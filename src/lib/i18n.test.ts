@@ -517,3 +517,48 @@ describe("editor node-view catalogue keys", () => {
     }
   });
 });
+
+/**
+ * P2.3 — suggestions (track-changes) surface strings. Keys extracted from the
+ * editor chrome that owns the "Suggesting" toggle, the pending count and the
+ * accept/reject controls (`page-editor.tsx`). Written red-first: these
+ * assertions fail until the keys land in all five catalogues. The kind labels
+ * reuse the existing `pendingWord` / `deletedPrefix` keys where a literal is
+ * already shipped.
+ */
+const SUGGESTION_KEYS = [
+  "suggestingWord",
+  "suggestionsWord",
+  "reviewSuggestions",
+  "acceptSuggestion",
+  "rejectSuggestion",
+  "acceptAllSuggestions",
+  "rejectAllSuggestions",
+  "suggestionInserted",
+  "suggestionReplaced",
+] as const satisfies readonly I18nKey[];
+
+describe("editor suggestions catalogue keys", () => {
+  it("defines every suggestion key in every locale, with no empty value", () => {
+    for (const key of SUGGESTION_KEYS) {
+      expect({ key, present: translationKeys().includes(key) }).toEqual({ key, present: true });
+      for (const { code } of LOCALES) {
+        expect({ key, code, value: t(code, key).trim() }).toEqual({
+          key,
+          code,
+          value: expect.any(String),
+        });
+        expect(t(code, key).trim()).not.toBe("");
+      }
+    }
+  });
+
+  it("translates each suggestion key in at least one shipped locale", () => {
+    for (const key of SUGGESTION_KEYS) {
+      const localised = LOCALES.some(
+        ({ code }) => code !== "en" && t(code, key) !== t("en", key),
+      );
+      expect({ key, localised }).toEqual({ key, localised: true });
+    }
+  });
+});

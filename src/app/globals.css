@@ -1894,3 +1894,65 @@ body {
   --accent-fg: #000000;
   --selection: #1f4a7a;
 }
+
+/* ---------------------------------------------------------------------------
+   Suggestions (track changes)
+   Decorations the SmartSuggestions extension emits: a node decoration per
+   inserted / replaced block (`.noema-suggestion` + `data-suggestion-kind`),
+   a sibling badge widget (`.noema-suggestion-badge`) and a strikethrough
+   marker for a deleted block (`.noema-suggestion-delete`). Colours ride on
+   the shared theme tokens so light / dark / high-contrast all agree.
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .noema-suggestion {
+  border-radius: 3px;
+  transition: background-color 120ms ease;
+}
+.noema-editor .ProseMirror .noema-suggestion[data-suggestion-kind="insert"] {
+  background: color-mix(in srgb, #2f9e44 14%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, #2f9e44 55%, transparent);
+}
+.noema-editor .ProseMirror .noema-suggestion[data-suggestion-kind="replace"] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.dark .noema-editor .ProseMirror .noema-suggestion[data-suggestion-kind="insert"] {
+  background: color-mix(in srgb, #2f9e44 24%, transparent);
+}
+.dark .noema-editor .ProseMirror .noema-suggestion[data-suggestion-kind="replace"] {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.noema-suggestion-badge {
+  display: inline-block;
+  margin-right: 0.25rem;
+  font-size: 0.85em;
+  line-height: 1;
+  vertical-align: middle;
+  user-select: none;
+  opacity: 0.85;
+}
+.noema-suggestion-badge[data-suggestion-kind="insert"] {
+  color: #2f9e44;
+}
+.noema-suggestion-badge[data-suggestion-kind="replace"] {
+  color: var(--accent);
+}
+.dark .noema-suggestion-badge[data-suggestion-kind="insert"] {
+  color: #69db7c;
+}
+
+.noema-suggestion-delete {
+  display: inline-block;
+  margin: 0 0.25rem;
+  padding: 0 0.25rem;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, #eb5757 14%, transparent);
+  color: #b91c1c;
+  text-decoration: line-through;
+  font-size: 0.85em;
+  user-select: none;
+}
+.dark .noema-suggestion-delete {
+  background: color-mix(in srgb, #ff7369 24%, transparent);
+  color: #ffa198;
+}
