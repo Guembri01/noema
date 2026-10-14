@@ -19,6 +19,17 @@ import { dirname, join } from "node:path";
  *
  * Reads fail OPEN: a missing or corrupt file yields "no sessions", never an
  * auth outage — a broken registry must not lock every device out.
+ *
+ * §17 deepening (session management row): on top of the B54 list/revoke
+ * primitives this module adds `validateSession` (fail-closed: a revoked or
+ * expired token is rejected even though the record still exists),
+ * `listSessionsForUser` (active-only panel view with a `current` flag),
+ * `revokeSession` (unscoped revoke for trusted server-side paths), and sliding
+ * expiry via `touchSession(sid, now, { maxLifetimeMs })` — activity extends a
+ * session's deadline, but never past the absolute `createdAt + maxLifetimeMs`
+ * cap, so a session cannot be kept alive forever. All new time-dependent
+ * logic takes an injected `now` (ms since epoch) for determinism; the
+ * wall-clock defaults exist only for the legacy no-argument call shapes.
  */
 
 export type SessionRecord = {
@@ -28,6 +39,12 @@ export type SessionRecord = {
   device: string | null;
   createdAt: string;
   lastActiveAt: string;
+  /**
+   * Sliding expiry deadline (ISO). Absent on records written before sliding
+   * expiry existed → falls back to the fixed createdAt + SESSION_TTL_MS
+   * window, so legacy rows keep their original semantics.
+   */
+  expiresAt?: string;
   revokedAt: string | null;
 };
 
@@ -50,6 +67,8 @@ function isRecord(value: unknown): value is SessionRecord {
     typeof record.userId === "string" &&
     typeof record.createdAt === "string" &&
     typeof record.lastActiveAt === "string" &&
+    // Optional on pre-sliding rows; validated by shape when present.
+    (record.expiresAt === undefined || typeof record.expiresAt === "string") &&
     (record.revokedAt === null || typeof record.revokedAt === "string") &&
     (record.device === null || typeof record.device === "string")
   );
@@ -76,12 +95,27 @@ function mutate(fn: (records: SessionRecord[]) => SessionRecord[]): void {
   writeAll(fn(readAll()));
 }
 
-/** Drop records that outlived the session TTL (or their revocation retention). */
-function prune(records: SessionRecord[]): SessionRecord[] {
-  const now = Date.now();
+/**
+ * When a session stops being valid, in ms since epoch: the slid `expiresAt`
+ * when present, else the fixed createdAt + SESSION_TTL_MS window that legacy
+ * records rely on. An unparseable createdAt (corrupt row) yields -Infinity so
+ * every expiry comparison treats the session as already over — corruption
+ * fails closed, never open.
+ */
+function effectiveExpiryMs(record: SessionRecord): number {
+  if (record.expiresAt) {
+    const slid = Date.parse(record.expiresAt);
+    if (Number.isFinite(slid)) return slid;
+  }
+  const created = Date.parse(record.createdAt);
+  return Number.isFinite(created) ? created + SESSION_TTL_MS : Number.NEGATIVE_INFINITY;
+}
+
+/** Drop records that outlived their session deadline (or revocation retention). */
+function prune(records: SessionRecord[], nowMs: number): SessionRecord[] {
   return records.filter((record) => {
-    if (now - Date.parse(record.createdAt) > SESSION_TTL_MS) return false;
-    if (record.revokedAt && now - Date.parse(record.revokedAt) > REVOKED_RETENTION_MS) {
+    if (effectiveExpiryMs(record) <= nowMs) return false;
+    if (record.revokedAt && nowMs - Date.parse(record.revokedAt) > REVOKED_RETENTION_MS) {
       return false;
     }
     return true;
@@ -92,8 +126,11 @@ function prune(records: SessionRecord[]): SessionRecord[] {
 export function registerSession(input: {
   userId: string;
   device: string | null;
+  /** Injected clock (ms since epoch); defaults to the wall clock. */
+  now?: number;
 }): SessionRecord {
-  const now = new Date().toISOString();
+  const at = input.now ?? Date.now();
+  const now = new Date(at).toISOString();
   const record: SessionRecord = {
     sid: randomUUID(),
     userId: input.userId,
@@ -102,7 +139,7 @@ export function registerSession(input: {
     lastActiveAt: now,
     revokedAt: null,
   };
-  mutate((records) => [...prune(records), record]);
+  mutate((records) => [...prune(records, at), record]);
   return record;
 }
 
@@ -116,16 +153,69 @@ export function isSessionRevoked(sid: string): boolean {
   return record !== null && record.revokedAt !== null;
 }
 
-/** Bump lastActiveAt (throttled to one write per minute per session). */
-export function touchSession(sid: string): void {
-  const now = Date.now();
+/**
+ * Strict validation for callers that can tolerate a registry outage being a
+ * hard failure: the record must exist, be unrevoked, and be unexpired at the
+ * injected `now`. Fail CLOSED on every one of those — a revoked-but-unexpired
+ * token is rejected even though the record (and the JWT) is still "live".
+ * (The auth hot path keeps the fail-open `isSessionRevoked` probe instead: a
+ * broken registry must not mass sign-out every device.)
+ */
+export function validateSession(sid: string, now: number): SessionRecord | null {
   const record = findSession(sid);
-  if (!record || record.revokedAt) return;
-  if (now - Date.parse(record.lastActiveAt) < TOUCH_INTERVAL_MS) return;
-  const iso = new Date(now).toISOString();
+  if (!record || record.revokedAt) return null;
+  if (effectiveExpiryMs(record) <= now) return null;
+  return record;
+}
+
+export type TouchResult =
+  | { status: "extended"; expiresAt: string }
+  | { status: "throttled" }
+  | { status: "not-found" }
+  | { status: "revoked" }
+  | { status: "expired" };
+
+export type TouchOptions = {
+  /** Idle window granted from `now` on a touch. Default: SESSION_TTL_MS. */
+  idleTimeoutMs?: number;
+  /**
+   * Absolute lifetime measured from createdAt: the deadline is clipped to
+   * createdAt + maxLifetimeMs, so sliding expiry cannot keep a session alive
+   * forever. Default: SESSION_TTL_MS (i.e. no extension past the original
+   * fixed window — existing expiry semantics unless a caller opts in).
+   */
+  maxLifetimeMs?: number;
+};
+
+/**
+ * Bump lastActiveAt (throttled to one write per minute per session) and, when
+ * an injected `now` is given, slide the session's expiry: the new deadline is
+ * min(now + idleTimeoutMs, createdAt + maxLifetimeMs). Fail closed: revoked,
+ * expired, and unknown sessions are never touched, so activity can't
+ * resurrect them. Without `now` the legacy wall-clock behavior applies.
+ */
+export function touchSession(
+  sid: string,
+  now?: number,
+  options: TouchOptions = {},
+): TouchResult {
+  const at = now ?? Date.now();
+  const record = findSession(sid);
+  if (!record) return { status: "not-found" };
+  if (record.revokedAt) return { status: "revoked" };
+  if (effectiveExpiryMs(record) <= at) return { status: "expired" };
+  if (at - Date.parse(record.lastActiveAt) < TOUCH_INTERVAL_MS) return { status: "throttled" };
+  const idle = options.idleTimeoutMs ?? SESSION_TTL_MS;
+  const cap = options.maxLifetimeMs ?? SESSION_TTL_MS;
+  const deadline = Math.min(at + idle, Date.parse(record.createdAt) + cap);
+  const iso = new Date(at).toISOString();
+  const expiresAt = new Date(deadline).toISOString();
   mutate((records) =>
-    records.map((entry) => (entry.sid === sid ? { ...entry, lastActiveAt: iso } : entry)),
+    records.map((entry) =>
+      entry.sid === sid ? { ...entry, lastActiveAt: iso, expiresAt } : entry,
+    ),
   );
+  return { status: "extended", expiresAt };
 }
 
 /** Active sessions of one user, most recently active first. */
@@ -135,14 +225,55 @@ export function listActiveSessions(userId: string): SessionRecord[] {
     .sort((a, b) => Date.parse(b.lastActiveAt) - Date.parse(a.lastActiveAt));
 }
 
+export type ListedSession = SessionRecord & { current: boolean };
+
+/**
+ * Panel view for a "Sessions" settings page: the user's sessions that are
+ * still valid at the injected `now` (revoked and expired ones excluded),
+ * most recently active first, each carrying a `current` flag for the
+ * caller-supplied sid of the requesting device.
+ */
+export function listSessionsForUser(
+  userId: string,
+  now: number,
+  options: { currentSid?: string | null } = {},
+): ListedSession[] {
+  return readAll()
+    .filter(
+      (record) =>
+        record.userId === userId && !record.revokedAt && effectiveExpiryMs(record) > now,
+    )
+    .sort((a, b) => Date.parse(b.lastActiveAt) - Date.parse(a.lastActiveAt))
+    .map((record) => ({ ...record, current: record.sid === options.currentSid }));
+}
+
+/**
+ * Revoke a session by sid alone — for trusted server-side paths that have
+ * already established ownership (e.g. forced sign-out). The request path must
+ * keep using the owner-scoped `revokeSessionForUser` guard below.
+ */
+export function revokeSession(sid: string, now?: number): "revoked" | "not-found" {
+  const record = findSession(sid);
+  if (!record || record.revokedAt) return "not-found";
+  const iso = new Date(now ?? Date.now()).toISOString();
+  mutate((records) =>
+    records.map((entry) => (entry.sid === sid ? { ...entry, revokedAt: iso } : entry)),
+  );
+  return "revoked";
+}
+
 export type RevokeOutcome = "revoked" | "not-found" | "forbidden";
 
 /** Revoke one session — only its owner may do it (B54 owner-of-session guard). */
-export function revokeSessionForUser(sid: string, userId: string): RevokeOutcome {
+export function revokeSessionForUser(
+  sid: string,
+  userId: string,
+  now?: number,
+): RevokeOutcome {
   const record = findSession(sid);
   if (!record || record.revokedAt) return "not-found";
   if (record.userId !== userId) return "forbidden";
-  const iso = new Date().toISOString();
+  const iso = new Date(now ?? Date.now()).toISOString();
   mutate((records) =>
     records.map((entry) => (entry.sid === sid ? { ...entry, revokedAt: iso } : entry)),
   );
@@ -155,9 +286,9 @@ export function revokeSessionForUser(sid: string, userId: string): RevokeOutcome
  */
 export function revokeAllSessionsForUser(
   userId: string,
-  options: { exceptSid?: string } = {},
+  options: { exceptSid?: string; now?: number } = {},
 ): number {
-  const iso = new Date().toISOString();
+  const iso = new Date(options.now ?? Date.now()).toISOString();
   let revoked = 0;
   mutate((records) =>
     records.map((record) => {
