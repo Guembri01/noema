@@ -6,15 +6,20 @@ import {
   lowlightNameFor,
 } from "./code-languages";
 import {
+  blocksToMarkdown,
+  blocksToMarkdownTree,
   hasMarkdown,
   markdownToText,
   markdownToTipTap,
   matchMarkdownShortcut,
+  parseFrontmatter,
   parseInline,
   parseMarkdown,
   safeHref,
+  selectionToMarkdown,
   splitTableRow,
 } from "./markdown";
+import type { RichBlock } from "./markdown";
 
 const text = (nodes: unknown[]): string =>
   JSON.stringify(nodes).replace(/\\"/g, '"');
@@ -471,5 +476,303 @@ describe("splitTableRow (B37)", () => {
   it("keeps escaped pipes inside their cell and preserves empty cells", () => {
     expect(splitTableRow("| a \\| b | c |")).toEqual(["a | b", "c"]);
     expect(splitTableRow("| | b |")).toEqual(["", "b"]);
+  });
+});
+
+/**
+ * §12 Import Markdown — frontmatter (🟡→✅).
+ *
+ * `parseFrontmatter` is the pure head of the `.md` import path: it splits the
+ * `---\nkey: value\n---` block into typed data (title/tags/date… that the
+ * import can turn into page properties) plus the body the block parser
+ * consumes. YAML-ish only, deliberately tolerant: CRLF, comments, quoted
+ * values, inline AND block lists, and a missing closing fence must never
+ * throw or swallow the document.
+ */
+describe("parseFrontmatter (§12 import)", () => {
+  it("splits the frontmatter block into typed data and the document body", () => {
+    const markdown = [
+      "---",
+      "title: Launch plan",
+      "priority: 3",
+      "draft: false",
+      "tags: [roadmap, q1, 2026]",
+      "date: 2026-01-05",
+      "---",
+      "",
+      "# Launch plan",
+      "Body text.",
+    ].join("\n");
+    expect(parseFrontmatter(markdown)).toEqual({
+      data: {
+        title: "Launch plan",
+        priority: 3,
+        draft: false,
+        tags: ["roadmap", "q1", 2026],
+        date: "2026-01-05", // dates stay strings: no Date objects in pure data
+      },
+      body: "# Launch plan\nBody text.",
+    });
+  });
+
+  it("tolerates CRLF line endings", () => {
+    const { data, body } = parseFrontmatter(
+      "---\r\ntitle: CRLF page\r\ndone: true\r\n---\r\n\r\nbody line\r\nnext",
+    );
+    expect(data).toEqual({ title: "CRLF page", done: true });
+    expect(body).toBe("body line\nnext");
+  });
+
+  it("reads list values in inline, indented and indentless block style", () => {
+    expect(parseFrontmatter("---\ntags: [a, b]\n---\nbody").data.tags).toEqual(["a", "b"]);
+    expect(parseFrontmatter("---\ntags:\n  - alpha\n  - beta\n---\nbody").data.tags).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    // YAML allows a sequence at the same indentation as its key.
+    expect(parseFrontmatter("---\ntags:\n- one\n- two\n---\nbody").data.tags).toEqual([
+      "one",
+      "two",
+    ]);
+  });
+
+  it("tolerates a missing closing fence", () => {
+    const openEnd = parseFrontmatter("---\ntitle: Orphaned\n\nbody follows");
+    expect(openEnd.data).toEqual({ title: "Orphaned" });
+    expect(openEnd.body).toBe("body follows");
+
+    const noBody = parseFrontmatter("---\ntitle: Only data\ntags: [a]");
+    expect(noBody.data).toEqual({ title: "Only data", tags: ["a"] });
+    expect(noBody.body).toBe("");
+  });
+
+  it("only claims the opening block when it really holds key: value pairs", () => {
+    // A document that merely starts with a horizontal rule keeps everything.
+    const rule = parseFrontmatter("---\nHello world\n---\n\nafter the rule");
+    expect(rule.data).toEqual({});
+    expect(rule.body).toBe("---\nHello world\n---\n\nafter the rule");
+
+    const plain = parseFrontmatter("# Title\n\nBody");
+    expect(plain).toEqual({ data: {}, body: "# Title\n\nBody" });
+    expect(parseFrontmatter("")).toEqual({ data: {}, body: "" });
+  });
+
+  it("keeps quoted values verbatim and drops comments", () => {
+    const { data } = parseFrontmatter(
+      '---\ntitle: "Full: title" # the text survives\nsite: https://example.com\nempty:\n---\nbody',
+    );
+    expect(data).toEqual({
+      title: "Full: title",
+      site: "https://example.com",
+      empty: null,
+    });
+  });
+});
+
+/**
+ * §12 Export Markdown — nested content (🟡→✅).
+ *
+ * The block→Markdown serializer must survive what the editor stores:
+ * indented nested lists, checkboxes, nested toggles/quotes, tables and
+ * code fences. Everything below is asserted as an exact round-trip through
+ * `markdownToTipTap` (the real parser→editor path) or a literal node, never
+ * through a database.
+ */
+describe("blocksToMarkdown (§12 export, nested content)", () => {
+  it("indents a nested ordered/bullet list on round-trip through the editor", () => {
+    const source = "- outer\n  1. one\n    - deep\n- second";
+    expect(blocksToMarkdown(markdownToTipTap(source))).toBe(source);
+  });
+
+  it("keeps task checkboxes on round-trip", () => {
+    const source = "- [x] done\n- [ ] todo";
+    expect(blocksToMarkdown(markdownToTipTap(source))).toBe(source);
+  });
+
+  it("serializes a nested toggle with indented children", () => {
+    const toggle: RichBlock = {
+      type: "toggle",
+      attrs: { summary: "Details" },
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Hidden" }] },
+        {
+          type: "toggle",
+          attrs: { summary: "More" },
+          content: [{ type: "paragraph", content: [{ type: "text", text: "Deeper" }] }],
+        },
+      ],
+    };
+    expect(blocksToMarkdown([toggle])).toBe("- Details\n  Hidden\n  - More\n    Deeper");
+  });
+
+  it("prefixes nested quotes and lists with >", () => {
+    const quote: RichBlock = {
+      type: "blockquote",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "outer" }] },
+        {
+          type: "blockquote",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "inner" }] }],
+        },
+        {
+          type: "bulletList",
+          content: [
+            { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "item" }] }] },
+          ],
+        },
+      ],
+    };
+    expect(blocksToMarkdown([quote])).toBe("> outer\n>\n> > inner\n>\n> - item");
+  });
+
+  it("round-trips a mixed document (heading, lists, table, image, code, rule)", () => {
+    const source = [
+      "## Title",
+      "",
+      "Intro with **bold** and `code`.",
+      "",
+      "- one",
+      "  - two",
+      "- [x] done",
+      "",
+      "| A | B |",
+      "| --- | --- |",
+      "| 1 | 2 |",
+      "",
+      "![pic](https://x.co/a.png)",
+      "",
+      "```ts",
+      "const a = 1;",
+      "```",
+      "",
+      "---",
+    ].join("\n");
+    expect(blocksToMarkdown(markdownToTipTap(source))).toBe(source);
+  });
+
+  it("uses a code fence longer than any backtick run inside the code", () => {
+    const code: RichBlock = {
+      type: "codeBlock",
+      attrs: { language: "md" },
+      content: [{ type: "text", text: "before\n```\nafter" }],
+    };
+    expect(blocksToMarkdown([code])).toBe("````md\nbefore\n```\nafter\n````");
+  });
+});
+
+/**
+ * §1 Copy as Markdown (🧭) — a copied block range must serialize without a
+ * throw, whatever the selection contains. Unknown/future block types degrade
+ * to their children or text instead of exploding, and the result is the same
+ * string the export path would produce for those blocks.
+ */
+describe("selectionToMarkdown (§1 copy as Markdown)", () => {
+  it("serializes a mixed selection and degrades on unknown block types", () => {
+    const blocks: RichBlock[] = [
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Copied" }] },
+      { type: "futureWidget", attrs: { mode: "fancy" } },
+      { type: "mysteryLeaf", text: "stray", marks: [{ type: "bold" }] },
+      {
+        type: "weirdWrapper",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "kept" }] }],
+      },
+      null as unknown as RichBlock, // a selection can hand us junk; it must not throw
+      { type: "paragraph", content: [{ type: "text", text: "Last *one*" }] },
+    ];
+    expect(selectionToMarkdown(blocks)).toBe(
+      "## Copied\n\n**stray**\n\nkept\n\nLast *one*",
+    );
+    expect(selectionToMarkdown(blocks)).toBe(blocksToMarkdown(blocks));
+  });
+
+  it("keeps inline marks and images intact", () => {
+    const md = selectionToMarkdown([
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "bold", marks: [{ type: "bold" }] },
+          { type: "text", text: " and " },
+          {
+            type: "text",
+            text: "link",
+            marks: [{ type: "link", attrs: { href: "https://x.co" } }],
+          },
+        ],
+      },
+      { type: "image", attrs: { src: "/api/files/w/p.png", alt: "pic" } },
+    ]);
+    expect(md).toBe("**bold** and [link](https://x.co)\n\n![pic](/api/files/w/p.png)");
+  });
+});
+
+/**
+ * §12 Export with subpages (🧭) — serialize a page and its descendants into
+ * a path → markdown map the zip builder can consume. Paths mirror the
+ * workspace export route's convention (sanitised title segments joined by
+ * "/", ` (1)` suffixes on collisions); the walk is cycle-safe.
+ */
+describe("blocksToMarkdownTree (§12 export with subpages)", () => {
+  type Page = {
+    id: string;
+    title: string;
+    blocks?: RichBlock[] | RichBlock | null;
+    children?: Page[];
+  };
+
+  const page = (id: string, title: string, text: string, children?: Page[]): Page => ({
+    id,
+    title,
+    blocks: [{ type: "paragraph", content: [{ type: "text", text }] }],
+    ...(children ? { children } : {}),
+  });
+
+  it("serializes a page and its descendants into a path → markdown map", () => {
+    const root: Page = page("a", "Roadmap", "top", [
+      page("b", "Phase 1", "first", [page("c", "Kickoff", "deep")]),
+      page("d", "Phase 2", "second"),
+    ]);
+    const tree = blocksToMarkdownTree(root, (node) => node.children);
+    expect([...tree.keys()]).toEqual([
+      "Roadmap.md",
+      "Roadmap/Phase-1.md",
+      "Roadmap/Phase-1/Kickoff.md",
+      "Roadmap/Phase-2.md",
+    ]);
+    expect(tree.get("Roadmap.md")).toBe("top");
+    expect(tree.get("Roadmap/Phase-1/Kickoff.md")).toBe("deep");
+
+    // A stored `{ type: "doc" }` wrapper and a missing getChildren both work.
+    const docRoot: Page = {
+      id: "x",
+      title: "Doc",
+      blocks: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "from doc" }] }] },
+    };
+    expect(blocksToMarkdownTree(docRoot, () => undefined).get("Doc.md")).toBe("from doc");
+  });
+
+  it("breaks parent cycles instead of recursing forever", () => {
+    const root: Page = page("a", "Root", "r");
+    const child: Page = page("b", "Loop", "l");
+    root.children = [child];
+    child.children = [root]; // a parent cycle must not hang the export
+    const tree = blocksToMarkdownTree(root, (node) => node.children);
+    expect([...tree.keys()]).toEqual(["Root.md", "Root/Loop.md"]);
+  });
+
+  it("sanitises titles like the export route and deduplicates collisions", () => {
+    const root: Page = page("a", "Docs", "n", [
+      page("b", "A/B", "x"),
+      page("c", "Notes", "one"),
+      page("d", "Notes", "two"),
+      page("e", "", "blank"),
+    ]);
+    const tree = blocksToMarkdownTree(root, (node) => node.children);
+    expect([...tree.keys()]).toEqual([
+      "Docs.md",
+      "Docs/A-B.md",
+      "Docs/Notes.md",
+      "Docs/Notes (1).md",
+      "Docs/untitled.md",
+    ]);
   });
 });
