@@ -25,6 +25,8 @@ import { parseBlockDeepLink } from "@/lib/deep-links";
 import {
   backlinksFor,
   buildBacklinkIndex,
+  unlinkedMentions,
+  type BacklinkRef,
   type Block,
   type LinkablePage,
 } from "@/lib/backlinks";
@@ -32,6 +34,14 @@ import type { RichNode } from "@/lib/blocks";
 
 /** A page as the "Linked references" panel renders it. */
 export type LinkedReference = { id: string; title: string; icon: string | null };
+
+/** The two reference sections the panel can show for one page. */
+export type PageReferences = {
+  /** Pages that link the target (via a page mention, embed or internal link). */
+  linked: LinkedReference[];
+  /** Pages that spell out the target's title as plain text without linking it. */
+  unlinked: LinkedReference[];
+};
 
 /** Inline node types — the only nodes that can carry a mention or a link mark. */
 const INLINE_TYPES = new Set(["text", "hardBreak", "mention", "inlineMath"]);
@@ -152,23 +162,20 @@ export function docToBlocks(doc: unknown): Block[] {
 }
 
 /**
- * Pages in the workspace that link to `pageId` (linked references), newest
- * page first is not guaranteed — the engine orders by source page then block,
- * which is stable and deduplicated per source page here.
- *
- * Workspace-scoped like the other page queries. `visiblePageIds` applies the
- * guest scope (R80.12): when the viewer is a guest, only source pages they may
- * open are considered, so hidden mentioners never leak their titles.
- *
- * The scan is bounded to the most recently updated 1000 pages, mirroring the
- * previous mention-based query; the cap is silent (D7).
+ * Workspace pages that can act as backlink sources for `pageId`: everything
+ * except the target itself, loaded with the fields the panel needs and their
+ * stored body documents. Workspace-scoped like the other page queries.
+ * `visiblePageIds` applies the guest scope (R80.12): when the viewer is a
+ * guest, only source pages they may open are considered, so hidden mentioners
+ * never leak their titles. The scan is bounded to the most recently updated
+ * 1000 pages, mirroring the previous mention-based query; the cap is silent (D7).
  */
-export async function getLinkedReferences(
+async function loadBacklinkSources(
   workspaceId: string,
   pageId: string,
-  visiblePageIds: ReadonlySet<string> | null = null,
-): Promise<LinkedReference[]> {
-  const pages = await prisma.page.findMany({
+  visiblePageIds: ReadonlySet<string> | null,
+) {
+  return prisma.page.findMany({
     where: {
       workspaceId,
       deletedAt: null,
@@ -179,17 +186,33 @@ export async function getLinkedReferences(
     take: 1000,
     select: { id: true, title: true, icon: true, content: true },
   });
+}
 
-  const linkable: LinkablePage[] = pages.map((page) => ({
+/** One row of `loadBacklinkSources` — the fields resolved into panel items. */
+type BacklinkSource = Awaited<ReturnType<typeof loadBacklinkSources>>[number];
+
+/**
+ * Fold the loaded sources into the engine's `LinkablePage` list (each page's
+ * document adapted via `docToBlocks`, whose `blockText` already exposes the
+ * page's plain text) plus an id→page lookup for resolving refs back to items.
+ */
+function prepareSources(sources: BacklinkSource[]) {
+  const linkable: LinkablePage[] = sources.map((page) => ({
     id: page.id,
     blocks: docToBlocks(page.content),
   }));
-  const index = buildBacklinkIndex(linkable);
+  const byId = new Map(sources.map((page) => [page.id, page]));
+  return { linkable, byId };
+}
 
-  const byId = new Map(pages.map((page) => [page.id, page]));
+/** One panel row per distinct source page, following the refs' order. */
+function toLinkedReferences(
+  refs: readonly BacklinkRef[],
+  byId: Map<string, BacklinkSource>,
+): LinkedReference[] {
   const items: LinkedReference[] = [];
   const seen = new Set<string>();
-  for (const ref of backlinksFor(index, pageId)) {
+  for (const ref of refs) {
     if (seen.has(ref.sourcePageId)) continue;
     seen.add(ref.sourcePageId);
     const source = byId.get(ref.sourcePageId);
@@ -197,4 +220,50 @@ export async function getLinkedReferences(
     items.push({ id: source.id, title: source.title, icon: source.icon });
   }
   return items;
+}
+
+/**
+ * Pages in the workspace that link to `pageId` (linked references), newest
+ * page first is not guaranteed — the engine orders by source page then block,
+ * which is stable and deduplicated per source page here.
+ */
+export async function getLinkedReferences(
+  workspaceId: string,
+  pageId: string,
+  visiblePageIds: ReadonlySet<string> | null = null,
+): Promise<LinkedReference[]> {
+  const sources = await loadBacklinkSources(workspaceId, pageId, visiblePageIds);
+  const { linkable, byId } = prepareSources(sources);
+  return toLinkedReferences(backlinksFor(buildBacklinkIndex(linkable), pageId), byId);
+}
+
+/**
+ * Both reference sections for a page: `linked` (pages that mention/embed/link
+ * the target) and `unlinked` (pages that spell its title out as plain text
+ * without ever linking it). `title` is the target page's own title; the source
+ * query excludes the target, so the caller supplies it for the engine's
+ * `titleOf` lookup. Unlinked sources are deduped per page and never overlap
+ * with the linked ones — `unlinkedMentions` skips already-linked pages, the
+ * target itself and partial-word matches. Same workspace/guest scoping and
+ * 1000-page bound as `getLinkedReferences`.
+ */
+export async function getPageReferences(
+  workspaceId: string,
+  pageId: string,
+  title: string,
+  visiblePageIds: ReadonlySet<string> | null = null,
+): Promise<PageReferences> {
+  const sources = await loadBacklinkSources(workspaceId, pageId, visiblePageIds);
+  const { linkable, byId } = prepareSources(sources);
+  const index = buildBacklinkIndex(linkable);
+
+  const linked = toLinkedReferences(backlinksFor(index, pageId), byId);
+  const titleById = new Map(sources.map((page) => [page.id, page.title]));
+  const unlinked = toLinkedReferences(
+    unlinkedMentions(index, pageId, linkable, {
+      titleOf: (id) => (id === pageId ? title : titleById.get(id)),
+    }),
+    byId,
+  );
+  return { linked, unlinked };
 }
