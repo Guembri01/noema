@@ -163,3 +163,144 @@ export function normalizeFeedUrl(value: string): string {
   const trimmed = value.trim();
   return /^webcal:\/\//i.test(trimmed) ? trimmed.replace(/^webcal:\/\//i, "https://") : trimmed;
 }
+
+// ---------------------------------------------------------------------------
+// ICS export — the outbound half of calendar subscriptions. A pure, RFC 5545
+// builder: no prisma, no network, and no clock reads (the caller passes `now`),
+// so the same input always produces byte-identical output. Pinned by the
+// export block in src/lib/ics.test.ts.
+// ---------------------------------------------------------------------------
+
+/** One event to serialise into a VEVENT. */
+export interface CalendarEventInput {
+  /** Stable iCalendar UID, e.g. `"evt-1@noema"`. */
+  uid: string;
+  /** ISO 8601 instant, or `YYYY-MM-DD` for an all-day event. */
+  start: string;
+  /** Exclusive end (RFC 5545); omitted when unknown. */
+  end?: string;
+  /** Serialise dates with `VALUE=DATE` (no time component). */
+  allDay?: boolean;
+  summary: string;
+  description?: string;
+  location?: string;
+  url?: string;
+}
+
+/** Envelope metadata for {@link buildCalendar}. */
+export interface CalendarBuildOptions {
+  /** `PRODID`, e.g. `"-//Noema//Calendar//EN"`. */
+  prodId: string;
+  /** Optional `X-WR-CALNAME` display name. */
+  name?: string;
+  /** `DTSTAMP` source — injected so the builder never reads the clock. */
+  now: string | Date;
+}
+
+const CRLF = "\r\n";
+const OCTET_LIMIT = 75;
+const UTF8 = new TextEncoder();
+
+const pad = (value: number): string => String(value).padStart(2, "0");
+
+const toDate = (value: string | Date): Date =>
+  typeof value === "string" ? new Date(value) : value;
+
+/** `YYYYMMDD` from the value's UTC calendar date. */
+function formatDate(value: string | Date): string {
+  const date = toDate(value);
+  return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}`;
+}
+
+/** `YYYYMMDDTHHMMSSZ`, pinned to UTC. */
+function formatDateTime(value: string | Date): string {
+  const date = toDate(value);
+  return (
+    formatDate(date) +
+    `T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`
+  );
+}
+
+/**
+ * Escape an RFC 5545 TEXT value: `\` → `\\`, `;` → `\;`, `,` → `\,`, and any
+ * newline (LF, CR or CRLF) → the two-character sequence `\n`. Backslash is
+ * escaped first so the characters introduced by the later passes are not
+ * re-escaped (no double escaping).
+ */
+export function escapeText(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\r\n|\r|\n/g, "\\n");
+}
+
+/**
+ * Fold one content line to at most 75 octets, joining continuations with CRLF
+ * and a single leading space. Folding is **octet**-counted (UTF-8), so a
+ * multi-byte character is never split across a fold; the leading space of a
+ * continuation counts toward its 75-octet budget.
+ */
+export function foldLine(line: string): string {
+  if (UTF8.encode(line).length <= OCTET_LIMIT) return line;
+
+  const pieces: string[] = [];
+  let current = "";
+  let octets = 0;
+  for (const char of line) {
+    const size = UTF8.encode(char).length;
+    if (octets + size > OCTET_LIMIT) {
+      pieces.push(current);
+      current = ` ${char}`;
+      octets = 1 + size;
+    } else {
+      current += char;
+      octets += size;
+    }
+  }
+  pieces.push(current);
+  return pieces.join(CRLF);
+}
+
+/**
+ * Serialise events into an RFC 5545 VCALENDAR. Each event becomes a VEVENT
+ * with `UID`, `DTSTAMP`, `DTSTART`, an optional `DTEND`, `SUMMARY` and the
+ * optional `DESCRIPTION`/`LOCATION`/`URL`; TEXT fields are escaped and every
+ * physical line is folded to 75 octets. All-day events use `VALUE=DATE`; timed
+ * events use UTC `YYYYMMDDTHHMMSSZ`. Lines are CRLF-terminated (including the
+ * final one). Event order is preserved.
+ */
+export function buildCalendar(
+  events: CalendarEventInput[],
+  options: CalendarBuildOptions,
+): string {
+  const lines: string[] = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    `PRODID:${options.prodId}`,
+    "CALSCALE:GREGORIAN",
+  ];
+  if (options.name) lines.push(`X-WR-CALNAME:${escapeText(options.name)}`);
+
+  const stamp = formatDateTime(options.now);
+  for (const event of events) {
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${event.uid}`);
+    lines.push(`DTSTAMP:${stamp}`);
+    if (event.allDay) {
+      lines.push(`DTSTART;VALUE=DATE:${formatDate(event.start)}`);
+      if (event.end) lines.push(`DTEND;VALUE=DATE:${formatDate(event.end)}`);
+    } else {
+      lines.push(`DTSTART:${formatDateTime(event.start)}`);
+      if (event.end) lines.push(`DTEND:${formatDateTime(event.end)}`);
+    }
+    lines.push(`SUMMARY:${escapeText(event.summary)}`);
+    if (event.description) lines.push(`DESCRIPTION:${escapeText(event.description)}`);
+    if (event.location) lines.push(`LOCATION:${escapeText(event.location)}`);
+    if (event.url) lines.push(`URL:${event.url}`);
+    lines.push("END:VEVENT");
+  }
+  lines.push("END:VCALENDAR");
+
+  return lines.map(foldLine).join(CRLF) + CRLF;
+}
