@@ -1,19 +1,42 @@
 /**
  * Pure helpers for bookmark/embed blocks and the link-preview API.
  * Kept dependency-free so they can be unit-tested and reused on the server.
+ *
+ * Embed provider resolution goes through ONE typed registry
+ * (`EMBED_PROVIDERS` below): exact host match patterns + canonical embed URL
+ * builder + iframe policy (`sandbox`/`allow`) per provider.
+ * `resolveEmbed()` is the single entry point; anything outside the registry
+ * is refused rather than embedded - there is deliberately no generic
+ * arbitrary-host iframe (repo SSRF posture).
  */
 
-export type EmbedProvider =
-  | "youtube"
-  | "vimeo"
-  | "loom"
-  | "spotify"
-  | "soundcloud"
-  | "figma"
-  | "codepen"
-  | "none";
+/** Every provider the registry recognises; `EmbedProvider` adds `"none"`. */
+export const EMBED_PROVIDER_IDS = [
+  "youtube",
+  "vimeo",
+  "loom",
+  "spotify",
+  "soundcloud",
+  "figma",
+  "codepen",
+  "twitter",
+  "codesandbox",
+] as const;
+
+export type EmbedProvider = (typeof EMBED_PROVIDER_IDS)[number] | "none";
+
+/** `EmbedProvider` minus the `"none"` sentinel (i.e. a registry key). */
+export type EmbedProviderId = Exclude<EmbedProvider, "none">;
 
 export type EmbedInfo = { provider: EmbedProvider; embedUrl: string | null };
+
+/** Full iframe configuration `resolveEmbed()` produces for an allowlisted URL. */
+export type ResolvedEmbed = {
+  provider: EmbedProviderId;
+  embedUrl: string;
+  sandbox: string;
+  allow: string;
+};
 
 export function isHttpUrl(value: string): boolean {
   try {
@@ -110,31 +133,162 @@ export function isPrivateHost(host: string): boolean {
   return false;
 }
 
+/** Inputs handed to a provider's embed builder. */
+export type BuildContext = {
+  /** Parsed, normalised input URL. */
+  parsed: URL;
+  /** Normalised input URL as a string (for providers that wrap it whole). */
+  url: string;
+  /** Hostname, lower-cased with any `www.` prefix stripped. */
+  host: string;
+};
+
+/** One allowlisted provider: match patterns, embed builder, iframe policy. */
+export type EmbedProviderDefinition = {
+  /** Exact hosts (lower-case, no `www.` prefix) this provider may match. */
+  readonly hosts: readonly string[];
+  /** `sandbox` attribute for the provider's iframe. */
+  readonly sandbox: string;
+  /** Renderer metadata: label, title, aspect ratio and `allow` attribute. */
+  readonly meta: EmbedMeta;
+  /** Build the canonical embed URL, or `null` when the path is not embeddable. */
+  readonly build: (ctx: BuildContext) => string | null;
+};
+
+/**
+ * Shared `sandbox` token sets. Every embed frame gets scripts + its own
+ * origin + popups + forms; media players add the presentation API, code
+ * playgrounds add modals. Top-frame navigation is NEVER granted.
+ */
+const SANDBOX_PLAYER = "allow-scripts allow-same-origin allow-popups allow-forms";
+const SANDBOX_MEDIA = `${SANDBOX_PLAYER} allow-presentation`;
+const SANDBOX_PLAYGROUND = `${SANDBOX_PLAYER} allow-modals`;
+
+/**
+ * THE provider allowlist registry: the ONLY source of truth for which hosts
+ * may embed, how each URL shape canonicalises, and what the resulting iframe
+ * is allowed to do (`sandbox` + `allow`). `Record<EmbedProviderId, ...>` is
+ * exhaustive, so a provider cannot be registered without meta/policy, and no
+ * host outside these patterns can ever produce a rich embed.
+ */
+export const EMBED_PROVIDERS: Record<EmbedProviderId, EmbedProviderDefinition> = {
+  youtube: {
+    hosts: ["youtube.com", "m.youtube.com", "youtube-nocookie.com", "youtu.be"],
+    sandbox: SANDBOX_MEDIA,
+    meta: {
+      label: "YouTube",
+      title: "YouTube video",
+      aspectRatio: "16 / 9",
+      allow: "accelerometer; clipboard-write; encrypted-media; picture-in-picture; web-share",
+    },
+    build: buildYoutubeEmbed,
+  },
+  vimeo: {
+    hosts: ["vimeo.com", "player.vimeo.com"],
+    sandbox: SANDBOX_MEDIA,
+    meta: {
+      label: "Vimeo",
+      title: "Vimeo video",
+      aspectRatio: "16 / 9",
+      allow: "autoplay; fullscreen; picture-in-picture",
+    },
+    build: buildVimeoEmbed,
+  },
+  loom: {
+    hosts: ["loom.com"],
+    sandbox: SANDBOX_MEDIA,
+    meta: {
+      label: "Loom",
+      title: "Loom recording",
+      aspectRatio: "16 / 9",
+      allow: "autoplay; fullscreen; picture-in-picture",
+    },
+    build: buildLoomEmbed,
+  },
+  spotify: {
+    hosts: ["open.spotify.com"],
+    sandbox: SANDBOX_MEDIA,
+    meta: {
+      label: "Spotify",
+      title: "Spotify player",
+      aspectRatio: "1 / 1",
+      allow: "autoplay; clipboard-write; encrypted-media; picture-in-picture",
+    },
+    build: buildSpotifyEmbed,
+  },
+  soundcloud: {
+    hosts: ["soundcloud.com"],
+    sandbox: SANDBOX_MEDIA,
+    meta: {
+      label: "SoundCloud",
+      title: "SoundCloud player",
+      aspectRatio: "16 / 9",
+      allow: "autoplay; encrypted-media; picture-in-picture",
+    },
+    build: buildSoundcloudEmbed,
+  },
+  figma: {
+    hosts: ["figma.com"],
+    sandbox: SANDBOX_PLAYER,
+    meta: {
+      label: "Figma",
+      title: "Figma file",
+      aspectRatio: "4 / 3",
+      allow: "clipboard-write; encrypted-media",
+    },
+    build: buildFigmaEmbed,
+  },
+  codepen: {
+    hosts: ["codepen.io"],
+    sandbox: SANDBOX_PLAYGROUND,
+    meta: {
+      label: "CodePen",
+      title: "CodePen embed",
+      aspectRatio: "16 / 9",
+      allow: "clipboard-write",
+    },
+    build: buildCodepenEmbed,
+  },
+  twitter: {
+    hosts: ["twitter.com", "x.com", "mobile.twitter.com", "mobile.x.com", "platform.twitter.com"],
+    sandbox: SANDBOX_PLAYER,
+    meta: {
+      label: "X (Twitter)",
+      title: "Post",
+      aspectRatio: "16 / 9",
+      allow: "clipboard-write; encrypted-media; picture-in-picture",
+    },
+    build: buildTwitterEmbed,
+  },
+  codesandbox: {
+    hosts: ["codesandbox.io"],
+    sandbox: SANDBOX_PLAYGROUND,
+    meta: {
+      label: "CodeSandbox",
+      title: "CodeSandbox embed",
+      aspectRatio: "16 / 9",
+      allow: "clipboard-write",
+    },
+    build: buildCodesandboxEmbed,
+  },
+};
+
 /**
  * Hosts whose content is willing to be rendered inside a sandboxed iframe.
- * This IS the embed allowlist: `detectEmbed` refuses everything else, so both
- * the editor node view and the read-only doc renderer fall back to a bookmark
+ * DERIVED from the registry so the two can never drift: this IS the embed
+ * allowlist, and `resolveEmbed()` refuses everything outside it, so both the
+ * editor node view and the read-only doc renderer fall back to a bookmark
  * card (or an input) instead of an arbitrary iframe.
  */
-export const EMBED_HOST_ALLOWLIST = [
-  "youtube.com",
-  "m.youtube.com",
-  "youtube-nocookie.com",
-  "youtu.be",
-  "vimeo.com",
-  "player.vimeo.com",
-  "loom.com",
-  "open.spotify.com",
-  "soundcloud.com",
-  "figma.com",
-  "codepen.io",
-] as const;
+export const EMBED_HOST_ALLOWLIST: readonly string[] = EMBED_PROVIDER_IDS.flatMap(
+  (id) => EMBED_PROVIDERS[id].hosts,
+);
 
 /** May this host be embedded? (www prefix tolerated, no wildcard subdomains.) */
 export function isEmbedHostAllowed(host: string): boolean {
   const normalized = host.toLowerCase().replace(/^www\./, "");
   if (!normalized) return false;
-  return (EMBED_HOST_ALLOWLIST as readonly string[]).includes(normalized);
+  return EMBED_HOST_ALLOWLIST.includes(normalized);
 }
 
 /** How long into the video the embed should start: `90`, `1m30s`, `1h2m3s`. */
@@ -158,58 +312,13 @@ export type EmbedMeta = {
   allow: string;
 };
 
-const PROVIDER_META: Record<Exclude<EmbedProvider, "none">, EmbedMeta> = {
-  youtube: {
-    label: "YouTube",
-    title: "YouTube video",
-    aspectRatio: "16 / 9",
-    allow: "accelerometer; clipboard-write; encrypted-media; picture-in-picture; web-share",
-  },
-  vimeo: {
-    label: "Vimeo",
-    title: "Vimeo video",
-    aspectRatio: "16 / 9",
-    allow: "autoplay; fullscreen; picture-in-picture",
-  },
-  loom: {
-    label: "Loom",
-    title: "Loom recording",
-    aspectRatio: "16 / 9",
-    allow: "autoplay; fullscreen; picture-in-picture",
-  },
-  spotify: {
-    label: "Spotify",
-    title: "Spotify player",
-    aspectRatio: "1 / 1",
-    allow: "autoplay; clipboard-write; encrypted-media; picture-in-picture",
-  },
-  soundcloud: {
-    label: "SoundCloud",
-    title: "SoundCloud player",
-    aspectRatio: "16 / 9",
-    allow: "autoplay; encrypted-media; picture-in-picture",
-  },
-  figma: {
-    label: "Figma",
-    title: "Figma file",
-    aspectRatio: "4 / 3",
-    allow: "clipboard-write; encrypted-media",
-  },
-  codepen: {
-    label: "CodePen",
-    title: "CodePen embed",
-    aspectRatio: "16 / 9",
-    allow: "clipboard-write",
-  },
-};
-
 /** Metadata for a provider, or `null` when the URL was not embeddable. */
 export function embedMeta(provider: EmbedProvider): EmbedMeta | null {
-  return provider === "none" ? null : PROVIDER_META[provider];
+  return provider === "none" ? null : EMBED_PROVIDERS[provider].meta;
 }
 
 /** YouTube: watch / share / shorts / live / embed / nocookie → canonical embed. */
-function youtubeEmbed(parsed: URL, host: string): EmbedInfo {
+function buildYoutubeEmbed({ parsed, host }: BuildContext): string | null {
   const parts = parsed.pathname.split("/").filter(Boolean);
   let id: string | null = null;
   if (host === "youtu.be") {
@@ -219,15 +328,14 @@ function youtubeEmbed(parsed: URL, host: string): EmbedInfo {
   } else if (parts[0] === "shorts" || parts[0] === "embed" || parts[0] === "live" || parts[0] === "v") {
     id = parts[1] ?? null;
   }
-  if (!id || !/^[A-Za-z0-9_-]+$/.test(id)) return { provider: "none", embedUrl: null };
+  if (!id || !/^[A-Za-z0-9_-]+$/.test(id)) return null;
   const start =
     parseStartTime(parsed.searchParams.get("start")) ?? parseStartTime(parsed.searchParams.get("t"));
-  const query = start ? `?start=${start}` : "";
-  return { provider: "youtube", embedUrl: `https://www.youtube.com/embed/${id}${query}` };
+  return `https://www.youtube.com/embed/${id}${start ? `?start=${start}` : ""}`;
 }
 
 /** Vimeo: /<id>, /video/<id>, /channels/<c>/<id>, /groups/<g>/videos/<id>. */
-function vimeoEmbed(parsed: URL): EmbedInfo {
+function buildVimeoEmbed({ parsed }: BuildContext): string | null {
   const parts = parsed.pathname.split("/").filter(Boolean);
   const numeric = (value: string | undefined): string | null =>
     value && /^\d+$/.test(value) ? value : null;
@@ -238,71 +346,119 @@ function vimeoEmbed(parsed: URL): EmbedInfo {
     id = numeric(parts[2]);
   else if (parts[0] === "groups") id = numeric(parts[3]);
   else id = numeric(parts[0]);
-  if (!id) return { provider: "none", embedUrl: null };
+  if (!id) return null;
 
   const start =
     parseStartTime(parsed.searchParams.get("t")) ??
     parseStartTime(parsed.hash.replace(/^#t=?/i, ""));
-  const hash = start ? `#t=${start}` : "";
-  return { provider: "vimeo", embedUrl: `https://player.vimeo.com/video/${id}${hash}` };
+  return `https://player.vimeo.com/video/${id}${start ? `#t=${start}` : ""}`;
+}
+
+/** Loom: /share/<id>, /embed/<id> or the bare /<id> recording URL. */
+function buildLoomEmbed({ parsed }: BuildContext): string | null {
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  const id = parts[0] === "share" || parts[0] === "embed" ? parts[1] : parts[0];
+  return id ? `https://www.loom.com/embed/${id}` : null;
+}
+
+/** Spotify: wraps share links in /embed/, passes embed links through. */
+function buildSpotifyEmbed({ parsed, url }: BuildContext): string | null {
+  if (parsed.pathname.startsWith("/embed/")) {
+    // Keep the query string: share links carry context/`si` params the
+    // embed player needs (`?context=spotify:playlist:...`).
+    return url;
+  }
+  return `https://open.spotify.com/embed${parsed.pathname}${parsed.search}`;
+}
+
+/** SoundCloud: wraps the original URL in the widget player. */
+function buildSoundcloudEmbed({ url }: BuildContext): string | null {
+  return `https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}`;
+}
+
+/** Figma: wraps the original URL in the embed host endpoint. */
+function buildFigmaEmbed({ url }: BuildContext): string | null {
+  return `https://www.figma.com/embed?embed_host=noema&url=${encodeURIComponent(url)}`;
+}
+
+/** CodePen: /<team>/pen/<slug> (or /pen/<slug>) → /embed/<slug>. */
+function buildCodepenEmbed({ parsed }: BuildContext): string | null {
+  if (!/\/pen\/.+/.test(parsed.pathname)) return null; // profiles/pages are not embeds
+  return `https://codepen.io${parsed.pathname.replace(/\/pen\//, "/embed/")}`;
+}
+
+/** Twitter/X: status URLs → the platform syndication iframe (digits-only id). */
+function buildTwitterEmbed({ parsed }: BuildContext): string | null {
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  // /<user>/status/<id>, /i/web/status/<id>, /<user>/status/<id>/photo/1
+  const statusAt = parts.indexOf("status");
+  if (statusAt !== -1) {
+    const id = parts[statusAt + 1];
+    if (!id || !/^\d+$/.test(id)) return null;
+    return `https://platform.twitter.com/embed/Tweet.html?id=${id}`;
+  }
+  // Canonical iframe form: platform.twitter.com/embed/Tweet.html?id=<id>
+  if (/\/embed\//i.test(parsed.pathname)) {
+    const id = parsed.searchParams.get("id");
+    if (!id || !/^\d+$/.test(id)) return null;
+    return `https://platform.twitter.com/embed/Tweet.html?id=${id}`;
+  }
+  return null;
+}
+
+/** CodeSandbox: /s/<id>, /p/sandbox/<id> or /embed/<id> → /embed/<id>. */
+function buildCodesandboxEmbed({ parsed }: BuildContext): string | null {
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  let rest: readonly string[];
+  if (parts[0] === "s") rest = parts.slice(1);
+  else if (parts[0] === "p" && parts[1] === "sandbox") rest = parts.slice(2);
+  else if (parts[0] === "embed") rest = parts.slice(1);
+  else return null;
+  if (rest.length === 0) return null;
+  if (rest.some((segment) => !/^[A-Za-z0-9-]+$/.test(segment))) return null;
+  return `https://codesandbox.io/embed/${rest.join("/")}`;
+}
+
+/** Which registry entry (if any) claims this exact, normalised host? */
+function providerForHost(host: string): EmbedProviderId | null {
+  for (const id of EMBED_PROVIDER_IDS) {
+    if (EMBED_PROVIDERS[id].hosts.includes(host)) return id;
+  }
+  return null;
+}
+
+/**
+ * Resolve a URL through the provider registry to a full iframe configuration
+ * (`provider` + canonical `embedUrl` + `sandbox` + `allow`), or `null`.
+ *
+ * `null` means "not embeddable": a non-http(s) URL, a host outside the
+ * allowlist (unknown/lookalike/private hosts included), or an allowlisted
+ * host whose path has no canonical embed. Callers must fall back to a
+ * bookmark card or an input - never to a generic arbitrary-host iframe.
+ */
+export function resolveEmbed(value: string): ResolvedEmbed | null {
+  const url = normalizeUrl(value);
+  if (!isHttpUrl(url)) return null;
+  const parsed = new URL(url);
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+
+  // Provider allowlist first: nothing outside it ever becomes an iframe.
+  if (!host || !isEmbedHostAllowed(host)) return null;
+  const provider = providerForHost(host);
+  if (!provider) return null;
+
+  const definition = EMBED_PROVIDERS[provider];
+  const embedUrl = definition.build({ parsed, url, host });
+  if (!embedUrl) return null;
+  return { provider, embedUrl, sandbox: definition.sandbox, allow: definition.meta.allow };
 }
 
 /** Map a URL to a safe iframe embed when the provider supports it. */
 export function detectEmbed(value: string): EmbedInfo {
-  const url = normalizeUrl(value);
-  if (!isHttpUrl(url)) return { provider: "none", embedUrl: null };
-  const parsed = new URL(url);
-  const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
-
-  // Provider allowlist first: nothing outside it ever becomes an iframe.
-  if (!isEmbedHostAllowed(host)) return { provider: "none", embedUrl: null };
-
-  if (
-    host === "youtube.com" ||
-    host === "m.youtube.com" ||
-    host === "youtube-nocookie.com" ||
-    host === "youtu.be"
-  ) {
-    return youtubeEmbed(parsed, host);
-  }
-  if (host === "vimeo.com" || host === "player.vimeo.com") {
-    return vimeoEmbed(parsed);
-  }
-  if (host === "loom.com") {
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    const id = parts[0] === "share" || parts[0] === "embed" ? parts[1] : parts[0];
-    return id
-      ? { provider: "loom", embedUrl: `https://www.loom.com/embed/${id}` }
-      : { provider: "none", embedUrl: null };
-  }
-  if (host === "open.spotify.com") {
-    if (!parsed.pathname.startsWith("/embed/")) {
-      // Keep the query string: share links carry context/`si` params the
-      // embed player needs (`?context=spotify:playlist:...`).
-      return {
-        provider: "spotify",
-        embedUrl: `https://open.spotify.com/embed${parsed.pathname}${parsed.search}`,
-      };
-    }
-    return { provider: "spotify", embedUrl: url };
-  }
-  if (host === "soundcloud.com") {
-    return {
-      provider: "soundcloud",
-      embedUrl: `https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}`,
-    };
-  }
-  if (host === "figma.com") {
-    return {
-      provider: "figma",
-      embedUrl: `https://www.figma.com/embed?embed_host=noema&url=${encodeURIComponent(url)}`,
-    };
-  }
-  if (host === "codepen.io") {
-    const slug = parsed.pathname.replace(/\/pen\//, "/embed/");
-    return { provider: "codepen", embedUrl: `https://codepen.io${slug}` };
-  }
-  return { provider: "none", embedUrl: null };
+  const resolved = resolveEmbed(value);
+  return resolved
+    ? { provider: resolved.provider, embedUrl: resolved.embedUrl }
+    : { provider: "none", embedUrl: null };
 }
 
 /** Extract only http(s) image URLs from untrusted preview metadata. */
