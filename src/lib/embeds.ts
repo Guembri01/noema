@@ -21,6 +21,8 @@ export const EMBED_PROVIDER_IDS = [
   "codepen",
   "twitter",
   "codesandbox",
+  "googledrive",
+  "whimsical",
 ] as const;
 
 export type EmbedProvider = (typeof EMBED_PROVIDER_IDS)[number] | "none";
@@ -271,6 +273,28 @@ export const EMBED_PROVIDERS: Record<EmbedProviderId, EmbedProviderDefinition> =
     },
     build: buildCodesandboxEmbed,
   },
+  googledrive: {
+    hosts: ["drive.google.com"],
+    sandbox: SANDBOX_PLAYER,
+    meta: {
+      label: "Google Drive",
+      title: "Google Drive preview",
+      aspectRatio: "4 / 3",
+      allow: "fullscreen",
+    },
+    build: buildGoogleDriveEmbed,
+  },
+  whimsical: {
+    hosts: ["whimsical.com"],
+    sandbox: SANDBOX_PLAYER,
+    meta: {
+      label: "Whimsical",
+      title: "Whimsical board",
+      aspectRatio: "4 / 3",
+      allow: "fullscreen; clipboard-write",
+    },
+    build: buildWhimsicalEmbed,
+  },
 };
 
 /**
@@ -417,6 +441,44 @@ function buildCodesandboxEmbed({ parsed }: BuildContext): string | null {
   if (rest.length === 0) return null;
   if (rest.some((segment) => !/^[A-Za-z0-9-]+$/.test(segment))) return null;
   return `https://codesandbox.io/embed/${rest.join("/")}`;
+}
+
+/**
+ * Google Drive: `/file/d/<id>/view`, `/file/<id>/view` and `/file/d/<id>` all
+ * canonicalise to the `/preview` iframe; `/drive/[u/<n>/]folders/<id>` to the
+ * embedded folder view. Query params (`usp=...`, `t=...`) are tracking-only and
+ * dropped; the id must be the Drive token (alphanumerics, `_`, `-`).
+ */
+const DRIVE_ID = /^[A-Za-z0-9_-]+$/;
+
+function buildGoogleDriveEmbed({ parsed }: BuildContext): string | null {
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  if (parts[0] === "file") {
+    const id = parts[1] === "d" ? parts[2] : parts[1];
+    return id && DRIVE_ID.test(id) ? `https://drive.google.com/file/d/${id}/preview` : null;
+  }
+  const foldersAt = parts.indexOf("folders");
+  if (foldersAt !== -1) {
+    const id = parts[foldersAt + 1];
+    return id && DRIVE_ID.test(id)
+      ? `https://drive.google.com/embeddedfolderview?id=${id}#list`
+      : null;
+  }
+  return null;
+}
+
+/**
+ * Whimsical: `/embed/<id>` passes through; `/<board-name>-<id>` and the
+ * workspace-prefixed `/<workspace>/<board-name>-<id>` shapes extract the
+ * trailing id token. Tracking query params are dropped.
+ */
+const WHIMSICAL_ID = /^[A-Za-z0-9]{8,}$/;
+
+function buildWhimsicalEmbed({ parsed }: BuildContext): string | null {
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  const segment = parts[0] === "embed" ? parts[1] : parts[parts.length - 1];
+  const id = segment?.split("-").pop();
+  return id && WHIMSICAL_ID.test(id) ? `https://whimsical.com/embed/${id}` : null;
 }
 
 /** Which registry entry (if any) claims this exact, normalised host? */

@@ -434,6 +434,8 @@ describe("embeds / provider mapping edge cases (B87)", () => {
       "codepen",
       "twitter",
       "codesandbox",
+      "googledrive",
+      "whimsical",
     ] as const;
     for (const provider of providers) {
       const meta = embedMeta(provider);
@@ -479,6 +481,16 @@ describe("embeds / resolveEmbed provider registry (allowlist)", () => {
       "https://codesandbox.io/s/my-sandbox-abc",
       "codesandbox",
       "https://codesandbox.io/embed/my-sandbox-abc",
+    ],
+    [
+      "https://drive.google.com/file/d/FILE_ID_1/view",
+      "googledrive",
+      "https://drive.google.com/file/d/FILE_ID_1/preview",
+    ],
+    [
+      "https://whimsical.com/embed/9VL5WuygDRCgPvxMSBN3mj",
+      "whimsical",
+      "https://whimsical.com/embed/9VL5WuygDRCgPvxMSBN3mj",
     ],
   ];
 
@@ -678,6 +690,162 @@ describe("embeds / resolveEmbed provider registry (allowlist)", () => {
       } else {
         expect(info, value).toEqual({ provider: "none", embedUrl: null });
       }
+    }
+  });
+});
+
+/* --------------------- MISSING_FEATURES §1: Google Drive preview (+ Whimsical) */
+
+/**
+ * MISSING_FEATURES §1 "Google Drive preview", alongside its Loom/Figma/Whimsical
+ * neighbours: each share URL canonicalises to the provider's OWN iframe
+ * endpoint, tracking query params are dropped, and lookalike/hostile hosts
+ * (`drive.google.com.evil.com`, `loom.com.evil.com`, `figma.com.evil.com`,
+ * `whimsical.com.evil.com`) are refused - the registry matches exact hosts only.
+ *
+ * Loom and Figma were already registered; their canonical shapes are pinned
+ * here too so the negative cases sit next to the positive ones.
+ */
+describe("embeds / Google Drive preview + Whimsical", () => {
+  it("normalises both Google Drive file URL shapes to the /preview iframe", () => {
+    expect(detectEmbed("https://drive.google.com/file/d/FILE_ID_1/view")).toEqual({
+      provider: "googledrive",
+      embedUrl: "https://drive.google.com/file/d/FILE_ID_1/preview",
+    });
+    // /file/<id> (the shape some "Embed item" snippets still hand out).
+    expect(detectEmbed("https://drive.google.com/file/FILE_ID_1/view")).toEqual({
+      provider: "googledrive",
+      embedUrl: "https://drive.google.com/file/d/FILE_ID_1/preview",
+    });
+    expect(detectEmbed("https://drive.google.com/file/d/FILE_ID_1")).toEqual({
+      provider: "googledrive",
+      embedUrl: "https://drive.google.com/file/d/FILE_ID_1/preview",
+    });
+  });
+
+  it("maps Google Drive folder shares to the embedded folder view", () => {
+    expect(
+      detectEmbed("https://drive.google.com/drive/folders/FOLDER_ID_1").embedUrl,
+    ).toBe("https://drive.google.com/embeddedfolderview?id=FOLDER_ID_1#list");
+    // The account-scoped `/drive/u/<n>/folders/<id>` shape too.
+    expect(
+      detectEmbed("https://drive.google.com/drive/u/0/folders/FOLDER_ID_1").embedUrl,
+    ).toBe("https://drive.google.com/embeddedfolderview?id=FOLDER_ID_1#list");
+  });
+
+  it("strips tracking query params from Google Drive links", () => {
+    expect(
+      detectEmbed("https://drive.google.com/file/d/FILE_ID_1/view?usp=sharing&t=42").embedUrl,
+    ).toBe("https://drive.google.com/file/d/FILE_ID_1/preview");
+    expect(
+      detectEmbed("https://drive.google.com/drive/folders/FOLDER_ID_1?usp=sharing").embedUrl,
+    ).toBe("https://drive.google.com/embeddedfolderview?id=FOLDER_ID_1#list");
+    expect(
+      detectEmbed("https://drive.google.com/drive/u/0/folders/FOLDER_ID_1?usp=drive_link").embedUrl,
+    ).toBe("https://drive.google.com/embeddedfolderview?id=FOLDER_ID_1#list");
+  });
+
+  it("refuses Google Drive paths that carry no usable id", () => {
+    const refused = [
+      "https://drive.google.com/",
+      "https://drive.google.com/file",
+      "https://drive.google.com/file/",
+      "https://drive.google.com/file/d/",
+      "https://drive.google.com/drive/folders",
+      "https://drive.google.com/drive/folders/",
+      "https://drive.google.com/drive/my-drive",
+      "https://drive.google.com/file/d/a%20b/view", // whitespace is not an id
+    ];
+    for (const url of refused) {
+      expect(resolveEmbed(url), url).toBeNull();
+      expect(detectEmbed(url).provider, url).toBe("none");
+    }
+  });
+
+  it("normalises Whimsical share/embed URLs to the /embed iframe, dropping tracking", () => {
+    expect(detectEmbed("https://whimsical.com/embed/9VL5WuygDRCgPvxMSBN3mj")).toEqual({
+      provider: "whimsical",
+      embedUrl: "https://whimsical.com/embed/9VL5WuygDRCgPvxMSBN3mj",
+    });
+    // /<board-name>-<id> share shape - the id is the trailing token.
+    expect(
+      detectEmbed("https://www.whimsical.com/embedkit-example-9VL5WuygDRCgPvxMSBN3mj").embedUrl,
+    ).toBe("https://whimsical.com/embed/9VL5WuygDRCgPvxMSBN3mj");
+    // Workspace-prefixed shape (new Whimsical URLs).
+    expect(
+      detectEmbed("https://whimsical.com/my-team/embedkit-example-9VL5WuygDRCgPvxMSBN3mj").embedUrl,
+    ).toBe("https://whimsical.com/embed/9VL5WuygDRCgPvxMSBN3mj");
+    expect(
+      detectEmbed("https://whimsical.com/embed/9VL5WuygDRCgPvxMSBN3mj?utm_source=share").embedUrl,
+    ).toBe("https://whimsical.com/embed/9VL5WuygDRCgPvxMSBN3mj");
+  });
+
+  it("refuses Whimsical paths without a board id", () => {
+    for (const url of [
+      "https://whimsical.com/",
+      "https://whimsical.com/embed",
+      "https://whimsical.com/embed/",
+      "https://whimsical.com/pricing",
+    ]) {
+      expect(resolveEmbed(url), url).toBeNull();
+    }
+  });
+
+  it("keeps Loom and Figma canonical (pre-existing) and refuses their lookalikes", () => {
+    expect(detectEmbed("https://www.loom.com/share/abc123")).toEqual({
+      provider: "loom",
+      embedUrl: "https://www.loom.com/embed/abc123",
+    });
+    expect(detectEmbed("https://www.figma.com/file/abc/Design")).toEqual({
+      provider: "figma",
+      embedUrl:
+        "https://www.figma.com/embed?embed_host=noema&url=https%3A%2F%2Fwww.figma.com%2Ffile%2Fabc%2FDesign",
+    });
+  });
+
+  it("refuses lookalike/hostile hosts for every new provider", () => {
+    const hostile = [
+      "https://drive.google.com.evil.com/file/d/FILE_ID_1/view",
+      "https://drive.google.com.evil.com/drive/folders/FOLDER_ID_1",
+      "https://drive-google.com/file/d/FILE_ID_1/view",
+      "https://notdrive.google.com/file/d/FILE_ID_1/view",
+      "https://loom.com.evil.com/share/abc123",
+      "https://notloom.com/share/abc123",
+      "https://figma.com.evil.com/file/abc/Design",
+      "https://notfigma.com/file/abc/Design",
+      "https://whimsical.com.evil.com/embed/9VL5WuygDRCgPvxMSBN3mj",
+      "https://notwhimsical.com/embed/9VL5WuygDRCgPvxMSBN3mj",
+      "https://drive.google.com@evil.com/file/d/FILE_ID_1/view", // userinfo trick
+      "https://loom.com:8443.evil.com/share/abc123",
+    ];
+    for (const url of hostile) {
+      expect(resolveEmbed(url), url).toBeNull();
+      expect(detectEmbed(url).provider, url).toBe("none");
+    }
+  });
+
+  it("extends the embed host allowlist exactly (no wildcards, no lookalikes)", () => {
+    for (const host of [
+      "drive.google.com",
+      "www.drive.google.com",
+      "DRIVE.GOOGLE.COM", // case-insensitive
+      "whimsical.com",
+      "www.whimsical.com",
+    ]) {
+      expect(isEmbedHostAllowed(host), host).toBe(true);
+    }
+    for (const host of [
+      "drive.google.com.evil.com",
+      "notdrive.google.com",
+      "drive-google.com",
+      "whimsical.com.evil.com",
+      "notwhimsical.com",
+      "loom.com.evil.com",
+      "figma.com.evil.com",
+      "www.www.drive.google.com",
+      "drive.google.com.",
+    ]) {
+      expect(isEmbedHostAllowed(host), host).toBe(false);
     }
   });
 });
