@@ -340,3 +340,269 @@ export function toTrackerTicket(ticket: TicketRecord): TrackerTicket {
     childCount: ticket._count.children,
   };
 }
+
+/* ------------------------------------------------------------------------ *
+ * Workload & capacity — per-person load planning (MISSING_FEATURES §20).
+ * Pure planning helpers over the assignee + estimate data the tickets
+ * already carry; no DB, no UI. The panel wiring is a follow-up.
+ * ------------------------------------------------------------------------ */
+
+/** Bucket id used for tickets that have no assignee. */
+export const UNASSIGNED_BUCKET = "unassigned";
+
+/** Default ratio at which somebody counts as "near" their capacity. */
+export const DEFAULT_NEAR_THRESHOLD = 0.8;
+
+/** Anything with an assignee and dates can be workload-planned (tracker rows qualify). */
+export type WorkloadTicket = TicketLike & { assigneeId?: string | null };
+
+/** Inclusive date window; omitted/null bounds are unbounded on that side. */
+export type DateRangeFilter = {
+  start?: string | Date | null;
+  end?: string | Date | null;
+};
+
+export type WorkloadOptions = {
+  /** Scope the workload to an iteration/sprint window (start/due date overlap). */
+  dateRange?: DateRangeFilter;
+};
+
+export type WorkloadBucket = {
+  /** Assignee id, or `UNASSIGNED_BUCKET`. */
+  assigneeId: string;
+  /** Open (not `done`/`cancelled`, via `isClosed`) tickets in scope. */
+  openCount: number;
+  /** Summed estimate of those open tickets (`sumEstimates`: dominant unit, 2dp). */
+  points: number;
+  /** Dominant estimate unit behind `points` (`"points"` when nothing is set). */
+  unit: string;
+};
+
+function rangeTime(value: string | Date | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? null : time;
+}
+
+/**
+ * Does the ticket fall inside `range`? Overlap of `[start..due]` with the
+ * window, both ends inclusive. A ticket carrying only one date counts as a
+ * one-day span on that date (same fallback as `timelineLayout`); a ticket
+ * with no usable dates can only be placed when the window is unbounded, and
+ * a `dateRange` without bounds does not filter anything at all.
+ */
+function inDateRange(ticket: WorkloadTicket, range: DateRangeFilter | undefined): boolean {
+  if (!range) return true;
+  const from = rangeTime(range.start);
+  const to = rangeTime(range.end);
+  if (from === null && to === null) return true;
+  const begin = rangeTime(ticket.startDate ?? ticket.dueDate);
+  const end = rangeTime(ticket.dueDate ?? ticket.startDate);
+  if (begin === null || end === null) return false;
+  if (from !== null && end < from) return false;
+  if (to !== null && begin > to) return false;
+  return true;
+}
+
+/**
+ * Per-person load: one bucket per assignee (plus `UNASSIGNED_BUCKET`) with
+ * the number of open tickets and the summed estimate of those tickets.
+ * Closed tickets never count, and assignees holding no open ticket in scope
+ * get no bucket. Buckets are sorted by load — open count desc, then points
+ * desc, then id asc — so a workload panel renders ready-ordered.
+ *
+ * Note: `points` is the raw sum of whatever estimate unit the tickets use;
+ * keep a single unit per view (that is what `unit` reports per bucket).
+ */
+export function workloadByAssignee<T extends WorkloadTicket>(
+  tickets: T[],
+  opts: WorkloadOptions = {},
+): WorkloadBucket[] {
+  const open = tickets.filter(
+    (ticket) => !isClosed(ticket.status) && inDateRange(ticket, opts.dateRange),
+  );
+  const byAssignee = new Map<string, T[]>();
+  for (const ticket of open) {
+    const raw = ticket.assigneeId?.trim();
+    const id = raw ? raw : UNASSIGNED_BUCKET;
+    const existing = byAssignee.get(id);
+    if (existing) existing.push(ticket);
+    else byAssignee.set(id, [ticket]);
+  }
+  const buckets: WorkloadBucket[] = [];
+  for (const [assigneeId, items] of byAssignee) {
+    const { total, unit } = sumEstimates(items);
+    buckets.push({ assigneeId, openCount: items.length, points: total, unit });
+  }
+  return buckets.sort((a, b) => {
+    if (a.openCount !== b.openCount) return b.openCount - a.openCount;
+    if (a.points !== b.points) return b.points - a.points;
+    return a.assigneeId.localeCompare(b.assigneeId);
+  });
+}
+
+/** What a person's load is measured against: estimate points or open ticket count. */
+export type CapacityBasis = "points" | "tickets";
+
+/** Per-person capacity limits; the field not matching the basis is ignored. */
+export type CapacityLimits = {
+  /** Max estimate points one person may hold at once. */
+  maxPoints?: number | null;
+  /** Max open tickets one person may hold at once. */
+  maxOpenTickets?: number | null;
+};
+
+export type CapacityState = "over" | "near" | "under" | "unknown";
+
+export type CapacityRow = {
+  assigneeId: string;
+  /** Load on the requested basis. */
+  used: number;
+  /** Resolved limit, or null when the capacity is missing/unusable. */
+  limit: number | null;
+  /** `used / limit` rounded to 4dp; null whenever no ratio could be computed. */
+  utilization: number | null;
+  /** `over` ≥ limit, `near` ≥ threshold, `under` below, `unknown` without a limit. */
+  state: CapacityState;
+};
+
+export type CapacityOptions = {
+  /** Which limit to measure. Default `"points"`. */
+  basis?: CapacityBasis;
+  /** Ratio at/above which a person counts as "near" capacity. Default 0.8. */
+  nearThreshold?: number;
+};
+
+function capacityRow(
+  assigneeId: string,
+  used: number,
+  limits: CapacityLimits | undefined,
+  basis: CapacityBasis,
+  nearThreshold: number,
+): CapacityRow {
+  const raw = limits == null
+    ? null
+    : basis === "tickets"
+      ? limits.maxOpenTickets
+      : limits.maxPoints;
+  const limit = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+  // Fail-safe: missing/invalid capacity never gets divided — report unknown.
+  if (limit === null || limit < 0) {
+    return { assigneeId, used, limit: null, utilization: null, state: "unknown" };
+  }
+  // Zero capacity has no meaningful ratio; only flag it when there is load.
+  if (limit === 0) {
+    return { assigneeId, used, limit: 0, utilization: null, state: used > 0 ? "over" : "unknown" };
+  }
+  const utilization = Math.round((used / limit) * 10000) / 10000;
+  const state: CapacityState =
+    utilization >= 1 ? "over" : utilization >= nearThreshold ? "near" : "under";
+  return { assigneeId, used, limit, utilization, state };
+}
+
+/**
+ * Turn workload buckets + per-person capacity limits into utilization rows:
+ * one per bucket, plus anyone who declared capacity but holds no open work
+ * (shown with 0 used, so idle people are visible). The utilization ratio is
+ * rounded to 4dp and the over/near/under flag is derived from that rounded
+ * number, so the displayed ratio and the flag always agree. A missing,
+ * non-finite or negative limit yields `utilization: null` / `state:
+ * "unknown"` — never NaN or Infinity.
+ */
+export function capacityStatus(
+  workload: WorkloadBucket[],
+  capacityByUser: Partial<Record<string, CapacityLimits>>,
+  opts: CapacityOptions = {},
+): CapacityRow[] {
+  const basis = opts.basis ?? "points";
+  const nearThreshold = opts.nearThreshold ?? DEFAULT_NEAR_THRESHOLD;
+  const usedOf = (bucket: WorkloadBucket) =>
+    basis === "tickets" ? bucket.openCount : bucket.points;
+
+  const rows = workload.map((bucket) =>
+    capacityRow(bucket.assigneeId, usedOf(bucket), capacityByUser[bucket.assigneeId], basis, nearThreshold),
+  );
+  const known = new Set(workload.map((bucket) => bucket.assigneeId));
+  for (const assigneeId of Object.keys(capacityByUser)) {
+    if (known.has(assigneeId)) continue;
+    rows.push(capacityRow(assigneeId, 0, capacityByUser[assigneeId], basis, nearThreshold));
+  }
+  return rows;
+}
+
+export type RebalanceOptions = WorkloadOptions & { basis?: CapacityBasis };
+
+export type RebalanceSuggestion = {
+  /** Assignee holding the most open work (null when there is none to move). */
+  from: string | null;
+  /** Least-loaded eligible colleague (null when there is no alternative). */
+  to: string | null;
+  fromLoad: number;
+  toLoad: number | null;
+};
+
+/**
+ * Who should hand work to whom? Deterministic, intentionally simple
+ * heuristic (documented so the UI copy can mirror it):
+ *
+ *  1. Scope the tickets exactly like `workloadByAssignee` — open tickets
+ *     only, optional `dateRange` window.
+ *  2. `from` must actually hold open work: the non-`unassigned` bucket with
+ *     the highest load (points by default), ties broken by open count desc,
+ *     then assignee id asc.
+ *  3. `to` is the *least* loaded eligible candidate, excluding `from`:
+ *     everyone with open work in scope plus anyone listed in
+ *     `capacityByUser` (they can absorb new work), ties broken by load asc,
+ *     open count asc, then id asc.
+ *  4. `unassigned` is never a sender or a receiver — there is no person at
+ *     that end of the move.
+ *  5. No open work at all → nothing to suggest; only one candidate → `to`
+ *     stays null.
+ */
+export function suggestRebalance(
+  tickets: WorkloadTicket[],
+  capacityByUser: Partial<Record<string, CapacityLimits>>,
+  opts: RebalanceOptions = {},
+): RebalanceSuggestion {
+  const basis = opts.basis ?? "points";
+  const workload = workloadByAssignee(tickets, opts);
+  const load = (bucket: WorkloadBucket) =>
+    basis === "tickets" ? bucket.openCount : bucket.points;
+
+  const holders = new Map<string, { assigneeId: string; openCount: number; load: number }>();
+  for (const bucket of workload) {
+    if (bucket.assigneeId === UNASSIGNED_BUCKET) continue;
+    holders.set(bucket.assigneeId, {
+      assigneeId: bucket.assigneeId,
+      openCount: bucket.openCount,
+      load: load(bucket),
+    });
+  }
+  if (holders.size === 0) return { from: null, to: null, fromLoad: 0, toLoad: null };
+
+  const from = [...holders.values()].sort(
+    (a, b) =>
+      b.load - a.load ||
+      b.openCount - a.openCount ||
+      a.assigneeId.localeCompare(b.assigneeId),
+  )[0];
+
+  const eligible = new Map(holders);
+  eligible.delete(from.assigneeId);
+  for (const assigneeId of Object.keys(capacityByUser)) {
+    if (assigneeId === UNASSIGNED_BUCKET || assigneeId === from.assigneeId) continue;
+    if (eligible.has(assigneeId)) continue; // already holds work; keep their real load
+    eligible.set(assigneeId, { assigneeId, openCount: 0, load: 0 });
+  }
+  if (eligible.size === 0) {
+    return { from: from.assigneeId, to: null, fromLoad: from.load, toLoad: null };
+  }
+
+  const to = [...eligible.values()].sort(
+    (a, b) =>
+      a.load - b.load ||
+      a.openCount - b.openCount ||
+      a.assigneeId.localeCompare(b.assigneeId),
+  )[0];
+  return { from: from.assigneeId, to: to.assigneeId, fromLoad: from.load, toLoad: to.load };
+}
