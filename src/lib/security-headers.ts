@@ -59,6 +59,8 @@ const FRAME_SRC = [
   "https://w.soundcloud.com",
   "https://www.figma.com",
   "https://codepen.io",
+  "https://platform.twitter.com",
+  "https://codesandbox.io",
 ].join(" ");
 
 /**
