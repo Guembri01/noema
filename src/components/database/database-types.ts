@@ -1,5 +1,7 @@
 import type { PropertyType } from "@prisma/client";
 import type { RelationData } from "@/server/queries";
+import type { GeoValue } from "@/lib/geo";
+import type { UniqueIdConfig } from "@/lib/unique-id";
 
 /**
  * The database shape shared by the view renderers.
@@ -16,6 +18,29 @@ export type PropertyConfig = {
   format?: string;
   /** NUMBER + format "currency": ISO 4217 code (defaults to USD). */
   currency?: string;
+  /**
+   * UNIQUE_ID: prefix / zero-pad / start-at / separator for the row-id
+   * formatter (`@/lib/unique-id`). Every field is optional so unset values fall
+   * back to the engine defaults ("ITEM"-style prefix, 4 digits, start at 1).
+   */
+  uniqueId?: Partial<UniqueIdConfig>;
+  /**
+   * PLACE: default map centre and zoom for the location picker
+   * (`@/lib/geo`). Unset fields open the picker at the world view.
+   */
+  place?: Partial<GeoValue> & { zoom?: number };
+  /**
+   * DATE: range/all-day/time-zone defaults applied to new values
+   * (`@/lib/date-range`). Optional so existing DATE properties are unchanged.
+   */
+  date?: {
+    /** Offer an end date in addition to a start date. */
+    allowRange?: boolean;
+    /** Whether new values default to an all-day (date-only) range. */
+    allDay?: boolean;
+    /** Default IANA time zone, e.g. "Europe/Paris". See `isValidTimeZone`. */
+    timeZone?: string;
+  };
 } | null;
 
 export type DBProperty = {
