@@ -40,18 +40,35 @@ import {
   type BlockDeletion,
   type BlockDoc,
 } from "@/lib/blocks";
+import { t } from "@/lib/i18n";
 
-const TEXT_COLORS = [
-  { label: "Default", value: null },
-  { label: "Gray", value: "#787774" },
-  { label: "Brown", value: "#9f6b53" },
-  { label: "Orange", value: "#d9730d" },
-  { label: "Yellow", value: "#cb912f" },
-  { label: "Green", value: "#448361" },
-  { label: "Blue", value: "#337ea9" },
-  { label: "Purple", value: "#9065b0" },
-  { label: "Pink", value: "#c14c8a" },
-  { label: "Red", value: "#d44c47" },
+type I18nKey = Parameters<typeof t>[1];
+
+/** Maps the shared palette labels in `extensions/block-colors.ts` to keys. */
+const COLOR_KEYS: Record<string, I18nKey> = {
+  Default: "colorDefault",
+  Gray: "colorGray",
+  Brown: "colorBrown",
+  Orange: "colorOrange",
+  Yellow: "colorYellow",
+  Green: "colorGreen",
+  Blue: "colorBlue",
+  Purple: "colorPurple",
+  Pink: "colorPink",
+  Red: "colorRed",
+};
+
+const TEXT_COLORS: { labelKey: I18nKey; value: string | null }[] = [
+  { labelKey: "colorDefault", value: null },
+  { labelKey: "colorGray", value: "#787774" },
+  { labelKey: "colorBrown", value: "#9f6b53" },
+  { labelKey: "colorOrange", value: "#d9730d" },
+  { labelKey: "colorYellow", value: "#cb912f" },
+  { labelKey: "colorGreen", value: "#448361" },
+  { labelKey: "colorBlue", value: "#337ea9" },
+  { labelKey: "colorPurple", value: "#9065b0" },
+  { labelKey: "colorPink", value: "#c14c8a" },
+  { labelKey: "colorRed", value: "#d44c47" },
 ];
 
 const BLOCK_SELECTOR =
@@ -73,21 +90,21 @@ type TurnKind =
   | "callout"
   | "code";
 
-const TURN_ITEMS: { kind: TurnKind; label: string }[] = [
-  { kind: "paragraph", label: "Text" },
-  { kind: "h1", label: "Heading 1" },
-  { kind: "h2", label: "Heading 2" },
-  { kind: "h3", label: "Heading 3" },
-  { kind: "h4", label: "Heading 4" },
-  { kind: "h5", label: "Heading 5" },
-  { kind: "h6", label: "Heading 6" },
-  { kind: "bullet", label: "Bulleted list" },
-  { kind: "ordered", label: "Numbered list" },
-  { kind: "task", label: "To-do list" },
-  { kind: "toggle", label: "Toggle list" },
-  { kind: "quote", label: "Quote" },
-  { kind: "callout", label: "Callout" },
-  { kind: "code", label: "Code" },
+const TURN_ITEMS: { kind: TurnKind; labelKey: I18nKey }[] = [
+  { kind: "paragraph", labelKey: "blockText" },
+  { kind: "h1", labelKey: "blockHeading1" },
+  { kind: "h2", labelKey: "blockHeading2" },
+  { kind: "h3", labelKey: "blockHeading3" },
+  { kind: "h4", labelKey: "blockHeading4" },
+  { kind: "h5", labelKey: "blockHeading5" },
+  { kind: "h6", labelKey: "blockHeading6" },
+  { kind: "bullet", labelKey: "blockBulletedList" },
+  { kind: "ordered", labelKey: "blockNumberedList" },
+  { kind: "task", labelKey: "blockTodoList" },
+  { kind: "toggle", labelKey: "blockToggleList" },
+  { kind: "quote", labelKey: "blockQuote" },
+  { kind: "callout", labelKey: "blockCallout" },
+  { kind: "code", labelKey: "code" },
 ];
 
 /**
@@ -98,11 +115,13 @@ export function BlockContextMenu({
   editor,
   editable,
   workspaceId,
+  locale = "en",
   children,
 }: {
   editor: Editor;
   editable: boolean;
   workspaceId?: string;
+  locale?: string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -201,7 +220,7 @@ export function BlockContextMenu({
       .focus()
       .insertContentAt(pos + node.nodeSize, node.toJSON())
       .run();
-    toast.success("Block duplicated");
+    toast.success(t(locale, "blockDuplicated"));
   };
 
   /**
@@ -215,9 +234,9 @@ export function BlockContextMenu({
     const deletion = snapshotBlockDeletion(editor.state.doc, pos);
     editor.chain().focus().setNodeSelection(pos).deleteSelection().run();
     if (!deletion) return;
-    toast.success("Block deleted", {
+    toast.success(t(locale, "blockDeleted"), {
       duration: 8000,
-      action: { label: "Undo", onClick: () => undoDeletion(deletion) },
+      action: { label: t(locale, "undo"), onClick: () => undoDeletion(deletion) },
     });
   };
 
@@ -237,7 +256,7 @@ export function BlockContextMenu({
     if (pos === null) return;
     const url = `${window.location.origin}${window.location.pathname}#block-${pos}`;
     void navigator.clipboard?.writeText(url);
-    toast.success("Link copied");
+    toast.success(t(locale, "copied"));
   };
 
   const paint = (value: string | null, kind: "text" | "highlight" | "background") => {
@@ -313,7 +332,7 @@ export function BlockContextMenu({
     if (!node) return;
     const text = node.textContent.trim();
     if (!text) {
-      toast.error("Nothing to work with in that block.");
+      toast.error(t(locale, "nothingToWorkWith"));
       return;
     }
     const skill = AI_SKILLS.find((candidate) => candidate.id === id);
@@ -371,12 +390,12 @@ export function BlockContextMenu({
         <DropdownMenuContent align="start" className="w-56">
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
-              <Type className="h-4 w-4 text-muted" /> Turn into
+              <Type className="h-4 w-4 text-muted" /> {t(locale, "turnInto")}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
               {TURN_ITEMS.map((item) => (
                 <DropdownMenuItem key={item.kind} onSelect={() => turnInto(item.kind)}>
-                  {item.label}
+                  {t(locale, item.labelKey)}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuSubContent>
@@ -384,48 +403,48 @@ export function BlockContextMenu({
 
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
-              <Palette className="h-4 w-4 text-muted" /> Color
+              <Palette className="h-4 w-4 text-muted" /> {t(locale, "colorLabel")}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
               {TEXT_COLORS.map((color) => (
                 <DropdownMenuItem
-                  key={color.label}
+                  key={color.labelKey}
                   onSelect={() => paint(color.value, "text")}
                 >
                   <span
                     className="h-4 w-4 rounded border border-border"
                     style={{ background: color.value ?? "transparent" }}
                   />
-                  {color.label}
+                  {t(locale, color.labelKey)}
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
               <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted">
-                Background
+                {t(locale, "backgroundLabel")}
               </p>
               {BLOCK_COLORS.map((color) => (
                 <DropdownMenuItem
                   key={color.label}
-                  aria-label={`${color.label} background`}
+                  aria-label={`${t(locale, COLOR_KEYS[color.label])} ${t(locale, "backgroundLabel")}`}
                   onSelect={() => paint(color.value, "background")}
                 >
                   <span
                     className="h-4 w-4 rounded border border-border"
                     style={{ background: color.tint }}
                   />
-                  {color.label}
+                  {t(locale, COLOR_KEYS[color.label])}
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => paint(null, "highlight")}>
-                Clear highlight
+                {t(locale, "clearHighlight")}
               </DropdownMenuItem>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
 
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
-              <Sparkles className="h-4 w-4 text-muted" /> Ask AI
+              <Sparkles className="h-4 w-4 text-muted" /> {t(locale, "askAI")}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
               {AI_SKILLS.map((skill) => (
@@ -453,30 +472,30 @@ export function BlockContextMenu({
                 );
               }}
             >
-              <Sigma className="h-4 w-4 text-muted" /> Edit equation
+              <Sigma className="h-4 w-4 text-muted" /> {t(locale, "editEquation")}
             </DropdownMenuItem>
           )}
 
           <DropdownMenuItem onSelect={() => move(-1)}>
-            <ArrowUp className="h-4 w-4 text-muted" /> Move up
+            <ArrowUp className="h-4 w-4 text-muted" /> {t(locale, "moveUp")}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => move(1)}>
-            <ArrowDown className="h-4 w-4 text-muted" /> Move down
+            <ArrowDown className="h-4 w-4 text-muted" /> {t(locale, "moveDown")}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={duplicate}>
-            <Copy className="h-4 w-4 text-muted" /> Duplicate
+            <Copy className="h-4 w-4 text-muted" /> {t(locale, "duplicate")}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={comment}>
-            <MessageSquare className="h-4 w-4 text-muted" /> Comment
+            <MessageSquare className="h-4 w-4 text-muted" /> {t(locale, "comment")}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={copyLink}>
-            <Link2 className="h-4 w-4 text-muted" /> Copy link to block
+            <Link2 className="h-4 w-4 text-muted" /> {t(locale, "copyLinkToBlock")}
           </DropdownMenuItem>
 
           <DropdownMenuSeparator />
 
           <DropdownMenuItem onSelect={remove}>
-            <Trash2 className="h-4 w-4 text-muted" /> Delete
+            <Trash2 className="h-4 w-4 text-muted" /> {t(locale, "delete")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

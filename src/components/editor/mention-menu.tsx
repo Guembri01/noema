@@ -8,6 +8,7 @@ import { type Editor } from "@tiptap/react";
 import { cn } from "@/lib/utils";
 import { mentionSearchAction } from "@/server/actions/mentions";
 import { dateMention } from "@/lib/mentions";
+import { t } from "@/lib/i18n";
 
 type MentionItem = {
   id: string;
@@ -18,9 +19,11 @@ type MentionItem = {
 export function MentionMenu({
   editor,
   workspaceId,
+  locale = "en",
 }: {
   editor: Editor;
   workspaceId: string;
+  locale?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -125,7 +128,7 @@ export function MentionMenu({
       style={{ left: pos.x, top: pos.y }}
     >
       <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted">
-        Mention
+        {t(locale, "mentionHeading")}
       </p>
       {items.map((item, index) => (
         <button
