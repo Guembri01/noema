@@ -11,6 +11,14 @@ import {
   signPayload,
   verifySignature,
 } from "@/lib/webhook-signature";
+import {
+  LEGACY_KEY_VERSION,
+  createKeyring,
+  decrypt,
+  deriveLegacyKey,
+  encrypt,
+  type Keyring,
+} from "@/lib/secrets";
 
 // R24.18 — the catalog lives in the PURE module `./webhook-events` (no
 // node:crypto, no prisma) so the client picker imports the same single source
@@ -110,6 +118,63 @@ export function verifyWebhookSignature(input: {
   }).ok;
 }
 
+/**
+ * R28.17 / M28.3 — webhook signing secrets are sealed at rest with the versioned
+ * keyring in `@/lib/secrets` (AES-256-GCM). One key is registered — the
+ * env-derived key (`AUTH_SECRET`) under `LEGACY_KEY_VERSION` — so newly written
+ * secrets are `v2:1:<iv>:<tag>:<payload>` envelopes and any legacy `v1:` envelope
+ * (e.g. one written by `encryptSecret`) still opens under the same key. No second
+ * copy of the key material is introduced.
+ */
+function webhookKeyring(): Keyring {
+  return createKeyring(
+    { [LEGACY_KEY_VERSION]: deriveLegacyKey() },
+    LEGACY_KEY_VERSION,
+  );
+}
+
+/** True for a `v1:`/`v2:` envelope from `@/lib/secrets`; a plaintext secret never matches. */
+function isSecretEnvelope(value: string): boolean {
+  return value.startsWith("v1:") || value.startsWith("v2:");
+}
+
+/** Seal a webhook signing secret for storage. */
+export function encryptWebhookSecret(secret: string): string {
+  return encrypt(secret, webhookKeyring());
+}
+
+/**
+ * Resolve a stored webhook secret to the plaintext used for signing.
+ *
+ * - Envelopes (`v1:` legacy or `v2:` keyring) are opened with the keyring.
+ * - A pre-migration PLAINTEXT secret (M28.3 transition window) is returned
+ *   as-is, with a warning, so already-configured hooks keep delivering signed
+ *   requests; re-creating the hook seals it. (Follow-up: hard-fail once the
+ *   migration window closes, per R28.17.)
+ * - A corrupt/unreadable envelope resolves to `null` — the delivery is sent
+ *   unsigned rather than signed with ciphertext — and is logged. New hooks are
+ *   always sealed on write, so this cannot happen to a freshly created hook.
+ */
+export function decryptWebhookSecret(
+  stored: string | null | undefined,
+): string | null {
+  if (!stored) return null;
+  if (!isSecretEnvelope(stored)) {
+    console.warn(
+      "[webhooks] signing secret is stored in plaintext; re-create the webhook to seal it at rest.",
+    );
+    return stored;
+  }
+  try {
+    return decrypt(stored, webhookKeyring());
+  } catch {
+    console.warn(
+      "[webhooks] stored webhook secret could not be decrypted; sending an unsigned delivery.",
+    );
+    return null;
+  }
+}
+
 /** Per-attempt headers; the timestamp/signature are computed at send time (R24.14 edge). */
 function signatureHeaders(
   secret: string | null,
@@ -189,6 +254,8 @@ export async function deliverWithRetry(
 ): Promise<void> {
   const sleep = options.sleep ?? defaultSleep;
   const row: DeliveryRowRef = { id: options.deliveryId ?? null };
+  // R28.17 — the secret is sealed at rest; open it once per logical delivery.
+  const secret = decryptWebhookSecret(hook.secret);
 
   for (let attempt = 1; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt += 1) {
     const delay = WEBHOOK_BACKOFF_MS[attempt - 1] ?? 0;
@@ -200,7 +267,7 @@ export async function deliverWithRetry(
     try {
       const response = await fetch(hook.url, {
         method: "POST",
-        headers: signatureHeaders(hook.secret, event, body, Date.now()),
+        headers: signatureHeaders(secret, event, body, Date.now()),
         body,
         // R24.11 — never follow redirects: a 3xx counts as a failed attempt.
         redirect: "manual",

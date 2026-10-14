@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canManageMembers } from "@/lib/permissions";
-import { WEBHOOK_EVENTS } from "@/lib/webhooks";
+import { WEBHOOK_EVENTS, encryptWebhookSecret } from "@/lib/webhooks";
 
 export async function createWebhookAction(input: {
   workspaceId: string;
@@ -32,12 +32,19 @@ export async function createWebhookAction(input: {
     (WEBHOOK_EVENTS as readonly string[]).includes(event),
   );
 
+  // R28.17 — signed deliveries only: a non-empty secret is mandatory, and it is
+  // sealed (AES-256-GCM keyring envelope) before it reaches the database.
+  const secret = input.secret?.trim();
+  if (!secret) {
+    return { error: "A signing secret is required." };
+  }
+
   await prisma.webhook.create({
     data: {
       workspaceId: input.workspaceId,
       url: url.toString(),
       events,
-      secret: input.secret?.trim() || null,
+      secret: encryptWebhookSecret(secret),
     },
   });
   revalidatePath("/w", "layout");

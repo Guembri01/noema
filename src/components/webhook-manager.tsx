@@ -93,7 +93,8 @@ export function WebhookManager({
           aria-label={t(locale, "signingSecretLabel")}
           value={secret}
           onChange={(e) => setSecret(e.target.value)}
-          placeholder={t(locale, "signingSecretPlaceholder")}
+          placeholder={t(locale, "signingSecretLabel")}
+          aria-required="true"
           className="h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
         />
         <div className="flex flex-wrap gap-3 text-sm">
@@ -113,7 +114,7 @@ export function WebhookManager({
         </p>
         <button
           type="button"
-          disabled={pending || !url.trim()}
+          disabled={pending || !url.trim() || !secret.trim()}
           onClick={create}
           className="flex h-9 items-center gap-1 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
         >
