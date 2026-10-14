@@ -2,10 +2,11 @@
 
 import { useRef, useState } from "react";
 import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
-import Image from "@tiptap/extension-image";
+import Image, { type ImageOptions } from "@tiptap/extension-image";
 import { AlignCenter, AlignLeft, AlignRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { alignOf, alignStyle, resizeWidthPercent } from "@/lib/media";
+import { t } from "@/lib/i18n";
 
 /**
  * Notion-style image block.
@@ -21,7 +22,17 @@ import { alignOf, alignStyle, resizeWidthPercent } from "@/lib/media";
  * `data-width`) so it survives responsive layouts; alignment is stored as
  * `align` (`data-align`).
  */
-export const ImageBlock = Image.extend({
+/** Image options plus the locale threaded from `page-editor.tsx`. */
+type ImageBlockOptions = ImageOptions & { locale: string };
+
+export const ImageBlock = Image.extend<ImageBlockOptions>({
+  addOptions() {
+    return {
+      ...this.parent?.(),
+      locale: "en",
+    } as ImageBlockOptions;
+  },
+
   addAttributes() {
     return {
       ...this.parent?.(),
@@ -60,19 +71,28 @@ export const ImageBlock = Image.extend({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(ImageView);
+    const locale = this.options.locale;
+    return ReactNodeViewRenderer((props: NodeViewProps) => (
+      <ImageView {...props} locale={locale} />
+    ));
   },
 });
 
 type DragState = { startX: number; startPercent: number; containerWidth: number };
 
 const ALIGNS = [
-  { value: "left", label: "Align image left", icon: AlignLeft },
-  { value: "center", label: "Align image center", icon: AlignCenter },
-  { value: "right", label: "Align image right", icon: AlignRight },
+  { value: "left", labelKey: "imageAlignLeft", icon: AlignLeft },
+  { value: "center", labelKey: "imageAlignCenter", icon: AlignCenter },
+  { value: "right", labelKey: "imageAlignRight", icon: AlignRight },
 ] as const;
 
-function ImageView({ node, updateAttributes, editor, selected }: NodeViewProps) {
+function ImageView({
+  node,
+  updateAttributes,
+  editor,
+  selected,
+  locale,
+}: NodeViewProps & { locale: string }) {
   const [altOpen, setAltOpen] = useState(false);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -164,7 +184,7 @@ function ImageView({ node, updateAttributes, editor, selected }: NodeViewProps) 
           <div
             className="noema-image-resize"
             data-testid="image-resize-handle"
-            aria-label="Resize image"
+            aria-label={t(locale, "imageResizeAria")}
             contentEditable={false}
             onPointerDown={beginResize}
             onPointerMove={moveResize}
@@ -180,17 +200,17 @@ function ImageView({ node, updateAttributes, editor, selected }: NodeViewProps) 
           <input
             className="noema-image-caption"
             value={caption}
-            placeholder="Write a caption…"
-            aria-label="Image caption"
+            placeholder={t(locale, "imageCaptionPlaceholder")}
+            aria-label={t(locale, "imageCaptionAria")}
             onChange={(event) => updateAttributes({ caption: event.target.value })}
           />
-          <span className="noema-image-align" role="group" aria-label="Image alignment">
-            {ALIGNS.map(({ value, label, icon: Icon }) => (
+          <span className="noema-image-align" role="group" aria-label={t(locale, "imageAlignmentAria")}>
+            {ALIGNS.map(({ value, labelKey, icon: Icon }) => (
               <button
                 key={value}
                 type="button"
                 data-testid={`image-align-${value}`}
-                aria-label={label}
+                aria-label={t(locale, labelKey)}
                 aria-pressed={align === value}
                 onClick={() => updateAttributes({ align: value })}
               >
@@ -204,14 +224,14 @@ function ImageView({ node, updateAttributes, editor, selected }: NodeViewProps) 
             aria-expanded={altOpen}
             onClick={() => setAltOpen((open) => !open)}
           >
-            Alt text
+            {t(locale, "imageAltText")}
           </button>
           {altOpen && (
             <input
               className="noema-image-alt"
               value={attrs.alt ?? ""}
-              placeholder="Describe this image for screen readers"
-              aria-label="Alt text"
+              placeholder={t(locale, "imageAltPlaceholder")}
+              aria-label={t(locale, "imageAltText")}
               onChange={(event) => updateAttributes({ alt: event.target.value })}
             />
           )}

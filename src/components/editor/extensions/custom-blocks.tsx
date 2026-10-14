@@ -25,6 +25,7 @@ import {
   type TocHeading,
   type TocItem,
 } from "@/lib/toc";
+import { t } from "@/lib/i18n";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -60,11 +61,15 @@ const CALLOUT_EMOJIS = [
   "💡", "📌", "❗", "✅", "🔥", "⚠️", "📝", "🎯", "📚", "🚀", "❤️", "🧠",
 ];
 
-export const Callout = Node.create({
+export const Callout = Node.create<{ locale: string }>({
   name: "callout",
   group: "block",
   content: "block+",
   defining: true,
+
+  addOptions() {
+    return { locale: "en" };
+  },
 
   addAttributes() {
     return {
@@ -95,11 +100,14 @@ export const Callout = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(CalloutView);
+    const locale = this.options.locale;
+    return ReactNodeViewRenderer((props: NodeViewProps) => (
+      <CalloutView {...props} locale={locale} />
+    ));
   },
 });
 
-function CalloutView({ node, updateAttributes }: NodeViewProps) {
+function CalloutView({ node, updateAttributes, locale }: NodeViewProps & { locale: string }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const color = CALLOUT_COLORS[String(node.attrs.color)] ?? CALLOUT_COLORS.gray;
 
@@ -112,7 +120,7 @@ function CalloutView({ node, updateAttributes }: NodeViewProps) {
       <div className="noema-callout-emoji" contentEditable={false}>
         <button
           type="button"
-          aria-label="Change callout icon"
+          aria-label={t(locale, "calloutChangeIcon")}
           onClick={() => setPickerOpen((v) => !v)}
         >
           {String(node.attrs.emoji)}
@@ -141,11 +149,15 @@ function CalloutView({ node, updateAttributes }: NodeViewProps) {
 
 /* ------------------------------------------------------------------- toggle */
 
-export const Toggle = Node.create({
+export const Toggle = Node.create<{ locale: string }>({
   name: "toggle",
   group: "block",
   content: "block+",
   defining: true,
+
+  addOptions() {
+    return { locale: "en" };
+  },
 
   addAttributes() {
     return {
@@ -176,18 +188,21 @@ export const Toggle = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(ToggleView);
+    const locale = this.options.locale;
+    return ReactNodeViewRenderer((props: NodeViewProps) => (
+      <ToggleView {...props} locale={locale} />
+    ));
   },
 });
 
-function ToggleView({ node, updateAttributes }: NodeViewProps) {
+function ToggleView({ node, updateAttributes, locale }: NodeViewProps & { locale: string }) {
   const open = Boolean(node.attrs.open);
   return (
     <NodeViewWrapper className="noema-toggle" data-toggle="">
       <div className="noema-toggle-header" contentEditable={false}>
         <button
           type="button"
-          aria-label={open ? "Collapse" : "Expand"}
+          aria-label={t(locale, open ? "toggleCollapse" : "toggleExpand")}
           aria-expanded={open}
           onClick={() => updateAttributes({ open: !open })}
           className="noema-toggle-chevron"
@@ -199,7 +214,7 @@ function ToggleView({ node, updateAttributes }: NodeViewProps) {
         </button>
         <input
           value={String(node.attrs.summary ?? "")}
-          placeholder="Toggle"
+          placeholder={t(locale, "blockToggle")}
           onChange={(e) => updateAttributes({ summary: e.target.value })}
           className="noema-toggle-summary"
         />
@@ -268,10 +283,14 @@ export const Column = Node.create({
 
 /* -------------------------------------------------------- table of contents */
 
-export const TableOfContents = Node.create({
+export const TableOfContents = Node.create<{ locale: string }>({
   name: "tableOfContents",
   group: "block",
   atom: true,
+
+  addOptions() {
+    return { locale: "en" };
+  },
 
   parseHTML() {
     return [{ tag: "div[data-toc]" }];
@@ -291,7 +310,10 @@ export const TableOfContents = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(TocView);
+    const locale = this.options.locale;
+    return ReactNodeViewRenderer((props: NodeViewProps) => (
+      <TocView {...props} locale={locale} />
+    ));
   },
 });
 
@@ -328,7 +350,7 @@ function scrollContainerFor(start: Element): Element {
   return document.scrollingElement ?? document.documentElement;
 }
 
-function TocView({ editor }: NodeViewProps) {
+function TocView({ editor, locale }: NodeViewProps & { locale: string }) {
   const [items, setItems] = useState<TocItem[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const itemsRef = useRef<TocItem[]>([]);
@@ -426,9 +448,9 @@ function TocView({ editor }: NodeViewProps) {
 
   return (
     <NodeViewWrapper className="noema-toc" data-toc="" contentEditable={false}>
-      <p className="noema-toc-title">Table of contents</p>
+      <p className="noema-toc-title">{t(locale, "blockTableOfContents")}</p>
       {items.length === 0 ? (
-        <p className="noema-toc-empty">Add headings to build an outline.</p>
+        <p className="noema-toc-empty">{t(locale, "tocEmpty")}</p>
       ) : (
         <ul>
           {items.map((item, index) => (

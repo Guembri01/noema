@@ -9,6 +9,7 @@ import {
 } from "@tiptap/react";
 import { ExternalLink, Loader2, Pencil, Trash2 } from "lucide-react";
 import { formatCell, type QueryProperty } from "@/lib/database-query";
+import { t } from "@/lib/i18n";
 import {
   getLinkedDatabaseAction,
   listDatabasesAction,
@@ -24,7 +25,11 @@ declare module "@tiptap/core" {
   }
 }
 
-export type LinkedDatabaseOptions = { workspaceId: string; workspaceSlug: string };
+export type LinkedDatabaseOptions = {
+  workspaceId: string;
+  workspaceSlug: string;
+  locale: string;
+};
 
 /**
  * Embed a read-only view of another database inside a page ("linked database").
@@ -37,7 +42,7 @@ export const LinkedDatabase = Node.create<LinkedDatabaseOptions>({
   draggable: true,
 
   addOptions() {
-    return { workspaceId: "", workspaceSlug: "" };
+    return { workspaceId: "", workspaceSlug: "", locale: "en" };
   },
 
   addAttributes() {
@@ -71,6 +76,7 @@ export const LinkedDatabase = Node.create<LinkedDatabaseOptions>({
 
 function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: NodeViewProps) {
   const options = extension.options as LinkedDatabaseOptions;
+  const locale = options.locale ?? "en";
   const databasePageId = node.attrs.databasePageId as string | null;
   const [query, setQuery] = useState("");
   const [options_, setOptions] = useState<{ id: string; title: string; icon: string | null }[]>([]);
@@ -120,7 +126,7 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
             autoFocus
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Link a database…"
+            placeholder={t(locale, "linkedLinkPlaceholder")}
             className="noema-linked-field"
           />
           <div className="noema-linked-results">
@@ -133,10 +139,12 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
                 className="noema-linked-result"
               >
                 <span>{option.icon ?? "🗂️"}</span>
-                <span className="truncate">{option.title || "Untitled"}</span>
+                <span className="truncate">{option.title || t(locale, "untitled")}</span>
               </button>
             ))}
-            {filtered.length === 0 && <p className="noema-linked-empty">No databases found.</p>}
+            {filtered.length === 0 && (
+              <p className="noema-linked-empty">{t(locale, "linkedNoDatabases")}</p>
+            )}
           </div>
         </div>
       </NodeViewWrapper>
@@ -151,18 +159,19 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
       <div className="noema-linked-shell">
         <div className="noema-linked-header" contentEditable={false}>
           <span className="noema-linked-title">
-            {data?.icon ?? "🗂️"} {String(node.attrs.title ?? data?.title ?? "Linked database")}
+            {data?.icon ?? "🗂️"}{" "}
+            {String(node.attrs.title ?? data?.title ?? t(locale, "linkedDatabaseFallback"))}
           </span>
           <a
             href={`/w/${options.workspaceSlug}/${databasePageId}`}
             className="noema-linked-open"
-            aria-label="Open database"
+            aria-label={t(locale, "linkedOpenAria")}
           >
             <ExternalLink className="h-3.5 w-3.5" />
           </a>
           <button
             type="button"
-            aria-label="Change database"
+            aria-label={t(locale, "linkedChangeAria")}
             onClick={() => updateAttributes({ databasePageId: null })}
             className="noema-linked-open"
           >
@@ -170,7 +179,7 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
           </button>
           <button
             type="button"
-            aria-label="Remove linked database"
+            aria-label={t(locale, "linkedRemoveAria")}
             onClick={() => deleteNode()}
             className="noema-linked-open"
           >
@@ -180,12 +189,12 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
         <div className="noema-linked-body" contentEditable={false}>
           {loading ? (
             <span className="noema-linked-loading">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+              <Loader2 className="h-4 w-4 animate-spin" /> {t(locale, "loading")}
             </span>
           ) : !data ? (
-            <p className="noema-linked-empty">Could not load that database.</p>
+            <p className="noema-linked-empty">{t(locale, "linkedLoadFailed")}</p>
           ) : data.rows.length === 0 ? (
-            <p className="noema-linked-empty">No rows yet.</p>
+            <p className="noema-linked-empty">{t(locale, "dbNoRows")}</p>
           ) : (
             <table className="noema-linked-table">
               <thead>
@@ -201,7 +210,7 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
                     {columns.map((column) => (
                       <td key={column.id}>
                         {column.id === primary?.id
-                          ? row.title || "Untitled"
+                          ? row.title || t(locale, "untitled")
                           : formatCell(
                               row.values[column.id],
                               { id: column.id, name: column.name, type: column.type, config: null } as QueryProperty,
