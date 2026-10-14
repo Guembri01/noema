@@ -7,6 +7,7 @@ import {
   splitTableRow,
   type MarkdownShortcutKind,
 } from "@/lib/markdown";
+import { BlockIds } from "@/components/editor/extensions/block-ids";
 import { ClearFormatting } from "@/components/editor/extensions/clear-formatting";
 import { SmartSuggestions } from "@/components/editor/extensions/suggestions";
 import { SmartTypography } from "@/components/editor/extensions/smart-typography";
@@ -31,8 +32,10 @@ import {
  * `e2e/editor-extras.spec.ts`; the pure matcher tests keep their spec honest.
  *
  * It also plays a second role: anchoring the **text formatting** slice
- * (clear formatting, subscript/superscript) and the **smart typography** slice
- * (curly quotes, en/em dashes, `...`, ©/®/™). `page-editor.tsx` owns the
+ * (clear formatting, subscript/superscript), the **smart typography** slice
+ * (curly quotes, en/em dashes, `...`, ©/®/™) and the **stable block ids**
+ * slice (a persistent `id` on every top-level block, so block deep-links
+ * resolve). `page-editor.tsx` owns the
  * editor's extension list but is shared across the whole fleet, so the new
  * extensions are registered through TipTap v3's `addExtensions` — the same
  * hook `StarterKit` uses to bundle its parts — and flattened into the
@@ -59,7 +62,14 @@ export const InputRules = Extension.create({
   name: "inputRules",
 
   addExtensions() {
-    return [ClearFormatting, Subscript, Superscript, SmartTypography, SmartSuggestions];
+    return [
+      ClearFormatting,
+      Subscript,
+      Superscript,
+      SmartTypography,
+      SmartSuggestions,
+      BlockIds,
+    ];
   },
 
   addInputRules() {
