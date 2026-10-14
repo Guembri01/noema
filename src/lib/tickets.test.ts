@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   RELATION_TYPES,
+  capacityStatus,
   formatEstimate,
   groupByLabel,
   groupByStatus,
@@ -10,11 +11,15 @@ import {
   priorityMeta,
   sortTickets,
   statusMeta,
+  suggestRebalance,
   sumEstimates,
   ticketKey,
   ticketProgress,
   timelineLayout,
   typeMeta,
+  workloadByAssignee,
+  type WorkloadBucket,
+  type WorkloadTicket,
 } from "./tickets";
 
 const ticket = (overrides: Partial<Parameters<typeof sortTickets>[0][number]> = {}) => ({
@@ -318,5 +323,238 @@ describe("label input validation (extracted from createLabelAction)", () => {
     });
     const long = normalizeLabelInput({ name: "x", description: "d".repeat(300) });
     expect(long.ok && long.description).toHaveLength(200);
+  });
+});
+
+/** Workload fixture: a normal ticket that also carries an assignee. */
+const workloadTicket = (overrides: Partial<WorkloadTicket> = {}): WorkloadTicket => ({
+  ...ticket(overrides),
+  assigneeId: overrides.assigneeId ?? null,
+});
+
+/** Pre-shaped bucket, for capacityStatus tests that skip aggregation. */
+const bucket = (assigneeId: string, openCount: number, points: number): WorkloadBucket => ({
+  assigneeId,
+  openCount,
+  points,
+  unit: "points",
+});
+
+describe("workload by assignee", () => {
+  it("aggregates open tickets per assignee plus an unassigned bucket", () => {
+    const buckets = workloadByAssignee([
+      workloadTicket({ id: "a", assigneeId: "u1", estimate: 3 }),
+      workloadTicket({ id: "b", assigneeId: "u1", estimate: 2 }),
+      workloadTicket({ id: "c", assigneeId: "u2", estimate: 8 }),
+      workloadTicket({ id: "d", assigneeId: null }),
+    ]);
+    // Sorted by load: open count desc, then points desc, then id asc.
+    expect(buckets).toEqual([
+      { assigneeId: "u1", openCount: 2, points: 5, unit: "points" },
+      { assigneeId: "u2", openCount: 1, points: 8, unit: "points" },
+      { assigneeId: "unassigned", openCount: 1, points: 0, unit: "points" },
+    ]);
+  });
+
+  it("excludes done and cancelled tickets from counts and sums", () => {
+    const buckets = workloadByAssignee([
+      workloadTicket({ id: "a", assigneeId: "u1", status: "in_progress", estimate: 3 }),
+      workloadTicket({ id: "b", assigneeId: "u1", status: "done", estimate: 5 }),
+      workloadTicket({ id: "c", assigneeId: "u2", status: "cancelled", estimate: 13 }),
+    ]);
+    // u2 only holds closed work, so it gets no bucket at all.
+    expect(buckets).toEqual([{ assigneeId: "u1", openCount: 1, points: 3, unit: "points" }]);
+  });
+
+  it("sums estimates, counting missing/zero estimates as nothing", () => {
+    const buckets = workloadByAssignee([
+      workloadTicket({ id: "a", assigneeId: "u1", estimate: null }),
+      workloadTicket({ id: "b", assigneeId: "u1", estimate: 0 }),
+      workloadTicket({ id: "c", assigneeId: "u1", estimate: 2.5 }),
+    ]);
+    expect(buckets).toEqual([{ assigneeId: "u1", openCount: 3, points: 2.5, unit: "points" }]);
+  });
+
+  it("scopes to a date range by start/due date overlap", () => {
+    const scoped = workloadByAssignee(
+      [
+        workloadTicket({ id: "over", assigneeId: "u1", startDate: "2026-01-05", dueDate: "2026-01-12", estimate: 3 }),
+        workloadTicket({ id: "before", assigneeId: "u1", startDate: "2026-01-01", dueDate: "2026-01-09", estimate: 5 }),
+        workloadTicket({ id: "after", assigneeId: "u1", startDate: "2026-01-25", dueDate: "2026-01-27", estimate: 8 }),
+        workloadTicket({ id: "undated", assigneeId: "u1", estimate: 11 }),
+        workloadTicket({ id: "dueOnly", assigneeId: "u1", dueDate: "2026-01-15", estimate: 2 }),
+        workloadTicket({ id: "closed", assigneeId: "u1", status: "done", startDate: "2026-01-10", dueDate: "2026-01-11", estimate: 4 }),
+      ],
+      { dateRange: { start: "2026-01-10", end: "2026-01-20" } },
+    );
+    // Overlapping + due-only tickets count; out-of-window, undated and
+    // closed ones do not.
+    expect(scoped).toEqual([{ assigneeId: "u1", openCount: 2, points: 5, unit: "points" }]);
+  });
+
+  it("treats range bounds as inclusive and a boundless range as no filter", () => {
+    const tickets = [
+      workloadTicket({ id: "startEdge", assigneeId: "u1", startDate: "2026-01-10" }),
+      workloadTicket({ id: "endEdge", assigneeId: "u1", startDate: "2026-01-20" }),
+      workloadTicket({ id: "undated", assigneeId: "u1" }),
+    ];
+    const edges = workloadByAssignee(tickets, {
+      dateRange: { start: "2026-01-10", end: "2026-01-20" },
+    });
+    expect(edges[0]?.openCount).toBe(2);
+
+    const unbounded = workloadByAssignee(tickets, { dateRange: {} });
+    expect(unbounded[0]?.openCount).toBe(3);
+
+    const elsewhere = workloadByAssignee(tickets, {
+      dateRange: { start: "2027-06-01", end: "2027-06-30" },
+    });
+    expect(elsewhere).toEqual([]);
+  });
+});
+
+describe("capacity status", () => {
+  it("flags over, near and under around the near-capacity threshold", () => {
+    const rows = capacityStatus(
+      [bucket("u1", 1, 12), bucket("u2", 1, 8), bucket("u3", 1, 3)],
+      { u1: { maxPoints: 10 }, u2: { maxPoints: 10 }, u3: { maxPoints: 10 } },
+    );
+    expect(rows.map((row) => row.state)).toEqual(["over", "near", "under"]);
+    expect(rows[0]).toMatchObject({ used: 12, limit: 10 });
+    expect(rows[0].utilization).toBeCloseTo(1.2, 4);
+    expect(rows[1]).toMatchObject({ used: 8, limit: 10, utilization: 0.8 });
+    expect(rows[2].utilization).toBeCloseTo(0.3, 4);
+  });
+
+  it("honours a configurable near-capacity threshold", () => {
+    const generous = capacityStatus([bucket("u1", 1, 6)], { u1: { maxPoints: 10 } }, { nearThreshold: 0.5 });
+    expect(generous[0]?.state).toBe("near");
+    const strict = capacityStatus([bucket("u1", 1, 6)], { u1: { maxPoints: 10 } }, { nearThreshold: 0.9 });
+    expect(strict[0]?.state).toBe("under");
+  });
+
+  it("reports unknown when capacity is missing instead of dividing by zero", () => {
+    const rows = capacityStatus([bucket("u1", 3, 5), bucket("u2", 0, 0)], { u2: { maxPoints: 0 } });
+    expect(rows[0]).toEqual({
+      assigneeId: "u1",
+      used: 5,
+      limit: null,
+      utilization: null,
+      state: "unknown",
+    });
+    // Zero capacity with nothing loaded: no ratio, nothing flagged either.
+    expect(rows[1]).toEqual({
+      assigneeId: "u2",
+      used: 0,
+      limit: 0,
+      utilization: null,
+      state: "unknown",
+    });
+    // Zero capacity with load on it: no ratio, but definitely over.
+    const loaded = capacityStatus([bucket("u1", 3, 5)], { u1: { maxPoints: 0 } });
+    expect(loaded[0]).toEqual({
+      assigneeId: "u1",
+      used: 5,
+      limit: 0,
+      utilization: null,
+      state: "over",
+    });
+    // A limit in the wrong unit for the requested basis is also unusable.
+    const mismatched = capacityStatus([bucket("u1", 3, 5)], { u1: { maxPoints: 10 } }, { basis: "tickets" });
+    expect(mismatched[0]?.state).toBe("unknown");
+    expect(mismatched[0]?.utilization).toBeNull();
+  });
+
+  it("measures open ticket counts against maxOpenTickets on the tickets basis", () => {
+    const rows = capacityStatus(
+      [bucket("u1", 4, 40), bucket("u2", 9, 90)],
+      { u1: { maxOpenTickets: 5 }, u2: { maxOpenTickets: 10 } },
+      { basis: "tickets" },
+    );
+    expect(rows).toMatchObject([
+      { assigneeId: "u1", used: 4, limit: 5, utilization: 0.8, state: "near" },
+      { assigneeId: "u2", used: 9, limit: 10, utilization: 0.9, state: "near" },
+    ]);
+  });
+
+  it("includes people who have capacity but no open tickets", () => {
+    const rows = capacityStatus([bucket("u1", 2, 5)], {
+      u1: { maxPoints: 10 },
+      idle: { maxPoints: 10 },
+    });
+    expect(rows.map((row) => row.assigneeId)).toEqual(["u1", "idle"]);
+    expect(rows[1]).toMatchObject({ used: 0, limit: 10, utilization: 0, state: "under" });
+  });
+});
+
+describe("suggest rebalance", () => {
+  it("moves work from the most overloaded to the least loaded candidate", () => {
+    const suggestion = suggestRebalance(
+      [
+        workloadTicket({ id: "a", assigneeId: "u1", estimate: 8 }),
+        workloadTicket({ id: "b", assigneeId: "u1", estimate: 5 }),
+        workloadTicket({ id: "c", assigneeId: "u2", estimate: 3 }),
+        workloadTicket({ id: "d", assigneeId: null, estimate: 13 }),
+      ],
+      { u3: { maxPoints: 10 } },
+    );
+    // u1 has 13 points; u3 only exists in the capacity map, so it is idle.
+    expect(suggestion).toEqual({ from: "u1", to: "u3", fromLoad: 13, toLoad: 0 });
+  });
+
+  it("is deterministic when everyone is equal", () => {
+    const tickets = [
+      workloadTicket({ id: "a", assigneeId: "u2", estimate: 5 }),
+      workloadTicket({ id: "b", assigneeId: "u1", estimate: 5 }),
+      workloadTicket({ id: "c", assigneeId: "u3", estimate: 5 }),
+    ];
+    const expected = { from: "u1", to: "u2", fromLoad: 5, toLoad: 5 };
+    expect(suggestRebalance(tickets, {})).toEqual(expected);
+    // Input order must not change the pick: ties break on assignee id.
+    expect(suggestRebalance([...tickets].reverse(), {})).toEqual(expected);
+  });
+
+  it("has nothing to suggest without open work or a second candidate", () => {
+    expect(
+      suggestRebalance(
+        [workloadTicket({ id: "a", assigneeId: "u1", status: "done", estimate: 5 })],
+        { u1: { maxPoints: 5 }, u2: { maxPoints: 5 } },
+      ),
+    ).toEqual({ from: null, to: null, fromLoad: 0, toLoad: null });
+    expect(suggestRebalance([workloadTicket({ id: "a", assigneeId: "u1", estimate: 5 })], {})).toEqual(
+      { from: "u1", to: null, fromLoad: 5, toLoad: null },
+    );
+  });
+
+  it("never treats unassigned as a sender or receiver", () => {
+    const suggestion = suggestRebalance(
+      [
+        workloadTicket({ id: "a", assigneeId: null, estimate: 20 }),
+        workloadTicket({ id: "b", assigneeId: "u1", estimate: 5 }),
+      ],
+      {},
+    );
+    expect(suggestion).toEqual({ from: "u1", to: null, fromLoad: 5, toLoad: null });
+  });
+
+  it("respects the date range and the load basis", () => {
+    const windowed = suggestRebalance(
+      [
+        workloadTicket({ id: "a", assigneeId: "u1", estimate: 10, startDate: "2026-01-02", dueDate: "2026-01-03" }),
+        workloadTicket({ id: "b", assigneeId: "u2", estimate: 2, startDate: "2026-01-15", dueDate: "2026-01-16" }),
+      ],
+      {},
+      { dateRange: { start: "2026-01-10", end: "2026-01-20" } },
+    );
+    expect(windowed).toEqual({ from: "u2", to: null, fromLoad: 2, toLoad: null });
+
+    const tickets = [
+      workloadTicket({ id: "c", assigneeId: "u1", estimate: 1 }),
+      workloadTicket({ id: "d", assigneeId: "u1", estimate: 1 }),
+      workloadTicket({ id: "e", assigneeId: "u2", estimate: 9 }),
+    ];
+    // By points u2 leads (9 > 2); by open tickets u1 leads (2 > 1).
+    expect(suggestRebalance(tickets, {}).from).toBe("u2");
+    expect(suggestRebalance(tickets, {}, { basis: "tickets" }).from).toBe("u1");
   });
 });
