@@ -15,6 +15,7 @@ import { normalizeViewConfig } from "@/lib/database-query";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { nextRunFor } from "@/lib/recurrence";
 import { ORDER_STEP } from "@/lib/row-order";
+import { formatUniqueId, nextNumbers, type UniqueIdConfig } from "@/lib/unique-id";
 
 type Result<T = unknown> = ({ ok: true } & T) | { error: string };
 
@@ -56,6 +57,93 @@ async function authorizeDatabase(
 function revalidateDatabase(workspaceId: string) {
   revalidatePath("/w", "layout");
   void workspaceId;
+}
+
+/**
+ * R89.25 — Unique ID allocation for new rows.
+ *
+ * A database may carry several `UNIQUE_ID` columns and Notion numbers each of
+ * them independently, so allocation is per property. The next number is
+ * derived from the MAXIMUM id already stored for that property (`nextNumbers`),
+ * never the row count, so deleting rows can never reuse an id.
+ *
+ * Each allocated cell stores both the numeric counter (`{ number }` — what the
+ * read-only cell in `view-parts.tsx` formats with the property config) and the
+ * human-readable id (`{ text }`). Existing cells are read back through the same
+ * shapes, so pre-existing or hand-edited values keep allocating correctly.
+ *
+ * Out of scope for this slice: backfilling ids for rows that predate a Unique
+ * ID property (a property added later only allocates on the next row created).
+ */
+
+/** The `config.uniqueId` block of a property, or `{}` when absent/malformed. */
+function readUniqueIdConfig(
+  config: Prisma.JsonValue | null,
+): Partial<UniqueIdConfig> {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return {};
+  const uniqueId = (config as { uniqueId?: unknown }).uniqueId;
+  if (!uniqueId || typeof uniqueId !== "object" || Array.isArray(uniqueId)) return {};
+  return uniqueId as Partial<UniqueIdConfig>;
+}
+
+/**
+ * Every id-shaped string a stored UNIQUE_ID cell contributes to `nextNumbers`.
+ * Mirrors `uniqueIdNumber` in `view-parts.tsx`: the counter may live under any
+ * of these keys, as a number or a digits-only string. Unparseable entries are
+ * handed on unchanged — `nextNumbers` ignores them rather than throwing.
+ */
+function existingUniqueIds(
+  values: (Prisma.JsonValue | null)[],
+  config: UniqueIdConfig,
+): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    if (typeof value === "string") {
+      out.push(value);
+      continue;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const record = value as Record<string, unknown>;
+    for (const key of ["number", "value", "text", "id"] as const) {
+      const candidate = record[key];
+      if (typeof candidate === "string") {
+        out.push(candidate);
+      } else if (
+        typeof candidate === "number" &&
+        Number.isInteger(candidate) &&
+        candidate >= 1
+      ) {
+        out.push(formatUniqueId(config, candidate));
+      }
+    }
+  }
+  return out;
+}
+
+/** Allocate the next Unique ID for one property inside a row-create transaction. */
+async function allocateUniqueIdValue(
+  tx: Prisma.TransactionClient,
+  propertyId: string,
+  config: Partial<UniqueIdConfig>,
+): Promise<Prisma.InputJsonValue> {
+  const rows = await tx.propertyValue.findMany({
+    where: { propertyId },
+    select: { value: true },
+  });
+  // Resolve defaults exactly like the read-only cell so storage and display
+  // never disagree; the engine sanitises any malformed optional field.
+  const resolved: UniqueIdConfig = {
+    prefix: typeof config.prefix === "string" ? config.prefix : "",
+    ...(typeof config.zeroPad === "number" ? { zeroPad: config.zeroPad } : {}),
+    ...(typeof config.startAt === "number" ? { startAt: config.startAt } : {}),
+    ...(typeof config.separator === "string" ? { separator: config.separator } : {}),
+  };
+  const existing = existingUniqueIds(
+    rows.map((row) => row.value),
+    resolved,
+  );
+  const number = nextNumbers(resolved, existing, 1)[0];
+  return { number, text: formatUniqueId(resolved, number) };
 }
 
 export async function createPropertyAction(
@@ -287,43 +375,69 @@ export async function createRowAction(
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
 
-  const last = await prisma.page.findFirst({
-    where: { parentId: databasePageId },
-    orderBy: { position: "desc" },
-    select: { position: true },
-  });
-  const row = await prisma.page.create({
-    data: {
-      workspaceId: auth.page.workspaceId,
-      parentId: databasePageId,
-      title: title || "Untitled",
-      createdById: auth.user.id,
-      position: (last?.position ?? 0) + 1000,
-    },
-    select: { id: true },
-  });
-
-  const primary = await prisma.property.findFirst({
-    where: { databasePageId },
-    orderBy: { position: "asc" },
-    select: { id: true, type: true },
-  });
-  if (primary) {
-    await prisma.propertyValue.create({
-      data: {
-        propertyId: primary.id,
-        pageId: row.id,
-        value: { text: title || "" } as Prisma.InputJsonValue,
-      },
+  // R89.25: the row, its primary cell and every UNIQUE_ID allocation commit or
+  // roll back together, so a crash can never leave a row without its id.
+  const rowId = await prisma.$transaction(async (tx) => {
+    const last = await tx.page.findFirst({
+      where: { parentId: databasePageId },
+      orderBy: { position: "desc" },
+      select: { position: true },
     });
-  }
+    const row = await tx.page.create({
+      data: {
+        workspaceId: auth.page.workspaceId,
+        parentId: databasePageId,
+        title: title || "Untitled",
+        createdById: auth.user.id,
+        position: (last?.position ?? 0) + 1000,
+      },
+      select: { id: true },
+    });
+
+    const properties = await tx.property.findMany({
+      where: { databasePageId },
+      orderBy: { position: "asc" },
+      select: { id: true, type: true, config: true },
+    });
+
+    // One cell per property: the primary text cell yields to a Unique ID
+    // allocation when the primary column is itself a UNIQUE_ID property, and
+    // every UNIQUE_ID column gets a fresh id derived from its own stored
+    // values (multiple Unique ID properties number independently).
+    const values = new Map<string, Prisma.InputJsonValue>();
+    const primary = properties[0];
+    if (primary && primary.type !== "UNIQUE_ID") {
+      values.set(primary.id, { text: title || "" });
+    }
+    for (const property of properties) {
+      if (property.type !== "UNIQUE_ID") continue;
+      values.set(
+        property.id,
+        await allocateUniqueIdValue(
+          tx,
+          property.id,
+          readUniqueIdConfig(property.config),
+        ),
+      );
+    }
+    if (values.size > 0) {
+      await tx.propertyValue.createMany({
+        data: [...values].map(([propertyId, value]) => ({
+          propertyId,
+          pageId: row.id,
+          value,
+        })),
+      });
+    }
+    return row.id;
+  });
 
   await dispatchWebhooks(auth.page.workspaceId, "row.created", {
-    rowId: row.id,
+    rowId,
     databasePageId,
   });
   revalidateDatabase(auth.page.workspaceId);
-  return { ok: true, id: row.id };
+  return { ok: true, id: rowId };
 }
 
 export async function deleteRowAction(rowId: string): Promise<Result> {
