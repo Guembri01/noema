@@ -40,6 +40,7 @@ enum PropertyType {
   URL
   EMAIL
   PHONE
+  PLACE
   PEOPLE
   FILES
   FORMULA
@@ -203,6 +204,7 @@ model Page {
   fullWidth   Boolean  @default(false)
   smallText   Boolean  @default(false)
   font        String   @default("default")
+  lineSpacing String   @default("normal")
   locked      Boolean  @default(false)
   content     Json?
   /// Plain-text mirror of the document, maintained on write, used for Postgres
