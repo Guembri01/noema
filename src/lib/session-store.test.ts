@@ -6,11 +6,14 @@ import {
   describeDevice,
   isSessionRevoked,
   listActiveSessions,
+  listSessionsForUser,
   registerSession,
   revokeAllSessionsForUser,
+  revokeSession,
   revokeSessionForUser,
   storePath,
   touchSession,
+  validateSession,
 } from "@/lib/session-store";
 
 /**
@@ -183,6 +186,204 @@ describe("session registry — last-active touch", () => {
       lastActiveAt: string;
     }>;
     expect(raw.find((r) => r.sid === record.sid)?.lastActiveAt).toBe(old);
+  });
+});
+
+describe("session registry — fail-closed validation (validateSession)", () => {
+  it("accepts an active session; rejects unknown and expired ones", () => {
+    const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+    const day = 24 * 60 * 60 * 1000;
+    const record = registerSession({ userId: "user-a", device: "Chrome", now: t0 });
+
+    // Active an hour in: well inside the 30-day window.
+    expect(validateSession(record.sid, t0 + 60 * 60 * 1000)?.sid).toBe(record.sid);
+
+    // Unknown sid → rejected (fail closed, unlike the isSessionRevoked probe,
+    // which stays fail-open so a broken registry can't mass sign-out devices).
+    expect(validateSession("no-such-sid", t0)).toBeNull();
+
+    // Past the fixed TTL: the record exists but the session is over.
+    expect(validateSession(record.sid, t0 + 30 * day + 1)).toBeNull();
+  });
+
+  it("rejects a revoked-but-unexpired token (revoke → validate fails closed)", () => {
+    const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+    const record = registerSession({ userId: "user-a", device: "Chrome", now: t0 });
+    expect(validateSession(record.sid, t0 + 60_000)).not.toBeNull();
+
+    // Unscoped revoke by sid, for trusted server-side/forced paths.
+    expect(revokeSession(record.sid, t0 + 61_000)).toBe("revoked");
+    // An hour later — nowhere near expiry — the token must already be dead.
+    expect(validateSession(record.sid, t0 + 2 * 60 * 60 * 1000)).toBeNull();
+    // Re-revoking an ended session reports not-found (same as owner-scoped).
+    expect(revokeSession(record.sid, t0 + 62_000)).toBe("not-found");
+    expect(revokeSession("no-such-sid", t0)).toBe("not-found");
+  });
+
+  it("owner-scoped revocation fails validation closed too, and only for the owner", () => {
+    const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+    const record = registerSession({ userId: "user-b", device: "Safari on iOS", now: t0 });
+
+    // Another user may not revoke it, and the token stays alive.
+    expect(revokeSessionForUser(record.sid, "user-a", t0 + 1_000)).toBe("forbidden");
+    expect(validateSession(record.sid, t0 + 2_000)).not.toBeNull();
+
+    // The owner can — and the token dies immediately, not at expiry.
+    expect(revokeSessionForUser(record.sid, "user-b", t0 + 3_000)).toBe("revoked");
+    expect(validateSession(record.sid, t0 + 4_000)).toBeNull();
+  });
+});
+
+describe("session registry — revoke-all keeps the current device", () => {
+  it("exceptSid spares the caller's session and stamps revokedAt at the injected now", () => {
+    const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+    const current = registerSession({ userId: "user-a", device: "current", now: t0 });
+    const other = registerSession({ userId: "user-a", device: "phone", now: t0 });
+
+    expect(
+      revokeAllSessionsForUser("user-a", { exceptSid: current.sid, now: t0 + 5_000 }),
+    ).toBe(1);
+
+    // The spared device is still valid; the other one is dead despite being
+    // nowhere near its 30-day expiry.
+    expect(validateSession(current.sid, t0 + 10_000)).not.toBeNull();
+    expect(validateSession(other.sid, t0 + 10_000)).toBeNull();
+
+    const raw = JSON.parse(readFileSync(storePath(), "utf8")) as Array<{
+      sid: string;
+      revokedAt: string | null;
+    }>;
+    expect(raw.find((r) => r.sid === other.sid)?.revokedAt).toBe(
+      new Date(t0 + 5_000).toISOString(),
+    );
+    expect(raw.find((r) => r.sid === current.sid)?.revokedAt).toBeNull();
+  });
+});
+
+describe("session registry — listSessionsForUser (settings panel view)", () => {
+  it("lists active sessions with metadata, most recent first, flagging the current one", () => {
+    const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+    const laptop = registerSession({ userId: "user-a", device: "Chrome on Windows", now: t0 });
+    const phone = registerSession({
+      userId: "user-a",
+      device: "Safari on iOS",
+      now: t0 + 5_000,
+    });
+    const revoked = registerSession({ userId: "user-a", device: "old tablet", now: t0 });
+    registerSession({ userId: "user-b", device: "other user", now: t0 + 5_000 });
+    revokeSession(revoked.sid, t0 + 6_000);
+
+    const listed = listSessionsForUser("user-a", t0 + 10_000, { currentSid: phone.sid });
+
+    expect(listed.map((s) => s.sid)).toEqual([phone.sid, laptop.sid]); // recent first
+    expect(listed.map((s) => s.device)).toEqual(["Safari on iOS", "Chrome on Windows"]);
+    expect(listed[0]?.current).toBe(true);
+    expect(listed[1]?.current).toBe(false);
+    expect(listed.map((s) => s.createdAt)).toContain(laptop.createdAt);
+    expect(listed.map((s) => s.lastActiveAt)).toContain(phone.lastActiveAt);
+    // The revoked tablet and the other user's session are absent.
+    expect(listed.map((s) => s.sid)).not.toContain(revoked.sid);
+  });
+
+  it("excludes expired and revoked sessions at the injected now", () => {
+    const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+    const day = 24 * 60 * 60 * 1000;
+    const alive = registerSession({ userId: "user-a", device: "Chrome", now: t0 });
+    const revoked = registerSession({ userId: "user-a", device: "phone", now: t0 });
+    revokeSession(revoked.sid, t0 + 1_000);
+
+    // A day in: only the non-revoked session is listed.
+    expect(listSessionsForUser("user-a", t0 + day).map((s) => s.sid)).toEqual([alive.sid]);
+
+    // 31 days in — past the fixed 30-day TTL, nothing slid — everything is gone.
+    expect(listSessionsForUser("user-a", t0 + 31 * day)).toEqual([]);
+
+    // An unknown currentSid simply flags nothing as current.
+    const flags = listSessionsForUser("user-a", t0 + day, { currentSid: "ghost" });
+    expect(flags.every((s) => !s.current)).toBe(true);
+  });
+});
+
+describe("session registry — sliding expiry (touchSession with an injected clock)", () => {
+  const day = 24 * 60 * 60 * 1000;
+  const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+
+  it("extends expiry on activity within the absolute cap", () => {
+    const record = registerSession({ userId: "user-a", device: "Chrome", now: t0 });
+
+    const first = touchSession(record.sid, t0 + 2 * 60_000, { maxLifetimeMs: 90 * day });
+    expect(first).toEqual({
+      status: "extended",
+      // Idle window (30d) measured from the touch: two minutes past the
+      // original fixed deadline.
+      expiresAt: new Date(t0 + 2 * 60_000 + 30 * day).toISOString(),
+    });
+
+    // The record is valid right up to (but not including) the slid deadline.
+    const slidExpiry = t0 + 30 * day + 2 * 60_000;
+    expect(validateSession(record.sid, slidExpiry - 1)).not.toBeNull();
+    expect(validateSession(record.sid, slidExpiry)).toBeNull();
+  });
+
+  it("keeps sliding on each touch, so activity outlives the original window", () => {
+    const record = registerSession({ userId: "user-a", device: "Chrome", now: t0 });
+    touchSession(record.sid, t0 + 2 * 60_000, { maxLifetimeMs: 90 * day });
+
+    // Another touch just before the slid deadline pushes it out by a full
+    // idle window again.
+    const second = touchSession(record.sid, t0 + 30 * day + 60_000, {
+      maxLifetimeMs: 90 * day,
+    });
+    expect(second).toEqual({
+      status: "extended",
+      expiresAt: new Date(t0 + 30 * day + 60_000 + 30 * day).toISOString(),
+    });
+    // Long past the original 30-day window, still active.
+    expect(validateSession(record.sid, t0 + 59 * day)).not.toBeNull();
+  });
+
+  it("stops extending at the absolute-lifetime cap (maxLifetimeMs)", () => {
+    const record = registerSession({ userId: "user-a", device: "Chrome", now: t0 });
+
+    // t0 + 2d + 30d would overshoot the 10-day cap → clipped to createdAt + cap.
+    const first = touchSession(record.sid, t0 + 2 * day, { maxLifetimeMs: 10 * day });
+    expect(first).toEqual({
+      status: "extended",
+      expiresAt: new Date(t0 + 10 * day).toISOString(),
+    });
+
+    // A later touch cannot push the deadline past the cap either…
+    const second = touchSession(record.sid, t0 + 9 * day, { maxLifetimeMs: 10 * day });
+    expect(second).toEqual({
+      status: "extended",
+      expiresAt: new Date(t0 + 10 * day).toISOString(),
+    });
+    // …and the session dies exactly at createdAt + maxLifetimeMs.
+    expect(validateSession(record.sid, t0 + 10 * day - 1)).not.toBeNull();
+    expect(validateSession(record.sid, t0 + 10 * day)).toBeNull();
+  });
+
+  it("never resurrects revoked, expired, or unknown sessions", () => {
+    const revoked = registerSession({ userId: "user-a", device: "Chrome", now: t0 });
+    revokeSession(revoked.sid, t0 + 1_000);
+    expect(
+      touchSession(revoked.sid, t0 + 10 * 60_000, { maxLifetimeMs: 90 * day }),
+    ).toEqual({ status: "revoked" });
+
+    const expired = registerSession({ userId: "user-a", device: "phone", now: t0 });
+    expect(touchSession(expired.sid, t0 + 31 * day)).toEqual({ status: "expired" });
+
+    expect(touchSession("no-such-sid", t0)).toEqual({ status: "not-found" });
+
+    // Nothing was written for any of them: lastActiveAt still reads the
+    // creation instant.
+    const raw = JSON.parse(readFileSync(storePath(), "utf8")) as Array<{
+      sid: string;
+      lastActiveAt: string;
+    }>;
+    expect(raw.find((r) => r.sid === revoked.sid)?.lastActiveAt).toBe(
+      new Date(t0).toISOString(),
+    );
   });
 });
 
