@@ -25,23 +25,36 @@ export type SearchRow = {
 };
 
 /**
- * Plain-text teaser for one result (MISSING_FEATURES §1). Prefers a page's
- * stored blocks via `summarizeBlocks`; search results normally only carry a
- * plain-text snippet, so as a fallback the snippet is read as a paragraph with
+ * Plain-text teaser for one result (MISSING_FEATURES §1). Prefers the page's
+ * real content via `summarizeBlocks` (fed by the search query as `blocks`).
+ * The match-centred `snippet` stays a fallback: when the page carries no usable
+ * content, or the derived teaser would not show the query (it matched deeper in
+ * the page than the teaser reaches), the snippet is read as a paragraph with
  * `extractDescription` and truncated at a word boundary. Pure and total.
  */
 function pageTeaser(
   content: { snippet?: string; blocks?: readonly SummaryBlock[] },
   maxLength: number,
+  query: string,
 ): string {
+  const fromSnippet = (): string => {
+    const snippet = content.snippet ?? "";
+    if (!snippet) return "";
+    const described = extractDescription([{ type: "paragraph", text: snippet }]);
+    return truncateAtWord(described ?? snippet, maxLength);
+  };
+
   if (content.blocks && content.blocks.length > 0) {
     const summary = summarizeBlocks(content.blocks, { maxLength });
-    if (summary) return summary;
+    if (summary) {
+      const term = query.trim();
+      if (!term || highlightSnippet(summary, query, summary.length)) return summary;
+      // Prefer the real content, but never hide why the page matched: fall back
+      // to the centred snippet when it can surface the highlight instead.
+      return fromSnippet() || summary;
+    }
   }
-  const snippet = content.snippet ?? "";
-  if (!snippet) return "";
-  const described = extractDescription([{ type: "paragraph", text: snippet }]);
-  return truncateAtWord(described ?? snippet, maxLength);
+  return fromSnippet();
 }
 
 /**
@@ -110,7 +123,7 @@ export function SearchResults({
 
       <ul className="mt-4 divide-y divide-border rounded-lg border border-border">
         {rows.map((page) => {
-          const teaser = pageTeaser(page, previewLength);
+          const teaser = pageTeaser(page, previewLength, query);
           return (
             <li key={page.id}>
               <Link
