@@ -1,10 +1,16 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { prisma } from "@/lib/db";
 import {
   WEBHOOK_EVENTS,
   WEBHOOK_EVENT_CATALOG,
   type WebhookEvent,
 } from "@/lib/webhook-events";
+import {
+  constantTimeEqualHex,
+  parseSignatureHeader,
+  signPayload,
+  verifySignature,
+} from "@/lib/webhook-signature";
 
 // R24.18 — the catalog lives in the PURE module `./webhook-events` (no
 // node:crypto, no prisma) so the client picker imports the same single source
@@ -43,30 +49,31 @@ export function deliveryDueTimes(startedAtMs: number): number[] {
   });
 }
 
-function hmacHex(secret: string, message: string): string {
-  return createHmac("sha256", secret).update(message).digest("hex");
-}
-
-function hexEqual(a: string, b: string): boolean {
-  const left = Buffer.from(a, "utf8");
-  const right = Buffer.from(b, "utf8");
-  return left.length === right.length && timingSafeEqual(left, right);
+/**
+ * Legacy v1 MAC: `HMAC-SHA256(secret, rawBody)`, with no timestamp bound in.
+ * Retained only so already-deployed receivers keep verifying during the rollout.
+ */
+function legacyHmacHex(secret: string, body: string): string {
+  return createHmac("sha256", secret).update(body).digest("hex");
 }
 
 /**
  * R24.13 — canonical form `x-noema-signature: t=<unixMs>,v1=<hex>` where
- * `v1 = HMAC-SHA256(secret, "<t>.<rawBody>")`. The timestamp is bound into the
- * MAC, so replayed requests cannot be re-stamped.
+ * `v1 = HMAC-SHA256(secret, "<t>.<rawBody>")`. Delegates to the shared
+ * `signPayload` (D24) so the dispatcher and `verifySignature` share ONE signing
+ * implementation. The wire format is byte-for-byte unchanged, so the single
+ * `x-noema-signature` header is kept — receivers need no transition.
  */
 export function signWebhookV2(secret: string, body: string, timestampMs: number): string {
-  return `t=${timestampMs},v1=${hmacHex(secret, `${timestampMs}.${body}`)}`;
+  return signPayload(body, secret, { timestamp: timestampMs });
 }
 
 /**
  * Verify an incoming `x-noema-signature`.
  *
- * - v2 (`t=…,v1=…`): freshness is enforced — `|now − t| > 300 s` fails, and so
- *   does any tampering of the timestamp or the body.
+ * - v2 (`t=…,v1=…`): delegated to the shared {@link verifySignature} — freshness
+ *   is enforced (`|now − t| > 300 s` fails, inclusive boundary), and so does any
+ *   tampering of the timestamp or the body.
  * - legacy v1 (bare hex = `HMAC-SHA256(secret, rawBody)`): still accepted so
  *   already-deployed receivers keep verifying during the rollout; it carries no
  *   timestamp, hence no freshness window.
@@ -81,22 +88,26 @@ export function verifyWebhookSignature(input: {
   timestamp?: number | string | null;
   now?: number;
 }): boolean {
-  const signature = input.signature.trim().toLowerCase();
+  const signature = input.signature.trim();
   if (!signature) return false;
-  const now = input.now ?? Date.now();
 
-  const v2 = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(signature);
-  if (v2) {
-    const t = Number(v2[1]);
-    if (input.timestamp != null && Number(input.timestamp) !== t) return false;
-    if (Math.abs(now - t) > SIGNATURE_TOLERANCE_MS) return false;
-    return hexEqual(hmacHex(input.secret, `${t}.${input.body}`), v2[2]);
+  // Legacy v1 (bare 64-hex, no `t=`): MAC over the raw body only.
+  if (/^[0-9a-f]{64}$/i.test(signature)) {
+    return constantTimeEqualHex(legacyHmacHex(input.secret, input.body), signature);
   }
 
-  if (/^[0-9a-f]{64}$/.test(signature)) {
-    return hexEqual(hmacHex(input.secret, input.body), signature);
+  // The shared verifier reads `t` from the header; enforce the companion
+  // `x-noema-timestamp` agrees with it when that header is present.
+  const parsed = parseSignatureHeader(signature);
+  if (!parsed.ok) return false;
+  if (input.timestamp != null && Number(input.timestamp) !== parsed.timestamp) {
+    return false;
   }
-  return false;
+
+  return verifySignature(input.body, signature, input.secret, {
+    now: input.now,
+    toleranceSeconds: SIGNATURE_TOLERANCE_MS / 1000,
+  }).ok;
 }
 
 /** Per-attempt headers; the timestamp/signature are computed at send time (R24.14 edge). */

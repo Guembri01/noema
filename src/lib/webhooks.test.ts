@@ -24,6 +24,18 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+// Spy on the shared signer while keeping its real behaviour, so a delivery test
+// can prove the dispatcher actually goes through `signPayload` (one signing
+// implementation) rather than a private re-implementation that merely happens
+// to agree today.
+const sigMocks = vi.hoisted(() => ({ signPayload: vi.fn() }));
+
+vi.mock("@/lib/webhook-signature", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/webhook-signature")>();
+  sigMocks.signPayload.mockImplementation(actual.signPayload);
+  return { ...actual, signPayload: sigMocks.signPayload };
+});
+
 import {
   WEBHOOK_BACKOFF_MS,
   WEBHOOK_MAX_ATTEMPTS,
@@ -33,6 +45,7 @@ import {
   signWebhookV2,
   verifyWebhookSignature,
 } from "./webhooks";
+import { signPayload, verifySignature } from "@/lib/webhook-signature";
 
 const originalFetch = globalThis.fetch;
 
@@ -58,6 +71,8 @@ beforeEach(() => {
   );
   mocks.fetch.mockReset().mockResolvedValue(http(200));
   globalThis.fetch = mocks.fetch as unknown as typeof fetch;
+  // Keep the real implementation installed by the module mock; only reset calls.
+  sigMocks.signPayload.mockClear();
 });
 
 afterAll(() => {
@@ -344,5 +359,112 @@ describe("one row per logical delivery (R24.10–R24.12)", () => {
       where: { id: "del_1" },
       data: { attempts: 2, ok: true, responseStatus: 200, error: null },
     });
+  });
+});
+
+describe("shared signing scheme — dispatcher ⇄ verifier (D24)", () => {
+  // A fixed clock is injected via `Date.now`, so the timestamp bound into the
+  // MAC is deterministic and nothing here depends on the wall clock.
+  const NOW = T0;
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  /** Dispatch one delivery with `Date.now` pinned and return the fetch init. */
+  const captureDelivery = async (): Promise<{
+    body: string;
+    headers: Record<string, string>;
+  }> => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(NOW);
+    try {
+      await dispatchWebhooks("ws_1", "page.created", { pageId: "p1" });
+      for (let i = 0; i < 10 && mocks.fetch.mock.calls.length === 0; i += 1) {
+        await flush();
+      }
+    } finally {
+      nowSpy.mockRestore();
+    }
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    return mocks.fetch.mock.calls[0][1] as {
+      body: string;
+      headers: Record<string, string>;
+    };
+  };
+
+  it("delivers through the shared signPayload (one signing implementation)", async () => {
+    const init = await captureDelivery();
+
+    expect(sigMocks.signPayload).toHaveBeenCalledTimes(1);
+    const [payload, secret, options] = sigMocks.signPayload.mock.calls[0] as [
+      string,
+      string,
+      { timestamp?: number },
+    ];
+    expect(payload).toBe(init.body);
+    expect(secret).toBe(SECRET);
+    expect(options.timestamp).toBe(NOW);
+
+    // The emitted header is the shared, timestamp-bound canonical form.
+    expect(init.headers["x-noema-signature"]).toMatch(
+      new RegExp(`^t=${NOW},v1=[0-9a-f]{64}$`),
+    );
+  });
+
+  it("round-trips the sender-built payload through the shared verifier", async () => {
+    const init = await captureDelivery();
+    const signature = init.headers["x-noema-signature"];
+    const timestamp = init.headers["x-noema-timestamp"];
+
+    // The sender-built JSON body verifies as-is with the shared verifier.
+    expect(verifySignature(init.body, signature, SECRET, { now: NOW })).toEqual({ ok: true });
+    expect(timestamp).toBe(String(NOW));
+    // …and through the server-side wrapper, companion header included.
+    expect(
+      verifyWebhookSignature({ secret: SECRET, body: init.body, signature, timestamp, now: NOW }),
+    ).toBe(true);
+  });
+
+  it("rejects a tampered body", async () => {
+    const init = await captureDelivery();
+    const signature = init.headers["x-noema-signature"];
+
+    expect(verifySignature(`${init.body} `, signature, SECRET, { now: NOW })).toEqual({
+      ok: false,
+      reason: "no_match",
+    });
+    expect(
+      verifyWebhookSignature({
+        secret: SECRET,
+        body: `${init.body} `,
+        signature,
+        timestamp: init.headers["x-noema-timestamp"],
+        now: NOW,
+      }),
+    ).toBe(false);
+  });
+
+  it("is canonical-key-order stable for the delivery payload", () => {
+    const payload = { event: "page.created", workspaceId: "ws_1", data: { pageId: "p1" } };
+    const reordered = { workspaceId: "ws_1", data: { pageId: "p1" }, event: "page.created" };
+    const signature = signPayload(payload, SECRET, { timestamp: NOW });
+
+    // Same payload, different insertion order ⇒ identical signature, and the
+    // reordered object verifies against it.
+    expect(signPayload(reordered, SECRET, { timestamp: NOW })).toBe(signature);
+    expect(verifySignature(reordered, signature, SECRET, { now: NOW })).toEqual({ ok: true });
+  });
+
+  it("delegates v2 verification to the shared parser (multiple v1 values)", () => {
+    const good = signWebhookV2(SECRET, BODY, T0).split("v1=")[1];
+    const header = `t=${T0},v1=${"0".repeat(64)},v1=${good}`;
+    expect(verifyWebhookSignature({ secret: SECRET, body: BODY, signature: header, now: T0 })).toBe(
+      true,
+    );
+  });
+
+  it("delegates v2 verification to the shared parser (whitespace tolerated)", () => {
+    const header = ` t=${T0} , v1=${V2_HEX} `;
+    expect(verifyWebhookSignature({ secret: SECRET, body: BODY, signature: header, now: T0 })).toBe(
+      true,
+    );
   });
 });
