@@ -267,24 +267,28 @@ export function BlockContextMenu({
   };
 
   /**
-   * Copy a deep link to the block's page.
+   * Copy a deep link to the block's page (and the block itself when it has a
+   * stable id).
    *
    * `src/lib/deep-links.ts` is the canonical builder; the old handler pasted
    * `${origin}${pathname}#block-<pos>` with a *document offset* as the anchor.
    * The canonical route is `/w/<workspaceSlug>/<pageId>` and this menu is not
    * handed either id (`page-editor.tsx` is shared and out of scope for this
    * slice), but the editor only mounts on that route, so the live URL is the
-   * authoritative source. TipTap nodes still carry no persisted block id, so the
-   * `#<blockId>` fragment is deferred: we emit the page link now and pass the
-   * block id as the builder's second argument once stable ids land.
+   * authoritative source. The `BlockIds` extension (registered via
+   * `input-rules.ts`) now stamps a persistent `id` on every top-level block, so
+   * when the block under the menu carries one we anchor to it; a nested or
+   * not-yet-minted block falls back to the page link (`blockId` undefined).
    */
   const copyLink = () => {
     if (pos === null) return;
     const { origin, pathname } = window.location;
     const segments = pathname.split("/").filter(Boolean).map(decodeSegment);
     const onPageRoute = segments[0] === "w" && segments.length >= 3;
+    const nodeId = editor.state.doc.nodeAt(pos)?.attrs?.id;
+    const blockId = typeof nodeId === "string" && nodeId.trim() !== "" ? nodeId : undefined;
     const url = onPageRoute
-      ? buildBlockDeepLink(segments[segments.length - 1], undefined, {
+      ? buildBlockDeepLink(segments[segments.length - 1], blockId, {
           origin,
           workspaceSlug: segments[1],
         })
