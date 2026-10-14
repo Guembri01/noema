@@ -1,9 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { evaluateFormula } from "@/lib/formula";
+import { evaluateFormula, type FormulaScope } from "@/lib/formula";
 
-const value = (expression: string, scope = {}) => {
-  const result = evaluateFormula(expression, scope);
+const run = (expression: string, scope: FormulaScope = {}, constants?: Record<string, unknown>) =>
+  evaluateFormula(expression, scope, constants ? { constants } : {});
+
+const value = (expression: string, scope: FormulaScope = {}, constants?: Record<string, unknown>) => {
+  const result = run(expression, scope, constants);
   return result.ok ? result.value : `ERR:${result.error}`;
+};
+
+const errorOf = (
+  expression: string,
+  scope: FormulaScope = {},
+  constants?: Record<string, unknown>,
+) => {
+  const result = run(expression, scope, constants);
+  return result.ok ? `OK:${JSON.stringify(result.value)}` : result.error;
 };
 
 describe("formula engine", () => {
@@ -124,5 +136,214 @@ describe("formula engine", () => {
     expect(value("true || false && false")).toBe(true);
     expect(value("1 + 2 == 3")).toBe(true);
     expect(value("!(1 == 1) || 1 < 2")).toBe(true);
+  });
+});
+
+describe("formula error states", () => {
+  it("returns friendly #ERROR results for division by zero", () => {
+    expect(errorOf("1 / 0")).toBe("#ERROR: division by zero");
+    expect(errorOf("0 / 0")).toBe("#ERROR: division by zero");
+    expect(errorOf("5 % 0")).toBe("#ERROR: division by zero");
+    expect(errorOf("1 / 0 + 5")).toBe("#ERROR: division by zero");
+  });
+
+  it("names unknown functions and identifiers", () => {
+    expect(errorOf('nope("x")')).toBe("#ERROR: unknown function 'nope'");
+    expect(errorOf("someProperty")).toBe("#ERROR: unknown identifier 'someProperty'");
+    expect(errorOf('prop("Estimate") + nope("x")', { Estimate: 1 })).toBe(
+      "#ERROR: unknown function 'nope'",
+    );
+  });
+
+  it("reports type mismatches for non-numeric arithmetic", () => {
+    expect(errorOf('"abc" - 1')).toBe("#ERROR: type mismatch");
+    expect(errorOf('"abc" * 2')).toBe("#ERROR: type mismatch");
+    expect(errorOf('-"abc"')).toBe("#ERROR: type mismatch");
+  });
+
+  it("prefixes syntax errors with #ERROR", () => {
+    expect(errorOf("1 +")).toContain("#ERROR:");
+    expect(errorOf("(1 + 2")).toContain("#ERROR:");
+    expect(errorOf("1 + * 2")).toContain("#ERROR:");
+    expect(errorOf('prop("Estimate"')).toContain("#ERROR:");
+    expect(errorOf('"unterminated')).toContain("#ERROR:");
+  });
+
+  it("propagates error values through operators and functions", () => {
+    expect(errorOf("!(1 / 0)")).toBe("#ERROR: division by zero");
+    expect(errorOf("1 == 1 / 0")).toBe("#ERROR: division by zero");
+    expect(errorOf("1 / 0 > 3")).toBe("#ERROR: division by zero");
+    expect(errorOf('upper(nope("x"))')).toBe("#ERROR: unknown function 'nope'");
+    expect(errorOf("if(1 / 0, 1, 2)")).toBe("#ERROR: division by zero");
+  });
+
+  it("ignores errors from untaken if() branches", () => {
+    expect(value("if(false, 1 / 0, 2)")).toBe(2);
+    expect(value("if(true, 1, 1 / 0)")).toBe(1);
+  });
+
+  it("keeps every failure structured as { ok: false, error }", () => {
+    const divZero = evaluateFormula("1 / 0");
+    expect(divZero.ok).toBe(false);
+    if (!divZero.ok) expect(divZero.error).toBe("#ERROR: division by zero");
+    const syntax = evaluateFormula("1 +");
+    expect(syntax.ok).toBe(false);
+    if (!syntax.ok) expect(syntax.error.startsWith("#ERROR:")).toBe(true);
+  });
+});
+
+describe("regex functions", () => {
+  it("matches text against patterns", () => {
+    expect(value('match("Hello", "Hello")')).toBe(true);
+    expect(value('match("Hello", "hello")')).toBe(false);
+    expect(value('match("Hello", "[Hh]ello")')).toBe(true);
+    expect(value('match("abc", "a.c")')).toBe(true);
+  });
+
+  it("replaces plain and regex matches", () => {
+    expect(value('replace("John Michael", "Michael", "Jack")')).toBe("John Jack");
+    expect(value('replace("a1b2", "\\\\d+", "#")')).toBe("a#b#");
+    expect(value('replace("John Michael", "(\\\\w+) (\\\\w+)", "$2 $1")')).toBe("Michael John");
+    expect(value('replace("abc", "x*", "-")')).toBe("-a-b-c-");
+  });
+
+  it("extracts capture groups", () => {
+    expect(value('extract("2024-01-15", "(\\\\d+)-(\\\\d+)-(\\\\d+)")')).toEqual([
+      "2024",
+      "01",
+      "15",
+    ]);
+    expect(value('extract("abc", "b")')).toEqual(["b"]);
+    expect(value('extract("hello", "xyz")')).toEqual([]);
+    expect(value('join(extract("a1b2", "(\\\\w)(\\\\d)"), "-")')).toBe("a-1-b-2");
+  });
+
+  it("rejects invalid patterns with a friendly error", () => {
+    expect(errorOf('match("abc", "[")')).toContain("#ERROR: invalid pattern");
+    expect(errorOf('replace("abc", "(", "x")')).toContain("#ERROR: invalid pattern");
+  });
+
+  it("caps regex pattern and text length", () => {
+    expect(errorOf(`match("aaa", "${"a".repeat(201)}")`)).toContain(
+      "pattern exceeds maximum length",
+    );
+    expect(errorOf(`match("${"a".repeat(5001)}", "a")`)).toContain("text exceeds maximum length");
+  });
+
+  it("rejects patterns prone to catastrophic backtracking", () => {
+    expect(errorOf('match("aaaaaaaaaaaaaaaaaaaa!", "(a+)+$")')).toContain(
+      "catastrophic backtracking",
+    );
+    expect(errorOf('match("aaaaaaaaaaaaaaaaaaaa!", "(x*)*y")')).toContain(
+      "catastrophic backtracking",
+    );
+  });
+
+  it("allows safe quantified groups", () => {
+    expect(value('match("abc", "([a-z]+)")')).toBe(true);
+    expect(value('extract("2024", "\\\\d{4}")')).toEqual(["2024"]);
+  });
+
+  it("requires a pattern argument", () => {
+    expect(errorOf('match("abc")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('replace("abc")')).toBe("#ERROR: type mismatch");
+  });
+});
+
+describe("list functions", () => {
+  it("joins lists with a separator", () => {
+    expect(value('join([1, 2, 3], "-")')).toBe("1-2-3");
+    expect(value('join(["a", "b"], ", ")')).toBe("a, b");
+    expect(value("join([1, 2])")).toBe("12");
+    expect(value('join([], ", ")')).toBe("");
+  });
+
+  it("sorts lists by value, then by type", () => {
+    expect(value("sort([10, 2, 1])")).toEqual([1, 2, 10]);
+    expect(value('sort(["b", "a"])')).toEqual(["a", "b"]);
+    expect(value('sort([true, "b", 2, "a", 1])')).toEqual([1, 2, "a", "b", true]);
+    expect(value("sort([])")).toEqual([]);
+  });
+
+  it("maps an expression over a list", () => {
+    expect(value('map([1, 2, 3], "item * 2")')).toEqual([2, 4, 6]);
+    expect(value('map([1, 2], "item + index")')).toEqual([1, 3]);
+    expect(value('map([], "item")')).toEqual([]);
+  });
+
+  it("filters a list by an expression", () => {
+    expect(value('filter([1, 2, 3, 4], "item % 2 == 0")')).toEqual([2, 4]);
+    expect(value('filter(["a", "", "b"], "!empty(item)")')).toEqual(["a", "b"]);
+  });
+
+  it("composes list functions", () => {
+    expect(value('join(map([1, 2, 3], "item * 2"), ", ")')).toBe("2, 4, 6");
+    expect(value('length(filter(map([1, 2, 3], "item * 2"), "item > 2"))')).toBe(2);
+    expect(value("length([1, 2, 3])")).toBe(3);
+  });
+
+  it("maps over nested lists", () => {
+    expect(value("map([[1, 2], [3]], 'join(item, \"+\")')")).toEqual(["1+2", "3"]);
+  });
+
+  it("rejects non-list arguments with type mismatches", () => {
+    expect(errorOf('sort("abc")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('map(42, "item")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('filter(5, "item")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('join("x", ",")')).toBe("#ERROR: type mismatch");
+  });
+
+  it("requires string expressions for map and filter", () => {
+    expect(errorOf("map([1, 2], 5)")).toBe("#ERROR: type mismatch");
+    expect(errorOf("filter([1, 2], false)")).toBe("#ERROR: type mismatch");
+  });
+
+  it("propagates errors out of list literals and nested expressions", () => {
+    expect(errorOf("[1, 1 / 0]")).toBe("#ERROR: division by zero");
+    expect(errorOf('join([1 / 0, 2], ",")')).toBe("#ERROR: division by zero");
+    expect(errorOf('map([0, 1], "1 / item")')).toBe("#ERROR: division by zero");
+  });
+
+  it("bounds nested expression evaluation depth", () => {
+    let nested = "item";
+    for (let i = 0; i < 10; i += 1) {
+      nested = `map([1], "${nested.replace(/[\\"]/g, (char) => `\\${char}`)}")`;
+    }
+    expect(errorOf(nested)).toMatch(/nested too deeply/i);
+  });
+});
+
+describe("named constants", () => {
+  it("resolves constants by name", () => {
+    expect(value("PI * 2", {}, { PI: 3.14 })).toBe(6.28);
+    expect(value('concat(GREETING, " world")', {}, { GREETING: "hello" })).toBe("hello world");
+    expect(value("ACTIVE", {}, { ACTIVE: true })).toBe(true);
+  });
+
+  it("resolves constants case-insensitively", () => {
+    expect(value("tax_rate", {}, { TAX_RATE: 0.2 })).toBe(0.2);
+  });
+
+  it("supports list constants", () => {
+    expect(value('join(LETTERS, "-")', {}, { LETTERS: ["a", "b", "c"] })).toBe("a-b-c");
+    expect(value('map(PRICES, "item * 2")', {}, { PRICES: [1, 10] })).toEqual([2, 20]);
+  });
+
+  it("exposes constants to nested map and filter expressions", () => {
+    expect(value('map([1, 2], "item + FEE")', {}, { FEE: 10 })).toEqual([11, 12]);
+    expect(value('filter([1, 2], "item < LIMIT")', {}, { LIMIT: 2 })).toEqual([1]);
+  });
+
+  it("treats nullish constants as empty values", () => {
+    expect(value("empty(Settings)", {}, { Settings: null })).toBe(true);
+  });
+
+  it("errors on unknown identifiers and non-value constants", () => {
+    expect(errorOf("Budget", {}, { Tax: 0.2 })).toBe("#ERROR: unknown identifier 'Budget'");
+    expect(errorOf("Config", {}, { Config: { a: 1 } })).toBe("#ERROR: type mismatch");
+  });
+
+  it("keeps language keywords ahead of constants", () => {
+    expect(value("true", {}, { true: "shadowed" })).toBe(true);
   });
 });
