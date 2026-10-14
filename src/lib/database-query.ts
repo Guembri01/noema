@@ -65,11 +65,20 @@ export type Filter = {
 /** A filter tree node: a leaf filter, or an AND/OR group of nodes. */
 export type FilterNode = Filter | { and: FilterNode[] } | { or: FilterNode[] };
 
+/** Where a colour rule's tint lands: the whole row (default) or one cell. */
+export type ColorRuleTarget = "row" | "cell";
+
 export type ColorRule = {
   propertyId: string;
   operator: FilterOperator;
   value?: string;
   color: string;
+  /**
+   * `"row"` tints the whole row, `"cell"` tints only `propertyId`'s cell
+   * (`cellColorFor`). Absent means `"row"`, so rules saved before this field
+   * existed keep painting rows.
+   */
+  target?: ColorRuleTarget;
 };
 
 export type Sort = { propertyId: string; direction: "asc" | "desc" };
@@ -485,6 +494,8 @@ export function rowColor(
   if (!rules || rules.length === 0) return null;
   const byId = new Map(properties.map((p) => [p.id, p]));
   for (const rule of rules) {
+    // Cell rules paint one cell (`cellColorFor`), never the whole row.
+    if (rule.target === "cell") continue;
     const property = byId.get(rule.propertyId);
     if (!property) continue;
     if (matches(row, rule, property)) return rule.color;
@@ -696,6 +707,11 @@ function normalizeColorRule(input: unknown): ColorRule | null {
     color: record.color,
   };
   if (typeof record.value === "string") rule.value = record.value;
+  // Keep an explicit target; an absent/unknown one stays absent and reads as
+  // "row" downstream, so old configs round-trip unchanged.
+  if (record.target === "row" || record.target === "cell") {
+    rule.target = record.target;
+  }
   return rule;
 }
 

@@ -223,15 +223,16 @@ export function DatabaseView({
     );
 
   // The view's flat colour rules, adapted to the conditional-formatting engine
-  // (which wraps the condition in a `filter` and targets whole rows), so the
-  // TableView can tint row background/text via `evaluateRowColors`. The same
-  // list is handed to each `Cell` so any `"cell"`-target rules also render.
+  // (which wraps the condition in a `filter`), so the TableView can tint row
+  // background/text via `evaluateRowColors`. The same list is handed to each
+  // `Cell` so any `"cell"`-target rules also render. A rule with no `target`
+  // (or an unknown one) is treated as `"row"` for back-compat.
   const rowColorRules: RowColorRule[] = (viewConfig.colorRules ?? []).map((rule, index) => ({
     id: `view-color-${index}`,
     propertyId: rule.propertyId,
     filter: { propertyId: rule.propertyId, operator: rule.operator, value: rule.value },
     color: rule.color,
-    target: "row",
+    target: rule.target === "cell" ? "cell" : "row",
   }));
 
   // Column layout. The initial value is seeded from the legacy

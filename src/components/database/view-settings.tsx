@@ -748,6 +748,24 @@ export function ViewSettings({
                 </div>
                 <div className="flex items-center gap-1">
                   <select
+                    value={rule.target ?? "row"}
+                    aria-label="Color rule target"
+                    data-testid="color-rule-target"
+                    onChange={(e) =>
+                      onChange({
+                        colorRules: (config.colorRules ?? []).map((r, i) =>
+                          i === index
+                            ? { ...r, target: e.target.value as ColorRule["target"] }
+                            : r,
+                        ),
+                      })
+                    }
+                    className={cn(CONTROL_CLASS, "w-20")}
+                  >
+                    <option value="row">{t(locale, "rowLabel")}</option>
+                    <option value="cell">Cell</option>
+                  </select>
+                  <select
                     value={rule.operator}
                     onChange={(e) =>
                       onChange({
@@ -793,6 +811,7 @@ export function ViewSettings({
                       operator: "is",
                       value: "",
                       color: "blue",
+                      target: "row",
                     } as ColorRule,
                   ],
                 })

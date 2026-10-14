@@ -15,6 +15,9 @@ import { t } from "@/lib/i18n";
 import { clampWidth } from "@/lib/column-layout";
 import { validateCell } from "@/lib/cell-validation";
 import { cellColorFor, type RowColorRule } from "@/lib/row-color-rules";
+import { formatUniqueId } from "@/lib/unique-id";
+import { formatDateRange, parseDateValue } from "@/lib/date-range";
+import { formatGeo, parseGeo } from "@/lib/geo";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
 
@@ -79,6 +82,18 @@ export function PropertyHeader({
 }) {
   const isPrimary = Boolean(property.config?.primary);
   const currentFormat = property.config?.format ?? "";
+  // Widen to `string` once so a type the generated enum may not list yet
+  // (e.g. PLACE) can still reach its editor without a cast at every check.
+  const typeCode: string = property.type;
+  // Selecting…/multi/status configure options; DATE / UNIQUE_ID / PLACE
+  // configure their engine settings through the same dialog.
+  const hasOptionsEditor =
+    typeCode === "SELECT" ||
+    typeCode === "MULTI_SELECT" ||
+    typeCode === "STATUS" ||
+    typeCode === "DATE" ||
+    typeCode === "UNIQUE_ID" ||
+    typeCode === "PLACE";
   // Single shared clamp so the header agrees with `setColumnWidth`/`autoFitWidths`.
   const widthStyle = width === undefined ? undefined : { width: clampWidth(width) };
   if (editing) {
@@ -183,9 +198,7 @@ export function PropertyHeader({
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
             )}
-            {(property.type === "SELECT" ||
-              property.type === "MULTI_SELECT" ||
-              property.type === "STATUS") && (
+            {hasOptionsEditor && (
               <DropdownMenuItem
                 data-testid="edit-options"
                 onSelect={() => onEditOptions(property)}
@@ -278,6 +291,26 @@ export function PropertyHeader({
   );
 }
 
+/**
+ * The first positive integer carried by a stored UNIQUE_ID cell value, or
+ * `null` when it holds no counter. Accepts a number or a digits-only string so
+ * a value written as `{ number: 42 }`, `{ value: 42 }` or `{ text: "42" }`
+ * all format the same way.
+ */
+function uniqueIdNumber(value: unknown): number | null {
+  const v = (value ?? {}) as Record<string, unknown>;
+  for (const candidate of [v.number, v.value, v.text, v.id]) {
+    if (typeof candidate === "number" && Number.isInteger(candidate) && candidate >= 1) {
+      return candidate;
+    }
+    if (typeof candidate === "string" && /^\d+$/.test(candidate.trim())) {
+      const parsed = Number(candidate.trim());
+      if (Number.isSafeInteger(parsed) && parsed >= 1) return parsed;
+    }
+  }
+  return null;
+}
+
 export function Cell({
   property,
   value,
@@ -332,6 +365,9 @@ export function Cell({
   );
   const numberFormat = property.config?.format;
   const dateFormatted = property.config?.format === "friendly";
+  // Widened once so the switch can reach types the generated enum may not list
+  // yet (PLACE) without a cast on every case.
+  const typeCode: string = property.type;
 
   // Inline, non-blocking validation: any failure shows a red ring plus the
   // engine's message (as `title`), never an alert or a prevented edit.
@@ -393,7 +429,7 @@ export function Cell({
   };
 
   const content = (() => {
-  switch (property.type) {
+  switch (typeCode) {
     case "NUMBER": {
       const raw = typeof v.number === "number" ? v.number : null;
       const formatted =
@@ -474,50 +510,150 @@ export function Cell({
         />
       );
     case "DATE": {
-      if (dateFormatted) {
-        const text = formatCell(value, property);
-        if (!editable) {
+      const dateConfig = property.config?.date;
+      // Without a DATE config the single-date editor is byte-for-byte the
+      // original: existing properties (and every other caller) are unchanged.
+      if (!dateConfig) {
+        if (dateFormatted) {
+          const text = formatCell(value, property);
+          if (!editable) {
+            return (
+              <span aria-label={property.name} className="text-muted">
+                {text || "—"}
+              </span>
+            );
+          }
+          if (editingDate) {
+            return (
+              <input
+                autoFocus
+                type="date"
+                aria-label={property.name}
+                defaultValue={typeof v.start === "string" ? v.start.slice(0, 10) : ""}
+                onChange={(e) => {
+                  if (e.target.value) onChange({ start: e.target.value });
+                }}
+                onBlur={() => setEditingDate(false)}
+                className="bg-transparent outline-none"
+              />
+            );
+          }
           return (
-            <span aria-label={property.name} className="text-muted">
-              {text || "—"}
-            </span>
-          );
-        }
-        if (editingDate) {
-          return (
-            <input
-              autoFocus
-              type="date"
+            <button
+              type="button"
               aria-label={property.name}
-              defaultValue={typeof v.start === "string" ? v.start.slice(0, 10) : ""}
-              onChange={(e) => {
-                if (e.target.value) onChange({ start: e.target.value });
-              }}
-              onBlur={() => setEditingDate(false)}
-              className="bg-transparent outline-none"
-            />
+              onClick={() => setEditingDate(true)}
+              className="w-full rounded px-1 py-0.5 text-left hover:bg-surface-2"
+            >
+              {text || <span className="text-muted">—</span>}
+            </button>
           );
         }
         return (
-          <button
-            type="button"
+          <input
+            type="date"
             aria-label={property.name}
-            onClick={() => setEditingDate(true)}
-            className="w-full rounded px-1 py-0.5 text-left hover:bg-surface-2"
-          >
-            {text || <span className="text-muted">—</span>}
-          </button>
+            defaultValue={typeof v.start === "string" ? v.start.slice(0, 10) : ""}
+            readOnly={!editable}
+            onChange={(e) => onChange({ start: e.target.value })}
+            className="bg-transparent outline-none"
+          />
+        );
+      }
+
+      // Range/all-day aware editor driven by `@/lib/date-range`: the stored
+      // value is normalised with `parseDateValue` so display agrees with the
+      // engine, and `allDay`/`timeZone` defaults come from the property config.
+      const parsedRange = parseDateValue(value);
+      const rangeValue = parsedRange.ok ? parsedRange.value : null;
+      const startText = typeof v.start === "string" ? v.start : "";
+      const endText = typeof v.end === "string" ? v.end : "";
+      const allDayValue =
+        typeof v.allDay === "boolean" ? v.allDay : dateConfig.allDay ?? true;
+      const hasRange =
+        rangeValue !== null &&
+        typeof rangeValue.end === "string" &&
+        rangeValue.end !== rangeValue.start;
+      const label =
+        rangeValue && hasRange
+          ? formatDateRange(rangeValue)
+          : formatCell(value, property);
+      const commitDate = (patch: { start?: string; end?: string; allDay?: boolean }) => {
+        const nextStart = patch.start ?? startText;
+        if (nextStart.trim() === "") {
+          onChange(null);
+          return;
+        }
+        const next: Record<string, unknown> = {
+          start: nextStart,
+          allDay: patch.allDay ?? allDayValue,
+        };
+        const nextEnd = patch.end ?? endText;
+        if (dateConfig.allowRange && nextEnd) next.end = nextEnd;
+        if (dateConfig.timeZone) next.timeZone = dateConfig.timeZone;
+        onChange(next);
+      };
+      if (!editable) {
+        return (
+          <span aria-label={property.name} className="text-muted">
+            {label || "—"}
+          </span>
+        );
+      }
+      if (editingDate) {
+        return (
+          <div className="flex flex-col gap-1" role="group" aria-label={property.name}>
+            <div className="flex items-center gap-1">
+              <input
+                autoFocus
+                type="date"
+                aria-label={property.name}
+                defaultValue={startText.slice(0, 10)}
+                onChange={(e) => commitDate({ start: e.target.value })}
+                className="bg-transparent outline-none"
+              />
+              {dateConfig.allowRange && (
+                <>
+                  <span className="text-muted">–</span>
+                  <input
+                    type="date"
+                    aria-label={`${property.name} end`}
+                    defaultValue={endText.slice(0, 10)}
+                    onChange={(e) => commitDate({ end: e.target.value })}
+                    className="bg-transparent outline-none"
+                  />
+                </>
+              )}
+            </div>
+            <label className="flex items-center gap-1 text-xs text-muted">
+              <input
+                type="checkbox"
+                aria-label={t(locale, "allDayWord")}
+                checked={allDayValue}
+                onChange={(e) => commitDate({ allDay: e.target.checked })}
+                className="accent-[var(--accent)]"
+              />
+              {t(locale, "allDayWord")}
+            </label>
+            <button
+              type="button"
+              onClick={() => setEditingDate(false)}
+              className="self-start text-xs text-accent hover:underline"
+            >
+              {t(locale, "close")}
+            </button>
+          </div>
         );
       }
       return (
-        <input
-          type="date"
+        <button
+          type="button"
           aria-label={property.name}
-          defaultValue={typeof v.start === "string" ? v.start.slice(0, 10) : ""}
-          readOnly={!editable}
-          onChange={(e) => onChange({ start: e.target.value })}
-          className="bg-transparent outline-none"
-        />
+          onClick={() => setEditingDate(true)}
+          className="w-full rounded px-1 py-0.5 text-left hover:bg-surface-2"
+        >
+          {label || <span className="text-muted">—</span>}
+        </button>
       );
     }
     case "SELECT":
@@ -687,7 +823,6 @@ export function Cell({
     case "LAST_EDITED_TIME":
     case "CREATED_BY":
     case "LAST_EDITED_BY":
-    case "UNIQUE_ID":
       // Read-only, but addressable: the row UI must be assertable for
       // created/last-edited surfacing (and screen readers get the name too).
       return (
@@ -695,6 +830,51 @@ export function Cell({
           {computed && computed.length > 0 ? computed : "—"}
         </span>
       );
+    case "UNIQUE_ID": {
+      // Read-only, derived display: format the stored counter with the
+      // property's Unique ID config (`@/lib/unique-id`). With no config (or no
+      // numeric id) it falls back to the caller-computed value, so existing
+      // rows render exactly as before.
+      const number = uniqueIdNumber(value);
+      const uniqueId = property.config?.uniqueId;
+      if (number !== null && uniqueId) {
+        let text = computed ?? "";
+        try {
+          text = formatUniqueId({ prefix: "", ...uniqueId }, number);
+        } catch {
+          text = computed ?? "";
+        }
+        return (
+          <span aria-label={property.name} className="text-muted">
+            {text || "—"}
+          </span>
+        );
+      }
+      return (
+        <span aria-label={property.name} className="text-muted">
+          {computed && computed.length > 0 ? computed : "—"}
+        </span>
+      );
+    }
+    case "PLACE": {
+      // Guarded because PLACE may not be in the generated `PropertyType` enum
+      // yet: a `{ lat, lng }` object or a `"lat, lng"` string renders
+      // read-only; anything unparseable stays blank.
+      const place = parseGeo(value);
+      if (!place.ok) {
+        return (
+          <span aria-label={property.name} className="text-muted">
+            —
+          </span>
+        );
+      }
+      return (
+        <span aria-label={property.name} className="text-muted">
+          {place.value.label ? `${place.value.label} · ` : ""}
+          {formatGeo(place.value)}
+        </span>
+      );
+    }
     case "RELATION": {
       const options = relationOptions ?? [];
       const selected = (v.pageIds as string[]) ?? [];
