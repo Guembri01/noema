@@ -323,3 +323,131 @@ describe("i18n duplicate-key detection", () => {
     });
   });
 });
+
+/**
+ * P2.1 — editor-surface strings. Keys extracted from the editor toolbar, the
+ * bubble menu, the slash-command menu, the block context menu, the mention
+ * menu and the equation editor. Written red-first in the i18n tranche: these
+ * assertions fail until the keys land in all five catalogues.
+ */
+type I18nKey = Parameters<typeof t>[1];
+
+const EDITOR_SURFACE_KEYS = [
+  "blockText",
+  "blockHeading1",
+  "blockHeading2",
+  "blockHeading3",
+  "blockHeading4",
+  "blockHeading5",
+  "blockHeading6",
+  "blockBulletedList",
+  "blockNumberedList",
+  "blockTodoList",
+  "blockToggleList",
+  "blockToggle",
+  "blockQuote",
+  "blockCallout",
+  "blockColumns",
+  "blockTable",
+  "blockImage",
+  "blockBookmark",
+  "blockEmbed",
+  "blockBreadcrumb",
+  "blockSyncedView",
+  "blockLinkedDatabase",
+  "blockTemplateButton",
+  "blockEquation",
+  "blockTableOfContents",
+  "blockDivider",
+  "paragraphHint",
+  "heading1Hint",
+  "heading2Hint",
+  "heading3Hint",
+  "heading4Hint",
+  "heading5Hint",
+  "heading6Hint",
+  "bulletedListHint",
+  "numberedListHint",
+  "todoListHint",
+  "calloutHint",
+  "toggleHint",
+  "columnsHint",
+  "quoteHint",
+  "codeBlockHint",
+  "tableHint",
+  "imageHint",
+  "bookmarkHint",
+  "embedHint",
+  "breadcrumbHint",
+  "syncedViewHint",
+  "linkedDatabaseHint",
+  "templateButtonHint",
+  "askAiHint",
+  "equationHint",
+  "tocHint",
+  "dividerHint",
+  "slashBasicBlocks",
+  "mentionHeading",
+  "turnInto",
+  "colorLabel",
+  "backgroundLabel",
+  "clearHighlight",
+  "editEquation",
+  "moveUp",
+  "moveDown",
+  "copyLinkToBlock",
+  "blockDuplicated",
+  "blockDeleted",
+  "nothingToWorkWith",
+  "colorDefault",
+  "colorGray",
+  "colorBrown",
+  "colorOrange",
+  "colorYellow",
+  "colorGreen",
+  "colorBlue",
+  "colorPurple",
+  "colorPink",
+  "colorRed",
+  "colorNone",
+  "selectTextFirst",
+  "linkPastePlaceholder",
+  "equationTitle",
+  "blockEquationTitle",
+  "latexSyntaxHint",
+  "latexSourceAria",
+  "apply",
+  "saving",
+  "saveFailed",
+  "retry",
+  "liveWord",
+  "uploadedPrefix",
+  "uploadFailed",
+] as const satisfies readonly I18nKey[];
+
+describe("editor-surface catalogue keys", () => {
+  it("defines every editor-surface key in every locale, with no empty value", () => {
+    for (const key of EDITOR_SURFACE_KEYS) {
+      expect({ key, present: translationKeys().includes(key) }).toEqual({ key, present: true });
+      for (const { code } of LOCALES) {
+        expect({ key, code, value: t(code, key).trim() }).toEqual({
+          key,
+          code,
+          value: expect.any(String),
+        });
+        expect(t(code, key).trim()).not.toBe("");
+      }
+    }
+  });
+
+  it("translates each editor-surface key in at least one shipped locale", () => {
+    // Guards against copying the English value into every catalogue: for each
+    // key, at least one non-English shipped locale must differ from English.
+    for (const key of EDITOR_SURFACE_KEYS) {
+      const localised = LOCALES.some(
+        ({ code }) => code !== "en" && t(code, key) !== t("en", key),
+      );
+      expect({ key, localised }).toEqual({ key, localised: true });
+    }
+  });
+});

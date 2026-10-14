@@ -36,14 +36,20 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EQUATION_EVENT } from "@/components/editor/equation-editor";
+import { t } from "@/lib/i18n";
 
 /* ---------------------------------------------------------------------------
    Slash menu
    --------------------------------------------------------------------------- */
 
+type I18nKey = Parameters<typeof t>[1];
+
 type SlashItem = {
+  /** Stable English label — kept for keyword ranking and React keys. */
   label: string;
+  labelKey: I18nKey;
   hint: string;
+  hintKey: I18nKey;
   icon: React.ReactNode;
   keywords: string;
   run?: (chain: ReturnType<Editor["chain"]>) => void;
@@ -51,41 +57,43 @@ type SlashItem = {
 };
 
 const SLASH_ITEMS: SlashItem[] = [
-  { label: "Text", hint: "Plain paragraph", icon: <Pilcrow className="h-4 w-4" />, keywords: "text paragraph body", run: (c) => c.setParagraph().run() },
-  { label: "Heading 1", hint: "Large heading", icon: <Heading1 className="h-4 w-4" />, keywords: "h1 title", run: (c) => c.toggleHeading({ level: 1 }).run() },
-  { label: "Heading 2", hint: "Medium heading", icon: <Heading2 className="h-4 w-4" />, keywords: "h2 subtitle", run: (c) => c.toggleHeading({ level: 2 }).run() },
-  { label: "Heading 3", hint: "Small heading", icon: <Heading3 className="h-4 w-4" />, keywords: "h3", run: (c) => c.toggleHeading({ level: 3 }).run() },
-  { label: "Heading 4", hint: "Extra small heading", icon: <Heading4 className="h-4 w-4" />, keywords: "h4 small", run: (c) => c.toggleHeading({ level: 4 }).run() },
-  { label: "Heading 5", hint: "Tiny heading", icon: <Heading5 className="h-4 w-4" />, keywords: "h5 tiny", run: (c) => c.toggleHeading({ level: 5 }).run() },
-  { label: "Heading 6", hint: "Smallest heading", icon: <Heading6 className="h-4 w-4" />, keywords: "h6 smallest", run: (c) => c.toggleHeading({ level: 6 }).run() },
-  { label: "Bulleted list", hint: "Unordered list", icon: <List className="h-4 w-4" />, keywords: "bullet ul list", run: (c) => c.toggleBulletList().run() },
-  { label: "Numbered list", hint: "Ordered list", icon: <ListOrdered className="h-4 w-4" />, keywords: "number ol list", run: (c) => c.toggleOrderedList().run() },
-  { label: "To-do list", hint: "Checklist", icon: <ListTodo className="h-4 w-4" />, keywords: "todo task checkbox", run: (c) => c.toggleTaskList().run() },
-  { label: "Callout", hint: "Emphasised box", icon: <Lightbulb className="h-4 w-4" />, keywords: "callout note info", run: (c) => c.setCallout({ emoji: "💡" }).run() },
-  { label: "Toggle", hint: "Collapsible block", icon: <ChevronRight className="h-4 w-4" />, keywords: "toggle collapse fold", run: (c) => c.setToggle({}).run() },
-  { label: "Columns", hint: "Side-by-side layout", icon: <Columns2 className="h-4 w-4" />, keywords: "columns layout grid", run: (c) => c.setColumns(2).run() },
-  { label: "Quote", hint: "Capture a quote", icon: <Quote className="h-4 w-4" />, keywords: "quote blockquote", run: (c) => c.toggleBlockquote().run() },
-  { label: "Code", hint: "Code block", icon: <SquareCode className="h-4 w-4" />, keywords: "code snippet", run: (c) => c.toggleCodeBlock().run() },
-  { label: "Table", hint: "3×3 table", icon: <TableIcon className="h-4 w-4" />, keywords: "table grid rows", run: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
-  { label: "Image", hint: "Upload or embed", icon: <ImagePlus className="h-4 w-4" />, keywords: "image picture photo upload file", action: () => {} },
-  { label: "Bookmark", hint: "Link preview card", icon: <BookmarkIcon className="h-4 w-4" />, keywords: "bookmark link card url", run: (c) => c.setBookmark().run() },
-  { label: "Embed", hint: "YouTube, Vimeo, Figma…", icon: <Video className="h-4 w-4" />, keywords: "embed video iframe youtube vimeo", run: (c) => c.setEmbed().run() },
-  { label: "Breadcrumb", hint: "Parent page trail", icon: <Compass className="h-4 w-4" />, keywords: "breadcrumb path trail navigation", run: (c) => c.setBreadcrumb().run() },
-  { label: "Synced view", hint: "Mirror another page", icon: <Layers className="h-4 w-4" />, keywords: "synced view transclusion mirror page", run: (c) => c.setPageEmbed().run() },
-  { label: "Linked database", hint: "Embed a database", icon: <Layers className="h-4 w-4" />, keywords: "linked database embed view", run: (c) => c.setLinkedDatabase().run() },
-  { label: "Template button", hint: "Insert a template", icon: <Copy className="h-4 w-4" />, keywords: "template button snippet meeting tasks", run: (c) => c.setTemplateButton({ templateId: "meeting" }).run() },
-  { label: "Ask AI", hint: "Prompt the assistant", icon: <Sparkles className="h-4 w-4" />, keywords: "ai ask assistant generate", run: (c) => c.setAskAi({}).run() },
-  { label: "Equation", hint: "Block math", icon: <Sigma className="h-4 w-4" />, keywords: "equation math latex katex", run: () => window.dispatchEvent(new CustomEvent(EQUATION_EVENT, { detail: { kind: "block" } })) },
-  { label: "Table of contents", hint: "Outline of headings", icon: <ListTree className="h-4 w-4" />, keywords: "toc outline contents", run: (c) => c.setTableOfContents().run() },
-  { label: "Divider", hint: "Visual separator", icon: <Minus className="h-4 w-4" />, keywords: "divider hr separator", run: (c) => c.setHorizontalRule().run() },
+  { label: "Text", labelKey: "blockText", hint: "Plain paragraph", hintKey: "paragraphHint", icon: <Pilcrow className="h-4 w-4" />, keywords: "text paragraph body", run: (c) => c.setParagraph().run() },
+  { label: "Heading 1", labelKey: "blockHeading1", hint: "Large heading", hintKey: "heading1Hint", icon: <Heading1 className="h-4 w-4" />, keywords: "h1 title", run: (c) => c.toggleHeading({ level: 1 }).run() },
+  { label: "Heading 2", labelKey: "blockHeading2", hint: "Medium heading", hintKey: "heading2Hint", icon: <Heading2 className="h-4 w-4" />, keywords: "h2 subtitle", run: (c) => c.toggleHeading({ level: 2 }).run() },
+  { label: "Heading 3", labelKey: "blockHeading3", hint: "Small heading", hintKey: "heading3Hint", icon: <Heading3 className="h-4 w-4" />, keywords: "h3", run: (c) => c.toggleHeading({ level: 3 }).run() },
+  { label: "Heading 4", labelKey: "blockHeading4", hint: "Extra small heading", hintKey: "heading4Hint", icon: <Heading4 className="h-4 w-4" />, keywords: "h4 small", run: (c) => c.toggleHeading({ level: 4 }).run() },
+  { label: "Heading 5", labelKey: "blockHeading5", hint: "Tiny heading", hintKey: "heading5Hint", icon: <Heading5 className="h-4 w-4" />, keywords: "h5 tiny", run: (c) => c.toggleHeading({ level: 5 }).run() },
+  { label: "Heading 6", labelKey: "blockHeading6", hint: "Smallest heading", hintKey: "heading6Hint", icon: <Heading6 className="h-4 w-4" />, keywords: "h6 smallest", run: (c) => c.toggleHeading({ level: 6 }).run() },
+  { label: "Bulleted list", labelKey: "blockBulletedList", hint: "Unordered list", hintKey: "bulletedListHint", icon: <List className="h-4 w-4" />, keywords: "bullet ul list", run: (c) => c.toggleBulletList().run() },
+  { label: "Numbered list", labelKey: "blockNumberedList", hint: "Ordered list", hintKey: "numberedListHint", icon: <ListOrdered className="h-4 w-4" />, keywords: "number ol list", run: (c) => c.toggleOrderedList().run() },
+  { label: "To-do list", labelKey: "blockTodoList", hint: "Checklist", hintKey: "todoListHint", icon: <ListTodo className="h-4 w-4" />, keywords: "todo task checkbox", run: (c) => c.toggleTaskList().run() },
+  { label: "Callout", labelKey: "blockCallout", hint: "Emphasised box", hintKey: "calloutHint", icon: <Lightbulb className="h-4 w-4" />, keywords: "callout note info", run: (c) => c.setCallout({ emoji: "💡" }).run() },
+  { label: "Toggle", labelKey: "blockToggle", hint: "Collapsible block", hintKey: "toggleHint", icon: <ChevronRight className="h-4 w-4" />, keywords: "toggle collapse fold", run: (c) => c.setToggle({}).run() },
+  { label: "Columns", labelKey: "blockColumns", hint: "Side-by-side layout", hintKey: "columnsHint", icon: <Columns2 className="h-4 w-4" />, keywords: "columns layout grid", run: (c) => c.setColumns(2).run() },
+  { label: "Quote", labelKey: "blockQuote", hint: "Capture a quote", hintKey: "quoteHint", icon: <Quote className="h-4 w-4" />, keywords: "quote blockquote", run: (c) => c.toggleBlockquote().run() },
+  { label: "Code", labelKey: "code", hint: "Code block", hintKey: "codeBlockHint", icon: <SquareCode className="h-4 w-4" />, keywords: "code snippet", run: (c) => c.toggleCodeBlock().run() },
+  { label: "Table", labelKey: "blockTable", hint: "3×3 table", hintKey: "tableHint", icon: <TableIcon className="h-4 w-4" />, keywords: "table grid rows", run: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+  { label: "Image", labelKey: "blockImage", hint: "Upload or embed", hintKey: "imageHint", icon: <ImagePlus className="h-4 w-4" />, keywords: "image picture photo upload file", action: () => {} },
+  { label: "Bookmark", labelKey: "blockBookmark", hint: "Link preview card", hintKey: "bookmarkHint", icon: <BookmarkIcon className="h-4 w-4" />, keywords: "bookmark link card url", run: (c) => c.setBookmark().run() },
+  { label: "Embed", labelKey: "blockEmbed", hint: "YouTube, Vimeo, Figma…", hintKey: "embedHint", icon: <Video className="h-4 w-4" />, keywords: "embed video iframe youtube vimeo", run: (c) => c.setEmbed().run() },
+  { label: "Breadcrumb", labelKey: "blockBreadcrumb", hint: "Parent page trail", hintKey: "breadcrumbHint", icon: <Compass className="h-4 w-4" />, keywords: "breadcrumb path trail navigation", run: (c) => c.setBreadcrumb().run() },
+  { label: "Synced view", labelKey: "blockSyncedView", hint: "Mirror another page", hintKey: "syncedViewHint", icon: <Layers className="h-4 w-4" />, keywords: "synced view transclusion mirror page", run: (c) => c.setPageEmbed().run() },
+  { label: "Linked database", labelKey: "blockLinkedDatabase", hint: "Embed a database", hintKey: "linkedDatabaseHint", icon: <Layers className="h-4 w-4" />, keywords: "linked database embed view", run: (c) => c.setLinkedDatabase().run() },
+  { label: "Template button", labelKey: "blockTemplateButton", hint: "Insert a template", hintKey: "templateButtonHint", icon: <Copy className="h-4 w-4" />, keywords: "template button snippet meeting tasks", run: (c) => c.setTemplateButton({ templateId: "meeting" }).run() },
+  { label: "Ask AI", labelKey: "askAI", hint: "Prompt the assistant", hintKey: "askAiHint", icon: <Sparkles className="h-4 w-4" />, keywords: "ai ask assistant generate", run: (c) => c.setAskAi({}).run() },
+  { label: "Equation", labelKey: "blockEquation", hint: "Block math", hintKey: "equationHint", icon: <Sigma className="h-4 w-4" />, keywords: "equation math latex katex", run: () => window.dispatchEvent(new CustomEvent(EQUATION_EVENT, { detail: { kind: "block" } })) },
+  { label: "Table of contents", labelKey: "blockTableOfContents", hint: "Outline of headings", hintKey: "tocHint", icon: <ListTree className="h-4 w-4" />, keywords: "toc outline contents", run: (c) => c.setTableOfContents().run() },
+  { label: "Divider", labelKey: "blockDivider", hint: "Visual separator", hintKey: "dividerHint", icon: <Minus className="h-4 w-4" />, keywords: "divider hr separator", run: (c) => c.setHorizontalRule().run() },
 ];
 
 export function SlashMenu({
   editor,
   onPickImage,
+  locale = "en",
 }: {
   editor: Editor;
   onPickImage: () => void;
+  locale?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -195,7 +203,7 @@ export function SlashMenu({
       style={{ left: pos.x, top: pos.y }}
     >
       <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted">
-        Basic blocks
+        {t(locale, "slashBasicBlocks")}
       </p>
       {items.map((item, index) => (
         <button
@@ -213,8 +221,8 @@ export function SlashMenu({
             {item.icon}
           </span>
           <span className="flex-1">
-            <span className="block font-medium">{item.label}</span>
-            <span className="block text-xs text-muted">{item.hint}</span>
+            <span className="block font-medium">{t(locale, item.labelKey)}</span>
+            <span className="block text-xs text-muted">{t(locale, item.hintKey)}</span>
           </span>
           {index === active && <CornerDownLeft className="h-3.5 w-3.5 text-muted" />}
         </button>

@@ -72,6 +72,7 @@ import { BubbleToolbar } from "@/components/editor/bubble-toolbar";
 import { SlashMenu } from "@/components/editor/slash-menu";
 import { HistoryControls } from "@/components/editor/history-controls";
 import { MentionMenu } from "@/components/editor/mention-menu";
+import { t } from "@/lib/i18n";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -165,13 +166,13 @@ export function PageEditor({
               ])
               .run();
           }
-          toast.success(`Uploaded ${asset.name}`);
+          toast.success(`${t(locale, "uploadedPrefix")} ${asset.name}`);
         } catch (error) {
-          toast.error(error instanceof Error ? error.message : "Upload failed");
+          toast.error(error instanceof Error ? error.message : t(locale, "uploadFailed"));
         }
       }
     },
-    [workspaceId],
+    [workspaceId, locale],
   );
 
   const collabUrl = process.env.NEXT_PUBLIC_COLLAB_URL ?? "";
@@ -223,7 +224,7 @@ export function PageEditor({
       }),
       CodeBlock,
       Placeholder.configure({
-        placeholder: editorPlaceholder ?? "Type '/' for commands, '@' to mention…",
+        placeholder: editorPlaceholder ?? t(locale, "editorPlaceholder"),
       }),
       TaskList,
       TaskItem.configure({ nested: true }),
@@ -435,6 +436,7 @@ export function PageEditor({
             <BubbleToolbar
               editor={editor}
               workspaceId={workspaceId}
+              locale={locale}
               onPanelOpenChange={setBubblePanelOpen}
             />
           </BubbleMenu>
@@ -458,18 +460,19 @@ export function PageEditor({
         </>
       )}
 
-      <BlockContextMenu editor={editor} editable={editable} workspaceId={workspaceId}>
+      <BlockContextMenu editor={editor} editable={editable} workspaceId={workspaceId} locale={locale}>
         <EditorContent editor={editor} />
       </BlockContextMenu>
 
       {editable && (
         <>
-          <EquationEditor editor={editor} />
+          <EquationEditor editor={editor} locale={locale} />
           <SlashMenu
             editor={editor}
+            locale={locale}
             onPickImage={() => fileInputRef.current?.click()}
           />
-          <MentionMenu editor={editor} workspaceId={workspaceId} />
+          <MentionMenu editor={editor} workspaceId={workspaceId} locale={locale} />
           <input
             ref={fileInputRef}
             type="file"
@@ -488,20 +491,20 @@ export function PageEditor({
         {collab && (
           <span className="flex items-center gap-1 rounded bg-surface px-1.5 py-0.5">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Live · {peers}
+            {t(locale, "liveWord")} · {peers}
           </span>
         )}
-        {saveState === "saving" && "Saving…"}
-        {saveState === "saved" && "Saved"}
+        {saveState === "saving" && t(locale, "saving")}
+        {saveState === "saved" && t(locale, "savedWord")}
         {saveState === "error" && (
           <span className="pointer-events-auto flex items-center gap-1 text-red-500">
-            Save failed
+            {t(locale, "saveFailed")}
             <button
               type="button"
               onClick={() => void runSave()}
               className="rounded border border-border px-1 text-xs text-fg hover:bg-surface-2"
             >
-              Retry
+              {t(locale, "retry")}
             </button>
           </span>
         )}

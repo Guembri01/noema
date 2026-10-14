@@ -30,29 +30,31 @@ import { runAiSkill } from "@/lib/ai-client";
 import { Tooltip } from "@/components/ui/tooltip";
 import { t } from "@/lib/i18n";
 
-const TEXT_COLORS = [
-  { label: "Default", value: null },
-  { label: "Gray", value: "#787774" },
-  { label: "Brown", value: "#9f6b53" },
-  { label: "Orange", value: "#d9730d" },
-  { label: "Yellow", value: "#cb912f" },
-  { label: "Green", value: "#448361" },
-  { label: "Blue", value: "#337ea9" },
-  { label: "Purple", value: "#9065b0" },
-  { label: "Pink", value: "#c14c8a" },
-  { label: "Red", value: "#d44c47" },
+type I18nKey = Parameters<typeof t>[1];
+
+const TEXT_COLORS: { labelKey: I18nKey; value: string | null }[] = [
+  { labelKey: "colorDefault", value: null },
+  { labelKey: "colorGray", value: "#787774" },
+  { labelKey: "colorBrown", value: "#9f6b53" },
+  { labelKey: "colorOrange", value: "#d9730d" },
+  { labelKey: "colorYellow", value: "#cb912f" },
+  { labelKey: "colorGreen", value: "#448361" },
+  { labelKey: "colorBlue", value: "#337ea9" },
+  { labelKey: "colorPurple", value: "#9065b0" },
+  { labelKey: "colorPink", value: "#c14c8a" },
+  { labelKey: "colorRed", value: "#d44c47" },
 ];
 
-const HIGHLIGHTS = [
-  { label: "None", value: null },
-  { label: "Gray", value: "#e3e2e0" },
-  { label: "Yellow", value: "#fdecc8" },
-  { label: "Green", value: "#dbeddb" },
-  { label: "Blue", value: "#d3e5ef" },
-  { label: "Purple", value: "#e8deee" },
-  { label: "Pink", value: "#f5e0e9" },
-  { label: "Red", value: "#ffe2dd" },
-  { label: "Orange", value: "#fadec9" },
+const HIGHLIGHTS: { labelKey: I18nKey; value: string | null }[] = [
+  { labelKey: "colorNone", value: null },
+  { labelKey: "colorGray", value: "#e3e2e0" },
+  { labelKey: "colorYellow", value: "#fdecc8" },
+  { labelKey: "colorGreen", value: "#dbeddb" },
+  { labelKey: "colorBlue", value: "#d3e5ef" },
+  { labelKey: "colorPurple", value: "#e8deee" },
+  { labelKey: "colorPink", value: "#f5e0e9" },
+  { labelKey: "colorRed", value: "#ffe2dd" },
+  { labelKey: "colorOrange", value: "#fadec9" },
 ];
 
 /* ---------------------------------------------------------------------------
@@ -148,7 +150,7 @@ export function BubbleToolbar({
     const { from, to } = editor.state.selection;
     const text = editor.state.doc.textBetween(from, to, "\n").trim();
     if (!text) {
-      toast.error("Select some text first.");
+      toast.error(t(locale, "selectTextFirst"));
       return;
     }
     const skill = AI_SKILLS.find((candidate) => candidate.id === id);
@@ -260,7 +262,7 @@ export function BubbleToolbar({
             }
             if (e.key === "Escape") setLinkOpen(false);
           }}
-          placeholder="Paste a link…"
+          placeholder={t(locale, "linkPastePlaceholder")}
           className="ml-1 h-7 w-44 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
         />
       )}
@@ -319,10 +321,10 @@ export function BubbleToolbar({
               <div className="flex items-center gap-1">
                 {(panel === "color" ? TEXT_COLORS : HIGHLIGHTS).map((choice) => (
                   <button
-                    key={choice.label}
+                    key={choice.labelKey}
                     type="button"
-                    title={choice.label}
-                    aria-label={choice.label}
+                    title={t(locale, choice.labelKey)}
+                    aria-label={t(locale, choice.labelKey)}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() =>
                       panel === "color"
