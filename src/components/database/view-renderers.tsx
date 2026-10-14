@@ -286,6 +286,13 @@ export function TableView({
                         }
                         editable={editable}
                         onChange={(v) => setValue(row.id, property.id, v)}
+                        // Conditional formatting: the same rules that tint the
+                        // row are offered to the cell so `"cell"`-target rules
+                        // (which `evaluateRowColors` ignores) paint their cell;
+                        // the full row + schema let a rule read other cells.
+                        colorRules={rowColorRules}
+                        row={row}
+                        properties={properties}
                       />
                     )}
                   </td>

@@ -46,6 +46,7 @@ import {
 import { evaluateFormula } from "@/lib/formula";
 import { aggregate, type RollupFunction } from "@/lib/rollup";
 import type { RowColorRule } from "@/lib/row-color-rules";
+import { mergeLayout, type ColumnLayout } from "@/lib/column-layout";
 import type { RelationData } from "@/server/queries";
 import {
   DropdownMenu,
@@ -143,6 +144,12 @@ export function DatabaseView({
   const csvInputRef = useRef<HTMLInputElement | null>(null);
   /** Latest intended view config while a save is still in flight (see below). */
   const pendingConfig = useRef<ViewConfig | undefined>(undefined);
+  /**
+   * In-session column layout (order/widths/hidden) per view. Like the manual
+   * row order below it is remembered for the session and seeded from the legacy
+   * `visiblePropertyIds`, so the settings popover and the table agree.
+   */
+  const [layoutByView, setLayoutByView] = useState<Record<string, ColumnLayout>>({});
 
   // The open tab is part of the view state: remember it per database so a
   // reload lands on the same tab instead of always resetting to the first one.
@@ -217,7 +224,8 @@ export function DatabaseView({
 
   // The view's flat colour rules, adapted to the conditional-formatting engine
   // (which wraps the condition in a `filter` and targets whole rows), so the
-  // TableView can tint row background/text via `evaluateRowColors`.
+  // TableView can tint row background/text via `evaluateRowColors`. The same
+  // list is handed to each `Cell` so any `"cell"`-target rules also render.
   const rowColorRules: RowColorRule[] = (viewConfig.colorRules ?? []).map((rule, index) => ({
     id: `view-color-${index}`,
     propertyId: rule.propertyId,
@@ -225,6 +233,50 @@ export function DatabaseView({
     color: rule.color,
     target: "row",
   }));
+
+  // Column layout. The initial value is seeded from the legacy
+  // `visiblePropertyIds` list (views saved before layouts existed) so an
+  // untouched view still shows exactly the same columns; `mergeLayout` then
+  // extends it with any columns the schema has gained since it was saved.
+  const hiddenPropertyIds = viewConfig.visiblePropertyIds;
+  const configLayout: ColumnLayout = {
+    order: [],
+    widths: {},
+    hidden:
+      hiddenPropertyIds === undefined
+        ? {}
+        : Object.fromEntries(
+            properties
+              .filter(
+                (property) =>
+                  !property.config?.primary &&
+                  !hiddenPropertyIds.includes(property.id),
+              )
+              .map((property) => [property.id, true] as const),
+          ),
+  };
+  const columnIds = properties.map((property) => property.id);
+  const layout = mergeLayout(
+    (activeView && layoutByView[activeView.id]) || configLayout,
+    columnIds,
+  );
+
+  /**
+   * Persist a column layout: remember it for this view so the popover reflects
+   * the toggle immediately, and mirror the resulting visibility into the stored
+   * `visiblePropertyIds` — the table renders from the view config, so this is
+   * what hides/shows the column and what survives a reload.
+   */
+  const onLayoutChange = (next: ColumnLayout) => {
+    if (!activeView) return;
+    const merged = mergeLayout(next, columnIds);
+    setLayoutByView((previous) => ({ ...previous, [activeView.id]: merged }));
+    setViewConfig({
+      visiblePropertyIds: merged.order.filter(
+        (id) => id !== primary?.id && merged.hidden[id] !== true,
+      ),
+    });
+  };
 
   // Local, optimistic manual row order, scoped per view so switching tabs never
   // re-applies one view's order to another. Persisting it is a server concern
@@ -717,6 +769,8 @@ export function DatabaseView({
           config={viewConfig}
           editable={editable}
           onChange={setViewConfig}
+          layout={layout}
+          onLayoutChange={onLayoutChange}
         />
         <div className="flex flex-wrap items-center gap-1">
           {editable && (
