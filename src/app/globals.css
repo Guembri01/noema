@@ -1,0 +1,1763 @@
+@import "tailwindcss";
+
+/* Class-based dark mode (next-themes sets `.dark` on <html>). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-sidebar: var(--sidebar);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-selection: var(--selection);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+:root {
+  /* Notion-like neutral palette */
+  --bg: #ffffff;
+  --sidebar: #f7f7f5;
+  --surface: #f1f1ef;
+  --surface-2: #eeeeec;
+  --border: #e9e9e7;
+  --fg: #37352f;
+  --muted: #6b6a65;
+  --accent: #1a75d2;
+  --accent-fg: #ffffff;
+  --selection: #b8d7fb;
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Helvetica, "Apple Color Emoji", Arial, sans-serif;
+  --font-mono: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.dark {
+  --bg: #191919;
+  --sidebar: #202020;
+  --surface: #2c2c2c;
+  --surface-2: #333333;
+  --border: #2f2f2f;
+  --fg: rgba(255, 255, 255, 0.81);
+  --muted: rgba(255, 255, 255, 0.52);
+  --accent: #4c9bea;
+  --accent-fg: #191919;
+  --selection: #1f4a7a;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  border-color: var(--border);
+}
+
+::selection {
+  background: var(--selection);
+}
+
+/* Thin, unobtrusive scrollbars. */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--muted) 35%, transparent);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--muted) 55%, transparent);
+  background-clip: content-box;
+}
+
+/* ---------------------------------------------------------------------------
+   Editor content — Notion-like typography and rhythm
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror {
+  outline: none;
+  min-height: 2rem;
+  line-height: 1.6;
+  font-size: 16px;
+  word-break: break-word;
+  caret-color: var(--fg);
+}
+
+/* Text selection inside the editor mirrors the app's selection colour. */
+.noema-editor .ProseMirror ::selection,
+.noema-editor .ProseMirror::selection {
+  background: var(--selection);
+}
+
+/* Block context-menu target: keep the hovered block from looking shifted. */
+.noema-editor .ProseMirror .ProseMirror-selectednode {
+  outline: none;
+}
+
+/* Notion-style text cursor: a thin caret, not the default I-beam shape. */
+.noema-editor .ProseMirror p,
+.noema-editor .ProseMirror h1,
+.noema-editor .ProseMirror h2,
+.noema-editor .ProseMirror h3,
+.noema-editor .ProseMirror h4,
+.noema-editor .ProseMirror h5,
+.noema-editor .ProseMirror h6,
+.noema-editor .ProseMirror li {
+  cursor: text;
+}
+
+.noema-editor .ProseMirror > * + * {
+  margin-top: 2px;
+}
+
+.noema-editor .ProseMirror p {
+  padding: 3px 2px;
+  margin: 0;
+}
+
+.noema-editor .ProseMirror h1 {
+  font-size: 1.875rem;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1.4rem 0 0;
+  padding: 3px 2px;
+}
+.noema-editor .ProseMirror h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.2rem 0 0;
+  padding: 3px 2px;
+}
+.noema-editor .ProseMirror h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1rem 0 0;
+  padding: 3px 2px;
+}
+.noema-editor .ProseMirror h4 {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0.9rem 0 0;
+  padding: 3px 2px;
+}
+.noema-editor .ProseMirror h5 {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0.8rem 0 0;
+  padding: 3px 2px;
+}
+.noema-editor .ProseMirror h6 {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0.7rem 0 0;
+  padding: 3px 2px;
+}
+
+.noema-editor .ProseMirror ul,
+.noema-editor .ProseMirror ol {
+  padding-left: 1.7rem;
+  margin: 2px 0;
+}
+.noema-editor .ProseMirror ul {
+  list-style: disc;
+}
+.noema-editor .ProseMirror ol {
+  list-style: decimal;
+}
+.noema-editor .ProseMirror li > p {
+  padding: 3px 0;
+}
+
+.noema-editor .ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+.noema-editor .ProseMirror ul[data-type="taskList"] li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+.noema-editor .ProseMirror ul[data-type="taskList"] li > label {
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+.noema-editor .ProseMirror ul[data-type="taskList"] input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.noema-editor
+  .ProseMirror
+  ul[data-type="taskList"]
+  li[data-checked="true"]
+  > div
+  > p {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.noema-editor .ProseMirror blockquote,
+.noema-editor .ProseMirror [data-callout] {
+  border-left: 3px solid var(--fg);
+  padding: 3px 2px 3px 14px;
+  margin: 6px 0;
+}
+
+.noema-editor .ProseMirror code {
+  font-family: var(--font-mono);
+  font-size: 85%;
+  color: #eb5757;
+  background: color-mix(in srgb, #eb5757 10%, transparent);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+}
+.dark .noema-editor .ProseMirror code {
+  color: #ff7369;
+}
+
+.noema-editor .ProseMirror pre {
+  background: var(--surface);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 16px 16px;
+  border-radius: 6px;
+  margin: 6px 0;
+  overflow-x: auto;
+}
+.noema-editor .ProseMirror pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* ------------------------------------------------------------------------ *
+ * Code block: Notion-style language selector + highlighted tokens
+ * ------------------------------------------------------------------------ */
+.noema-code-block {
+  position: relative;
+  margin: 6px 0;
+}
+.noema-code-block > pre {
+  margin: 0;
+  /* Room for the language chip in the top-left corner. */
+  padding-top: 34px;
+}
+.noema-code-block.is-selected {
+  outline: none;
+}
+
+/* Corner chip + dropdown (light grey chrome, muted label, token colours). */
+.noema-code-lang {
+  position: absolute;
+  top: 7px;
+  left: 8px;
+  z-index: 2;
+}
+.noema-code-lang-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.noema-code-lang-trigger:hover,
+.noema-code-lang-trigger[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  border-color: var(--border);
+}
+.noema-code-lang-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.noema-code-lang-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  width: 190px;
+  max-height: 260px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.noema-code-lang-filter {
+  width: 100%;
+  padding: 5px 8px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+}
+.noema-code-lang-filter::placeholder {
+  color: var(--muted);
+}
+.noema-code-lang-filter:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+.noema-code-lang-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.noema-code-lang-option {
+  padding: 5px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.noema-code-lang-option:hover,
+.noema-code-lang-option:focus-visible {
+  background: var(--surface-2);
+  outline: none;
+}
+.noema-code-lang-option.is-active {
+  color: var(--muted);
+}
+.noema-code-lang-option.is-active::after {
+  content: "✓";
+  float: right;
+}
+.noema-code-lang-empty {
+  padding: 5px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* highlight.js token colours (light) - applies to the editor now and to any
+   client-side highlighted output later. */
+.hljs {
+  color: var(--fg);
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--muted);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag,
+.hljs-formula {
+  color: #cf222e;
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attribute,
+.hljs-meta .hljs-string {
+  color: #0a3069;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link,
+.hljs-selector-attr,
+.hljs-selector-pseudo,
+.hljs-template-variable,
+.hljs-variable {
+  color: #0550ae;
+}
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: #8250df;
+}
+.hljs-type,
+.hljs-params {
+  color: #953800;
+}
+.hljs-built_in,
+.hljs-title.class_,
+.hljs-class .hljs-title {
+  color: #b35900;
+}
+.hljs-meta {
+  color: #0550ae;
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}
+.hljs-deletion {
+  color: #82071e;
+}
+.dark .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-literal,
+.dark .hljs-doctag,
+.dark .hljs-formula {
+  color: #ff7b72;
+}
+.dark .hljs-string,
+.dark .hljs-regexp,
+.dark .hljs-addition,
+.dark .hljs-attribute,
+.dark .hljs-meta .hljs-string {
+  color: #a5d6ff;
+}
+.dark .hljs-number,
+.dark .hljs-symbol,
+.dark .hljs-bullet,
+.dark .hljs-link,
+.dark .hljs-selector-attr,
+.dark .hljs-selector-pseudo,
+.dark .hljs-template-variable,
+.dark .hljs-variable,
+.dark .hljs-meta {
+  color: #79c0ff;
+}
+.dark .hljs-title,
+.dark .hljs-section,
+.dark .hljs-name,
+.dark .hljs-selector-id,
+.dark .hljs-selector-class {
+  color: #d2a8ff;
+}
+.dark .hljs-type,
+.dark .hljs-params {
+  color: #ffa657;
+}
+.dark .hljs-built_in,
+.dark .hljs-title.class_,
+.dark .hljs-class .hljs-title {
+  color: #ffa657;
+}
+.dark .hljs-deletion {
+  color: #ffa198;
+}
+
+.noema-editor .ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+.noema-editor .ProseMirror hr.ProseMirror-selectednode {
+  border-top-color: var(--accent);
+}
+
+.noema-editor .ProseMirror img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+.noema-editor .ProseMirror img.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+}
+
+.noema-editor .ProseMirror a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--fg) 35%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* Placeholder shown on the first empty block. */
+.noema-editor .ProseMirror p.is-editor-empty:first-child::before {
+  color: var(--muted);
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Selected block highlight (drag handle / node selection). */
+.noema-editor .ProseMirror .ProseMirror-selectednode {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Highlight mark default. */
+.noema-editor .ProseMirror mark {
+  background: #fdecc8;
+  border-radius: 3px;
+  padding: 0.1em 0;
+}
+.dark .noema-editor .ProseMirror mark {
+  background: #5b4b21;
+  color: var(--fg);
+}
+
+/* ---------------------------------------------------------------------------
+   Callout
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .noema-callout {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 4px;
+  margin: 6px 0;
+}
+.noema-callout-emoji {
+  position: relative;
+  flex-shrink: 0;
+}
+.noema-callout-emoji > button {
+  font-size: 18px;
+  line-height: 1.4;
+}
+.noema-callout-picker {
+  position: absolute;
+  z-index: 30;
+  top: 28px;
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 2px;
+  width: 210px;
+  padding: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+.noema-callout-picker button {
+  font-size: 16px;
+  padding: 4px;
+  border-radius: 4px;
+}
+.noema-callout-picker button:hover {
+  background: var(--surface-2);
+}
+.noema-callout-content {
+  flex: 1;
+  min-width: 0;
+}
+.noema-callout-content > * + * {
+  margin-top: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   Toggle
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .noema-toggle {
+  margin: 2px 0;
+}
+.noema-toggle-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.noema-toggle-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 24px;
+  color: var(--muted);
+  border-radius: 4px;
+}
+.noema-toggle-chevron:hover {
+  background: var(--surface-2);
+}
+.noema-toggle-summary {
+  flex: 1;
+  padding: 3px 2px;
+  font-weight: 500;
+  background: transparent;
+  outline: none;
+}
+.noema-toggle-summary::placeholder {
+  color: var(--muted);
+}
+.noema-toggle-body {
+  padding-left: 22px;
+}
+
+/* ---------------------------------------------------------------------------
+   Columns
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror [data-columns] {
+  display: flex;
+  gap: 16px;
+  margin: 6px 0;
+}
+.noema-editor .ProseMirror [data-column] {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.noema-editor .ProseMirror [data-column] > * + * {
+  margin-top: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   Tables
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .tableWrapper {
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.noema-editor .ProseMirror table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  overflow: hidden;
+}
+.noema-editor .ProseMirror table td,
+.noema-editor .ProseMirror table th {
+  position: relative;
+  min-width: 1em;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  vertical-align: top;
+}
+.noema-editor .ProseMirror table th {
+  background: var(--surface);
+  font-weight: 600;
+  text-align: left;
+}
+.noema-editor .ProseMirror table .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  pointer-events: none;
+}
+.noema-editor .ProseMirror table .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background-color: var(--accent);
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Table of contents
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .noema-toc {
+  margin: 8px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.noema-toc-title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.noema-toc-empty {
+  font-size: 14px;
+  color: var(--muted);
+}
+.noema-toc ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.noema-toc li {
+  margin: 2px 0;
+}
+.noema-toc button {
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--fg);
+  text-align: left;
+}
+.noema-toc button:hover {
+  background: var(--surface-2);
+}
+
+/* ---------------------------------------------------------------------------
+   Math (KaTeX) + drag handle
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .katex {
+  font-size: 1.05em;
+}
+.noema-editor .ProseMirror [data-type="block-math"] {
+  margin: 6px 0;
+}
+.noema-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 24px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: grab;
+  opacity: 0.55;
+}
+.noema-drag-handle:hover {
+  background: var(--surface-2);
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------------------
+   Mentions
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .noema-mention {
+  display: inline;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--fg);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.noema-editor .ProseMirror .noema-mention:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+   Bookmark
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .noema-bookmark {
+  margin: 6px 0;
+}
+.noema-bookmark-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.noema-bookmark-field,
+.noema-embed-field,
+.noema-page-embed-field {
+  flex: 1;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 14px;
+  outline: none;
+}
+.noema-bookmark-field:focus,
+.noema-embed-field:focus,
+.noema-page-embed-field:focus {
+  border-color: var(--accent);
+}
+.noema-bookmark-btn {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+}
+.noema-bookmark-btn:hover {
+  background: var(--surface-2);
+}
+.noema-bookmark-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.noema-bookmark-link {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  color: inherit;
+  text-decoration: none;
+}
+.noema-bookmark-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.noema-bookmark-title {
+  font-weight: 500;
+}
+.noema-bookmark-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.noema-bookmark-host {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.noema-bookmark-favicon {
+  width: 16px;
+  height: 16px;
+}
+.noema-bookmark-image {
+  width: 120px;
+  height: 84px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+.noema-bookmark-actions,
+.noema-embed-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.noema-bookmark-card:hover .noema-bookmark-actions,
+.noema-embed-frame:hover .noema-embed-actions {
+  opacity: 1;
+}
+.noema-bookmark-actions button,
+.noema-embed-actions button {
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+}
+.noema-bookmark-actions button:hover,
+.noema-embed-actions button:hover {
+  color: var(--fg);
+}
+
+/* ---------------------------------------------------------------------------
+   Embed
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .noema-embed {
+  margin: 8px 0;
+}
+.noema-embed-input {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.noema-embed-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+.noema-embed-frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  aspect-ratio: 16 / 9;
+}
+.noema-embed-frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Breadcrumb
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .noema-breadcrumb {
+  margin: 6px 0;
+  font-size: 13px;
+}
+.noema-breadcrumb-trail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  color: var(--muted);
+}
+.noema-breadcrumb-item a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.noema-breadcrumb-item a:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+.noema-breadcrumb-sep {
+  margin-left: 4px;
+}
+.noema-breadcrumb-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* ---------------------------------------------------------------------------
+   Synced page view
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .noema-page-embed {
+  margin: 8px 0;
+}
+.noema-page-embed-shell {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.noema-page-embed-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.noema-page-embed-chevron {
+  display: flex;
+  color: var(--muted);
+}
+.noema-page-embed-title {
+  flex: 1;
+  font-weight: 500;
+}
+.noema-page-embed-open,
+.noema-page-embed-remove {
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--muted);
+}
+.noema-page-embed-open:hover,
+.noema-page-embed-remove:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.noema-page-embed-body {
+  padding: 10px 14px;
+}
+.noema-page-embed-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.noema-page-embed-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.noema-page-embed-results {
+  display: flex;
+  flex-direction: column;
+}
+.noema-page-embed-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  text-align: left;
+}
+.noema-page-embed-result:hover {
+  background: var(--surface-2);
+}
+
+/* ---------------------------------------------------------------------------
+   Read-only document renderer
+   --------------------------------------------------------------------------- */
+.noema-doc-renderer {
+  font-size: 15px;
+  line-height: 1.6;
+}
+.noema-doc-renderer h1 {
+  margin: 10px 0 4px;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+.noema-doc-renderer h2 {
+  margin: 8px 0 4px;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+.noema-doc-renderer h3 {
+  margin: 6px 0 4px;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.noema-doc-renderer h4 {
+  margin: 5px 0 4px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.noema-doc-renderer h5 {
+  margin: 4px 0 4px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.noema-doc-renderer h6 {
+  margin: 4px 0 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.noema-doc-renderer p {
+  margin: 2px 0;
+}
+.noema-doc-renderer ul {
+  padding-left: 1.5rem;
+  list-style: disc;
+}
+.noema-doc-renderer ol {
+  padding-left: 1.5rem;
+  list-style: decimal;
+}
+.noema-doc-renderer .noema-render-tasks {
+  padding-left: 0;
+  list-style: none;
+}
+.noema-doc-renderer blockquote {
+  padding-left: 12px;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+.noema-doc-renderer pre {
+  overflow-x: auto;
+  padding: 16px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 6px 0;
+}
+/* Parity with the editor's code block: the language class rides on <code>
+   (no selector chrome in read-only views, but identical typography). */
+.noema-doc-renderer pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: inherit;
+}
+.noema-doc-renderer pre code[class^="language-"],
+.noema-doc-renderer pre code[class*=" language-"] {
+  background: transparent;
+  color: inherit;
+}
+.noema-doc-renderer table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.noema-doc-renderer td,
+.noema-doc-renderer th {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+}
+.noema-doc-renderer img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+.noema-doc-renderer [data-columns] {
+  display: flex;
+  gap: 16px;
+}
+.noema-doc-renderer [data-column] {
+  flex: 1;
+  min-width: 0;
+}
+.noema-doc-renderer .noema-math-inline,
+.noema-doc-renderer .noema-math-block {
+  font-family: var(--font-mono);
+}
+
+/* ---------------------------------------------------------------------------
+   Template button
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .noema-template-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.noema-template-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+.noema-template-select,
+.noema-template-insert {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  font-size: 13px;
+}
+.noema-template-insert:hover {
+  background: var(--surface-2);
+}
+.noema-template-remove {
+  color: var(--muted);
+  padding: 0 4px;
+  font-size: 15px;
+}
+.noema-template-remove:hover {
+  color: var(--red, #d44c47);
+}
+
+/* ---------------------------------------------------------------------------
+   Page settings (width / text size / font)
+   --------------------------------------------------------------------------- */
+.noema-page-small .noema-editor .ProseMirror {
+  font-size: 14.5px;
+}
+.noema-font-serif .noema-editor .ProseMirror,
+.noema-font-serif .noema-doc-renderer {
+  font-family: Georgia, "Times New Roman", serif;
+}
+.noema-font-mono .noema-editor .ProseMirror,
+.noema-font-mono .noema-doc-renderer {
+  font-family: var(--font-mono);
+}
+
+/* ---------------------------------------------------------------------------
+   Ask AI block
+   --------------------------------------------------------------------------- */.noema-editor .ProseMirror .noema-ask-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.noema-ask-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.noema-ask-input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 14px;
+  outline: none;
+}
+.noema-ask-input:focus {
+  border-color: var(--accent);
+}
+.noema-ask-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.noema-ask-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 13px;
+}
+.noema-ask-btn:hover {
+  background: var(--surface-2);
+}
+.noema-ask-icon {
+  margin-left: auto;
+  color: var(--muted);
+}
+.noema-ask-icon:hover {
+  color: var(--red, #d44c47);
+}
+.noema-ask-answer {
+  font-size: 14px;
+  line-height: 1.6;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+/* ---------------------------------------------------------------------------
+   Linked database (embedded read-only view)
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror .noema-linked-shell {
+  margin: 8px 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.noema-linked-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.noema-linked-title {
+  flex: 1;
+  font-weight: 500;
+}
+.noema-linked-open {
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--muted);
+}
+.noema-linked-open:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.noema-linked-body {
+  overflow-x: auto;
+  padding: 8px 10px;
+}
+.noema-linked-loading,
+.noema-linked-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.noema-linked-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.noema-linked-table th,
+.noema-linked-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.noema-linked-table th {
+  color: var(--muted);
+  font-weight: 500;
+}
+.noema-linked-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.noema-linked-field {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 14px;
+  outline: none;
+}
+.noema-linked-results {
+  display: flex;
+  flex-direction: column;
+}
+.noema-linked-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  text-align: left;
+}
+.noema-linked-result:hover {
+  background: var(--surface-2);
+}
+
+/* ---------------------------------------------------------------------------
+   Accessibility: visible focus ring everywhere
+   --------------------------------------------------------------------------- */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.skip-link:focus {
+  left: 12px;
+  top: 12px;
+}
+
+/* ---------------------------------------------------------------------------
+   Markdown rendering (AI answers, Ask AI block, previews)
+   Mirrors `.noema-editor` typography so a reply looks like a Notion page.
+   --------------------------------------------------------------------------- */
+.notion-markdown {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.notion-markdown > *:first-child {
+  margin-top: 0;
+}
+.notion-markdown > *:last-child {
+  margin-bottom: 0;
+}
+.notion-markdown p {
+  margin: 6px 0;
+}
+.notion-markdown h1,
+.notion-markdown h2,
+.notion-markdown h3,
+.notion-markdown h4,
+.notion-markdown h5,
+.notion-markdown h6 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 1em 0 4px;
+}
+.notion-markdown h1 {
+  font-size: 1.5em;
+}
+.notion-markdown h2 {
+  font-size: 1.25em;
+}
+.notion-markdown h3 {
+  font-size: 1.1em;
+}
+.notion-markdown h4 {
+  font-size: 1em;
+}
+.notion-markdown h5 {
+  font-size: 0.95em;
+}
+.notion-markdown h6 {
+  font-size: 0.9em;
+}
+.notion-markdown strong {
+  font-weight: 600;
+}
+.notion-markdown del {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.notion-markdown a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--fg) 30%, transparent);
+  text-underline-offset: 2px;
+}
+.notion-markdown a:hover {
+  text-decoration-color: var(--fg);
+}
+.notion-markdown ul,
+.notion-markdown ol {
+  margin: 4px 0;
+  padding-left: 1.45em;
+}
+.notion-markdown ul {
+  list-style: disc;
+}
+.notion-markdown ul ul {
+  list-style: circle;
+}
+.notion-markdown ul ul ul {
+  list-style: square;
+}
+.notion-markdown ol {
+  list-style: decimal;
+}
+.notion-markdown li {
+  margin: 3px 0;
+}
+.notion-markdown li > ul,
+.notion-markdown li > ol {
+  margin: 2px 0;
+}
+.notion-markdown blockquote {
+  margin: 8px 0;
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid var(--fg);
+}
+.notion-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 14px 0;
+}
+.notion-markdown .notion-inline-code,
+.notion-markdown code {
+  background: var(--surface);
+  border-radius: 3px;
+  padding: 0.12em 0.35em;
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: #eb5757;
+}
+.dark .notion-markdown .notion-inline-code,
+.dark .notion-markdown code {
+  color: #ff7369;
+}
+
+/* Fenced code */
+.notion-code {
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.notion-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}
+.notion-code-lang {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.notion-code-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.notion-code-copy:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.notion-code pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.notion-code pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+/* Tables */
+.notion-markdown-table {
+  margin: 8px 0;
+  overflow-x: auto;
+}
+.notion-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+.notion-markdown th,
+.notion-markdown td {
+  border: 1px solid var(--border);
+  padding: 6px 9px;
+  vertical-align: top;
+}
+.notion-markdown thead th {
+  background: var(--surface);
+  font-weight: 500;
+}
+.notion-markdown tbody tr:hover {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+/* Task lists */
+.notion-markdown-tasks {
+  list-style: none;
+  padding-left: 0.2em;
+}
+.notion-markdown-task {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.notion-markdown-task > :not(.notion-check) {
+  min-width: 0;
+}
+.notion-check {
+  flex: none;
+  margin-top: 3px;
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--muted);
+  border-radius: 3px;
+}
+.notion-check-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* Note references inside answers */
+.notion-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 4px;
+  background: var(--surface);
+  padding: 1px 6px;
+  font-size: 0.92em;
+  font-weight: 500;
+}
+.notion-ref-link {
+  text-decoration: none;
+}
+.notion-ref-link:hover .notion-ref {
+  background: var(--surface-2);
+}
+.notion-ref-title {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Narrow surfaces (the docked AI rail) */
+.notion-markdown-compact {
+  font-size: 14px;
+}
+.notion-markdown-compact h1 {
+  font-size: 1.2em;
+}
+.notion-markdown-compact h2 {
+  font-size: 1.1em;
+}
+.notion-markdown-compact h3,
+.notion-markdown-compact h4 {
+  font-size: 1em;
+}
+.notion-markdown-compact .notion-ref-title {
+  max-width: 150px;
+}
+
+/* ---------------------------------------------------------------------------
+   Notion-like surface primitives
+   --------------------------------------------------------------------------- */
+.notion-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.notion-card:hover {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+}
+.notion-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+.notion-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+}
+.notion-kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+}
+.notion-skeleton {
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--surface) 0%,
+    var(--surface-2) 50%,
+    var(--surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: notion-skeleton 1.4s ease-in-out infinite;
+}
+@keyframes notion-skeleton {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Typographic fine-tuning (progressive enhancement — ignored where unsupported)
+   --------------------------------------------------------------------------- */
+.noema-editor .ProseMirror p,
+.notion-markdown p {
+  text-wrap: pretty;
+}
+.noema-editor .ProseMirror h1,
+.noema-editor .ProseMirror h2,
+.noema-editor .ProseMirror h3,
+.notion-markdown h1,
+.notion-markdown h2,
+.notion-markdown h3 {
+  text-wrap: balance;
+}
+
+/* ---------------------------------------------------------------------------
+   Motion: respect the user's preference
+   --------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+
+
+
+
+
+/* ------------------------------------------------------------------ image */
+.noema-image-block {
+  margin: 8px 0;
+}
+.noema-image-block.is-selected .noema-image {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.noema-image {
+  display: block;
+  max-width: 100%;
+  border-radius: 6px;
+}
+.noema-image-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.noema-image-caption {
+  flex: 1;
+  padding: 2px 6px;
+  font-size: 12px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  outline: none;
+}
+.noema-image-caption:focus {
+  color: var(--fg);
+  border-color: var(--border);
+}
+.noema-image-alt-toggle {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: underline;
+}
+.noema-image-alt {
+  width: 100%;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+}
+.noema-image-caption-view {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ----------------------------------------------------- block backgrounds */
+.noema-editor .ProseMirror [data-block-color],
+.noema-doc-renderer [data-block-color] {
+  border-radius: 4px;
+}
+.noema-editor .ProseMirror [data-block-color="gray"],
+.noema-doc-renderer [data-block-color="gray"] { background-color: #f1f1ef; }
+.noema-editor .ProseMirror [data-block-color="brown"],
+.noema-doc-renderer [data-block-color="brown"] { background-color: #eee0da; }
+.noema-editor .ProseMirror [data-block-color="orange"],
+.noema-doc-renderer [data-block-color="orange"] { background-color: #faebdd; }
+.noema-editor .ProseMirror [data-block-color="yellow"],
+.noema-doc-renderer [data-block-color="yellow"] { background-color: #fbf3db; }
+.noema-editor .ProseMirror [data-block-color="green"],
+.noema-doc-renderer [data-block-color="green"] { background-color: #edf3ec; }
+.noema-editor .ProseMirror [data-block-color="blue"],
+.noema-doc-renderer [data-block-color="blue"] { background-color: #e7f3f8; }
+.noema-editor .ProseMirror [data-block-color="purple"],
+.noema-doc-renderer [data-block-color="purple"] { background-color: #f6f3f9; }
+.noema-editor .ProseMirror [data-block-color="pink"],
+.noema-doc-renderer [data-block-color="pink"] { background-color: #fbe4e8; }
+.noema-editor .ProseMirror [data-block-color="red"],
+.noema-doc-renderer [data-block-color="red"] { background-color: #fdebec; }

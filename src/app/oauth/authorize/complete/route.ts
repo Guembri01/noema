@@ -1,0 +1,45 @@
+import { NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/auth";
+import { prisma } from "@/lib/db";
+import { randomToken } from "@/lib/slug";
+
+export const runtime = "nodejs";
+
+/** Issue an authorization code after the user approves (or denies) an app. */
+export async function POST(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const form = await request.formData();
+  const clientId = String(form.get("client_id") ?? "");
+  const redirectUri = String(form.get("redirect_uri") ?? "");
+  const state = String(form.get("state") ?? "");
+  const decision = String(form.get("decision") ?? "deny");
+
+  const app = await prisma.oAuthApp.findUnique({ where: { clientId } });
+  if (!app || !app.redirectUris.includes(redirectUri)) {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  }
+
+  const url = new URL(redirectUri);
+  if (decision !== "allow") {
+    url.searchParams.set("error", "access_denied");
+    if (state) url.searchParams.set("state", state);
+    return NextResponse.redirect(url.toString(), 303);
+  }
+
+  const code = randomToken(24);
+  await prisma.oAuthCode.create({
+    data: {
+      code,
+      clientId,
+      userId: user.id,
+      redirectUri,
+      expiresAt: new Date(Date.now() + 5 * 60_000),
+    },
+  });
+
+  url.searchParams.set("code", code);
+  if (state) url.searchParams.set("state", state);
+  return NextResponse.redirect(url.toString(), 303);
+}

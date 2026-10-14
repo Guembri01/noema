@@ -1,0 +1,922 @@
+// Noema — data model
+// An original, open-source Notion-style workspace.
+// The schema deliberately models the full surface area of a Notion-class
+// product: block-based pages, full-page databases with properties/views,
+// collaboration primitives, sharing, history, search and audit.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  GUEST
+}
+
+enum PageType {
+  PAGE
+  DATABASE
+}
+
+enum PropertyType {
+  TEXT
+  NUMBER
+  SELECT
+  MULTI_SELECT
+  STATUS
+  DATE
+  CHECKBOX
+  URL
+  EMAIL
+  PHONE
+  PEOPLE
+  FILES
+  FORMULA
+  RELATION
+  ROLLUP
+  CREATED_TIME
+  CREATED_BY
+  LAST_EDITED_TIME
+  LAST_EDITED_BY
+  UNIQUE_ID
+  BUTTON
+  AI_AUTOFILL
+}
+
+enum ViewType {
+  TABLE
+  BOARD
+  LIST
+  GALLERY
+  CALENDAR
+  TIMELINE
+  CHART
+}
+
+enum SharePermission {
+  READ
+  COMMENT
+  EDIT
+  FULL
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  avatarUrl    String?
+  locale       String   @default("en")
+  theme        String   @default("system")
+  twoFactorSecret  String?
+  twoFactorEnabled Boolean @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  ownedWorkspaces Workspace[]       @relation("WorkspaceOwner")
+  memberships     WorkspaceMember[]
+  pagesCreated    Page[]            @relation("PageCreatedBy")
+  comments        Comment[]
+  favorites       Favorite[]
+  notifications   Notification[]
+  apiTokens       ApiToken[]
+  activity        Activity[]
+  follows         PageFollow[]
+  pagePermissions PagePermission[]
+  oauthApps       OAuthApp[]
+  teamspaceMembers TeamspaceMember[]
+  projectMembers   ProjectMember[]
+  assignedTickets  Ticket[]         @relation("TicketAssignee")
+  reportedTickets  Ticket[]         @relation("TicketReporter")
+  ticketComments   TicketComment[]
+  ticketActivity   TicketActivity[]
+  commentReactions CommentReaction[]
+  ticketViews      TicketView[]
+  chatThreads     ChatThread[]       @relation("ChatThreadCreatedBy")
+  chatMessages    ChatMessage[]
+
+  @@index([email])
+}
+
+// ---------------------------------------------------------------------------
+// Workspaces & membership
+// ---------------------------------------------------------------------------
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  icon      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownerId String
+  owner   User   @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  members  WorkspaceMember[]
+  pages    Page[]
+  invites  Invite[]
+  activity Activity[]
+  webhooks Webhook[]
+  teamspaces Teamspace[]
+  aiProvider     AiProviderConfig?
+  emailConfig    EmailConfig?
+  projects       Project[]
+  labels         Label[]
+  tickets        Ticket[]
+  ticketViews    TicketView[]
+  cycles         Cycle[]
+  ticketCounter  Int       @default(0)
+  chatThreads    ChatThread[]
+  calendarFeeds  CalendarFeed[]
+  calendarEvents CalendarEvent[]
+
+  @@index([ownerId])
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model Invite {
+  id          String        @id @default(cuid())
+  workspaceId String
+  email       String
+  role        WorkspaceRole @default(MEMBER)
+  token       String        @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  invitedById String?
+  projectId   String?
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([email])
+}
+
+// ---------------------------------------------------------------------------
+// Pages & blocks
+//
+// A page stores its block tree as a TipTap/ProseMirror JSON document in
+// `content`. Databases are pages whose `type` is DATABASE; their rows are also
+// pages (children of the database page). This mirrors the "everything is a
+// page" model while keeping the editor representation simple.
+// ---------------------------------------------------------------------------
+
+model Page {
+  id          String   @id @default(cuid())
+  workspaceId String
+  parentId    String?
+  teamspaceId String?
+  projectId   String?
+  type        PageType @default(PAGE)
+  title       String   @default("")
+  icon        String?
+  coverUrl    String?
+  fullWidth   Boolean  @default(false)
+  smallText   Boolean  @default(false)
+  font        String   @default("default")
+  locked      Boolean  @default(false)
+  content     Json?
+  /// Plain-text mirror of the document, maintained on write, used for Postgres
+  /// full-text search (GIN index created by `npm run setup:search`).
+  searchText  String?
+  position    Float    @default(0)
+  isFavorite  Boolean  @default(false)
+  isArchived  Boolean  @default(false)
+  deletedAt   DateTime?
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parent    Page?     @relation("PageChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Page[]    @relation("PageChildren")
+  teamspace Teamspace? @relation(fields: [teamspaceId], references: [id], onDelete: SetNull)
+  project   Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  chatThreads ChatThread[]
+  createdBy User      @relation("PageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  properties     Property[]
+  propertyValues PropertyValue[]
+  views          DatabaseView[]
+  templates      Template[]
+  versions       PageVersion[]
+  comments       Comment[]
+  shareLinks     ShareLink[]
+  favorites      Favorite[]
+  followers      PageFollow[]
+  permissions    PagePermission[]
+  assets         Asset[]
+
+  @@index([workspaceId])
+  @@index([parentId])
+  @@index([deletedAt])
+  @@index([type])
+}
+
+model PageVersion {
+  id          String   @id @default(cuid())
+  pageId      String
+  title       String
+  content     Json?
+  createdById String?
+  summary     String?
+  charDelta   Int?
+  createdAt   DateTime @default(now())
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId])
+}
+
+// ---------------------------------------------------------------------------
+// Databases: properties, values, views, templates
+// ---------------------------------------------------------------------------
+
+model Property {
+  id             String       @id @default(cuid())
+  databasePageId String
+  name           String
+  type           PropertyType
+  config         Json? // select/status options, relation target, rollup + formula config
+  position       Float        @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  databasePage Page            @relation(fields: [databasePageId], references: [id], onDelete: Cascade)
+  values       PropertyValue[]
+
+  @@index([databasePageId])
+}
+
+model PropertyValue {
+  id         String   @id @default(cuid())
+  propertyId String
+  pageId     String // the row page
+  value      Json?
+  updatedAt  DateTime @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  page     Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, pageId])
+  @@index([pageId])
+}
+
+model DatabaseView {
+  id             String   @id @default(cuid())
+  databasePageId String
+  name           String
+  type           ViewType @default(TABLE)
+  config         Json? // filters, sorts, groups, visible properties, layout options
+  position       Float    @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  databasePage Page @relation(fields: [databasePageId], references: [id], onDelete: Cascade)
+
+  @@index([databasePageId])
+}
+
+model Template {
+  id             String    @id @default(cuid())
+  databasePageId String
+  name           String
+  icon           String?
+  content        Json?
+  config         Json?
+  recurrence     String?
+  nextRunAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  databasePage Page @relation(fields: [databasePageId], references: [id], onDelete: Cascade)
+
+  @@index([databasePageId])
+  @@index([nextRunAt])
+}
+
+// ---------------------------------------------------------------------------
+// Collaboration
+// ---------------------------------------------------------------------------
+
+model Comment {
+  id        String   @id @default(cuid())
+  pageId    String
+  parentId  String?
+  authorId  String
+  body      String
+  blockId   String?
+  quote     String?
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  page    Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  parent  Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies Comment[] @relation("CommentReplies")
+  author  User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  reactions CommentReaction[]
+
+  @@index([pageId])
+}
+
+model Favorite {
+  id     String @id @default(cuid())
+  userId String
+  pageId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pageId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  payload   Json?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+}
+
+// ---------------------------------------------------------------------------
+// Files, sharing, audit, tokens
+// ---------------------------------------------------------------------------
+
+model Asset {
+  id        String   @id @default(cuid())
+  pageId    String?
+  name      String
+  url       String
+  mimeType  String?
+  size      Int?
+  createdAt DateTime @default(now())
+
+  page Page? @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@index([pageId])
+}
+
+model ShareLink {
+  id           String          @id @default(cuid())
+  pageId       String
+  token        String          @unique
+  permission   SharePermission @default(READ)
+  passwordHash String?
+  expiresAt    DateTime?
+  createdAt    DateTime        @default(now())
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId])
+}
+
+model CommentReaction {
+  id        String   @id @default(cuid())
+  commentId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId, emoji])
+  @@index([commentId])
+}
+
+/// A named set of ticket filters, saved per workspace.
+model TicketView {
+  id          String   @id @default(cuid())
+  workspaceId String
+  createdById String
+  name        String
+  config      Json
+  position    Int      @default(1000)
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model Activity {
+  id          String   @id @default(cuid())
+  workspaceId String
+  actorId     String?
+  action      String
+  targetType  String
+  targetId    String?
+  meta        Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([createdAt])
+}
+
+model ApiToken {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PageFollow {
+  id        String   @id @default(cuid())
+  userId    String
+  pageId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pageId])
+  @@index([pageId])
+}
+
+model PagePermission {
+  id        String          @id @default(cuid())
+  pageId    String
+  userId    String
+  level     SharePermission @default(READ)
+  createdAt DateTime        @default(now())
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pageId])
+  @@index([pageId])
+}
+
+model Teamspace {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  icon        String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  members   TeamspaceMember[]
+  invites   TeamspaceInvite[]
+  pages     Page[]
+
+  @@index([workspaceId])
+}
+
+model TeamspaceMember {
+  id          String        @id @default(cuid())
+  teamspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+  createdAt   DateTime      @default(now())
+
+  teamspace Teamspace @relation(fields: [teamspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamspaceId, userId])
+  @@index([userId])
+}
+
+/// Pending email invitation to a teamspace (token stored hashed, single use).
+model TeamspaceInvite {
+  id           String        @id @default(cuid())
+  teamspaceId  String
+  email        String
+  role         WorkspaceRole @default(MEMBER)
+  tokenHash    String        @unique
+  invitedById  String
+  acceptedAt   DateTime?
+  acceptedById String?
+  expiresAt    DateTime
+  createdAt    DateTime      @default(now())
+
+  teamspace Teamspace @relation(fields: [teamspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([teamspaceId, email])
+  @@index([teamspaceId])
+}
+
+/// Per-workspace AI provider (overrides the env defaults when enabled).
+model AiProviderConfig {
+  id              String   @id @default(cuid())
+  workspaceId     String   @unique
+  provider        String   @default("openai")
+  baseUrl         String?
+  model           String?
+  apiKeyEncrypted String?
+  enabled         Boolean  @default(true)
+  updatedById     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Projects & milestones
+// ---------------------------------------------------------------------------
+
+model Project {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  summary     String?
+  description String?
+  status      String    @default("active")
+  color       String    @default("blue")
+  icon        String?
+  ownerId     String?
+  startDate   DateTime?
+  dueDate     DateTime?
+  position    Int       @default(1000)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace  Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  milestones Milestone[]
+  pages      Page[]
+  members    ProjectMember[]
+  invites    Invite[]
+  tickets    Ticket[]
+
+  @@index([workspaceId, status])
+}
+
+/// Project-level access, including external clients (view-only).
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  role      String   @default("CLIENT")
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+model Milestone {
+  id          String    @id @default(cuid())
+  projectId   String
+  name        String
+  description String?
+  status      String    @default("planned")
+  dueDate     DateTime?
+  completedAt DateTime?
+  position    Int       @default(1000)
+  createdAt   DateTime  @default(now())
+
+  project Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tickets Ticket[]
+
+  @@index([projectId, position])
+}
+
+// ---------------------------------------------------------------------------
+// Tickets (issues) with workspace labels, estimates and timeline dates
+// ---------------------------------------------------------------------------
+
+/// A time-boxed iteration (sprint) that tickets can be assigned to.
+model Cycle {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  startDate   DateTime
+  endDate     DateTime
+  goal        String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  tickets   Ticket[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, startDate])
+}
+
+/// A reusable, workspace-wide label (colour + description).
+model Label {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  color       String   @default("gray")
+  description String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  tickets   TicketLabel[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+/// An issue/ticket. `number` feeds the human key (`NOE-12`).
+model Ticket {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  number       Int
+  key          String
+  title        String
+  description  Json?
+  type         String    @default("task")
+  status       String    @default("todo")
+  priority     String    @default("none")
+  estimate     Float?
+  estimateUnit String    @default("points")
+  startDate    DateTime?
+  dueDate      DateTime?
+  completedAt  DateTime?
+  projectId    String?
+  milestoneId  String?
+  cycleId      String?
+  assigneeId   String?
+  reporterId   String
+  parentId     String?
+  position     Int       @default(1000)
+  archived     Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  workspace  Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project    Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  milestone  Milestone?       @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  cycle      Cycle?           @relation(fields: [cycleId], references: [id], onDelete: SetNull)
+  assignee   User?            @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  reporter   User             @relation("TicketReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  parent     Ticket?          @relation("TicketChildren", fields: [parentId], references: [id], onDelete: SetNull)
+  children   Ticket[]         @relation("TicketChildren")
+  labels     TicketLabel[]
+  relations  TicketRelation[] @relation("TicketRelationFrom")
+  relatedBy  TicketRelation[] @relation("TicketRelationTo")
+  comments   TicketComment[]
+  activity   TicketActivity[]
+
+  @@unique([workspaceId, number])
+  @@index([workspaceId, status])
+  @@index([workspaceId, projectId])
+  @@index([workspaceId, cycleId])
+}
+
+model TicketLabel {
+  id       String @id @default(cuid())
+  ticketId String
+  labelId  String
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  label  Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@unique([ticketId, labelId])
+  @@index([labelId])
+}
+
+/// blocks · blocked_by · relates · duplicates
+model TicketRelation {
+  id     String @id @default(cuid())
+  fromId String
+  toId   String
+  type   String @default("relates")
+  createdAt DateTime @default(now())
+
+  from Ticket @relation("TicketRelationFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  to   Ticket @relation("TicketRelationTo", fields: [toId], references: [id], onDelete: Cascade)
+
+  @@unique([fromId, toId, type])
+}
+
+model TicketComment {
+  id        String   @id @default(cuid())
+  ticketId  String
+  authorId  String
+  body      String
+  createdAt DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+}
+
+model TicketActivity {
+  id        String   @id @default(cuid())
+  ticketId  String
+  actorId   String
+  kind      String
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor  User   @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Email (SMTP) configuration and delivery log
+// ---------------------------------------------------------------------------
+
+model EmailConfig {
+  id                String   @id @default(cuid())
+  workspaceId       String   @unique
+  host              String
+  port              Int      @default(587)
+  secure            Boolean  @default(false)
+  username          String?
+  passwordEncrypted String?
+  fromName          String?
+  fromEmail         String
+  replyTo           String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model EmailDelivery {
+  id          String   @id @default(cuid())
+  workspaceId String
+  to          String
+  subject     String
+  kind        String
+  status      String
+  error       String?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Chat (workspace discussions)
+// ---------------------------------------------------------------------------
+
+model ChatThread {
+  id          String   @id @default(cuid())
+  workspaceId String
+  pageId      String?
+  title       String
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  page      Page?         @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  createdBy User          @relation("ChatThreadCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  messages  ChatMessage[]
+
+  @@index([workspaceId, updatedAt])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  threadId  String
+  userId    String?
+  role      String   @default("user")
+  body      String
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  thread ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  user   User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([threadId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Calendar (ICS feeds + materialised events)
+// ---------------------------------------------------------------------------
+
+model CalendarFeed {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  icsUrl      String
+  color       String   @default("blue")
+  createdAt   DateTime @default(now())
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  events    CalendarEvent[]
+
+  @@index([workspaceId])
+}
+
+model CalendarEvent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  feedId      String?
+  uid         String
+  title       String
+  start       DateTime
+  end         DateTime?
+  allDay      Boolean   @default(false)
+  location    String?
+  url         String?
+  notesPageId String?
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  feed      CalendarFeed? @relation(fields: [feedId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, uid])
+  @@index([workspaceId, start])
+}
+
+model OAuthApp {
+  id           String   @id @default(cuid())
+  userId       String
+  name         String
+  clientId     String   @unique
+  clientSecret String
+  redirectUris String[] @default([])
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model OAuthCode {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  clientId    String
+  userId      String
+  redirectUri String
+  expiresAt   DateTime
+  used        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([code])
+}
+
+model Webhook {
+  id          String   @id @default(cuid())
+  workspaceId String
+  url         String
+  events      String[] @default([])
+  secret      String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  workspace  Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([workspaceId])
+}
+
+model WebhookDelivery {
+  id             String   @id @default(cuid())
+  webhookId      String
+  event          String
+  ok             Boolean
+  responseStatus Int?
+  attempts       Int      @default(1)
+  error          String?
+  createdAt      DateTime @default(now())
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId, createdAt])
+}

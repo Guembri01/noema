@@ -1,0 +1,284 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { CalendarRange, Pencil, Plus, Trash2, TrendingUp } from "lucide-react";
+import {
+  createCycleAction,
+  deleteCycleAction,
+  updateCycleAction,
+} from "@/server/actions/cycles";
+import { useAction } from "@/lib/actions-client";
+import { PromptDialog } from "@/components/prompt-dialog";
+import { activeCycle, cycleDays, cycleProgress, velocity, type CycleTicket } from "@/lib/cycles";
+import { formatEstimate } from "@/lib/tickets";
+import { LocalTime } from "@/components/local-time";
+import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
+
+export type CycleRow = {
+  id: string;
+  name: string;
+  goal: string | null;
+  startDate: string;
+  endDate: string;
+  tickets: (CycleTicket & { key: string; title: string; assigneeName?: string | null })[];
+};
+
+const day = (value: string) => value.slice(0, 10);
+
+/** Committed vs completed, plus a burndown sparkline. */
+export function CyclesBoard({
+  workspaceId,
+  cycles,
+  locale,
+}: {
+  workspaceId: string;
+  cycles: CycleRow[];
+  locale: string;
+}) {
+  const router = useRouter();
+  const { run, pending, error } = useAction(locale);
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<CycleRow | null>(null);
+
+  const current = activeCycle(cycles);
+  const past = velocity(cycles);
+  const averageVelocity =
+    past.length === 0 ? 0 : Math.round((past.reduce((sum, row) => sum + row.completed, 0) / past.length) * 10) / 10;
+
+  const save = (values: Record<string, string>) =>
+    run(
+      () =>
+        editing
+          ? updateCycleAction({
+              cycleId: editing.id,
+              name: values.name,
+              startDate: values.start,
+              endDate: values.end,
+              goal: values.goal || null,
+            })
+          : createCycleAction({
+              workspaceId,
+              name: values.name,
+              startDate: values.start,
+              endDate: values.end,
+              goal: values.goal || undefined,
+            }),
+      {
+        success: editing ? "Cycle updated" : "Cycle created",
+        onSuccess: () => router.refresh(),
+      },
+    );
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-muted">
+        <span>
+          {cycles.length} cycle{cycles.length === 1 ? "" : "s"}
+        </span>
+        {current && <span>Running now: {current.name}</span>}
+        <span title="Average completed points in the last six finished cycles">
+          <TrendingUp className="mr-1 inline h-3 w-3" aria-hidden />
+          {t(locale, "velocity")}: {averageVelocity} pts/cycle
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            setEditing(null);
+            setCreating(true);
+          }}
+          className="ml-auto flex h-8 items-center gap-1 rounded bg-accent px-3 text-sm text-accent-fg"
+        >
+          <Plus className="h-4 w-4" /> {t(locale, "newCycle")}
+        </button>
+      </div>
+
+      {error && (
+        <p role="alert" className="mb-3 text-sm text-red-600 dark:text-red-400">
+          {error}
+        </p>
+      )}
+
+      {cycles.length === 0 ? (
+        <div className="notion-empty rounded-xl border border-dashed border-border">
+          <span className="notion-empty-icon">
+            <CalendarRange className="h-5 w-5" aria-hidden />
+          </span>
+          <p>No cycles yet.</p>
+          <p className="text-xs">A cycle is a time box — plan two weeks, commit to the estimate, then review it.</p>
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {cycles.map((cycle) => {
+            const progress = cycleProgress(cycle.tickets, cycle);
+            const isCurrent = current?.id === cycle.id;
+            const max = Math.max(progress.committed, 1);
+            return (
+              <li
+                key={cycle.id}
+                className={cn(
+                  "rounded-xl border p-4",
+                  isCurrent ? "border-accent/40" : "border-border",
+                )}
+              >
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <h3 className="text-sm font-semibold">{cycle.name}</h3>
+                  {isCurrent && (
+                    <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                      running
+                    </span>
+                  )}
+                  <span className="text-xs text-muted">
+                    <LocalTime value={cycle.startDate} mode="date" /> →{" "}
+                    <LocalTime value={cycle.endDate} mode="date" /> · {cycleDays(cycle)} days ·{" "}
+                    {progress.daysLeft} left
+                  </span>
+                  <span className="ml-auto flex items-center gap-1">
+                    <button
+                      type="button"
+                      aria-label={`Edit ${cycle.name}`}
+                      onClick={() => {
+                        setCreating(false);
+                        setEditing(cycle);
+                      }}
+                      className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${cycle.name}`}
+                      disabled={pending}
+                      onClick={() =>
+                        run(() => deleteCycleAction(cycle.id), {
+                          success: "Cycle deleted",
+                          onSuccess: () => router.refresh(),
+                        })
+                      }
+                      className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-red-500"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                </div>
+
+                {cycle.goal && <p className="mt-1 text-sm text-muted">{cycle.goal}</p>}
+
+                <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+                  <span>
+                    Completed{" "}
+                    <strong className="text-fg">
+                      {formatEstimate(progress.completed, progress.unit)}
+                    </strong>{" "}
+                    of {formatEstimate(progress.committed, progress.unit)}
+                  </span>
+                  <span className="text-muted">
+                    {progress.remaining} {progress.unit} remaining · {progress.percent}%
+                  </span>
+                  <span className="text-muted">{cycle.tickets.length} tickets</span>
+                </div>
+
+                <div
+                  className="mt-2 h-2 overflow-hidden rounded-full bg-surface-2"
+                  role="progressbar"
+                  aria-valuenow={progress.percent}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label={`${cycle.name} completion: ${progress.percent}%`}
+                >
+                  <div
+                    className="h-full rounded-full bg-accent transition-[width]"
+                    style={{ width: `${progress.percent}%` }}
+                  />
+                </div>
+
+                {/* Burndown: actual line over the ideal line. */}
+                <svg
+                  viewBox={`0 0 ${Math.max(progress.days - 1, 1)} ${Math.max(max, 1)}`}
+                  preserveAspectRatio="none"
+                  className="mt-3 h-16 w-full"
+                  role="img"
+                  aria-label={`${cycle.name} burndown`}
+                >
+                  <polyline
+                    fill="none"
+                    stroke="currentColor"
+                    strokeOpacity="0.25"
+                    strokeWidth="0.12"
+                    points={progress.burndown
+                      .map((point) => `${point.day - 1},${point.ideal}`)
+                      .join(" ")}
+                  />
+                  <polyline
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="0.2"
+                    points={progress.burndown
+                      .filter((point) => point.remaining !== null)
+                      .map((point) => `${point.day - 1},${point.remaining}`)
+                      .join(" ")}
+                  />
+                </svg>
+
+                {cycle.tickets.length > 0 && (
+                  <ul className="mt-2 flex flex-wrap gap-1.5">
+                    {cycle.tickets.slice(0, 8).map((ticket) => (
+                      <li
+                        key={ticket.id}
+                        className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted"
+                        title={ticket.title}
+                      >
+                        <span className="font-mono">{ticket.key}</span>{" "}
+                        {formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")}
+                      </li>
+                    ))}
+                    {cycle.tickets.length > 8 && (
+                      <li className="text-[11px] text-muted">+{cycle.tickets.length - 8} more</li>
+                    )}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <PromptDialog
+        open={creating || editing !== null}
+        locale={locale}
+        title={editing ? `Edit ${editing.name}` : "New cycle"}
+        description="A cycle is a time box. Tickets you schedule into it count towards its committed estimate."
+        fields={[
+          { name: "name", label: "Name", defaultValue: editing?.name ?? "", placeholder: "Sprint 12" },
+          {
+            name: "start",
+            label: "Starts",
+            defaultValue: editing ? day(editing.startDate) : "",
+            placeholder: "2026-04-01",
+          },
+          {
+            name: "end",
+            label: "Ends",
+            defaultValue: editing ? day(editing.endDate) : "",
+            placeholder: "2026-04-14",
+          },
+          {
+            name: "goal",
+            label: "Goal",
+            hint: "optional",
+            required: false,
+            defaultValue: editing?.goal ?? "",
+            placeholder: "Ship the ticket tracker",
+          },
+        ]}
+        confirmLabel={editing ? "Save cycle" : "Create cycle"}
+        onSubmit={save}
+        onClose={() => {
+          setCreating(false);
+          setEditing(null);
+        }}
+      />
+    </div>
+  );
+}

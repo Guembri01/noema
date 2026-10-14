@@ -1,0 +1,66 @@
+import { NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/auth";
+import { getWorkspaceAccess } from "@/lib/permissions";
+import { rateLimit } from "@/lib/api-guard";
+import { listEmailDeliveries, sendWorkspaceInviteAction } from "@/server/actions/email";
+import { inviteTeamspaceMemberAction } from "@/server/actions/teamspace-invites";
+
+export const runtime = "nodejs";
+
+/** List recent email deliveries for a workspace (admins only). */
+export async function GET(request: Request) {
+  const limited = rateLimit(request, "invites-read", 60, 60_000);
+  if (limited) return limited;
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const workspaceId = new URL(request.url).searchParams.get("workspaceId") ?? "";
+  const access = await getWorkspaceAccess(user.id, workspaceId);
+  if (!access) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+
+  return NextResponse.json({ deliveries: await listEmailDeliveries(workspaceId, 25) });
+}
+
+/**
+ * Send an invitation. Body:
+ *   { target: "workspace", workspaceId, email, role?: "GUEST" | "MEMBER" | "ADMIN" }
+ *   { target: "teamspace", teamspaceId, email, role?: "MEMBER" | "ADMIN" }
+ */
+export async function POST(request: Request) {
+  const limited = rateLimit(request, "invites-write", 20, 60_000);
+  if (limited) return limited;
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  let body: {
+    target?: string;
+    workspaceId?: string;
+    teamspaceId?: string;
+    email?: string;
+    role?: string;
+  };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  if (body.target === "teamspace") {
+    const result = await inviteTeamspaceMemberAction({
+      teamspaceId: String(body.teamspaceId ?? ""),
+      email: String(body.email ?? ""),
+      role: body.role === "ADMIN" ? "ADMIN" : "MEMBER",
+    });
+    if ("error" in result) return NextResponse.json(result, { status: 400 });
+    return NextResponse.json(result);
+  }
+
+  const role = body.role === "GUEST" ? "GUEST" : body.role === "ADMIN" ? "ADMIN" : "MEMBER";
+  const result = await sendWorkspaceInviteAction({
+    workspaceId: String(body.workspaceId ?? ""),
+    email: String(body.email ?? ""),
+    role,
+  });
+  if ("error" in result) return NextResponse.json(result, { status: 400 });
+  return NextResponse.json(result);
+}
