@@ -306,13 +306,18 @@ export async function regenerateChatAnswerAction(
       select: { body: true },
     }),
   ]);
-  if (lastAnswer) await prisma.chatMessage.delete({ where: { id: lastAnswer.id } });
-
+  // Lossless replace (R25.4): capture the new answer first and only swap the
+  // old one out once it is on disk — a failed or unconfigured regenerate must
+  // never eat the previous answer. deleteMany keeps the swap idempotent when
+  // two regenerates race (the second delete is a no-op, not a P2025 throw).
   const answered = await replyAsAssistant(threadId, {
     workspaceId: thread.workspaceId,
     pageId: thread.pageId,
     question: lastQuestion?.body ?? "",
   });
+  if (answered && lastAnswer) {
+    await prisma.chatMessage.deleteMany({ where: { id: lastAnswer.id } });
+  }
   revalidatePath("/w", "layout");
   return { ok: true, answered };
 }

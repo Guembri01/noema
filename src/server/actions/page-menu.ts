@@ -21,6 +21,7 @@ import { dispatchWebhooks } from "@/lib/webhooks";
 import { pageSearchText } from "@/lib/search";
 import { prosemirrorToText } from "@/lib/blocks";
 import { formatWordStats } from "@/lib/actions-menu";
+import { loadVersionAuthors } from "@/server/version-authors";
 
 type Result<T = unknown> = ({ ok: true } & T) | { error: string };
 
@@ -152,20 +153,13 @@ export async function getPageMenuDataAction(
   ]);
   if (!detail) return { error: "Page not found." };
 
-  // Author names for the timeline (PageVersion has no user relation).
-  const authorIds = [
-    ...new Set(
-      versions.map((version) => version.createdById).filter((id): id is string => Boolean(id)),
-    ),
-  ];
-  const authors = authorIds.length
-    ? await prisma.user.findMany({
-        where: { id: { in: authorIds } },
-        select: { id: true, name: true },
-      })
-    : [];
-  const authorName = (id: string | null) =>
-    id ? (authors.find((author) => author.id === id)?.name ?? null) : null;
+  // One shared authorship resolver for both history surfaces (R30.11 of
+  // docs/specs/version-history-v2.md): User-row lookup by createdById,
+  // membership-independent, so the timeline agrees with the page panel.
+  const resolveVersionAuthor = await loadVersionAuthors(
+    versions.map((version) => version.createdById),
+  );
+  const authorName = (id: string | null) => resolveVersionAuthor(id)?.name ?? null;
 
   const latestAuthorId = versions[0]?.createdById ?? null;
   const lastEditedBy =

@@ -1,8 +1,15 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import { prisma } from "./db";
+import {
+  describeDevice,
+  isSessionRevoked,
+  registerSession,
+  revokeSessionForUser,
+  touchSession,
+} from "./session-store";
 
 const COOKIE_NAME = "noema_session";
 const SESSION_DAYS = 30;
@@ -28,9 +35,31 @@ export async function verifyPassword(
   return bcrypt.compare(password, hash);
 }
 
-/** Issue a signed session cookie for the given user id. */
+/**
+ * Issue a signed session cookie for the given user id.
+ *
+ * B54: the token carries a `sid` claim that is registered in the session
+ * registry (src/lib/session-store.ts) so the security settings UI can list the
+ * device and revoke it. If the registry is unavailable the sign-in still
+ * succeeds — the session then behaves like a legacy (unlisted) one, because a
+ * broken store must not block authentication.
+ */
 export async function createSession(userId: string): Promise<void> {
-  const token = await new SignJWT({ sub: userId })
+  let record: { sid: string } | null = null;
+  try {
+    const requestHeaders = await headers();
+    record = registerSession({
+      userId,
+      device: describeDevice(requestHeaders.get("user-agent")),
+    });
+  } catch {
+    record = null;
+  }
+
+  const payload: { sub: string; sid?: string } = { sub: userId };
+  if (record) payload.sid = record.sid;
+
+  const token = await new SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_DAYS}d`)
@@ -46,8 +75,23 @@ export async function createSession(userId: string): Promise<void> {
   });
 }
 
+/**
+ * Delete the calling device's cookie — and revoke its registry record, so a
+ * replayed copy of the token is dead on its next request too (B54).
+ */
 export async function destroySession(): Promise<void> {
   const store = await cookies();
+  const token = store.get(COOKIE_NAME)?.value;
+  if (token) {
+    try {
+      const { payload } = await jwtVerify(token, secretKey());
+      if (typeof payload.sub === "string" && typeof payload.sid === "string") {
+        revokeSessionForUser(payload.sid, payload.sub);
+      }
+    } catch {
+      // Invalid/expired token: nothing worth revoking.
+    }
+  }
   store.delete(COOKIE_NAME);
 }
 
@@ -56,7 +100,31 @@ export async function getSessionUserId(): Promise<string | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secretKey());
-    return typeof payload.sub === "string" ? payload.sub : null;
+    if (typeof payload.sub !== "string") return null;
+    const sid = typeof payload.sid === "string" ? payload.sid : null;
+    if (sid) {
+      // Best-effort: an unreadable registry fails OPEN (auth stays up) — it
+      // never turns a storage hiccup into a mass sign-out.
+      try {
+        if (isSessionRevoked(sid)) return null;
+        touchSession(sid);
+      } catch {
+        /* registry unavailable → revocation lags a request */
+      }
+    }
+    return payload.sub;
+  } catch {
+    return null;
+  }
+}
+
+/** The registry sid behind the calling cookie (null for legacy tokens). */
+export async function getSessionId(): Promise<string | null> {
+  const token = (await cookies()).get(COOKIE_NAME)?.value;
+  if (!token) return null;
+  try {
+    const { payload } = await jwtVerify(token, secretKey());
+    return typeof payload.sid === "string" ? payload.sid : null;
   } catch {
     return null;
   }

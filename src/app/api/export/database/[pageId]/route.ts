@@ -1,17 +1,25 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { rateLimit } from "@/lib/api-guard";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
+import { DATABASE_EXPORT_FORMATS, parseExportFormat } from "@/lib/export-format";
 import { matrixToCsv } from "@/lib/serialize";
 import { formatCell, type QueryProperty } from "@/lib/database-query";
 
 export const runtime = "nodejs";
 
-/** Export a database page's rows as CSV. */
+/**
+ * Export a database page's rows as CSV (default).
+ * Unknown `?format` → 400 (R23.16); 30 exports/min (R23.22).
+ */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ pageId: string }> },
 ) {
+  const limited = rateLimit(request, "export-database", 30, 60_000);
+  if (limited) return limited;
+
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -26,6 +34,18 @@ export async function GET(
 
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const parsedFormat = parseExportFormat(
+    new URL(request.url).searchParams.get("format"),
+    DATABASE_EXPORT_FORMATS,
+    "csv",
+  );
+  if (!parsedFormat.ok) {
+    return NextResponse.json(
+      { error: parsedFormat.error, valid: parsedFormat.valid },
+      { status: 400 },
+    );
+  }
 
   const [properties, rows] = await Promise.all([
     prisma.property.findMany({

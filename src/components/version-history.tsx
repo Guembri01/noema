@@ -37,10 +37,13 @@ function relative(value: string, locale: string) {
 export function VersionHistory({
   pageId,
   versions,
+  current,
   locale,
 }: {
   pageId: string;
   versions: VersionRow[];
+  /** The live page state (R30.6) - rendered as a distinct, non-restorable header row. */
+  current: { title: string; updatedAt: string };
   locale: string;
 }) {
   const router = useRouter();
@@ -88,20 +91,30 @@ export function VersionHistory({
             </header>
 
             <div className="flex-1 overflow-y-auto p-3">
-              {versions.length === 0 ? (
-                <p className="p-2 text-sm text-muted">
-                  {t(locale, "noVersionsYet")}
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {versions.map((version, index) => (
-                    <li
-                      key={version.id}
-                      className={cn(
-                        "rounded-lg border border-border p-3",
-                        index === 0 && "bg-surface",
-                      )}
-                    >
+              <ul className="space-y-2">
+                {/* Live page state (R30.6): a distinct, non-restorable header
+                    row - snapshots below always store the state BEFORE a save,
+                    so the newest one is not "current" and must stay restorable
+                    ("undo the last edit from history"). */}
+                <li
+                  data-testid="version-current-row"
+                  className="rounded-lg border border-dashed border-border bg-surface p-3"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                      {current.title || t(locale, "untitled")}
+                    </p>
+                    <p className="text-[11px] text-muted" suppressHydrationWarning>
+                      {relative(current.updatedAt, locale)}
+                      {t(locale, "currentSuffix")}
+                    </p>
+                  </div>
+                </li>
+                {versions.length === 0 && (
+                  <li className="p-2 text-sm text-muted">{t(locale, "noVersionsYet")}</li>
+                )}
+                {versions.map((version) => (
+                  <li key={version.id} className="rounded-lg border border-border p-3">
                       <div className="flex items-center gap-2">
                         <span
                           className="grid h-6 w-6 place-items-center rounded-full text-[10px] font-medium text-white"
@@ -118,7 +131,6 @@ export function VersionHistory({
                           </p>
                           <p className="text-[11px] text-muted" suppressHydrationWarning>
                             {relative(version.createdAt, locale)}
-                            {index === 0 ? t(locale, "currentSuffix") : ""}
                           </p>
                         </div>
                         {typeof version.charDelta === "number" && version.charDelta !== 0 && (
@@ -143,35 +155,34 @@ export function VersionHistory({
                         {version.title || t(locale, "untitled")}
                         {t(locale, "titledSuffix")}
                       </p>
-                      {index !== 0 && (
-                        <button
-                          type="button"
-                          disabled={pending}
-                          onClick={() =>
-                            startTransition(async () => {
-                              const outcome = await safeAction(
-                                () => restorePageVersionAction(version.id),
-                                { locale },
-                              );
-                              const value = outcome.ok ? outcome.value : { error: outcome.error };
-                              if ("error" in value) {
-                                toast.error(value.error);
-                                return;
-                              }
-                              toast.success(t(locale, "restoredVersion"));
-                              setOpen(false);
-                              router.refresh();
-                            })
-                          }
-                          className="mt-2 inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-50"
-                        >
-                          <RotateCcw className="h-3 w-3" /> {t(locale, "restore")}
-                        </button>
-                      )}
+                      {/* Every snapshot row is restorable - including the newest,
+                          which stores the pre-latest-edit state (R30.6). */}
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() =>
+                          startTransition(async () => {
+                            const outcome = await safeAction(
+                              () => restorePageVersionAction(version.id),
+                              { locale },
+                            );
+                            const value = outcome.ok ? outcome.value : { error: outcome.error };
+                            if ("error" in value) {
+                              toast.error(value.error);
+                              return;
+                            }
+                            toast.success(t(locale, "restoredVersion"));
+                            setOpen(false);
+                            router.refresh();
+                          })
+                        }
+                        className="mt-2 inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-50"
+                      >
+                        <RotateCcw className="h-3 w-3" /> {t(locale, "restore")}
+                      </button>
                     </li>
                   ))}
                 </ul>
-              )}
             </div>
           </aside>
         </div>

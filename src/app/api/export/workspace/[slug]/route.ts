@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import JSZip from "jszip";
 import { getCurrentUser } from "@/lib/auth";
+import { rateLimit } from "@/lib/api-guard";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { getWorkspaceBySlug } from "@/server/queries";
+import { WORKSPACE_EXPORT_FORMATS, parseExportFormat } from "@/lib/export-format";
 import { matrixToCsv, pageToMarkdown } from "@/lib/serialize";
 import { formatCell, type QueryProperty } from "@/lib/database-query";
 
@@ -14,12 +16,16 @@ const safeName = (value: string) =>
 
 /**
  * Bulk export: every page as Markdown (nested by ancestry) and every database
- * as CSV, packaged into a zip.
+ * as CSV, packaged into a zip. Unknown `?format` → 400 (R23.16);
+ * 5 exports/min (R23.22).
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
+  const limited = rateLimit(request, "export-workspace", 5, 60_000);
+  if (limited) return limited;
+
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -28,6 +34,18 @@ export async function GET(
   if (!workspace) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const parsedFormat = parseExportFormat(
+    new URL(request.url).searchParams.get("format"),
+    WORKSPACE_EXPORT_FORMATS,
+    "zip",
+  );
+  if (!parsedFormat.ok) {
+    return NextResponse.json(
+      { error: parsedFormat.error, valid: parsedFormat.valid },
+      { status: 400 },
+    );
+  }
 
   const pages = await prisma.page.findMany({
     where: { workspaceId: workspace.id, deletedAt: null },

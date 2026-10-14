@@ -18,6 +18,8 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // gitignored local-only parity-loop evidence logs (never shipped)
+      "scripts/_logs/**",
     ],
   },
 ];

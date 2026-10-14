@@ -22,6 +22,7 @@ import { PageTitle } from "@/components/page-title";
 import { CommentPanel, type CommentNode } from "@/components/comment-panel";
 import { Backlinks } from "@/components/backlinks";
 import { VersionHistory } from "@/components/version-history";
+import { loadVersionAuthors } from "@/server/version-authors";
 import {
   DatabaseView,
   type DBProperty,
@@ -72,6 +73,15 @@ export default async function PageRoute({
     }),
     getTeamspaces(workspace.id),
   ]);
+
+  // One shared authorship resolver for BOTH history surfaces (R30.11 of
+  // docs/specs/version-history-v2.md): the User row is looked up by
+  // `createdById` regardless of current membership, so a departed member
+  // renders here exactly as in the ...-menu timeline - the old
+  // `members.find(...)` made them surface-dependent "Unknown".
+  const resolveVersionAuthor = await loadVersionAuthors(
+    page.versions.map((version) => version.createdById),
+  );
 
   const editable =
     access.role !== "GUEST" &&
@@ -188,14 +198,14 @@ export default async function PageRoute({
         <VersionHistory
           pageId={page.id}
           locale={locale}
+          current={{ title: page.title, updatedAt: page.updatedAt.toISOString() }}
           versions={page.versions.map((version) => ({
             id: version.id,
             title: version.title,
             summary: version.summary,
             charDelta: version.charDelta,
             createdAt: version.createdAt.toISOString(),
-            author:
-              members.find((member) => member.id === version.createdById) ?? null,
+            author: resolveVersionAuthor(version.createdById),
           }))}
         />
       </section>

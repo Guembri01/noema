@@ -6,11 +6,21 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { markdownToDoc } from "@/lib/serialize";
-import { cardDescriptionBlocks, parseTrelloBoard, pathToTitles } from "@/lib/importers";
+import { cardDescriptionBlocks, parseTrelloBoard, pathToTitles, type ImportCounts } from "@/lib/importers";
 
 const TRELLO_COLORS = ["gray", "blue", "green", "yellow", "orange", "purple", "pink", "red"];
 
-type ImportResult = { ok: true; id: string; slug: string } | { error: string };
+/**
+ * B71 / R23.6: every multi-record import runs inside one `prisma.$transaction`
+ * so a mid-import failure rolls back instead of leaving partial pages.
+ * Counts (D23.4) report what was written vs dropped.
+ */
+type ImportResult =
+  | { ok: true; id: string; slug: string; counts: ImportCounts }
+  | { error: string };
+
+const errorMessage = (error: unknown, fallback: string) =>
+  error instanceof Error && error.message ? error.message : fallback;
 
 /** Import a Word (.docx) document as a page. */
 export async function importDocxAction(formData: FormData): Promise<ImportResult> {
@@ -44,26 +54,40 @@ export async function importDocxAction(formData: FormData): Promise<ImportResult
   if (!result) return { error: "That file is not a readable .docx document." };
 
   const title = file.name.replace(/\.docx$/i, "").slice(0, 200) || "Imported document";
-  const last = await prisma.page.findFirst({
-    where: { workspaceId, parentId },
-    orderBy: { position: "desc" },
-    select: { position: true },
-  });
-  const page = await prisma.page.create({
-    data: {
-      workspaceId,
-      parentId,
-      title,
-      icon: "📄",
-      createdById: user.id,
-      position: (last?.position ?? 0) + 1000,
-      content: markdownToDoc(result.value) as unknown as Prisma.InputJsonValue,
-    },
-    select: { id: true },
-  });
+
+  let pageId = "";
+  try {
+    await prisma.$transaction(async (tx) => {
+      const last = await tx.page.findFirst({
+        where: { workspaceId, parentId },
+        orderBy: { position: "desc" },
+        select: { position: true },
+      });
+      const page = await tx.page.create({
+        data: {
+          workspaceId,
+          parentId,
+          title,
+          icon: "📄",
+          createdById: user.id,
+          position: (last?.position ?? 0) + 1000,
+          content: markdownToDoc(result.value) as unknown as Prisma.InputJsonValue,
+        },
+        select: { id: true },
+      });
+      pageId = page.id;
+    });
+  } catch (error) {
+    return { error: errorMessage(error, "Word import failed.") };
+  }
 
   revalidatePath("/w", "layout");
-  return { ok: true, id: page.id, slug: workspace.slug };
+  return {
+    ok: true,
+    id: pageId,
+    slug: workspace.slug,
+    counts: { imported: 1, skippedColumns: 0, skippedCells: 0, failed: 0 },
+  };
 }
 
 /** Import a Trello board JSON export as a database (lists → status options). */
@@ -97,85 +121,105 @@ export async function importTrelloAction(input: {
     orderBy: { position: "desc" },
     select: { position: true },
   });
-  const database = await prisma.page.create({
-    data: {
-      workspaceId: input.workspaceId,
-      parentId: input.parentId ?? null,
-      type: "DATABASE",
-      title: board.name,
-      icon: "📋",
-      createdById: user.id,
-      position: (last?.position ?? 0) + 1000,
-    },
-    select: { id: true },
-  });
 
-  const nameProperty = await prisma.property.create({
-    data: {
-      databasePageId: database.id,
-      name: "Name",
-      type: "TEXT",
-      position: 1000,
-      config: { primary: true },
-    },
-  });
-  const options = board.lists.map((list, index) => ({
-    id: list.id,
-    name: list.name,
-    color: TRELLO_COLORS[index % TRELLO_COLORS.length],
-  }));
-  const statusProperty = await prisma.property.create({
-    data: {
-      databasePageId: database.id,
-      name: "List",
-      type: "STATUS",
-      position: 2000,
-      config: { options },
-    },
-  });
-  await prisma.databaseView.createMany({
-    data: [
-      { databasePageId: database.id, name: "Table", type: "TABLE", position: 1000 },
-      {
-        databasePageId: database.id,
-        name: "Board",
-        type: "BOARD",
-        position: 2000,
-        config: { groupByPropertyId: statusProperty.id },
-      },
-    ],
-  });
-
-  let position = 1000;
-  for (const list of board.lists) {
-    for (const card of list.cards) {
-      const blocks = cardDescriptionBlocks(card.description);
-      const row = await prisma.page.create({
+  let databaseId = "";
+  let imported = 0;
+  try {
+    // R23.6: the whole board (page + properties + views + every card row)
+    // commits or rolls back as one unit.
+    await prisma.$transaction(async (tx) => {
+      const database = await tx.page.create({
         data: {
           workspaceId: input.workspaceId,
-          parentId: database.id,
-          title: card.title,
+          parentId: input.parentId ?? null,
+          type: "DATABASE",
+          title: board.name,
+          icon: "📋",
           createdById: user.id,
-          position,
-          icon: "🗂️",
-          ...(blocks.length > 0
-            ? { content: { type: "doc", content: blocks } as Prisma.InputJsonValue }
-            : {}),
+          position: (last?.position ?? 0) + 1000,
         },
         select: { id: true },
       });
-      position += 1000;
-      await prisma.propertyValue.createMany({
+      databaseId = database.id;
+
+      const nameProperty = await tx.property.create({
+        data: {
+          databasePageId: database.id,
+          name: "Name",
+          type: "TEXT",
+          position: 1000,
+          config: { primary: true },
+        },
+      });
+      const options = board.lists.map((list, index) => ({
+        id: list.id,
+        name: list.name,
+        color: TRELLO_COLORS[index % TRELLO_COLORS.length],
+      }));
+      const statusProperty = await tx.property.create({
+        data: {
+          databasePageId: database.id,
+          name: "List",
+          type: "STATUS",
+          position: 2000,
+          config: { options },
+        },
+      });
+      await tx.databaseView.createMany({
         data: [
-          { propertyId: nameProperty.id, pageId: row.id, value: { text: card.title } },
-          { propertyId: statusProperty.id, pageId: row.id, value: { optionId: list.id } },
+          { databasePageId: database.id, name: "Table", type: "TABLE", position: 1000 },
+          {
+            databasePageId: database.id,
+            name: "Board",
+            type: "BOARD",
+            position: 2000,
+            config: { groupByPropertyId: statusProperty.id },
+          },
         ],
       });
-    }
+
+      let position = 1000;
+      let rows = 0;
+      for (const list of board.lists) {
+        for (const card of list.cards) {
+          const blocks = cardDescriptionBlocks(card.description);
+          const row = await tx.page.create({
+            data: {
+              workspaceId: input.workspaceId,
+              parentId: database.id,
+              title: card.title,
+              createdById: user.id,
+              position,
+              icon: "🗂️",
+              ...(blocks.length > 0
+                ? { content: { type: "doc", content: blocks } as Prisma.InputJsonValue }
+                : {}),
+            },
+            select: { id: true },
+          });
+          position += 1000;
+          rows += 1;
+          await tx.propertyValue.createMany({
+            data: [
+              { propertyId: nameProperty.id, pageId: row.id, value: { text: card.title } },
+              { propertyId: statusProperty.id, pageId: row.id, value: { optionId: list.id } },
+            ],
+          });
+        }
+      }
+      imported = 1 + rows;
+    });
+  } catch (error) {
+    return { error: errorMessage(error, "Trello import failed.") };
   }
 
   revalidatePath("/w", "layout");
-  return { ok: true, id: database.id, slug: workspace.slug };
+  return {
+    ok: true,
+    id: databaseId,
+    slug: workspace.slug,
+    counts: { imported, skippedColumns: 0, skippedCells: 0, failed: 0 },
+  };
 }
 
 /** Import a Markdown archive (e.g. a Notion/pages export) as nested pages. */
@@ -217,48 +261,67 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
     return value;
   };
 
-  let created = 0;
-  let lastId = "";
-
+  // R23.6: read/parse every entry first (no DB writes), then create the
+  // whole tree inside one transaction so a failure mid-archive rolls back.
+  const plan: { titles: string[]; content: ReturnType<typeof markdownToDoc> }[] = [];
   for (const entry of entries) {
     const titles = pathToTitles(entry.name);
     if (titles.length === 0) continue;
-    let parent = parentId;
-    let prefix = "";
-    for (let i = 0; i < titles.length; i += 1) {
-      prefix = prefix ? `${prefix}/${titles[i]}` : titles[i];
-      const isLeaf = i === titles.length - 1;
-      let pageId = cache.get(prefix);
-      if (!pageId) {
-        const content = isLeaf ? markdownToDoc(await entry.async("text")) : undefined;
-        const page = await prisma.page.create({
-          data: {
-            workspaceId,
-            parentId: parent,
-            title: titles[i],
-            icon: isLeaf ? "📄" : "📁",
-            createdById: user.id,
-            position: nextPosition(parent),
-            ...(content
-              ? { content: content as unknown as Prisma.InputJsonValue }
-              : {}),
-          },
-          select: { id: true },
-        });
-        pageId = page.id;
-        cache.set(prefix, pageId);
-        if (isLeaf) {
-          created += 1;
-          lastId = pageId;
+    plan.push({ titles, content: markdownToDoc(await entry.async("text")) });
+  }
+  if (plan.length === 0) return { error: "Nothing to import." };
+
+  let created = 0;
+  let imported = 0;
+  let lastId = "";
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const item of plan) {
+        const { titles, content } = item;
+        let parent = parentId;
+        let prefix = "";
+        for (let i = 0; i < titles.length; i += 1) {
+          prefix = prefix ? `${prefix}/${titles[i]}` : titles[i];
+          const isLeaf = i === titles.length - 1;
+          let pageId = cache.get(prefix);
+          if (!pageId) {
+            const page = await tx.page.create({
+              data: {
+                workspaceId,
+                parentId: parent,
+                title: titles[i],
+                icon: isLeaf ? "📄" : "📁",
+                createdById: user.id,
+                position: nextPosition(parent),
+                ...(isLeaf ? { content: content as unknown as Prisma.InputJsonValue } : {}),
+              },
+              select: { id: true },
+            });
+            pageId = page.id;
+            cache.set(prefix, pageId);
+            imported += 1;
+            if (isLeaf) {
+              created += 1;
+              lastId = pageId;
+            }
+          }
+          parent = pageId;
         }
       }
-      parent = pageId;
-    }
+      if (created === 0) throw new Error("Nothing to import.");
+    });
+  } catch (error) {
+    return { error: errorMessage(error, "Archive import failed.") };
   }
 
-  if (created === 0) return { error: "Nothing to import." };
   revalidatePath("/w", "layout");
-  return { ok: true, id: lastId, slug: workspace.slug };
+  return {
+    ok: true,
+    id: lastId,
+    slug: workspace.slug,
+    counts: { imported, skippedColumns: 0, skippedCells: 0, failed: 0 },
+  };
 }
 
 /** Import a Markdown document as a new page. */

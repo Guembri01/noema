@@ -14,6 +14,8 @@ import {
 } from "@/lib/permissions";
 import { parsePageContent } from "@/lib/validation";
 import { prosemirrorToText } from "@/lib/blocks";
+import { fileKeyFromUrl, purgeableError, staleFileUrls, subtreeClosure } from "@/lib/trash";
+import { storageDriver } from "@/lib/storage";
 
 type Result<T = unknown> = ({ ok: true } & T) | { error: string };
 
@@ -22,14 +24,14 @@ async function authorizePage(
 ): Promise<
   | { error: string }
   | {
-      page: { id: string; workspaceId: string; parentId: string | null };
+      page: { id: string; workspaceId: string; parentId: string | null; deletedAt: Date | null };
       access: NonNullable<WorkspaceAccess>;
     }
 > {
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { id: true, workspaceId: true, parentId: true },
+    select: { id: true, workspaceId: true, parentId: true, deletedAt: true },
   });
   if (!page) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
@@ -320,6 +322,73 @@ export async function movePageAction(
   return { ok: true };
 }
 
+/**
+ * Upload URLs that only the purged pages reference — computed *before* the
+ * rows go away (reads only) so storage cleanup happens after a successful
+ * delete and never in front of it.
+ */
+async function collectStaleFileUrls(
+  workspaceId: string,
+  purgedIds: string[],
+): Promise<string[]> {
+  try {
+    const [purgedPages, purgedValues, keptPages, keptValues] = await Promise.all([
+      prisma.page.findMany({
+        where: { id: { in: purgedIds } },
+        select: { content: true, coverUrl: true },
+      }),
+      prisma.propertyValue.findMany({
+        where: { pageId: { in: purgedIds } },
+        select: { value: true },
+      }),
+      prisma.page.findMany({
+        where: { workspaceId, id: { notIn: purgedIds } },
+        select: { content: true, coverUrl: true },
+      }),
+      prisma.propertyValue.findMany({
+        where: { page: { workspaceId }, pageId: { notIn: purgedIds } },
+        select: { value: true },
+      }),
+    ]);
+    return staleFileUrls(
+      [...purgedPages, ...purgedValues],
+      [...keptPages, ...keptValues],
+    );
+  } catch (error) {
+    console.warn("trash purge: could not scan uploads, skipping file cleanup", error);
+    return [];
+  }
+}
+
+/**
+ * Best-effort storage cleanup for purged pages: blobs are removed from the
+ * driver and their Asset rows deleted, but a storage hiccup never fails the
+ * purge itself (a leaked blob beats a failed delete).
+ */
+async function dropPurgedFiles(urls: string[]): Promise<void> {
+  if (urls.length === 0) return;
+  try {
+    const keys = urls
+      .map(fileKeyFromUrl)
+      .filter((key): key is string => key !== null);
+    if (keys.length > 0) {
+      const driver = storageDriver();
+      await Promise.all(
+        keys.map(async (key) => {
+          try {
+            await driver.remove(key);
+          } catch {
+            // Best-effort: a missing blob is already the desired end state.
+          }
+        }),
+      );
+    }
+    await prisma.asset.deleteMany({ where: { url: { in: urls } } });
+  } catch (error) {
+    console.warn("trash purge: upload cleanup failed", error);
+  }
+}
+
 /** Permanently delete every page in the workspace trash (one transaction). */
 export async function emptyTrashAction(workspaceId: string): Promise<Result<{ deleted: number }>> {
   const user = await requireUser();
@@ -327,9 +396,29 @@ export async function emptyTrashAction(workspaceId: string): Promise<Result<{ de
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to empty the trash." };
   }
-  const result = await prisma.page.deleteMany({
+  const trashed = await prisma.page.findMany({
     where: { workspaceId, deletedAt: { not: null } },
+    select: { id: true },
   });
+  if (trashed.length === 0) return { ok: true, deleted: 0 };
+
+  // Purge the whole subtree of every trashed page, scoped to this workspace:
+  // children (and any pre-existing invisible orphan under a trashed parent)
+  // go with their parent instead of being silently cascade-deleted by the
+  // database with no chance to clean up their uploads.
+  const nodes = await prisma.page.findMany({
+    where: { workspaceId },
+    select: { id: true, parentId: true },
+  });
+  const ids = subtreeClosure(
+    nodes,
+    trashed.map((page) => page.id),
+  );
+  const staleUrls = await collectStaleFileUrls(workspaceId, ids);
+  const result = await prisma.page.deleteMany({
+    where: { id: { in: ids }, workspaceId },
+  });
+  await dropPurgedFiles(staleUrls);
   revalidateWorkspace(workspaceId);
   return { ok: true, deleted: result.count };
 }
@@ -471,6 +560,14 @@ export async function archivePageAction(pageId: string): Promise<Result> {
 export async function restorePageAction(pageId: string): Promise<Result> {
   const auth = await authorizePage(pageId);
   if ("error" in auth) return auth;
+  if (!canEditContent(auth.access.role)) {
+    return { error: "You do not have permission to restore this page." };
+  }
+  // Only trashed pages restore: a live page (or a double restore) is a no-op
+  // that would otherwise log activity and pretend something happened.
+  if (!auth.page.deletedAt) {
+    return { error: "This page is not in the trash." };
+  }
   // A page whose parent is still in the trash would restore into an invisible
   // branch, so re-attach it at the workspace root in that case.
   const parentId = auth.page.parentId;
@@ -495,14 +592,34 @@ export async function restorePageAction(pageId: string): Promise<Result> {
   return { ok: true };
 }
 
-/** Permanently delete a trashed page and its subtree. */
-export async function deletePageAction(pageId: string): Promise<Result> {
+/**
+ * Permanently delete a trashed page and its subtree.
+ *
+ * Guards: edit permission, the page must actually be in the trash, and it must
+ * belong to `workspaceId` (the trash the caller is acting from) — a purge can
+ * never cross workspace boundaries even for a user with access to both.
+ */
+export async function deletePageAction(pageId: string, workspaceId: string): Promise<Result> {
   const auth = await authorizePage(pageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) {
     return { error: "You do not have permission to delete this page." };
   }
-  await prisma.page.delete({ where: { id: pageId } });
+  const guard = purgeableError(auth.page, workspaceId);
+  if (guard) return { error: guard };
+
+  const nodes = await prisma.page.findMany({
+    where: { workspaceId: auth.page.workspaceId },
+    select: { id: true, parentId: true },
+  });
+  const ids = subtreeClosure(nodes, [pageId]);
+  const staleUrls = await collectStaleFileUrls(auth.page.workspaceId, ids);
+  // Children cascade in the database, but the id set is explicit so the purge
+  // stays deterministic (and so uploads are cleaned up for every page lost).
+  await prisma.page.deleteMany({
+    where: { id: { in: ids }, workspaceId: auth.page.workspaceId },
+  });
+  await dropPurgedFiles(staleUrls);
   await logActivity({
     workspaceId: auth.page.workspaceId,
     actorId: null,

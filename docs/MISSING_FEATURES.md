@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Scoreboard:** 563 feature rows — 161 implemented · 101 partial · 287 planned · 14 deliberately out of scope.
+**Scoreboard:** 563 feature rows — 174 implemented · 89 partial · 286 planned · 14 deliberately out of scope.
 
-This file lists the **388** rows that are not finished, area by area, plus 14 intentional divergences.
+This file lists the **375** rows that are not finished, area by area, plus 14 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -168,34 +168,21 @@ This file lists the **388** rows that are not finished, area by area, plus 14 in
 
 ### 4. Properties
 
-6 done · 13 partial · 16 planned · 1 out of scope
+19 done · 1 partial · 15 planned · 1 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Number format | Display as number/percent/currency. | 🟡 | Number format works; percent/currency partial. |
-| Select property | Single choice from options. | 🟡 | Works; option color/rename partial. |
-| Multi-select property | Multiple choices. | 🟡 | Works; ordering/dedup edge cases. |
-| Status property | State with grouped options. | 🟡 | Basic select-like; group semantics missing. |
-| Date property | A single date. | 🟡 | Stored; formatting limited. |
-| Person/people property | Assign workspace members. | 🟡 | Single user works; multi-user partial. |
-| Files & media property | Attach files to a row. | 🟡 | Upload works; gallery preview missing. |
-| Created time | Row creation timestamp. | 🟡 | Stored automatically; surfaced in UI partial. |
-| Created by | Row creator. | 🟡 | Stored; surfaced in UI partial. |
-| Last edited time | Last modification timestamp. | 🟡 | Stored; surfaced partial. |
-| Last edited by | Last editor. | 🟡 | Stored; surfaced partial. |
-| Property reorder/hide | Arrange and hide properties. | 🟡 | Hide works; drag reorder partial. |
-| Property delete | Remove a property and its data. | 🟡 | Works; confirmation weak. |
-| Status groups | To-do / In-progress / Complete buckets. | 🧭 | Planned; drives board columns. |
+| Last edited by | Last editor. | 🟡 | Tracked from property/table edits via the activity log (falls back to creator); content/title edits outside the database view not yet recorded. |
 | Date range | Start and end date. | 🧭 | Planned. |
 | Date reminders | Notify at a chosen time. | 🧭 | Planned; depends on scheduler. |
 | Date time zone | Time-zone-aware timestamps. | 🧭 | Planned; store as UTC + zone. |
 | Formula property | Computed value from an expression. | 🧭 | Planned; see Formulas. |
-| Relation property | Link rows across databases. | 🧭 | Planned. |
-| Relation (single) | One linked row. | 🧭 | Planned. |
-| Relation (multi) | Many linked rows. | 🧭 | Planned. |
-| Two-way relation | Reciprocal relation property. | 🧭 | Planned; requires pair metadata. |
-| Rollup property | Aggregate across a relation. | 🧭 | Planned; depends on relations. |
-| Rollup functions | Count, sum, average, min/max, join, etc. | 🧭 | Planned function set. |
+| Relation property | Link rows across databases. | 🧭 | Planned. Spec: docs/specs/relations-rollups.md. |
+| Relation (single) | One linked row. | 🧭 | Planned. Spec: docs/specs/relations-rollups.md. |
+| Relation (multi) | Many linked rows. | 🧭 | Planned. Spec: docs/specs/relations-rollups.md. |
+| Two-way relation | Reciprocal relation property. | 🧭 | Planned; requires pair metadata. Spec: docs/specs/relations-rollups.md. |
+| Rollup property | Aggregate across a relation. | 🧭 | Planned; depends on relations. Spec: docs/specs/relations-rollups.md. |
+| Rollup functions | Count, sum, average, min/max, join, etc. | 🧭 | Planned function set. Spec: docs/specs/relations-rollups.md. |
 | Unique ID property | Monotonic per-database id. | 🧭 | Planned. |
 | Button property | Trigger actions from a row. | 🧭 | Planned. |
 | Place/location property | Address with map preview. | 🧭 | Planned. |

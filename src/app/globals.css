@@ -890,6 +890,18 @@ body {
   height: 100%;
   border: 0;
 }
+.noema-embed-provider {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  pointer-events: none;
+}
 
 /* ---------------------------------------------------------------------------
    Breadcrumb
@@ -1737,6 +1749,52 @@ body {
   color: var(--muted);
   text-align: center;
 }
+/* Resize + alignment (the picture lives in a shrink-wrapped figure so the
+   handle sits on its right edge whatever the width). */
+.noema-image-figure {
+  position: relative;
+  max-width: 100%;
+}
+.noema-image-figure .noema-image {
+  display: block;
+  width: 100%;
+}
+.noema-image-resize {
+  position: absolute;
+  top: 50%;
+  right: -7px;
+  width: 12px;
+  height: 34px;
+  transform: translateY(-50%);
+  border-radius: 6px;
+  background: var(--accent);
+  opacity: 0;
+  cursor: ew-resize;
+  touch-action: none;
+  transition: opacity 0.15s;
+}
+.noema-image-block:hover .noema-image-resize,
+.noema-image-block.is-selected .noema-image-resize {
+  opacity: 1;
+}
+.noema-image-align {
+  display: inline-flex;
+  gap: 2px;
+}
+.noema-image-align button {
+  padding: 3px;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 4px;
+}
+.noema-image-align button:hover {
+  color: var(--fg);
+}
+.noema-image-align button[aria-pressed="true"] {
+  color: var(--fg);
+  background: var(--bg);
+  border-color: var(--border);
+}
 
 /* ----------------------------------------------------- block backgrounds */
 .noema-editor .ProseMirror [data-block-color],
@@ -1761,3 +1819,10 @@ body {
 .noema-doc-renderer [data-block-color="pink"] { background-color: #fbe4e8; }
 .noema-editor .ProseMirror [data-block-color="red"],
 .noema-doc-renderer [data-block-color="red"] { background-color: #fdebec; }
+
+/* B96 — TOC scroll-spy: highlight the current outline entry (aria-current).
+   Scoped to the TOC block; append-only (shared file). */
+.noema-toc button[aria-current="true"] {
+  background: var(--surface-2);
+  font-weight: 600;
+}

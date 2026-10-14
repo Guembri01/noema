@@ -31,6 +31,12 @@ import { setPageTeamspaceAction } from "@/server/actions/teamspaces";
 import { setPageProjectAction } from "@/server/actions/projects";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import {
+  groupByParent,
+  moveCandidates,
+  toggleExpanded,
+  visibleChildren,
+} from "@/lib/page-tree";
 import { toast } from "sonner";
 import { safeAction } from "@/lib/actions-client";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -70,23 +76,10 @@ type PageTreeProps = {
 };
 
 /**
- * Candidate parents for "Move to": every page except the moved page and its own
- * descendants (the server also guards cycles — this just hides impossible choices).
+ * Pure page-tree helpers (moveCandidates, grouping, expand toggles, the
+ * visible-rows plan) live in `@/lib/page-tree` — extracted verbatim by B66 so
+ * they are unit-testable without a DOM.
  */
-function moveCandidates(tree: PageTreeNode[], node: PageTreeNode) {
-  const blocked = new Set<string>([node.id]);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const candidate of tree) {
-      if (candidate.parentId && blocked.has(candidate.parentId) && !blocked.has(candidate.id)) {
-        blocked.add(candidate.id);
-        grew = true;
-      }
-    }
-  }
-  return tree.filter((candidate) => !blocked.has(candidate.id)).slice(0, 12);
-}
 
 export function PageTree({
   tree,
@@ -108,23 +101,10 @@ export function PageTree({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
-  const byParent = useMemo(() => {
-    const map = new Map<string | null, PageTreeNode[]>();
-    for (const node of tree) {
-      const key = node.parentId;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(node);
-    }
-    return map;
-  }, [tree]);
+  const byParent = useMemo(() => groupByParent(tree), [tree]);
 
   const toggle = (id: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    setExpanded((prev) => toggleExpanded(prev, id));
 
   const remote = (fn: () => Promise<unknown>, message?: string) =>
     startTransition(async () => {
@@ -142,9 +122,7 @@ export function PageTree({
     depth: number,
     rootFilter?: (node: PageTreeNode) => boolean,
   ) => {
-    const nodes = (byParent.get(parentId) ?? []).filter(
-      (node) => parentId !== null || !rootFilter || rootFilter(node),
-    );
+    const nodes = visibleChildren(byParent, parentId, rootFilter);
     if (nodes.length === 0) return null;
     return (
       <ul className="space-y-px">

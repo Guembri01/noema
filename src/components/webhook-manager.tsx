@@ -10,12 +10,11 @@ import {
   deleteWebhookAction as deleteWebhookActionRaw,
 } from "@/server/actions/webhooks";
 import { t } from "@/lib/i18n";
+import { WEBHOOK_EVENT_CATALOG } from "@/lib/webhook-events";
 
 /** Transport-safe wrappers (F-09): a failed request now returns `{ error }`. */
 const createWebhookAction = guarded(createWebhookActionRaw);
 const deleteWebhookAction = guarded(deleteWebhookActionRaw);
-
-const EVENTS = ["page.created", "page.updated", "row.created", "comment.created"];
 
 export type WebhookRow = {
   id: string;
@@ -98,14 +97,14 @@ export function WebhookManager({
           className="h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
         />
         <div className="flex flex-wrap gap-3 text-sm">
-          {EVENTS.map((event) => (
-            <label key={event} className="flex items-center gap-1.5">
+          {WEBHOOK_EVENT_CATALOG.map((event) => (
+            <label key={event.id} className="flex items-center gap-1.5">
               <input
                 type="checkbox"
-                checked={events.includes(event)}
-                onChange={() => toggleEvent(event)}
+                checked={events.includes(event.id)}
+                onChange={() => toggleEvent(event.id)}
               />
-              {event}
+              {event.label}
             </label>
           ))}
         </div>

@@ -8,7 +8,7 @@ surface of Notion.
 > source code, assets or trademarks. It implements the same *category* of
 > product from publicly documented behaviour only. See [NOTICE](#notice).
 
-- **Stack:** Next.js 15 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · Prisma 6 · PostgreSQL · TipTap
+- **Stack:** Next.js 15 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · Prisma 6 · PostgreSQL (docker container `noema-db`, port **5433**) · TipTap
 - **Runs locally:** one `docker compose up` for the database, one `npm run dev` for the app.
 - **License:** MIT
 
@@ -21,7 +21,8 @@ This repository is a **working foundation plus a complete parity tracker**.
 - The app runs and implements the core workspace loop (auth → workspaces →
   nested pages → block editor → databases → search → comments → history).
 - Every Notion feature area is tracked in **[`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md)**
-  (~490 rows) with a status per feature, so nothing is dropped.
+  (563 feature rows: 161 implemented · 101 partial · 287 planned · 14 deliberately
+  out of scope) with a status per feature, so nothing is dropped.
 
 ## Implemented today
 
@@ -39,11 +40,10 @@ This repository is a **working foundation plus a complete parity tracker**.
 | Properties | TEXT, NUMBER, SELECT, MULTI_SELECT, STATUS, DATE, CHECKBOX, URL/EMAIL/PHONE, PEOPLE, FILES, **FORMULA** (expression engine), **RELATION** (link to another database), **ROLLUP** (14 aggregates over related rows), and computed system fields (**CREATED_TIME/BY, LAST_EDITED_TIME/BY, UNIQUE_ID**) |
 | Search | Full-text search across page titles and body content |
 | Comments | Page comments, threaded replies, resolve, delete, notifications on reply |
-| Sharing | Share-link + invite data model (UI surface is on the roadmap) |
 | UX | **Notion-white default theme** (light) with a dark toggle, **⌘K quick-find command palette**, toast notifications, tooltips, responsive sidebar, accessible primitives (Radix) |
 | Page settings | Full-width, small text and font (default/serif/mono), saved per page |
 | Import / Export | Export a page as **Markdown / JSON / HTML**, a database as **CSV**, the whole workspace as a **.zip**; import **Markdown** or **CSV** |
-| Sharing | **Share to web** — publish a page read-only at `/s/<token>` with optional **password + expiry**; unpublish |
+| Sharing | **Share to web** — publish a page read-only at `/s/<token>` with optional **password + expiry**; unpublish; per-member share levels and **email invitations** (see [Permissions](#permissions-guests-teamspaces-page-shares)) |
 | Templates | **Template button** block + database templates with **recurrence** (daily/weekly/monthly) materialized by `POST /api/cron/templates` |
 | Public API | `GET/POST /api/v1/pages`, `GET /api/v1/pages/:id`, `GET /api/v1/search`, `GET /api/v1/workspaces` — authenticated with **Bearer API tokens** (hashed at rest, managed in workspace settings) |
 | Workspace settings | Rename, member list, API tokens, workspace export |
@@ -52,10 +52,10 @@ This repository is a **working foundation plus a complete parity tracker**.
 | Library | `/w/<slug>/library` — every database and page in one browsable grid |
 | Discussions | **Workspace chat**: draft-first threads (no empty rows — the thread is created on the first message), first message names it, notes can be pinned to a discussion, and `/ask …` gets a grounded AI answer; `GET/POST /api/chat` |
 | Meetings | **Calendar subscriptions** — paste an ICS URL, events are imported/refreshed, and one click turns an event into a **meeting-notes page**; `GET/POST /api/calendar` |
-| Version history | **Slide-over panel** (no longer a long list in the page body): who changed what, relative time, character delta, “Renamed to …”, and one-click **Restore** |\n| Block menu | **Right-click any block**: Turn into, Colour, **Ask AI**, **Move up/down**, Duplicate, Comment, Copy link, **Edit equation**, Delete — plus a Notion-style caret and selection colour |
+| Version history | **Slide-over panel** (no longer a long list in the page body): who changed what, relative time, character delta, “Renamed to …”, and one-click **Restore** |
+| Block menu | **Right-click any block**: Turn into, Colour, **Ask AI**, **Move up/down**, Duplicate, Comment, Copy link, **Edit equation**, Delete — plus a Notion-style caret and selection colour |
 | AI skills | Selection-toolbar **Ask AI**: Improve writing, Proofread, Reformat, Make shorter, Explain, Summarize, Translate |
 | Undo / redo | Floating undo/redo controls in the editor |
-
 | Inbox | Notification inbox with unread badge and “mark all read” |
 | Realtime | **Optional Yjs collaboration** (`npm run collab` + `NEXT_PUBLIC_COLLAB_URL`) with awareness/live cursors and a “Live · N” indicator |
 | Webhooks | **HMAC-SHA256-signed** POST deliveries on `page.created`, `page.updated`, `row.created`, `comment.created`; managed in workspace settings |
@@ -73,7 +73,7 @@ This repository is a **working foundation plus a complete parity tracker**.
 | Editor blocks | … + **linked database** (embedded read-only view of another database) |
 | Accessibility | Visible focus rings, a **skip-to-content** link, `lang`/`dir` from locale, labelled landmarks/navs/controls, and a **WCAG contrast-audited palette** (`npm run check:a11y`) |
 | Formulas | FORMULA properties with an expression engine (`prop("Name")`, `+ - * / %`, comparisons, `if`, `concat`, `round`, `min/max`, `abs`, `length`, `upper/lower`, `contains`, `empty`, `now/today`) |
-| Quality | **Vitest** unit tests for the pure logic (block serialisation, database query engine); `tsc --noEmit`; ESLint; clean production build |
+| Quality | **Vitest** unit tests for the pure logic (block serialisation, database query engine), **Playwright** e2e, `tsc --noEmit`, ESLint, `npm run check:fast` inner-loop gate and `npm run check:coherence` drift gate |
 
 Everything not yet implemented is enumerated in the feature matrix with a
 🧭 Planned status.
@@ -223,12 +223,13 @@ dark variants under `.dark`).
 | Text column | 720px (Notion's is 708px) for notes, `max-w-5xl` for database pages, full width when the page opts in |
 | Page chrome | Breadcrumb + actions in a **sticky bar** that reveals a hairline only once content scrolls under it; 180px cover; emoji icon |
 | Markdown surfaces | `.notion-markdown` mirrors the editor typography, so an AI answer, an Ask-AI block and a page all read the same |
-| Accessibility | Visible `:focus-visible` rings, `aria-current` on the active breadcrumb, `prefers-reduced-motion` honoured, 44/44 a11y checks |
+| Accessibility | Visible `:focus-visible` rings, `aria-current` on the active breadcrumb, `prefers-reduced-motion` honoured, structural + contrast audit via `npm run check:a11y` |
 | Feedback | Optimistic sends, skeleton "thinking" row, auto-scroll to the newest exchange, `notion-empty` / `notion-skeleton` helpers |
 
 **Remaining work** is enumerated in [`docs/MISSING_FEATURES.md`](docs/MISSING_FEATURES.md)
-(generated from the feature matrix by `npm run docs:gaps`): 435 of 525 tracked
-rows are still partial or planned, with a 15-item priority shortlist at the top.
+(generated from the feature matrix by `npm run docs:gaps`): 388 of 563 tracked
+rows are still partial or planned (plus 14 deliberately out of scope), with a
+15-item priority shortlist at the top.
 
 
 ## LaTeX
@@ -273,25 +274,54 @@ Pick a model from the curated list or press **Fetch models** to pull the provide
 
 ## Quick start
 
-Requirements: **Node.js 24+**, **npm**, **Docker**.
+Requirements: **Node.js 24** (the toolchain is typed against Node 24 —
+`@types/node ^24`), **npm**, **Docker**.
 
 ```bash
-# 1. Database (PostgreSQL on localhost:5433)
+# 1. Database — Postgres 16 in the `noema-db` container, mapped to localhost:5433
 docker compose up -d
 
-# 2. Environment
-cp .env.example .env        # then edit AUTH_SECRET if you like
+# 2. Environment — required keys: DATABASE_URL (already points at :5433), AUTH_SECRET
+cp .env.example .env        # then set a real AUTH_SECRET (see .env.example for the generator)
 
-# 3. Install + generate the client
+# 3. Install dependencies (postinstall runs `prisma generate`)
 npm install
 
-# 4. Create the schema and seed demo content
+# 4. Create the schema, seed demo content, build the search index
 npm run db:push
 npm run db:seed
+npm run setup:search        # optional: FTS GIN index + searchText backfill (safe to re-run)
 
 # 5. Run
-npm run dev                 # http://localhost:3000
+npm run dev                 # http://localhost:3000 (Next.js default port)
 ```
+
+**`.env` keys** — everything is documented in [`.env.example`](./.env.example):
+
+| Group | Keys | Notes |
+| --- | --- | --- |
+| Required | `DATABASE_URL`, `AUTH_SECRET` | `DATABASE_URL` must match the docker mapping (`localhost:5433`, user/db `noema`) |
+| AI (optional) | `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_TRANSCRIBE_*` | any OpenAI-compatible provider; see [AI configuration](#ai-configuration) |
+| SSO (optional) | `SSO_ISSUER`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`, `SSO_REDIRECT_URI` | enables *Sign in with SSO*; the local mock IdP used by `npm run check:sso` is pointed at with these |
+| SMTP (optional) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, … | invitation emails; without it the invite link is still shown in the UI |
+| Notion importer (optional) | `NOTION_API_BASE` | defaults to `https://api.notion.com/v1`; checks point it at a local mock (`http://localhost:4322/v1`) |
+| Misc (optional) | `APP_URL`, `APP_ORIGINS`, `CRON_SECRET`, `NEXT_PUBLIC_COLLAB_URL` | canonical email links, Server-Action origin allow-list, cron guard, realtime collab |
+
+**Production:** `npm run build` then `npm start`. Note that dev and prod share
+the same `.next` directory — never run them at the same time.
+
+### Servers & ports
+
+| Server | Command | Port |
+| --- | --- | --- |
+| Dev (Turbopack) | `npm run dev` | `http://localhost:3000` |
+| Prod | `npm run build && npm start -- --port 3200` | `http://localhost:3200` |
+
+Playwright's default `baseURL` is **`http://localhost:3200`** (see
+`playwright.config.ts`), so start the production server on `:3200` before
+`npm run e2e` — or point the suite at any other server with `E2E_BASE_URL`
+(the parity loop targets the dev server on `:3201`:
+`E2E_BASE_URL=http://localhost:3201 npx playwright test`).
 
 ### Demo credentials
 
@@ -307,38 +337,43 @@ password: password123
 
 | Script | Purpose |
 | --- | --- |
-| `npm run dev` | Start the dev server (Turbopack) |
-| `npm run build` / `npm start` | Production build / serve |
+| `npm run dev` | Start the dev server (Turbopack) → `http://localhost:3000` |
+| `npm run build` / `npm start` | Production build / serve (`npm start -- --port 3200` for the e2e default) |
+| `npm run collab` | Optional Yjs websocket collaboration server (`NEXT_PUBLIC_COLLAB_URL`) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint |
+| `npm run test` / `npm run test:watch` | Full Vitest unit suite / watch mode |
+| `npm run test:changed` | Unit tests touching changed files only (`--changed --passWithNoTests`) |
+| `npm run test:bail` | Unit suite that stops at the first failure (`--bail=1`) |
+| `npm run check:fast` | Inner-loop gate: `tsc --noEmit` + ESLint + changed-file unit tests |
+| `npm run e2e` | Full Playwright suite against `baseURL` (`http://localhost:3200`, override with `E2E_BASE_URL`) |
+| `npm run e2e:headed` | The same suite in a headed browser |
+| `npm run e2e:bail` | Fail-fast e2e triage run (`--max-failures=1`) |
+| `npm run smoke` | Authenticated smoke: signs the demo session and fetches the protected routes |
 | `npm run db:push` | Sync Prisma schema to the database |
 | `npm run db:migrate` | Create a versioned migration |
 | `npm run db:seed` | Seed demo data |
 | `npm run db:studio` | Prisma Studio |
+| `npm run setup:search` | Creates the full-text GIN index and backfills the `Page.searchText` mirror (safe to re-run) |
+| `npm run backup` | Database dump with a core-table verification and retention (`-- --keep N`) |
 | `npm run check:a11y` | WCAG structural + contrast audit of the rendered shell |
 | `npm run check:sso` | OIDC SSO + teamspaces + transcription checks (uses a local mock IdP) |
 | `npm run check:ui` | Home gallery, sidebar tabs, discussions and calendar checks (uses a local mock ICS feed) |
 | `npm run check:ai` | Full AI suite against the configured provider (ask, grounded ask, summarize, autofill, all 7 skills) |
 | `npm run check:routes` | Probes every rendered route and fails on any 5xx |
-| `npm run e2e` | Playwright end-to-end suite (saving, selection toolbar + AI panel, block menu, **move up/down**, equations, comments, chat + AI reply, sidebar right-click, projects, teamspace invites, AI settings) |
 | `npm run check:mail` | SMTP end-to-end check against a throwaway SMTP server (invitation received, link inside, hashed storage, delivery log) |
 | `npm run check:providers` | Verifies **every** configured provider (DeepSeek + OpenAI) live, and exercises the transcription route with real audio |
 | `npm run check:tickets` | Tickets end-to-end: labels, keys, estimates, dates, board movement, relations, comments, bulk edits, activity log |
+| `npm run check:search` | Proves ranking, prefix matching, snippets, trashed-page exclusion, re-indexing and the public API path |
+| `npm run check:storage` | Storage round trip through the API: upload, byte-for-byte read, guards (auth, traversal, missing, bad type) |
+| `npm run check:chat-stream` | Proves answers stream in chunks, arrive before completion, and persist exactly once |
+| `npm run check:coherence` | **Fails on drift**: orphan actions, native dialogs, unexpected injection sinks, growing action-call drift, shrinking i18n coverage |
+| `npm run audit` | Static coherence inventory (same rules as `check:coherence`) → `docs/_audit-raw.json` |
+| `npm run check:matrix` | Recount the parity scoreboard (read-only; add `-- --write` to update the doc) |
+| `node --env-file=.env scripts/check-notion.mjs` | Notion API importer check (uses a local mock Notion server) |
 | `npm run seed:tickets` | Optional demo backlog: 7 workspace labels + 8 tickets with estimates, dates, relations and comments (skips if tickets already exist) |
 | `npm run docs:gaps` | Regenerates **`docs/MISSING_FEATURES.md`** — every partial/planned row, grouped by area, with the priority shortlist |
 | `npm run docs:counts` | Recomputes the `FEATURE_MATRIX` scoreboard |
-| `npm run setup:search` | Creates the full-text GIN index and backfills the `Page.searchText` mirror (safe to re-run) |
-| `npm run check:search` | Proves ranking, prefix matching, snippets, trashed-page exclusion, re-indexing and the public API path |
-| `npm run audit` | Static coherence inventory (orphan actions, unwrapped action calls, dead controls, i18n coverage, injection sinks) → `docs/_audit-raw.json` |
-| `npm run check:coherence` | **Fails the build on drift**: orphan actions, native dialogs, unexpected injection sinks, growing action-call drift, shrinking i18n coverage |
-| `npm run check:chat-stream` | Proves answers stream in chunks, arrive before completion, and persist exactly once |
-| `npm run setup:search` | Creates the full-text GIN index and backfills the `Page.searchText` mirror (safe to re-run) |
-| `npm run check:search` | Proves ranking, prefix matching, snippets, trashed-page exclusion, re-indexing and the public API path |
-| `npm run check:storage` | Storage round trip through the API: upload, byte-for-byte read, guards (auth, traversal, missing, bad type) |
-| `npm run backup` | Database dump with a core-table verification and retention (`-- --keep N`) |
-| `npm run audit` | Coherence inventory: orphan actions, unwrapped action calls, dead controls, i18n coverage, injection sinks |
-| `npm run check:matrix` | Recompute the parity scoreboard (`-- --write` to update the doc) |
-| `node --env-file=.env scripts/check-notion.mjs` | Notion API importer check (uses a local mock Notion server) |
 
 ## Project layout
 
@@ -356,8 +391,13 @@ notion-clone/
 │     └─ queries.ts        # read model used by server components
 ├─ docs/
 │  ├─ ARCHITECTURE.md
-│  ├─ FEATURE_MATRIX.md    # Notion parity tracker (~490 rows)
+│  ├─ FEATURE_MATRIX.md    # Notion parity tracker (563 feature rows)
+│  ├─ specs/               # design specs (saml-sso, relations-rollups, realtime-collab)
+│  ├─ VELOCITY.md          # parity-loop velocity actuals vs targets
 │  └─ ROADMAP.md
+├─ scripts/
+│  ├─ LOOP_PLAYBOOK.md     # how the parity loop runs (gates, locks, slots)
+│  └─ check-*.mjs          # the check:* gates above
 ├─ rea-analysis/           # REA evidence from analysing the Notion web bundle
 └─ docker-compose.yml
 ```
@@ -388,7 +428,9 @@ auth-gated, so the parity tracker is built from publicly documented behaviour.
 - Passwords hashed with bcrypt (cost 12); sessions are HS256 JWTs in httpOnly cookies.
 - Every server action re-derives workspace access from the session; guests are read-only.
 - Set a strong `AUTH_SECRET` and use `secure` cookies + HTTPS in production.
-- The public share-link/invite endpoints are modelled but not yet exposed.
+- Share links are live: `/s/<token>` (optional password + expiry) and the
+  single-use, hashed `/invite/<token>` invitation links — both re-check access
+  on the server rather than trusting the URL.
 
 ## Where to read next
 
@@ -398,7 +440,10 @@ auth-gated, so the parity tracker is built from publicly documented behaviour.
 | [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | The exhaustive spec/UX/UI test matrix — including right-click, keyboard, offline and permission cases — and the definition of done |
 | [`docs/FIX_PLAN.md`](docs/FIX_PLAN.md) | Ordered A→Z plan to make spec ≡ backend ≡ UI ≡ tests ≡ docs, with acceptance criteria per phase |
 | [`docs/MISSING_FEATURES.md`](docs/MISSING_FEATURES.md) | Every unfinished feature row, grouped by area |
-| [`docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md) | The 530-row Notion parity tracker behind all of the above |
+| [`docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md) | The 563-row Notion parity tracker behind all of the above |
+| [`docs/specs/`](docs/specs/) | Design specs for the big builds — `saml-sso.md`, `relations-rollups.md`, `realtime-collab.md` |
+| [`docs/VELOCITY.md`](docs/VELOCITY.md) | Actual build times per parity-loop batch vs the playbook targets |
+| [`scripts/LOOP_PLAYBOOK.md`](scripts/LOOP_PLAYBOOK.md) | How the parity loop runs: gate tiers, server/port rules, lock and slots |
 
 Conversations are addressable: `/w/<slug>?chat=<threadId>` opens that discussion in the docked panel.
 Deleted pages live at `/w/<slug>/trash` (restore · delete forever · empty trash).

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { COLOR_CHOICES, type DBProperty } from "@/components/database/database-types";
 import { updatePropertyAction } from "@/server/actions/database";
 import { useAction } from "@/lib/actions-client";
@@ -26,6 +27,7 @@ export function PropertyOptionsEditor({
   property: DBProperty;
   onClose: () => void;
 }) {
+  const router = useRouter();
   const initial = (property.config?.options ?? []) as OptionDraft[];
   const [draft, setDraft] = useState<OptionDraft[]>(initial);
   // Latest intended option list while a save is still in flight.
@@ -35,10 +37,14 @@ export function PropertyOptionsEditor({
   const save = (next: OptionDraft[]) => {
     pending.current = next;
     setDraft(next);
-    run(() =>
-      updatePropertyAction(property.id, {
-        config: { ...(property.config ?? {}), options: next },
-      }),
+    run(
+      () =>
+        updatePropertyAction(property.id, {
+          config: { ...(property.config ?? {}), options: next },
+        }),
+      // The table behind the dialog re-renders from storage, so closing the
+      // editor never shows a stale chip.
+      { onSuccess: () => router.refresh() },
     );
   };
 

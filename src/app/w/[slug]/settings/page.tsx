@@ -1,6 +1,12 @@
 import { notFound } from "next/navigation";
-import { requireUser } from "@/lib/auth";
-import { canDeleteWorkspace, canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
+import { getSessionId, requireUser } from "@/lib/auth";
+import { listActiveSessions } from "@/lib/session-store";
+import {
+  canDeleteWorkspace,
+  canManageMembers,
+  canPerformWorkspaceAction,
+  getWorkspaceAccess,
+} from "@/lib/permissions";
 import { getWorkspaceBySlug, getWorkspaceMembers, getRecentActivity, getRecentWebhookDeliveries } from "@/server/queries";
 import { prisma } from "@/lib/db";
 import { TeamspaceManager, type TeamspaceRow } from "@/components/teamspace-manager";
@@ -21,6 +27,7 @@ import {
 import { EditWorkspaceButton } from "@/components/workspace-dialog";
 import { MembersManager } from "@/components/members-manager";
 import { TwoFactorManager } from "@/components/two-factor-manager";
+import { SessionsManager, type SessionRow } from "@/components/sessions-manager";
 import { OAuthAppManager, type OAuthAppRow } from "@/components/oauth-app-manager";
 import {
   WebhookManager,
@@ -60,6 +67,9 @@ export default async function SettingsPage({
   if (!access) notFound();
 
   const manage = canManageMembers(access.role);
+  // The member directory carries every member's name and email: guests (and
+  // anyone without membership) never receive it — even in the RSC payload.
+  const directory = canPerformWorkspaceAction(access.role, "viewMemberDirectory");
   const [members, tokens, webhooks, deliveries] = await Promise.all([
     getWorkspaceMembers(workspace.id),
     prisma.apiToken.findMany({
@@ -81,6 +91,21 @@ export default async function SettingsPage({
     where: { id: user.id },
     select: { twoFactorEnabled: true },
   });
+
+  // B54 — active sessions of this account (session registry, matrix §17).
+  const [activeSessions, currentSid] = await Promise.all([
+    listActiveSessions(user.id),
+    getSessionId(),
+  ]);
+  const sessionRows: SessionRow[] = activeSessions
+    .map((record) => ({
+      sid: record.sid,
+      device: record.device,
+      createdAt: record.createdAt,
+      lastActiveAt: record.lastActiveAt,
+      current: record.sid === currentSid,
+    }))
+    .sort((a, b) => Number(b.current) - Number(a.current));
 
   const teamspaces = await prisma.teamspace.findMany({
     where: { workspaceId: workspace.id },
@@ -177,9 +202,11 @@ export default async function SettingsPage({
       </section>
 
       <section className="mt-10">
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
-          {t(locale, "members")} ({members.length})
-        </h2>
+        {directory && (
+          <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
+            {t(locale, "members")} ({members.length})
+          </h2>
+        )}
         <MembersManager
           workspaceId={workspace.id}
           workspaceName={workspace.name}
@@ -187,12 +214,16 @@ export default async function SettingsPage({
           currentUserId={user.id}
           currentUserRole={access.role}
           locale={locale}
-          members={members.map((member) => ({
-            userId: member.id,
-            name: member.name,
-            email: member.email,
-            role: member.role,
-          }))}
+          members={
+            directory
+              ? members.map((member) => ({
+                  userId: member.id,
+                  name: member.name,
+                  email: member.email,
+                  role: member.role,
+                }))
+              : []
+          }
         />
       </section>
 
@@ -242,6 +273,8 @@ export default async function SettingsPage({
       />
 
       <TwoFactorManager enabled={account?.twoFactorEnabled ?? false} locale={locale} />
+
+      <SessionsManager sessions={sessionRows} locale={locale} />
 
       <ApiTokenManager tokens={tokenRows} locale={locale} />
 

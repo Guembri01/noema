@@ -68,9 +68,9 @@ export function MentionMenu({
     const q = query.toLowerCase();
     const today = new Date();
     const dates: MentionItem[] = [
-      dateMention(today),
-      dateMention(new Date(today.getTime() + 86_400_000)),
-      dateMention(new Date(today.getTime() + 7 * 86_400_000)),
+      dateMention(today, { style: "weekday" }),
+      dateMention(new Date(today.getTime() + 86_400_000), { style: "weekday" }),
+      dateMention(new Date(today.getTime() + 7 * 86_400_000), { style: "weekday" }),
     ]
       .filter((d) => !q || d.label.toLowerCase().includes(q) || d.id.includes(q))
       .map((d) => ({ id: d.id, label: d.label, type: "date" as const }));

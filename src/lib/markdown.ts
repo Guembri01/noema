@@ -53,8 +53,13 @@ export type Block =
 
 /** Allow only hrefs we would happily follow; block `javascript:`, `data:`… */
 export function safeHref(href: string): string | null {
-  const value = (href ?? "").trim();
+  // B59/H2: mirror WHATWG URL normalisation first - control characters (tab,
+  // LF and CR are stripped from inside schemes before parsing) go away, then
+  // the ends are trimmed, so `java\nscript:` is seen as `javascript:` and
+  // rejected. Protocol-relative `//host` (and its `\\` twin) is rejected too.
+  const value = (href ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
   if (!value) return null;
+  if (/^[\\/]{2}/.test(value)) return null;
   if (/^(https?:|mailto:|tel:)/i.test(value)) return value;
   if (/^[/#]/.test(value)) return value; // relative or in-page
   if (/^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(value)) return `https://${value}`;
@@ -211,6 +216,9 @@ function splitRow(line: string): string[] {
   cells.push(current.trim());
   return cells;
 }
+
+/** Split one pipe-separated table row into trimmed cells (`\|` stays a pipe). */
+export const splitTableRow = splitRow;
 
 function parseList(
   lines: string[],
@@ -404,6 +412,153 @@ export function hasMarkdown(text: string): boolean {
   return /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|```|\|)|(\*\*|__|~~|`|\[\[page:)/.test(
     text ?? "",
   );
+}
+
+// ---------------------------------------------------------------------------
+// Markdown shortcuts (editor input rules)
+// ---------------------------------------------------------------------------
+
+/**
+ * The pure spec behind the editor's markdown shortcuts: given the text of a
+ * block up to the cursor (including the just-typed character), report which
+ * trigger fired, the exact text it consumed, and the payload the transform
+ * needs (heading level, list start, checked state, fence language, table
+ * cells…).
+ *
+ * Block-level triggers are anchored at the start of the block (leading
+ * indentation is allowed) and are terminated by a space or the newline that
+ * arrives with Enter. Inline triggers (`~~…~~`, `==…==`) anchor at the cursor
+ * instead. Everything here is dependency-free so each rule is unit-testable
+ * without an editor.
+ */
+export type MarkdownShortcutKind =
+  | "heading"
+  | "bullet"
+  | "ordered"
+  | "quote"
+  | "code"
+  | "task"
+  | "hr"
+  | "strike"
+  | "highlight"
+  | "table";
+
+export type MarkdownShortcut = {
+  kind: MarkdownShortcutKind;
+  /** Exact text consumed by the trigger. */
+  trigger: string;
+  /** Payload for the transform: marker, language, inner text, pipe row… */
+  value: string;
+  /** Index in the inspected text where the trigger starts. */
+  from: number;
+  /** Index just past the trigger. */
+  to: number;
+  /** Heading level (1-6). */
+  level?: number;
+  /** Task checkbox state. */
+  checked?: boolean;
+  /** Ordered-list start number. */
+  start?: number;
+  /** Fence language, or `null` when the fence carries none. */
+  lang?: string | null;
+  /** Table cells split from the pipe row. */
+  cells?: string[];
+};
+
+const SHORTCUT_HEADING = /^(\s*)(#{1,6})\s$/;
+const SHORTCUT_HR = /^(\s*)(-{3,}|\*{3,}|_{3,})\s$/;
+const SHORTCUT_BULLET = /^(\s*)([-*+])\s$/;
+const SHORTCUT_ORDERED = /^(\s*)(\d{1,9})[.)]\s$/;
+const SHORTCUT_QUOTE = /^(\s*)>\s$/;
+const SHORTCUT_FENCE = /^(\s*)(```+|~~~+)([\w+#.-]*)\s$/;
+const SHORTCUT_TASK = /^(\s*)\[([ xX]?)\]\s$/;
+const SHORTCUT_TABLE = /^\s*\|(.+)\|\s*\n$/;
+const SHORTCUT_STRIKE = /~~([^~\n]+)~~$/;
+const SHORTCUT_HIGHLIGHT = /==([^=\n]+)==$/;
+
+/** Match a markdown shortcut against the text before the cursor. */
+export function matchMarkdownShortcut(text: string): MarkdownShortcut | null {
+  const input = text ?? "";
+  let match: RegExpExecArray | null;
+
+  if ((match = SHORTCUT_HEADING.exec(input))) {
+    return {
+      kind: "heading",
+      trigger: match[0],
+      value: match[2],
+      from: 0,
+      to: match[0].length,
+      level: match[2].length,
+    };
+  }
+  if ((match = SHORTCUT_HR.exec(input))) {
+    return { kind: "hr", trigger: match[0], value: match[2], from: 0, to: match[0].length };
+  }
+  if ((match = SHORTCUT_BULLET.exec(input))) {
+    return { kind: "bullet", trigger: match[0], value: match[2], from: 0, to: match[0].length };
+  }
+  if ((match = SHORTCUT_ORDERED.exec(input))) {
+    return {
+      kind: "ordered",
+      trigger: match[0],
+      value: match[2],
+      from: 0,
+      to: match[0].length,
+      start: Number(match[2]),
+    };
+  }
+  if ((match = SHORTCUT_QUOTE.exec(input))) {
+    return { kind: "quote", trigger: match[0], value: ">", from: 0, to: match[0].length };
+  }
+  if ((match = SHORTCUT_FENCE.exec(input))) {
+    return {
+      kind: "code",
+      trigger: match[0],
+      value: match[3],
+      from: 0,
+      to: match[0].length,
+      lang: match[3] || null,
+    };
+  }
+  if ((match = SHORTCUT_TASK.exec(input))) {
+    return {
+      kind: "task",
+      trigger: match[0],
+      value: match[2],
+      from: 0,
+      to: match[0].length,
+      checked: /[xX]/.test(match[2]),
+    };
+  }
+  if ((match = SHORTCUT_TABLE.exec(input))) {
+    return {
+      kind: "table",
+      trigger: match[0],
+      value: match[1],
+      from: 0,
+      to: match[0].length,
+      cells: splitRow(match[1]),
+    };
+  }
+  if ((match = SHORTCUT_STRIKE.exec(input))) {
+    return {
+      kind: "strike",
+      trigger: match[0],
+      value: match[1],
+      from: input.length - match[0].length,
+      to: input.length,
+    };
+  }
+  if ((match = SHORTCUT_HIGHLIGHT.exec(input))) {
+    return {
+      kind: "highlight",
+      trigger: match[0],
+      value: match[1],
+      from: input.length - match[0].length,
+      to: input.length,
+    };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

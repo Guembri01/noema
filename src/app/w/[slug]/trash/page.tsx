@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, Trash2 } from "lucide-react";
 import { requireUser } from "@/lib/auth";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { getTrash, getWorkspaceBySlug } from "@/server/queries";
 import { TrashList } from "@/components/trash-list";
 import { t } from "@/lib/i18n";
@@ -40,6 +40,7 @@ export default async function TrashPage({ params }: { params: Promise<{ slug: st
       <TrashList
         workspaceId={workspace.id}
         locale={locale}
+        canEdit={canEditContent(access.role)}
         pages={pages.map((page) => ({
           id: page.id,
           title: page.title,

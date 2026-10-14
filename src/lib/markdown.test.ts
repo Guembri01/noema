@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  CODE_LANGUAGES,
+  codeLanguageLabel,
+  findCodeLanguage,
+  lowlightNameFor,
+} from "./code-languages";
+import {
   hasMarkdown,
   markdownToText,
   markdownToTipTap,
+  matchMarkdownShortcut,
   parseInline,
   parseMarkdown,
   safeHref,
+  splitTableRow,
 } from "./markdown";
 
 const text = (nodes: unknown[]): string =>
@@ -21,6 +29,20 @@ describe("safeHref", () => {
     expect(safeHref("javascript:alert(1)")).toBeNull();
     expect(safeHref("data:text/html;base64,PHN2Zz4=")).toBeNull();
     expect(safeHref("  ")).toBeNull();
+  });
+
+  // B59 / audit H2 - protocol-relative and control-character bypasses.
+  it("rejects protocol-relative and control-character tricks", () => {
+    expect(safeHref("//evil.example/x")).toBeNull();
+    expect(safeHref("\\\\evil.example/x")).toBeNull();
+    expect(safeHref("java\nscript:alert(1)")).toBeNull();
+    expect(safeHref("javascript%3Aalert(1)")).toBeNull();
+    expect(safeHref("\u0001javascript:alert(1)")).toBeNull();
+  });
+
+  it("normalises control characters out of otherwise safe hrefs", () => {
+    expect(safeHref("\u0001https://example.com/a")).toBe("https://example.com/a");
+    expect(safeHref("https://example.com/a\n")).toBe("https://example.com/a");
   });
 });
 
@@ -160,5 +182,294 @@ describe("conversions", () => {
     expect(hasMarkdown("plain sentence")).toBe(false);
     expect(hasMarkdown("**bold**")).toBe(true);
     expect(hasMarkdown("- a list")).toBe(true);
+  });
+});
+
+/**
+ * B18 — markdown shortcut long tail.
+ *
+ * `matchMarkdownShortcut` is the pure spec for the editor's input rules: it
+ * receives the text of a block up to the cursor (plus the just-typed
+ * character) and reports which shortcut fired, where, and with what payload.
+ * Every rule is asserted here as a pure parse/transform before any editor
+ * wiring exists (red-first).
+ */
+describe("matchMarkdownShortcut", () => {
+  it("matches heading triggers with the level and consumed range", () => {
+    expect(matchMarkdownShortcut("# ")).toMatchObject({
+      kind: "heading",
+      level: 1,
+      trigger: "# ",
+      from: 0,
+      to: 2,
+    });
+    expect(matchMarkdownShortcut("###### ")).toMatchObject({ kind: "heading", level: 6 });
+    expect(matchMarkdownShortcut("####### ")).toBeNull(); // seven levels is not a heading
+    expect(matchMarkdownShortcut("##nope")).toBeNull(); // marker needs the space
+    expect(matchMarkdownShortcut("intro # ")).toBeNull(); // only at the block start
+  });
+
+  it("matches unordered-list triggers for -, * and +", () => {
+    expect(matchMarkdownShortcut("- ")).toMatchObject({ kind: "bullet", trigger: "- " });
+    expect(matchMarkdownShortcut("* ")).toMatchObject({ kind: "bullet" });
+    expect(matchMarkdownShortcut("+ ")).toMatchObject({ kind: "bullet" });
+    expect(matchMarkdownShortcut("- item")).toBeNull();
+    expect(matchMarkdownShortcut("and - ")).toBeNull();
+  });
+
+  it("matches ordered-list triggers with dot AND paren markers", () => {
+    expect(matchMarkdownShortcut("1. ")).toMatchObject({ kind: "ordered", start: 1, value: "1" });
+    expect(matchMarkdownShortcut("1) ")).toMatchObject({ kind: "ordered", start: 1, value: "1" });
+    expect(matchMarkdownShortcut("12. ")).toMatchObject({ kind: "ordered", start: 12, value: "12" });
+    expect(matchMarkdownShortcut("1)")).toBeNull(); // terminator not typed yet
+  });
+
+  it("matches blockquotes and fenced code with an optional language", () => {
+    expect(matchMarkdownShortcut("> ")).toMatchObject({ kind: "quote", trigger: "> " });
+    expect(matchMarkdownShortcut("``` ")).toMatchObject({ kind: "code", lang: null });
+    expect(matchMarkdownShortcut("```ts ")).toMatchObject({ kind: "code", lang: "ts" });
+    expect(matchMarkdownShortcut("~~~py ")).toMatchObject({ kind: "code", lang: "py" });
+    expect(matchMarkdownShortcut("```ts")).toBeNull();
+  });
+
+  it("matches checkbox triggers with their checked state", () => {
+    expect(matchMarkdownShortcut("[ ] ")).toMatchObject({ kind: "task", checked: false });
+    expect(matchMarkdownShortcut("[] ")).toMatchObject({ kind: "task", checked: false });
+    expect(matchMarkdownShortcut("[x] ")).toMatchObject({ kind: "task", checked: true });
+    expect(matchMarkdownShortcut("[X] ")).toMatchObject({ kind: "task", checked: true });
+    expect(matchMarkdownShortcut("- [ ] ")).toBeNull(); // "- " converts first, then "[ ] "
+  });
+
+  it("matches horizontal rules without stealing single markers", () => {
+    expect(matchMarkdownShortcut("--- ")).toMatchObject({ kind: "hr" });
+    expect(matchMarkdownShortcut("*** ")).toMatchObject({ kind: "hr" });
+    expect(matchMarkdownShortcut("___ ")).toMatchObject({ kind: "hr" });
+    expect(matchMarkdownShortcut("-- ")).toBeNull(); // two dashes is not a rule
+    expect(matchMarkdownShortcut("- ")).toMatchObject({ kind: "bullet" });
+  });
+
+  it("matches inline strikethrough and highlight at the cursor", () => {
+    expect(matchMarkdownShortcut("say ~~gone~~")).toMatchObject({
+      kind: "strike",
+      value: "gone",
+      from: 4,
+      to: 12,
+    });
+    expect(matchMarkdownShortcut("==mark==")).toMatchObject({
+      kind: "highlight",
+      value: "mark",
+      from: 0,
+      to: 8,
+    });
+    expect(matchMarkdownShortcut("say ~~gon")).toBeNull(); // unterminated
+    expect(matchMarkdownShortcut("run =mark=")).toBeNull();
+  });
+
+  it("matches a pipe row as a table only when Enter is pressed", () => {
+    expect(matchMarkdownShortcut("| Name | Qty |\n")).toMatchObject({
+      kind: "table",
+      cells: ["Name", "Qty"],
+      from: 0,
+      to: "| Name | Qty |\n".length,
+    });
+    expect(matchMarkdownShortcut("| A |\n")).toMatchObject({ kind: "table", cells: ["A"] });
+    expect(matchMarkdownShortcut("| A | B | ")).toBeNull(); // space must not convert
+    expect(matchMarkdownShortcut("| A | B |")).toBeNull(); // still typing
+    expect(matchMarkdownShortcut("x | A | B |\n")).toBeNull(); // block must start with |
+    expect(matchMarkdownShortcut("| a \\| b | c |\n")).toMatchObject({
+      kind: "table",
+      cells: ["a | b", "c"], // escaped pipes stay inside their cell
+    });
+  });
+
+  it("turns the matched shortcut into TipTap structure (transform half)", () => {
+    const row = matchMarkdownShortcut("| Name | Qty |\n");
+    expect(row?.cells).toEqual(["Name", "Qty"]);
+    const task = matchMarkdownShortcut("[x] ");
+    expect(task).toMatchObject({ kind: "task", checked: true });
+    // A heading trigger consumed exactly the marker plus its space.
+    const heading = matchMarkdownShortcut("# ");
+    expect(heading && heading.to - heading.from).toBe(heading?.trigger.length);
+  });
+});
+
+/**
+ * B37 — regression net for the parser/converter paths the existing suites do
+ * not reach: GFM tables (parsing, JSON conversion, text flattening), nested
+ * list mixes through `markdownToTipTap`, code-fence languages OUTSIDE B01's
+ * picker registry (must degrade gracefully, never drop the block), and the
+ * `splitTableRow` export B18 landed for the table input rule.
+ */
+describe("parseMarkdown tables (B37)", () => {
+  it("keeps escaped pipes and inline formatting inside cells", () => {
+    const [table] = parseMarkdown("| **A** | a \\| b |\n| :---: | --- |\n| `x` | y |");
+    expect(table.type).toBe("table");
+    if (table.type !== "table") return;
+    expect(table.align).toEqual(["center", null]);
+    expect(table.header).toEqual([
+      [{ type: "strong", children: [{ type: "text", value: "A" }] }],
+      [{ type: "text", value: "a | b" }],
+    ]);
+    expect(table.rows).toHaveLength(1);
+    expect(table.rows[0]).toEqual([
+      [{ type: "code", value: "x" }],
+      [{ type: "text", value: "y" }],
+    ]);
+  });
+
+  it("ends the table at the first non-row line instead of swallowing it", () => {
+    const blocks = parseMarkdown("| A |\n| --- |\n| 1 |\nafter the table");
+    expect(blocks.map((block) => block.type)).toEqual(["table", "paragraph"]);
+    expect(JSON.stringify(blocks[1])).toContain("after the table");
+    // ...while consecutive pipe rows keep being consumed as table rows.
+    const [table] = parseMarkdown("| A |\n| --- |\n| 1 |\n| 2 |");
+    expect(table.type).toBe("table");
+    if (table.type !== "table") return;
+    expect(table.rows).toHaveLength(2);
+  });
+
+  it("converts a table to TipTap JSON (header row + cell rows)", () => {
+    const [node] = markdownToTipTap("| A | B |\n| --- | --- |\n| 1 | 2 |");
+    expect(node).toEqual({
+      type: "table",
+      content: [
+        {
+          type: "tableRow",
+          content: [
+            { type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "A" }] }] },
+            { type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "B" }] }] },
+          ],
+        },
+        {
+          type: "tableRow",
+          content: [
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "1" }] }] },
+            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "2" }] }] },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("flattens a table to pipe-joined text for previews", () => {
+    expect(markdownToText("| A | B |\n| --- | --- |\n| 1 | 2 |")).toBe("A | B\n1 | 2");
+  });
+});
+
+describe("markdownToTipTap nested lists (B37)", () => {
+  it("nests an ordered list (and a deeper bullet) inside a bullet item", () => {
+    const nodes = markdownToTipTap("- outer\n  1. one\n  2. two\n     - deep\n- second");
+    expect(nodes).toEqual([
+      {
+        type: "bulletList",
+        content: [
+          {
+            type: "listItem",
+            content: [
+              { type: "paragraph", content: [{ type: "text", text: "outer" }] },
+              {
+                type: "orderedList",
+                content: [
+                  { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "one" }] }] },
+                  {
+                    type: "listItem",
+                    content: [
+                      { type: "paragraph", content: [{ type: "text", text: "two" }] },
+                      {
+                        type: "bulletList",
+                        content: [
+                          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "deep" }] }] },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "second" }] }] },
+        ],
+      },
+    ]);
+  });
+
+  it("nests a task item under a plain bullet as a taskList", () => {
+    const [list] = markdownToTipTap("- outer\n  - [ ] inner");
+    expect(list).toEqual({
+      type: "bulletList",
+      content: [
+        {
+          type: "listItem",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "outer" }] },
+            {
+              type: "taskList",
+              content: [
+                {
+                  type: "taskItem",
+                  attrs: { checked: false },
+                  content: [{ type: "paragraph", content: [{ type: "text", text: "inner" }] }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
+});
+
+describe("code fences outside the language registry (B37)", () => {
+  const OUTSIDE = ["haskell", "elixir", "zig", "vue", "svelte", "dockerfile", "objective-c", "f#"];
+
+  it("none of these fence languages is in B01's picker registry", () => {
+    for (const lang of OUTSIDE) {
+      expect(findCodeLanguage(lang), `${lang} should be outside CODE_LANGUAGES`).toBeUndefined();
+    }
+    expect(CODE_LANGUAGES.length).toBeGreaterThanOrEqual(25); // B01 contract still holds
+  });
+
+  it("keeps unregistered fence languages verbatim instead of dropping them", () => {
+    for (const lang of OUTSIDE) {
+      const [block] = parseMarkdown("```" + lang + "\ncode line\n```");
+      expect(block).toEqual({ type: "code", lang, value: "code line" });
+    }
+    const [tilde] = parseMarkdown("~~~prolog\nlikes(alice, bob).\n~~~");
+    expect(tilde).toEqual({ type: "code", lang: "prolog", value: "likes(alice, bob)." });
+  });
+
+  it("converts unregistered fence languages to the codeBlock language attr", () => {
+    const [node] = markdownToTipTap("```zig\nfn main() {}\n```");
+    expect(node).toEqual({
+      type: "codeBlock",
+      attrs: { language: "zig" },
+      content: [{ type: "text", text: "fn main() {}" }],
+    });
+  });
+
+  it("falls back gracefully for unregistered languages (raw label, no grammar)", () => {
+    expect(codeLanguageLabel("zig")).toBe("zig"); // raw value, no crash
+    expect(lowlightNameFor("zig")).toBeNull(); // no grammar -> no highlight
+    expect(codeLanguageLabel("")).toBe("Plain text");
+  });
+
+  it("keeps a language-less fence as lang null with no language attr", () => {
+    const [block] = parseMarkdown("```\nplain\n```");
+    expect(block).toEqual({ type: "code", lang: null, value: "plain" });
+    const [node] = markdownToTipTap("```\nplain\n```");
+    expect(node).toEqual({ type: "codeBlock", content: [{ type: "text", text: "plain" }] });
+  });
+});
+
+describe("splitTableRow (B37)", () => {
+  it("splits a pipe row into trimmed cells with or without outer pipes", () => {
+    expect(splitTableRow("| a | b |")).toEqual(["a", "b"]);
+    expect(splitTableRow("a | b")).toEqual(["a", "b"]);
+    expect(splitTableRow("| a  | b |")).toEqual(["a", "b"]);
+  });
+
+  it("keeps escaped pipes inside their cell and preserves empty cells", () => {
+    expect(splitTableRow("| a \\| b | c |")).toEqual(["a | b", "c"]);
+    expect(splitTableRow("| | b |")).toEqual(["", "b"]);
   });
 });

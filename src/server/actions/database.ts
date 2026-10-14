@@ -10,6 +10,7 @@ import {
   type WorkspaceAccess,
 } from "@/lib/permissions";
 import { csvToMatrix } from "@/lib/serialize";
+import type { ImportCounts } from "@/lib/importers";
 import { normalizeViewConfig } from "@/lib/database-query";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { nextRunFor } from "@/lib/recurrence";
@@ -591,7 +592,7 @@ export async function setTemplateRecurrenceAction(
 export async function importCsvAction(
   databasePageId: string,
   csv: string,
-): Promise<Result<{ created: number }>> {
+): Promise<Result<{ created: number; counts: ImportCounts }>> {
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
@@ -613,46 +614,69 @@ export async function importCsvAction(
     ? header.findIndex((h) => h.toLowerCase() === primary.name.toLowerCase())
     : -1;
 
-  const last = await prisma.page.findFirst({
-    where: { parentId: databasePageId },
-    orderBy: { position: "desc" },
-    select: { position: true },
-  });
-  let position = (last?.position ?? 0) + 1000;
+  // B71 / D23.1: honest counts — header cells that match no property are
+  // skipped (counted once per column) and cells that fail coercion are
+  // counted per cell. Both were silent drops before this batch.
+  const skippedColumns = columns.filter((property) => property === null).length;
+  let skippedCells = 0;
   let created = 0;
 
-  for (const row of matrix.slice(1)) {
-    if (row.every((cell) => cell.trim() === "")) continue;
-    const title = (primaryIndex >= 0 ? row[primaryIndex] : row[0]) ?? "";
-    const page = await prisma.page.create({
-      data: {
-        workspaceId: auth.page.workspaceId,
-        parentId: databasePageId,
-        title: title.trim() || "Untitled",
-        createdById: auth.user.id,
-        position,
-      },
-      select: { id: true },
-    });
-    position += 1000;
+  try {
+    // R23.6: rows + values commit or roll back as one unit.
+    await prisma.$transaction(async (tx) => {
+      const last = await tx.page.findFirst({
+        where: { parentId: databasePageId },
+        orderBy: { position: "desc" },
+        select: { position: true },
+      });
+      let position = (last?.position ?? 0) + 1000;
 
-    const values: Prisma.PropertyValueCreateManyInput[] = [];
-    for (let i = 0; i < columns.length; i += 1) {
-      const property = columns[i];
-      if (!property) continue;
-      if (property.config && (property.config as { primary?: boolean }).primary) continue;
-      const raw = (row[i] ?? "").trim();
-      if (raw === "") continue;
-      const value = coerceCsvValue(raw, property);
-      if (value === null) continue;
-      values.push({ propertyId: property.id, pageId: page.id, value });
-    }
-    if (values.length > 0) {
-      await prisma.propertyValue.createMany({ data: values });
-    }
-    created += 1;
+      for (const row of matrix.slice(1)) {
+        if (row.every((cell) => cell.trim() === "")) continue;
+        const title = (primaryIndex >= 0 ? row[primaryIndex] : row[0]) ?? "";
+        const page = await tx.page.create({
+          data: {
+            workspaceId: auth.page.workspaceId,
+            parentId: databasePageId,
+            title: title.trim() || "Untitled",
+            createdById: auth.user.id,
+            position,
+          },
+          select: { id: true },
+        });
+        position += 1000;
+
+        const values: Prisma.PropertyValueCreateManyInput[] = [];
+        for (let i = 0; i < columns.length; i += 1) {
+          const property = columns[i];
+          if (!property) continue;
+          if (property.config && (property.config as { primary?: boolean }).primary) continue;
+          const raw = (row[i] ?? "").trim();
+          if (raw === "") continue;
+          const value = coerceCsvValue(raw, property);
+          if (value === null) {
+            skippedCells += 1;
+            continue;
+          }
+          values.push({ propertyId: property.id, pageId: page.id, value });
+        }
+        if (values.length > 0) {
+          await tx.propertyValue.createMany({ data: values });
+        }
+        created += 1;
+      }
+    });
+  } catch (error) {
+    return {
+      error:
+        error instanceof Error && error.message ? error.message : "CSV import failed.",
+    };
   }
 
   revalidateDatabase(auth.page.workspaceId);
-  return { ok: true, created };
+  return {
+    ok: true,
+    created,
+    counts: { imported: created, skippedColumns, skippedCells, failed: 0 },
+  };
 }

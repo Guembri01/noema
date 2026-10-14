@@ -52,6 +52,16 @@ export const TemplateButton = Node.create({
   },
 });
 
+/**
+ * D7 note (B57): the labels below — `aria-label="Choose template"`, "Insert",
+ * `aria-label="Remove template button"` — are intentionally still English
+ * literals. This node view receives no locale: threading one needs
+ * `page-editor.tsx` (editor-slot owned) and the keys must land in all five
+ * catalogues via `scripts/i18n-insert.mjs` (i18n slot, single-writer rule).
+ * Localized together with the unified picker in R31.10/T31.10 (spec
+ * docs/specs/templates.md D7); none of these strings are asserted anywhere yet
+ * (only `e2e` text matching risk — see spec §10 note 3).
+ */
 function TemplateButtonView({ node, editor, getPos, deleteNode }: NodeViewProps) {
   const templateId = (node.attrs.templateId as TemplateId) ?? "meeting";
   const definition = TEMPLATES.find((t) => t.id === templateId) ?? TEMPLATES[0];

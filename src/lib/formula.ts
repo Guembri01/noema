@@ -8,6 +8,10 @@
 export type FormulaValue = number | string | boolean;
 export type FormulaScope = Record<string, FormulaValue>;
 
+/** Bounds for pathological input: no user formula legitimately exceeds these. */
+export const MAX_FORMULA_LENGTH = 10_000;
+export const MAX_FORMULA_DEPTH = 256;
+
 export type FormulaResult =
   | { ok: true; value: FormulaValue }
   | { ok: false; error: string };
@@ -48,6 +52,7 @@ function tokenize(input: string): Token[] {
         value += input[j];
         j += 1;
       }
+      if (j >= input.length) throw new Error("Unterminated string literal");
       tokens.push({ kind: "string", value });
       i = j + 1;
       continue;
@@ -78,6 +83,7 @@ function tokenize(input: string): Token[] {
 
 class Parser {
   private pos = 0;
+  private depth = 0;
   constructor(
     private readonly tokens: Token[],
     private readonly scope: FormulaScope,
@@ -170,9 +176,17 @@ class Parser {
   }
 
   private unary(): FormulaValue {
-    if (this.eat("!")) return !Boolean(this.unary());
-    if (this.eat("-")) return -Number(this.unary());
-    return this.primary();
+    // Every recursive-descent cycle funnels through unary(), so counting here
+    // bounds both parenthesis/call nesting and chains like "!!!!…".
+    this.depth += 1;
+    if (this.depth > MAX_FORMULA_DEPTH) throw new Error("Expression nested too deeply");
+    try {
+      if (this.eat("!")) return !Boolean(this.unary());
+      if (this.eat("-")) return -Number(this.unary());
+      return this.primary();
+    } finally {
+      this.depth -= 1;
+    }
   }
 
   private primary(): FormulaValue {
@@ -252,6 +266,9 @@ class Parser {
 export function evaluateFormula(expression: string, scope: FormulaScope = {}): FormulaResult {
   const source = (expression ?? "").trim();
   if (!source) return { ok: false, error: "Empty formula" };
+  if (source.length > MAX_FORMULA_LENGTH) {
+    return { ok: false, error: "Formula exceeds maximum length" };
+  }
   try {
     const value = new Parser(tokenize(source), scope).parse();
     return { ok: true, value };

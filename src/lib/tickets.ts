@@ -51,6 +51,29 @@ export const LABEL_COLORS = [
   "pink",
 ] as const;
 
+export type NormalizedLabelInput =
+  | { ok: true; name: string; color: string; description: string | null }
+  | { ok: false; error: string };
+
+/**
+ * Pure label validation lifted out of `createLabelAction` (a "use server" file
+ * cannot export it): trims + caps name (40) and description (200), falls back
+ * to a known colour, and rejects blank names.
+ */
+export function normalizeLabelInput(input: {
+  name: string;
+  color?: string | null;
+  description?: string | null;
+}): NormalizedLabelInput {
+  const name = input.name.trim().slice(0, 40);
+  if (!name) return { ok: false, error: "Give the label a name." };
+  const requested = input.color ?? "gray";
+  const color = LABEL_COLORS.includes(requested as (typeof LABEL_COLORS)[number])
+    ? requested
+    : "gray";
+  return { ok: true, name, color, description: input.description?.trim().slice(0, 200) || null };
+}
+
 export const RELATION_TYPES = [
   { id: "blocks", label: "Blocks", inverse: "blocked_by" },
   { id: "blocked_by", label: "Blocked by", inverse: "blocks" },
@@ -112,7 +135,7 @@ export function sumEstimates(
     const unit = item.estimateUnit ?? "points";
     groups.set(unit, (groups.get(unit) ?? 0) + item.estimate);
   }
-  if (groups.size === 0) return { total: 0, unit: "points", count: 0 };
+  if (groups.size === 0) return { total: 0, unit: "points", count: items.length };
   const [unit, total] = [...groups.entries()].sort((a, b) => b[1] - a[1])[0];
   return { total: Math.round(total * 100) / 100, unit, count: items.length };
 }
@@ -145,7 +168,7 @@ export function groupByStatus<T extends TicketLike>(
   });
 }
 
-/** Sort for lists: priority first, then due date, then key. */
+/** Sort for lists: priority first, then due date, then key (numerically: NOE-2 < NOE-10). */
 export function sortTickets<T extends TicketLike>(tickets: T[]): T[] {
   return [...tickets].sort((a, b) => {
     const priority = priorityMeta(b.priority).weight - priorityMeta(a.priority).weight;
@@ -153,7 +176,7 @@ export function sortTickets<T extends TicketLike>(tickets: T[]): T[] {
     const aDue = a.dueDate ? new Date(a.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
     const bDue = b.dueDate ? new Date(b.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
     if (aDue !== bDue) return aDue - bDue;
-    return a.key.localeCompare(b.key);
+    return a.key.localeCompare(b.key, undefined, { numeric: true });
   });
 }
 

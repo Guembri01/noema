@@ -66,6 +66,8 @@ import { PageEmbed } from "@/components/editor/extensions/page-embed";
 import { TemplateButton } from "@/components/editor/extensions/template-button";
 import { AskAi } from "@/components/editor/extensions/ask-ai";
 import { LinkedDatabase } from "@/components/editor/extensions/linked-database";
+// B18: markdown shortcut long tail + emoji shortcodes (one-line registration).
+import { InputRules } from "@/components/editor/extensions/input-rules";
 import { BubbleToolbar } from "@/components/editor/bubble-toolbar";
 import { SlashMenu } from "@/components/editor/slash-menu";
 import { HistoryControls } from "@/components/editor/history-controls";
@@ -251,6 +253,8 @@ export function PageEditor({
       TemplateButton,
       AskAi.configure({ workspaceId }),
       LinkedDatabase.configure({ workspaceId, workspaceSlug }),
+      // B18: `1)` lists, `| a | b |` + Enter tables, `:smile:` emoji.
+      InputRules,
       ...(collab
         ? [
             Collaboration.configure({ document: collab.ydoc }),

@@ -290,3 +290,255 @@ describe("pastePlan", () => {
     expect(pastePlan(many, { empty: false })).toBe("blocks");
   });
 });
+
+/**
+ * B37 — deeper HTML paste fidelity: nested bulleted+ordered mixes, callout
+ * toggle JSON round-trip (paste -> JSON -> clipboard HTML -> paste), heading
+ * block colours beyond the paragraph case, and tables wrapped in thead/tbody
+ * with colspan/rowspan spans.
+ */
+
+type PasteBlock = ReturnType<typeof parse>["blocks"][number];
+
+const attr = (value: string): string =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+const esc = (value: string): string => value.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+/** Re-emit clipboard HTML for the block shapes this round-trip covers. */
+const blockToHtml = (node: PasteBlock): string => {
+  const kids = () => (node.content ?? []).map(blockToHtml).join("");
+  switch (node.type) {
+    case "callout":
+      return `<div data-callout="" emoji="${attr(String(node.attrs?.emoji ?? "💡"))}" color="${attr(String(node.attrs?.color ?? "gray"))}">${kids()}</div>`;
+    case "toggle":
+      return `<div data-toggle="" summary="${attr(String(node.attrs?.summary ?? ""))}" open="${node.attrs?.open ? "true" : "false"}">${kids()}</div>`;
+    case "paragraph":
+      return `<p>${inlineToHtml(node.content ?? [])}</p>`;
+    case "bulletList":
+      return `<ul>${kids()}</ul>`;
+    case "orderedList":
+      return `<ol>${kids()}</ol>`;
+    case "listItem":
+      return `<li>${kids()}</li>`;
+    default:
+      throw new Error(`round-trip helper does not serialise ${node.type}`);
+  }
+};
+
+const inlineToHtml = (nodes: PasteBlock[]): string =>
+  nodes
+    .map((node) => {
+      if (node.type === "hardBreak") return "<br>";
+      if (node.type !== "text") return blockToHtml(node);
+      let out = esc(node.text ?? "");
+      for (const mark of node.marks ?? []) {
+        const color = String(mark.attrs?.color ?? "");
+        if (mark.type === "bold") out = `<strong>${out}</strong>`;
+        else if (mark.type === "italic") out = `<em>${out}</em>`;
+        else if (mark.type === "underline") out = `<u>${out}</u>`;
+        else if (mark.type === "strike") out = `<s>${out}</s>`;
+        else if (mark.type === "code") out = `<code>${out}</code>`;
+        else if (mark.type === "link") out = `<a href="${attr(String(mark.attrs?.href ?? ""))}">${out}</a>`;
+        else if (mark.type === "highlight") out = `<mark style="background-color: ${attr(color)}">${out}</mark>`;
+        else if (mark.type === "textStyle") out = `<span style="color: ${attr(color)}">${out}</span>`;
+      }
+      return out;
+    })
+    .join("");
+
+describe("normalizePasteHtml nested list mixes (B37)", () => {
+  it("nests an ordered list (with a deeper bullet) inside a bullet item", () => {
+    const html =
+      "<ul><li>alpha<ol><li>one</li><li>two<ul><li>deep</li></ul></li></ol></li><li>beta</li></ul>";
+    expect(parse(html).blocks).toEqual([
+      {
+        type: "bulletList",
+        content: [
+          {
+            type: "listItem",
+            content: [
+              { type: "paragraph", content: [{ type: "text", text: "alpha" }] },
+              {
+                type: "orderedList",
+                content: [
+                  { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "one" }] }] },
+                  {
+                    type: "listItem",
+                    content: [
+                      { type: "paragraph", content: [{ type: "text", text: "two" }] },
+                      {
+                        type: "bulletList",
+                        content: [
+                          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "deep" }] }] },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "beta" }] }] },
+        ],
+      },
+    ]);
+  });
+
+  it("nests a bullet list inside the first ordered item", () => {
+    const html = "<ol><li>first<ul><li>sub one</li><li>sub two</li></ul></li><li>second</li></ol>";
+    expect(parse(html).blocks).toEqual([
+      {
+        type: "orderedList",
+        content: [
+          {
+            type: "listItem",
+            content: [
+              { type: "paragraph", content: [{ type: "text", text: "first" }] },
+              {
+                type: "bulletList",
+                content: [
+                  { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "sub one" }] }] },
+                  { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "sub two" }] }] },
+                ],
+              },
+            ],
+          },
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "second" }] }] },
+        ],
+      },
+    ]);
+  });
+});
+
+describe("callout/toggle JSON round-trip (B37)", () => {
+  it("round-trips a callout (marks included) back through clipboard HTML", () => {
+    const html =
+      '<div data-callout="" emoji="🚀" color="blue"><p><strong>ship</strong> today</p></div>';
+    const first = parse(html).blocks;
+    expect(first).toEqual([
+      {
+        type: "callout",
+        attrs: { emoji: "🚀", color: "blue" },
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "ship", marks: [{ type: "bold" }] },
+              { type: "text", text: " today" },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(parse(blockToHtml(first[0])).blocks).toEqual(first);
+  });
+
+  it("round-trips a collapsed toggle with a nested list through clipboard HTML", () => {
+    const html =
+      '<div data-toggle="" summary="Details" open="false">' +
+      "<p>hidden <code>bit</code></p><ul><li>one</li></ul></div>";
+    const first = parse(html).blocks;
+    expect(first).toEqual([
+      {
+        type: "toggle",
+        attrs: { summary: "Details", open: false },
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "hidden " },
+              { type: "text", text: "bit", marks: [{ type: "code" }] },
+            ],
+          },
+          {
+            type: "bulletList",
+            content: [
+              { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "one" }] }] },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(parse(blockToHtml(first[0])).blocks).toEqual(first);
+  });
+
+  it("inserts callouts and toggles as blocks even into a non-empty target", () => {
+    const callout = parse('<div data-callout="" emoji="🚀" color="blue"><p>x</p></div>');
+    const toggle = parse('<div data-toggle="" summary="D"><p>y</p></div>');
+    expect(pastePlan(callout, { empty: false })).toBe("blocks");
+    expect(pastePlan(toggle, { empty: false })).toBe("blocks");
+    expect(pastePlan(callout, { empty: true })).toBe("blocks");
+  });
+});
+
+describe("data-block-color on headings (B37)", () => {
+  it("keeps the colour on every heading level, not just paragraphs", () => {
+    const levels = [1, 2, 3, 4, 5, 6];
+    const html = levels
+      .map((level) => `<h${level} data-block-color="gray">t${level}</h${level}>`)
+      .join("");
+    expect(parse(html).blocks).toEqual(
+      levels.map((level) => ({
+        type: "heading",
+        attrs: { level, blockColor: "gray" },
+        content: [{ type: "text", text: `t${level}` }],
+      })),
+    );
+  });
+
+  it("inherits the wrapper colour on a heading", () => {
+    expect(parse('<div data-block-color="blue"><h3>deep</h3></div>').blocks).toEqual([
+      {
+        type: "heading",
+        attrs: { level: 3, blockColor: "blue" },
+        content: [{ type: "text", text: "deep" }],
+      },
+    ]);
+  });
+
+  it("keeps heading colour and text alignment together", () => {
+    expect(parse('<h2 data-block-color="red" style="text-align: center">loud</h2>').blocks).toEqual([
+      {
+        type: "heading",
+        attrs: { level: 2, blockColor: "red", textAlign: "center" },
+        content: [{ type: "text", text: "loud" }],
+      },
+    ]);
+  });
+
+  it("keeps a coloured heading inside a blockquote", () => {
+    expect(parse('<blockquote><h4 data-block-color="red">q</h4></blockquote>').blocks).toEqual([
+      {
+        type: "blockquote",
+        content: [
+          { type: "heading", attrs: { level: 4, blockColor: "red" }, content: [{ type: "text", text: "q" }] },
+        ],
+      },
+    ]);
+  });
+});
+
+describe("HTML table parsing fidelity (B37)", () => {
+  it("keeps tables through thead/tbody wrappers with colspan and rowspan", () => {
+    const html =
+      '<table><thead><tr><th colspan="2">Wide</th></tr></thead>' +
+      '<tbody><tr><td rowspan="2">Tall</td><td>x</td></tr></tbody></table>';
+    const cell = (type: string, text: string, colspan: number, rowspan: number) => ({
+      type,
+      attrs: { colspan, rowspan },
+      content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+    });
+    expect(parse(html).blocks).toEqual([
+      {
+        type: "table",
+        content: [
+          { type: "tableRow", content: [cell("tableHeader", "Wide", 2, 1)] },
+          {
+            type: "tableRow",
+            content: [cell("tableCell", "Tall", 1, 2), cell("tableCell", "x", 1, 1)],
+          },
+        ],
+      },
+    ]);
+  });
+});

@@ -53,16 +53,46 @@ export function userMention(user: { id: string; name: string }): MentionAttrs {
   return { id: user.id, label: user.name, type: "user" };
 }
 
-/** Build a date mention from a Date. */
-export function dateMention(date: Date): MentionAttrs {
+/** How a date mention chip renders its label. */
+export type DateMentionStyle = "short" | "long" | "weekday";
+
+export type DateMentionOptions = {
+  /** Chip style; defaults to the compact `short` form. */
+  style?: DateMentionStyle;
+  /** BCP-47 locale; defaults to the runtime locale. */
+  locale?: string;
+};
+
+const DATE_MENTION_FORMATS: Record<DateMentionStyle, Intl.DateTimeFormatOptions> = {
+  short: { month: "short", day: "numeric", year: "numeric" },
+  long: { month: "long", day: "numeric", year: "numeric" },
+  weekday: { weekday: "short", month: "short", day: "numeric", year: "numeric" },
+};
+
+/**
+ * Build a date mention from a Date. The `id` is always the ISO day (stable
+ * across styles) so backlinks and dedup keep working when the label changes.
+ */
+export function dateMention(date: Date, options: DateMentionOptions = {}): MentionAttrs {
+  const { style = "short", locale } = options;
   const iso = date.toISOString().slice(0, 10);
   return {
     id: iso,
-    label: date.toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }),
+    label: date.toLocaleDateString(locale, DATE_MENTION_FORMATS[style] ?? DATE_MENTION_FORMATS.short),
     type: "date",
   };
+}
+
+/**
+ * Apply a page-visibility scope to mention suggestions: pages outside the
+ * scope disappear, people and dates (which are not page resources) always
+ * stay. `null` means "the viewer sees the whole workspace" and leaves the
+ * list untouched.
+ */
+export function scopeMentionSuggestions<T extends { id: string; type: string }>(
+  items: T[],
+  visiblePageIds: ReadonlySet<string> | null,
+): T[] {
+  if (!visiblePageIds) return items;
+  return items.filter((item) => item.type !== "page" || visiblePageIds.has(item.id));
 }

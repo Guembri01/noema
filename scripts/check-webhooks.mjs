@@ -2,7 +2,7 @@
 // assert the webhook endpoint received a signed request.
 // Usage: node --env-file=.env scripts/check-webhooks.mjs [baseUrl]
 import { PrismaClient } from "@prisma/client";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 
 const base = process.argv[2] ?? "http://localhost:3200";
@@ -49,15 +49,35 @@ console.log(`create page → ${created.status} (expect 201)`);
 
 await new Promise((resolve) => setTimeout(resolve, 1500));
 console.log(`webhook deliveries → ${received.length} (expect 1)`);
+let signatureOk = false;
 if (received[0]) {
   console.log(`  x-noema-event: ${received[0].headers["x-noema-event"]}`);
-  console.log(`  signed: ${Boolean(received[0].headers["x-noema-signature"])}`);
+  const signature = received[0].headers["x-noema-signature"] ?? "";
+  const timestamp = received[0].headers["x-noema-timestamp"];
+  // R24.13 — verify the v2 signature end-to-end: t bound into the MAC, the
+  // companion timestamp header agreeing, and freshness within 300 s.
+  const v2 = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(signature);
+  if (v2) {
+    const t = Number(v2[1]);
+    const expected = createHmac("sha256", "s3cr3t")
+      .update(`${t}.${received[0].body}`)
+      .digest("hex");
+    signatureOk =
+      expected === v2[2] &&
+      String(timestamp) === String(t) &&
+      Math.abs(Date.now() - t) <= 300_000;
+  }
+  console.log(`  signature v2: ${signatureOk ? "valid (t=…,v1=…)" : `INVALID (${signature})`}`);
   console.log(`  body contains event: ${/page\.created/.test(received[0].body)}`);
 }
 
+// R24.10/R24.12 — the outbox row exists and every attempt updates THAT row.
+await new Promise((resolve) => setTimeout(resolve, 300));
 const logged = await prisma.webhookDelivery.findMany({ where: { webhookId: hook.id } });
+const rowsOk =
+  logged.length === 1 && logged[0].ok === true && logged[0].attempts === 1;
 console.log(
-  `delivery log → ${logged.length} row(s) · ok=${logged[0]?.ok} · attempts=${logged[0]?.attempts}`,
+  `delivery log → ${logged.length} row(s) (expect 1) · ok=${logged[0]?.ok} · attempts=${logged[0]?.attempts}`,
 );
 
 await prisma.apiToken.deleteMany({ where: { name: "webhook-check" } });
@@ -69,4 +89,11 @@ if (created.status === 201) {
 
 server.close();
 await prisma.$disconnect();
-process.exit(received.length > 0 ? 0 : 1);
+const pass =
+  created.status === 201 && received.length === 1 && signatureOk && rowsOk;
+if (!pass) {
+  console.error(
+    `FAILED — created=${created.status} received=${received.length} signatureOk=${signatureOk} singleRowOk=${rowsOk}`,
+  );
+}
+process.exit(pass ? 0 : 1);

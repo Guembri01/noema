@@ -302,6 +302,9 @@ export function Cell({
   // never violate the rules of hooks.
   const [editingNumber, setEditingNumber] = useState(false);
   const [editingDate, setEditingDate] = useState(false);
+  // PEOPLE keeps a local draft so two quick picks can't overwrite each other
+  // from stale server props (the echo from the server lands after both clicks).
+  const [peopleDraft, setPeopleDraft] = useState<string[] | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const readOnly = (node: React.ReactNode) => (
     <span className="text-muted">{node}</span>
@@ -545,13 +548,20 @@ export function Cell({
       );
     }
     case "PEOPLE": {
-      const names = Array.from(
+      const valueNames = Array.from(
         new Set(
           ((v.names as string[]) ?? []).filter(
             (entry): entry is string => typeof entry === "string" && entry !== "",
           ),
         ),
       );
+      // The local draft wins until the component remounts: the server echo of
+      // the first pick would otherwise be stale when the second pick is made.
+      const names = peopleDraft ?? valueNames;
+      const emit = (next: string[]) => {
+        setPeopleDraft(next);
+        onChange({ names: next });
+      };
       const members = peopleOptions ?? [];
       return (
         <div
@@ -569,7 +579,7 @@ export function Cell({
                 <button
                   type="button"
                   aria-label={`${t(locale, "remove")}: ${name}`}
-                  onClick={() => onChange({ names: names.filter((n) => n !== name) })}
+                  onClick={() => emit(names.filter((n) => n !== name))}
                   className="text-muted hover:text-fg"
                 >
                   ×
@@ -598,11 +608,11 @@ export function Cell({
                       <DropdownMenuItem
                         key={member.id}
                         onSelect={() =>
-                          onChange({
-                            names: active
+                          emit(
+                            active
                               ? names.filter((n) => n !== member.name)
                               : [...names, member.name],
-                          })
+                          )
                         }
                       >
                         {active ? "✓ " : ""}

@@ -8,7 +8,7 @@ import {
   type NodeViewProps,
 } from "@tiptap/react";
 import { ExternalLink, Pencil, Trash2 } from "lucide-react";
-import { detectEmbed, hostOf, isHttpUrl, normalizeUrl } from "@/lib/embeds";
+import { detectEmbed, embedMeta, hostOf, isHttpUrl, normalizeUrl } from "@/lib/embeds";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -195,6 +195,7 @@ function EmbedView({ node, updateAttributes, deleteNode }: NodeViewProps) {
   const url = node.attrs.url as string | null;
   const [value, setValue] = useState(url ?? "");
   const info = url ? detectEmbed(url) : { provider: "none" as const, embedUrl: null };
+  const meta = embedMeta(info.provider);
   const [editing, setEditing] = useState(!info.embedUrl);
 
   return (
@@ -222,14 +223,21 @@ function EmbedView({ node, updateAttributes, deleteNode }: NodeViewProps) {
           </p>
         </div>
       ) : (
-        <div className="noema-embed-frame" contentEditable={false}>
+        <div
+          className="noema-embed-frame"
+          data-provider={info.provider}
+          contentEditable={false}
+          style={meta ? { aspectRatio: meta.aspectRatio } : undefined}
+        >
           <iframe
             src={info.embedUrl}
-            title="Embedded content"
+            title={meta?.title ?? "Embedded content"}
             loading="lazy"
-            allow="accelerometer; clipboard-write; encrypted-media; picture-in-picture"
+            referrerPolicy="strict-origin-when-cross-origin"
+            allow={meta?.allow ?? "clipboard-write"}
             allowFullScreen
           />
+          {meta && <span className="noema-embed-provider">{meta.label}</span>}
           <div className="noema-embed-actions">
             <button type="button" aria-label="Change embed" onClick={() => setEditing(true)}>
               <Pencil className="h-3.5 w-3.5" />

@@ -21,17 +21,18 @@ const LEVEL_KEYS: Record<string, "inheritRole" | "canView" | "canComment" | "can
 const LEVELS = ["NONE", "READ", "COMMENT", "EDIT", "FULL"];
 
 /**
- * Who can open this page, member by member. Lists the effective explicit level
- * (or "inherit") and lets an editor change it — the capability the page menu was
- * missing even though the server could already answer it.
+ * The member roster with per-person access levels — the shared body of both
+ * share surfaces (the "Who has access" modal and the Share panel). Exported so
+ * the Share dialog embeds exactly the same list instead of a second copy.
+ *
+ * The server answers guests and revoked users with an empty list, so this
+ * renders an empty state rather than a roster they must not see.
  */
-export function WhoHasAccess({
+export function AccessList({
   pageId,
   locale = "en",
-  onClose,
 }: {
   pageId: string;
-  onClose: () => void;
   locale?: string;
 }) {
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -64,6 +65,63 @@ export function WhoHasAccess({
     });
 
   return (
+    <div className="max-h-80 overflow-y-auto">
+      {rows === null ? (
+        <p className="flex items-center gap-2 px-1 py-4 text-sm text-muted">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t(locale, "loadingMembers")}
+        </p>
+      ) : rows.length === 0 ? (
+        <p className="px-1 py-4 text-sm text-muted">{t(locale, "noMembers")}</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {rows.map((row) => (
+            <li key={row.userId} className="flex items-center gap-3 py-2">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm">{row.name}</span>
+                <span className="block truncate text-[11px] text-muted">{row.email}</span>
+              </span>
+              <select
+                value={row.level ?? "NONE"}
+                aria-label={`Access for ${row.name}`}
+                disabled={pending}
+                onChange={(event) => change(row.userId, event.target.value)}
+                className="h-8 rounded border border-border bg-bg px-2 text-xs disabled:opacity-50"
+              >
+                {LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {t(locale, LEVEL_KEYS[level])}
+                  </option>
+                ))}
+              </select>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {error && (
+        <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Who can open this page, member by member. Lists the effective explicit level
+ * (or "inherit") and lets an editor change it — the capability the page menu was
+ * missing even though the server could already answer it.
+ */
+export function WhoHasAccess({
+  pageId,
+  locale = "en",
+  onClose,
+}: {
+  pageId: string;
+  onClose: () => void;
+  locale?: string;
+}) {
+  return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <button type="button" aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/30" />
       <div
@@ -79,45 +137,9 @@ export function WhoHasAccess({
           {t(locale, "whoHasAccessIntro")}
         </p>
 
-        <div className="mt-4 max-h-80 overflow-y-auto">
-          {rows === null ? (
-            <p className="flex items-center gap-2 px-1 py-4 text-sm text-muted">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t(locale, "loadingMembers")}
-            </p>
-          ) : rows.length === 0 ? (
-            <p className="px-1 py-4 text-sm text-muted">{t(locale, "noMembers")}</p>
-          ) : (
-            <ul className="divide-y divide-border">
-              {rows.map((row) => (
-                <li key={row.userId} className="flex items-center gap-3 py-2">
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm">{row.name}</span>
-                    <span className="block truncate text-[11px] text-muted">{row.email}</span>
-                  </span>
-                  <select
-                    value={row.level ?? "NONE"}
-                    aria-label={`Access for ${row.name}`}
-                    disabled={pending}
-                    onChange={(event) => change(row.userId, event.target.value)}
-                    className="h-8 rounded border border-border bg-bg px-2 text-xs disabled:opacity-50"
-                  >
-                    {LEVELS.map((level) => (
-                      <option key={level} value={level}>
-                        {t(locale, LEVEL_KEYS[level])}
-                      </option>
-                    ))}
-                  </select>
-                </li>
-              ))}
-            </ul>
-          )}
+        <div className="mt-4">
+          <AccessList pageId={pageId} locale={locale} />
         </div>
-
-        {error && (
-          <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
-            {error}
-          </p>
-        )}
 
         <div className="mt-4 flex justify-end">
           <button

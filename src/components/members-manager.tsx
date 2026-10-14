@@ -3,12 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Crown, LogOut, ShieldCheck, UserMinus } from "lucide-react";
+import { toast } from "sonner";
 import {
   leaveWorkspaceAction,
   removeMemberAction,
   setMemberRoleAction,
   transferOwnershipAction,
 } from "@/server/actions/workspaces";
+import { sendWorkspaceInviteAction } from "@/server/actions/email";
 import { useAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
 
@@ -56,15 +58,44 @@ export function MembersManager({
   const [confirming, setConfirming] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
   const [transferring, setTransferring] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"GUEST" | "MEMBER" | "ADMIN">("MEMBER");
 
   const isOwner = currentUserRole === "OWNER" || currentUserId === ownerId;
   const canManage = isOwner || currentUserRole === "ADMIN";
   const refresh = () => router.refresh();
 
+  /** Invite by email: existing members join instantly, everyone else gets a link. */
+  const invite = () =>
+    run(
+      () =>
+        sendWorkspaceInviteAction({
+          workspaceId,
+          email: inviteEmail.trim(),
+          role: inviteRole,
+        }),
+      {
+        onSuccess: (result) => {
+          if ("error" in result) return;
+          setInviteEmail("");
+          void navigator.clipboard?.writeText(result.link).catch(() => undefined);
+          const detail = result.emailed
+            ? t(locale, "emailed")
+            : result.warning?.includes("not configured")
+              ? t(locale, "linkCopiedNotConfigured")
+              : t(locale, "linkCopiedFailed");
+          toast.success(`${t(locale, "inviteCreated")} — ${detail}`);
+          refresh();
+        },
+      },
+    );
+
   return (
     <div className="space-y-3">
-      <ul className="divide-y divide-border rounded-lg border border-border">
-        {members.map((member) => {
+      {/* No directory for guests: render nothing until the leave block below. */}
+      {members.length > 0 && (
+        <ul className="divide-y divide-border rounded-lg border border-border">
+          {members.map((member) => {
           const isTargetOwner = member.userId === ownerId;
           const isSelf = member.userId === currentUserId;
           const roleLocked =
@@ -109,7 +140,12 @@ export function MembersManager({
                 </span>
               )}
 
-              {isOwner && !isSelf && !isTargetOwner && confirming !== `transfer:${member.userId}` && (
+              {/* Ownership only moves to a member or admin — a guest can never own. */}
+              {isOwner &&
+                !isSelf &&
+                !isTargetOwner &&
+                member.role !== "GUEST" &&
+                confirming !== `transfer:${member.userId}` && (
                 <button
                   type="button"
                   aria-label={`Make ${member.name} the owner`}
@@ -165,8 +201,46 @@ export function MembersManager({
               )}
             </li>
           );
-        })}
-      </ul>
+          })}
+        </ul>
+      )}
+
+      {canManage && (
+        <form
+          className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void invite();
+          }}
+        >
+          <input
+            type="email"
+            required
+            value={inviteEmail}
+            aria-label={t(locale, "inviteEmailAria")}
+            placeholder="client@example.com"
+            onChange={(event) => setInviteEmail(event.target.value)}
+            className="h-8 min-w-44 flex-1 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
+          />
+          <select
+            value={inviteRole}
+            aria-label={t(locale, "inviteRoleAria")}
+            onChange={(event) => setInviteRole(event.target.value as typeof inviteRole)}
+            className="h-8 rounded border border-border bg-bg px-1.5 text-xs"
+          >
+            <option value="MEMBER">{t(locale, "inviteRoleMember")}</option>
+            <option value="ADMIN">{t(locale, "inviteRoleAdmin")}</option>
+            <option value="GUEST">{t(locale, "inviteRoleGuest")}</option>
+          </select>
+          <button
+            type="submit"
+            disabled={pending || !inviteEmail.trim()}
+            className="h-8 rounded bg-accent px-3 text-xs text-accent-fg disabled:opacity-50"
+          >
+            {t(locale, "invite")}
+          </button>
+        </form>
+      )}
 
       {transferring && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">

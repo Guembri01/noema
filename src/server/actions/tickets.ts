@@ -9,13 +9,13 @@ import { parsePageContent } from "@/lib/validation";
 import { DESCRIPTION_MAX, descriptionDoc, sanitizeDescription } from "@/lib/description";
 import { getTicketsPage } from "@/server/queries";
 import {
-  LABEL_COLORS,
   RELATION_TYPES,
   TICKET_PRIORITIES,
   TICKET_STATUSES,
   TICKET_TYPES,
   isClosed,
   keyPrefix,
+  normalizeLabelInput,
   ticketKey,
   toTrackerTicket,
   type TrackerTicket,
@@ -68,14 +68,11 @@ export async function createLabelAction(input: {
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to manage labels." };
   }
-  const name = input.name.trim().slice(0, 40);
-  if (!name) return { error: "Give the label a name." };
-  const color = LABEL_COLORS.includes((input.color ?? "gray") as (typeof LABEL_COLORS)[number])
-    ? (input.color as string)
-    : "gray";
+  const normalized = normalizeLabelInput(input);
+  if (!normalized.ok) return { error: normalized.error };
 
   const existing = await prisma.label.findUnique({
-    where: { workspaceId_name: { workspaceId: input.workspaceId, name } },
+    where: { workspaceId_name: { workspaceId: input.workspaceId, name: normalized.name } },
     select: { id: true },
   });
   if (existing) return { error: "That label already exists." };
@@ -83,9 +80,9 @@ export async function createLabelAction(input: {
   const label = await prisma.label.create({
     data: {
       workspaceId: input.workspaceId,
-      name,
-      color,
-      description: input.description?.trim().slice(0, 200) || null,
+      name: normalized.name,
+      color: normalized.color,
+      description: normalized.description,
     },
     select: { id: true },
   });

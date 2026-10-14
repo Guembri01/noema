@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Menu } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";
 import { OPEN_CHAT_EVENT } from "@/components/sidebar-chat";
 import { ChatPanel, type PanelThread } from "@/components/chat-panel";
 import type { CalendarFeedView, MeetingEventView } from "@/components/sidebar-meetings";
+import { CommandPalette } from "@/components/command-palette";
 import { QuickFind } from "@/components/quick-find";
+import { safeAction } from "@/lib/actions-client";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
+import { createPageAction } from "@/server/actions/pages";
 import type { PageTreeNode } from "@/server/queries";
 
 export function WorkspaceShell({
@@ -52,10 +55,30 @@ export function WorkspaceShell({
   children: React.ReactNode;
 }) {
   const [quickOpen, setQuickOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Desktop collapse for the sidebar (Ctrl/Cmd+\ and the palette action).
+  const [sidebarHidden, setSidebarHidden] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatThreadId, setChatThreadId] = useState<string | null>(null);
+  const router = useRouter();
   const searchParams = useSearchParams();
+
+  const toggleSidebar = useCallback(() => setSidebarHidden((hidden) => !hidden), []);
+
+  const createNewPage = useCallback(async () => {
+    const outcome = await safeAction(() =>
+      createPageAction({ workspaceId: workspace.id, parentId: null }),
+    );
+    if (!outcome.ok) return;
+    const result = outcome.value;
+    if ("ok" in result) {
+      setPaletteOpen(false);
+      setQuickOpen(false);
+      router.push(`/w/${workspace.slug}/${result.id}`);
+      router.refresh();
+    }
+  }, [router, workspace.id, workspace.slug]);
 
   // `?chat=<threadId>` deep-links a conversation: it opens on load (and on
   // navigation, e.g. from a shared link), so a discussion is addressable.
@@ -78,16 +101,28 @@ export function WorkspaceShell({
     return () => window.removeEventListener(OPEN_CHAT_EVENT, handler);
   }, []);
 
+  // B43 shortcuts: Ctrl/Cmd+K and Ctrl/Cmd+P open the command palette,
+  // Ctrl/Cmd+N creates a page, Ctrl/Cmd+\ toggles the sidebar.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      if (event.defaultPrevented) return;
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "k" || key === "p") {
         event.preventDefault();
-        setQuickOpen((open) => !open);
+        setQuickOpen(false);
+        setPaletteOpen((open) => !open);
+      } else if (key === "n") {
+        event.preventDefault();
+        void createNewPage();
+      } else if (event.key === "\\" || event.code === "Backslash") {
+        event.preventDefault();
+        toggleSidebar();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [createNewPage, toggleSidebar]);
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -104,9 +139,16 @@ export function WorkspaceShell({
       </div>
 
       <div
+        data-testid="workspace-sidebar"
         className={cn(
           "fixed inset-y-0 left-0 z-40 md:static md:z-auto",
-          sidebarOpen ? "block" : "hidden md:block",
+          sidebarOpen
+            ? sidebarHidden
+              ? "block md:hidden"
+              : "block"
+            : sidebarHidden
+              ? "hidden"
+              : "hidden md:block",
         )}
       >
         <Sidebar
@@ -160,6 +202,15 @@ export function WorkspaceShell({
         workspaceId={workspace.id}
         workspaceSlug={workspace.slug}
         locale={locale}
+      />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        workspaceSlug={workspace.slug}
+        locale={locale}
+        pages={tree}
+        onCreatePage={() => void createNewPage()}
+        onToggleSidebar={toggleSidebar}
       />
     </div>
   );

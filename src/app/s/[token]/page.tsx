@@ -75,11 +75,25 @@ export default async function PublicSharedPage({
   }
 
   const page = link.page;
+  // Fail closed: this public surface never accepts writes. The stored mode
+  // (ShareLink.permission) is surfaced so viewers know what the publisher chose;
+  // editing happens in-app after sign-in, never anonymously here.
+  const readOnly = link.permission !== "EDIT";
 
   return (
     <main className="mx-auto max-w-3xl px-8 py-14">
       <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
-        Shared page · read-only
+        {readOnly ? (
+          "Shared page · read-only"
+        ) : (
+          <>
+            Shared page · anyone with the link can edit —{" "}
+            <a href="/login" className="underline">
+              sign in
+            </a>{" "}
+            to edit in Noema
+          </>
+        )}
       </p>
       <h1 className="mb-6 text-4xl font-bold tracking-tight">
         {page.icon ? `${page.icon} ` : ""}

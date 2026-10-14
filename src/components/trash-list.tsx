@@ -39,10 +39,13 @@ export function TrashList({
   workspaceId,
   locale,
   pages,
+  canEdit,
 }: {
   workspaceId: string;
   locale: string;
   pages: TrashRow[];
+  /** Guests can browse the trash but every destructive control stays hidden. */
+  canEdit: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -79,7 +82,8 @@ export function TrashList({
         <span>
           {pages.length} {pages.length === 1 ? "page" : "pages"}
         </span>
-        {confirmingEmpty ? (
+        {canEdit &&
+        (confirmingEmpty ? (
           <span className="flex items-center gap-2">
             <button
               type="button"
@@ -114,7 +118,7 @@ export function TrashList({
           >
             {t(locale, "emptyTrash")}
           </button>
-        )}
+        ))}
       </div>
 
       <ul className="divide-y divide-border rounded-xl border border-border">
@@ -128,60 +132,64 @@ export function TrashList({
               <span className="block text-[11px] text-muted" suppressHydrationWarning>{deletedLabel(page.deletedAt)}</span>
             </span>
 
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() =>
-                run("Page restored", async () => {
-                  const result = await restorePageAction(page.id);
-
-                  return "error" in result ? { ok: false, message: result.error } : { ok: true };
-                })
-              }
-              className="flex h-8 items-center gap-1.5 rounded border border-border px-2.5 text-sm hover:bg-surface-2 disabled:opacity-50"
-            >
-              <ArchiveRestore className="h-3.5 w-3.5" /> {t(locale, "restore")}
-            </button>
-
-            {confirming === page.id ? (
-              <span className="flex items-center gap-2">
+            {canEdit && (
+              <>
                 <button
                   type="button"
                   disabled={pending}
                   onClick={() =>
-                    run("Deleted forever", async () => {
-                      const result = await deletePageAction(page.id);
+                    run("Page restored", async () => {
+                      const result = await restorePageAction(page.id);
 
-                      if ("error" in result) return { ok: false, message: result.error };
-                      setConfirming(null);
-                      return { ok: true };
+                      return "error" in result ? { ok: false, message: result.error } : { ok: true };
                     })
                   }
-                  className="h-8 rounded bg-red-500/90 px-2.5 text-sm text-white hover:bg-red-500 disabled:opacity-50"
+                  className="flex h-8 items-center gap-1.5 rounded border border-border px-2.5 text-sm hover:bg-surface-2 disabled:opacity-50"
                 >
-                  {t(locale, "deleteForever")}
+                  <ArchiveRestore className="h-3.5 w-3.5" /> {t(locale, "restore")}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirming(null)}
-                  className="h-8 rounded px-2 text-sm text-muted hover:bg-surface-2"
-                >
-                  Cancel
-                </button>
-              </span>
-            ) : (
-              <button
-                type="button"
-                aria-label={`Delete ${page.title || "Untitled"} forever`}
-                disabled={pending}
-                onClick={() => setConfirming(page.id)}
-                className={cn(
-                  "flex h-8 w-8 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-red-500",
-                  "disabled:opacity-50",
+
+                {confirming === page.id ? (
+                  <span className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() =>
+                        run("Deleted forever", async () => {
+                          const result = await deletePageAction(page.id, workspaceId);
+
+                          if ("error" in result) return { ok: false, message: result.error };
+                          setConfirming(null);
+                          return { ok: true };
+                        })
+                      }
+                      className="h-8 rounded bg-red-500/90 px-2.5 text-sm text-white hover:bg-red-500 disabled:opacity-50"
+                    >
+                      {t(locale, "deleteForever")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirming(null)}
+                      className="h-8 rounded px-2 text-sm text-muted hover:bg-surface-2"
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    aria-label={`Delete ${page.title || "Untitled"} forever`}
+                    disabled={pending}
+                    onClick={() => setConfirming(page.id)}
+                    className={cn(
+                      "flex h-8 w-8 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-red-500",
+                      "disabled:opacity-50",
+                    )}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
                 )}
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+              </>
             )}
           </li>
         ))}

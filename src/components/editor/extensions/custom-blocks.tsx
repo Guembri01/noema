@@ -16,7 +16,15 @@ import {
   type NodeViewProps,
 } from "@tiptap/react";
 import { ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  activeHeadingIndex,
+  buildTocItems,
+  scrollBehavior,
+  tocAnchorId,
+  type TocHeading,
+  type TocItem,
+} from "@/lib/toc";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -287,31 +295,134 @@ export const TableOfContents = Node.create({
   },
 });
 
+/**
+ * The rendered element for the heading node at `pos`. Resolution is by
+ * document position (never by id), so a stale position after an edit just
+ * returns null and the next `collect()` refreshes it.
+ */
+function headingElementAt(
+  editor: NodeViewProps["editor"],
+  pos: number,
+): HTMLElement | null {
+  try {
+    const dom = editor.view.nodeDOM(pos);
+    return dom instanceof HTMLElement ? dom : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Nearest scrollable ancestor, falling back to the root scroller. */
+function scrollContainerFor(start: Element): Element {
+  let node: Element | null = start;
+  while (node) {
+    const overflowY = getComputedStyle(node).overflowY;
+    if (
+      (overflowY === "auto" || overflowY === "scroll") &&
+      node.scrollHeight > node.clientHeight
+    ) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return document.scrollingElement ?? document.documentElement;
+}
+
 function TocView({ editor }: NodeViewProps) {
-  const [items, setItems] = useState<
-    { level: number; text: string; pos: number }[]
-  >([]);
+  const [items, setItems] = useState<TocItem[]>([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const itemsRef = useRef<TocItem[]>([]);
+
+  /**
+   * Recompute every heading's offset from the scroll container's top edge and
+   * publish the active outline index. Hidden or unrendered headings measure
+   * `Infinity` so they can never claim the active slot.
+   */
+  const measure = (list: readonly TocItem[]) => {
+    if (list.length === 0) {
+      setActiveIndex(-1);
+      return;
+    }
+    const container = scrollContainerFor(editor.view.dom);
+    const rootScroller =
+      container === document.scrollingElement ||
+      container === document.documentElement;
+    const baseTop = rootScroller ? 0 : container.getBoundingClientRect().top;
+    const tops = list.map((item) => {
+      const el = headingElementAt(editor, item.pos);
+      if (!el || el.offsetHeight === 0) return Number.POSITIVE_INFINITY;
+      return el.getBoundingClientRect().top - baseTop;
+    });
+    setActiveIndex((prev) => {
+      const next = activeHeadingIndex(tops);
+      return prev === next ? prev : next;
+    });
+  };
 
   const collect = () => {
-    const found: { level: number; text: string; pos: number }[] = [];
+    const headings: TocHeading[] = [];
     editor.state.doc.descendants((node, pos) => {
       if (node.type.name === "heading") {
         const text = node.textContent.trim();
-        if (text) found.push({ level: Number(node.attrs.level) || 1, text, pos });
+        if (text) headings.push({ level: Number(node.attrs.level) || 1, text, pos });
       }
       return true;
     });
-    setItems(found);
+    const built = buildTocItems(headings);
+    itemsRef.current = built;
+    // ANCHOR STRATEGY: slugify+dedupe runs here, at render, and the id is
+    // stamped onto the rendered heading element only — the document model
+    // stays id-free by design (see src/lib/toc.ts).
+    for (const item of built) {
+      const el = headingElementAt(editor, item.pos);
+      if (el) el.id = tocAnchorId(item.slug);
+    }
+    setItems(built);
+    measure(built);
   };
+
+  const remeasure = () => measure(itemsRef.current);
 
   useEffect(() => {
     collect();
     editor.on("update", collect);
+    // `scroll` does not bubble, so one capture-phase listener on window sees
+    // the workspace scroller (#main), the root scroller, and nested ones.
+    window.addEventListener("scroll", remeasure, { capture: true, passive: true });
+    window.addEventListener("resize", remeasure);
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(remeasure);
+    observer?.observe(editor.view.dom);
     return () => {
       editor.off("update", collect);
+      window.removeEventListener("scroll", remeasure, true);
+      window.removeEventListener("resize", remeasure);
+      observer?.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
+
+  const goToHeading = (item: TocItem) => {
+    // Keep the caret parity with the old behaviour, but suppress TipTap's own
+    // post-focus scroll — it lands a frame later and would cancel ours.
+    editor
+      .chain()
+      .focus(null, { scrollIntoView: false })
+      .setTextSelection(item.pos + 1)
+      .run();
+    const el =
+      headingElementAt(editor, item.pos) ??
+      document.getElementById(tocAnchorId(item.slug));
+    if (!el) return;
+    const reduced =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // One frame out: TipTap's delayedFocus() runs view.focus() inside a rAF,
+    // and any native focus scroll must happen before the smooth animation.
+    requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: scrollBehavior(reduced), block: "start" });
+    });
+  };
 
   return (
     <NodeViewWrapper className="noema-toc" data-toc="" contentEditable={false}>
@@ -321,17 +432,11 @@ function TocView({ editor }: NodeViewProps) {
       ) : (
         <ul>
           {items.map((item, index) => (
-            <li key={`${item.pos}-${index}`} style={{ paddingLeft: (item.level - 1) * 16 }}>
+            <li key={item.slug} style={{ paddingLeft: (item.level - 1) * 16 }}>
               <button
                 type="button"
-                onClick={() =>
-                  editor
-                    .chain()
-                    .focus()
-                    .setTextSelection(item.pos + 1)
-                    .scrollIntoView()
-                    .run()
-                }
+                aria-current={index === activeIndex ? "true" : undefined}
+                onClick={() => goToHeading(item)}
               >
                 {item.text}
               </button>

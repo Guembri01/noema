@@ -1,0 +1,42 @@
+# =============================================================================
+# B62 — .dockerignore (spec R28.22). Keeps the build context small and, above
+# all, keeps secrets and local data OUT of every image layer.
+# =============================================================================
+
+# --- secrets: never enter an image ------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- dependencies & build output (rebuilt inside the image) ------------------
+node_modules
+.next
+out
+build
+*.tsbuildinfo
+
+# --- vcs / editor / agent tooling -------------------------------------------
+.git
+.gitignore
+.opencode
+.vscode
+
+# --- tests & test artifacts --------------------------------------------------
+e2e
+test-results*
+playwright-report
+blob-report
+coverage
+playwright.config.ts
+
+# --- local-only data & logs (per spec: backups, e2e, scripts/_logs) ---------
+backups
+uploads
+scripts/_logs
+docs
+_tmp-login-probe.js
+
+# --- the packaging files themselves are build inputs, not context -----------
+Dockerfile
+.dockerignore
+docker-compose.yml

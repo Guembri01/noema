@@ -1,0 +1,85 @@
+# CI v1 — lite gate (B64). Mirrors the local FAST tier: tsc + eslint + unit
+# (changed) + coherence. Deliberately NO e2e: Playwright needs a real postgres
+# (prisma db push + seed) and the suite runs serially (workers: 1, shared demo
+# workspace) — see the commented follow-up at the bottom of this file.
+# The same two checks ship as a plain git hook: scripts/pre-commit.sample.md.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check:fast + coherence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # npm ci already fires `postinstall: prisma generate`; kept as an explicit
+      # step so a failed client generation fails its own line in the log.
+      # DATABASE_URL is a dummy — `generate` only parses the schema, never connects.
+      - name: Prisma generate
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://user:pass@127.0.0.1:5432/noema
+
+      # = tsc --noEmit && eslint --quiet . && vitest run --changed --passWithNoTests
+      # Note: in CI the checkout is clean, so `vitest --changed` sees no diff and
+      # may run 0 tests; tsc + eslint still gate every push. Switching this line
+      # to `npm test` (full unit suite) is a candidate CI v2 tweak.
+      - name: check:fast
+        run: npx tsc --noEmit && npx eslint --quiet . && npm test  # full suite: --changed is vacuous on a clean checkout
+
+      - name: Coherence gate
+        run: node scripts/check-coherence.mjs
+
+      # ----- Follow-up (CI v2, NOT enabled): e2e with a postgres service -------
+      # Uncomment as a SEPARATE job when the suite is CI-stable; keep `check` as
+      # the required status check and start the e2e job as allow-failure:
+      #
+      #   e2e:
+      #     runs-on: ubuntu-latest
+      #     needs: check
+      #     continue-on-error: true          # allow-failure at first; ratchet later
+      #     services:
+      #       postgres:
+      #         image: postgres:16
+      #         env:
+      #           POSTGRES_USER: noema
+      #           POSTGRES_PASSWORD: noema
+      #           POSTGRES_DB: noema
+      #         ports:
+      #           - 5432:5432
+      #         options: >-
+      #           --health-cmd pg_isready --health-interval 10s
+      #           --health-timeout 5s --health-retries 5
+      #     env:
+      #       DATABASE_URL: postgresql://noema:noema@127.0.0.1:5432/noema
+      #     steps:
+      #       - uses: actions/checkout@v4
+      #       - uses: actions/setup-node@v4
+      #         with: { node-version: 24, cache: npm }
+      #       - run: npm ci
+      #       - run: npx prisma db push
+      #       - run: npm run db:seed
+      #       - run: npx playwright install --with-deps chromium
+      #       - run: npx playwright test
+      #         env:
+      #           E2E_BASE_URL: http://localhost:3000   # + next build/start or dev
+      # -------------------------------------------------------------------------

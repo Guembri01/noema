@@ -9,8 +9,7 @@ import { uniqueWorkspaceSlug } from "@/server/unique";
 import { welcomeDoc } from "@/lib/welcome";
 import { logActivity } from "@/lib/activity";
 import {
-  canDeleteWorkspace,
-  canManageMembers,
+  canPerformWorkspaceAction,
   getWorkspaceAccess,
 } from "@/lib/permissions";
 
@@ -85,7 +84,7 @@ export async function updateWorkspaceAction(input: {
 }): Promise<WorkspaceResult> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, input.workspaceId);
-  if (!access || !canManageMembers(access.role)) {
+  if (!canPerformWorkspaceAction(access?.role ?? null, "manageSettings")) {
     return { error: "You do not have permission to change this workspace." };
   }
 
@@ -117,7 +116,7 @@ export async function deleteWorkspaceAction(
 ): Promise<WorkspaceResult> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
-  if (!access || !canDeleteWorkspace(access.role)) {
+  if (!canPerformWorkspaceAction(access?.role ?? null, "deleteWorkspace")) {
     return { error: "Only the workspace owner can delete it." };
   }
   const workspace = await prisma.workspace.findUnique({
@@ -141,7 +140,7 @@ export async function setMemberRoleAction(
 ): Promise<WorkspaceResult> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
-  if (!access || !canManageMembers(access.role)) {
+  if (!access || !canPerformWorkspaceAction(access.role, "manageMembers")) {
     return { error: "You do not have permission to change roles." };
   }
   if (!ASSIGNABLE_ROLES.includes(role as WorkspaceRole)) {
@@ -182,7 +181,7 @@ export async function removeMemberAction(
 ): Promise<WorkspaceResult> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
-  if (!access || !canManageMembers(access.role)) {
+  if (!access || !canPerformWorkspaceAction(access.role, "manageMembers")) {
     return { error: "You do not have permission to remove members." };
   }
   if (userId === user.id) return { error: "Use “Leave workspace” to remove yourself." };
@@ -245,19 +244,24 @@ export async function transferOwnershipAction(
 ): Promise<WorkspaceResult> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
-  if (!access || !canDeleteWorkspace(access.role)) {
+  if (!canPerformWorkspaceAction(access?.role ?? null, "transferOwnership")) {
     return { error: "Only the current owner can transfer this workspace." };
   }
   if (userId === user.id) return { error: "You already own this workspace." };
 
   const target = await prisma.workspaceMember.findFirst({
     where: { workspaceId, userId },
-    select: { id: true },
+    select: { id: true, role: true },
   });
   if (!target) return { error: "That person is not a member of this workspace." };
+  // A GUEST is a read-only external collaborator (canEditContent is false), so
+  // promoting one to owner would produce an owner who cannot edit content.
+  if (target.role === "GUEST") {
+    return { error: "A guest cannot own this workspace — promote them to a member first." };
+  }
 
-  await logActivity({ workspaceId, actorId: user.id, action: "member.ownership_transferred", targetType: "member", targetId: userId });
-
+  // The transaction runs first: the activity log records what actually happened,
+  // never an attempt that failed halfway.
   await prisma.$transaction([
     prisma.workspace.update({ where: { id: workspaceId }, data: { ownerId: userId } }),
     prisma.workspaceMember.update({ where: { id: target.id }, data: { role: "OWNER" } }),
@@ -266,6 +270,7 @@ export async function transferOwnershipAction(
       data: { role: "ADMIN" },
     }),
   ]);
+  await logActivity({ workspaceId, actorId: user.id, action: "member.ownership_transferred", targetType: "member", targetId: userId });
   revalidatePath("/", "layout");
   revalidatePath("/w", "layout");
   return { ok: true };

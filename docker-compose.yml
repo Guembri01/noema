@@ -17,5 +17,45 @@ services:
       timeout: 5s
       retries: 10
 
+  # B62 (spec R28.23): application service — PROFILE-GATED, so a plain
+  # `docker compose up` keeps starting ONLY the `db` service above, which is
+  # byte-identical to before (noema-db, the dev loop and `npm run backup`
+  # are untouched). Start the full stack explicitly with:
+  #   docker compose --profile app up --build
+  # Secrets come from .env at run time (env_file) — never baked into the image.
+  app:
+    profiles: ["app"]
+    build:
+      context: .
+    image: noema-app:local
+    container_name: noema-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # In-network DB host: the .env DATABASE_URL points at localhost:5433
+      # on the host, which is unreachable from inside the container.
+      DATABASE_URL: postgresql://noema:noema@db:5432/noema?schema=public
+      PORT: "3000"
+    ports:
+      # B74: host 3202 (3200 prod / 3201 dev are sacred, and the container's
+      # own 3000 stays internal). Matches the B74 smoke-run port.
+      - "3202:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # GET /api/health (R28.24): 200 = healthy, 503 (or no answer) = unhealthy.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 volumes:
   noema-db-data:

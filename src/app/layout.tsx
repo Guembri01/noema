@@ -21,8 +21,17 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const user = await getCurrentUser();
-  const locale = user?.locale ?? "en";
+  // B46 (a11y): a failed session lookup (e.g. transient DB outage) must not
+  // replace the whole document with a bare error page — check:a11y then loses
+  // lang/dir, the skip link and the landmarks. Degrade to the default locale
+  // instead; failing child segments are caught by app/error.tsx.
+  let locale = "en";
+  try {
+    const user = await getCurrentUser();
+    locale = user?.locale ?? locale;
+  } catch {
+    locale = "en";
+  }
   const dir = directionOf(locale);
   return (
     <html lang={locale} dir={dir} suppressHydrationWarning>

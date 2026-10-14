@@ -6,11 +6,21 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { isAllowedFeedUrl, normalizeFeedUrl, parseIcsEvents } from "@/lib/ics";
+// H4 SSRF: same guard pattern as the link-preview route
+// (src/app/api/link-preview/route.ts:44-46), extended with DNS + redirect
+// re-validation - see src/lib/feed-guard.ts.
+import { safeFetchFeed } from "@/lib/feed-guard";
 import { templateContent } from "@/lib/templates";
 
 export type CalendarResult<T = unknown> = ({ ok: true } & T) | { error: string };
 
 const MAX_FEED_BYTES = 2_000_000;
+
+/**
+ * One message for every read failure - blocked private target, network error
+ * or non-2xx - so the connector never leaks a status oracle (audit H4).
+ */
+const FEED_READ_ERROR = "Could not read that calendar feed.";
 
 /** Subscribe to an iCalendar feed and materialise its upcoming events. */
 export async function connectCalendarFeedAction(input: {
@@ -29,12 +39,12 @@ export async function connectCalendarFeedAction(input: {
     return { error: "Enter a valid http(s) or webcal calendar URL." };
   }
 
-  const response = await fetch(url, {
+  const response = await safeFetchFeed(url, {
     headers: { accept: "text/calendar, text/plain;q=0.9, */*;q=0.5" },
     signal: AbortSignal.timeout(15_000),
-  }).catch(() => null);
+  });
   if (!response?.ok) {
-    return { error: `Could not read that calendar (${response?.status ?? "network error"}).` };
+    return { error: FEED_READ_ERROR };
   }
   const body = await response.text();
   if (body.length > MAX_FEED_BYTES) {
@@ -103,10 +113,10 @@ export async function refreshCalendarFeedsAction(
 
   let refreshed = 0;
   for (const feed of feeds) {
-    const response = await fetch(feed.icsUrl, {
+    const response = await safeFetchFeed(feed.icsUrl, {
       headers: { accept: "text/calendar, text/plain;q=0.9, */*;q=0.5" },
       signal: AbortSignal.timeout(15_000),
-    }).catch(() => null);
+    });
     if (!response?.ok) continue;
     const events = parseIcsEvents(await response.text()).slice(0, 500);
     for (const event of events) {

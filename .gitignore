@@ -53,6 +53,8 @@ next-env.d.ts
 
 # local uploads (user content)
 /uploads
+# session registry (B54 — file-backed device list / revocation)
+/.data/
 # generated audit data
 docs/_audit-raw.json
 backups/

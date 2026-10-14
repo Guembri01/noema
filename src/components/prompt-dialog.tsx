@@ -72,7 +72,10 @@ export function PromptDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
-      <DialogContent className="w-full max-w-md rounded-xl border border-border bg-bg p-4 shadow-2xl">
+      <DialogContent
+        className="w-full max-w-md rounded-xl border border-border bg-bg p-4 shadow-2xl"
+        aria-label={title}
+      >
         <h2 className="text-base font-semibold">{title}</h2>
         {description && <p className="mt-1 text-xs text-muted">{description}</p>}
 

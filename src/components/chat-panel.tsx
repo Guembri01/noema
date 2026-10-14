@@ -156,18 +156,31 @@ export function ChatPanel({
     const body = (text ?? draft).trim();
     if (!body) return;
     const optimisticId = `pending-${Date.now()}`;
-    setDraft("");
+    // Only a composer send consumes the draft. Prompts sent from the quick
+    // actions or the answer menu never touch text the user is still typing.
+    if (text === undefined) setDraft("");
     setOptimistic((current) => [...current, { id: optimisticId, body }]);
 
     startTransition(async () => {
+      // R25.17 — never eat the draft: until the server acknowledges the
+      // question nothing is stored, so any failure gives the exact text back
+      // (without clobbering whatever the user typed in the meantime). The
+      // stream route persists the question before it can answer 200, so once
+      // it has, the text lives in the thread and must NOT come back.
+      let acknowledged = false;
+      const restoreDraft = () => setDraft((current) => current || body);
+      /** Failure paths guarantee the optimistic bubble is gone (R25.17). */
+      const dropOptimistic = () =>
+        setOptimistic((current) => current.filter((item) => item.id !== optimisticId));
+      const bail = (message: string) => {
+        toast.error(message);
+        restoreDraft();
+        dropOptimistic();
+      };
+
       let threadId = active?.id ?? null;
       if (!threadId) {
         const created = await safeAction(() => createChatThreadAction(workspaceId));
-        const bail = (message: string) => {
-          toast.error(message);
-          setDraft(body);
-          setOptimistic((current) => current.filter((item) => item.id !== optimisticId));
-        };
         if (!created.ok) {
           bail(created.error);
           return;
@@ -179,7 +192,7 @@ export function ChatPanel({
         threadId = created.value.id;
         setActiveThreadId(threadId);
       }
-      setOptimistic((current) => current.filter((item) => item.id !== optimisticId));
+      dropOptimistic();
       if (!threadId) return;
 
       // Stream the answer; if the stream cannot start (AI off, transport down),
@@ -190,6 +203,8 @@ export function ChatPanel({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ threadId, body }),
         });
+        // A 200 means the route already wrote the question row (route.ts:56).
+        acknowledged = response.ok;
 
         if (!response.ok || !response.body) {
           const posted = await safeAction(() => postChatMessageAction(threadId, body));
@@ -198,7 +213,11 @@ export function ChatPanel({
             : "error" in posted.value
               ? posted.value.error
               : null;
-          if (failure) toast.error(failure);
+          if (failure) {
+            toast.error(failure);
+            if (!acknowledged) restoreDraft();
+            dropOptimistic();
+          }
           router.refresh();
           return;
         }
@@ -214,6 +233,8 @@ export function ChatPanel({
           setStreaming(text);
         }
         if (text.includes("[stream-error]")) {
+          // In-band failure: the route persisted the exchange either way, so
+          // the draft stays consumed — it is in the thread now.
           toast.error(text.split("[stream-error]")[1]?.trim() || "The answer was cut short.");
         }
         setStreaming(null);
@@ -221,6 +242,10 @@ export function ChatPanel({
       } catch (error) {
         setStreaming(null);
         toast.error(describeActionError(error, locale));
+        // Nothing reached the database before the transport died — the draft
+        // is all the user has left of their question, so give it back.
+        if (!acknowledged) restoreDraft();
+        dropOptimistic();
         router.refresh();
       }
     });

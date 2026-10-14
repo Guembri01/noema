@@ -9,6 +9,22 @@ export type TrelloCard = { title: string; description: string };
 export type TrelloList = { id: string; name: string; cards: TrelloCard[] };
 export type TrelloBoard = { name: string; lists: TrelloList[] };
 
+/**
+ * Honest import result counts (B71 / spec `import-export.md` M1):
+ * every importer reports what was written and what was dropped, instead of
+ * silently losing data (defects D23.1/D23.4).
+ */
+export type ImportCounts = {
+  /** Page/row records the import wrote. */
+  imported: number;
+  /** CSV header columns that matched no property (counted once per column). */
+  skippedColumns: number;
+  /** Non-empty cells dropped because they could not be coerced to the property type. */
+  skippedCells: number;
+  /** Records the importer tried to process but lost (e.g. failed Notion subtrees). */
+  failed: number;
+};
+
 type RawTrello = {
   name?: unknown;
   lists?: { id?: unknown; name?: unknown }[];

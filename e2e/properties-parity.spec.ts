@@ -293,6 +293,19 @@ async function openHeaderMenu(page: Page, name: string) {
   await header(page, name).getByLabel("Property options").click();
 }
 
+/**
+ * Pick a Format submenu entry.
+ *
+ * The submenu renders in a portal; a mouse click can lose the pointer-events
+ * transfer race against its parent menu (hit test falls through to <html>).
+ * Keyboard activation is geometry- and pointer-independent: Enter opens the
+ * submenu, and pressing Enter on the item itself focuses it and selects it.
+ */
+async function chooseFormat(page: Page, testId: string) {
+  await page.getByRole("menuitem", { name: "Format" }).press("Enter");
+  await page.getByTestId(testId).press("Enter");
+}
+
 /* ---------------------------------------------------------------------------
    (a) Number formats — percent + currency
    --------------------------------------------------------------------------- */
@@ -315,25 +328,31 @@ test("renders and persists percent and currency number formats", async ({ page }
 
     // Percent: stored fraction renders as the percentage.
     await openHeaderMenu(page, "Rate");
-    await page.getByRole("menuitem", { name: "Format" }).click();
-    await page.getByTestId("format-percent").click();
+    await chooseFormat(page, "format-percent");
     await pollDb(
       async () => (await storedPropertyConfig(fixture.pageId, "Rate")).format === "percent",
       async () => {
-        await openHeaderMenu(page, "Rate");
-        await page.getByRole("menuitem", { name: "Format" }).click();
-        await page.getByTestId("format-percent").click().catch(() => {});
+        await openHeaderMenu(page, "Rate").catch(() => {});
+        await chooseFormat(page, "format-percent").catch(() => {});
       },
       "percent format not stored",
     );
 
+    // Reload before the next menu: the router.refresh() from the first write
+    // would otherwise close the second menu mid-click.
+    await reloadPage(page);
+    await waitForHydration(page, '[aria-label="Add a view"]');
+    await expect(page.getByLabel("Rate")).toHaveText("7.5%");
+
     // Currency: symbol, grouping, two decimals.
     await openHeaderMenu(page, "Price");
-    await page.getByRole("menuitem", { name: "Format" }).click();
-    await page.getByTestId("format-currency-usd").click();
+    await chooseFormat(page, "format-currency-usd");
     await pollDb(
       async () => (await storedPropertyConfig(fixture.pageId, "Price")).format === "currency",
-      undefined,
+      async () => {
+        await openHeaderMenu(page, "Price").catch(() => {});
+        await chooseFormat(page, "format-currency-usd").catch(() => {});
+      },
       "currency format not stored",
     );
 
@@ -412,21 +431,18 @@ test("renames a select option and recolours it, persisting across a reload", asy
       "option colour not stored",
     );
 
-    // Rename.
+    // Rename. Enter commits (and the label carries the *current* name, so it
+    // changes as soon as the draft updates — resolve by prefix instead).
     const nameInput = editor.getByLabel("Option name: Bronze");
     await nameInput.fill("Platinum");
-    await nameInput.blur();
+    await page.keyboard.press("Enter");
     await pollDb(
       async () => {
         const config = await storedPropertyConfig(fixture.pageId, "Tier");
         const options = (config.options ?? []) as { name?: string }[];
         return options[0]?.name === "Platinum";
       },
-      async () => {
-        const retry = page.getByRole("dialog", { name: /Edit options/ }).getByLabel(/^Option name/);
-        await retry.fill("Platinum").catch(() => {});
-        await retry.blur().catch(() => {});
-      },
+      undefined,
       "option rename not stored",
     );
 
@@ -528,24 +544,20 @@ test("assigns several workspace members to a people cell", async ({ page }) => {
 
     await page.getByLabel("Add person").click();
     await page.getByRole("menuitem", { name: "B17 Second" }).click();
-    // Re-open for the second member (the menu closes on select).
+    // Re-open for the second member (the menu closes on select). The cell
+    // keeps a local draft, so the second pick appends instead of reverting.
     await page.getByLabel("Add person").click();
     await page.getByRole("menuitem", { name: owner!.name }).click();
 
-    const expected = [owner!.name, "B17 Second"];
+    // Selection order is the stored order.
+    const expected = ["B17 Second", owner!.name];
     await pollDb(
       async () => {
         const value = await storedValue(fixture.propIds.Owners, fixture.rowIds[0]);
         const names = (value as { names?: string[] } | null)?.names ?? [];
         return JSON.stringify(names) === JSON.stringify(expected);
       },
-      async () => {
-        await page.getByLabel("Add person").click().catch(() => {});
-        await page
-          .getByRole("menuitem", { name: "B17 Second" })
-          .click()
-          .catch(() => {});
-      },
+      undefined,
       "people value not stored",
     );
 
@@ -607,14 +619,17 @@ test("reorders columns by dragging the header and persists the order", async ({ 
     await expect
       .poll(
         async () => {
-          const names = await page.locator("thead th").evaluateAll((cells) =>
-            cells
-              .map((cell) => (cell.textContent ?? "").trim())
-              .filter((text) => text.length > 0),
-          );
-          const due = names.findIndex((name) => name.startsWith("Due"));
-          const estimate = names.findIndex((name) => name.startsWith("Estimate"));
-          return due >= 0 && estimate >= 0 && due < estimate;
+          const ids = await page
+            .locator("thead th[data-testid^='property-header-']")
+            .evaluateAll((cells) =>
+              cells.map((cell) => cell.getAttribute("data-testid")),
+            );
+          return JSON.stringify(ids) ===
+            JSON.stringify([
+              "property-header-Name",
+              "property-header-Due",
+              "property-header-Estimate",
+            ]);
         },
         { timeout: 15_000 },
       )

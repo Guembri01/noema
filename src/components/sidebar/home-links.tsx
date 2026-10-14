@@ -1,10 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Bell, BookOpen, CalendarRange, CircleDot, FolderKanban } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  Bell,
+  BookOpen,
+  CalendarRange,
+  CircleDot,
+  ExternalLink,
+  FolderKanban,
+  StarOff,
+} from "lucide-react";
+import { toggleFavoriteAction } from "@/server/actions/pages";
+import { useAction } from "@/lib/actions-client";
+import { orderFavorites } from "@/lib/favorites";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { Tooltip } from "@/components/ui/tooltip";
 
 type HomeQuickLinksProps = {
   workspace: { slug: string };
@@ -89,34 +101,109 @@ export function HomeQuickLinks({
   );
 }
 
+type FavoriteEntry = { page: { id: string; title: string; icon: string | null } };
+
 type FavoritesListProps = {
-  workspace: { slug: string };
-  favorites: { page: { id: string; title: string; icon: string | null } }[];
+  workspace: { id: string; slug: string };
+  favorites: FavoriteEntry[];
   locale: string;
 };
 
+/**
+ * Sidebar Favorites section (Notion parity).
+ *
+ * - Rendering order comes from `orderFavorites()` — deduped, input-stable, so
+ *   the sequence the server queried (`Favorite.id asc`, insertion order) is the
+ *   sequence that survives a reload.
+ * - Hover (and keyboard focus) reveals the row actions: unfavorite and
+ *   open-in-new-tab.
+ * - Empty state renders the section with a hint instead of disappearing, so
+ *   the feature stays discoverable; the count badge only shows with rows.
+ */
 export function FavoritesList({ workspace, favorites, locale }: FavoritesListProps) {
-  if (favorites.length === 0) return null;
+  const router = useRouter();
+  const { run, pending } = useAction(locale);
+  const items = orderFavorites(favorites);
+
+  const unfavorite = (pageId: string) =>
+    run(() => toggleFavoriteAction(workspace.id, pageId), {
+      onSuccess: () => router.refresh(),
+    });
+
   return (
-    <div className="mt-3 px-3">
-      <p className="px-1 pb-1 text-[11px] font-medium text-muted/90">
-        {t(locale, "favorites")}
-      </p>
-      <ul className="space-y-px">
-        {favorites.map(({ page }) => (
-          <li key={page.id}>
-            <Link
-              href={`/w/${workspace.slug}/${page.id}`}
-              className="flex items-center gap-2 rounded-md px-1 py-1 text-sm hover:bg-surface-2"
+    <section
+      aria-label={t(locale, "favorites")}
+      data-testid="favorites-section"
+      className="mt-3 px-3"
+    >
+      <div className="flex items-center gap-1 px-1 pb-1">
+        <p className="flex-1 text-[11px] font-medium text-muted/90">
+          {t(locale, "favorites")}
+        </p>
+        {items.length > 0 && (
+          <span
+            data-testid="favorites-count"
+            className="rounded bg-surface-2 px-1 text-[10px] text-muted"
+          >
+            {items.length}
+          </span>
+        )}
+      </div>
+      {items.length === 0 ? (
+        <p
+          data-testid="favorites-empty"
+          className="px-1 pb-1 text-[11px] text-muted"
+        >
+          {t(locale, "noFavoritesHint")}
+        </p>
+      ) : (
+        <ul data-testid="favorites-list" className="space-y-px">
+          {items.map(({ page }) => (
+            <li
+              key={page.id}
+              data-testid="favorite-item"
+              data-page-id={page.id}
+              className="group/fav flex items-center rounded-md hover:bg-surface-2"
             >
-              <span className="w-4 text-center text-sm">
-                {page.icon ?? "⭐"}
-              </span>
-              <span className="truncate">{page.title || "Untitled"}</span>
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </div>
+              <Link
+                href={`/w/${workspace.slug}/${page.id}`}
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-sm"
+              >
+                <span className="w-4 shrink-0 text-center text-sm">
+                  {page.icon ?? "⭐"}
+                </span>
+                <span className="truncate">{page.title || "Untitled"}</span>
+              </Link>
+              <div className="flex shrink-0 items-center opacity-0 transition group-hover/fav:opacity-100 focus-within:opacity-100">
+                <Tooltip label={t(locale, "openInNewTab")}>
+                  <a
+                    href={`/w/${workspace.slug}/${page.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={t(locale, "openInNewTab")}
+                    data-testid="favorite-open-new-tab"
+                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                  </a>
+                </Tooltip>
+                <Tooltip label={t(locale, "removeFromFavorites")}>
+                  <button
+                    type="button"
+                    aria-label={t(locale, "removeFromFavorites")}
+                    data-testid="favorite-remove"
+                    disabled={pending}
+                    onClick={() => unfavorite(page.id)}
+                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-50"
+                  >
+                    <StarOff className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                </Tooltip>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
