@@ -42,6 +42,284 @@ export function decryptSecret(envelope: string | null | undefined): string | nul
   }
 }
 
+/**
+ * Versioned keyring & key rotation (docs/MISSING_FEATURES.md §17) — additive
+ * to the legacy `v1:` envelope above.
+ *
+ * A `Keyring` is an ordered map of key-version → 32-byte AES-256-GCM key with
+ * a designated `activeVersion`. `encrypt` seals under the active version and
+ * embeds it in the payload (`v2:<version>:<iv>:<tag>:<payload>`), so `decrypt`
+ * selects the right key even after `rotateKeyring` has promoted a newer one.
+ * Legacy `v1:` envelopes carry no key version and are implicitly pinned to
+ * key version `1` (`LEGACY_KEY_VERSION`) — register the env-derived key
+ * (`deriveLegacyKey`) there to keep old ciphertexts readable during a
+ * migration pass (`reencrypt`).
+ *
+ * Persisting the keyring (vault/KMS) and wiring env-based keys into the app
+ * are follow-ups; this module stays pure logic over Node `crypto`.
+ */
+
+const AES_KEY_BYTES = 32;
+const GCM_IV_BYTES = 12;
+const GCM_TAG_BYTES = 16;
+const KEY_VERSION_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/** Key version that legacy `v1:` envelopes are implicitly pinned to. */
+export const LEGACY_KEY_VERSION = "1";
+
+/** Default rotation policy consumed by `needsRotation`: 90 days. */
+export const DEFAULT_MAX_KEY_AGE_SECONDS = 90 * 24 * 3600;
+
+export interface Keyring {
+  /** Key versions → raw 32-byte AES keys; insertion order preserved. */
+  readonly keys: ReadonlyMap<string, Buffer>;
+  /** Version used by `encrypt` and embedded in new payloads. */
+  readonly activeVersion: string;
+  /** Unix seconds the active key was introduced — feeds `needsRotation`. */
+  readonly activeSince: number;
+}
+
+export type SecretDecryptErrorCode =
+  /** Not a parseable envelope (wrong scheme/shape, bad IV or tag sizes). */
+  | "malformed"
+  /** No key version embedded, or the keyring has no key for it. */
+  | "unknown-version"
+  /** GCM auth-tag mismatch: tampered payload or wrong key material. */
+  | "auth-failed";
+
+/** Fail-closed error thrown by `decrypt`/`reencrypt`; never leaks plaintext. */
+export class SecretDecryptError extends Error {
+  readonly code: SecretDecryptErrorCode;
+  readonly keyVersion: string | null;
+
+  constructor(
+    code: SecretDecryptErrorCode,
+    message: string,
+    keyVersion: string | null = null,
+  ) {
+    super(message);
+    this.name = "SecretDecryptError";
+    this.code = code;
+    this.keyVersion = keyVersion;
+  }
+}
+
+/** The env-derived key behind legacy `v1:` envelopes — register it as `1`. */
+export function deriveLegacyKey(): Buffer {
+  return encryptionKey();
+}
+
+function nowSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+function assertKeyVersion(version: string): void {
+  if (!KEY_VERSION_PATTERN.test(version)) {
+    throw new Error(
+      `Invalid key version: expected /^[A-Za-z0-9._-]+$/ (got ${JSON.stringify(version)}).`,
+    );
+  }
+}
+
+function copyKeyMaterial(material: Uint8Array, version: string): Buffer {
+  const key = Buffer.from(material); // defensive copy — caller may mutate
+  if (key.length !== AES_KEY_BYTES) {
+    throw new Error(
+      `Key "${version}" must be exactly ${AES_KEY_BYTES} bytes, got ${key.length}.`,
+    );
+  }
+  return key;
+}
+
+/** Build an immutable-by-convention keyring; validates keys and active version. */
+export function createKeyring(
+  keys: Readonly<Record<string, Uint8Array>> | ReadonlyMap<string, Uint8Array>,
+  activeVersion: string,
+  now: number = nowSeconds(),
+): Keyring {
+  const entries =
+    keys instanceof Map ? [...keys.entries()] : Object.entries(keys);
+  if (entries.length === 0) {
+    throw new Error("A keyring needs at least one key.");
+  }
+  const normalized = new Map<string, Buffer>();
+  for (const [version, material] of entries) {
+    assertKeyVersion(version);
+    normalized.set(version, copyKeyMaterial(material, version));
+  }
+  if (!normalized.has(activeVersion)) {
+    throw new Error(
+      `activeVersion "${activeVersion}" has no key in the keyring.`,
+    );
+  }
+  return { keys: normalized, activeVersion, activeSince: now };
+}
+
+/** Seal under the ACTIVE version, embedding it in the payload. */
+export function encrypt(plaintext: string, keyring: Keyring): string {
+  const key = keyring.keys.get(keyring.activeVersion);
+  if (!key) {
+    // Invariant: createKeyring guarantees the active key exists.
+    throw new Error(
+      `Keyring has no key for activeVersion "${keyring.activeVersion}".`,
+    );
+  }
+  const iv = randomBytes(GCM_IV_BYTES);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const payload = Buffer.concat([
+    cipher.update(plaintext, "utf8"),
+    cipher.final(),
+  ]);
+  const tag = cipher.getAuthTag();
+  return `v2:${keyring.activeVersion}:${iv.toString("base64")}:${tag.toString("base64")}:${payload.toString("base64")}`;
+}
+
+/**
+ * Open a keyring payload: read the embedded version, select that key, fail
+ * closed with a typed `SecretDecryptError` on unknown/missing version or on a
+ * GCM auth-tag mismatch (tamper detection). Legacy `v1:` envelopes are
+ * resolved against `LEGACY_KEY_VERSION`.
+ */
+export function decrypt(envelope: string, keyring: Keyring): string {
+  const segments = envelope.split(":");
+  const [scheme] = segments;
+  if (scheme === "v1") {
+    const [, iv, tag, payload] = segments;
+    if (segments.length !== 4 || !iv || !tag || payload === undefined) {
+      throw new SecretDecryptError("malformed", "Malformed legacy `v1:` envelope.");
+    }
+    const key = keyring.keys.get(LEGACY_KEY_VERSION);
+    if (!key) {
+      throw new SecretDecryptError(
+        "unknown-version",
+        `Keyring has no key for legacy version "${LEGACY_KEY_VERSION}".`,
+        LEGACY_KEY_VERSION,
+      );
+    }
+    return openAesGcm(key, iv, tag, payload);
+  }
+  if (scheme !== "v2") {
+    throw new SecretDecryptError(
+      "malformed",
+      "Not a `v1:`/`v2:` AES-256-GCM envelope.",
+    );
+  }
+  const [, version, iv, tag, payload] = segments;
+  if (segments.length !== 5) {
+    throw new SecretDecryptError(
+      "malformed",
+      "Malformed `v2:` envelope: expected `v2:<version>:<iv>:<tag>:<payload>`.",
+    );
+  }
+  if (!version) {
+    throw new SecretDecryptError(
+      "unknown-version",
+      "Envelope has no embedded key version.",
+    );
+  }
+  const key = keyring.keys.get(version);
+  if (!key) {
+    throw new SecretDecryptError(
+      "unknown-version",
+      `Keyring has no key for version "${version}".`,
+      version,
+    );
+  }
+  return openAesGcm(key, iv, tag, payload);
+}
+
+function openAesGcm(
+  key: Buffer,
+  ivB64: string,
+  tagB64: string,
+  payloadB64: string,
+): string {
+  const iv = Buffer.from(ivB64, "base64");
+  const tag = Buffer.from(tagB64, "base64");
+  if (iv.length !== GCM_IV_BYTES || tag.length !== GCM_TAG_BYTES) {
+    throw new SecretDecryptError(
+      "malformed",
+      "Envelope IV/auth tag must decode to 12/16 bytes.",
+    );
+  }
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([
+      decipher.update(Buffer.from(payloadB64, "base64")),
+      decipher.final(),
+    ]).toString("utf8");
+  } catch {
+    throw new SecretDecryptError(
+      "auth-failed",
+      "GCM auth tag mismatch: payload was tampered with or sealed under another key.",
+    );
+  }
+}
+
+export interface RotateKeyringOptions {
+  /** Explicit version for the new key; inferred from numeric versions otherwise. */
+  readonly version?: string;
+  /** Unix seconds to stamp as the new `activeSince` (default: now). */
+  readonly now?: number;
+}
+
+function nextKeyVersion(keyring: Keyring): string {
+  let max = 0;
+  for (const version of keyring.keys.keys()) {
+    if (!/^\d+$/.test(version)) {
+      throw new Error(
+        "Cannot infer the next key version from non-numeric versions; pass an explicit version.",
+      );
+    }
+    max = Math.max(max, Number(version));
+  }
+  return String(max + 1);
+}
+
+/**
+ * Return a NEW keyring with `newKey` active and every prior key retained, so
+ * ciphertexts pinned to older versions keep decrypting.
+ */
+export function rotateKeyring(
+  keyring: Keyring,
+  newKey: Uint8Array,
+  options: RotateKeyringOptions = {},
+): Keyring {
+  const version = options.version ?? nextKeyVersion(keyring);
+  assertKeyVersion(version);
+  if (keyring.keys.has(version)) {
+    throw new Error(
+      `Key version "${version}" already exists; rotation must not overwrite keys.`,
+    );
+  }
+  const keys = new Map(keyring.keys);
+  keys.set(version, copyKeyMaterial(newKey, version));
+  return {
+    keys,
+    activeVersion: version,
+    activeSince: options.now ?? nowSeconds(),
+  };
+}
+
+/** True when the active key is older than `maxAgeSeconds` (default: 90 days). */
+export function needsRotation(
+  keyring: Keyring,
+  maxAgeSeconds: number = DEFAULT_MAX_KEY_AGE_SECONDS,
+  now: number = nowSeconds(),
+): boolean {
+  return now - keyring.activeSince > maxAgeSeconds;
+}
+
+/** Migration pass: decrypt under `oldKeyring`, re-seal under the new active version. */
+export function reencrypt(
+  oldPayload: string,
+  oldKeyring: Keyring,
+  newKeyring: Keyring,
+): string {
+  return encrypt(decrypt(oldPayload, oldKeyring), newKeyring);
+}
+
 /** Show only the shape of a stored key: `sk-ab…9f2c`. */
 export function maskSecret(value: string | null | undefined): string | null {
   if (!value) return null;
