@@ -2,6 +2,12 @@
 
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
+import {
+  computeEdgeRoutes,
+  type BarRect,
+  type EdgeRoute,
+  type TimelineEdge,
+} from "@/lib/dependency-arrows";
 
 export type GanttMilestone = {
   id: string;
@@ -12,14 +18,64 @@ export type GanttMilestone = {
 
 const DAY = 24 * 60 * 60 * 1000;
 
+/**
+ * Vertical geometry of the chart, in pixels. Kept beside the Tailwind classes
+ * it mirrors (`h-5` project bar, `h-3` milestone rows, `space-y-3` gaps) so the
+ * optional SVG overlay can place dependency arrows over the exact same rows.
+ */
+const PROJECT_ROW_HEIGHT = 20;
+const MILESTONE_ROW_HEIGHT = 12;
+const ROW_GAP = 12;
+/** Width of a derived milestone bar, as a percentage of the track. */
+const MILESTONE_BAR_WIDTH = 2;
+/**
+ * Horizontal offset of the track column: the `w-32` label (`8rem`) plus the
+ * `gap-2` row gap (`0.5rem`). The SVG overlay is inset by this much so its
+ * percentage x-axis lines up with the bars, which are laid out in the track.
+ */
+const TRACK_LEFT = "8.5rem";
+
 function startOfDay(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+
+/** An `ArrowPath` rendered as an SVG polyline `d`. */
+function routePath(route: EdgeRoute): string {
+  const vertices = [route.path.start, ...route.path.points, route.path.end];
+  return vertices
+    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`)
+    .join(" ");
+}
+
+/**
+ * Explicit arrowhead drawn from `ArrowPath.direction` (the side the route meets
+ * the target). A marker would skew under the overlay's non-uniform viewBox, and
+ * the library already hands us the direction, so we draw the head ourselves.
+ */
+function arrowHead(route: EdgeRoute): string {
+  const { x, y } = route.path.end;
+  const ax = 1.1; // horizontal reach, in percentage-of-track units
+  const ay = 4; // vertical reach, in pixel units
+  const tip = `${x},${y}`;
+  switch (route.path.direction) {
+    case "right":
+      return `${tip} ${x - ax},${y - ay} ${x - ax},${y + ay}`;
+    case "left":
+      return `${tip} ${x + ax},${y - ay} ${x + ax},${y + ay}`;
+    case "down":
+      return `${tip} ${x - ax},${y - ay} ${x + ax},${y - ay}`;
+    case "up":
+      return `${tip} ${x - ax},${y + ay} ${x + ax},${y + ay}`;
+    default:
+      return tip;
+  }
 }
 
 /**
  * Lightweight Gantt: the project spans start → due, milestones are dated
  * markers on the same axis, and "today" is pinned so progress is obvious.
- * Pure layout (no timeline dependencies), so it stays fast and printable.
+ * Layout is pure and cheap; when callers supply dependency `bars`/`edges` an
+ * optional SVG overlay draws the arrows via @/lib/dependency-arrows.
  */
 export function ProjectGantt({
   name,
@@ -27,12 +83,18 @@ export function ProjectGantt({
   dueDate,
   milestones,
   locale,
+  bars,
+  edges,
 }: {
   name: string;
   startDate: string | null;
   dueDate: string | null;
   milestones: GanttMilestone[];
   locale: string;
+  /** Positioned bars for the arrow overlay; derived from milestones when omitted. */
+  bars?: readonly BarRect[];
+  /** Dependency edges (`from` blocks `to`); no overlay when omitted/empty. */
+  edges?: readonly TimelineEdge[];
 }) {
   const dated = milestones.filter((milestone) => milestone.dueDate);
   const today = startOfDay(new Date());
@@ -52,6 +114,23 @@ export function ProjectGantt({
 
   const projectStart = startDate ? pct(startDate) : 0;
   const projectEnd = dueDate ? pct(dueDate) : 100;
+
+  // One derived bar per dated milestone, on its exact row of the chart.
+  const derivedBars: BarRect[] = [];
+  milestones.forEach((milestone, index) => {
+    if (!milestone.dueDate) return;
+    const center = pct(milestone.dueDate);
+    derivedBars.push({
+      id: milestone.id,
+      x: Math.max(0, Math.min(100 - MILESTONE_BAR_WIDTH, center - MILESTONE_BAR_WIDTH / 2)),
+      y: PROJECT_ROW_HEIGHT + ROW_GAP + index * (MILESTONE_ROW_HEIGHT + ROW_GAP),
+      width: MILESTONE_BAR_WIDTH,
+      height: MILESTONE_ROW_HEIGHT,
+    });
+  });
+  const totalHeight = PROJECT_ROW_HEIGHT + milestones.length * (MILESTONE_ROW_HEIGHT + ROW_GAP);
+  const routeBars = bars && bars.length > 0 ? bars : derivedBars;
+  const routes = edges && edges.length > 0 ? computeEdgeRoutes(routeBars, edges) : [];
 
   return (
     <div className="rounded-xl border border-border p-4">
@@ -120,6 +199,29 @@ export function ProjectGantt({
             );
           })}
         </div>
+
+        {routes.length > 0 && (
+          <svg
+            className="pointer-events-none absolute inset-y-0 right-0 z-20 h-full overflow-visible text-accent"
+            style={{ left: TRACK_LEFT }}
+            viewBox={`0 0 100 ${totalHeight}`}
+            preserveAspectRatio="none"
+            aria-hidden
+          >
+            {routes.map((route) => (
+              <g key={route.edgeId}>
+                <path
+                  d={routePath(route)}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1}
+                  vectorEffect="non-scaling-stroke"
+                />
+                <polygon points={arrowHead(route)} fill="currentColor" />
+              </g>
+            ))}
+          </svg>
+        )}
       </div>
 
       <p className="mt-3 text-[11px] text-muted">
