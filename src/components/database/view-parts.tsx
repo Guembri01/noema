@@ -12,8 +12,11 @@ import { uploadFile } from "@/lib/upload-client";
 import { toast } from "sonner";
 import { ROLLUP_FUNCTIONS } from "@/lib/rollup";
 import { t } from "@/lib/i18n";
+import { clampWidth } from "@/lib/column-layout";
+import { validateCell } from "@/lib/cell-validation";
+import { cellColorFor, type RowColorRule } from "@/lib/row-color-rules";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { OPTION_COLORS, type DBProperty, type HeaderConfig } from "@/components/database/database-types";
+import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
 
 export const PROPERTY_TYPES: PropertyType[] = [
   "TEXT",
@@ -54,6 +57,7 @@ export function PropertyHeader({
   headerConfig,
   onConfigureButton,
   locale,
+  width,
 }: {
   property: DBProperty;
   editable: boolean;
@@ -70,9 +74,13 @@ export function PropertyHeader({
   headerConfig: HeaderConfig;
   onConfigureButton: (p: DBProperty) => void;
   locale: string;
+  /** Optional saved column width; clamped to the layout bounds when present. */
+  width?: number;
 }) {
   const isPrimary = Boolean(property.config?.primary);
   const currentFormat = property.config?.format ?? "";
+  // Single shared clamp so the header agrees with `setColumnWidth`/`autoFitWidths`.
+  const widthStyle = width === undefined ? undefined : { width: clampWidth(width) };
   if (editing) {
     return (
       <input
@@ -84,12 +92,13 @@ export function PropertyHeader({
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           if (e.key === "Escape") setEditing(null);
         }}
+        style={widthStyle}
         className="w-full bg-transparent text-xs outline-none"
       />
     );
   }
   return (
-    <span className="group/head inline-flex items-center gap-2">
+    <span className="group/head inline-flex items-center gap-2" style={widthStyle}>
       <span className="text-muted">{icon(property.type)}</span>
       <span className="truncate">{property.name}</span>
       {editable && (
@@ -281,6 +290,9 @@ export function Cell({
   editable,
   onChange,
   locale,
+  colorRules,
+  row,
+  properties,
 }: {
   property: DBProperty;
   value: unknown;
@@ -295,6 +307,15 @@ export function Cell({
   editable: boolean;
   onChange: (value: unknown) => void;
   locale: string;
+  /**
+   * Conditional-formatting rules. Only `target: "cell"` rules that paint this
+   * property tint the cell; omitted by default, so nothing changes for callers
+   * that do not wire rules yet.
+   */
+  colorRules?: RowColorRule[];
+  /** Full row + schema, used to evaluate colour-rule conditions on other cells. */
+  row?: DBRow;
+  properties?: DBProperty[];
 }) {
   const v = (value ?? {}) as Record<string, unknown>;
   // Formatted cells (percent/currency/friendly date) render as text and swap
@@ -311,6 +332,35 @@ export function Cell({
   );
   const numberFormat = property.config?.format;
   const dateFormatted = property.config?.format === "friendly";
+
+  // Inline, non-blocking validation: any failure shows a red ring plus the
+  // engine's message (as `title`), never an alert or a prevented edit.
+  const validation = validateCell(property, value);
+  const errorMessage = validation.ok
+    ? ""
+    : validation.errors.map((error) => error.message).join(" ");
+  // Cell-targeted colour rules. Without a rule set (the default) this is a
+  // no-op; the caller may pass the surrounding row/schema so conditions on
+  // other properties can be evaluated, else the cell validates against itself.
+  const activeColorRules = colorRules ?? [];
+  const cellBackground = (() => {
+    if (activeColorRules.length === 0) return undefined;
+    const queryRow = row ?? {
+      id: "",
+      title: "",
+      icon: null,
+      propertyValues: [{ propertyId: property.id, value }],
+    };
+    const resolved = cellColorFor(
+      activeColorRules,
+      queryRow,
+      property.id,
+      properties ?? [property],
+    );
+    if (!resolved.backgroundColor) return undefined;
+    const hex = OPTION_COLORS[resolved.backgroundColor] ?? "#8a8a85";
+    return `${hex}22`;
+  })();
 
   const commitNumber = (raw: string) => {
     if (raw.trim() === "") {
@@ -342,6 +392,7 @@ export function Cell({
       );
   };
 
+  const content = (() => {
   switch (property.type) {
     case "NUMBER": {
       const raw = typeof v.number === "number" ? v.number : null;
@@ -786,6 +837,20 @@ export function Cell({
         />
       );
   }
+  })();
+  // Valid + uncoloured → the exact node each case always returned. Any error or
+  // resolved colour wraps it so the common path is byte-for-byte unchanged.
+  if (errorMessage === "" && cellBackground === undefined) return content;
+  return (
+    <div
+      data-invalid={errorMessage !== "" ? "true" : undefined}
+      title={errorMessage !== "" ? errorMessage : undefined}
+      style={cellBackground ? { backgroundColor: cellBackground } : undefined}
+      className={cn("rounded", errorMessage !== "" && "ring-1 ring-red-500/70")}
+    >
+      {content}
+    </div>
+  );
 }
 
 export function AddPropertyForm({
