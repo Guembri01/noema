@@ -3,11 +3,15 @@
  * Supports property references via `prop("Name")`, workspace-level named
  * constants by bare name, arithmetic, comparisons, boolean logic, string
  * concatenation with `+`, array literals, and a set of functions (math, text,
- * logic, regex, list). Pure and unit-tested.
+ * logic, date, regex, list). Pure and unit-tested.
  *
  * Errors are values, not exceptions: bad syntax, unknown functions, division
  * by zero, type mismatches and sandbox violations all surface as friendly
  * structured results (`#ERROR: …`) from `evaluateFormula`.
+ *
+ * Date inputs are ISO strings or epoch milliseconds (`now`); zone-less forms
+ * are read as UTC and all date output (formatDate, dateAdd, …) is UTC, so
+ * results never depend on the host timezone.
  */
 
 export type FormulaValue = number | string | boolean | FormulaValue[];
@@ -214,6 +218,190 @@ function regexReplace(
   return text.replace(regex, replacement);
 }
 
+/** Units accepted by the date functions. */
+type DateUnit = "days" | "weeks" | "months" | "years" | "hours" | "minutes";
+
+const DATE_UNITS: readonly DateUnit[] = [
+  "days",
+  "weeks",
+  "months",
+  "years",
+  "hours",
+  "minutes",
+];
+
+const MS_PER_MINUTE = 60_000;
+const MS_PER_HOUR = 60 * MS_PER_MINUTE;
+const MS_PER_DAY = 24 * MS_PER_HOUR;
+
+/**
+ * Parses a date argument: an ISO string or epoch milliseconds (the `now`
+ * keyword). Zone-less forms — bare `YYYY-MM-DD` and date-times without an
+ * offset — are read as UTC so results never depend on the host timezone,
+ * matching how `today` emits `toISOString()` day strings. Only strict ISO
+ * shapes are accepted; `Date.parse`'s lenient natural-language forms
+ * ("March 5, 2024") parse in local time and are therefore rejected as invalid
+ * dates. Never throws.
+ */
+function parseDateValue(value: ExprValue | undefined): Date | FormulaErrorValue {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return errorValue("type mismatch");
+    const epoch = new Date(value);
+    return Number.isNaN(epoch.getTime()) ? errorValue("invalid date") : epoch;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return errorValue("invalid date");
+    const source = trimmed.replace(/^(\d{4}-\d{2}-\d{2}) /, "$1T");
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(source);
+    const zoneless = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/.test(source);
+    const zoned =
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2})$/.test(
+        source,
+      );
+    if (!dateOnly && !zoneless && !zoned) return errorValue("invalid date");
+    const parsed = new Date(zoneless ? `${source}Z` : source);
+    if (Number.isNaN(parsed.getTime())) return errorValue("invalid date");
+    // Date-only inputs can silently overflow (`new Date("2024-02-30")` lands on
+    // March 1), so the normalized day must round-trip or the input is invalid.
+    if (dateOnly && parsed.toISOString().slice(0, 10) !== source) {
+      return errorValue("invalid date");
+    }
+    return parsed;
+  }
+  return errorValue("type mismatch");
+}
+
+/** Validates a date-function unit argument (`days`, `weeks`, `months`, …). */
+function parseDateUnit(value: ExprValue | undefined): DateUnit | FormulaErrorValue {
+  if (typeof value !== "string") return errorValue("type mismatch");
+  const unit = DATE_UNITS.find((candidate) => candidate === value.toLowerCase());
+  return unit ?? errorValue(`unknown date unit '${value}'`);
+}
+
+/** Days in the given UTC calendar month. */
+function daysInUtcMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+}
+
+/**
+ * Adds whole calendar months, clamping the day of month so month/year steps
+ * stay calendar-safe: Jan 31 + 1 month → Feb 28/29, never a fixed 30-day
+ * step. Fractional amounts truncate toward zero; out-of-range results come
+ * back as Invalid Date, which callers surface as an error value.
+ */
+function addCalendarMonths(date: Date, months: number): Date {
+  const result = new Date(date.getTime());
+  const day = result.getUTCDate();
+  result.setUTCDate(1);
+  result.setUTCMonth(result.getUTCMonth() + months);
+  result.setUTCDate(Math.min(day, daysInUtcMonth(result.getUTCFullYear(), result.getUTCMonth())));
+  return result;
+}
+
+/**
+ * Shifts `date` by `amount` in `unit`: calendar units (months/years) clamp
+ * like `addCalendarMonths`, time units add exact elapsed milliseconds.
+ */
+function shiftDate(date: Date, amount: number, unit: DateUnit): Date {
+  switch (unit) {
+    case "days":
+      return new Date(date.getTime() + amount * MS_PER_DAY);
+    case "weeks":
+      return new Date(date.getTime() + amount * 7 * MS_PER_DAY);
+    case "hours":
+      return new Date(date.getTime() + amount * MS_PER_HOUR);
+    case "minutes":
+      return new Date(date.getTime() + amount * MS_PER_MINUTE);
+    case "months":
+      return addCalendarMonths(date, Math.trunc(amount));
+    case "years":
+      return addCalendarMonths(date, Math.trunc(amount) * 12);
+  }
+}
+
+/** Whole calendar months from `earlier` to `later` (signed, exact by clamping). */
+function calendarMonthsBetween(later: Date, earlier: Date): number {
+  const raw =
+    (later.getUTCFullYear() - earlier.getUTCFullYear()) * 12 +
+    (later.getUTCMonth() - earlier.getUTCMonth());
+  const anchor = addCalendarMonths(earlier, raw);
+  if (raw > 0 && anchor.getTime() > later.getTime()) return raw - 1;
+  if (raw < 0 && anchor.getTime() < later.getTime()) return raw + 1;
+  return raw;
+}
+
+/**
+ * Whole `unit`s from `earlier` to `later`, truncated toward zero so partial
+ * units never round away from zero (1.9 days → 1, −1.9 days → −1). Months and
+ * years count calendar units with dateAdd's clamping, so
+ * `dateBetween(dateAdd(d, n, u), d, u)` round-trips to `n`.
+ */
+function wholeUnitsBetween(later: Date, earlier: Date, unit: DateUnit): number {
+  const elapsed = later.getTime() - earlier.getTime();
+  let whole: number;
+  switch (unit) {
+    case "days":
+      whole = Math.trunc(elapsed / MS_PER_DAY);
+      break;
+    case "weeks":
+      whole = Math.trunc(elapsed / (7 * MS_PER_DAY));
+      break;
+    case "hours":
+      whole = Math.trunc(elapsed / MS_PER_HOUR);
+      break;
+    case "minutes":
+      whole = Math.trunc(elapsed / MS_PER_MINUTE);
+      break;
+    case "months":
+      whole = calendarMonthsBetween(later, earlier);
+      break;
+    case "years":
+      whole = Math.trunc(calendarMonthsBetween(later, earlier) / 12);
+      break;
+  }
+  // Truncating a sub-unit negative span yields -0; a zero span must read +0.
+  return whole === 0 ? 0 : whole;
+}
+
+/** Tokens understood by formatDate(). */
+const FORMAT_TOKENS = ["YYYY", "MM", "DD", "HH", "mm", "ss"] as const;
+
+/**
+ * Renders `date` in UTC by explicit token substitution (YYYY, MM, DD, HH, mm,
+ * ss); every other character passes through literally and any other letter
+ * sequence is an invalid pattern. UTC keeps the output independent of the host
+ * timezone. `date` must already be valid — this never sees Invalid Date.
+ */
+function formatDateValue(date: Date, pattern: string): string | FormulaErrorValue {
+  const iso = date.toISOString();
+  const parts: Record<(typeof FORMAT_TOKENS)[number], string> = {
+    YYYY: iso.slice(0, 4),
+    MM: iso.slice(5, 7),
+    DD: iso.slice(8, 10),
+    HH: iso.slice(11, 13),
+    mm: iso.slice(14, 16),
+    ss: iso.slice(17, 19),
+  };
+  let output = "";
+  let index = 0;
+  while (index < pattern.length) {
+    const token = FORMAT_TOKENS.find((candidate) => pattern.startsWith(candidate, index));
+    if (token !== undefined) {
+      output += parts[token];
+      index += token.length;
+      continue;
+    }
+    const unknownRun = /^[A-Za-z]+/.exec(pattern.slice(index));
+    if (unknownRun !== null) {
+      return errorValue(`invalid format pattern: unknown token '${unknownRun[0]}'`);
+    }
+    output += pattern[index];
+    index += 1;
+  }
+  return output;
+}
+
 type Token =
   | { kind: "number"; value: number }
   | { kind: "string"; value: string }
@@ -277,6 +465,26 @@ function tokenize(input: string): Token[] {
   }
   tokens.push({ kind: "eof" });
   return tokens;
+}
+
+/**
+ * ifs(cond1, val1, …, fallback?): selects like `if` — pairs are consulted in
+ * order and only up to the first true condition, so errors in untaken pairs
+ * never surface (an error condition propagates, since it decides control
+ * flow). An odd argument count leaves a trailing fallback; with no match and
+ * no fallback the result is an error value.
+ */
+function selectIfs(args: ExprValue[]): ExprValue {
+  if (args.length < 2) return errorValue("type mismatch");
+  const hasFallback = args.length % 2 === 1;
+  const pairCount = hasFallback ? (args.length - 1) / 2 : args.length / 2;
+  for (let pair = 0; pair < pairCount; pair += 1) {
+    const condition = args[pair * 2];
+    if (isError(condition)) return condition;
+    if (Boolean(condition)) return args[pair * 2 + 1];
+  }
+  if (hasFallback) return args[args.length - 1];
+  return errorValue("no matching condition");
 }
 
 class Parser {
@@ -507,6 +715,11 @@ class Parser {
       // if() is branch-selecting: errors in untaken branches never surface.
       return Boolean(condition) ? args[1] : args[2];
     }
+    if (name === "ifs") {
+      // ifs() is pair-selecting like if(): only consulted pairs can surface
+      // errors, so it must run before the eager argument-error sweep below.
+      return selectIfs(args);
+    }
     for (const arg of args) {
       if (isError(arg)) return arg;
     }
@@ -548,6 +761,19 @@ class Parser {
         return String(args[0] ?? "").toLowerCase().includes(String(args[1] ?? "").toLowerCase());
       case "empty":
         return String(args[0] ?? "").trim() === "";
+      case "slice": {
+        const start = Number(args[1]);
+        if (!Number.isFinite(start)) return errorValue("type mismatch");
+        const text = String(args[0] ?? "");
+        if (args[2] === undefined) return text.slice(start);
+        const end = Number(args[2]);
+        if (!Number.isFinite(end)) return errorValue("type mismatch");
+        // String.slice natively supports negative (from-the-end) indexes and
+        // clamps out-of-range ones.
+        return text.slice(start, end);
+      }
+      case "trim":
+        return String(args[0] ?? "").trim();
       case "abs":
         return Math.abs(Number(args[0]));
       case "round": {
@@ -559,6 +785,47 @@ class Parser {
         return Math.min(...args.map(Number));
       case "max":
         return Math.max(...args.map(Number));
+      case "ceil":
+        return checkedNumber(Math.ceil(Number(args[0])));
+      case "floor":
+        return checkedNumber(Math.floor(Number(args[0])));
+      case "sqrt":
+        return checkedNumber(Math.sqrt(Number(args[0])));
+      case "pow":
+        return checkedNumber(Math.pow(Number(args[0]), Number(args[1])));
+      case "date": {
+        const parsed = parseDateValue(args[0]);
+        if (isError(parsed)) return parsed;
+        return parsed.toISOString();
+      }
+      case "dateadd":
+      case "datesubtract": {
+        const parsed = parseDateValue(args[0]);
+        if (isError(parsed)) return parsed;
+        const amount = Number(args[1]);
+        if (!Number.isFinite(amount)) return errorValue("type mismatch");
+        const unit = parseDateUnit(args[2]);
+        if (isError(unit)) return unit;
+        const shifted = shiftDate(parsed, name === "datesubtract" ? -amount : amount, unit);
+        if (Number.isNaN(shifted.getTime())) return errorValue("invalid date");
+        return shifted.toISOString();
+      }
+      case "datebetween": {
+        const later = parseDateValue(args[0]);
+        if (isError(later)) return later;
+        const earlier = parseDateValue(args[1]);
+        if (isError(earlier)) return earlier;
+        const unit = parseDateUnit(args[2]);
+        if (isError(unit)) return unit;
+        return wholeUnitsBetween(later, earlier, unit);
+      }
+      case "formatdate": {
+        const parsed = parseDateValue(args[0]);
+        if (isError(parsed)) return parsed;
+        const pattern = args[1];
+        if (typeof pattern !== "string") return errorValue("type mismatch");
+        return formatDateValue(parsed, pattern);
+      }
       case "match": {
         const pattern = args[1];
         if (pattern === undefined) return errorValue("type mismatch");

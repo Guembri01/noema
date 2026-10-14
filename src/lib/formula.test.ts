@@ -347,3 +347,283 @@ describe("named constants", () => {
     expect(value("true", {}, { true: "shadowed" })).toBe(true);
   });
 });
+
+describe("math functions", () => {
+  it("rounds toward positive and negative infinity with ceil and floor", () => {
+    expect(value("ceil(1.2)")).toBe(2);
+    expect(value("ceil(-1.2)")).toBe(-1);
+    expect(value("ceil(4)")).toBe(4);
+    expect(value("ceil(0)")).toBe(0);
+    expect(value("floor(1.8)")).toBe(1);
+    expect(value("floor(-1.8)")).toBe(-2);
+    expect(value("floor(0)")).toBe(0);
+  });
+
+  it("raises to a power and takes square roots", () => {
+    expect(value("pow(2, 10)")).toBe(1024);
+    expect(value("pow(5, 0)")).toBe(1);
+    expect(value("pow(-2, 3)")).toBe(-8);
+    expect(value("pow(0.5, 2)")).toBe(0.25);
+    expect(value("sqrt(9)")).toBe(3);
+    expect(value("sqrt(0)")).toBe(0);
+    expect(value("round(sqrt(2), 4)")).toBe(1.4142);
+  });
+
+  it("keeps existing abs/round/min/max behavior", () => {
+    expect(value("abs(-7)")).toBe(7);
+    expect(value("abs(0)")).toBe(0);
+    expect(value("round(3.14159, 2)")).toBe(3.14);
+    expect(value("round(2.5)")).toBe(3);
+    expect(value("min(3, 1, 2)")).toBe(1);
+    expect(value("max(3, 1, 2)")).toBe(3);
+  });
+
+  it("returns error values for non-numeric or invalid math arguments", () => {
+    expect(errorOf('ceil("abc")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('floor("abc")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('sqrt("abc")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('pow("abc", 2)')).toBe("#ERROR: type mismatch");
+    expect(errorOf('pow(2, "abc")')).toBe("#ERROR: type mismatch");
+    expect(errorOf("ceil()")).toBe("#ERROR: type mismatch");
+    expect(errorOf("pow(2)")).toBe("#ERROR: type mismatch");
+    expect(errorOf("sqrt(-4)")).toBe("#ERROR: type mismatch");
+    expect(errorOf("ceil(1 / 0)")).toBe("#ERROR: division by zero");
+  });
+});
+
+describe("text functions", () => {
+  it("slices text with positive, negative and clamped indexes", () => {
+    expect(value('slice("hello", 1, 3)')).toBe("el");
+    expect(value('slice("hello", 2)')).toBe("llo");
+    expect(value('slice("hello", 0)')).toBe("hello");
+    expect(value('slice("hello", 3, 3)')).toBe("");
+    expect(value('slice("hello", 4, 2)')).toBe("");
+    expect(value('slice("hello", -3)')).toBe("llo");
+    expect(value('slice("hello", 1, -1)')).toBe("ell");
+    expect(value('slice("hello", -100, 100)')).toBe("hello");
+    expect(value('slice("", 0, 3)')).toBe("");
+    expect(value('slice("hello", 5)')).toBe("");
+  });
+
+  it("trims surrounding whitespace", () => {
+    expect(value('trim("  padded  ")')).toBe("padded");
+    expect(value('trim("padded")')).toBe("padded");
+    expect(value('trim("   ")')).toBe("");
+    expect(value("trim(42)")).toBe("42");
+    expect(value("trim()")).toBe("");
+  });
+
+  it("keeps concat/upper/lower and the regex replace untouched", () => {
+    expect(value('concat("a", 1, true)')).toBe("a1true");
+    expect(value('upper(" mixed ")')).toBe(" MIXED ");
+    expect(value('lower("MIXED")')).toBe("mixed");
+    expect(value('replace("a1b2", "\\\\d+", "#")')).toBe("a#b#");
+    expect(value('replace("John Michael", "(\\\\w+) (\\\\w+)", "$2 $1")')).toBe("Michael John");
+  });
+
+  it("rejects missing or non-numeric slice indexes", () => {
+    expect(errorOf('slice("hello")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('slice("hello", "x")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('slice("hello", 1, "y")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('slice("hello", 1 / 0)')).toBe("#ERROR: division by zero");
+  });
+});
+
+describe("logic functions (ifs)", () => {
+  it("returns the first matching branch", () => {
+    expect(value('ifs(1 > 2, "a", 2 > 1, "b", "c")')).toBe("b");
+    expect(value('ifs(true, "yes", false, "no")')).toBe("yes");
+    expect(value('ifs(1 == 1, "first", 1 == 1, "second")')).toBe("first");
+    expect(value('ifs(false, "a", true, "b", "fallback")')).toBe("b");
+  });
+
+  it("uses the trailing fallback when no condition matches", () => {
+    expect(value('ifs(false, 1, false, 2, "none")')).toBe("none");
+    expect(value('ifs(false, "pair value", "fallback")')).toBe("fallback");
+    expect(value("ifs(false, 1, 2)")).toBe(2);
+    expect(value('ifs(true, "only")')).toBe("only");
+  });
+
+  it("errors when nothing matches and no fallback is given", () => {
+    expect(errorOf("ifs(false, 1)")).toBe("#ERROR: no matching condition");
+    expect(errorOf("ifs(false, 1, false, 2)")).toBe("#ERROR: no matching condition");
+    expect(errorOf("ifs()")).toBe("#ERROR: type mismatch");
+    expect(errorOf("ifs(true)")).toBe("#ERROR: type mismatch");
+  });
+
+  it("propagates errors only from conditions and branches it consults", () => {
+    expect(errorOf('ifs(1 / 0, "a", true, "b")')).toBe("#ERROR: division by zero");
+    expect(errorOf('ifs(true, 1 / 0, "b")')).toBe("#ERROR: division by zero");
+    expect(value('ifs(true, "a", 1 / 0, "b")')).toBe("a");
+    expect(value('ifs(false, 1 / 0, "taken")')).toBe("taken");
+    expect(errorOf('ifs(1 / 0, "a")')).toBe("#ERROR: division by zero");
+  });
+});
+
+describe("date functions", () => {
+  it("parses and normalizes dates with date()", () => {
+    expect(value('date("2024-01-15")')).toBe("2024-01-15T00:00:00.000Z");
+    expect(value('date("2024-01-15T10:30:00")')).toBe("2024-01-15T10:30:00.000Z");
+    expect(value('date("2024-01-15 10:30:00")')).toBe("2024-01-15T10:30:00.000Z");
+    expect(value('date("2024-01-15T10:30:00Z")')).toBe("2024-01-15T10:30:00.000Z");
+    expect(value('date("2024-01-15T10:30:00+02:00")')).toBe("2024-01-15T08:30:00.000Z");
+    expect(value("date(0)")).toBe("1970-01-01T00:00:00.000Z");
+  });
+
+  it("rejects invalid or non-date inputs with error values", () => {
+    expect(errorOf('date("not a date")')).toBe("#ERROR: invalid date");
+    expect(errorOf('date("2024-02-30")')).toBe("#ERROR: invalid date");
+    expect(errorOf('date("2024-13-01")')).toBe("#ERROR: invalid date");
+    expect(errorOf('date("")')).toBe("#ERROR: invalid date");
+    expect(errorOf("date(true)")).toBe("#ERROR: type mismatch");
+    expect(errorOf("date([1])")).toBe("#ERROR: type mismatch");
+    expect(errorOf("date()")).toBe("#ERROR: type mismatch");
+  });
+
+  it("adds days, weeks, hours and minutes", () => {
+    expect(value('formatDate(dateAdd("2024-01-15", 3, "days"), "YYYY-MM-DD")')).toBe(
+      "2024-01-18",
+    );
+    expect(value('formatDate(dateAdd("2024-01-28", 1, "weeks"), "YYYY-MM-DD")')).toBe(
+      "2024-02-04",
+    );
+    expect(value('formatDate(dateAdd("2024-01-15T10:00:00Z", 90, "minutes"), "YYYY-MM-DD HH:mm")')).toBe(
+      "2024-01-15 11:30",
+    );
+    expect(value('formatDate(dateAdd("2024-01-15", 5, "hours"), "YYYY-MM-DD HH:mm")')).toBe(
+      "2024-01-15 05:00",
+    );
+    expect(value('formatDate(dateAdd("2024-01-15", -2, "days"), "YYYY-MM-DD")')).toBe(
+      "2024-01-13",
+    );
+    expect(value('formatDate(dateAdd("2024-01-15", 0, "days"), "YYYY-MM-DD")')).toBe(
+      "2024-01-15",
+    );
+    expect(value('dateAdd("2024-01-15", 1, "days")')).toBe("2024-01-16T00:00:00.000Z");
+  });
+
+  it("adds months and years calendar-safely across boundaries", () => {
+    // Jan 31 + 1 month clamps into the short month instead of stepping 30 days.
+    expect(value('formatDate(dateAdd("2024-01-31", 1, "months"), "YYYY-MM-DD")')).toBe(
+      "2024-02-29",
+    );
+    expect(value('formatDate(dateAdd("2023-01-31", 1, "months"), "YYYY-MM-DD")')).toBe(
+      "2023-02-28",
+    );
+    expect(value('formatDate(dateAdd("2024-03-31", -1, "months"), "YYYY-MM-DD")')).toBe(
+      "2024-02-29",
+    );
+    expect(value('formatDate(dateAdd("2024-02-29", 1, "years"), "YYYY-MM-DD")')).toBe(
+      "2025-02-28",
+    );
+    expect(value('formatDate(dateAdd("2024-12-15", 1, "months"), "YYYY-MM-DD")')).toBe(
+      "2025-01-15",
+    );
+    expect(value('formatDate(dateAdd("2024-01-15", 14, "months"), "YYYY-MM-DD")')).toBe(
+      "2025-03-15",
+    );
+  });
+
+  it("subtracts units with dateSubtract", () => {
+    expect(value('formatDate(dateSubtract("2024-03-01", 1, "days"), "YYYY-MM-DD")')).toBe(
+      "2024-02-29",
+    );
+    expect(value('formatDate(dateSubtract("2024-03-01", 1, "months"), "YYYY-MM-DD")')).toBe(
+      "2024-02-01",
+    );
+    expect(value('formatDate(dateSubtract("2024-01-01", 1, "years"), "YYYY-MM-DD")')).toBe(
+      "2023-01-01",
+    );
+    expect(value('formatDate(dateSubtract("2024-01-15", -3, "days"), "YYYY-MM-DD")')).toBe(
+      "2024-01-18",
+    );
+  });
+
+  it("rejects invalid dateAdd/dateSubtract arguments", () => {
+    expect(errorOf('dateAdd("not a date", 1, "days")')).toBe("#ERROR: invalid date");
+    expect(errorOf('dateAdd("2024-01-15", "soon", "days")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('dateAdd("2024-01-15", 1)')).toBe("#ERROR: type mismatch");
+    expect(errorOf('dateAdd(true, 1, "days")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('dateAdd("2024-01-15", 1, "fortnights")')).toBe(
+      "#ERROR: unknown date unit 'fortnights'",
+    );
+    expect(errorOf('dateSubtract("2024-01-15", 1, "decades")')).toBe(
+      "#ERROR: unknown date unit 'decades'",
+    );
+  });
+
+  it("measures whole days, weeks, hours and minutes with dateBetween", () => {
+    expect(value('dateBetween("2024-01-15", "2024-01-10", "days")')).toBe(5);
+    expect(value('dateBetween("2024-01-10", "2024-01-15", "days")')).toBe(-5);
+    expect(value('dateBetween("2024-01-15", "2024-01-15", "days")')).toBe(0);
+    expect(value('dateBetween("2024-02-01", "2024-01-15", "days")')).toBe(17);
+    expect(value('dateBetween("2024-01-20", "2024-01-06", "weeks")')).toBe(2);
+    expect(value('dateBetween("2024-01-19", "2024-01-06", "weeks")')).toBe(1);
+    expect(value('dateBetween("2024-01-15T05:30:00Z", "2024-01-15T04:00:00Z", "minutes")')).toBe(
+      90,
+    );
+    expect(value('dateBetween("2024-01-15T05:30:00Z", "2024-01-15T04:00:00Z", "hours")')).toBe(1);
+    // Partial units truncate toward zero.
+    expect(value('dateBetween("2024-01-16T12:00:00Z", "2024-01-15T00:00:00Z", "days")')).toBe(1);
+    expect(value('dateBetween("2024-01-15T00:00:00Z", "2024-01-16T12:00:00Z", "days")')).toBe(-1);
+    expect(value('dateBetween("2024-01-15T00:00:00Z", "2024-01-15T12:00:00Z", "days")')).toBe(0);
+    expect(value('dateBetween("2024-01-15T12:00:00Z", "2024-01-15T00:00:00Z", "days")')).toBe(0);
+  });
+
+  it("measures whole months and years with calendar clamping", () => {
+    expect(value('dateBetween("2024-03-15", "2024-01-15", "months")')).toBe(2);
+    expect(value('dateBetween("2024-03-10", "2024-01-15", "months")')).toBe(1);
+    expect(value('dateBetween("2024-02-01", "2024-01-31", "months")')).toBe(0);
+    // Round-trips dateAdd's clamp: Jan 31 + 1 month = Feb 29 (2024 is a leap year).
+    expect(value('dateBetween("2024-02-29", "2024-01-31", "months")')).toBe(1);
+    expect(value('dateBetween("2024-01-15", "2025-01-15", "months")')).toBe(-12);
+    expect(value('dateBetween("2025-01-15", "2024-01-15", "years")')).toBe(1);
+    expect(value('dateBetween("2025-01-14", "2024-01-15", "years")')).toBe(0);
+    expect(value('dateBetween("2024-01-15", "2025-01-14", "years")')).toBe(0);
+  });
+
+  it("rejects invalid dates and units in dateBetween", () => {
+    expect(errorOf('dateBetween("nope", "2024-01-01", "days")')).toBe("#ERROR: invalid date");
+    expect(errorOf('dateBetween("2024-01-02", "nope", "days")')).toBe("#ERROR: invalid date");
+    expect(errorOf('dateBetween(true, "2024-01-01", "days")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('dateBetween("2024-01-02", "2024-01-01")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('dateBetween("2024-01-02", "2024-01-01", "centuries")')).toBe(
+      "#ERROR: unknown date unit 'centuries'",
+    );
+  });
+
+  it("formats dates by explicit token substitution", () => {
+    expect(value('formatDate("2024-03-05T07:08:09Z", "YYYY-MM-DD")')).toBe("2024-03-05");
+    expect(value('formatDate("2024-03-05T07:08:09Z", "DD/MM/YYYY HH:mm:ss")')).toBe(
+      "05/03/2024 07:08:09",
+    );
+    expect(value('formatDate("2024-03-05T07:08:09Z", "YYYYMMDD")')).toBe("20240305");
+    expect(value('formatDate("2024-03-05T07:08:09Z", "ss:mm:HH DD MM YYYY")')).toBe(
+      "09:08:07 05 03 2024",
+    );
+    expect(value('formatDate("2024-12-25T23:59:59Z", "YYYY-MM-DD HH:mm:ss")')).toBe(
+      "2024-12-25 23:59:59",
+    );
+    // Zone-less inputs are read as UTC, so formatting never depends on the host zone.
+    expect(value('formatDate("2024-01-15T10:30:00", "YYYY-MM-DD HH:mm")')).toBe(
+      "2024-01-15 10:30",
+    );
+    expect(value('formatDate(0, "YYYY-MM-DD")')).toBe("1970-01-01");
+    // Dispatch is case-insensitive, like every other function in the registry.
+    expect(value('FORMATDATE("2024-01-01", "YYYY")')).toBe("2024");
+  });
+
+  it("rejects invalid dates and patterns in formatDate", () => {
+    expect(errorOf('formatDate("not a date", "YYYY")')).toBe("#ERROR: invalid date");
+    expect(errorOf('formatDate("2024-02-30", "YYYY-MM-DD")')).toBe("#ERROR: invalid date");
+    expect(errorOf('formatDate("2024-01-01", "YY-MM-DD")')).toBe(
+      "#ERROR: invalid format pattern: unknown token 'YY'",
+    );
+    expect(errorOf('formatDate("2024-01-01", "day")')).toBe(
+      "#ERROR: invalid format pattern: unknown token 'day'",
+    );
+    expect(errorOf('formatDate("2024-01-01")')).toBe("#ERROR: type mismatch");
+    expect(errorOf('formatDate("2024-01-01", 5)')).toBe("#ERROR: type mismatch");
+    expect(errorOf('formatDate(true, "YYYY")')).toBe("#ERROR: type mismatch");
+  });
+});
