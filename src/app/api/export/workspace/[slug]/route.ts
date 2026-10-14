@@ -1,11 +1,21 @@
 import { NextResponse } from "next/server";
-import JSZip from "jszip";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { getWorkspaceBySlug } from "@/server/queries";
-import { WORKSPACE_EXPORT_FORMATS, parseExportFormat } from "@/lib/export-format";
+import {
+  WORKSPACE_EXPORT_FORMATS,
+  attachmentZipPath,
+  buildWorkspaceZip,
+  collectExportPageIds,
+  parseExportFormat,
+  parseIncludeSubpages,
+  rewriteAttachments,
+  type WorkspaceZipFile,
+} from "@/lib/export-format";
+import { collectFileUrls, fileKeyFromUrl } from "@/lib/trash";
+import { storageDriver } from "@/lib/storage";
 import { matrixToCsv, pageToMarkdown } from "@/lib/serialize";
 import { formatCell, type QueryProperty } from "@/lib/database-query";
 
@@ -16,8 +26,10 @@ const safeName = (value: string) =>
 
 /**
  * Bulk export: every page as Markdown (nested by ancestry) and every database
- * as CSV, packaged into a zip. Unknown `?format` → 400 (R23.16);
- * 5 exports/min (R23.22).
+ * as CSV, packaged into a zip with a `manifest.json` structure manifest and
+ * the uploaded attachments of every exported page (MISSING_FEATURES §12).
+ * `?includeSubpages=false` exports top-level pages only; unknown `?format`
+ * → 400 (R23.16); 5 exports/min (R23.22).
  */
 export async function GET(
   request: Request,
@@ -35,8 +47,9 @@ export async function GET(
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+  const searchParams = new URL(request.url).searchParams;
   const parsedFormat = parseExportFormat(
-    new URL(request.url).searchParams.get("format"),
+    searchParams.get("format"),
     WORKSPACE_EXPORT_FORMATS,
     "zip",
   );
@@ -46,13 +59,18 @@ export async function GET(
       { status: 400 },
     );
   }
+  const includeSubpages = parseIncludeSubpages(searchParams.get("includeSubpages"));
 
   const pages = await prisma.page.findMany({
     where: { workspaceId: workspace.id, deletedAt: null },
     orderBy: { position: "asc" },
-    select: { id: true, parentId: true, title: true, type: true, content: true },
+    select: { id: true, parentId: true, title: true, type: true, content: true, coverUrl: true },
   });
   const byId = new Map(pages.map((p) => [p.id, p]));
+
+  // Depth toggle: `?includeSubpages=false` keeps top-level pages only.
+  const exportIds = new Set(collectExportPageIds(pages, { includeSubpages }));
+  const exported = pages.filter((page) => exportIds.has(page.id));
 
   const pathFor = (id: string): string => {
     const segments: string[] = [];
@@ -68,17 +86,9 @@ export async function GET(
     return segments.join("/");
   };
 
-  const zip = new JSZip();
-  const used = new Set<string>();
-  const unique = (path: string) => {
-    let candidate = path;
-    let n = 1;
-    while (used.has(candidate)) candidate = `${path.replace(/(\.[^.]+)$/, "")} (${n++})$1`;
-    used.add(candidate);
-    return candidate;
-  };
+  const files: WorkspaceZipFile[] = [];
 
-  for (const page of pages) {
+  for (const page of exported) {
     if (page.type === "DATABASE") {
       const [properties, rows] = await Promise.all([
         prisma.property.findMany({
@@ -105,18 +115,38 @@ export async function GET(
           ),
         ),
       );
-      zip.file(unique(`${pathFor(page.id)}.csv`), csv);
+      files.push({ path: `${pathFor(page.id)}.csv`, kind: "database", pageId: page.id, content: csv });
     } else {
-      zip.file(unique(`${pathFor(page.id)}.md`), pageToMarkdown(page.title, page.content));
+      files.push({
+        path: `${pathFor(page.id)}.md`,
+        kind: "page",
+        pageId: page.id,
+        // Rewrite /api/files/... references to the bundled copies so the
+        // export stands on its own.
+        content: rewriteAttachments(pageToMarkdown(page.title, page.content)),
+      });
     }
   }
 
-  zip.file(
-    "README.md",
-    `# ${workspace.name}\n\nExported from Noema on ${new Date().toISOString()}.\n`,
-  );
+  // Attachments: bundle every upload referenced by an exported page's content
+  // or cover, best-effort — a missing blob skips that file, never the export.
+  const attachmentUrls = new Set<string>();
+  for (const page of exported) {
+    for (const url of collectFileUrls({ content: page.content, coverUrl: page.coverUrl })) {
+      attachmentUrls.add(url);
+    }
+  }
+  const driver = storageDriver();
+  for (const url of attachmentUrls) {
+    const key = fileKeyFromUrl(url);
+    const zipPath = attachmentZipPath(url);
+    if (!key || !zipPath) continue;
+    const stored = await driver.get(key).catch(() => null);
+    if (!stored) continue;
+    files.push({ path: zipPath, kind: "attachment", content: stored.body, mimeType: stored.contentType });
+  }
 
-  const buffer = await zip.generateAsync({ type: "nodebuffer" });
+  const buffer = await buildWorkspaceZip({ workspaceName: workspace.name, includeSubpages, files });
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "content-type": "application/zip",
