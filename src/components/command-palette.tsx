@@ -5,7 +5,16 @@ import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { Monitor, Moon, PanelLeft, Plus, Search, Sun } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { fuzzyFilter } from "@/lib/fuzzy";
+import {
+  filterByType,
+  firstIndex,
+  fuzzyFilter,
+  lastIndex,
+  nextIndex,
+  parseTypeScope,
+  prevIndex,
+  type SearchType,
+} from "@/lib/fuzzy";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { PageTreeNode } from "@/server/queries";
@@ -16,9 +25,13 @@ import type { PageTreeNode } from "@/server/queries";
  *
  * - Fuzzy-ranked via `src/lib/fuzzy.ts` (pure, unit-tested): actions first,
  *   then workspace pages; an empty query lists everything in natural order.
+ * - Filters: a leading `type:<value>` scope in the query narrows results by
+ *   item type (`parseTypeScope` + `filterByType`).
  * - a11y: Radix gives `role="dialog"` + focus trap; the results container is
  *   a `role="listbox"` of `role="option"`s driven by `aria-activedescendant`,
- *   so the input keeps focus while ↑↓ move the selection.
+ *   so the input keeps focus while ↑↓ (wrapping) and Home/End move the
+ *   selection via the unit-tested `nextIndex`/`prevIndex`/`firstIndex`/
+ *   `lastIndex` helpers.
  * - Server Actions never live here: `onCreatePage` is owned by the shell,
  *   which wraps it in `useAction()` (coherence ratchet).
  */
@@ -26,6 +39,8 @@ import type { PageTreeNode } from "@/server/queries";
 type PaletteItem = {
   key: string;
   group: "actions" | "theme" | "pages";
+  /** Item type for `type:` scope filtering (§11 Search by type). */
+  type: SearchType | "action" | "theme";
   label: string;
   searchText: string;
   icon: React.ReactNode;
@@ -70,6 +85,7 @@ export function CommandPalette({
       {
         key: "action:create-page",
         group: "actions",
+        type: "action",
         label: t(locale, "createNewPage"),
         searchText: `${t(locale, "createNewPage")} new page`,
         icon: <Plus className="h-4 w-4 text-muted" />,
@@ -78,6 +94,7 @@ export function CommandPalette({
       {
         key: "action:search",
         group: "actions",
+        type: "action",
         label: t(locale, "goToSearchPage"),
         searchText: `${t(locale, "goToSearchPage")} ${t(locale, "search")}`,
         icon: <Search className="h-4 w-4 text-muted" />,
@@ -86,6 +103,7 @@ export function CommandPalette({
       {
         key: "action:toggle-sidebar",
         group: "actions",
+        type: "action",
         label: t(locale, "toggleSidebar"),
         searchText: `${t(locale, "toggleSidebar")} sidebar navigation`,
         icon: <PanelLeft className="h-4 w-4 text-muted" />,
@@ -101,6 +119,7 @@ export function CommandPalette({
     const themeItems: PaletteItem[] = themeOptions.map((option) => ({
       key: `theme:${option.value}`,
       group: "theme",
+      type: "theme",
       label: option.label,
       searchText: `${option.label} ${t(locale, "theme")} ${option.value}`,
       icon: option.icon,
@@ -110,6 +129,7 @@ export function CommandPalette({
     const pageItems: PaletteItem[] = pages.map((page) => ({
       key: `page:${page.id}`,
       group: "pages",
+      type: page.type === "DATABASE" ? "database" : "page",
       label: page.title || t(locale, "untitled"),
       searchText: page.title || t(locale, "untitled"),
       icon: (
@@ -123,27 +143,35 @@ export function CommandPalette({
     return [...actions, ...themeItems, ...pageItems];
   }, [locale, pages, router, setTheme, workspaceSlug, onCreatePage, onToggleSidebar]);
 
+  // Search filters (§11): a leading `type:<value>` token narrows the list by
+  // item type; the remainder is what actually gets fuzzy-matched.
+  const scope = useMemo(() => parseTypeScope(query), [query]);
+  const scoped = useMemo(
+    () => (scope.type ? filterByType(items, scope.type, (item) => item.type) : items),
+    [items, scope.type],
+  );
+
   // Two ranked slices keep the Actions/Theme/Pages group order stable while
   // still ordering each group by fuzzy score.
   const ranked = useMemo(
     () => ({
       actions: fuzzyFilter(
-        items.filter((item) => item.group === "actions"),
-        query,
+        scoped.filter((item) => item.group === "actions"),
+        scope.query,
         (item) => item.searchText,
       ),
       theme: fuzzyFilter(
-        items.filter((item) => item.group === "theme"),
-        query,
+        scoped.filter((item) => item.group === "theme"),
+        scope.query,
         (item) => item.searchText,
       ),
       pages: fuzzyFilter(
-        items.filter((item) => item.group === "pages"),
-        query,
+        scoped.filter((item) => item.group === "pages"),
+        scope.query,
         (item) => item.searchText,
       ),
     }),
-    [items, query],
+    [scoped, scope],
   );
 
   const flat = useMemo(
@@ -174,10 +202,16 @@ export function CommandPalette({
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActiveIndex(Math.min(active + 1, flat.length - 1));
+      setActiveIndex(nextIndex(flat.length, active));
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      setActiveIndex(Math.max(active - 1, 0));
+      setActiveIndex(prevIndex(flat.length, active));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setActiveIndex(firstIndex(flat.length));
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setActiveIndex(lastIndex(flat.length));
     } else if (event.key === "Enter") {
       event.preventDefault();
       const item = flat[active];
