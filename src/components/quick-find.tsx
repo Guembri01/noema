@@ -12,6 +12,49 @@ import {
 import { createPageAction } from "@/server/actions/pages";
 import { toast } from "sonner";
 import { t } from "@/lib/i18n";
+import { highlightSnippet } from "@/lib/fuzzy";
+import {
+  DEFAULT_SUMMARY_LENGTH,
+  extractDescription,
+  summarizeBlocks,
+  truncateAtWord,
+  type SummaryBlock,
+} from "@/lib/page-summary";
+
+/**
+ * Plain-text teaser for one quick-find row (MISSING_FEATURES §1): stored blocks
+ * via `summarizeBlocks` when available, otherwise the result's snippet read as a
+ * paragraph through `extractDescription` and truncated at a word boundary.
+ */
+function pageTeaser(
+  content: { snippet?: string; blocks?: readonly SummaryBlock[] },
+  maxLength: number,
+): string {
+  if (content.blocks && content.blocks.length > 0) {
+    const summary = summarizeBlocks(content.blocks, { maxLength });
+    if (summary) return summary;
+  }
+  const snippet = content.snippet ?? "";
+  if (!snippet) return "";
+  const described = extractDescription([{ type: "paragraph", text: snippet }]);
+  return truncateAtWord(described ?? snippet, maxLength);
+}
+
+/** Teaser text with the active query highlighted via the shared `highlightSnippet`. */
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  const match = highlightSnippet(text, query, text.length);
+  if (!match) return <>{text}</>;
+  const { text: excerpt, matchStart, matchEnd } = match;
+  return (
+    <>
+      {excerpt.slice(0, matchStart)}
+      <mark className="rounded-sm bg-accent/20 text-inherit">
+        {excerpt.slice(matchStart, matchEnd)}
+      </mark>
+      {excerpt.slice(matchEnd)}
+    </>
+  );
+}
 
 
 export function QuickFind({
@@ -20,12 +63,15 @@ export function QuickFind({
   workspaceId,
   workspaceSlug,
   locale,
+  previewLength = DEFAULT_SUMMARY_LENGTH,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   workspaceId: string;
   workspaceSlug: string;
   locale: string;
+  /** Longest teaser shown per result, including the trailing ellipsis. */
+  previewLength?: number;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -107,29 +153,30 @@ export function QuickFind({
               heading={t(locale, "pages")}
               className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:text-muted"
             >
-              {items.map((item) => (
-                <Command.Item
-                  key={item.id}
-                  value={item.id}
-                  onSelect={() => go(item.id)}
-                  className="flex cursor-pointer items-start gap-2 rounded px-2 py-2 text-sm data-[selected=true]:bg-surface-2"
-                >
-                  <span className="mt-0.5 w-4 text-center">
-                    {item.icon ?? (item.type === "DATABASE" ? "🗂️" : "📄")}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">
-                      {item.title}
+              {items.map((item) => {
+                const teaser = pageTeaser(item, previewLength);
+                return (
+                  <Command.Item
+                    key={item.id}
+                    value={item.id}
+                    onSelect={() => go(item.id)}
+                    className="flex cursor-pointer items-start gap-2 rounded px-2 py-2 text-sm data-[selected=true]:bg-surface-2"
+                  >
+                    <span className="mt-0.5 w-4 text-center">
+                      {item.icon ?? (item.type === "DATABASE" ? "🗂️" : "📄")}
                     </span>
-                    {item.snippet && (
-                      <span className="block truncate text-xs text-muted">
-                        {item.snippet}
-                      </span>
-                    )}
-                  </span>
-                  <FileText className="mt-0.5 h-3.5 w-3.5 text-muted" />
-                </Command.Item>
-              ))}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{item.title}</span>
+                      {teaser && (
+                        <span className="block truncate text-xs text-muted">
+                          <HighlightedText text={teaser} query={query} />
+                        </span>
+                      )}
+                    </span>
+                    <FileText className="mt-0.5 h-3.5 w-3.5 text-muted" />
+                  </Command.Item>
+                );
+              })}
             </Command.Group>
           </Command.List>
         </Command>

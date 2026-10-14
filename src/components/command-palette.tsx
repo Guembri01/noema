@@ -9,6 +9,7 @@ import {
   filterByType,
   firstIndex,
   fuzzyFilter,
+  highlightSnippet,
   lastIndex,
   nextIndex,
   parseTypeScope,
@@ -49,6 +50,26 @@ type PaletteItem = {
 
 const optionId = (index: number) => `command-palette-option-${index}`;
 
+/**
+ * Label text with the active (type-scoped) query emphasised. Reuses the shared
+ * `highlightSnippet` so search-term highlighting matches the search page and
+ * quick-find; an empty or non-matching query renders the plain label.
+ */
+function HighlightedLabel({ text, query }: { text: string; query: string }) {
+  const match = highlightSnippet(text, query, text.length);
+  if (!match) return <>{text}</>;
+  const { text: excerpt, matchStart, matchEnd } = match;
+  return (
+    <>
+      {excerpt.slice(0, matchStart)}
+      <mark className="rounded-sm bg-accent/20 text-inherit">
+        {excerpt.slice(matchStart, matchEnd)}
+      </mark>
+      {excerpt.slice(matchEnd)}
+    </>
+  );
+}
+
 export function CommandPalette({
   open,
   onOpenChange,
@@ -57,6 +78,7 @@ export function CommandPalette({
   pages,
   onCreatePage,
   onToggleSidebar,
+  highlightMatches = true,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -65,6 +87,8 @@ export function CommandPalette({
   pages: PageTreeNode[];
   onCreatePage: () => void;
   onToggleSidebar: () => void;
+  /** Emphasise matched characters in result labels (default on). */
+  highlightMatches?: boolean;
 }) {
   const router = useRouter();
   const { theme, setTheme } = useTheme();
@@ -259,7 +283,13 @@ export function CommandPalette({
               <span className="flex h-4 w-4 shrink-0 items-center justify-center">
                 {item.icon}
               </span>
-              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              <span className="min-w-0 flex-1 truncate">
+                {highlightMatches ? (
+                  <HighlightedLabel text={item.label} query={scope.query} />
+                ) : (
+                  item.label
+                )}
+              </span>
               {item.key === `theme:${theme}` && (
                 <span className="text-xs text-muted">{t(locale, "theme")}</span>
               )}
