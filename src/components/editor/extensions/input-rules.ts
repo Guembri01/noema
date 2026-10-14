@@ -8,6 +8,7 @@ import {
   type MarkdownShortcutKind,
 } from "@/lib/markdown";
 import { ClearFormatting } from "@/components/editor/extensions/clear-formatting";
+import { SmartSuggestions } from "@/components/editor/extensions/suggestions";
 import { SmartTypography } from "@/components/editor/extensions/smart-typography";
 import {
   matchScriptShortcut,
@@ -58,7 +59,7 @@ export const InputRules = Extension.create({
   name: "inputRules",
 
   addExtensions() {
-    return [ClearFormatting, Subscript, Superscript, SmartTypography];
+    return [ClearFormatting, Subscript, Superscript, SmartTypography, SmartSuggestions];
   },
 
   addInputRules() {
