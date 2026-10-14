@@ -1,9 +1,17 @@
 "use client";
 
 import { Cell, PropertyHeader } from "./view-parts";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, CalendarDays, ExternalLink, LayoutTemplate, Trash2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpRight,
+  CalendarDays,
+  ExternalLink,
+  LayoutTemplate,
+  Trash2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import {
@@ -12,9 +20,35 @@ import {
   statusGroupColumns,
   visibleColumns,
   type QueryProperty,
+  type QueryRow,
   type ViewConfig,
 } from "@/lib/database-query";
+import { groupRowsByProperty, visibleGroups as filterVisibleGroups } from "@/lib/board-groups";
+import { reorderRows, sortByOrder } from "@/lib/row-order";
+import { evaluateRowColors, type RowColorRule } from "@/lib/row-color-rules";
+import {
+  CARD_SIZES,
+  cardFieldOrder,
+  cardSizeFor,
+  densityOptions,
+  listRowModel,
+  resolveCardPreview,
+  type CardSizeName,
+  type ListDensity,
+} from "@/lib/view-presets";
 import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
+
+/**
+ * Apply a manual row order (id → order) with the row-order engine. Without a
+ * map the input sequence is returned untouched, so an unpositioned board/list
+ * keeps the order the server already sorted by `Page.position`.
+ */
+function orderRows(rows: DBRow[], rowOrder?: Record<string, number>): DBRow[] {
+  if (!rowOrder) return rows;
+  return sortByOrder(
+    rows.map((row) => ({ id: row.id, row, order: rowOrder[row.id] })),
+  ).map((entry) => entry.row);
+}
 
 export function TableView({
   locale,
@@ -48,6 +82,9 @@ export function TableView({
   onRenameProperty,
   onDuplicateProperty,
   onReorderProperty,
+  rowOrder,
+  onReorderRows,
+  rowColorRules = [],
 }: {
   locale: string;
   workspaceSlug: string;
@@ -82,12 +119,19 @@ export function TableView({
   onRenameProperty: (id: string, name: string) => void;
   onDuplicateProperty: (p: DBProperty) => void;
   onReorderProperty: (fromId: string, toId: string) => void;
+  /** Manual row order (id → position); applied with the row-order engine. */
+  rowOrder?: Record<string, number>;
+  /** Persist a new row sequence (ids in display order); enables move up/down. */
+  onReorderRows?: (orderedIds: string[]) => void;
+  /** Conditional-formatting rules: row background/text via the colour engine. */
+  rowColorRules?: RowColorRule[];
 }) {
   const columns = visibleColumns(
     properties as unknown as QueryProperty[],
     config,
   ) as unknown as DBProperty[];
   const frozen = config.freezeFirstColumn !== false;
+  const orderedRows = orderRows(rows, rowOrder);
   // HTML5 drag state for property reorder: the dragged column id and the
   // column currently under the pointer (highlighted as the drop target).
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -157,7 +201,7 @@ export function TableView({
           </tr>
         </thead>
         <tbody>
-          {rows.length === 0 && (
+          {orderedRows.length === 0 && (
             <tr>
               <td
                 colSpan={columns.length + 1}
@@ -167,16 +211,31 @@ export function TableView({
               </td>
             </tr>
           )}
-          {rows.map((row) => {
+          {orderedRows.map((row, rowIndex) => {
             const rowStripe = (() => {
               const color = colorOf(row);
               return color
                 ? `3px solid ${OPTION_COLORS[color] ?? color}`
                 : undefined;
             })();
+            // Conditional formatting from the view's colour rules: the engine
+            // picks the first matching "row" rule and returns palette names.
+            const resolved = evaluateRowColors(
+              rowColorRules,
+              row as unknown as QueryRow,
+              properties as unknown as QueryProperty[],
+            );
+            const rowColors: { backgroundColor?: string; color?: string } = {};
+            if (resolved.backgroundColor) {
+              rowColors.backgroundColor = `${OPTION_COLORS[resolved.backgroundColor] ?? "#8a8a85"}22`;
+            }
+            if (resolved.textColor) {
+              rowColors.color = OPTION_COLORS[resolved.textColor];
+            }
             return (
             <tr
               key={row.id}
+              style={rowColors}
               className="group border-b border-border last:border-0 hover:bg-surface-2/50"
             >
               {columns.map((property, index) => {
@@ -234,6 +293,46 @@ export function TableView({
               })}
               <td className="px-1 align-top">
                 <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100">
+                  {editable && onReorderRows && (
+                    <>
+                      <button
+                        type="button"
+                        title={t(locale, "moveUp")}
+                        aria-label={`${t(locale, "moveUp")}: ${row.title}`}
+                        disabled={rowIndex === 0}
+                        onClick={() =>
+                          onReorderRows(
+                            reorderRows(
+                              orderedRows.map((entry) => entry.id),
+                              rowIndex,
+                              rowIndex - 1,
+                            ),
+                          )
+                        }
+                        className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                      >
+                        <ArrowUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        title={t(locale, "moveDown")}
+                        aria-label={`${t(locale, "moveDown")}: ${row.title}`}
+                        disabled={rowIndex === orderedRows.length - 1}
+                        onClick={() =>
+                          onReorderRows(
+                            reorderRows(
+                              orderedRows.map((entry) => entry.id),
+                              rowIndex,
+                              rowIndex + 1,
+                            ),
+                          )
+                        }
+                        className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                      >
+                        <ArrowDown className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  )}
                   <a
                     href={`/w/${workspaceSlug}/${row.id}`}
                     title={t(locale, "openAsPage")}
@@ -288,6 +387,10 @@ export function ListView({
   rows,
   valueFor,
   editable,
+  density: densityProp,
+  onDensityChange,
+  rowOrder,
+  onReorderRows,
 }: {
   workspaceSlug: string;
   properties: DBProperty[];
@@ -295,45 +398,132 @@ export function ListView({
   valueFor: (row: DBRow, propertyId: string) => unknown;
   editable: boolean;
   locale: string;
+  /** List density; defaults to compact and toggles in place. */
+  density?: ListDensity;
+  /** Persist a density change; without it the toggle is local-only. */
+  onDensityChange?: (density: ListDensity) => void;
+  /** Manual row order (id → position); applied with the row-order engine. */
+  rowOrder?: Record<string, number>;
+  /** Persist a new row sequence (ids in display order); enables move up/down. */
+  onReorderRows?: (orderedIds: string[]) => void;
 }) {
   const status = properties.find(
     (p) => p.type === "STATUS" || p.type === "SELECT",
   );
+  const [localDensity, setLocalDensity] = useState<ListDensity>("compact");
+  const density = densityProp ?? localDensity;
+  const orderedRows = orderRows(rows, rowOrder);
+  const setDensity = (next: ListDensity) => {
+    if (onDensityChange) onDensityChange(next);
+    else setLocalDensity(next);
+  };
   return (
-    <ul className="divide-y divide-border rounded-lg border border-border">
-      {rows.map((row) => {
-        const value = status ? (valueFor(row, status.id) as { optionId?: string }) : undefined;
-        const option = status?.config?.options?.find((o) => o.id === value?.optionId);
-        return (
-          <li key={row.id}>
-            <Link
-              href={`/w/${workspaceSlug}/${row.id}`}
-              className="flex items-center gap-3 px-4 py-3 hover:bg-surface-2"
-            >
-              <span className="w-4 text-center">{row.icon ?? "📄"}</span>
-              <span className="flex-1 truncate text-sm">
-                {row.title || t(locale, "untitled")}
-              </span>
-              {option && (
-                <span
-                  className="rounded px-1.5 py-0.5 text-xs"
-                  style={{
-                    backgroundColor: `${OPTION_COLORS[option.color] ?? "#8a8a85"}22`,
-                    color: OPTION_COLORS[option.color] ?? "#8a8a85",
-                  }}
-                >
-                  {option.name}
+    <div>
+      {/* Density toggle: `densityOptions` drives both the choices and labels. */}
+      <div className="mb-1 flex items-center justify-end gap-0.5" role="group">
+        {densityOptions().map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={density === option.value}
+            onClick={() => setDensity(option.value)}
+            className={cn(
+              "rounded px-2 py-0.5 text-xs",
+              density === option.value
+                ? "bg-surface-2 text-fg"
+                : "text-muted hover:bg-surface-2",
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      <ul className="divide-y divide-border rounded-lg border border-border">
+        {orderedRows.map((row, rowIndex) => {
+          const model = listRowModel(row, properties, { density });
+          const value = status ? (valueFor(row, status.id) as { optionId?: string }) : undefined;
+          const option = status?.config?.options?.find((o) => o.id === value?.optionId);
+          return (
+            <li key={row.id} className="flex items-center">
+              <Link
+                href={`/w/${workspaceSlug}/${row.id}`}
+                className={cn(
+                  "flex min-w-0 flex-1 items-center gap-3 hover:bg-surface-2",
+                  model.expanded ? "px-4 py-3" : "px-4 py-2",
+                )}
+              >
+                <span className="w-4 text-center">{row.icon ?? "📄"}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm">
+                    {model.primary || t(locale, "untitled")}
+                  </span>
+                  {model.expanded && model.secondary && (
+                    <span className="block truncate text-xs text-muted">
+                      {model.secondary}
+                    </span>
+                  )}
+                </span>
+                {option && (
+                  <span
+                    className="rounded px-1.5 py-0.5 text-xs"
+                    style={{
+                      backgroundColor: `${OPTION_COLORS[option.color] ?? "#8a8a85"}22`,
+                      color: OPTION_COLORS[option.color] ?? "#8a8a85",
+                    }}
+                  >
+                    {option.name}
+                  </span>
+                )}
+                {editable && <ExternalLink className="h-3.5 w-3.5 text-muted" />}
+              </Link>
+              {editable && onReorderRows && (
+                <span className="flex items-center gap-0.5 pr-2">
+                  <button
+                    type="button"
+                    title={t(locale, "moveUp")}
+                    aria-label={`${t(locale, "moveUp")}: ${row.title}`}
+                    disabled={rowIndex === 0}
+                    onClick={() =>
+                      onReorderRows(
+                        reorderRows(
+                          orderedRows.map((entry) => entry.id),
+                          rowIndex,
+                          rowIndex - 1,
+                        ),
+                      )
+                    }
+                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                  >
+                    <ArrowUp className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    title={t(locale, "moveDown")}
+                    aria-label={`${t(locale, "moveDown")}: ${row.title}`}
+                    disabled={rowIndex === orderedRows.length - 1}
+                    onClick={() =>
+                      onReorderRows(
+                        reorderRows(
+                          orderedRows.map((entry) => entry.id),
+                          rowIndex,
+                          rowIndex + 1,
+                        ),
+                      )
+                    }
+                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                  >
+                    <ArrowDown className="h-3.5 w-3.5" />
+                  </button>
                 </span>
               )}
-              {editable && <ExternalLink className="h-3.5 w-3.5 text-muted" />}
-            </Link>
-          </li>
-        );
-      })}
-      {rows.length === 0 && (
-        <li className="px-4 py-8 text-center text-sm text-muted">{t(locale, "dbNoRows")}</li>
-      )}
-    </ul>
+            </li>
+          );
+        })}
+        {orderedRows.length === 0 && (
+          <li className="px-4 py-8 text-center text-sm text-muted">{t(locale, "dbNoRows")}</li>
+        )}
+      </ul>
+    </div>
   );
 }
 
@@ -351,6 +541,7 @@ export function BoardView({
   computedFor,
   peopleOptions,
   editable,
+  visibleGroups: visibleGroupsProp,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -365,6 +556,8 @@ export function BoardView({
   computedFor?: (row: DBRow, property: DBProperty) => string | undefined;
   peopleOptions?: { id: string; name: string }[];
   editable: boolean;
+  /** Per-column visibility: a column key mapped to `false` is hidden. */
+  visibleGroups?: Record<string, boolean>;
 }) {
   const groupProperty = properties.find((p) => p.id === groupBy);
   const statusProperty = properties.find(
@@ -381,60 +574,54 @@ export function BoardView({
   }
 
   // A STATUS property whose options declare buckets (To-do / In progress /
-  // Done) drives one column per bucket; every other grouping keeps the
-  // per-option columns it always had.
+  // Done) drives one column per bucket; every other grouping goes through the
+  // board-groups engine, which orders one column per declared option and
+  // appends the Empty bucket (multi-select rows land in every matching one).
+  const statusBucketBoard = hasStatusGroups(property);
+  const visibility = visibleGroupsProp ?? {};
   const localizedGroups: Record<string, string> = {
     todo: t(locale, "statusGroupTodo"),
     doing: t(locale, "statusGroupDoing"),
     done: t(locale, "statusGroupDone"),
   };
-  const columns = hasStatusGroups(property)
-    ? statusGroupColumns(rows, properties, property.id, t(locale, "noValue")).map(
-        (column) =>
-          localizedGroups[column.id]
-            ? { ...column, name: localizedGroups[column.id] }
-            : column,
-      )
-    : [
-        ...(property.config?.options ?? []).map((option) => ({
-          ...option,
-          rows: rows.filter(
-            (row) =>
-              ((valueFor(row, property.id) as { optionId?: string } | undefined)
-                ?.optionId ?? "") === option.id,
-          ),
-        })),
-        {
-          id: "__none",
-          name: t(locale, "noValue"),
-          color: "gray",
-          rows: rows.filter(
-            (row) =>
-              !(
-                (valueFor(row, property.id) as { optionId?: string } | undefined)
-                  ?.optionId
-              ),
-          ),
-        },
-      ];
+  type BoardColumn = { key: string; label: string; color: string; rows: DBRow[] };
+  const columns: BoardColumn[] = statusBucketBoard
+    ? statusGroupColumns(rows, properties, property.id, t(locale, "noValue"))
+        .map((column) => ({
+          key: column.id,
+          label: localizedGroups[column.id] ?? column.name,
+          color: column.color,
+          rows: column.rows,
+        }))
+        .filter((column) => visibility[column.key] !== false)
+    : filterVisibleGroups(
+        groupRowsByProperty(rows, properties, property.id),
+        visibility,
+      ).map((group) => ({
+        key: group.key,
+        label: group.label,
+        color: group.color ?? "gray",
+        rows: group.rows,
+      }));
+  const counts = new Map(columns.map((column) => [column.key, column.rows.length]));
 
   return (
     <div className="flex gap-4 overflow-x-auto pb-2">
-      {columns.map((option) => {
-        const groupRows = option.rows;
+      {columns.map((column) => {
+        const groupRows = column.rows;
         return (
-          <div key={option.id} className="w-64 shrink-0">
+          <div key={column.key} className="w-64 shrink-0">
             <div className="mb-2 flex items-center gap-2 text-sm">
               <span
                 className="inline-block h-2.5 w-2.5 rounded-sm"
                 style={{
-                  backgroundColor: OPTION_COLORS[option.color] ?? "#8a8a85",
+                  backgroundColor: OPTION_COLORS[column.color] ?? "#8a8a85",
                 }}
               />
-              <span className="font-medium" data-testid={`board-column-${option.id}`}>
-                {option.name}
+              <span className="font-medium" data-testid={`board-column-${column.key}`}>
+                {column.label}
               </span>
-              <span className="text-muted">{groupRows.length}</span>
+              <span className="text-muted">{counts.get(column.key)}</span>
             </div>
             <div className="space-y-2">
               {groupRows.map((row) => (
@@ -496,6 +683,7 @@ export function GalleryView({
   primary,
   valueFor,
   computedFor,
+  cardSize: cardSizeProp,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -504,27 +692,47 @@ export function GalleryView({
   primary: DBProperty | null;
   valueFor: (row: DBRow, propertyId: string) => unknown;
   computedFor?: (row: DBRow, property: DBProperty) => string | undefined;
+  /** Force a card size; without it the size follows the container width. */
+  cardSize?: CardSizeName;
 }) {
-  const preview = properties
-    .filter((p) => p.id !== primary?.id && !p.config?.primary)
-    .slice(0, 3);
-  const fileProperties = properties.filter((p) => p.type === "FILES");
+  // The card size tracks the container: `cardSizeFor` maps a measured width to
+  // a preset, and `CARD_SIZES` supplies the column count, aspect and whether
+  // the cover is shown. Initial width is 0 (the densest preset) so server and
+  // client render identically until the observer reports the real width.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setContainerWidth(width);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
-  /** First attached image across the row's FILES properties (card banner). */
-  const bannerFor = (row: DBRow): { url: string; name: string } | null => {
-    for (const property of fileProperties) {
-      const value = valueFor(row, property.id) as
-        | { files?: { name?: string; url?: string }[] }
-        | undefined;
-      for (const file of value?.files ?? []) {
-        const url = file?.url ?? "";
-        const image =
-          url.startsWith("data:image/") || /\.(png|jpe?g|gif|webp|avif|svg)(\?|$)/i.test(url);
-        if (url && image) return { url, name: file?.name ?? "" };
-      }
-    }
-    return null;
-  };
+  const size = cardSizeProp ?? cardSizeFor(containerWidth);
+  const spec = CARD_SIZES[size];
+
+  // The preset engine reads lower-case property types (e.g. "files"), matching
+  // `COVER_PROPERTY_TYPES`; `DatabaseView` stores them upper-case.
+  const presetProperties = properties.map((property) => ({
+    id: property.id,
+    name: property.name,
+    type: property.type.toLowerCase(),
+  }));
+  const coverPropertyId = properties.find((property) => property.type === "FILES")?.id ?? null;
+  const fields = cardFieldOrder(
+    // The primary/name property is the card title, so it is never listed twice.
+    presetProperties.filter((property) => property.id !== primary?.id),
+    {
+      previewPropertyId: coverPropertyId,
+      maxFields: spec.showPreview ? 3 : 4,
+    },
+  )
+    .map((id) => properties.find((property) => property.id === id))
+    .filter((property): property is DBProperty => property !== undefined);
 
   if (rows.length === 0) {
     return (
@@ -535,30 +743,41 @@ export function GalleryView({
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div
+      ref={containerRef}
+      className="grid gap-4"
+      style={{ gridTemplateColumns: `repeat(${spec.columns}, minmax(0, 1fr))` }}
+      data-card-size={size}
+    >
       {rows.map((row) => {
-        const banner = bannerFor(row);
+        const preview = resolveCardPreview(row, presetProperties, { coverPropertyId });
         return (
           <Link
             key={row.id}
             href={`/w/${workspaceSlug}/${row.id}`}
             className="overflow-hidden rounded-lg border border-border bg-bg transition hover:bg-surface-2"
           >
-            <div
-              className="grid h-24 place-items-center overflow-hidden bg-surface text-3xl"
-              data-testid="gallery-banner"
-            >
-              {banner ? (
-                /* eslint-disable-next-line @next/next/no-img-element -- raw attachment URLs are not statically analysable for next/image */
-                <img src={banner.url} alt={banner.name} className="h-full w-full object-cover" />
-              ) : (
-                row.icon ?? "📄"
-              )}
-            </div>
+            {spec.showPreview && (
+              <div
+                className="grid place-items-center overflow-hidden bg-surface text-3xl"
+                style={{ aspectRatio: spec.aspect }}
+                data-testid="gallery-banner"
+              >
+                {preview.kind === "cover" ? (
+                  /* eslint-disable-next-line @next/next/no-img-element -- raw attachment URLs are not statically analysable for next/image */
+                  <img src={preview.value} alt={row.title} className="h-full w-full object-cover" />
+                ) : (
+                  preview.value ?? row.icon ?? "📄"
+                )}
+              </div>
+            )}
             <div className="p-3">
-              <p className="truncate text-sm font-medium">{row.title || t(locale, "untitled")}</p>
+              <p className="truncate text-sm font-medium">
+                {!spec.showPreview && <span className="mr-1">{row.icon ?? "📄"}</span>}
+                {row.title || t(locale, "untitled")}
+              </p>
               <dl className="mt-2 space-y-1">
-                {preview.map((property) => (
+                {fields.map((property) => (
                   <div key={property.id} className="flex items-center justify-between gap-2 text-xs text-muted">
                     <dt className="truncate">{property.name}</dt>
                     <dd className="truncate">

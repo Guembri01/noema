@@ -45,6 +45,7 @@ import {
   type ViewConfig } from "@/lib/database-query";
 import { evaluateFormula } from "@/lib/formula";
 import { aggregate, type RollupFunction } from "@/lib/rollup";
+import type { RowColorRule } from "@/lib/row-color-rules";
 import type { RelationData } from "@/server/queries";
 import {
   DropdownMenu,
@@ -213,6 +214,32 @@ export function DatabaseView({
       properties as unknown as QueryProperty[],
       viewConfig.colorRules,
     );
+
+  // The view's flat colour rules, adapted to the conditional-formatting engine
+  // (which wraps the condition in a `filter` and targets whole rows), so the
+  // TableView can tint row background/text via `evaluateRowColors`.
+  const rowColorRules: RowColorRule[] = (viewConfig.colorRules ?? []).map((rule, index) => ({
+    id: `view-color-${index}`,
+    propertyId: rule.propertyId,
+    filter: { propertyId: rule.propertyId, operator: rule.operator, value: rule.value },
+    color: rule.color,
+    target: "row",
+  }));
+
+  // Local, optimistic manual row order, scoped per view so switching tabs never
+  // re-applies one view's order to another. Persisting it is a server concern
+  // that does not exist yet, so the order lives for the session only.
+  const [rowOrderByView, setRowOrderByView] = useState<Record<string, Record<string, number>>>({});
+  const rowOrder = activeView ? rowOrderByView[activeView.id] : undefined;
+  const onReorderRows = (orderedIds: string[]) => {
+    if (!activeView) return;
+    setRowOrderByView((previous) => ({
+      ...previous,
+      [activeView.id]: Object.fromEntries(
+        orderedIds.map((id, index) => [id, (index + 1) * 1000]),
+      ),
+    }));
+  };
 
   const onLinkDatabase = (property: DBProperty, targetDatabaseId: string) =>
     startTransition(async () => {
@@ -948,6 +975,8 @@ export function DatabaseView({
           rows={viewRows}
           valueFor={valueFor}
           editable={editable}
+          rowOrder={rowOrder}
+          onReorderRows={onReorderRows}
         />
       ) : activeView.type === "GALLERY" ? (
         <GalleryView
@@ -975,7 +1004,12 @@ export function DatabaseView({
           rows={viewRows}
         />
       ) : activeView.type === "CHART" ? (
-        <ChartView locale={locale} properties={properties} rows={viewRows} />
+        <ChartView
+          locale={locale}
+          properties={properties}
+          rows={viewRows}
+          groupByPropertyId={viewConfig.groupByPropertyId}
+        />
       ) : activeView.type === "TABLE" ? (
         <TableView
           locale={locale}
@@ -1013,6 +1047,9 @@ export function DatabaseView({
             setPromptState({ kind: "deleteProperty", property: target });
           }}
           onReorderProperty={onReorderProperty}
+          rowOrder={rowOrder}
+          onReorderRows={onReorderRows}
+          rowColorRules={rowColorRules}
           onRenameProperty={(id, name) =>
             startTransition(async () => {
               await updatePropertyAction(id, { name });
