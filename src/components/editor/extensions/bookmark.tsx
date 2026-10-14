@@ -8,7 +8,7 @@ import {
   type NodeViewProps,
 } from "@tiptap/react";
 import { ExternalLink, Pencil, Trash2 } from "lucide-react";
-import { detectEmbed, embedMeta, hostOf, isHttpUrl, normalizeUrl } from "@/lib/embeds";
+import { embedMeta, hostOf, isHttpUrl, normalizeUrl, resolveEmbed } from "@/lib/embeds";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -194,13 +194,17 @@ export const Embed = Node.create({
 function EmbedView({ node, updateAttributes, deleteNode }: NodeViewProps) {
   const url = node.attrs.url as string | null;
   const [value, setValue] = useState(url ?? "");
-  const info = url ? detectEmbed(url) : { provider: "none" as const, embedUrl: null };
-  const meta = embedMeta(info.provider);
-  const [editing, setEditing] = useState(!info.embedUrl);
+  // Resolve through the provider registry on every render - the node's
+  // persisted `provider` attribute is a hint only and is never trusted for
+  // the iframe. Unsupported/raw URLs stay in the editing input (never a
+  // generic arbitrary-host iframe).
+  const resolved = url ? resolveEmbed(url) : null;
+  const meta = resolved ? embedMeta(resolved.provider) : null;
+  const [editing, setEditing] = useState(!resolved);
 
   return (
     <NodeViewWrapper className="noema-embed" data-embed="">
-      {editing || !info.embedUrl ? (
+      {editing || !resolved ? (
         <div className="noema-embed-input" contentEditable={false}>
           <input
             autoFocus
@@ -210,8 +214,8 @@ function EmbedView({ node, updateAttributes, deleteNode }: NodeViewProps) {
               if (e.key === "Enter") {
                 e.preventDefault();
                 const normalized = normalizeUrl(value);
-                const detected = detectEmbed(normalized);
-                updateAttributes({ url: normalized, provider: detected.provider });
+                const next = resolveEmbed(normalized);
+                updateAttributes({ url: normalized, provider: next?.provider ?? "none" });
                 setEditing(false);
               }
             }}
@@ -225,16 +229,17 @@ function EmbedView({ node, updateAttributes, deleteNode }: NodeViewProps) {
       ) : (
         <div
           className="noema-embed-frame"
-          data-provider={info.provider}
+          data-provider={resolved.provider}
           contentEditable={false}
           style={meta ? { aspectRatio: meta.aspectRatio } : undefined}
         >
           <iframe
-            src={info.embedUrl}
+            src={resolved.embedUrl}
             title={meta?.title ?? "Embedded content"}
             loading="lazy"
             referrerPolicy="strict-origin-when-cross-origin"
-            allow={meta?.allow ?? "clipboard-write"}
+            sandbox={resolved.sandbox}
+            allow={resolved.allow}
             allowFullScreen
           />
           {meta && <span className="noema-embed-provider">{meta.label}</span>}

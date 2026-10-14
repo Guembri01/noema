@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { detectEmbed, embedMeta } from "@/lib/embeds";
+import { embedMeta, resolveEmbed } from "@/lib/embeds";
 import { t } from "@/lib/i18n";
 import { alignOf, alignStyle } from "@/lib/media";
 import { sanitizeHref } from "@/lib/validation";
@@ -258,30 +258,41 @@ function renderBlock(node: PMNode, key: string, locale: string = "en"): ReactNod
       );
     }
     case "embed": {
-      const info = detectEmbed(String(node.attrs?.url ?? ""));
-      const meta = info.provider === "none" ? null : embedMeta(info.provider);
-      return info.embedUrl ? (
+      // Stored content is untrusted (old rows, imports, API writes): the URL
+      // is re-resolved through the provider registry here rather than trusting
+      // a persisted `provider`, so the iframe `src`, `sandbox` and `allow` all
+      // come from ONE allowlisted source. Non-http(s), unknown/lookalike hosts
+      // and allowlisted hosts with no canonical embed resolve to null and
+      // degrade to a plain (scheme-gated) link - never an arbitrary iframe.
+      const url = String(node.attrs?.url ?? "");
+      const resolved = resolveEmbed(url);
+      if (!resolved) {
+        return (
+          <a
+            key={key}
+            href={sanitizeHref(url) ?? "#"}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            {url}
+          </a>
+        );
+      }
+      const meta = embedMeta(resolved.provider);
+      return (
         <iframe
           key={key}
-          src={info.embedUrl}
-          data-provider={info.provider}
+          src={resolved.embedUrl}
+          data-provider={resolved.provider}
           title={meta?.title ?? t(locale, "embeddedContent")}
           className="noema-embed-frame"
           loading="lazy"
           referrerPolicy="strict-origin-when-cross-origin"
-          allow={meta?.allow ?? "clipboard-write"}
+          sandbox={resolved.sandbox}
+          allow={resolved.allow}
           allowFullScreen
           style={meta ? { aspectRatio: meta.aspectRatio } : undefined}
         />
-      ) : (
-        <a
-          key={key}
-          href={sanitizeHref(String(node.attrs?.url ?? "")) ?? "#"}
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          {String(node.attrs?.url ?? "")}
-        </a>
       );
     }
     default:
