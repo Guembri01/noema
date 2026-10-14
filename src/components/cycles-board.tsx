@@ -11,7 +11,7 @@ import {
 import { useAction } from "@/lib/actions-client";
 import { PromptDialog } from "@/components/prompt-dialog";
 import { activeCycle, cycleDays, cycleProgress, velocity, type CycleTicket } from "@/lib/cycles";
-import { formatEstimate } from "@/lib/tickets";
+import { formatEstimate, UNASSIGNED_BUCKET, workloadByAssignee } from "@/lib/tickets";
 import { LocalTime } from "@/components/local-time";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
@@ -22,7 +22,12 @@ export type CycleRow = {
   goal: string | null;
   startDate: string;
   endDate: string;
-  tickets: (CycleTicket & { key: string; title: string; assigneeName?: string | null })[];
+  tickets: (CycleTicket & {
+    key: string;
+    title: string;
+    assigneeId?: string | null;
+    assigneeName?: string | null;
+  })[];
 };
 
 const day = (value: string) => value.slice(0, 10);
@@ -114,6 +119,22 @@ export function CyclesBoard({
             const progress = cycleProgress(cycle.tickets, cycle);
             const isCurrent = current?.id === cycle.id;
             const max = Math.max(progress.committed, 1);
+            // Per-person load inside this cycle's window; the page only ships
+            // the assignee name, so fall back to it when there is no id.
+            const load = workloadByAssignee(
+              cycle.tickets.map((ticket) => ({
+                ...ticket,
+                assigneeId: ticket.assigneeId ?? ticket.assigneeName ?? null,
+              })),
+              { dateRange: { start: cycle.startDate, end: cycle.endDate } },
+            );
+            const loadLabel = (assigneeId: string) => {
+              if (assigneeId === UNASSIGNED_BUCKET) return t(locale, "unassigned");
+              const holder = cycle.tickets.find(
+                (ticket) => (ticket.assigneeId ?? ticket.assigneeName) === assigneeId,
+              );
+              return holder?.assigneeName ?? assigneeId;
+            };
             return (
               <li
                 key={cycle.id}
@@ -220,6 +241,22 @@ export function CyclesBoard({
                       .join(" ")}
                   />
                 </svg>
+
+                {load.length > 0 && (
+                  <ul className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+                    <li className="font-medium uppercase tracking-wide">Workload</li>
+                    {load.map((bucket) => (
+                      <li
+                        key={bucket.assigneeId}
+                        className="rounded border border-border px-1.5 py-0.5"
+                        title={`${bucket.openCount} open · ${formatEstimate(bucket.points, bucket.unit)}`}
+                      >
+                        {loadLabel(bucket.assigneeId)}: {bucket.openCount} open ·{" "}
+                        {formatEstimate(bucket.points, bucket.unit)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
 
                 {cycle.tickets.length > 0 && (
                   <ul className="mt-2 flex flex-wrap gap-1.5">
