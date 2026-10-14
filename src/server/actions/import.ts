@@ -7,6 +7,8 @@ import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { markdownToDoc } from "@/lib/serialize";
 import { cardDescriptionBlocks, parseTrelloBoard, pathToTitles, type ImportCounts } from "@/lib/importers";
+import type { CreatePropertyDescriptor } from "@/lib/csv-mapping";
+import { importCsvAction } from "./database";
 
 const TRELLO_COLORS = ["gray", "blue", "green", "yellow", "orange", "purple", "pink", "red"];
 
@@ -367,4 +369,106 @@ export async function importMarkdownAction(input: {
 
   revalidatePath("/w", "layout");
   return { ok: true, id: page.id, slug: workspace.slug };
+}
+
+/**
+ * R23.2 — create a new DATABASE page from a parsed CSV.
+ *
+ * The client owns the header-mapping step (`suggestPropertyMapping` /
+ * `buildCreatePlan`, `src/lib/csv-mapping.ts`) and hands over the reviewed
+ * column plan as `properties` plus a normalised CSV whose header row already
+ * matches the property names. This action only creates the database shell
+ * (page + properties + a Table view); the row values are written by the shared
+ * append core (`importCsvAction`), so create-import and append-import coerce
+ * cells identically. Following R23.2 the first column always becomes the
+ * primary TEXT property that carries row titles.
+ */
+export async function importCsvDatabaseAction(input: {
+  workspaceId: string;
+  parentId?: string | null;
+  title: string;
+  properties: CreatePropertyDescriptor[];
+  csv: string;
+}): Promise<ImportResult> {
+  const user = await requireUser();
+  const access = await getWorkspaceAccess(user.id, input.workspaceId);
+  if (!access || !canEditContent(access.role)) {
+    return { error: "You do not have permission to import." };
+  }
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: input.workspaceId },
+    select: { slug: true },
+  });
+  if (!workspace) return { error: "Workspace not found." };
+
+  const plan = input.properties.filter((property) => property.name.trim() !== "");
+  if (plan.length === 0) return { error: "Nothing to import." };
+
+  const last = await prisma.page.findFirst({
+    where: { workspaceId: input.workspaceId, parentId: input.parentId ?? null },
+    orderBy: { position: "desc" },
+    select: { position: true },
+  });
+
+  let databaseId = "";
+  try {
+    await prisma.$transaction(async (tx) => {
+      const database = await tx.page.create({
+        data: {
+          workspaceId: input.workspaceId,
+          parentId: input.parentId ?? null,
+          type: "DATABASE",
+          title: input.title.trim().slice(0, 200) || "Imported CSV",
+          icon: "📥",
+          createdById: user.id,
+          position: (last?.position ?? 0) + 1000,
+        },
+        select: { id: true },
+      });
+      databaseId = database.id;
+
+      let position = 1000;
+      for (const [index, descriptor] of plan.entries()) {
+        const primary = index === 0;
+        await tx.property.create({
+          data: {
+            databasePageId: database.id,
+            name: descriptor.name.trim().slice(0, 80) || `Column ${index + 1}`,
+            type: primary ? "TEXT" : descriptor.type,
+            position,
+            config: (primary ? { primary: true } : {}) as Prisma.InputJsonValue,
+          },
+        });
+        position += 1000;
+      }
+
+      await tx.databaseView.create({
+        data: {
+          databasePageId: database.id,
+          name: "Table",
+          type: "TABLE",
+          position: 1000,
+        },
+      });
+    });
+  } catch (error) {
+    return { error: errorMessage(error, "CSV import failed.") };
+  }
+
+  // R23.6: rows are written by the shared append core. If that second phase
+  // fails, compensate by deleting the database shell so a failed import never
+  // leaves an empty database behind.
+  const appended = await importCsvAction(databaseId, input.csv);
+  if ("error" in appended) {
+    await prisma.page.delete({ where: { id: databaseId } }).catch(() => undefined);
+    return appended;
+  }
+
+  revalidatePath("/w", "layout");
+  return {
+    ok: true,
+    id: databaseId,
+    slug: workspace.slug,
+    counts: appended.counts,
+  };
 }
