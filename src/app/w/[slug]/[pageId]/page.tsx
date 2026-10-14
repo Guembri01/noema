@@ -9,7 +9,6 @@ import { getWorkspaceAccess } from "@/lib/permissions";
 import { pageScopeFor } from "@/lib/guest-access";
 import {
   getAncestorTrail,
-  getBacklinks,
   getDatabase,
   getPageDetail,
   getTeamspaces,
@@ -17,6 +16,7 @@ import {
   getWorkspaceBySlug,
   getWorkspaceMembers,
 } from "@/server/queries";
+import { getLinkedReferences } from "@/server/backlinks";
 import { PageEditor } from "@/components/editor/page-editor";
 import { PageTitle } from "@/components/page-title";
 import { CommentPanel, type CommentNode } from "@/components/comment-panel";
@@ -53,7 +53,7 @@ export default async function PageRoute({
 
   const [database, backlinks, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces] = await Promise.all([
     page.type === "DATABASE" ? getDatabase(page.id) : Promise.resolve(null),
-    getBacklinks(workspace.id, page.id),
+    getLinkedReferences(workspace.id, page.id, visiblePageIds),
     getAncestorTrail(workspace.id, page.id),
     prisma.pageFollow.findUnique({
       where: { userId_pageId: { userId: user.id, pageId: page.id } },
@@ -194,6 +194,8 @@ export default async function PageRoute({
         />
       )}
 
+      <Backlinks items={backlinks} workspaceSlug={workspace.slug} locale={locale} />
+
       <section className="mt-12 border-t border-border pt-6">
         <VersionHistory
           pageId={page.id}
@@ -209,8 +211,6 @@ export default async function PageRoute({
           }))}
         />
       </section>
-
-      <Backlinks items={backlinks} workspaceSlug={workspace.slug} locale={locale} />
 
       <CommentPanel
           locale={locale}
