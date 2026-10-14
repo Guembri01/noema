@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  EMBED_HOST_ALLOWLIST,
+  EMBED_PROVIDERS,
+  EMBED_PROVIDER_IDS,
   detectEmbed,
   embedMeta,
   hostOf,
@@ -9,7 +12,9 @@ import {
   normalizeUrl,
   parseHtmlMetadata,
   parseStartTime,
+  resolveEmbed,
   safeImageUrl,
+  type EmbedProviderId,
 } from "@/lib/embeds";
 
 describe("embeds / url helpers", () => {
@@ -427,6 +432,8 @@ describe("embeds / provider mapping edge cases (B87)", () => {
       "soundcloud",
       "figma",
       "codepen",
+      "twitter",
+      "codesandbox",
     ] as const;
     for (const provider of providers) {
       const meta = embedMeta(provider);
@@ -436,5 +443,241 @@ describe("embeds / provider mapping edge cases (B87)", () => {
       expect(meta?.allow, provider).toBeTruthy();
     }
     expect(embedMeta("none")).toBeNull();
+  });
+});
+
+/* ---------------------- provider allowlist registry: resolveEmbed (MISSING_FEATURES §1/§15) */
+
+/**
+ * MISSING_FEATURES §1 "Embed block" (provider allowlist) + §15 "Media &
+ * embeds": provider resolution goes through ONE typed registry
+ * (`EMBED_PROVIDERS`) holding each provider's exact host patterns, canonical
+ * embed builder and iframe policy (`sandbox` + `allow`). `resolveEmbed(url)`
+ * returns the full config for allowlisted providers and `null` for everything
+ * else - there is deliberately NO generic arbitrary-host iframe fallback: an
+ * unknown host is refused (bookmark card / input) per the repo's SSRF posture.
+ */
+describe("embeds / resolveEmbed provider registry (allowlist)", () => {
+  const canonical: Array<[string, EmbedProviderId, string]> = [
+    ["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube", "https://www.youtube.com/embed/dQw4w9WgXcQ"],
+    ["https://vimeo.com/76979871", "vimeo", "https://player.vimeo.com/video/76979871"],
+    ["https://www.loom.com/share/abc123", "loom", "https://www.loom.com/embed/abc123"],
+    ["https://open.spotify.com/track/abc123", "spotify", "https://open.spotify.com/embed/track/abc123"],
+    [
+      "https://soundcloud.com/artist/track",
+      "soundcloud",
+      "https://w.soundcloud.com/player/?url=https%3A%2F%2Fsoundcloud.com%2Fartist%2Ftrack",
+    ],
+    [
+      "https://www.figma.com/file/abc/Design",
+      "figma",
+      "https://www.figma.com/embed?embed_host=noema&url=https%3A%2F%2Fwww.figma.com%2Ffile%2Fabc%2FDesign",
+    ],
+    ["https://codepen.io/team/pen/slug", "codepen", "https://codepen.io/team/embed/slug"],
+    ["https://x.com/jack/status/20", "twitter", "https://platform.twitter.com/embed/Tweet.html?id=20"],
+    [
+      "https://codesandbox.io/s/my-sandbox-abc",
+      "codesandbox",
+      "https://codesandbox.io/embed/my-sandbox-abc",
+    ],
+  ];
+
+  it("resolves each provider's canonical URL to provider + embedUrl + sandbox + allow", () => {
+    // One canonical URL per registered provider - none may be missing here.
+    expect(new Set(canonical.map(([, provider]) => provider)).size).toBe(EMBED_PROVIDER_IDS.length);
+
+    for (const [url, provider, embedUrl] of canonical) {
+      const resolved = resolveEmbed(url);
+      expect(resolved, url).not.toBeNull();
+      if (!resolved) continue;
+      expect(resolved.provider, url).toBe(provider);
+      expect(resolved.embedUrl, url).toBe(embedUrl);
+      const meta = embedMeta(provider);
+      expect(meta, provider).not.toBeNull();
+      expect(resolved.allow, url).toBe(meta?.allow);
+      expect(resolved.sandbox, url).toBe(EMBED_PROVIDERS[provider].sandbox);
+    }
+  });
+
+  it("canonicalises non-canonical URL shapes for every provider", () => {
+    expect(resolveEmbed("https://m.youtube.com/watch?v=dQw4w9WgXcQ")?.embedUrl).toBe(
+      "https://www.youtube.com/embed/dQw4w9WgXcQ",
+    );
+    expect(resolveEmbed("https://vimeo.com/channels/staffpicks/76979871")?.embedUrl).toBe(
+      "https://player.vimeo.com/video/76979871",
+    );
+    expect(resolveEmbed("https://www.loom.com/embed/abc123")?.embedUrl).toBe(
+      "https://www.loom.com/embed/abc123",
+    );
+    expect(resolveEmbed("https://open.spotify.com/playlist/pl_1?si=zzz")?.embedUrl).toBe(
+      "https://open.spotify.com/embed/playlist/pl_1?si=zzz",
+    );
+    expect(resolveEmbed("https://soundcloud.com/artist/track")?.embedUrl).toBe(
+      "https://w.soundcloud.com/player/?url=https%3A%2F%2Fsoundcloud.com%2Fartist%2Ftrack",
+    );
+    expect(resolveEmbed("https://www.figma.com/design/abc/Design")?.embedUrl).toBe(
+      "https://www.figma.com/embed?embed_host=noema&url=https%3A%2F%2Fwww.figma.com%2Fdesign%2Fabc%2FDesign",
+    );
+    expect(resolveEmbed("https://codepen.io/team/pen/slug/")?.embedUrl).toBe(
+      "https://codepen.io/team/embed/slug/",
+    );
+    // Twitter/X: share URLs (twitter.com / x.com / mobile / i/web path) and
+    // the canonical platform iframe all collapse to one embed URL.
+    expect(resolveEmbed("https://twitter.com/jack/status/20?s=21")).toMatchObject({
+      provider: "twitter",
+      embedUrl: "https://platform.twitter.com/embed/Tweet.html?id=20",
+    });
+    expect(resolveEmbed("https://www.x.com/jack/status/20")?.embedUrl).toBe(
+      "https://platform.twitter.com/embed/Tweet.html?id=20",
+    );
+    expect(resolveEmbed("https://mobile.twitter.com/i/web/status/20")?.embedUrl).toBe(
+      "https://platform.twitter.com/embed/Tweet.html?id=20",
+    );
+    expect(resolveEmbed("https://platform.twitter.com/embed/Tweet.html?id=20")?.provider).toBe(
+      "twitter",
+    );
+    // CodeSandbox: /s/, /p/sandbox/ and /embed/ shapes all collapse.
+    expect(resolveEmbed("https://www.codesandbox.io/p/sandbox/my-sandbox-abc")?.embedUrl).toBe(
+      "https://codesandbox.io/embed/my-sandbox-abc",
+    );
+    expect(resolveEmbed("https://codesandbox.io/embed/my-sandbox-abc")?.provider).toBe(
+      "codesandbox",
+    );
+    expect(resolveEmbed("codesandbox.io/s/my-sandbox-abc")?.embedUrl).toBe(
+      "https://codesandbox.io/embed/my-sandbox-abc",
+    );
+  });
+
+  it("refuses provider hosts whose path has no embed", () => {
+    const refused = [
+      "https://www.youtube.com/results?search_query=cats",
+      "https://vimeo.com/blog",
+      "https://www.loom.com/share",
+      "https://codepen.io/", // no /pen/ segment → not a pen embed
+      "https://codepen.io/team/pen", // pen without a slug
+      "https://x.com/jack",
+      "https://x.com/jack/status/",
+      "https://x.com/jack/status/not-a-number", // ids are digits only
+      "https://platform.twitter.com/embed/Tweet.html", // no ?id=
+      "https://codesandbox.io/s", // no sandbox id
+      "https://codesandbox.io/explore",
+      "https://codesandbox.io/",
+    ];
+    for (const url of refused) {
+      expect(resolveEmbed(url), url).toBeNull();
+      expect(detectEmbed(url).provider, url).toBe("none");
+    }
+  });
+
+  it("refuses anything outside the host allowlist - no generic iframe fallback", () => {
+    const refused = [
+      "https://evil.example.com/watch?v=abc",
+      "https://youtube.com.evil.example/watch?v=abc",
+      "https://music.youtube.com/watch?v=abc", // no wildcard subdomains
+      "https://x.com.evil.example/jack/status/20",
+      "https://eviltwitter.com/jack/status/20",
+      "https://evil.codesandbox.io/s/my-sandbox-abc",
+      "https://localhost:3000/watch?v=abc",
+      "https://127.0.0.1/watch?v=abc",
+      "https://169.254.169.254/latest/meta-data/",
+      "https://www.youtube.com@evil.example/watch?v=abc", // userinfo trick
+      "javascript:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+      "//www.youtube.com/watch?v=abc",
+      "",
+    ];
+    for (const value of refused) expect(resolveEmbed(value), value).toBeNull();
+    // detectEmbed keeps mirroring the refusal: no provider, no embed URL.
+    expect(detectEmbed("https://evil.example.com/watch?v=abc")).toEqual({
+      provider: "none",
+      embedUrl: null,
+    });
+  });
+
+  it("gives every registered provider a tight sandbox (scripts yes, top-nav no)", () => {
+    for (const id of EMBED_PROVIDER_IDS) {
+      const definition = EMBED_PROVIDERS[id];
+      expect(definition, id).toBeDefined();
+      if (!definition) continue;
+      expect(definition.hosts.length, id).toBeGreaterThan(0);
+      for (const host of definition.hosts) {
+        expect(host, `${id}: ${host}`).toBe(host.toLowerCase());
+        expect(host.startsWith("www."), `${id}: ${host}`).toBe(false);
+      }
+      // Player needs scripts + its own origin; popups for outbound links;
+      // forms for in-frame search/login flows.
+      expect(definition.sandbox, id).toContain("allow-scripts");
+      expect(definition.sandbox, id).toContain("allow-same-origin");
+      expect(definition.sandbox, id).toContain("allow-popups");
+      expect(definition.sandbox, id).toContain("allow-forms");
+      // Never navigate the host page from inside the frame.
+      expect(definition.sandbox, id).not.toContain("allow-top-navigation");
+      // No duplicate tokens.
+      const tokens = definition.sandbox.split(" ");
+      expect(new Set(tokens).size, id).toBe(tokens.length);
+      // Meta policy present and well-formed.
+      expect(definition.meta.label, id).toBeTruthy();
+      expect(definition.meta.title, id).toBeTruthy();
+      expect(definition.meta.allow, id).toBeTruthy();
+      expect(definition.meta.aspectRatio, id).toMatch(/^\d+ \/ \d+$/);
+    }
+    // Media players get the presentation API, code playgrounds get modals.
+    for (const id of ["youtube", "vimeo", "loom", "spotify", "soundcloud"] as const) {
+      expect(EMBED_PROVIDERS[id].sandbox, id).toContain("allow-presentation");
+      expect(EMBED_PROVIDERS[id].sandbox, id).not.toContain("allow-modals");
+    }
+    for (const id of ["codepen", "codesandbox"] as const) {
+      expect(EMBED_PROVIDERS[id].sandbox, id).toContain("allow-modals");
+    }
+  });
+
+  it("derives the host allowlist from the registry: exact, lowercase, no dupes, no www.", () => {
+    expect(EMBED_HOST_ALLOWLIST).toEqual(
+      EMBED_PROVIDER_IDS.flatMap((id) => EMBED_PROVIDERS[id].hosts),
+    );
+    expect(new Set(EMBED_HOST_ALLOWLIST).size).toBe(EMBED_HOST_ALLOWLIST.length);
+
+    const allowed = [
+      "twitter.com",
+      "www.twitter.com",
+      "WWW.TWITTER.COM",
+      "x.com",
+      "mobile.twitter.com",
+      "mobile.x.com",
+      "platform.twitter.com",
+      "codesandbox.io",
+      "www.codesandbox.io",
+    ];
+    for (const host of allowed) expect(isEmbedHostAllowed(host), host).toBe(true);
+
+    const rejected = [
+      "platform.twitter.com.evil.example",
+      "evil.codesandbox.io",
+      "twitter.com.",
+      "x.com.evil.example",
+      "sub.x.com",
+      "codesandbox.io.evil.example",
+      "platform-x.com",
+    ];
+    for (const host of rejected) expect(isEmbedHostAllowed(host), host).toBe(false);
+  });
+
+  it("keeps detectEmbed the exact {provider, embedUrl} projection of resolveEmbed", () => {
+    const values = [
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "https://x.com/jack/status/20",
+      "https://codesandbox.io/s/my-sandbox-abc",
+      "https://evil.example.com/watch?v=x",
+      "javascript:alert(1)",
+    ];
+    for (const value of values) {
+      const resolved = resolveEmbed(value);
+      const info = detectEmbed(value);
+      if (resolved) {
+        expect(info, value).toEqual({ provider: resolved.provider, embedUrl: resolved.embedUrl });
+      } else {
+        expect(info, value).toEqual({ provider: "none", embedUrl: null });
+      }
+    }
   });
 });
