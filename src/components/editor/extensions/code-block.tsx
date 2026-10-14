@@ -7,10 +7,11 @@ import {
   ReactNodeViewRenderer,
   type NodeViewProps,
 } from "@tiptap/react";
-import { CodeBlockLowlight } from "@tiptap/extension-code-block-lowlight";
+import { CodeBlockLowlight, type CodeBlockLowlightOptions } from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
 import { cn } from "@/lib/utils";
 import { codeLanguageLabel, searchCodeLanguages } from "@/lib/code-languages";
+import { t } from "@/lib/i18n";
 
 /**
  * Syntax highlighting with highlight.js' *common* language set only, so the
@@ -28,9 +29,21 @@ const lowlight = createLowlight(common);
  * attribute is the standard TipTap one, so stored document JSON, markdown
  * export and the read-only DocRenderer keep working unchanged.
  */
-export const CodeBlock = CodeBlockLowlight.extend({
+/** CodeBlockLowlight options plus the locale threaded from `page-editor.tsx`. */
+type CodeBlockOptions = CodeBlockLowlightOptions & { locale: string };
+
+export const CodeBlock = CodeBlockLowlight.extend<CodeBlockOptions>({
+  addOptions() {
+    return {
+      ...this.parent?.(),
+      locale: "en",
+    } as CodeBlockOptions;
+  },
   addNodeView() {
-    return ReactNodeViewRenderer(CodeBlockView);
+    const locale = this.options.locale;
+    return ReactNodeViewRenderer((props: NodeViewProps) => (
+      <CodeBlockView {...props} locale={locale} />
+    ));
   },
 }).configure({
   lowlight,
@@ -38,7 +51,13 @@ export const CodeBlock = CodeBlockLowlight.extend({
   defaultLanguage: null,
 });
 
-function CodeBlockView({ node, editor, updateAttributes, selected }: NodeViewProps) {
+function CodeBlockView({
+  node,
+  editor,
+  updateAttributes,
+  selected,
+  locale,
+}: NodeViewProps & { locale: string }) {
   const attrs = node.attrs as { language?: unknown; blockColor?: unknown };
   const language = String(attrs.language ?? "");
   const blockColor = attrs.blockColor ? String(attrs.blockColor) : null;
@@ -101,8 +120,8 @@ function CodeBlockView({ node, editor, updateAttributes, selected }: NodeViewPro
               className="noema-code-lang-filter"
               type="text"
               value={query}
-              placeholder="Filter languages…"
-              aria-label="Filter languages"
+              placeholder={t(locale, "codeFilterLanguages")}
+              aria-label={t(locale, "codeFilterLanguagesAria")}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
@@ -116,7 +135,7 @@ function CodeBlockView({ node, editor, updateAttributes, selected }: NodeViewPro
               }}
             />
             {matches.length > 0 ? (
-              <div className="noema-code-lang-list" role="listbox" aria-label="Languages">
+              <div className="noema-code-lang-list" role="listbox" aria-label={t(locale, "codeLanguagesAria")}>
                 {matches.map((lang) => (
                   <button
                     key={lang.value}
@@ -136,7 +155,7 @@ function CodeBlockView({ node, editor, updateAttributes, selected }: NodeViewPro
                 ))}
               </div>
             ) : (
-              <p className="noema-code-lang-empty">No matches</p>
+              <p className="noema-code-lang-empty">{t(locale, "codeNoMatches")}</p>
             )}
           </div>
         )}

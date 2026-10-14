@@ -451,3 +451,69 @@ describe("editor-surface catalogue keys", () => {
     }
   });
 });
+
+/**
+ * P2.2 — editor node-view strings. Keys extracted from the React node views
+ * rendered inside the editor surface: code block language picker, callout,
+ * toggle, table of contents, image block, linked database, template button,
+ * Ask AI block and breadcrumb. Written red-first: these assertions fail until
+ * the keys land in all five catalogues.
+ */
+const NODE_VIEW_KEYS = [
+  "codeFilterLanguages",
+  "codeFilterLanguagesAria",
+  "codeLanguagesAria",
+  "codeNoMatches",
+  "calloutChangeIcon",
+  "toggleCollapse",
+  "toggleExpand",
+  "tocEmpty",
+  "imageAlignLeft",
+  "imageAlignCenter",
+  "imageAlignRight",
+  "imageResizeAria",
+  "imageCaptionPlaceholder",
+  "imageCaptionAria",
+  "imageAlignmentAria",
+  "imageAltText",
+  "imageAltPlaceholder",
+  "linkedLinkPlaceholder",
+  "linkedNoDatabases",
+  "linkedDatabaseFallback",
+  "linkedOpenAria",
+  "linkedChangeAria",
+  "linkedRemoveAria",
+  "linkedLoadFailed",
+  "chooseTemplate",
+  "insertWord",
+  "templateRemoveAria",
+  "askAiPlaceholder",
+  "askWord",
+  "askSummarizePage",
+  "breadcrumbNoParents",
+] as const satisfies readonly I18nKey[];
+
+describe("editor node-view catalogue keys", () => {
+  it("defines every node-view key in every locale, with no empty value", () => {
+    for (const key of NODE_VIEW_KEYS) {
+      expect({ key, present: translationKeys().includes(key) }).toEqual({ key, present: true });
+      for (const { code } of LOCALES) {
+        expect({ key, code, value: t(code, key).trim() }).toEqual({
+          key,
+          code,
+          value: expect.any(String),
+        });
+        expect(t(code, key).trim()).not.toBe("");
+      }
+    }
+  });
+
+  it("translates each node-view key in at least one shipped locale", () => {
+    for (const key of NODE_VIEW_KEYS) {
+      const localised = LOCALES.some(
+        ({ code }) => code !== "en" && t(code, key) !== t("en", key),
+      );
+      expect({ key, localised }).toEqual({ key, localised: true });
+    }
+  });
+});

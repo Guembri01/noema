@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { Markdown } from "@/components/markdown";
 import { hasMarkdown, markdownToTipTap } from "@/lib/markdown"
 import { stripLoneSurrogates } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -22,14 +23,14 @@ declare module "@tiptap/core" {
 }
 
 /** A block that asks the configured AI provider and can insert the answer. */
-export const AskAi = Node.create<{ workspaceId: string }>({
+export const AskAi = Node.create<{ workspaceId: string; locale: string }>({
   name: "askAi",
   group: "block",
   atom: true,
   draggable: true,
 
   addOptions() {
-    return { workspaceId: "" };
+    return { workspaceId: "", locale: "en" };
   },
 
   addAttributes() {
@@ -58,8 +59,9 @@ export const AskAi = Node.create<{ workspaceId: string }>({
 
   addNodeView() {
     const workspaceId = this.options.workspaceId;
+    const locale = this.options.locale;
     return ReactNodeViewRenderer((props) => (
-      <AskAiView {...props} workspaceId={workspaceId} />
+      <AskAiView {...props} workspaceId={workspaceId} locale={locale} />
     ));
   },
 });
@@ -70,7 +72,8 @@ function AskAiView({
   updateAttributes,
   deleteNode,
   workspaceId,
-}: NodeViewProps & { workspaceId?: string }) {
+  locale,
+}: NodeViewProps & { workspaceId?: string; locale: string }) {
   const [loading, setLoading] = useState(false);
   const prompt = String(node.attrs.prompt ?? "");
   const answer = String(node.attrs.answer ?? "");
@@ -90,12 +93,12 @@ function AskAiView({
       });
       const data = (await response.json()) as { text?: string; error?: string };
       if (!response.ok) {
-        toast.error(data.error ?? "AI request failed");
+        toast.error(data.error ?? t(locale, "aiRequestFailed"));
         return;
       }
       updateAttributes({ answer: stripLoneSurrogates(data.text ?? "") });
     } catch {
-      toast.error("AI request failed");
+      toast.error(t(locale, "aiRequestFailed"));
     } finally {
       setLoading(false);
     }
@@ -115,12 +118,12 @@ function AskAiView({
       });
       const data = (await response.json()) as { text?: string; error?: string };
       if (!response.ok) {
-        toast.error(data.error ?? "AI request failed");
+        toast.error(data.error ?? t(locale, "aiRequestFailed"));
         return;
       }
       updateAttributes({ answer: stripLoneSurrogates(data.text ?? "") });
     } catch {
-      toast.error("AI request failed");
+      toast.error(t(locale, "aiRequestFailed"));
     } finally {
       setLoading(false);
     }
@@ -144,7 +147,7 @@ function AskAiView({
     <NodeViewWrapper className="noema-ask-ai" data-ask-ai="">
       <div className="noema-ask-card" contentEditable={false}>
         <div className="noema-ask-head">
-          <Sparkles className="h-3.5 w-3.5" /> Ask AI
+          <Sparkles className="h-3.5 w-3.5" /> {t(locale, "askAI")}
         </div>
         <input
           value={prompt}
@@ -155,7 +158,7 @@ function AskAiView({
               void ask();
             }
           }}
-          placeholder="Ask anything…"
+          placeholder={t(locale, "askAiPlaceholder")}
           className="noema-ask-input"
         />
         <div className="noema-ask-actions">
@@ -165,7 +168,7 @@ function AskAiView({
             onClick={() => void ask()}
             className="noema-ask-btn"
           >
-            {loading ? "Thinking…" : "Ask"}
+            {loading ? t(locale, "chatThinking") : t(locale, "askWord")}
           </button>
           <button
             type="button"
@@ -173,16 +176,16 @@ function AskAiView({
             onClick={() => void summarize()}
             className="noema-ask-btn"
           >
-            Summarize page
+            {t(locale, "askSummarizePage")}
           </button>
           {answer && (
             <button type="button" onClick={insertAnswer} className="noema-ask-btn">
-              <CornerDownLeft className="h-3.5 w-3.5" /> Insert
+              <CornerDownLeft className="h-3.5 w-3.5" /> {t(locale, "insertWord")}
             </button>
           )}
           <button
             type="button"
-            aria-label="Remove"
+            aria-label={t(locale, "remove")}
             onClick={() => deleteNode()}
             className="noema-ask-icon"
           >

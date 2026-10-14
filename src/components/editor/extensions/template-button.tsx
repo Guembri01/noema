@@ -8,6 +8,7 @@ import {
 } from "@tiptap/react";
 import { Copy } from "lucide-react";
 import { TEMPLATES, templateContent, type TemplateId } from "@/lib/templates";
+import { t } from "@/lib/i18n";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -18,10 +19,14 @@ declare module "@tiptap/core" {
 }
 
 /** A reusable button that inserts a block template at its position. */
-export const TemplateButton = Node.create({
+export const TemplateButton = Node.create<{ locale: string }>({
   name: "templateButton",
   group: "block",
   atom: true,
+
+  addOptions() {
+    return { locale: "en" };
+  },
 
   addAttributes() {
     return { templateId: { default: "meeting" } };
@@ -48,21 +53,27 @@ export const TemplateButton = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(TemplateButtonView);
+    const locale = this.options.locale;
+    return ReactNodeViewRenderer((props: NodeViewProps) => (
+      <TemplateButtonView {...props} locale={locale} />
+    ));
   },
 });
 
 /**
- * D7 note (B57): the labels below — `aria-label="Choose template"`, "Insert",
- * `aria-label="Remove template button"` — are intentionally still English
- * literals. This node view receives no locale: threading one needs
- * `page-editor.tsx` (editor-slot owned) and the keys must land in all five
- * catalogues via `scripts/i18n-insert.mjs` (i18n slot, single-writer rule).
- * Localized together with the unified picker in R31.10/T31.10 (spec
- * docs/specs/templates.md D7); none of these strings are asserted anywhere yet
- * (only `e2e` text matching risk — see spec §10 note 3).
+ * D7 note: previously the labels below — `aria-label="Choose template"`,
+ * "Insert" and `aria-label="Remove template button"` — were English literals
+ * because this node view received no locale. `page-editor.tsx` now threads the
+ * active locale here through the extension's `configure({ locale })` option and
+ * the strings resolve from the shared catalogue.
  */
-function TemplateButtonView({ node, editor, getPos, deleteNode }: NodeViewProps) {
+function TemplateButtonView({
+  node,
+  editor,
+  getPos,
+  deleteNode,
+  locale,
+}: NodeViewProps & { locale: string }) {
   const templateId = (node.attrs.templateId as TemplateId) ?? "meeting";
   const definition = TEMPLATES.find((t) => t.id === templateId) ?? TEMPLATES[0];
 
@@ -96,7 +107,7 @@ function TemplateButtonView({ node, editor, getPos, deleteNode }: NodeViewProps)
               })
               .run()
           }
-          aria-label="Choose template"
+          aria-label={t(locale, "chooseTemplate")}
           className="noema-template-select"
         >
           {TEMPLATES.map((template) => (
@@ -106,11 +117,11 @@ function TemplateButtonView({ node, editor, getPos, deleteNode }: NodeViewProps)
           ))}
         </select>
         <button type="button" className="noema-template-insert" onClick={insert}>
-          Insert
+          {t(locale, "insertWord")}
         </button>
         <button
           type="button"
-          aria-label="Remove template button"
+          aria-label={t(locale, "templateRemoveAria")}
           className="noema-template-remove"
           onClick={() => deleteNode()}
         >
