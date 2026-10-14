@@ -8,6 +8,7 @@ import {
   type MarkdownShortcutKind,
 } from "@/lib/markdown";
 import { ClearFormatting } from "@/components/editor/extensions/clear-formatting";
+import { SmartTypography } from "@/components/editor/extensions/smart-typography";
 import {
   matchScriptShortcut,
   Subscript,
@@ -29,12 +30,17 @@ import {
  * `e2e/editor-extras.spec.ts`; the pure matcher tests keep their spec honest.
  *
  * It also plays a second role: anchoring the **text formatting** slice
- * (clear formatting, subscript/superscript). `page-editor.tsx` owns the
+ * (clear formatting, subscript/superscript) and the **smart typography** slice
+ * (curly quotes, en/em dashes, `...`, ©/®/™). `page-editor.tsx` owns the
  * editor's extension list but is shared across the whole fleet, so the new
  * extensions are registered through TipTap v3's `addExtensions` — the same
  * hook `StarterKit` uses to bundle its parts — and flattened into the
- * schema from here. Once they are listed in `page-editor.tsx` directly,
+ * schema/rules from here. Once they are listed in `page-editor.tsx` directly,
  * drop the hook (duplicate names would warn).
+ *
+ * Ordering note: the typography rules are appended after the stock and B18
+ * rules, and are compiled in `TYPOGRAPHY_RULES` order (em dash before en
+ * dash), so the lib's documented dash precedence is preserved.
  */
 
 /** Build a TipTap `find` function for the given shortcut kinds. */
@@ -52,7 +58,7 @@ export const InputRules = Extension.create({
   name: "inputRules",
 
   addExtensions() {
-    return [ClearFormatting, Subscript, Superscript];
+    return [ClearFormatting, Subscript, Superscript, SmartTypography];
   },
 
   addInputRules() {
