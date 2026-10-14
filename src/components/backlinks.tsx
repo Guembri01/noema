@@ -73,7 +73,7 @@ export function Backlinks({
         <div className={items.length > 0 ? "mt-6" : undefined}>
           <h2 className={heading}>
             <AtSign className="h-4 w-4" />
-            {t(locale, "mentionHeading")} ({unlinked.length})
+            {t(locale, "unlinkedMentions")} ({unlinked.length})
           </h2>
           <ReferenceList items={unlinked} {...listProps} />
         </div>

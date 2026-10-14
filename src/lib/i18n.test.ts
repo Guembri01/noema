@@ -562,3 +562,39 @@ describe("editor suggestions catalogue keys", () => {
     }
   });
 });
+
+/**
+ * Page-route wiring — the "Unlinked mentions" reference section heading.
+ * `Backlinks` previously reused the editor's `mentionHeading` ("Mention") for
+ * this section; it now carries its own key so the label can read as a full
+ * phrase and translate independently of the inline mention menu. Written
+ * red-first (B-slice on the page route): `t` resolves to `undefined` for the
+ * unknown key until it lands in all five catalogues. Source-key order is pinned
+ * by the block scanner above (`unlinkedMentions` follows `linkedReferences`).
+ */
+const REFERENCE_KEYS = ["unlinkedMentions"] as const satisfies readonly I18nKey[];
+
+describe("page reference catalogue keys", () => {
+  it("defines every reference key in every locale, with no empty value", () => {
+    for (const key of REFERENCE_KEYS) {
+      expect({ key, present: translationKeys().includes(key) }).toEqual({ key, present: true });
+      for (const { code } of LOCALES) {
+        expect({ key, code, value: t(code, key).trim() }).toEqual({
+          key,
+          code,
+          value: expect.any(String),
+        });
+        expect(t(code, key).trim()).not.toBe("");
+      }
+    }
+  });
+
+  it("translates each reference key in at least one shipped locale", () => {
+    for (const key of REFERENCE_KEYS) {
+      const localised = LOCALES.some(
+        ({ code }) => code !== "en" && t(code, key) !== t("en", key),
+      );
+      expect({ key, localised }).toEqual({ key, localised: true });
+    }
+  });
+});

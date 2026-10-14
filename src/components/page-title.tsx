@@ -36,7 +36,6 @@ import {
   appearanceClasses,
   parseAppearance,
   patchAppearance,
-  serializeAppearance,
   type PageAppearance,
 } from "@/lib/page-appearance";
 import { pageToMarkdown } from "@/lib/serialize";
@@ -109,8 +108,8 @@ export function PageTitle({
   initialFullWidth: boolean;
   initialSmallText: boolean;
   initialFont: string;
-  /** Line spacing has no server column yet (layered on via localStorage). */
-  initialLineSpacing?: PageAppearance["lineSpacing"];
+  /** Persisted line-spacing preset (`Page.lineSpacing`); parseAppearance sanitizes the raw column value. */
+  initialLineSpacing?: string;
   /** Forward-compatible seed for the full appearance JSON once persisted. */
   initialAppearance?: unknown;
   initialSharedToken: string | null;
@@ -159,7 +158,6 @@ export function PageTitle({
 
   const notifyKey = `noema:page-notify:${pageId}`;
   const [notifyLevel, setNotifyLevel] = useState<NotifyLevel>("all");
-  const appearanceKey = `noema:page-appearance:${pageId}`;
 
   // Notion keeps the page's action bar visible and reveals a hairline only
   // once the content moves under it.
@@ -195,22 +193,9 @@ export function PageTitle({
     }
   }, [notifyKey]);
 
-  // Line spacing has no server column yet, so it is layered on top of the
-  // server-backed small-text/font via a per-page localStorage entry (same
-  // pattern as Notify me). A server `initialAppearance` wins when present.
-  useEffect(() => {
-    if (initialAppearance !== undefined) return;
-    try {
-      const stored = window.localStorage.getItem(appearanceKey);
-      if (!stored) return;
-      const parsed = parseAppearance(JSON.parse(stored));
-      setAppearance((previous) =>
-        patchAppearance(previous, { lineSpacing: parsed.lineSpacing }),
-      );
-    } catch {
-      // Corrupt JSON or unavailable storage — keep the server/default value.
-    }
-  }, [appearanceKey, initialAppearance]);
+  // Line spacing is server-backed (`Page.lineSpacing`) and seeded through the
+  // appearance state above; no localStorage layer remains. A server
+  // `initialAppearance` still wins when present.
 
   const save = (patch: Record<string, unknown>, revalidate = true) =>
     startTransition(async () => {
@@ -343,22 +328,21 @@ export function PageTitle({
   };
 
   // Single funnel for the page-appearance engine. The sanitized patch is
-  // applied locally first; only the fields the current page model understands
-  // (smallText, font) reach the existing update action — line spacing is kept
-  // per page in localStorage until the schema grows a column.
+  // applied locally first, then every field the page model understands
+  // (smallText, font, lineSpacing) is persisted through the update action, so
+  // a reload re-seeds from the server.
   const applyAppearance = (patch: Partial<PageAppearance>) => {
     const next = patchAppearance(appearance, patch);
     setAppearance(next);
-    if (patch.lineSpacing !== undefined) {
-      try {
-        window.localStorage.setItem(appearanceKey, serializeAppearance(next));
-      } catch {
-        // localStorage unavailable — keep the in-memory value only.
-      }
-    }
+    const persisted: Record<string, unknown> = {};
     if (patch.fontSize !== undefined || patch.font !== undefined) {
-      save({ smallText: next.fontSize === "small", font: next.font });
+      persisted.smallText = next.fontSize === "small";
+      persisted.font = next.font;
     }
+    if (patch.lineSpacing !== undefined) {
+      persisted.lineSpacing = next.lineSpacing;
+    }
+    if (Object.keys(persisted).length > 0) save(persisted);
   };
 
   const applyStyle = (value: string) => {
