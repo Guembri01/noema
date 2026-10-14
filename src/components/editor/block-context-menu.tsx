@@ -40,6 +40,7 @@ import {
   type BlockDeletion,
   type BlockDoc,
 } from "@/lib/blocks";
+import { buildBlockDeepLink } from "@/lib/deep-links";
 import { t } from "@/lib/i18n";
 
 type I18nKey = Parameters<typeof t>[1];
@@ -73,6 +74,19 @@ const TEXT_COLORS: { labelKey: I18nKey; value: string | null }[] = [
 
 const BLOCK_SELECTOR =
   "p, h1, h2, h3, h4, h5, h6, pre, blockquote, li, [data-callout], .noema-toggle";
+
+/**
+ * Percent-decode a URL path segment, falling back to the raw text when the
+ * escape is malformed (`"100%"`) — mirrors `deep-links.ts`'s decoder so the
+ * builder re-encodes a clean value instead of double-encoding `window.location`.
+ */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
 
 type TurnKind =
   | "paragraph"
@@ -252,9 +266,29 @@ export function BlockContextMenu({
     editor.chain().focus().setContent(restored, { emitUpdate: true }).run();
   };
 
+  /**
+   * Copy a deep link to the block's page.
+   *
+   * `src/lib/deep-links.ts` is the canonical builder; the old handler pasted
+   * `${origin}${pathname}#block-<pos>` with a *document offset* as the anchor.
+   * The canonical route is `/w/<workspaceSlug>/<pageId>` and this menu is not
+   * handed either id (`page-editor.tsx` is shared and out of scope for this
+   * slice), but the editor only mounts on that route, so the live URL is the
+   * authoritative source. TipTap nodes still carry no persisted block id, so the
+   * `#<blockId>` fragment is deferred: we emit the page link now and pass the
+   * block id as the builder's second argument once stable ids land.
+   */
   const copyLink = () => {
     if (pos === null) return;
-    const url = `${window.location.origin}${window.location.pathname}#block-${pos}`;
+    const { origin, pathname } = window.location;
+    const segments = pathname.split("/").filter(Boolean).map(decodeSegment);
+    const onPageRoute = segments[0] === "w" && segments.length >= 3;
+    const url = onPageRoute
+      ? buildBlockDeepLink(segments[segments.length - 1], undefined, {
+          origin,
+          workspaceSlug: segments[1],
+        })
+      : `${origin}${pathname}`;
     void navigator.clipboard?.writeText(url);
     toast.success(t(locale, "copied"));
   };
