@@ -357,7 +357,11 @@ export function DatabaseView({
       else scope[candidate.name] = formatCell(value, candidate as unknown as QueryProperty);
     }
     const result = evaluateFormula(expression, scope);
-    return result.ok ? String(result.value) : `#${result.error}`;
+    return result.ok
+      ? String(result.value)
+      : result.error.startsWith("#")
+        ? result.error
+        : `#${result.error}`;
   };
 
   /** Related rows for a relation property, for the relation picker. */
