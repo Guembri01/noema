@@ -27,6 +27,13 @@ import {
   visibleMenuItems,
   type MenuItem,
 } from "@/lib/actions-menu";
+import {
+  parseAppearance,
+  type PageAppearance,
+  type PageFont,
+  type PageLineSpacing,
+} from "@/lib/page-appearance";
+import { computeStats, type TextBlock } from "@/lib/text-stats";
 import type { PageMenuData } from "@/server/actions/page-menu";
 
 export const EMOJIS = [
@@ -45,10 +52,16 @@ export const COVERS = [
   "linear-gradient(120deg, #e0c3fc 0%, #8ec5fc 100%)",
 ];
 
-const FONT_OPTIONS = [
+const FONT_OPTIONS: { id: PageFont; label: string }[] = [
   { id: "default", label: "Default" },
   { id: "serif", label: "Serif" },
   { id: "mono", label: "Mono" },
+];
+
+const LINE_SPACING_OPTIONS: { id: PageLineSpacing; label: string }[] = [
+  { id: "tight", label: "Tight" },
+  { id: "normal", label: "Normal" },
+  { id: "loose", label: "Loose" },
 ];
 
 const EXPORTS = [
@@ -87,11 +100,17 @@ type ActionsMenuProps = {
   cover: string | null;
   data: PageMenuData | null;
   notifyLevel: NotifyLevel;
+  /** Resolved page appearance; falls back to the legacy font/smallText props. */
+  appearance?: PageAppearance;
+  /** Document block tree for the text-stats footer, when available. */
+  content?: TextBlock[];
   workspaces: { id: string; name: string; slug: string }[];
   teamspaces: { id: string; name: string; icon: string | null }[];
   onOpening: () => void;
   onToggle: (key: ActionsMenuToggleKey) => void;
   onStyle: (font: string) => void;
+  /** Preferred appearance handler (partial patch); onStyle is the fallback. */
+  onAppearance?: (patch: Partial<PageAppearance>) => void;
   onCopyLink: () => void;
   onCopyContents: () => void;
   onDuplicate: () => void;
@@ -121,11 +140,14 @@ export function ActionsMenu(props: ActionsMenuProps) {
     cover,
     data,
     notifyLevel,
+    appearance,
+    content,
     workspaces,
     teamspaces,
     onOpening,
     onToggle,
     onStyle,
+    onAppearance,
     onCopyLink,
     onCopyContents,
     onDuplicate,
@@ -183,8 +205,33 @@ export function ActionsMenu(props: ActionsMenuProps) {
   const active = activeIndex >= 0 && activeIndex < flat.length ? activeIndex : -1;
   const activeItem = active >= 0 ? flat[active] : null;
 
+  // One resolved appearance drives every style control. When the caller wires
+  // the page-appearance engine it wins; otherwise the legacy font/smallText
+  // props are parsed through the same sanitizer so both paths behave alike.
+  const resolvedAppearance = useMemo<PageAppearance>(
+    () =>
+      appearance ??
+      parseAppearance({
+        fontSize: smallText ? "small" : "default",
+        font,
+        lineSpacing: "normal",
+      }),
+    [appearance, smallText, font],
+  );
+
+  // text-stats is the preferred tally; the server's formatWordStats number is
+  // only a fallback while (or when) the document is unavailable.
+  const pageStats = useMemo(
+    () => (content ? computeStats(content) : null),
+    [content],
+  );
+  const statWords = pageStats?.words ?? data?.stats.words ?? 0;
+  const statReading = pageStats
+    ? pageStats.readingTimeLabel
+    : (data?.stats.reading ?? "less than a minute");
+
   const toggleState: Record<string, boolean> = {
-    "small-text": smallText,
+    "small-text": resolvedAppearance.fontSize === "small",
     "full-width": fullWidth,
     lock: locked,
   };
@@ -465,8 +512,16 @@ export function ActionsMenu(props: ActionsMenuProps) {
       return;
     }
     if (item.kind === "toggle") {
-      if (item.id === "small-text") onToggle("smallText");
-      else if (item.id === "full-width") onToggle("fullWidth");
+      if (item.id === "small-text") {
+        if (onAppearance) {
+          onAppearance({
+            fontSize:
+              resolvedAppearance.fontSize === "small" ? "default" : "small",
+          });
+        } else {
+          onToggle("smallText");
+        }
+      } else if (item.id === "full-width") onToggle("fullWidth");
       else if (item.id === "lock") onToggle("locked");
       return;
     }
@@ -644,11 +699,38 @@ export function ActionsMenu(props: ActionsMenuProps) {
                     key={option.id}
                     type="button"
                     role="radio"
-                    aria-checked={font === option.id}
-                    onClick={() => onStyle(option.id)}
+                    aria-checked={resolvedAppearance.font === option.id}
+                    onClick={() => {
+                      if (onAppearance) onAppearance({ font: option.id });
+                      else onStyle(option.id);
+                    }}
                     className={cn(
                       "flex-1 rounded px-1 py-1 text-xs text-muted hover:bg-surface-2",
-                      font === option.id && "bg-surface-2 text-fg",
+                      resolvedAppearance.font === option.id && "bg-surface-2 text-fg",
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {query.trim() === "" && onAppearance && (
+              <div
+                role="radiogroup"
+                aria-label="Line spacing"
+                className="flex gap-1 border-b border-border px-2 py-1.5"
+              >
+                {LINE_SPACING_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={resolvedAppearance.lineSpacing === option.id}
+                    onClick={() => onAppearance({ lineSpacing: option.id })}
+                    className={cn(
+                      "flex-1 rounded px-1 py-1 text-xs text-muted hover:bg-surface-2",
+                      resolvedAppearance.lineSpacing === option.id &&
+                        "bg-surface-2 text-fg",
                     )}
                   >
                     {option.label}
@@ -800,7 +882,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
               {data ? (
                 <>
                   <p>
-                    {data.stats.words} words · {data.stats.reading}
+                    {statWords} words · {statReading}
                   </p>
                   {data.lastEditedBy && <p>Last edited by {data.lastEditedBy}</p>}
                   <p>{formatFooterTime(data.updatedAt, new Date())}</p>
@@ -877,7 +959,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
               {data ? (
                 <>
                   <p>
-                    {data.stats.words} words · {data.stats.reading}
+                    {statWords} words · {statReading}
                   </p>
                   <p className="text-muted">
                     {data.lastEditedBy

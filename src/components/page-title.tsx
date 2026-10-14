@@ -32,9 +32,49 @@ import {
 } from "@/components/topbar/actions-menu";
 import { sendChatPrompt } from "@/components/topbar/chat-bridge";
 import { formatEditedLabel } from "@/lib/actions-menu";
+import {
+  appearanceClasses,
+  parseAppearance,
+  patchAppearance,
+  serializeAppearance,
+  type PageAppearance,
+} from "@/lib/page-appearance";
 import { pageToMarkdown } from "@/lib/serialize";
+import type { TextBlock } from "@/lib/text-stats";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+/**
+ * Stored ProseMirror/RichNode JSON (`{ type: "doc", content: [...] }`) → the
+ * minimal block tree `computeStats` walks. Unknown nodes are skipped rather
+ * than coerced, so a malformed document only loses stats, never a render.
+ */
+function mapTextBlocks(nodes: unknown): TextBlock[] {
+  if (!Array.isArray(nodes)) return [];
+  const blocks: TextBlock[] = [];
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") continue;
+    const { type, text, content } = node as {
+      type?: unknown;
+      text?: unknown;
+      content?: unknown;
+    };
+    if (typeof type !== "string") continue;
+    const children = mapTextBlocks(content);
+    blocks.push({
+      type,
+      ...(typeof text === "string" ? { text } : {}),
+      ...(children.length > 0 ? { children } : {}),
+    });
+  }
+  return blocks;
+}
+
+function collectTextBlocks(raw: unknown): TextBlock[] {
+  const root =
+    raw && typeof raw === "object" ? (raw as { content?: unknown }) : null;
+  return mapTextBlocks(root?.content);
+}
 
 export function PageTitle({
   locale = "en",
@@ -49,6 +89,8 @@ export function PageTitle({
   initialFullWidth,
   initialSmallText,
   initialFont,
+  initialLineSpacing = "normal",
+  initialAppearance,
   initialSharedToken,
   initialFollowing,
   initialLocked,
@@ -67,6 +109,10 @@ export function PageTitle({
   initialFullWidth: boolean;
   initialSmallText: boolean;
   initialFont: string;
+  /** Line spacing has no server column yet (layered on via localStorage). */
+  initialLineSpacing?: PageAppearance["lineSpacing"];
+  /** Forward-compatible seed for the full appearance JSON once persisted. */
+  initialAppearance?: unknown;
   initialSharedToken: string | null;
   initialFollowing: boolean;
   initialLocked: boolean;
@@ -84,8 +130,15 @@ export function PageTitle({
   const [cover, setCover] = useState(initialCover);
   const [favorite, setFavorite] = useState(initialFavorite);
   const [fullWidth, setFullWidth] = useState(initialFullWidth);
-  const [smallText, setSmallText] = useState(initialSmallText);
-  const [font, setFont] = useState(initialFont);
+  const [appearance, setAppearance] = useState<PageAppearance>(() =>
+    initialAppearance !== undefined
+      ? parseAppearance(initialAppearance)
+      : parseAppearance({
+          fontSize: initialSmallText ? "small" : "default",
+          font: initialFont,
+          lineSpacing: initialLineSpacing,
+        }),
+  );
   const [shareToken, setShareToken] = useState(initialSharedToken);
   const [following, setFollowing] = useState(initialFollowing);
   const [locked, setLocked] = useState(initialLocked);
@@ -98,9 +151,15 @@ export function PageTitle({
   const [importOpen, setImportOpen] = useState(false);
   const [edited, setEdited] = useState<PageEditedInfo | null>(null);
   const [menuData, setMenuData] = useState<PageMenuData | null>(null);
+  const [blocks, setBlocks] = useState<TextBlock[] | null>(null);
+
+  // The two legacy booleans now read through the appearance engine.
+  const smallText = appearance.fontSize === "small";
+  const font = appearance.font;
 
   const notifyKey = `noema:page-notify:${pageId}`;
   const [notifyLevel, setNotifyLevel] = useState<NotifyLevel>("all");
+  const appearanceKey = `noema:page-appearance:${pageId}`;
 
   // Notion keeps the page's action bar visible and reveals a hairline only
   // once the content moves under it.
@@ -135,6 +194,23 @@ export function PageTitle({
       setNotifyLevel("all");
     }
   }, [notifyKey]);
+
+  // Line spacing has no server column yet, so it is layered on top of the
+  // server-backed small-text/font via a per-page localStorage entry (same
+  // pattern as Notify me). A server `initialAppearance` wins when present.
+  useEffect(() => {
+    if (initialAppearance !== undefined) return;
+    try {
+      const stored = window.localStorage.getItem(appearanceKey);
+      if (!stored) return;
+      const parsed = parseAppearance(JSON.parse(stored));
+      setAppearance((previous) =>
+        patchAppearance(previous, { lineSpacing: parsed.lineSpacing }),
+      );
+    } catch {
+      // Corrupt JSON or unavailable storage — keep the server/default value.
+    }
+  }, [appearanceKey, initialAppearance]);
 
   const save = (patch: Record<string, unknown>, revalidate = true) =>
     startTransition(async () => {
@@ -184,6 +260,11 @@ export function PageTitle({
   const fetchMenuData = () => {
     getPageMenuDataAction(pageId).then((result) => {
       if ("updatedAt" in result) setMenuData(result);
+    });
+    // The menu's word-count footer prefers text-stats over the server tally,
+    // so load the document once per open and derive the block tree locally.
+    getPageContentAction(pageId).then((result) => {
+      if (!("error" in result)) setBlocks(collectTextBlocks(result.content));
     });
   };
 
@@ -261,16 +342,36 @@ export function PageTitle({
     toast.success(`Comment notifications: ${label}`);
   };
 
+  // Single funnel for the page-appearance engine. The sanitized patch is
+  // applied locally first; only the fields the current page model understands
+  // (smallText, font) reach the existing update action — line spacing is kept
+  // per page in localStorage until the schema grows a column.
+  const applyAppearance = (patch: Partial<PageAppearance>) => {
+    const next = patchAppearance(appearance, patch);
+    setAppearance(next);
+    if (patch.lineSpacing !== undefined) {
+      try {
+        window.localStorage.setItem(appearanceKey, serializeAppearance(next));
+      } catch {
+        // localStorage unavailable — keep the in-memory value only.
+      }
+    }
+    if (patch.fontSize !== undefined || patch.font !== undefined) {
+      save({ smallText: next.fontSize === "small", font: next.font });
+    }
+  };
+
   const applyStyle = (value: string) => {
-    setFont(value);
-    save({ font: value });
+    if (value === "default" || value === "serif" || value === "mono") {
+      applyAppearance({ font: value });
+    }
   };
 
   const applyToggle = (key: ActionsMenuToggleKey) => {
     if (key === "smallText") {
-      const next = !smallText;
-      setSmallText(next);
-      save({ smallText: next });
+      applyAppearance({
+        fontSize: appearance.fontSize === "small" ? "default" : "small",
+      });
     } else if (key === "fullWidth") {
       const next = !fullWidth;
       setFullWidth(next);
@@ -314,7 +415,7 @@ export function PageTitle({
     });
 
   return (
-    <header className="mb-4">
+    <header className={cn("mb-4", ...appearanceClasses(appearance))}>
       <div
         className={cn(
           "sticky top-0 z-20 -mx-12 mb-2 flex items-center justify-between gap-2 bg-bg/85 px-12 py-2 backdrop-blur-sm transition-[border-color,box-shadow] duration-150",
@@ -401,11 +502,14 @@ export function PageTitle({
             cover={cover}
             data={menuData}
             notifyLevel={notifyLevel}
+            appearance={appearance}
+            content={blocks ?? undefined}
             workspaces={workspaces}
             teamspaces={teamspaces}
             onOpening={fetchMenuData}
             onToggle={applyToggle}
             onStyle={applyStyle}
+            onAppearance={applyAppearance}
             onCopyLink={() => void copyLink()}
             onCopyContents={() => void copyPageContents()}
             onDuplicate={duplicate}
