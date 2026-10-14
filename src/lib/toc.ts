@@ -10,6 +10,14 @@
  * slug per heading from its text here (slugify + document-order dedupe) and
  * stamps `tocAnchorId(slug)` onto the rendered heading element at render time.
  * Nothing is written back to the doc; the ids vanish with the DOM.
+ *
+ * Additive deep-linking layer (same rule — view-only, never persisted):
+ * `slugifyHeading` / `buildHeadingAnchors` produce deterministic,
+ * collision-free anchor ids (`-1`, `-2`, … suffix chain) for deep links and
+ * backlinks, and `activeHeadingIndex(headings, scrollOffset, opts)` /
+ * `activeHeading(...)` run the scroll-spy maths against absolute heading tops
+ * plus the scroll position (with an `offsetBias` for sticky-header heights).
+ * The legacy `(relativeTops, marker)` form is untouched.
  */
 
 export interface TocHeading {
@@ -54,6 +62,26 @@ export function slugify(text: string): string {
 }
 
 /**
+ * Deep-link anchor id for a heading: {@link slugify} plus collision-free
+ * suffixing against a caller-owned `used` set (pass the same set across a
+ * document to keep ids unique). On collision the suffix chain `-1`, `-2`, …
+ * is appended, skipping any suffix already claimed in `used`; every emitted
+ * id is registered back into `used`. Without `used` the call is stateless —
+ * same text, same id. Unicode letters survive (URL fragments percent-encode
+ * them fine), matching {@link slugify}'s anchor strategy.
+ */
+export function slugifyHeading(text: string, used?: Set<string>): string {
+  const base = slugify(text);
+  if (!used) return base;
+  let slug = base;
+  for (let suffix = 1; used.has(slug); suffix += 1) {
+    slug = `${base}-${suffix}`;
+  }
+  used.add(slug);
+  return slug;
+}
+
+/**
  * Attach a unique anchor slug to every heading in document order. Repeated
  * texts dedupe with `-2`, `-3`, … and a deduped slug can never collide with a
  * later literal `<name>-2` heading — every outline row keeps its own anchor.
@@ -71,6 +99,30 @@ export function buildTocItems(headings: readonly TocHeading[]): TocItem[] {
   });
 }
 
+/** A heading paired with its stable, collision-free deep-link anchor id. */
+export interface TocAnchor extends TocHeading {
+  /**
+   * Anchor id derived from the heading text via {@link slugifyHeading}
+   * (deduped in document order with the `-1`, `-2`, … chain). Never
+   * persisted; deterministic for a given heading list.
+   */
+  id: string;
+}
+
+/**
+ * Assign every heading a stable anchor id for deep links/backlinks. Pure and
+ * deterministic: same input headings → same ids, across calls. Duplicate
+ * titles get unique ids (`intro`, `intro-1`, …) and a fresh `used` set per
+ * call so results never leak between invocations.
+ */
+export function buildHeadingAnchors(headings: readonly TocHeading[]): TocAnchor[] {
+  const used = new Set<string>();
+  return headings.map((heading) => ({
+    ...heading,
+    id: slugifyHeading(heading.text, used),
+  }));
+}
+
 /**
  * The DOM id stamped on the heading element that `slug` anchors to. Prefixed
  * so it can never collide with application ids (`<main id="main">`, …).
@@ -80,25 +132,86 @@ export function tocAnchorId(slug: string): string {
 }
 
 /**
- * Scroll-spy core. `relativeTops[i]` is heading i's distance from the scroll
- * container's top edge (`headingRect.top - containerRect.top`, recomputed per
- * scroll event; `Infinity` marks a heading that is hidden/unrendered).
- *
- * Returns the index of the active outline entry: the LAST heading at/above
- * `marker`. Before the first heading reaches the line the first entry stays
- * active (clamp — there is always a current entry while headings exist), and
- * `-1` means "no headings".
+ * A heading carrying its top edge offset (px from the scroll origin, e.g.
+ * `heading.offsetTop` or `rect.top + scrollTop`).
  */
+export interface ScrollSpyHeading {
+  /** Distance from the scroll origin to the heading's top edge, in px. */
+  top: number;
+}
+
+export interface ActiveHeadingOptions {
+  /**
+   * Extra px added to the scroll position before comparing — the sticky
+   * header's height, so a heading tucked under the header counts as in view.
+   * Defaults to 0.
+   */
+  offsetBias?: number;
+}
+
+/**
+ * Scroll-spy core. Two call forms, dispatched on the first element:
+ *
+ * 1. **Headings form** (deep-link/scroll-position friendly): given headings
+ *    each with a known `top` and the current `scrollOffset`, returns the
+ *    index of the LAST heading at/above `scrollOffset + offsetBias` — i.e.
+ *    the heading currently in view. Clamped to [0, n−1]: scrolled above the
+ *    first heading → 0, scrolled past the last → n−1. Empty list → `-1`
+ *    (no headings, nothing active).
+ * 2. **Legacy relative-tops form** (TocView): `relativeTops[i]` is heading
+ *    i's distance from the scroll container's top edge (`Infinity` marks a
+ *    hidden/unrendered heading), and `marker` is the reading line in that
+ *    local space (defaults to {@link TOC_ACTIVE_MARKER_PX}). Before the first
+ *    heading reaches the line the first entry stays active (clamp — there is
+ *    always a current entry while headings exist), and `-1` means
+ *    "no headings".
+ */
+export function activeHeadingIndex<T extends ScrollSpyHeading>(
+  headings: readonly T[],
+  scrollOffset?: number,
+  opts?: ActiveHeadingOptions,
+): number;
+export function activeHeadingIndex(relativeTops: readonly number[], marker?: number): number;
 export function activeHeadingIndex(
-  relativeTops: readonly number[],
-  marker: number = TOC_ACTIVE_MARKER_PX,
+  tops: readonly (number | ScrollSpyHeading)[],
+  second?: number,
+  opts?: ActiveHeadingOptions,
 ): number {
-  if (relativeTops.length === 0) return -1;
+  if (tops.length === 0) return -1;
+  const first = tops[0];
+  // Legacy form: plain numbers = relative tops, `second` = marker (reading
+  // line in container-local space).
+  if (typeof first === "number") {
+    const marker = second ?? TOC_ACTIVE_MARKER_PX;
+    let active = 0;
+    for (let i = 0; i < tops.length; i += 1) {
+      const top = tops[i];
+      if (typeof top === "number" && top <= marker) active = i;
+    }
+    return active;
+  }
+  // Headings form: objects with `top`, `second` = scrollOffset, bias added.
+  const readingLine = (second ?? 0) + (opts?.offsetBias ?? 0);
   let active = 0;
-  for (let i = 0; i < relativeTops.length; i += 1) {
-    if (relativeTops[i] <= marker) active = i;
+  for (let i = 0; i < tops.length; i += 1) {
+    const heading = tops[i];
+    if (typeof heading !== "number" && heading.top <= readingLine) active = i;
   }
   return active;
+}
+
+/**
+ * Convenience wrapper over the headings form of {@link activeHeadingIndex}:
+ * returns the heading currently in view, or `undefined` when the outline is
+ * empty. Extra heading fields are preserved (generic over `T`).
+ */
+export function activeHeading<T extends ScrollSpyHeading>(
+  headings: readonly T[],
+  scrollOffset?: number,
+  opts?: ActiveHeadingOptions,
+): T | undefined {
+  const index = activeHeadingIndex(headings, scrollOffset, opts);
+  return index === -1 ? undefined : headings[index];
 }
 
 /**
