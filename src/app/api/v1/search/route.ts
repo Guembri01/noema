@@ -1,12 +1,18 @@
 import { NextResponse } from "next/server";
 import { authenticateApiRequest } from "@/lib/api-auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
-import { searchPages } from "@/server/queries";
+import { searchPagesPage } from "@/server/queries";
 import { rateLimit } from "@/lib/api-guard";
+import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
 
 export const runtime = "nodejs";
 
-/** GET /api/v1/search?workspaceId=…&q=… — search page titles and bodies. */
+/**
+ * GET /api/v1/search?workspaceId=…&q=…&page_size=…&start_cursor=… — search page
+ * titles and bodies. Keyset pagination over the engine's rank with an `id`
+ * tie-break. `page_size` defaults to 50, clamped to 1..100; bad values are 400
+ * `invalid_page_size`, unreadable cursors 400 `invalid_cursor`.
+ */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "v1");
   if (limited) return limited;
@@ -22,15 +28,27 @@ export async function GET(request: Request) {
   const access = await getWorkspaceAccess(auth.userId, workspaceId);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const results = await searchPages(workspaceId, query);
+  const pageSize = url.searchParams.get("page_size");
+  if (pageSize !== null && pageSize.trim() !== "" && !Number.isFinite(Number(pageSize))) {
+    return NextResponse.json({ error: "invalid_page_size" }, { status: 400 });
+  }
+  const limit = clampLimit(pageSize, { min: 1, max: 100, fallback: 50 });
+  const cursor = url.searchParams.get("start_cursor");
+  if (cursor !== null && cursor !== "" && decodeCursor(cursor) === null) {
+    return NextResponse.json(malformedCursorResult(), { status: 400 });
+  }
+
+  const page = await searchPagesPage(workspaceId, query, null, { limit, cursor });
   return NextResponse.json({
-    results: results.map((page) => ({
-      id: page.id,
-      title: page.title || "Untitled",
-      icon: page.icon,
-      type: page.type,
-      snippet: page.snippet,
-      updatedAt: page.updatedAt,
+    results: page.items.map((result) => ({
+      id: result.id,
+      title: result.title || "Untitled",
+      icon: result.icon,
+      type: result.type,
+      snippet: result.snippet,
+      updatedAt: result.updatedAt,
     })),
+    has_more: page.hasMore,
+    next_cursor: page.nextCursor,
   });
 }

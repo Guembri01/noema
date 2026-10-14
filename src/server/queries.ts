@@ -3,6 +3,7 @@ import { makeSnippet, searchTerms } from "@/lib/search";
 import { prosemirrorToText } from "@/lib/blocks";
 import { docMentionsPage } from "@/lib/mentions";
 import { promptTerms, scorePage, snippetAround } from "@/lib/retrieval";
+import { paginateSlice, type PaginateResult } from "@/lib/cursor-pagination";
 
 export type PageTreeNode = {
   id: string;
@@ -24,6 +25,48 @@ export async function getUserWorkspaces(userId: string) {
     orderBy: { createdAt: "asc" },
     select: { id: true, name: true, slug: true, icon: true, ownerId: true },
   });
+}
+
+/** Row shape of `GET /api/v1/workspaces`. */
+export type ApiWorkspaceRow = {
+  id: string;
+  name: string;
+  slug: string;
+  icon: string | null;
+};
+
+/**
+ * One keyset page of the caller's workspaces (owner or member), ordered by the
+ * documented tuple `(createdAt, id)`. Mirrors `getUserWorkspaces`'s access
+ * predicate but pages over the opaque cursor dialect.
+ */
+export async function getWorkspacesPage(
+  userId: string,
+  options: { limit?: number; cursor?: string | null } = {},
+): Promise<PaginateResult<ApiWorkspaceRow>> {
+  const rows = await prisma.workspace.findMany({
+    where: {
+      OR: [{ ownerId: userId }, { members: { some: { userId } } }],
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true, name: true, slug: true, icon: true, createdAt: true },
+  });
+  const page = paginateSlice(rows, {
+    limit: options.limit,
+    cursor: options.cursor,
+    direction: "asc",
+    keyOf: (row) => ({ key: row.createdAt.toISOString(), tiebreaker: row.id }),
+  });
+  return {
+    items: page.items.map((row) => ({
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      icon: row.icon,
+    })),
+    nextCursor: page.nextCursor,
+    hasMore: page.hasMore,
+  };
 }
 
 export async function getWorkspaceBySlug(slug: string) {
@@ -54,6 +97,63 @@ export async function getPageTree(
       isFavorite: true,
     },
   });
+}
+
+/** Row shape of `GET /api/v1/pages` (the cursor's sort fields stay internal). */
+export type ApiPageRow = {
+  id: string;
+  parentId: string | null;
+  title: string;
+  icon: string | null;
+  type: "PAGE" | "DATABASE";
+  updatedAt: Date;
+};
+
+/**
+ * One keyset page of a workspace's live pages, in the documented total order
+ * `(position, createdAt, id)`. The opaque cursor carries `position` as its key
+ * and a `createdAt|id` composite tiebreaker, so pages that share a position
+ * (`Page.position` defaults to `0`) never overlap or get skipped between calls.
+ */
+export async function getPagesPage(
+  workspaceId: string,
+  options: { limit?: number; cursor?: string | null } = {},
+): Promise<PaginateResult<ApiPageRow>> {
+  const rows = await prisma.page.findMany({
+    where: { workspaceId, deletedAt: null },
+    orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      parentId: true,
+      title: true,
+      icon: true,
+      type: true,
+      updatedAt: true,
+      position: true,
+      createdAt: true,
+    },
+  });
+  const page = paginateSlice(rows, {
+    limit: options.limit,
+    cursor: options.cursor,
+    direction: "asc",
+    keyOf: (row) => ({
+      key: row.position,
+      tiebreaker: `${row.createdAt.toISOString()}|${row.id}`,
+    }),
+  });
+  return {
+    items: page.items.map((row) => ({
+      id: row.id,
+      parentId: row.parentId,
+      title: row.title,
+      icon: row.icon,
+      type: row.type,
+      updatedAt: row.updatedAt,
+    })),
+    nextCursor: page.nextCursor,
+    hasMore: page.hasMore,
+  };
 }
 
 export async function getTeamspaces(workspaceId: string) {
@@ -363,6 +463,36 @@ export async function searchPagesPaged(
     results: hasMore ? all.slice(0, take) : all,
     nextOffset: hasMore ? offset + take : null,
   };
+}
+
+/** Internal scan cap for cursor-paged search (see follow-up: keyset in SQL). */
+const SEARCH_PAGE_SCAN = 1000;
+
+/** Row shape of `GET /api/v1/search`. */
+export type ApiSearchRow = Awaited<ReturnType<typeof searchPages>>[number];
+
+/**
+ * One keyset page of workspace search, ordered by the engine's rank with `id`
+ * as the tie-break. `searchPages` already returns the ranked hits, so the page
+ * assigns each row its positional rank and keysets over `(rank, id)` — stable
+ * while a walk is in flight, re-ranked on each fresh query.
+ */
+export async function searchPagesPage(
+  workspaceId: string,
+  query: string,
+  visiblePageIds: Set<string> | null,
+  options: { limit?: number; cursor?: string | null } = {},
+): Promise<PaginateResult<ApiSearchRow>> {
+  const ranked = await searchPages(workspaceId, query, visiblePageIds, {
+    take: SEARCH_PAGE_SCAN,
+  });
+  const rankById = new Map(ranked.map((row, index) => [row.id, index]));
+  return paginateSlice(ranked, {
+    limit: options.limit,
+    cursor: options.cursor,
+    direction: "asc",
+    keyOf: (row) => ({ key: rankById.get(row.id) ?? 0, tiebreaker: row.id }),
+  });
 }
 
 /** Pages in the workspace that @-mention the given page (linked references). */
@@ -795,6 +925,32 @@ export async function getTicketsPage(
   const hasMore = rows.length > take;
   const tickets = hasMore ? rows.slice(0, take) : rows;
   return { tickets, nextCursor: hasMore ? (tickets[tickets.length - 1]?.id ?? null) : null };
+}
+
+/** Row shape of `GET /api/tickets`. */
+export type ApiTicketRow = Awaited<ReturnType<typeof getTickets>>[number];
+
+/**
+ * One keyset page of a workspace's tickets ordered by the documented tuple
+ * `(id)`, for the public `GET /api/tickets`. Mirrors `getTickets`'s select and
+ * archived filter, but pages on the opaque cursor dialect rather than the
+ * tracker's raw-id cursor.
+ */
+export async function getTicketsCursorPage(
+  workspaceId: string,
+  options: { limit?: number; cursor?: string | null; includeArchived?: boolean } = {},
+): Promise<PaginateResult<ApiTicketRow>> {
+  const rows = await prisma.ticket.findMany({
+    where: { workspaceId, archived: options.includeArchived ? undefined : false },
+    orderBy: [{ id: "asc" }],
+    select: ticketListSelect,
+  });
+  return paginateSlice(rows, {
+    limit: options.limit,
+    cursor: options.cursor,
+    direction: "asc",
+    keyOf: (row) => ({ key: row.id, tiebreaker: row.id }),
+  });
 }
 
 /** Tickets belonging to one project (project page rollup + Gantt). */

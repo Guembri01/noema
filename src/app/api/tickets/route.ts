@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { rateLimit } from "@/lib/api-guard";
-import { getLabels, getTickets } from "@/server/queries";
+import { getLabels, getTicketsCursorPage } from "@/server/queries";
+import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
 import {
   addTicketCommentAction,
   archiveTicketAction,
@@ -33,11 +34,31 @@ export async function GET(request: Request) {
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
 
-  const [tickets, labels] = await Promise.all([
-    getTickets(workspaceId, { includeArchived: searchParams.get("archived") === "true" }),
+  const pageSize = searchParams.get("page_size");
+  if (pageSize !== null && pageSize.trim() !== "" && !Number.isFinite(Number(pageSize))) {
+    return NextResponse.json({ error: "invalid_page_size" }, { status: 400 });
+  }
+  const limit = clampLimit(pageSize, { min: 1, max: 100, fallback: 50 });
+  const cursor = searchParams.get("start_cursor");
+  if (cursor !== null && cursor !== "" && decodeCursor(cursor) === null) {
+    return NextResponse.json(malformedCursorResult(), { status: 400 });
+  }
+
+  const [page, labels] = await Promise.all([
+    getTicketsCursorPage(workspaceId, {
+      limit,
+      cursor,
+      includeArchived: searchParams.get("archived") === "true",
+    }),
     getLabels(workspaceId),
   ]);
-  return NextResponse.json({ tickets, labels, role: access.role });
+  return NextResponse.json({
+    tickets: page.items,
+    labels,
+    role: access.role,
+    has_more: page.hasMore,
+    next_cursor: page.nextCursor,
+  });
 }
 
 /**
