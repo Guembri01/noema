@@ -4,6 +4,7 @@ import { prosemirrorToText } from "@/lib/blocks";
 import { docMentionsPage } from "@/lib/mentions";
 import { promptTerms, scorePage, snippetAround } from "@/lib/retrieval";
 import { paginateSlice, type PaginateResult } from "@/lib/cursor-pagination";
+import type { SummaryBlock } from "@/lib/page-summary";
 
 export type PageTreeNode = {
   id: string;
@@ -330,6 +331,75 @@ export async function getDatabase(databasePageId: string) {
 
 export type DatabaseData = Awaited<ReturnType<typeof getDatabase>>;
 
+/** Fields every search hit carries (the select shape all callers share). */
+type SearchHitBase = {
+  id: string;
+  title: string;
+  icon: string | null;
+  type: "PAGE" | "DATABASE";
+  updatedAt: Date;
+};
+
+/**
+ * Map one stored ProseMirror node onto the summariser's minimal block shape,
+ * renaming the doc's `content` key to `children` at every level so
+ * `summarizeBlocks` can walk real page content without the editor. Pure and
+ * total: junk, arrays and primitives yield `null`.
+ */
+function toSummaryNode(node: unknown): SummaryBlock | null {
+  if (!node || typeof node !== "object") return null;
+  const source = node as { type?: unknown; text?: unknown; content?: unknown };
+  const block: SummaryBlock = {};
+  if (typeof source.type === "string") block.type = source.type;
+  if (typeof source.text === "string") block.text = source.text;
+  if (Array.isArray(source.content)) {
+    const children: SummaryBlock[] = [];
+    for (const child of source.content) {
+      const mapped = toSummaryNode(child);
+      if (mapped) children.push(mapped);
+    }
+    if (children.length > 0) block.children = children;
+  }
+  return block;
+}
+
+/**
+ * A stored document's top-level content as summary blocks (empty for junk or a
+ * doc that is not `{ content: [...] }`), ready for the client teaser renderer.
+ */
+function toSummaryBlocks(doc: unknown): SummaryBlock[] {
+  const root = doc as { content?: unknown } | null;
+  if (!root || !Array.isArray(root.content)) return [];
+  const blocks: SummaryBlock[] = [];
+  for (const node of root.content) {
+    const block = toSummaryNode(node);
+    if (block) blocks.push(block);
+  }
+  return blocks;
+}
+
+/**
+ * Project a selected page row onto the search-hit shape. `snippet` is always
+ * present; `blocks` (the preferred teaser source) is attached only when the
+ * caller opted in, so other callers' return shapes stay unchanged.
+ */
+function toSearchHit(
+  page: SearchHitBase & { content?: unknown },
+  snippet: string,
+  includeBlocks: boolean,
+): SearchHitBase & { snippet: string; blocks?: SummaryBlock[] } {
+  const hit: SearchHitBase & { snippet: string; blocks?: SummaryBlock[] } = {
+    id: page.id,
+    title: page.title,
+    icon: page.icon,
+    type: page.type,
+    updatedAt: page.updatedAt,
+    snippet,
+  };
+  if (includeBlocks) hit.blocks = toSummaryBlocks(page.content);
+  return hit;
+}
+
 /**
  * Workspace search across page titles and body text. Bodies are scanned from
  * stored documents because Postgres cannot full-text index JSON portably; the
@@ -339,6 +409,12 @@ export type DatabaseData = Awaited<ReturnType<typeof getDatabase>>;
  * Search a workspace: Postgres full-text ranking over `Page.searchText`, with a
  * prefix pass for partial words (type-ahead) and a small in-memory fallback for
  * pages whose mirror has not been backfilled yet.
+ *
+ * Pass `includeBlocks` to also read each hit's stored document and expose it as
+ * `blocks` (the summariser's minimal shape) so the UI can render a real
+ * content-derived teaser. It defaults off: the teaser payload is only wanted by
+ * the search page, while the palette/API/cursor walks would otherwise read the
+ * JSON of every hit.
  */
 export async function searchPages(
     workspaceId: string,
@@ -346,10 +422,11 @@ export async function searchPages(
     /** Guest scoping: hide results the viewer may not open. */
     visiblePageIds: Set<string> | null = null,
     /** Window over the ranked set (the search page pages through it). */
-    options: { take?: number; offset?: number } = {},
+    options: { take?: number; offset?: number; includeBlocks?: boolean } = {},
   ) {
     const take = options.take ?? 50;
     const offset = options.offset ?? 0;
+    const includeBlocks = options.includeBlocks ?? false;
   const q = query.trim();
   const base = {
     id: true,
@@ -365,9 +442,9 @@ export async function searchPages(
       orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
       take,
       skip: offset,
-      select: base,
+      select: includeBlocks ? { ...base, content: true } : base,
     });
-    return pages.map((page) => ({ ...page, snippet: "" }));
+    return pages.map((page) => toSearchHit(page, "", includeBlocks));
   }
 
   // 1. Ranked full-text match (GIN index on to_tsvector(searchText)).
@@ -433,12 +510,12 @@ export async function searchPages(
   const order = new Map(hits.map((hit, index) => [hit.id, index]));
   const pages = await prisma.page.findMany({
     where: { id: { in: hits.map((hit) => hit.id) }, deletedAt: null },
-    select: base,
+    select: includeBlocks ? { ...base, content: true } : base,
   });
   const snippetById = new Map(hits.map((hit) => [hit.id, hit.snippet]));
   return pages
     .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
-    .map((page) => ({ ...page, snippet: snippetById.get(page.id) ?? "" }));
+    .map((page) => toSearchHit(page, snippetById.get(page.id) ?? "", includeBlocks));
 }
 
 /**
@@ -450,13 +527,14 @@ export async function searchPagesPaged(
   workspaceId: string,
   query: string,
   visiblePageIds: Set<string> | null,
-  options: { take?: number; offset?: number } = {},
+  options: { take?: number; offset?: number; includeBlocks?: boolean } = {},
 ): Promise<{ results: Awaited<ReturnType<typeof searchPages>>; nextOffset: number | null }> {
   const take = Math.min(Math.max(options.take ?? 50, 1), 100);
   const offset = Math.max(options.offset ?? 0, 0);
   const all = await searchPages(workspaceId, query, visiblePageIds, {
     take: take + 1,
     offset,
+    includeBlocks: options.includeBlocks ?? false,
   });
   const hasMore = all.length > take;
   return {

@@ -27,7 +27,10 @@ export default async function SearchPage({
 
   const visiblePageIds = await pageScopeFor(user.id, workspace.id, access.role);
   const paged = q.trim()
-    ? await searchPagesPaged(workspace.id, q, visiblePageIds, { take: 50 })
+    ? await searchPagesPaged(workspace.id, q, visiblePageIds, {
+        take: 50,
+        includeBlocks: true,
+      })
     : { results: [], nextOffset: null };
   const results = paged.results;
 
@@ -58,6 +61,7 @@ export default async function SearchPage({
             icon: page.icon,
             type: page.type,
             snippet: page.snippet ?? "",
+            blocks: page.blocks ?? [],
           }))}
           nextOffset={paged.nextOffset}
         />
