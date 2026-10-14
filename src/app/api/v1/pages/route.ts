@@ -4,29 +4,50 @@ import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { rateLimit } from "@/lib/api-guard";
+import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
+import { getPagesPage } from "@/server/queries";
 
 export const runtime = "nodejs";
 
-/** GET /api/v1/pages?workspaceId=… — list pages in a workspace. */
+/**
+ * GET /api/v1/pages?workspaceId=…&page_size=…&start_cursor=… — list pages.
+ *
+ * Keyset pagination over the stable total order `(position, createdAt, id)`.
+ * `page_size` defaults to 50 and is clamped to 1..100; a non-numeric value is
+ * a 400 `invalid_page_size`. An unreadable `start_cursor` is a 400
+ * `invalid_cursor`; omitting both returns the first page (`has_more` /
+ * `next_cursor` always accompany the `pages` key).
+ */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "v1");
   if (limited) return limited;
   const auth = await authenticateApiRequest(request);
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const workspaceId = new URL(request.url).searchParams.get("workspaceId");
+  const url = new URL(request.url);
+  const workspaceId = url.searchParams.get("workspaceId");
   if (!workspaceId) {
     return NextResponse.json({ error: "workspaceId is required" }, { status: 400 });
   }
   const access = await getWorkspaceAccess(auth.userId, workspaceId);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const pages = await prisma.page.findMany({
-    where: { workspaceId, deletedAt: null },
-    orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-    select: { id: true, parentId: true, title: true, icon: true, type: true, updatedAt: true },
+  const pageSize = url.searchParams.get("page_size");
+  if (pageSize !== null && pageSize.trim() !== "" && !Number.isFinite(Number(pageSize))) {
+    return NextResponse.json({ error: "invalid_page_size" }, { status: 400 });
+  }
+  const limit = clampLimit(pageSize, { min: 1, max: 100, fallback: 50 });
+  const cursor = url.searchParams.get("start_cursor");
+  if (cursor !== null && cursor !== "" && decodeCursor(cursor) === null) {
+    return NextResponse.json(malformedCursorResult(), { status: 400 });
+  }
+
+  const page = await getPagesPage(workspaceId, { limit, cursor });
+  return NextResponse.json({
+    pages: page.items,
+    has_more: page.hasMore,
+    next_cursor: page.nextCursor,
   });
-  return NextResponse.json({ pages });
 }
 
 /** POST /api/v1/pages — create a page. Body: { workspaceId, title?, parentId?, type? } */
