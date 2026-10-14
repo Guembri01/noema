@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { activeCycle, cycleDays, cycleProgress, velocity } from "./cycles";
+import {
+  activeCycle,
+  addedMidCycle,
+  burndownSeries,
+  cycleDays,
+  cycleProgress,
+  scopeChange,
+  ticketsInCycle,
+  velocity,
+  type Cycle,
+} from "./cycles";
 
 const ticket = (overrides: Partial<Parameters<typeof cycleProgress>[0][number]> = {}) => ({
   id: overrides.id ?? "t1",
@@ -14,6 +24,7 @@ const ticket = (overrides: Partial<Parameters<typeof cycleProgress>[0][number]> 
   dueDate: overrides.dueDate ?? null,
   completedAt: overrides.completedAt ?? null,
   updatedAt: overrides.updatedAt ?? null,
+  createdAt: overrides.createdAt ?? null,
 });
 
 const cycle = {
@@ -97,5 +108,153 @@ describe("velocity", () => {
     );
     expect(rows.map((row) => row.name)).toEqual(["S2", "S1"]);
     expect(rows[0]).toEqual({ name: "S2", completed: 5, committed: 10 });
+  });
+});
+
+/**
+ * The `Cycle` shape the cycles UI stores (`start`/`end`, ISO strings) and the
+ * pure burndown/scope helpers built on it. All the date maths is UTC, so the
+ * assertions do not depend on the machine's timezone.
+ */
+const epochCycle: Cycle = {
+  id: "c1",
+  name: "Sprint 1",
+  start: "2026-03-01T00:00:00.000Z",
+  end: "2026-03-05T00:00:00.000Z",
+};
+
+describe("cycleDays with a Cycle", () => {
+  it("counts inclusive UTC days and never returns zero", () => {
+    expect(cycleDays(epochCycle)).toBe(5);
+    expect(cycleDays({ ...epochCycle, end: epochCycle.start })).toBe(1);
+    // A same-day end that is still later than the start is still one day.
+    expect(cycleDays({ ...epochCycle, end: "2026-03-01T23:59:59.000Z" })).toBe(1);
+  });
+});
+
+describe("ticketsInCycle", () => {
+  const list = [
+    ticket({ id: "a", status: "done", estimate: 8, completedAt: "2026-03-02T00:00:00.000Z" }),
+    ticket({ id: "b", status: "todo", startDate: "2026-03-05" }),
+    ticket({ id: "c", status: "todo", dueDate: "2026-03-07" }),
+    ticket({ id: "d", status: "todo" }),
+    ticket({ id: "e", status: "done", completedAt: "2026-02-25T00:00:00.000Z" }),
+    ticket({ id: "f", status: "done", completedAt: "2026-03-05T00:00:00.000Z" }),
+  ];
+
+  it("keeps tickets whose completion or schedule lands inside the window", () => {
+    expect(ticketsInCycle(list, epochCycle).map((row) => row.id)).toEqual(["a", "b", "f"]);
+  });
+
+  it("drops tickets that only fall outside the window", () => {
+    const ids = ticketsInCycle(list, epochCycle).map((row) => row.id);
+    expect(ids).not.toContain("c"); // scheduled after the end
+    expect(ids).not.toContain("e"); // completed before the start
+    expect(ids).not.toContain("d"); // carries no dates at all
+  });
+
+  it("honours a custom completion field", () => {
+    const custom = [
+      ticket({ id: "x", status: "done", updatedAt: "2026-03-04T00:00:00.000Z" }),
+      ticket({ id: "y", status: "done", updatedAt: "2026-03-09T00:00:00.000Z" }),
+    ];
+    expect(ticketsInCycle(custom, epochCycle)).toEqual([]);
+    expect(ticketsInCycle(custom, epochCycle, { completedAtField: "updatedAt" }).map((row) => row.id)).toEqual([
+      "x",
+    ]);
+  });
+});
+
+describe("burndownSeries", () => {
+  const tickets = [
+    ticket({ id: "a", status: "done", estimate: 8, completedAt: "2026-03-02T00:00:00.000Z" }),
+    ticket({ id: "b", status: "todo", estimate: 5 }),
+    ticket({ id: "c", status: "in_progress", estimate: 2 }),
+  ];
+  const now = new Date("2026-03-03T12:00:00.000Z");
+
+  it("draws one point per UTC day, dated from the cycle start", () => {
+    const series = burndownSeries(epochCycle, tickets, { now });
+    expect(series).toHaveLength(5);
+    expect(series.map((point) => point.date)).toEqual([
+      "2026-03-01",
+      "2026-03-02",
+      "2026-03-03",
+      "2026-03-04",
+      "2026-03-05",
+    ]);
+  });
+
+  it("burns closed estimates on their completion day and leaves the future unmeasured", () => {
+    const series = burndownSeries(epochCycle, tickets, { now });
+    expect(series.map((point) => point.remaining)).toEqual([15, 7, 7, null, null]);
+  });
+
+  it("runs the ideal line from the total to zero", () => {
+    const series = burndownSeries(epochCycle, tickets, { now });
+    expect(series[0].ideal).toBe(15);
+    expect(series[2].ideal).toBe(7.5);
+    expect(series[4].ideal).toBe(0);
+  });
+
+  it("measures the whole cycle when no clock is given", () => {
+    const series = burndownSeries(epochCycle, tickets);
+    expect(series.every((point) => typeof point.remaining === "number")).toBe(true);
+    expect(series[4].remaining).toBe(7);
+  });
+
+  it("handles a single-day cycle without dividing by zero", () => {
+    const series = burndownSeries({ ...epochCycle, end: epochCycle.start }, tickets);
+    expect(series).toHaveLength(1);
+    expect(series[0].ideal).toBe(15);
+    expect(series[0].remaining).toBe(7);
+  });
+});
+
+describe("addedMidCycle & scopeChange", () => {
+  const list = [
+    ticket({ id: "p1", estimate: 2, createdAt: "2026-02-20T00:00:00.000Z" }),
+    ticket({ id: "p2", estimate: 3, createdAt: "2026-03-01T00:00:00.000Z" }),
+    ticket({ id: "p3", estimate: 5, createdAt: "2026-03-03T00:00:00.000Z" }),
+    ticket({ id: "p4", estimate: 1, createdAt: "2026-03-05T23:00:00.000Z" }),
+    ticket({ id: "p5", estimate: 100, createdAt: "2026-03-09T00:00:00.000Z" }),
+  ];
+
+  it("flags tickets created on a later UTC day than the start", () => {
+    expect(addedMidCycle(list, epochCycle).map((row) => row.id)).toEqual(["p3", "p4"]);
+  });
+
+  it("ignores tickets created after the cycle ends and those with no stamp", () => {
+    const withUntimed = [...list, ticket({ id: "p6", estimate: 4 })];
+    expect(addedMidCycle(withUntimed, epochCycle).map((row) => row.id)).toEqual(["p3", "p4"]);
+  });
+
+  it("summarises the mid-cycle scope creep", () => {
+    const change = scopeChange(list, epochCycle);
+    expect(change.planned).toBe(2);
+    expect(change.added).toBe(2);
+    expect(change.addedEstimate).toBe(6);
+    expect(change.ratio).toBe(0.5);
+  });
+
+  it("never divides by zero on an empty cycle", () => {
+    expect(scopeChange([], epochCycle)).toEqual({ planned: 0, added: 0, addedEstimate: 0, ratio: 0 });
+  });
+});
+
+describe("cycleProgress with the Cycle shape", () => {
+  const tickets = [
+    ticket({ id: "a", estimate: 8, status: "done", completedAt: "2026-03-02T00:00:00.000Z" }),
+    ticket({ id: "b", estimate: 5, status: "todo" }),
+    ticket({ id: "c", estimate: 2, status: "in_progress" }),
+  ];
+
+  it("reads committed/completed/remaining from the same window", () => {
+    const progress = cycleProgress(tickets, epochCycle, new Date("2026-03-03T12:00:00.000Z"));
+    expect(progress.committed).toBe(15);
+    expect(progress.completed).toBe(8);
+    expect(progress.remaining).toBe(7);
+    expect(progress.percent).toBe(53);
+    expect(progress.days).toBe(5);
   });
 });
