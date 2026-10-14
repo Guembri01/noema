@@ -61,6 +61,8 @@ const FRAME_SRC = [
   "https://codepen.io",
   "https://platform.twitter.com",
   "https://codesandbox.io",
+  "https://drive.google.com",
+  "https://whimsical.com",
 ].join(" ");
 
 /**
