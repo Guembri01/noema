@@ -6,6 +6,8 @@
  * unit-tested without a database or a browser, and reused by the server later.
  */
 
+import { formatGeo, parseGeo } from "@/lib/geo";
+
 export type PropertyOption = {
   id: string;
   name: string;
@@ -125,6 +127,20 @@ const CHECKBOX_OPERATORS: OperatorSpec[] = [
   { value: "unchecked", label: "is unchecked" },
 ];
 
+/**
+ * PLACE cells have no scalar column to compare: `formatCell` renders them as
+ * the label plus coordinates, so only that text is searchable. Distance/radius
+ * filters are deliberately out of scope for this in-memory layer.
+ */
+const PLACE_OPERATORS: OperatorSpec[] = [
+  { value: "contains", label: "contains" },
+  { value: "does_not_contain", label: "does not contain" },
+  { value: "is", label: "is" },
+  { value: "is_not", label: "is not" },
+  { value: "is_empty", label: "is empty" },
+  { value: "is_not_empty", label: "is not empty" },
+];
+
 /** Every operator the app can evaluate, used to validate stored configs. */
 export const FILTER_OPERATORS: readonly FilterOperator[] = [
   ...new Set<FilterOperator>([
@@ -151,6 +167,7 @@ export function operatorsFor(type: string): OperatorSpec[] {
   if (type === "CHECKBOX") return [...CHECKBOX_OPERATORS];
   if (type === "NUMBER") return [...COMPARISON_OPERATORS, ...TEXT_OPERATORS];
   if (type === "DATE") return [...DATE_OPERATORS, ...COMPARISON_OPERATORS, ...TEXT_OPERATORS];
+  if (type === "PLACE") return [...PLACE_OPERATORS];
   return [...TEXT_OPERATORS];
 }
 
@@ -314,6 +331,14 @@ export function formatCell(value: unknown, property: QueryProperty): string {
       return ((v.names as string[]) ?? []).join(", ");
     case "FILES":
       return ((v.files as { name: string }[]) ?? []).map((f) => f.name).join(", ");
+    case "PLACE": {
+      // Same rendering the PLACE cell uses, so search/filter text matches what
+      // the user sees: `label · "lat, lng"` (or just the coordinates).
+      const parsed = parseGeo(value);
+      if (!parsed.ok) return "";
+      const coords = formatGeo(parsed.value);
+      return parsed.value.label ? `${parsed.value.label} · ${coords}` : coords;
+    }
     default:
       return typeof v.text === "string" ? v.text : "";
   }
