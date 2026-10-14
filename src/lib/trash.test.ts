@@ -1,8 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
   collectFileUrls,
+  DEFAULT_TRASH_RETENTION_DAYS,
+  defaultTrashRetentionPolicy,
   fileKeyFromUrl,
+  isExpired,
   purgeableError,
+  selectPurgeable,
   staleFileUrls,
   subtreeClosure,
 } from "@/lib/trash";
@@ -129,5 +133,113 @@ describe("staleFileUrls", () => {
 
   test("keeps nothing when no upload is referenced at all", () => {
     expect(staleFileUrls([{ text: "hello" }], [])).toEqual([]);
+  });
+});
+
+/**
+ * Trash retention policy (MISSING_FEATURES §9 "Trash retention policy" /
+ * §17 "Trash retention"; spec R30.15) — how long a trashed page stays
+ * recoverable before an auto-purge ("empty trash") may take it.
+ *
+ * Everything here is pure and time-injected: `now` is an argument, never
+ * `Date.now()`, so boundaries are testable to the millisecond.
+ */
+describe("trash retention policy", () => {
+  const NOW = new Date("2026-03-31T12:00:00.000Z");
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const daysAgo = (days: number): Date => new Date(NOW.getTime() - days * DAY_MS);
+
+  describe("defaults", () => {
+    test("retains trash for 30 days unless a workspace overrides it", () => {
+      expect(DEFAULT_TRASH_RETENTION_DAYS).toBe(30);
+      expect(defaultTrashRetentionPolicy).toEqual({ retentionDays: 30 });
+    });
+  });
+
+  describe("isExpired", () => {
+    test("far-past deletions are expired", () => {
+      expect(isExpired(daysAgo(3650), 30, NOW)).toBe(true);
+      expect(isExpired(daysAgo(31), 30, NOW)).toBe(true);
+    });
+
+    test("far-future deletions are not expired", () => {
+      // Clock skew: a deletedAt after `now` can never have outlived anything.
+      expect(isExpired(new Date(NOW.getTime() + 3650 * DAY_MS), 30, NOW)).toBe(false);
+      expect(isExpired(new Date(NOW.getTime() + DAY_MS), 30, NOW)).toBe(false);
+    });
+
+    test("deletions inside the window are not expired", () => {
+      expect(isExpired(NOW, 30, NOW)).toBe(false);
+      expect(isExpired(daysAgo(1), 30, NOW)).toBe(false);
+      expect(isExpired(daysAgo(29.999), 30, NOW)).toBe(false);
+    });
+
+    test("exactly at the retention boundary the item is still kept", () => {
+      // Spec R30.15 purges only `deletedAt < now - window` (strict), so an
+      // item deleted exactly `retentionDays` ago is recoverable for one more
+      // tick rather than destroyed on a tie.
+      expect(isExpired(daysAgo(30), 30, NOW)).toBe(false);
+      expect(isExpired(daysAgo(7), 7, NOW)).toBe(false);
+    });
+
+    test("one millisecond past the boundary is expired", () => {
+      expect(isExpired(new Date(NOW.getTime() - 30 * DAY_MS - 1), 30, NOW)).toBe(true);
+      expect(isExpired(new Date(NOW.getTime() - 7 * DAY_MS - 1), 7, NOW)).toBe(true);
+    });
+
+    test("a non-positive window disables expiry entirely", () => {
+      // Mirrors the repo convention for retention knobs (0 ⇒ no pruning):
+      // a misconfigured workspace must keep trash, never purge everything.
+      expect(isExpired(daysAgo(1), 0, NOW)).toBe(false);
+      expect(isExpired(daysAgo(3650), -1, NOW)).toBe(false);
+    });
+  });
+
+  describe("selectPurgeable", () => {
+    const items = [
+      { id: "ancient", deletedAt: daysAgo(400) },
+      { id: "expired", deletedAt: daysAgo(31) },
+      { id: "boundary", deletedAt: daysAgo(30) },
+      { id: "fresh", deletedAt: daysAgo(1) },
+      { id: "live", deletedAt: null },
+    ];
+
+    test("returns only items older than the default 30-day window", () => {
+      expect(selectPurgeable(items, defaultTrashRetentionPolicy, NOW)).toEqual([
+        items[0],
+        items[1],
+      ]);
+    });
+
+    test("keeps the boundary item: nothing exactly at the window is purged", () => {
+      const ids = selectPurgeable(items, defaultTrashRetentionPolicy, NOW).map((i) => i.id);
+      expect(ids).not.toContain("boundary");
+      expect(ids).not.toContain("fresh");
+      expect(ids).not.toContain("live");
+    });
+
+    test("honours a per-workspace custom window", () => {
+      const ids = selectPurgeable(items, { retentionDays: 7 }, NOW).map((i) => i.id);
+      // 7 days reaches the 30-day boundary item; the 1-day-old one survives.
+      expect(ids).toEqual(["ancient", "expired", "boundary"]);
+
+      expect(selectPurgeable(items, { retentionDays: 36500 }, NOW)).toEqual([]);
+    });
+
+    test("never selects pages that are not in the trash", () => {
+      const selected = selectPurgeable(
+        [{ deletedAt: null }],
+        { retentionDays: 0 },
+        NOW,
+      );
+      expect(selected).toEqual([]);
+    });
+
+    test("returns the original item references and an empty list when trash is empty", () => {
+      const selected = selectPurgeable(items, defaultTrashRetentionPolicy, NOW);
+      expect(selected[0]).toBe(items[0]);
+      expect(selected[1]).toBe(items[1]);
+      expect(selectPurgeable([], defaultTrashRetentionPolicy, NOW)).toEqual([]);
+    });
   });
 });

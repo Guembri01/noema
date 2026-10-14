@@ -112,3 +112,56 @@ export function staleFileUrls(purged: unknown, kept: unknown): string[] {
   }
   return stale;
 }
+
+// ---------------------------------------------------------------------------
+// Trash retention policy — MISSING_FEATURES §9 "Trash retention policy" and
+// §17 "Trash retention" (spec R30.15). Pure, time-injected rules for how long
+// a trashed page stays recoverable before an auto-purge may take it. Wiring a
+// scheduler / cron job onto these is a separate follow-up; nothing here talks
+// to the database or the clock.
+// ---------------------------------------------------------------------------
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** How long trash is kept before it becomes purgeable, in days. */
+export type TrashRetentionPolicy = {
+  retentionDays: number;
+};
+
+/** Default retention window (days) when a workspace does not override it. */
+export const DEFAULT_TRASH_RETENTION_DAYS = 30;
+
+/** The policy applied to workspaces without a configured override. */
+export const defaultTrashRetentionPolicy: TrashRetentionPolicy = {
+  retentionDays: DEFAULT_TRASH_RETENTION_DAYS,
+};
+
+/**
+ * Whether a trashed item has outlived its retention window as of `now`.
+ *
+ * Strictly past the window: an item deleted exactly `retentionDays` ago is
+ * still recoverable (spec R30.15 purges only `deletedAt < now - window`, so a
+ * tie never destroys data). A non-positive window disables expiry entirely —
+ * same convention as the other retention knobs (0 ⇒ no pruning) — so a
+ * misconfigured workspace keeps its trash instead of losing everything.
+ */
+export function isExpired(deletedAt: Date, retentionDays: number, now: Date): boolean {
+  if (!(retentionDays > 0)) return false;
+  return now.getTime() - deletedAt.getTime() > retentionDays * MS_PER_DAY;
+}
+
+/**
+ * Trashed items whose `deletedAt` is older than `policy.retentionDays` as of
+ * `now` — the candidates for permanent purge ("empty trash"). Items never
+ * trashed (`deletedAt === null`) are never selected; results keep the caller's
+ * item references and input order.
+ */
+export function selectPurgeable<T extends { deletedAt: Date | null }>(
+  items: ReadonlyArray<T>,
+  policy: TrashRetentionPolicy,
+  now: Date,
+): T[] {
+  return items.filter(
+    (item) => item.deletedAt !== null && isExpired(item.deletedAt, policy.retentionDays, now),
+  );
+}
