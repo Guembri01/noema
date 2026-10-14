@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePasteHtml, pastePlan } from "@/lib/paste";
+import { normalizePasteHtml, pastePlan, sanitizePastedHtml, stripToPlainText } from "@/lib/paste";
 
 /**
  * Paste normalisation: clipboard HTML (from another Noema page, or a foreign
@@ -515,6 +515,130 @@ describe("data-block-color on headings (B37)", () => {
         ],
       },
     ]);
+  });
+});
+
+/**
+ * Paste sanitisation surface (MISSING_FEATURES §2 "Paste with formatting" /
+ * "Paste without formatting"): pure HTML-string in -> clean HTML string
+ * (`sanitizePastedHtml`) or clean text (`stripToPlainText`) out.
+ */
+
+describe("sanitizePastedHtml", () => {
+  it("strips script/style/meta/iframe with their content, and comments", () => {
+    const html =
+      "<!-- exported from somewhere -->" +
+      '<meta charset="utf-8">' +
+      "<style>p{display:none}</style>" +
+      '<iframe src="https://evil.test"></iframe>' +
+      '<script>alert("x")</script>' +
+      "<p>keep</p>";
+    expect(sanitizePastedHtml(html)).toBe("<p>keep</p>");
+  });
+
+  it("removes on* handlers but keeps the element and its attributes", () => {
+    expect(sanitizePastedHtml('<p onclick="steal()" class="keep">x</p>')).toBe(
+      '<p class="keep">x</p>',
+    );
+    expect(sanitizePastedHtml('<img src="/a.png" onerror="x()" alt="a">')).toBe(
+      '<img src="/a.png" alt="a">',
+    );
+  });
+
+  it("neutralizes javascript: and vbscript: urls, keeping safe ones", () => {
+    const html =
+      '<a href="javascript:evil()">click</a>' +
+      '<a href="  VBScript:boom()">legacy</a>' +
+      '<a href="https://ok.test">ok</a>';
+    expect(sanitizePastedHtml(html)).toBe(
+      '<a>click</a><a>legacy</a><a href="https://ok.test">ok</a>',
+    );
+  });
+
+  it("strips inline style noise but keeps the small allowlist", () => {
+    expect(
+      sanitizePastedHtml(
+        '<p style="color: #d44c47; margin: 0; display: none; font-weight: 700">t</p>',
+      ),
+    ).toBe('<p style="color: #d44c47; font-weight: 700">t</p>');
+    expect(sanitizePastedHtml('<span style="mso-margin-top: 0">n</span>')).toBe("<span>n</span>");
+    expect(sanitizePastedHtml('<p style="color: expression(alert(1))">x</p>')).toBe("<p>x</p>");
+  });
+
+  it("preserves semantic formatting tags and safe attributes verbatim", () => {
+    const html =
+      "<h2>Title</h2>" +
+      "<p><b>b</b><i>i</i><u>u</u><s>s</s><code>c</code></p>" +
+      "<blockquote><p>q</p></blockquote>" +
+      '<ul><li data-checked="true">l</li></ul>' +
+      '<a href="https://ok.test" target="_blank" rel="noopener">link</a>' +
+      "<table><tr><th>A</th></tr></table>";
+    expect(sanitizePastedHtml(html)).toBe(html);
+  });
+
+  it("keeps entities intact for round-trip fidelity", () => {
+    expect(sanitizePastedHtml("<p>A &amp; B &mdash; C</p>")).toBe("<p>A &amp; B &mdash; C</p>");
+  });
+
+  it("keeps dangerous tags and extra CSS only when explicitly allowed", () => {
+    expect(
+      sanitizePastedHtml("<style>p{color:red}</style><p>x</p>", { allowTags: ["style"] }),
+    ).toBe("<style>p{color:red}</style><p>x</p>");
+    expect(
+      sanitizePastedHtml('<p style="color: red; letter-spacing: 2px">x</p>', {
+        allowStyles: ["letter-spacing"],
+      }),
+    ).toBe('<p style="color: red; letter-spacing: 2px">x</p>');
+  });
+
+  it("fully cleans a nested span-style/font wrapper (leak regression)", () => {
+    const html =
+      '<span style="mso-margin-top: 0; font-size: 13px" onmouseover="x()">' +
+      '<font color="#ff0000" face="Arial">t</font></span>';
+    const clean = sanitizePastedHtml(html);
+    expect(clean).toBe('<span><font color="#ff0000" face="Arial">t</font></span>');
+    expect(clean).not.toMatch(/style=|onmouseover|mso-|font-size/);
+  });
+});
+
+describe("stripToPlainText", () => {
+  it("decodes entities", () => {
+    expect(stripToPlainText("<p>A &amp; B &lt;C&gt; &copy;&nbsp;D</p>")).toBe(
+      "A & B <C> ©\u00a0D",
+    );
+  });
+
+  it("turns block boundaries and <br> into single newlines", () => {
+    const html =
+      "<h2>Title</h2><p>Hello <b>world</b><br>again</p>" +
+      "<ul><li>one</li><li>two</li></ul><blockquote><p>q</p></blockquote>";
+    expect(stripToPlainText(html)).toBe("Title\nHello world\nagain\none\ntwo\nq");
+  });
+
+  it("removes all markup, attributes and wrapper noise", () => {
+    expect(stripToPlainText('<div class="x" style="color:red" lang="en"><span>t</span></div>')).toBe(
+      "t",
+    );
+    expect(stripToPlainText("<p>  a\n   b  </p>")).toBe("a b");
+  });
+
+  it("drops script/style content outright", () => {
+    expect(stripToPlainText('<p>safe<script>alert("x")</script><style>p{}</style></p>')).toBe(
+      "safe",
+    );
+  });
+
+  it("never leaks a nested span-style/font wrapper (leak regression)", () => {
+    const html =
+      '<span style="mso-x: 1" onmouseover="x()">' +
+      '<font color="#ff0000" face="Arial">wrapped <b>text</b></font></span>';
+    const text = stripToPlainText(html);
+    expect(text).toBe("wrapped text");
+    expect(text).not.toMatch(/[<>]|style|mso-/i);
+  });
+
+  it("returns an empty string for markup-only input", () => {
+    expect(stripToPlainText('<div></div><img src="/a.png">')).toBe("");
   });
 });
 

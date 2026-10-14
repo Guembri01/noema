@@ -11,6 +11,11 @@
  * Only unsafe markup is stripped (script/style/iframe content, `on*`
  * handlers, `javascript:` urls, non-whitelisted CSS); structure and every
  * Noema block attribute survive.
+ *
+ * The same parser backs two standalone sanitisation helpers:
+ * `sanitizePastedHtml` (HTML in -> clean HTML out, for "paste with
+ * formatting") and `stripToPlainText` (HTML in -> clean text out, for
+ * "paste without formatting").
  */
 
 import type { Mark, RichNode } from "@/lib/blocks";
@@ -38,8 +43,14 @@ type TextNode = { kind: "text"; raw: string };
 type HtmlNode = ElementNode | TextNode;
 
 /** Elements whose content is discarded wholesale with the element. */
-const DROP_WITH_CONTENT =
-  /<(script|style|iframe|object|embed|noscript|svg|math)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+const DROP_WITH_CONTENT_TAGS = [
+  "script", "style", "iframe", "object", "embed", "noscript", "svg", "math",
+] as const;
+
+const dropWithContentRe = (tags: readonly string[]): RegExp =>
+  new RegExp(`<(${tags.join("|")})\\b[^>]*>[\\s\\S]*?(?:<\\/\\1\\s*>|$)`, "gi");
+
+const DEFAULT_DROP_RE = dropWithContentRe(DROP_WITH_CONTENT_TAGS);
 const COMMENT = /<!--[\s\S]*?-->/g;
 const TOKEN = /<\/?([a-zA-Z][\w-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)\/?>/g;
 const VOID = new Set([
@@ -81,10 +92,10 @@ function parseAttrs(source: string): Record<string, string> {
 }
 
 /** Tokenize into a tree; unbalanced closes pop the nearest open element. */
-function tokenize(html: string): HtmlNode[] {
+function tokenize(html: string, dropRe: RegExp = DEFAULT_DROP_RE): HtmlNode[] {
   const root: ElementNode = { kind: "element", tag: "#root", attrs: {}, children: [] };
   const stack: ElementNode[] = [root];
-  const clean = html.replace(COMMENT, "").replace(DROP_WITH_CONTENT, "");
+  const clean = html.replace(COMMENT, "").replace(dropRe, "");
   TOKEN.lastIndex = 0;
   let cursor = 0;
   let match: RegExpExecArray | null;
@@ -509,6 +520,160 @@ export function normalizePasteHtml(html: string): NormalizedPaste {
     inline: flattenInline(blocks),
     partial: detectPartial(nodes),
   };
+}
+
+/* ---------------------------------------------------------- sanitisation */
+
+/** Head/noise elements with no content of their own; dropped unless allowed. */
+const DROP_EMPTY_TAGS = new Set(["meta", "base", "link"]);
+
+/**
+ * CSS properties kept in a pasted `style` attribute. These are exactly the
+ * ones the normaliser can map to marks/attrs (plus text-align); everything
+ * else (mso-*, font-size, margins, display, …) is noise or layout chrome.
+ */
+const DEFAULT_ALLOWED_STYLES = new Set([
+  "color", "background-color", "font-weight", "font-style",
+  "text-decoration", "text-decoration-line", "text-align",
+]);
+
+/** Attributes whose value must be a safe URL scheme. */
+const URL_ATTRS = new Set([
+  "href", "src", "action", "formaction", "cite", "background", "poster", "xlink:href",
+]);
+
+/** Tags that form block boundaries in plain-text output. */
+const PLAIN_BLOCK_TAGS = new Set([
+  "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "pre",
+  "blockquote", "hr", "table", "tr", "th", "td", "div",
+  "section", "article", "header", "footer", "main", "aside",
+  "figure", "figcaption", "details", "summary", "dl", "dt", "dd",
+  "form", "fieldset",
+]);
+
+/** True for URLs that execute code (scheme-obfuscation tolerant). */
+function unsafeUrl(value: string): boolean {
+  const probe = value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+  return /^(javascript|vbscript|data:text\/html)/.test(probe);
+}
+
+function escapeAttr(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Keep only allowlisted declarations; `null` when nothing survives. */
+function sanitizeStyle(style: string, allow: ReadonlySet<string>): string | null {
+  const kept: string[] = [];
+  for (const part of style.split(";")) {
+    const idx = part.indexOf(":");
+    if (idx <= 0) continue;
+    const prop = part.slice(0, idx).trim().toLowerCase();
+    const value = part.slice(idx + 1).trim();
+    if (!value || !allow.has(prop)) continue;
+    if (/expression\s*\(|javascript:|vbscript:|data:text\/html/i.test(value)) continue;
+    kept.push(`${prop}: ${value}`);
+  }
+  return kept.length ? kept.join("; ") : null;
+}
+
+function serializeAttrs(attrs: Record<string, string>, allowStyles: ReadonlySet<string>): string {
+  let out = "";
+  for (const [name, value] of Object.entries(attrs)) {
+    if (name === "style") {
+      const style = sanitizeStyle(value, allowStyles);
+      if (style) out += ` style="${escapeAttr(style)}"`;
+      continue;
+    }
+    if (URL_ATTRS.has(name) && unsafeUrl(value)) continue;
+    out += ` ${name}="${escapeAttr(value)}"`;
+  }
+  return out;
+}
+
+function serializeNodes(
+  nodes: HtmlNode[],
+  allowTags: ReadonlySet<string>,
+  allowStyles: ReadonlySet<string>,
+): string {
+  let out = "";
+  for (const node of nodes) {
+    if (node.kind === "text") {
+      out += node.raw; // text round-trips verbatim (entities preserved)
+      continue;
+    }
+    if (DROP_EMPTY_TAGS.has(node.tag) && !allowTags.has(node.tag)) continue;
+    const attrs = serializeAttrs(node.attrs, allowStyles);
+    if (VOID.has(node.tag)) {
+      out += `<${node.tag}${attrs}>`;
+      continue;
+    }
+    out += `<${node.tag}${attrs}>${serializeNodes(node.children, allowTags, allowStyles)}</${node.tag}>`;
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------- public */
+
+export type SanitizeOptions = {
+  /** Tags kept even when they are normally dropped (e.g. "style", "iframe"). */
+  allowTags?: readonly string[];
+  /** Extra CSS properties kept in `style` beyond the default allowlist. */
+  allowStyles?: readonly string[];
+};
+
+/**
+ * Sanitise foreign clipboard HTML for a "paste with formatting" flow:
+ * semantic formatting (bold/italic/underline/strike/code marks, headings,
+ * lists, links, blockquotes, tables) and safe attributes survive verbatim,
+ * while `on*` handlers, `javascript:`-style URLs, comments, `<script>` /
+ * `<style>` / `<meta>` / `<iframe>` (unless explicitly allowed) and inline
+ * `style` declarations beyond a small allowlist are stripped.
+ */
+export function sanitizePastedHtml(html: string, opts: SanitizeOptions = {}): string {
+  const allowTags = new Set((opts.allowTags ?? []).map((tag) => tag.toLowerCase()));
+  const allowStyles = new Set([
+    ...DEFAULT_ALLOWED_STYLES,
+    ...(opts.allowStyles ?? []).map((prop) => prop.toLowerCase()),
+  ]);
+  const dropRe = dropWithContentRe(DROP_WITH_CONTENT_TAGS.filter((tag) => !allowTags.has(tag)));
+  return serializeNodes(tokenize(html, dropRe), allowTags, allowStyles);
+}
+
+/**
+ * "Paste without formatting": remove every tag, attribute and style, decode
+ * entities, collapse whitespace, and turn block boundaries into single
+ * newlines — so no wrapper markup or style can leak into the document.
+ */
+export function stripToPlainText(html: string): string {
+  let out = "";
+  const walk = (nodes: HtmlNode[]): void => {
+    for (const node of nodes) {
+      if (node.kind === "text") {
+        out += node.raw.replace(/[ \t\r\n\f]+/g, " ");
+        continue;
+      }
+      if (node.tag === "input") continue;
+      if (node.tag === "br") {
+        out += "\n";
+        continue;
+      }
+      const block = PLAIN_BLOCK_TAGS.has(node.tag);
+      if (block) out += "\n";
+      walk(node.children);
+      if (block) out += "\n";
+    }
+  };
+  walk(tokenize(html));
+  return decodeEntities(out)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t\f]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
 }
 
 const INLINE_FRIENDLY = new Set(["paragraph", "heading", "codeBlock", "blockquote"]);
