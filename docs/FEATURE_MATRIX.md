@@ -768,28 +768,28 @@ The table below summarizes how many feature rows fall into each status, per area
 
 | Area | ✅ Implemented | 🟡 Partial | 🧭 Planned | ⛔ Out of scope | Total |
 | --- | --- | --- | --- | --- | --- |
-| 1. Editor & blocks | 34 | 29 | 35 | 2 | 100 |
-| 2. Text formatting | 9 | 8 | 4 | 1 | 22 |
+| 1. Editor & blocks | 44 | 21 | 33 | 2 | 100 |
+| 2. Text formatting | 10 | 7 | 4 | 1 | 22 |
 | 3. Databases | 15 | 2 | 36 | 0 | 53 |
 | 4. Properties | 19 | 1 | 15 | 1 | 36 |
 | 5. Formulas | 0 | 0 | 16 | 0 | 16 |
 | 6. Templates | 1 | 2 | 6 | 1 | 10 |
 | 7. Collaboration | 13 | 2 | 11 | 0 | 26 |
 | 8. Sharing & permissions | 2 | 5 | 15 | 0 | 22 |
-| 9. Workspaces & structure | 5 | 7 | 11 | 0 | 23 |
+| 9. Workspaces & structure | 6 | 6 | 11 | 0 | 23 |
 | 10. Version history | 0 | 0 | 9 | 0 | 9 |
 | 11. Search | 3 | 2 | 6 | 0 | 11 |
 | 12. Import & export | 0 | 2 | 20 | 0 | 22 |
 | 13. Integrations & API | 0 | 3 | 19 | 0 | 22 |
 | 14. AI | 4 | 3 | 9 | 0 | 16 |
-| 15. Media & embeds | 4 | 7 | 10 | 0 | 21 |
+| 15. Media & embeds | 9 | 4 | 8 | 0 | 21 |
 | 16. Navigation & UX | 25 | 7 | 15 | 2 | 49 |
 | 17. Data model & platform | 6 | 8 | 23 | 0 | 37 |
 | 18. Pricing & plan-gated features | 0 | 0 | 14 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 8 | 7 | 15 |
 | 20. Projects, tickets & planning | 27 | 1 | 4 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **174** | **89** | **286** | **14** | **563** |
+| **Total** | **191** | **76** | **282** | **14** | **563** |
 
 ## Deliberate divergences
 
