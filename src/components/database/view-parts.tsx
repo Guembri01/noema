@@ -17,7 +17,7 @@ import { validateCell } from "@/lib/cell-validation";
 import { cellColorFor, type RowColorRule } from "@/lib/row-color-rules";
 import { formatUniqueId } from "@/lib/unique-id";
 import { formatDateRange, parseDateValue } from "@/lib/date-range";
-import { formatGeo, parseGeo } from "@/lib/geo";
+import { formatGeo, normalizeGeo, parseGeo } from "@/lib/geo";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
 
@@ -42,6 +42,7 @@ export const PROPERTY_TYPES: PropertyType[] = [
   "LAST_EDITED_TIME",
   "LAST_EDITED_BY",
   "UNIQUE_ID",
+  "PLACE",
   "BUTTON",
   "AI_AUTOFILL",
 ];
@@ -311,6 +312,9 @@ function uniqueIdNumber(value: unknown): number | null {
   return null;
 }
 
+/** Editable draft for a PLACE cell: the three raw input strings. */
+type PlaceDraft = { lat: string; lng: string; label: string };
+
 export function Cell({
   property,
   value,
@@ -356,6 +360,10 @@ export function Cell({
   // never violate the rules of hooks.
   const [editingNumber, setEditingNumber] = useState(false);
   const [editingDate, setEditingDate] = useState(false);
+  // PLACE: the display swaps to lat/lng/label inputs; the draft holds the raw
+  // strings so an in-progress coordinate can be typed before it parses.
+  const [editingPlace, setEditingPlace] = useState(false);
+  const [placeDraft, setPlaceDraft] = useState<PlaceDraft | null>(null);
   // PEOPLE keeps a local draft so two quick picks can't overwrite each other
   // from stale server props (the echo from the server lands after both clicks).
   const [peopleDraft, setPeopleDraft] = useState<string[] | null>(null);
@@ -408,6 +416,31 @@ export function Cell({
     // Percent edits are entered as the displayed percentage (7.5) but stored
     // as the fraction (0.075), like the product.
     onChange({ number: numberFormat === "percent" ? n / 100 : n });
+  };
+
+  // Validate + persist a PLACE draft. `parseGeo` owns the finiteness/bounds
+  // rules and `normalizeGeo` clamps/wraps before storage; a draft that does not
+  // parse yet (half-typed coordinate) is left in the editor, not saved. An
+  // entirely blank draft clears the cell.
+  const commitPlace = (draft: PlaceDraft): boolean => {
+    const lat = draft.lat.trim();
+    const lng = draft.lng.trim();
+    const label = draft.label.trim();
+    if (lat === "" || lng === "") {
+      if (lat === "" && lng === "" && label === "") {
+        onChange(null);
+        return true;
+      }
+      return false;
+    }
+    const parsed = parseGeo({
+      lat: Number(lat),
+      lng: Number(lng),
+      label: draft.label,
+    });
+    if (!parsed.ok) return false;
+    onChange(normalizeGeo(parsed.value));
+    return true;
   };
 
   const attachFile = (file: File) => {
@@ -857,22 +890,96 @@ export function Cell({
       );
     }
     case "PLACE": {
-      // Guarded because PLACE may not be in the generated `PropertyType` enum
-      // yet: a `{ lat, lng }` object or a `"lat, lng"` string renders
-      // read-only; anything unparseable stays blank.
-      const place = parseGeo(value);
-      if (!place.ok) {
+      // A stored `{ lat, lng, label? }` (or `"lat, lng"` string) renders through
+      // `@/lib/geo`; anything unparseable stays blank. Editable cells swap the
+      // `formatGeo` display for lat/lng/label inputs.
+      const parsed = parseGeo(value);
+      const place = parsed.ok ? parsed.value : null;
+      const display = place
+        ? `${place.label ? `${place.label} · ` : ""}${formatGeo(place)}`
+        : "";
+      if (!editable) {
         return (
           <span aria-label={property.name} className="text-muted">
-            —
+            {display || "—"}
           </span>
         );
       }
+      if (editingPlace && placeDraft) {
+        const draft = placeDraft;
+        const update = (patch: Partial<PlaceDraft>) =>
+          setPlaceDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+        const blurCommit = () => commitPlace(draft);
+        return (
+          <div className="flex flex-col gap-1" role="group" aria-label={property.name}>
+            <div className="flex items-center gap-1">
+              <input
+                autoFocus
+                type="text"
+                inputMode="decimal"
+                aria-label={`${property.name} lat`}
+                value={draft.lat}
+                onChange={(e) => update({ lat: e.target.value })}
+                onBlur={blurCommit}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                }}
+                className="w-20 bg-transparent outline-none"
+              />
+              <span className="text-muted">,</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                aria-label={`${property.name} lng`}
+                value={draft.lng}
+                onChange={(e) => update({ lng: e.target.value })}
+                onBlur={blurCommit}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                }}
+                className="w-20 bg-transparent outline-none"
+              />
+            </div>
+            <input
+              type="text"
+              aria-label={`${property.name} label`}
+              value={draft.label}
+              onChange={(e) => update({ label: e.target.value })}
+              onBlur={blurCommit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              }}
+              className="bg-transparent outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                commitPlace(draft);
+                setEditingPlace(false);
+              }}
+              className="self-start text-xs text-accent hover:underline"
+            >
+              {t(locale, "close")}
+            </button>
+          </div>
+        );
+      }
       return (
-        <span aria-label={property.name} className="text-muted">
-          {place.value.label ? `${place.value.label} · ` : ""}
-          {formatGeo(place.value)}
-        </span>
+        <button
+          type="button"
+          aria-label={property.name}
+          onClick={() => {
+            setPlaceDraft({
+              lat: place ? String(place.lat) : "",
+              lng: place ? String(place.lng) : "",
+              label: place?.label ?? "",
+            });
+            setEditingPlace(true);
+          }}
+          className="w-full rounded px-1 py-0.5 text-left hover:bg-surface-2"
+        >
+          {display || <span className="text-muted">—</span>}
+        </button>
       );
     }
     case "RELATION": {
@@ -1135,6 +1242,8 @@ export function icon(type: PropertyType): string {
       return "Σ";
     case "FILES":
       return "📎";
+    case "PLACE":
+      return "📍";
     default:
       return "Aa";
   }
