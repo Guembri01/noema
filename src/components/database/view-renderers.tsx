@@ -25,6 +25,7 @@ import {
 } from "@/lib/database-query";
 import { groupRowsByProperty, visibleGroups as filterVisibleGroups } from "@/lib/board-groups";
 import { reorderRows, sortByOrder } from "@/lib/row-order";
+import { reorderRowsAction } from "@/server/actions/database";
 import { evaluateRowColors, type RowColorRule } from "@/lib/row-color-rules";
 import {
   CARD_SIZES,
@@ -48,6 +49,24 @@ function orderRows(rows: DBRow[], rowOrder?: Record<string, number>): DBRow[] {
   return sortByOrder(
     rows.map((row) => ({ id: row.id, row, order: rowOrder[row.id] })),
   ).map((entry) => entry.row);
+}
+
+/**
+ * Persist a manual row order. The in-session `update` callback still runs first
+ * so a move feels instant and stays the fallback when persistence fails; the
+ * `reorderRowsAction` then renumbers `Page.position` for the parent database.
+ * The failure is swallowed on purpose — a failed write must never undo the
+ * order the user just saw.
+ */
+function persistRowOrder(
+  orderedIds: string[],
+  update: (orderedIds: string[]) => void,
+): void {
+  update(orderedIds);
+  if (orderedIds.length === 0) return;
+  void reorderRowsAction(orderedIds[0], orderedIds).catch(() => {
+    /* keep the in-session order */
+  });
 }
 
 export function TableView({
@@ -308,12 +327,13 @@ export function TableView({
                         aria-label={`${t(locale, "moveUp")}: ${row.title}`}
                         disabled={rowIndex === 0}
                         onClick={() =>
-                          onReorderRows(
+                          persistRowOrder(
                             reorderRows(
                               orderedRows.map((entry) => entry.id),
                               rowIndex,
                               rowIndex - 1,
                             ),
+                            onReorderRows,
                           )
                         }
                         className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
@@ -326,12 +346,13 @@ export function TableView({
                         aria-label={`${t(locale, "moveDown")}: ${row.title}`}
                         disabled={rowIndex === orderedRows.length - 1}
                         onClick={() =>
-                          onReorderRows(
+                          persistRowOrder(
                             reorderRows(
                               orderedRows.map((entry) => entry.id),
                               rowIndex,
                               rowIndex + 1,
                             ),
+                            onReorderRows,
                           )
                         }
                         className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
@@ -491,12 +512,13 @@ export function ListView({
                     aria-label={`${t(locale, "moveUp")}: ${row.title}`}
                     disabled={rowIndex === 0}
                     onClick={() =>
-                      onReorderRows(
+                      persistRowOrder(
                         reorderRows(
                           orderedRows.map((entry) => entry.id),
                           rowIndex,
                           rowIndex - 1,
                         ),
+                        onReorderRows,
                       )
                     }
                     className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
@@ -509,12 +531,13 @@ export function ListView({
                     aria-label={`${t(locale, "moveDown")}: ${row.title}`}
                     disabled={rowIndex === orderedRows.length - 1}
                     onClick={() =>
-                      onReorderRows(
+                      persistRowOrder(
                         reorderRows(
                           orderedRows.map((entry) => entry.id),
                           rowIndex,
                           rowIndex + 1,
                         ),
+                        onReorderRows,
                       )
                     }
                     className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"

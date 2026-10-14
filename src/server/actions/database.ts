@@ -14,6 +14,7 @@ import type { ImportCounts } from "@/lib/importers";
 import { normalizeViewConfig } from "@/lib/database-query";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { nextRunFor } from "@/lib/recurrence";
+import { ORDER_STEP } from "@/lib/row-order";
 
 type Result<T = unknown> = ({ ok: true } & T) | { error: string };
 
@@ -169,6 +170,63 @@ export async function reorderPropertiesAction(
       prisma.property.update({
         where: { id },
         data: { position: (index + 1) * 1000 },
+      }),
+    ),
+  );
+  revalidateDatabase(auth.page.workspaceId);
+  return { ok: true };
+}
+
+/**
+ * Persist a manual row order: positions are rewritten from the client's visible
+ * order on the same dense 1000-step `Page.position` scale `createRowAction`
+ * and the row-order engine use (`ORDER_STEP`). `anchorRowId` is any row of the
+ * target database — it only resolves the parent database and its permissions,
+ * so the shared table/list renderer can persist without carrying the database
+ * id. Ids the client does not know are kept and pushed to the end, so a stale
+ * tab can never drop a row someone else added; unknown or soft-deleted ids are
+ * ignored and duplicate ids are collapsed.
+ */
+export async function reorderRowsAction(
+  anchorRowId: string,
+  orderedRowIds: string[],
+): Promise<Result> {
+  const anchor = await prisma.page.findUnique({
+    where: { id: anchorRowId },
+    select: { parentId: true },
+  });
+  if (!anchor?.parentId) return { error: "Row not found." };
+  const auth = await authorizeDatabase(anchor.parentId);
+  if ("error" in auth) return auth;
+  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+
+  const existing = await prisma.page.findMany({
+    where: { parentId: anchor.parentId, deletedAt: null },
+    orderBy: { position: "asc" },
+    select: { id: true },
+  });
+  const known = new Set(existing.map((row) => row.id));
+  const seen = new Set<string>();
+  const order: string[] = [];
+  for (const id of orderedRowIds) {
+    if (known.has(id) && !seen.has(id)) {
+      seen.add(id);
+      order.push(id);
+    }
+  }
+  for (const row of existing) {
+    if (!seen.has(row.id)) {
+      seen.add(row.id);
+      order.push(row.id);
+    }
+  }
+  if (order.length === 0) return { ok: true };
+
+  await prisma.$transaction(
+    order.map((id, index) =>
+      prisma.page.update({
+        where: { id },
+        data: { position: (index + 1) * ORDER_STEP },
       }),
     ),
   );
