@@ -88,6 +88,27 @@ function decodeSegment(segment: string): string {
   }
 }
 
+/**
+ * The `#<blockId>` anchor `buildBlockDeepLink` should use for the block at
+ * `at`. `BlockIds` stamps an id on top-level blocks only (`block-ids.ts`), so
+ * the node under the pointer is id-less for a nested node (a list item, a
+ * callout paragraph); climb to the nearest top-level ancestor instead and
+ * return `undefined` when none carries one, leaving the page-link fallback to
+ * the caller.
+ */
+function blockAnchorId(doc: Editor["state"]["doc"], at: number): string | undefined {
+  const readId = (node: { attrs?: { id?: unknown } } | null | undefined): string | undefined => {
+    const id = node?.attrs?.id;
+    return typeof id === "string" && id.trim() !== "" ? id : undefined;
+  };
+  const $pos = doc.resolve(at);
+  // A top-level block's start resolves at doc level (depth 0) — `nodeAt` reads
+  // it there; a nested block resolves inside its ancestor, and `node(1)` is the
+  // top-level node that wraps it.
+  const node = $pos.depth >= 1 ? $pos.node(1) : doc.nodeAt(at);
+  return readId(node);
+}
+
 type TurnKind =
   | "paragraph"
   | "h1"
@@ -277,16 +298,16 @@ export function BlockContextMenu({
    * slice), but the editor only mounts on that route, so the live URL is the
    * authoritative source. The `BlockIds` extension (registered via
    * `input-rules.ts`) now stamps a persistent `id` on every top-level block, so
-   * when the block under the menu carries one we anchor to it; a nested or
-   * not-yet-minted block falls back to the page link (`blockId` undefined).
+   * we climb from the block under the menu to its top-level ancestor and anchor
+   * to that id; when no ancestor carries one (or the block is not yet minted)
+   * we fall back to the page link (`blockId` undefined).
    */
   const copyLink = () => {
     if (pos === null) return;
     const { origin, pathname } = window.location;
     const segments = pathname.split("/").filter(Boolean).map(decodeSegment);
     const onPageRoute = segments[0] === "w" && segments.length >= 3;
-    const nodeId = editor.state.doc.nodeAt(pos)?.attrs?.id;
-    const blockId = typeof nodeId === "string" && nodeId.trim() !== "" ? nodeId : undefined;
+    const blockId = blockAnchorId(editor.state.doc, pos);
     const url = onPageRoute
       ? buildBlockDeepLink(segments[segments.length - 1], blockId, {
           origin,

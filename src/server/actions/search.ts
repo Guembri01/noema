@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { pageScopeFor } from "@/lib/guest-access";
 import { searchPages, searchPagesPaged } from "@/server/queries";
+import type { SummaryBlock } from "@/lib/page-summary";
 
 export type QuickFindResult = {
   id: string;
@@ -11,6 +12,13 @@ export type QuickFindResult = {
   icon: string | null;
   type: string;
   snippet: string;
+  /**
+   * Content-derived teaser blocks, when the caller has them. The search page
+   * asks the query for these (via `includeBlocks`) so appended "Load more" rows
+   * render the same real teaser as the initial window; the palette leaves it
+   * unset and keeps using `snippet`.
+   */
+  blocks?: SummaryBlock[];
 };
 
 /**
@@ -53,6 +61,9 @@ export async function loadMoreSearchAction(input: {
     const visiblePageIds = await pageScopeFor(user.id, input.workspaceId, access.role);
     const page = await searchPagesPaged(input.workspaceId, input.query, visiblePageIds, {
       offset: input.offset,
+      // Mirror the search page's initial window (`includeBlocks: true`) so the
+      // next page carries the same content-derived teasers, not a bare snippet.
+      includeBlocks: true,
     });
     return {
       ok: true,
@@ -62,6 +73,7 @@ export async function loadMoreSearchAction(input: {
         icon: result.icon,
         type: result.type,
         snippet: result.snippet ?? "",
+        blocks: result.blocks ?? [],
       })),
       nextOffset: page.nextOffset,
     };
