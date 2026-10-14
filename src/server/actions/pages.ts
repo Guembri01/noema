@@ -208,6 +208,7 @@ export async function updatePageAction(
     fullWidth?: boolean;
     smallText?: boolean;
     font?: string;
+    lineSpacing?: string;
     locked?: boolean;
     content?: unknown;
   },
@@ -261,6 +262,9 @@ export async function updatePageAction(
       ...(patch.fullWidth !== undefined ? { fullWidth: patch.fullWidth } : {}),
       ...(patch.smallText !== undefined ? { smallText: patch.smallText } : {}),
       ...(patch.font !== undefined ? { font: patch.font.slice(0, 20) } : {}),
+      ...(patch.lineSpacing !== undefined
+        ? { lineSpacing: patch.lineSpacing.slice(0, 20) }
+        : {}),
       ...(patch.locked !== undefined ? { locked: patch.locked } : {}),
       ...(contentResult.doc !== undefined
         ? { content: contentResult.doc as Prisma.InputJsonValue }
