@@ -16,6 +16,14 @@ import {
   isWebhookEventType,
   validateEventPayload,
 } from "@/lib/webhook-event-catalog";
+import {
+  canAttempt,
+  createBreaker,
+  onFailure,
+  onSuccess,
+  stateName,
+  type BreakerName,
+} from "@/lib/circuit-breaker";
 
 /** Transport-safe wrappers (F-09): a failed request now returns `{ error }`. */
 const createWebhookAction = guarded(createWebhookActionRaw);
@@ -62,6 +70,42 @@ function validateEventSelection(selected: readonly string[]): string | null {
   return null;
 }
 
+/** Per-webhook delivery health folded from its recent `WebhookDelivery` rows. */
+type DeliveryHealth = {
+  /** Effective circuit at the newest delivery instant: `closed`, `open`, or `half-open`. */
+  circuit: BreakerName;
+  /** Whether the circuit would let another attempt through right now. */
+  attemptable: boolean;
+  /** Retry attempts recorded by the webhook's newest delivery. */
+  attempts: number;
+};
+
+/**
+ * Replay a webhook's deliveries (any order) through the shared breaker so the
+ * manager can surface an open/closed delivery circuit per webhook alongside the
+ * newest retry count. Older rows are applied first; `now` is pinned to the
+ * newest row's timestamp instead of `Date.now()`, so the reading is
+ * deterministic and server/client renders agree.
+ */
+function deliveryHealth(rows: readonly DeliveryRow[]): DeliveryHealth | null {
+  if (rows.length === 0) return null;
+  const chronological = [...rows].sort(
+    (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+  );
+  let state = createBreaker();
+  for (const row of chronological) {
+    const at = Date.parse(row.createdAt);
+    state = row.ok ? onSuccess(state, at) : onFailure(state, at);
+  }
+  const newest = chronological[chronological.length - 1];
+  const now = Date.parse(newest.createdAt);
+  return {
+    circuit: stateName(state, now),
+    attemptable: canAttempt(state, now),
+    attempts: newest.attempts,
+  };
+}
+
 export function WebhookManager({
   workspaceId,
   webhooks,
@@ -102,6 +146,16 @@ export function WebhookManager({
         toast.error(result.error);
       }
     });
+
+  // Group the recent delivery log by webhook URL so each row can show its own
+  // circuit and newest retry count. The RSC payload only carries the URL, so it
+  // is the join key available to the manager.
+  const deliveriesByUrl = new Map<string, DeliveryRow[]>();
+  for (const delivery of deliveries) {
+    const rows = deliveriesByUrl.get(delivery.url);
+    if (rows) rows.push(delivery);
+    else deliveriesByUrl.set(delivery.url, [delivery]);
+  }
 
   return (
     <section className="mt-10">
@@ -162,35 +216,54 @@ export function WebhookManager({
         <p className="text-sm text-muted">{t(locale, "noWebhooks")}</p>
       ) : (
         <ul className="divide-y divide-border rounded-lg border border-border">
-          {webhooks.map((webhook) => (
-            <li key={webhook.id} className="flex items-center gap-3 px-4 py-3 text-sm">
-              <span className="flex-1 truncate font-mono text-xs">{webhook.url}</span>
-              <span className="text-xs text-muted">
-                {webhook.events.length === 0 ? t(locale, "allEvents") : subscriptionLabels(webhook.events)}
-              </span>
-              {webhook.hasSecret && (
-                <span className="rounded bg-surface px-1 text-[10px] text-muted">{t(locale, "signedBadge")}</span>
-              )}
-              <button
-                type="button"
-                aria-label={t(locale, "deleteWebhook")}
-                onClick={() =>
-                  startTransition(async () => {
-                    const result = await deleteWebhookAction(webhook.id);
-                    if ("ok" in result) {
-                      toast.success(t(locale, "webhookRemoved"));
-                      router.refresh();
-                    } else {
-                      toast.error(result.error);
+          {webhooks.map((webhook) => {
+            const health = deliveryHealth(deliveriesByUrl.get(webhook.url) ?? []);
+            return (
+              <li key={webhook.id} className="flex items-center gap-3 px-4 py-3 text-sm">
+                <span className="flex-1 truncate font-mono text-xs">{webhook.url}</span>
+                <span className="text-xs text-muted">
+                  {webhook.events.length === 0 ? t(locale, "allEvents") : subscriptionLabels(webhook.events)}
+                </span>
+                {health && (
+                  <span
+                    title={
+                      health.attemptable
+                        ? "Delivery circuit closed"
+                        : "Delivery circuit open"
                     }
-                  })
-                }
-                className="text-muted hover:text-red-500"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </li>
-          ))}
+                    className={`rounded px-1 text-[10px] font-medium ${
+                      health.attemptable
+                        ? "bg-emerald-500/15 text-emerald-600"
+                        : "bg-red-500/15 text-red-600"
+                    }`}
+                  >
+                    {health.circuit} · {health.attempts} {t(locale, "attemptUnit")}
+                  </span>
+                )}
+                {webhook.hasSecret && (
+                  <span className="rounded bg-surface px-1 text-[10px] text-muted">{t(locale, "signedBadge")}</span>
+                )}
+                <button
+                  type="button"
+                  aria-label={t(locale, "deleteWebhook")}
+                  onClick={() =>
+                    startTransition(async () => {
+                      const result = await deleteWebhookAction(webhook.id);
+                      if ("ok" in result) {
+                        toast.success(t(locale, "webhookRemoved"));
+                        router.refresh();
+                      } else {
+                        toast.error(result.error);
+                      }
+                    })
+                  }
+                  className="text-muted hover:text-red-500"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
 
