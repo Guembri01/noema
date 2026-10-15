@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type DragEvent,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import {
   ChevronRight,
   CircleDot,
@@ -37,6 +45,13 @@ import {
   toggleExpanded,
   visibleChildren,
 } from "@/lib/page-tree";
+import {
+  canDrop,
+  dropIndicatorStyle,
+  resolveDropTarget,
+  type DropMode,
+  type DropRect,
+} from "@/lib/drag-drop-targets";
 import { truncateEnd } from "@/lib/truncate";
 import { toast } from "sonner";
 import { safeAction } from "@/lib/actions-client";
@@ -126,6 +141,99 @@ export function PageTree({
       router.refresh();
     });
 
+  /** id → node, for the drag helpers' parent lookups. */
+  const byId = useMemo(() => new Map(tree.map((node) => [node.id, node])), [tree]);
+
+  // Drag-and-drop intention (docs "Drag & drop"): the pointer is hit-tested by
+  // `resolveDropTarget` over the rows currently laid out in the nav and gated by
+  // `canDrop`, so no ad-hoc edge/indent math lives here. `draggingId` is the row
+  // being dragged and `dropTarget` the resolved `{ id, mode }` the indicator
+  // draws. The drop still goes through `movePageAction` (server permission +
+  // cycle checks) via `remote`, so this only decides *where* a drop would land.
+  const navRef = useRef<HTMLElement | null>(null);
+  const dragStartX = useRef(0);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; mode: DropMode } | null>(null);
+
+  /** The laid-out rows, measured fresh so scroll/collapse stay in sync. */
+  const dropRects = (): DropRect[] => {
+    const container = navRef.current;
+    if (!container) return [];
+    const rects: DropRect[] = [];
+    container.querySelectorAll<HTMLElement>("[data-page-row]").forEach((element) => {
+      const id = element.dataset.pageId;
+      if (!id) return;
+      const box = element.getBoundingClientRect();
+      rects.push({ id, top: box.top, height: box.height });
+    });
+    return rects;
+  };
+
+  const parentOf = (id: string) => byId.get(id)?.parentId ?? null;
+
+  const handleDragStart = (event: DragEvent<HTMLDivElement>, id: string) => {
+    setDraggingId(id);
+    setDropTarget(null);
+    dragStartX.current = event.clientX;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", id);
+  };
+
+  const handleDragEnd = () => {
+    setDraggingId(null);
+    setDropTarget(null);
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLElement>) => {
+    if (!draggingId) return;
+    const rects = dropRects();
+    if (rects.length === 0) return;
+    // Rightward travel promotes the hover to `inside` (re-parent) — the
+    // drag-right-to-nest gesture handled by `resolveDropTarget`.
+    const resolved = resolveDropTarget(rects, event.clientY, {
+      indentOffset: event.clientX - dragStartX.current,
+    });
+    const resolvedId = rects[resolved.index]?.id;
+    if (!resolvedId || !canDrop(draggingId, resolvedId, parentOf)) {
+      setDropTarget(null);
+      return;
+    }
+    // Only a valid target accepts the drop (preventDefault enables it).
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTarget({ id: resolvedId, mode: resolved.mode });
+  };
+
+  const handleDragLeave = (event: DragEvent<HTMLElement>) => {
+    const next = event.relatedTarget as Node | null;
+    if (next && event.currentTarget.contains(next)) return;
+    setDropTarget(null);
+  };
+
+  const handleDrop = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    const draggedId = draggingId;
+    const target = dropTarget;
+    setDraggingId(null);
+    setDropTarget(null);
+    if (!draggedId || !target) return;
+    const draggedNode = byId.get(draggedId);
+    const targetNode = byId.get(target.id);
+    if (!draggedNode || !targetNode) return;
+    if (!canDrop(draggedId, targetNode.id, parentOf)) return;
+    // `inside` re-parents under the row; `before`/`after` join the row's parent.
+    // The action only takes a parent id (it appends at that level's end), so
+    // exact sibling ordering is a follow-up, not ad-hoc math here.
+    const parentId = target.mode === "inside" ? targetNode.id : targetNode.parentId;
+    if (target.mode === "inside" && draggedNode.parentId === parentId) return;
+    remote(
+      () => movePageAction(draggedId, parentId),
+      target.mode === "inside"
+        ? `Moved into ${targetNode.title || "Untitled"}`
+        : "Moved page",
+    );
+  };
+
   const renderNodes = (
     parentId: string | null,
     depth: number,
@@ -140,6 +248,10 @@ export function PageTree({
           const isOpen = expanded.has(node.id);
           const href = `/w/${workspace.slug}/${node.id}`;
           const active = pathname === href;
+          const indicator =
+            dropTarget && dropTarget.id === node.id
+              ? dropIndicatorStyle({ index: 0, mode: dropTarget.mode })
+              : null;
           return (
             <li key={node.id}>
               <ContextMenu>
@@ -148,8 +260,14 @@ export function PageTree({
                 className={cn(
                   "group flex items-center rounded-md pr-0.5 hover:bg-surface-2",
                   active && "bg-surface-2",
+                  draggingId === node.id && "opacity-50",
                 )}
-                style={{ paddingLeft: depth * 14 }}
+                data-page-row
+                data-page-id={node.id}
+                draggable
+                onDragStart={(event) => handleDragStart(event, node.id)}
+                onDragEnd={handleDragEnd}
+                style={{ paddingLeft: depth * 14, ...(indicator ?? {}) }}
               >
                 <button
                   type="button"
@@ -439,7 +557,14 @@ export function PageTree({
       </Tooltip>
     </div>
 
-    <nav aria-label={t(locale, "pages")} className="mt-1 flex-1 overflow-y-auto px-2 pb-3">
+    <nav
+      ref={navRef}
+      aria-label={t(locale, "pages")}
+      className="mt-1 flex-1 overflow-y-auto px-2 pb-3"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {(byParent.get(null) ?? []).length === 0 && teamspaces.length === 0 ? (
         <p className="px-2 py-4 text-sm text-muted">No pages yet.</p>
       ) : (
