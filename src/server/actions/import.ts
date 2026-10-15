@@ -8,6 +8,12 @@ import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { markdownToDoc } from "@/lib/serialize";
 import { cardDescriptionBlocks, parseTrelloBoard, pathToTitles, type ImportCounts } from "@/lib/importers";
 import type { CreatePropertyDescriptor } from "@/lib/csv-mapping";
+import { fileNameExt, isAllowedType, mimeForExt } from "@/lib/file-type";
+import {
+  mapNotionBlockType,
+  mapNotionPropertyType,
+  unmappedBlocks,
+} from "@/lib/import-notion-map";
 import { importCsvAction } from "./database";
 
 const TRELLO_COLORS = ["gray", "blue", "green", "yellow", "orange", "purple", "pink", "red"];
@@ -18,11 +24,96 @@ const TRELLO_COLORS = ["gray", "blue", "green", "yellow", "orange", "purple", "p
  * Counts (D23.4) report what was written vs dropped.
  */
 type ImportResult =
-  | { ok: true; id: string; slug: string; counts: ImportCounts }
+  | { ok: true; id: string; slug: string; counts: ImportCounts; unmapped?: NotionMappingSummary }
   | { error: string };
 
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
+
+/**
+ * Distinct Notion block/property type coverage for an import: how many types
+ * have a Noema equivalent and which have none. Computed through the vocabulary
+ * layer (`src/lib/import-notion-map.ts`) so the server reports the same loss
+ * the client preview shows, instead of silently dropping content.
+ */
+export type NotionMappingSummary = {
+  blocks: { total: number; mapped: number; unmapped: string[] };
+  properties: { total: number; mapped: number; unmapped: string[] };
+};
+
+/** Distinct, non-empty type strings in first-seen order (mirrors `unmappedBlocks`). */
+function distinctTypes(types: readonly unknown[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const type of types) {
+    if (typeof type !== "string" || type.trim() === "" || seen.has(type)) continue;
+    seen.add(type);
+    out.push(type);
+  }
+  return out;
+}
+
+/**
+ * Report/count the Notion types in an import that have no Noema mapping, using
+ * the shared vocabulary layer (`mapNotionBlockType` / `mapNotionPropertyType` /
+ * `unmappedBlocks`). Purely additive and total: unknown or malformed input
+ * degrades to an empty summary rather than throwing.
+ */
+function summarizeNotionMapping(
+  blockTypes: readonly unknown[] = [],
+  propertyTypes: readonly unknown[] = [],
+): NotionMappingSummary {
+  const blocks = distinctTypes(blockTypes);
+  const properties = distinctTypes(propertyTypes);
+  return {
+    blocks: {
+      total: blocks.length,
+      mapped: blocks.filter((type) => mapNotionBlockType(type) !== null).length,
+      unmapped: unmappedBlocks(blocks),
+    },
+    properties: {
+      total: properties.length,
+      mapped: properties.filter((type) => mapNotionPropertyType(type) !== null).length,
+      unmapped: properties.filter((type) => mapNotionPropertyType(type) === null),
+    },
+  };
+}
+
+/**
+ * Server-side allow-lists per uploaded import entry, mirroring the sidebar
+ * `<input accept>` attributes. Validated through `file-type` (extension →
+ * MIME + shared allow-list matcher) instead of trusting `File.type`, which
+ * browsers leave blank on many systems.
+ */
+const UPLOAD_ALLOW: Record<string, readonly string[]> = {
+  docx: [".docx"],
+  zip: [".zip"],
+};
+
+/**
+ * Whether an uploaded file's extension resolves to a permitted type. The
+ * browser-supplied `File.type` is ignored; the name is resolved via
+ * `mimeForExt` and matched with `isAllowedType`.
+ */
+function isUploadAllowed(file: File, allow: readonly string[]): boolean {
+  return isAllowedType(mimeForExt(fileNameExt(file.name)), { allow });
+}
+
+/**
+ * Read an optional JSON string-array form field (Notion type hints). Anything
+ * malformed or non-array degrades to `[]` so validation never rejects an
+ * otherwise valid import.
+ */
+function readTypeHints(formData: FormData, field: string): string[] {
+  const raw = formData.get(field);
+  if (typeof raw !== "string" || raw.trim() === "") return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 /** Import a Word (.docx) document as a page. */
 export async function importDocxAction(formData: FormData): Promise<ImportResult> {
@@ -32,6 +123,9 @@ export async function importDocxAction(formData: FormData): Promise<ImportResult
   const file = formData.get("file");
   if (!workspaceId || !(file instanceof File)) {
     return { error: "Missing file or workspace." };
+  }
+  if (!isUploadAllowed(file, UPLOAD_ALLOW.docx)) {
+    return { error: `Unsupported file type: ${file.name}. Expected a .docx document.` };
   }
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access || !canEditContent(access.role)) {
@@ -233,6 +327,9 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
   if (!workspaceId || !(file instanceof File)) {
     return { error: "Missing file or workspace." };
   }
+  if (!isUploadAllowed(file, UPLOAD_ALLOW.zip)) {
+    return { error: `Unsupported file type: ${file.name}. Expected a .zip archive.` };
+  }
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import." };
@@ -242,6 +339,14 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
     select: { slug: true },
   });
   if (!workspace) return { error: "Workspace not found." };
+
+  // m30: report which Notion block/property types in a Notion/pages export
+  // have no Noema mapping. Additive: without the optional type hints (the
+  // sidebar sends none) the summary is empty and the import is unchanged.
+  const unmapped = summarizeNotionMapping(
+    readTypeHints(formData, "blockTypes"),
+    readTypeHints(formData, "propertyTypes"),
+  );
 
   const { default: JSZip } = await import("jszip");
   const zip = await JSZip.loadAsync(await file.arrayBuffer()).catch(() => null);
@@ -323,6 +428,7 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
     id: lastId,
     slug: workspace.slug,
     counts: { imported, skippedColumns: 0, skippedCells: 0, failed: 0 },
+    unmapped,
   };
 }
 
