@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, MessageSquare, Quote, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -17,6 +17,11 @@ import { cn, initials, avatarColor } from "@/lib/utils";
 import { parseCommentBody, toPlainText, type CommentSegment } from "@/lib/comment-body";
 import { sanitizeHref } from "@/lib/validation";
 import { t } from "@/lib/i18n";
+import {
+  buildThreads,
+  threadCounts,
+  type Comment as ThreadComment,
+} from "@/lib/comment-threads";
 import { LocalTime } from "@/components/local-time";
 
 export type CommentNode = {
@@ -37,6 +42,35 @@ export type CommentNode = {
 
 /** Custom event the editor fires when "Comment" is pressed. */
 export const COMMENT_EVENT = "noema:comment";
+
+/**
+ * Flatten the server-shaped nodes into the pure thread model
+ * (`src/lib/comment-threads.ts`) so `buildThreads`/`threadCounts` can drive the
+ * resolved/unresolved readout. Purely derived - the boolean `resolved` maps to
+ * `resolvedAt` presence (only whether the stamp exists is read, never its
+ * value) and reactions are left out of this projection. The wire shape and the
+ * server-authoritative actions are untouched.
+ */
+function toThreadComments(comments: CommentNode[]): ThreadComment[] {
+  return comments.flatMap((comment) => [
+    {
+      id: comment.id,
+      threadId: comment.id,
+      authorId: comment.author.id,
+      body: comment.body,
+      createdAt: comment.createdAt,
+      resolvedAt: comment.resolved ? comment.createdAt : undefined,
+    },
+    ...comment.replies.map((reply) => ({
+      id: reply.id,
+      threadId: comment.id,
+      parentId: comment.id,
+      authorId: reply.author.id,
+      body: reply.body,
+      createdAt: reply.createdAt,
+    })),
+  ]);
+}
 
 export function CommentPanel({
   locale,
@@ -62,6 +96,14 @@ export function CommentPanel({
   const [flash, setFlash] = useState(false);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Purely derived from the props: grouping replies under their root via
+  // `buildThreads` and tallying resolved vs open threads via `threadCounts`.
+  // Read-only presentation - no action or wire shape changes.
+  const counts = useMemo(
+    () => threadCounts(buildThreads(toThreadComments(comments))),
+    [comments],
+  );
 
   // The editor's "Comment" action hands the selection to us here.
   useEffect(() => {
@@ -123,10 +165,17 @@ export function CommentPanel({
 
   return (
     <section className="mt-14 border-t border-border pt-8">
-      <h2 className="mb-4 flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-muted">
-        <MessageSquare className="h-4 w-4" />
-        {t(locale, "commentsHeading")} ({comments.length})
-      </h2>
+      <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 className="flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-muted">
+          <MessageSquare className="h-4 w-4" />
+          {t(locale, "commentsHeading")} ({counts.threads})
+        </h2>
+        {counts.threads > 0 && (
+          <p className="text-xs text-muted">
+            {counts.resolved} resolved · {counts.unresolved} open
+          </p>
+        )}
+      </div>
 
       <ul className="space-y-5">
         {comments.map((comment) => (
