@@ -718,7 +718,7 @@ export function PageEditor({
             locale={locale}
             onPickImage={() => fileInputRef.current?.click()}
           />
-          <MentionMenu editor={editor} workspaceId={workspaceId} locale={locale} />
+          <MentionMenu editor={editor} workspaceId={workspaceId} pageId={pageId} locale={locale} />
           <input
             ref={fileInputRef}
             type="file"
