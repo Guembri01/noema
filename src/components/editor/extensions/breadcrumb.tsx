@@ -7,6 +7,7 @@ import {
   type NodeViewProps,
 } from "@tiptap/react";
 import { t } from "@/lib/i18n";
+import { truncateMiddle } from "@/lib/truncate";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -57,6 +58,13 @@ export const Breadcrumb = Node.create<BreadcrumbOptions>({
   },
 });
 
+/**
+ * Longest breadcrumb label rendered, in code points. The trail is inline and
+ * horizontal, so the middle is elided (`truncateMiddle`) to keep both the start
+ * and the distinguishing tail; a surrogate pair is never sliced.
+ */
+const BREADCRUMB_LABEL_MAX = 40;
+
 function BreadcrumbView({ extension }: NodeViewProps) {
   const options = extension.options as BreadcrumbOptions;
   const trail = options.trail ?? [];
@@ -70,7 +78,7 @@ function BreadcrumbView({ extension }: NodeViewProps) {
           {trail.map((crumb, index) => (
             <span key={crumb.id} className="noema-breadcrumb-item">
               <a href={`/w/${options.workspaceSlug}/${crumb.id}`}>
-                {crumb.title || t(locale, "untitled")}
+                {truncateMiddle(crumb.title || t(locale, "untitled"), BREADCRUMB_LABEL_MAX)}
               </a>
               {index < trail.length - 1 && <span className="noema-breadcrumb-sep">/</span>}
             </span>

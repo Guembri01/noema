@@ -37,6 +37,7 @@ import {
   toggleExpanded,
   visibleChildren,
 } from "@/lib/page-tree";
+import { truncateEnd } from "@/lib/truncate";
 import { toast } from "sonner";
 import { safeAction } from "@/lib/actions-client";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -74,6 +75,14 @@ type PageTreeProps = {
   startTransition: StartTransition;
   children?: ReactNode;
 };
+
+/**
+ * Longest page title the tree row renders, in code points. The row keeps its
+ * `truncate` class (CSS still elides to the available width); this bounds the
+ * *computed* string too, so a deep title stays short and a surrogate pair is
+ * never sliced. See `@/lib/truncate`.
+ */
+const SIDEBAR_TITLE_MAX = 48;
 
 /**
  * Pure page-tree helpers (moveCandidates, grouping, expand toggles, the
@@ -168,7 +177,9 @@ export function PageTree({
                   <span className="w-4 shrink-0 text-center text-sm">
                     {node.icon ?? (node.type === "DATABASE" ? "🗂️" : "📄")}
                   </span>
-                  <span className="truncate">{node.title || "Untitled"}</span>
+                  <span className="truncate">
+                    {truncateEnd(node.title || "Untitled", SIDEBAR_TITLE_MAX)}
+                  </span>
                 </Link>
                 {renamingId === node.id && (
                   <input
