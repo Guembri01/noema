@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { History, RotateCcw, X } from "lucide-react";
 import { toast } from "sonner";
@@ -8,10 +8,17 @@ import { restorePageVersionAction } from "@/server/actions/page-versions";
 import { safeAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
 import { cn, initials, avatarColor } from "@/lib/utils";
+import { diffStats, diffText, type DiffSegment } from "@/lib/text-diff";
 
 export type VersionRow = {
   id: string;
   title: string;
+  /**
+   * Snapshot body as plain text, when the caller has it (F7 `text-diff` reads
+   * raw strings). Optional and additive: rows without it fall back to `title`
+   * for the inline character diff, so existing callers keep type-checking.
+   */
+  content?: string | null;
   summary: string | null;
   charDelta: number | null;
   createdAt: string;
@@ -31,6 +38,66 @@ function relative(value: string, locale: string) {
 }
 
 /**
+ * Above this combined length the inline diff is skipped: Myers' greedy pass is
+ * quadratic in the worst case, and a version *preview* stays well under it. The
+ * fallback still renders the target text verbatim (just without the spans).
+ */
+const MAX_INLINE_DIFF_LENGTH = 2000;
+
+const INLINE_DIFF_CLASS: Record<DiffSegment["op"], string> = {
+  equal: "",
+  insert: "rounded bg-emerald-500/15 text-emerald-700",
+  delete: "rounded bg-red-500/15 text-red-600",
+};
+
+/**
+ * Inline character-level diff of the selected snapshot against the live page
+ * (F7 `diffText`): `equal` runs render plainly, while `insert`/`delete` use the
+ * semantic `<ins>`/`<del>` elements so a change is conveyed by more than colour
+ * alone. The `diffStats` tally rides along as +added / -removed badges.
+ */
+function InlineDiff({ before, after }: { before: string; after: string }) {
+  const diff = useMemo(
+    () => (before.length + after.length > MAX_INLINE_DIFF_LENGTH ? null : diffText(before, after)),
+    [before, after],
+  );
+
+  if (diff === null) {
+    return <p className="whitespace-pre-wrap break-words text-sm">{after}</p>;
+  }
+
+  const stats = diffStats(diff);
+
+  return (
+    <div className="space-y-1">
+      <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+        {diff.map((segment, index) =>
+          segment.op === "insert" ? (
+            <ins key={index} data-op="insert" className={INLINE_DIFF_CLASS.insert}>
+              {segment.text}
+            </ins>
+          ) : segment.op === "delete" ? (
+            <del key={index} data-op="delete" className={INLINE_DIFF_CLASS.delete}>
+              {segment.text}
+            </del>
+          ) : (
+            <span key={index}>{segment.text}</span>
+          ),
+        )}
+      </p>
+      <p className="flex items-center gap-2 text-[11px] text-muted">
+        <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-600">
+          +{stats.added}
+        </span>
+        <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-red-500">
+          -{stats.removed}
+        </span>
+      </p>
+    </div>
+  );
+}
+
+/**
  * Version history as a slide-over panel: the page body stays readable instead
  * of ending with a long list, and each entry says who changed what.
  */
@@ -43,12 +110,14 @@ export function VersionHistory({
   pageId: string;
   versions: VersionRow[];
   /** The live page state (R30.6) - rendered as a distinct, non-restorable header row. */
-  current: { title: string; updatedAt: string };
+  current: { title: string; updatedAt: string; content?: string | null };
   locale: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+  /** Version id whose inline diff is expanded, or null when none is open. */
+  const [selected, setSelected] = useState<string | null>(null);
 
   return (
     <>
@@ -180,6 +249,30 @@ export function VersionHistory({
                       >
                         <RotateCcw className="h-3 w-3" /> {t(locale, "restore")}
                       </button>
+                      {/* Inline character-level diff (F7 text-diff) of this
+                          snapshot against the live page - additive to the
+                          existing row controls, collapses when re-toggled. */}
+                      <button
+                        type="button"
+                        aria-expanded={selected === version.id}
+                        onClick={() =>
+                          setSelected((previous) => (previous === version.id ? null : version.id))
+                        }
+                        className="mt-2 inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2"
+                      >
+                        {t(locale, "suggestionReplaced")}
+                      </button>
+                      {selected === version.id && (
+                        <div
+                          data-testid="version-inline-diff"
+                          className="mt-3 rounded border border-border bg-surface-2 p-2"
+                        >
+                          <InlineDiff
+                            before={version.content ?? version.title}
+                            after={current.content ?? current.title}
+                          />
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>
