@@ -78,13 +78,34 @@ function SectionHeading({ label }: { label: string }) {
   );
 }
 
+/**
+ * Ids the picker must not offer: every target the document already links to (a
+ * `mention` atom's `id`) plus the page itself when the host supplies its id.
+ * Reads the live document, so the caller passes the current editor. Purely a
+ * read — the document and the candidate rows are never mutated.
+ */
+function excludedIds(editor: Editor, pageId?: string): Set<string> {
+  const ids = new Set<string>();
+  if (pageId) ids.add(pageId);
+  editor.state.doc.descendants((node) => {
+    if (node.type.name !== "mention") return true;
+    const id: unknown = node.attrs.id;
+    if (typeof id === "string" && id.length > 0) ids.add(id);
+    return true;
+  });
+  return ids;
+}
+
 export function MentionMenu({
   editor,
   workspaceId,
+  pageId,
   locale = "en",
 }: {
   editor: Editor;
   workspaceId: string;
+  /** Current page id, when the host exposes it, so the page never mentions itself. */
+  pageId?: string;
   locale?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -137,16 +158,21 @@ export function MentionMenu({
   );
 
   // Rank first (best match floats up, recency/input order break ties), then
-  // filter (drop non-matches, cap) and split into the pages/people sections.
+  // filter (drop non-matches, targets already linked in the doc, the page
+  // itself, then cap) and split into the pages/people sections. The exclusion
+  // only narrows what the menu offers — insertion is unaffected.
   const sections = useMemo(() => {
     const ranked = rankCandidates(candidates, query);
-    const visible = filterCandidates(ranked, query, { limit: MENTION_LIMIT });
+    const visible = filterCandidates(ranked, query, {
+      excludeIds: excludedIds(editor, pageId),
+      limit: MENTION_LIMIT,
+    });
     const grouped = splitByKind(visible);
     return {
       pages: grouped.pages.map((row): MentionItem => ({ id: row.id, label: row.title, type: "page" })),
       users: grouped.users.map((row): MentionItem => ({ id: row.id, label: row.title, type: "user" })),
     };
-  }, [candidates, query]);
+  }, [candidates, query, editor, pageId]);
 
   const dates = useMemo<MentionItem[]>(() => {
     const q = query.trim().toLowerCase();
