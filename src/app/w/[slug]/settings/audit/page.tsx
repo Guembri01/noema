@@ -2,28 +2,18 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
-import { getRecentActivity, getWorkspaceBySlug } from "@/server/queries";
-import {
-  SYSTEM_ACTOR_ID,
-  describeAuditEvent,
-  filterAuditEvents,
-  groupAuditByDay,
-  normalizeAuditEvent,
-  sortAuditEvents,
-  type AuditEvent,
-  type AuditFilter,
-} from "@/lib/audit-log";
-import { diffObjects, isEmptyDiff, summarizeDiff } from "@/lib/audit-diff";
-import { LocalTime } from "@/components/local-time";
+import { getActivityPage, getWorkspaceBySlug, getWorkspaceMembers } from "@/server/queries";
+import type { AuditFilter } from "@/lib/audit-log";
+import { AuditFeed } from "@/components/audit-feed";
 import { t } from "@/lib/i18n";
 
 export const metadata = { title: "Audit log" };
 
-/** One row of `getRecentActivity`, named so the mapper below stays readable. */
-type ActivityRow = Awaited<ReturnType<typeof getRecentActivity>>[number];
-
 /** `YYYY-MM-DD`, the only shape a date input can hand back. */
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Events fetched per page — the initial window and each "Load more" window. */
+const AUDIT_PAGE_SIZE = 50;
 
 /** Inclusive lower bound (UTC midnight) for a `YYYY-MM-DD` day, or undefined. */
 function dayStartIso(day: string | undefined): string | undefined {
@@ -42,40 +32,12 @@ function dayEndIso(day: string | undefined): string | undefined {
 }
 
 /**
- * Project a Prisma `Activity` row onto the audit feed's normalised shape. The
- * tolerant `normalizeAuditEvent` door (from the read-only `@/lib/audit-log`)
- * validates and coerces, returning `null` for a row the feed cannot render;
- * a missing relation actor becomes `SYSTEM_ACTOR_ID`, and a row without a
- * `targetId` falls back to its own id so it is never silently dropped.
- */
-function toAuditEvent(row: ActivityRow): AuditEvent | null {
-  return normalizeAuditEvent({
-    id: row.id,
-    actorId: row.actor?.id ?? SYSTEM_ACTOR_ID,
-    type: row.action,
-    entityId: row.targetId ?? row.id,
-    entityType: row.targetType,
-    createdAt: row.createdAt,
-    meta: row.meta ?? undefined,
-  });
-}
-
-/**
- * A one-line "which fields changed" summary when the activity meta carries the
- * pair the audit-diff helper understands; `null` for every event that does not.
- */
-function changeSummary(event: AuditEvent): string | null {
-  const meta = event.meta;
-  if (meta === undefined || !("before" in meta) || !("after" in meta)) return null;
-  const entries = diffObjects(meta.before, meta.after);
-  return isEmptyDiff(entries) ? null : summarizeDiff(entries);
-}
-
-/**
- * Workspace-wide audit log: the same `Activity` feed the settings summary draws
- * from, filtered by actor/action/date and sectioned into UTC day buckets. The
- * query half is the pure `@/lib/audit-log` module; this page is only the thin
- * server shell (permission gate + URL filters) over it.
+ * Workspace-wide audit log: the `Activity` feed the settings summary draws from,
+ * but walked one cursor page at a time (newest first) through the additive
+ * `getActivityPage`, then narrowed by actor/action/date and sectioned into UTC
+ * day buckets by the pure `@/lib/audit-log` module. This page is only the thin
+ * server shell (permission gate + URL filters + first page); appending later
+ * pages is the `AuditFeed` client component's "Load more" control.
  */
 export default async function AuditLogPage({
   params,
@@ -95,18 +57,21 @@ export default async function AuditLogPage({
   // The audit trail is management data: never rendered for non-managers.
   if (!canManageMembers(access.role)) notFound();
 
-  const rows = await getRecentActivity(workspace.id, 200);
+  const workspaceId = workspace.id;
+  const [page, members] = await Promise.all([
+    getActivityPage(workspaceId, { limit: AUDIT_PAGE_SIZE }),
+    // `getActivityPage` only carries actor ids; member records supply the names
+    // the filter's actor select shows.
+    getWorkspaceMembers(workspaceId),
+  ]);
+  const events = page.items;
 
-  // One pass builds the normalised events and the id -> display-name map the
-  // filter options and the "no name" case need.
-  const actorNames = new Map<string, string>();
-  const events: AuditEvent[] = [];
-  for (const row of rows) {
-    const event = toAuditEvent(row);
-    if (event === null) continue;
-    events.push(event);
-    if (row.actor && !actorNames.has(row.actor.id)) actorNames.set(row.actor.id, row.actor.name);
-  }
+  const nameById = new Map<string, string>();
+  for (const member of members) nameById.set(member.id, member.name);
+  const actorOptions = [...new Set(events.map((event) => event.actorId))]
+    .sort()
+    .map((id) => ({ id, label: nameById.get(id) ?? id }));
+  const typeOptions = [...new Set(events.map((event) => event.type))].sort();
 
   const filter: AuditFilter = {
     ...(actor ? { actorIds: [actor] } : {}),
@@ -114,13 +79,25 @@ export default async function AuditLogPage({
     ...(dayStartIso(from) ? { from: dayStartIso(from) } : {}),
     ...(dayEndIso(to) ? { to: dayEndIso(to) } : {}),
   };
-  const ordered = sortAuditEvents(filterAuditEvents(events, filter));
-  const groups = groupAuditByDay(ordered);
 
-  const actorOptions = [...new Set(events.map((event) => event.actorId))]
-    .sort()
-    .map((id) => ({ id, label: actorNames.get(id) ?? id }));
-  const typeOptions = [...new Set(events.map((event) => event.type))].sort();
+  /** Next page of the audit feed, handed to `AuditFeed`'s "Load more". */
+  async function loadMoreActivity(input: { cursor: string }) {
+    "use server";
+    const current = await requireUser();
+    const currentAccess = await getWorkspaceAccess(current.id, workspaceId);
+    if (!currentAccess || !canManageMembers(currentAccess.role)) {
+      return { error: "Not allowed." };
+    }
+    try {
+      const next = await getActivityPage(workspaceId, {
+        limit: AUDIT_PAGE_SIZE,
+        cursor: input.cursor,
+      });
+      return { ok: true as const, events: next.items, nextCursor: next.nextCursor };
+    } catch {
+      return { error: "Could not load more activity." };
+    }
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-10 py-12">
@@ -201,36 +178,14 @@ export default async function AuditLogPage({
         </Link>
       </form>
 
-      {groups.length === 0 ? (
-        <p className="text-sm text-muted">{t(locale, "noResults")}</p>
-      ) : (
-        <div className="flex flex-col gap-8">
-          {groups.map((group) => (
-            <section key={group.day}>
-              <h2 className="mb-3 flex items-baseline justify-between text-sm font-medium uppercase tracking-wide text-muted">
-                <span>{group.label}</span>
-                <span className="text-xs normal-case">{group.count}</span>
-              </h2>
-              <ul className="divide-y divide-border rounded-lg border border-border">
-                {group.events.map((event) => {
-                  const change = changeSummary(event);
-                  return (
-                    <li key={event.id} className="flex items-start gap-3 px-4 py-2 text-sm">
-                      <span className="min-w-0 flex-1">
-                        <span className="block">{describeAuditEvent(event)}</span>
-                        {change && <span className="mt-0.5 block text-xs text-muted">{change}</span>}
-                      </span>
-                      <span className="shrink-0 text-xs text-muted">
-                        <LocalTime value={event.createdAt} />
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          ))}
-        </div>
-      )}
+      <AuditFeed
+        initialEvents={events}
+        filter={filter}
+        nextCursor={page.nextCursor}
+        now={Date.now()}
+        locale={locale}
+        loadMore={loadMoreActivity}
+      />
     </div>
   );
 }
