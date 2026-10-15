@@ -37,6 +37,14 @@ import {
 } from "@/components/webhook-manager";
 import { LocalTime } from "@/components/local-time";
 import { t } from "@/lib/i18n";
+import {
+  aggregateByPage,
+  dailySeries,
+  topPages,
+  type AnalyticsEvent,
+  type AnalyticsEventKind,
+} from "@/lib/analytics-events";
+import { SYSTEM_ACTOR_ID } from "@/lib/audit-log";
 
 /** i18n keys for the workspace activity trail (locale applied at render). */
 const ACTIVITY_KEYS: Record<string, string> = {
@@ -53,6 +61,80 @@ const ACTIVITY_KEYS: Record<string, string> = {
   "page.unshared": "actPageUnshared",
   "comment.created": "actComment",
 };
+
+/** One row of `getRecentActivity`, named so the projection below stays readable. */
+type ActivityRow = Awaited<ReturnType<typeof getRecentActivity>>[number];
+
+/**
+ * Workspace activity actions that describe page-level analytics, mapped onto the
+ * `AnalyticsEventKind` vocabulary the read-only `@/lib/analytics-events` helpers
+ * aggregate. Members, teamspaces and workspace-settings actions are not page
+ * activity, so they are absent here and dropped by the projection.
+ */
+const ACTIVITY_ANALYTICS_KIND: Record<string, AnalyticsEventKind> = {
+  "page.created": "create",
+  "page.shared": "edit",
+  "page.unshared": "edit",
+  "page.archived": "edit",
+  "page.restored": "edit",
+  "page.deleted": "edit",
+  "row.edited": "edit",
+  "comment.created": "comment",
+};
+
+/**
+ * The page an activity row is about. Page-scoped actions carry it as `targetId`;
+ * `comment.created` records the comment as its target, so the page travels in
+ * `meta.pageId`. Rows with no page — or a malformed meta — return null.
+ */
+function activityPageId(row: ActivityRow): string | null {
+  if (row.targetType === "page" && row.targetId) return row.targetId;
+  const meta = row.meta;
+  if (meta !== null && typeof meta === "object" && !Array.isArray(meta)) {
+    const pageId = (meta as Record<string, unknown>).pageId;
+    if (typeof pageId === "string" && pageId.length > 0) return pageId;
+  }
+  return null;
+}
+
+/**
+ * Project the workspace activity rows already loaded for the settings view onto
+ * the pure `AnalyticsEvent` shape. Rows whose action or page cannot be mapped
+ * are dropped rather than guessed at, so the aggregates only count real page
+ * activity and never throw on the messy edges the trail carries.
+ */
+function toAnalyticsEvents(rows: readonly ActivityRow[]): AnalyticsEvent[] {
+  const events: AnalyticsEvent[] = [];
+  for (const row of rows) {
+    const kind = ACTIVITY_ANALYTICS_KIND[row.action];
+    if (!kind) continue;
+    const pageId = activityPageId(row);
+    if (!pageId) continue;
+    events.push({
+      id: row.id,
+      pageId,
+      actorId: row.actor?.id ?? SYSTEM_ACTOR_ID,
+      kind,
+      at: row.createdAt.toISOString(),
+    });
+  }
+  return events;
+}
+
+/** Short, stable label for a page id when the activity trail carries no title. */
+const shortId = (id: string): string => (id.length > 8 ? `${id.slice(0, 8)}…` : id);
+
+/** Window, in UTC days, the activity sparkline summarises. */
+const SPARKLINE_DAYS = 14;
+const MS_PER_DAY = 86_400_000;
+/** Tallest sparkline bar, in px; must match the bar container's `h-16`. */
+const SPARKLINE_MAX_PX = 64;
+
+/** Bar height for one day's total; empty days keep a 2px baseline. */
+function barHeight(total: number, max: number): number {
+  if (total <= 0 || max <= 0) return 2;
+  return Math.max(4, Math.round((total / max) * SPARKLINE_MAX_PX));
+}
 
 export default async function SettingsPage({
   params,
@@ -128,6 +210,26 @@ export default async function SettingsPage({
   }));
 
   const activity = manage ? await getRecentActivity(workspace.id) : [];
+
+  // B22 — analytics summary. A pure projection of the rows already loaded above
+  // (no extra query) through the read-only `@/lib/analytics-events` aggregators:
+  // top pages by activity, plus a dense daily series for the sparkline.
+  const analyticsEvents = toAnalyticsEvents(activity);
+  const pageAggregates = aggregateByPage(analyticsEvents);
+  const aggregateByPageId = new Map(pageAggregates.map((entry) => [entry.pageId, entry]));
+  const topActivityPages = topPages(analyticsEvents, { limit: 5 });
+  const totalAnalyticsEvents = pageAggregates.reduce((sum, entry) => sum + entry.total, 0);
+  const contributorCount = new Set(analyticsEvents.map((event) => event.actorId)).size;
+
+  const rangeEnd = new Date();
+  const rangeStart = new Date(rangeEnd.getTime() - (SPARKLINE_DAYS - 1) * MS_PER_DAY);
+  const dailyActivity = dailySeries(analyticsEvents, {
+    from: rangeStart.toISOString().slice(0, 10),
+    to: rangeEnd.toISOString().slice(0, 10),
+  });
+  const dailyMax = dailyActivity.reduce((max, bucket) => Math.max(max, bucket.total), 0);
+  const firstActivityDay = dailyActivity.at(0)?.date ?? "";
+  const lastActivityDay = dailyActivity.at(-1)?.date ?? "";
 
   const [aiProvider, emailSummary, workspaceInvites, emailDeliveries, labels] = await Promise.all([    getAiProviderSummary(workspace.id),
     getEmailSummary(workspace.id),
@@ -257,6 +359,101 @@ export default async function SettingsPage({
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {manage && analyticsEvents.length > 0 && (
+        <section className="mt-10" aria-labelledby="analytics-heading">
+          <h2
+            id="analytics-heading"
+            className="mb-3 text-sm font-medium uppercase tracking-wide text-muted"
+          >
+            Analytics
+          </h2>
+          <p className="mb-3 text-xs text-muted">
+            Page activity from the workspace trail, most active pages first.
+          </p>
+          <div className="rounded-lg border border-border p-4">
+            <div className="mb-4 flex flex-wrap gap-x-6 gap-y-1 text-sm">
+              <span>
+                <strong className="font-semibold">{totalAnalyticsEvents}</strong>{" "}
+                <span className="text-muted">events</span>
+              </span>
+              <span>
+                <strong className="font-semibold">{pageAggregates.length}</strong>{" "}
+                <span className="text-muted">pages</span>
+              </span>
+              <span>
+                <strong className="font-semibold">{contributorCount}</strong>{" "}
+                <span className="text-muted">contributors</span>
+              </span>
+            </div>
+
+            <div
+              className="flex h-16 items-end gap-1"
+              role="img"
+              aria-label={`Daily page activity over the last ${SPARKLINE_DAYS} days`}
+            >
+              {dailyActivity.map((bucket) => (
+                <div
+                  key={bucket.date}
+                  title={`${bucket.date}: ${bucket.total}`}
+                  className={
+                    bucket.total > 0
+                      ? "w-full flex-1 rounded-sm bg-accent"
+                      : "w-full flex-1 rounded-sm bg-border"
+                  }
+                  style={{ height: `${barHeight(bucket.total, dailyMax)}px` }}
+                />
+              ))}
+            </div>
+            <div className="mb-4 flex justify-between text-[10px] text-muted">
+              <span>{firstActivityDay}</span>
+              <span>{lastActivityDay}</span>
+            </div>
+
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-muted">
+                  <th className="pb-2 font-medium">Page</th>
+                  <th className="pb-2 text-right font-medium">Events</th>
+                  <th className="hidden pb-2 text-right font-medium sm:table-cell">
+                    Contributors
+                  </th>
+                  <th className="hidden pb-2 text-right font-medium sm:table-cell">Last activity</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border border-t border-border">
+                {topActivityPages.map((page) => {
+                  const aggregate = aggregateByPageId.get(page.pageId);
+                  return (
+                    <tr key={page.pageId}>
+                      <td className="py-2">
+                        <Link
+                          href={`/w/${workspace.slug}/${page.pageId}`}
+                          className="text-accent hover:underline"
+                          title={page.pageId}
+                        >
+                          {shortId(page.pageId)}
+                        </Link>
+                      </td>
+                      <td className="py-2 text-right tabular-nums">{page.count}</td>
+                      <td className="hidden py-2 text-right tabular-nums sm:table-cell">
+                        {aggregate?.uniqueActors ?? 0}
+                      </td>
+                      <td className="hidden py-2 text-right text-xs text-muted sm:table-cell">
+                        {aggregate?.lastActivity ? (
+                          <LocalTime value={aggregate.lastActivity} />
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 
