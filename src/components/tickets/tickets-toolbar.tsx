@@ -2,6 +2,7 @@
 
 import { useState, type Dispatch, type SetStateAction } from "react";
 import {
+  ArrowUpDown,
   Bookmark,
   CalendarDays,
   Filter,
@@ -35,6 +36,7 @@ import { TICKET_PRIORITIES, TICKET_STATUSES, formatEstimate } from "@/lib/ticket
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { LabelRow } from "./ticket-types";
+import type { TicketSortField, TicketSortSpec } from "./ticket-view-renderers";
 
 /** The three ticket layouts the toolbar switches between. */
 type TicketView = "list" | "board" | "timeline";
@@ -68,6 +70,48 @@ const TICKET_FILTER_FIELDS = [
   "assigneeId",
   "projectId",
 ] as const;
+
+/**
+ * Base sort spec per sortable ticket field. These reuse the list view's engine
+ * type (`TicketSortSpec` from `./ticket-view-renderers`) so the toolbar and the
+ * renderer agree on the field union and on how each column is compared: an
+ * estimate is numeric, a due date is parsed as a date, an assignee is text, and
+ * priority/status are `select` columns ranked by the domain's display order.
+ * Typed as a complete record, so adding a field to `TicketSortField` fails the
+ * build until it is mapped here too.
+ */
+const TICKET_SORT_SPECS: Record<TicketSortField, Omit<TicketSortSpec, "dir">> = {
+  estimate: { propertyId: "estimate", type: "number" },
+  priority: {
+    propertyId: "priority",
+    type: "select",
+    optionOrder: TICKET_PRIORITIES.map((priority) => priority.id),
+  },
+  status: {
+    propertyId: "status",
+    type: "select",
+    optionOrder: TICKET_STATUSES.map((status) => status.id),
+  },
+  date: { propertyId: "date", type: "date" },
+  assignee: { propertyId: "assignee", type: "text" },
+};
+
+/** Field labels, one per sortable field (same exhaustiveness guarantee). */
+const TICKET_SORT_LABELS: Record<TicketSortField, string> = {
+  estimate: "Estimate",
+  priority: "Priority",
+  status: "Status",
+  date: "Due date",
+  assignee: "Assignee",
+};
+
+/** The sortable fields in the order the control offers them. */
+const TICKET_SORT_FIELDS = Object.keys(TICKET_SORT_SPECS) as TicketSortField[];
+
+/** Narrow a `<select>` value back to a sortable field. */
+function isTicketSortField(value: string): value is TicketSortField {
+  return value in TICKET_SORT_SPECS;
+}
 
 /** One `FilterNode` per active toolbar filter; inactive filters are omitted. */
 function ticketFilterNodes(state: TicketFilterState): FilterNode[] {
@@ -165,6 +209,7 @@ export function TicketsToolbar({
   closed,
   checked,
   setChecked,
+  onSortChange,
 }: {
   view: "list" | "board" | "timeline";
   setView: Dispatch<SetStateAction<"list" | "board" | "timeline">>;
@@ -197,11 +242,31 @@ export function TicketsToolbar({
   closed: number;
   checked: string[];
   setChecked: Dispatch<SetStateAction<string[]>>;
+  /**
+   * Optional writer for the toolbar's sort. Called with the chosen
+   * `TicketSortSpec` (the list view's `{ propertyId, dir, type, ... }` shape)
+   * whenever the field or direction changes, or `null` when the sort is
+   * cleared. Omitted by callers that own no sort state, so the control is
+   * purely additive and the existing filters/presets are untouched.
+   */
+  onSortChange?: (spec: TicketSortSpec | null) => void;
 }) {
   // In-session named presets — saved views tagged `scope: "tickets"`. They are
   // never persisted; applying one overlays the live filters and view type.
   const [presets, setPresets] = useState<SavedView[]>([]);
   const [presetName, setPresetName] = useState("");
+
+  // Sort field + direction. Kept locally so the control renders, and mirrored
+  // into the parent's view state through the optional `onSortChange` writer.
+  const [sortField, setSortField] = useState<TicketSortField | "">("");
+  const [sortDirection, setSortDirection] = useState<TicketSortSpec["dir"]>("asc");
+
+  /** Set the toolbar's sort and write it (or `null`) to the view state. */
+  const changeSort = (field: TicketSortField | "", direction: TicketSortSpec["dir"]) => {
+    setSortField(field);
+    setSortDirection(direction);
+    onSortChange?.(field === "" ? null : { ...TICKET_SORT_SPECS[field], dir: direction });
+  };
 
   const liveFilters: TicketFilterState = {
     query,
@@ -371,6 +436,43 @@ export function TicketsToolbar({
           />
           {t(locale, "hideClosed")}
         </label>
+
+        {/* Sort: field + direction, written to the view via `onSortChange`. */}
+        <span className="flex items-center gap-1" data-testid="ticket-sort">
+          <ArrowUpDown className="h-3.5 w-3.5 text-muted" aria-hidden />
+          <select
+            value={sortField}
+            aria-label="Sort tickets by"
+            data-testid="ticket-sort-field"
+            onChange={(event) =>
+              changeSort(
+                isTicketSortField(event.target.value) ? event.target.value : "",
+                sortDirection,
+              )
+            }
+            className="h-8 rounded border border-border bg-bg px-2 text-sm outline-none"
+          >
+            <option value="">Sort</option>
+            {TICKET_SORT_FIELDS.map((field) => (
+              <option key={field} value={field}>
+                {TICKET_SORT_LABELS[field]}
+              </option>
+            ))}
+          </select>
+          <select
+            value={sortDirection}
+            aria-label="Sort direction"
+            data-testid="ticket-sort-direction"
+            disabled={sortField === ""}
+            onChange={(event) =>
+              changeSort(sortField, event.target.value === "desc" ? "desc" : "asc")
+            }
+            className="h-8 rounded border border-border bg-bg px-2 text-sm outline-none disabled:opacity-50"
+          >
+            <option value="asc">Ascending</option>
+            <option value="desc">Descending</option>
+          </select>
+        </span>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
