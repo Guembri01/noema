@@ -33,23 +33,105 @@ import {
   type PageFont,
   type PageLineSpacing,
 } from "@/lib/page-appearance";
+import {
+  DEFAULT_COVER_POSITION,
+  formatObjectPosition,
+  parseCoverPosition,
+  type CoverPosition,
+} from "@/lib/cover-position";
+import {
+  GRADIENTS,
+  coverCss,
+  validateCover,
+  type CoverValue,
+  type GradientId,
+} from "@/lib/page-cover";
+import { PAGE_ICON_EMOJI, isEmoji, isImageIcon } from "@/lib/page-icon";
 import { computeStats, type TextBlock } from "@/lib/text-stats";
 import type { PageMenuData } from "@/server/actions/page-menu";
 
-export const EMOJIS = [
+/**
+ * Icon and cover catalogs are owned by `page-icon.ts` / `page-cover.ts`; the
+ * menu only re-exports the legacy names so existing callers (page-title) keep
+ * working. The extra legacy emoji are additive — no picker option is dropped.
+ */
+const LEGACY_EMOJIS: readonly string[] = [
   "📄", "📝", "📌", "📚", "🗂️", "✅", "💡", "🚀", "🎯", "🔥", "⭐", "🧠",
   "🗓️", "🎨", "📊", "🔖", "🧩", "🛠️", "🌱", "☕", "🎧", "🏷️", "🔬", "🧪",
 ];
 
-export const COVERS = [
-  "linear-gradient(120deg, #89f7fe 0%, #66a6ff 100%)",
-  "linear-gradient(120deg, #f6d365 0%, #fda085 100%)",
-  "linear-gradient(120deg, #a1c4fd 0%, #c2e9fb 100%)",
-  "linear-gradient(120deg, #d4fc79 0%, #96e6a1 100%)",
-  "linear-gradient(120deg, #fbc2eb 0%, #a6c1ee 100%)",
-  "linear-gradient(120deg, #fda4af 0%, #fecdd3 100%)",
-  "linear-gradient(120deg, #c1dfc4 0%, #deecdd 100%)",
-  "linear-gradient(120deg, #e0c3fc 0%, #8ec5fc 100%)",
+export const EMOJIS: readonly string[] = Object.freeze(
+  Array.from(new Set<string>([...LEGACY_EMOJIS, ...PAGE_ICON_EMOJI])),
+);
+
+/** Gradient presets as CSS values, straight from the persisted catalog. */
+export const COVERS: readonly string[] = Object.freeze(Object.values(GRADIENTS));
+
+/** Stable preset ids, in catalog order. */
+const GRADIENT_IDS = Object.keys(GRADIENTS) as GradientId[];
+
+/** Reverse lookup: a persisted gradient CSS value → its preset id. */
+const GRADIENT_ID_BY_CSS: ReadonlyMap<string, GradientId> = new Map(
+  GRADIENT_IDS.map((id) => [GRADIENTS[id], id] as const),
+);
+
+/** A persisted cover decoded through the page-cover engine. */
+type ResolvedCover = { value: CoverValue; position: CoverPosition };
+
+/**
+ * Split a stored cover string into its CSS value and the focal point the menu
+ * encodes after it (`"<css> <x>% <y>%"`). A cover without a position decodes to
+ * the centred default.
+ */
+function splitCoverCss(raw: string): { css: string; position: CoverPosition } {
+  const match = raw.match(/^(.*\S)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/);
+  if (!match) return { css: raw, position: { ...DEFAULT_COVER_POSITION } };
+  return {
+    css: match[1],
+    position: parseCoverPosition(`${match[2]}% ${match[3]}%`),
+  };
+}
+
+/**
+ * Decode a persisted cover string into a tagged {@link CoverValue} plus its
+ * focal point, or `null` when it is absent or unrecognised. Gradients are
+ * matched by catalog value and images must pass {@link isImageIcon}, so a
+ * hostile string never reaches the renderer as a cover.
+ */
+function readCover(raw: string | null): ResolvedCover | null {
+  if (!raw) return null;
+  const { css, position } = splitCoverCss(raw);
+  const gradientId = GRADIENT_ID_BY_CSS.get(css);
+  if (gradientId) return { value: { type: "gradient", gradientId }, position };
+  if (isImageIcon(css)) return { value: { type: "image", url: css }, position };
+  return null;
+}
+
+/**
+ * Encode a validated cover + focal point back into the single `coverUrl`
+ * string the existing save path persists. The default focal point is omitted
+ * so a plain preset round-trips byte-for-byte.
+ */
+function writeCover(value: CoverValue, position: CoverPosition): string {
+  const css = coverCss(value);
+  if (css === "") return "";
+  const focal = formatObjectPosition(position);
+  return focal === formatObjectPosition(DEFAULT_COVER_POSITION)
+    ? css
+    : `${css} ${focal}`;
+}
+
+/** Preset focal points offered by the position grid. */
+const POSITION_PRESETS: readonly { label: string; position: CoverPosition }[] = [
+  { label: "Top left", position: { x: 0, y: 0 } },
+  { label: "Top", position: { x: 50, y: 0 } },
+  { label: "Top right", position: { x: 100, y: 0 } },
+  { label: "Left", position: { x: 0, y: 50 } },
+  { label: "Center", position: { x: 50, y: 50 } },
+  { label: "Right", position: { x: 100, y: 50 } },
+  { label: "Bottom left", position: { x: 0, y: 100 } },
+  { label: "Bottom", position: { x: 50, y: 100 } },
+  { label: "Bottom right", position: { x: 100, y: 100 } },
 ];
 
 const FONT_OPTIONS: { id: PageFont; label: string }[] = [
@@ -175,6 +257,13 @@ export function ActionsMenu(props: ActionsMenuProps) {
     focus: boolean;
   } | null>(null);
   const [subIndex, setSubIndex] = useState(0);
+  // The persisted cover string is re-read through the page-cover engine: the
+  // tagged value says which swatch is active and how the banner paints, while
+  // the focal point is the cover position carried after the CSS value.
+  const storedCover = useMemo(() => readCover(cover), [cover]);
+  const [coverPosition, setCoverPosition] = useState<CoverPosition>(
+    () => readCover(cover)?.position ?? { ...DEFAULT_COVER_POSITION },
+  );
   const { setTheme, theme } = useTheme();
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -463,6 +552,12 @@ export function ActionsMenu(props: ActionsMenuProps) {
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  // Re-seed the focal point whenever the persisted cover changes (a pick here
+  // or a parent refresh), so the position grid reflects stored state.
+  useEffect(() => {
+    setCoverPosition(storedCover?.position ?? { ...DEFAULT_COVER_POSITION });
+  }, [storedCover]);
+
   // Close when clicking outside the trigger + dialog wrapper.
   useEffect(() => {
     if (!open) return;
@@ -647,6 +742,28 @@ export function ActionsMenu(props: ActionsMenuProps) {
   const backToMain = () => {
     setView("main");
     inputRef.current?.focus();
+  };
+
+  // Persist through the existing onPickCover path: a null clears the cover,
+  // otherwise the tagged value is validated and re-encoded as a CSS string so
+  // page-title's `background` render and the server column are unchanged.
+  const pickCoverValue = (value: CoverValue | null) => {
+    if (value === null || !validateCover(value).valid) {
+      onPickCover(null);
+      return;
+    }
+    onPickCover(writeCover(value, coverPosition));
+  };
+
+  const pickCoverPosition = (position: CoverPosition) => {
+    setCoverPosition(position);
+    if (storedCover) onPickCover(writeCover(storedCover.value, position));
+  };
+
+  // Only a glyph or an absolute http(s) image URL may become a page icon, so a
+  // stray stored value can never be round-tripped back through the picker.
+  const pickIcon = (candidate: string) => {
+    if (isEmoji(candidate) || isImageIcon(candidate)) onPickIcon(candidate);
   };
 
   if (!open) {
@@ -903,7 +1020,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
                     key={emoji}
                     type="button"
                     aria-label={`Set icon ${emoji}`}
-                    onClick={() => onPickIcon(emoji)}
+                    onClick={() => pickIcon(emoji)}
                     className="grid h-7 w-7 place-items-center rounded text-lg hover:bg-surface-2"
                   >
                     {emoji}
@@ -912,21 +1029,69 @@ export function ActionsMenu(props: ActionsMenuProps) {
               </div>
               <p className="mb-1 mt-3 text-xs font-medium text-muted">Cover</p>
               <div className="grid grid-cols-4 gap-1">
-                {COVERS.map((gradient) => (
-                  <button
-                    key={gradient}
-                    type="button"
-                    aria-label="Set cover"
-                    onClick={() => onPickCover(gradient)}
-                    className="h-10 rounded"
-                    style={{ background: gradient }}
-                  />
-                ))}
+                {GRADIENT_IDS.map((id) => {
+                  const selected =
+                    storedCover?.value.type === "gradient" &&
+                    storedCover.value.gradientId === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      aria-label={`Set cover ${id}`}
+                      aria-pressed={selected}
+                      onClick={() =>
+                        pickCoverValue({ type: "gradient", gradientId: id })
+                      }
+                      className={cn(
+                        "h-10 rounded bg-cover bg-center",
+                        selected && "ring-2 ring-accent",
+                      )}
+                      style={{
+                        backgroundImage: coverCss({
+                          type: "gradient",
+                          gradientId: id,
+                        }),
+                        backgroundPosition: formatObjectPosition(coverPosition),
+                      }}
+                    />
+                  );
+                })}
               </div>
-              {cover && (
+              {storedCover && (
+                <>
+                  <p className="mb-1 mt-3 text-xs font-medium text-muted">
+                    Position
+                  </p>
+                  <div
+                    role="group"
+                    aria-label="Cover position"
+                    className="grid w-24 grid-cols-3 gap-1"
+                  >
+                    {POSITION_PRESETS.map((preset) => {
+                      const selected =
+                        formatObjectPosition(coverPosition) ===
+                        formatObjectPosition(preset.position);
+                      return (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          aria-label={`Cover position ${preset.label}`}
+                          aria-pressed={selected}
+                          onClick={() => pickCoverPosition(preset.position)}
+                          className={cn(
+                            "h-7 w-7 rounded border border-border",
+                            selected && "bg-surface-2 ring-1 ring-accent",
+                          )}
+                        />
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+              {storedCover && (
                 <button
                   type="button"
-                  onClick={() => onPickCover(null)}
+                  onClick={() => pickCoverValue(null)}
                   className="mt-2 rounded px-1 py-0.5 text-xs text-muted hover:bg-surface-2"
                 >
                   Remove cover
