@@ -18,6 +18,7 @@ import {
   rovingTabIndex,
   typeaheadIndex,
 } from "@/lib/keyboard-nav";
+import { DEFAULT_SHORTCUTS, formatCombo } from "@/lib/keyboard-shortcuts";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { PageTreeNode } from "@/server/queries";
@@ -38,6 +39,9 @@ import type { PageTreeNode } from "@/server/queries";
  *   first label that starts with what was typed (`typeaheadIndex`).
  * - Server Actions never live here: `onCreatePage` is owned by the shell,
  *   which wraps it in `useAction()` (coherence ratchet).
+ * - Commands that mirror a default keyboard shortcut advertise it on the row
+ *   (right-aligned, platform-aware) using the shared `src/lib/keyboard-shortcuts.ts`
+ *   registry, so no keystroke is hardcoded here.
  */
 
 type PaletteItem = {
@@ -52,6 +56,37 @@ type PaletteItem = {
 };
 
 const optionId = (index: number) => `command-palette-option-${index}`;
+
+/**
+ * Action rows that mirror a `DEFAULT_SHORTCUTS` entry, keyed by palette item
+ * key. The registry stays the single source of truth: the row renders whatever
+ * combo that binding carries for the current platform, and a row with no entry
+ * simply shows no hint (theme/page rows never match).
+ */
+const COMMAND_SHORTCUT_IDS: Readonly<Record<string, string>> = {
+  "action:create-page": "new-page",
+  "action:search": "search",
+  "action:toggle-sidebar": "toggle-sidebar",
+};
+
+/** Formatted, platform-aware shortcut hints keyed by palette item key. */
+function commandShortcutHints(isMac: boolean): Record<string, string> {
+  const hints: Record<string, string> = {};
+  for (const [itemKey, id] of Object.entries(COMMAND_SHORTCUT_IDS)) {
+    const binding = DEFAULT_SHORTCUTS.find((entry) => entry.id === id);
+    if (binding) hints[itemKey] = formatCombo(binding.combo, { isMac });
+  }
+  return hints;
+}
+
+/** macOS detection for shortcut glyphs; false during SSR to avoid a mismatch. */
+function useIsMac(): boolean {
+  const [isMac, setIsMac] = useState(false);
+  useEffect(() => {
+    setIsMac(/mac|iphone|ipad|ipod/i.test(navigator.userAgent));
+  }, []);
+  return isMac;
+}
 
 /**
  * Label text with the active (type-scoped) query emphasised. Reuses the shared
@@ -98,6 +133,8 @@ export function CommandPalette({
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const isMac = useIsMac();
+  const shortcutHints = useMemo(() => commandShortcutHints(isMac), [isMac]);
 
   // Fresh state on every open: no stale query, first item preselected.
   useEffect(() => {
@@ -307,6 +344,11 @@ export function CommandPalette({
                   item.label
                 )}
               </span>
+              {shortcutHints[item.key] && (
+                <span aria-hidden className="shrink-0 text-xs text-muted">
+                  {shortcutHints[item.key]}
+                </span>
+              )}
               {item.key === `theme:${theme}` && (
                 <span className="text-xs text-muted">{t(locale, "theme")}</span>
               )}
