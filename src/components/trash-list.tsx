@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import { stableTime } from "@/lib/time";
 import { bucketKey, bucketLabel } from "@/lib/date-bucket";
+import { defaultTrashRetentionPolicy } from "@/lib/trash";
 import { truncateMiddle } from "@/lib/truncate";
 import { offsetForIndex, totalHeight, visibleRange } from "@/lib/virtual-list";
 
@@ -60,6 +61,40 @@ function deletedLabel(value: string | null) {
   // text: `toLocaleDateString()` diverged between Node (en-US) and the browser's
   // locale, failing hydration and detaching this list's action handlers.
   return `Deleted ${when} · ${stableTime(date, "date")}`;
+}
+
+/** Milliseconds in a day, matching the retention arithmetic in `lib/trash`. */
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Whole days until a trashed page leaves its retention window, or `null` when
+ * no window applies: no `deletedAt`, an unparseable one, or a non-positive
+ * window (which disables expiry entirely, the `lib/trash` convention). Mirrors
+ * `isExpired`'s strict boundary (`deletedAt < now - window`), so a page deleted
+ * exactly `retentionDays` ago reads `0` and one already past the window is
+ * negative — neither is reported as still having time left. Pure: `now` is
+ * injected, never read here.
+ */
+function daysUntilPurge(
+  deletedAt: string | null,
+  retentionDays: number,
+  now: number,
+): number | null {
+  if (!deletedAt || !(retentionDays > 0)) return null;
+  const deleted = Date.parse(deletedAt);
+  if (!Number.isFinite(deleted)) return null;
+  return Math.ceil((deleted + retentionDays * MS_PER_DAY - now) / MS_PER_DAY);
+}
+
+/**
+ * The per-row retention suffix, or `""` when a page has no window. Counts a
+ * whole day of slack: "in 1 day" through its last 24h, then "soon" once it is
+ * at or past its purge boundary rather than a negative count.
+ */
+function retentionSuffix(days: number | null): string {
+  if (days === null) return "";
+  if (days > 0) return ` · Auto-deletes in ${days} ${days === 1 ? "day" : "days"}`;
+  return " · Auto-deletes soon";
 }
 
 /**
@@ -118,6 +153,13 @@ export function TrashList({
   // Top of the windowed scroller; only read in windowed mode.
   const [scrollTop, setScrollTop] = useState(0);
 
+  // Trash retention window. One source for the purge rule and this hint, so the
+  // "auto-deletes in N days" copy cannot drift from what the policy enforces.
+  const retentionDays = defaultTrashRetentionPolicy.retentionDays;
+  // One clock read per render, so every row's hint agrees. The metadata line is
+  // `suppressHydrationWarning`, so the server/client millisecond gap is safe.
+  const now = Date.now();
+
   const run = (label: string, task: () => Promise<{ ok: boolean; message?: string }>) =>
     startTransition(async () => {
       const outcome = await safeAction(task);
@@ -143,7 +185,7 @@ export function TrashList({
         <span className="block truncate text-sm">
           {truncateMiddle(page.title || "Untitled", TITLE_MAX)}
         </span>
-        <span className="block text-[11px] text-muted" suppressHydrationWarning>{deletedLabel(page.deletedAt)}</span>
+        <span className="block text-[11px] text-muted" suppressHydrationWarning>{deletedLabel(page.deletedAt)}{retentionSuffix(daysUntilPurge(page.deletedAt, retentionDays, now))}</span>
       </span>
 
       {canEdit && (
