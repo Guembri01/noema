@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import { Ban, CircleDot } from "lucide-react";
 import { LocalTime } from "@/components/local-time";
+import { addBusinessHours, type WorkingHours } from "@/lib/business-hours";
 import {
   blockersOf,
   buildDependencyGraph,
@@ -11,6 +12,7 @@ import {
   type DependencyEdge,
 } from "@/lib/dependencies";
 import { t } from "@/lib/i18n";
+import { slaStatus, type SlaClock, type SlaStatusResult } from "@/lib/sla-timer";
 import {
   capacityStatus,
   formatEstimate,
@@ -28,7 +30,7 @@ import {
   type WorkloadBucket,
 } from "@/lib/tickets";
 import { cn } from "@/lib/utils";
-import { LabelChip, StatusPill } from "./ticket-bits";
+import { LabelChip, SlaChip, StatusPill } from "./ticket-bits";
 import { LABEL_TONES, type TicketRow } from "./ticket-types";
 
 /** `TicketRelation`-shaped rows accepted as an optional dependency source. */
@@ -124,6 +126,53 @@ function buildWorkloadView(
   };
 }
 
+/**
+ * Optional SLA configuration for the list/board chips. Every input the timer
+ * needs is supplied by the caller; the bare prop is opt-in, so omitting it
+ * leaves the rows byte-for-byte as they were.
+ *
+ * A ticket's timer opens at its `startDate` (tickets without one show no chip)
+ * and its due instant is `startDate + hours` measured on the `workingHours`
+ * calendar via `addBusinessHours`, so weekends and holidays stretch — not
+ * shrink — the budget. `slaStatus` then grades the deadline against `now`.
+ */
+export type TicketSlaPolicy = {
+  /** SLA budget in working hours from the ticket's start instant. */
+  hours: number;
+  /** UTC working calendar used to place the due instant. */
+  workingHours: WorkingHours;
+  /** Elapsed-window percentage at which the chip turns `warning`. */
+  warnAtPercent?: number;
+  /** Injected wall clock for deterministic grading; defaults to render time. */
+  now?: SlaClock;
+};
+
+/** Per-ticket SLA grade, present only for tickets a supplied policy covers. */
+function buildSlaView(
+  rows: TicketRow[],
+  policy: TicketSlaPolicy | undefined,
+): Map<string, SlaStatusResult> {
+  const view = new Map<string, SlaStatusResult>();
+  if (!policy) return view;
+  const now = policy.now ?? Date.now();
+  for (const ticket of rows) {
+    const anchor = ticket.startDate;
+    if (!anchor) continue;
+    const due = addBusinessHours(anchor, policy.hours, policy.workingHours);
+    const dueMs = due.getTime();
+    const startedMs = Date.parse(anchor);
+    if (!Number.isFinite(dueMs)) continue;
+    // The real span (incl. non-working gaps) drives the warning band so a
+    // weekend inside the budget does not silently disable it.
+    const windowMs = Number.isFinite(startedMs) ? dueMs - startedMs : undefined;
+    view.set(
+      ticket.id,
+      slaStatus(now, dueMs, { warnAtPercent: policy.warnAtPercent, windowMs }),
+    );
+  }
+  return view;
+}
+
 /** Dev-only flag when the supplied relations close a loop. */
 function DevCycleNotice({ cycle }: { cycle: string[] | null }) {
   if (!cycle) return null;
@@ -204,6 +253,7 @@ export function TicketListView({
   edges,
   relations,
   capacityByUser,
+  slaPolicy,
 }: {
   filtered: TicketRow[];
   checked: string[];
@@ -220,9 +270,12 @@ export function TicketListView({
   relations?: readonly RelationInput[];
   /** Optional per-assignee capacity limits that tint the workload chips. */
   capacityByUser?: Partial<Record<string, CapacityLimits>>;
+  /** Optional SLA budget that adds a per-ticket `ok`/`warning`/`overdue` chip. */
+  slaPolicy?: TicketSlaPolicy;
 }) {
   const dependencies = buildDependencyView(filtered, edges, relations);
   const workload = buildWorkloadView(filtered, capacityByUser);
+  const sla = buildSlaView(filtered, slaPolicy);
   const blocked = dependencies.blockersByTicket.size;
 
   return (
@@ -245,6 +298,7 @@ export function TicketListView({
           const capacity = ticket.assigneeId
             ? workload.capacityById.get(ticket.assigneeId)
             : undefined;
+          const slaRow = sla.get(ticket.id);
           return (
             <li key={ticket.id} className="flex items-center gap-3 px-3 py-2 hover:bg-surface-2">
               <input
@@ -294,6 +348,7 @@ export function TicketListView({
               <span className="hidden w-20 text-xs text-muted lg:block">
                 {priorityMeta(ticket.priority).label}
               </span>
+              {slaRow && <SlaChip status={slaRow.status} remainingMs={slaRow.remainingMs} />}
               <StatusPill status={ticket.status} />
             </li>
           );
@@ -326,6 +381,7 @@ export function TicketBoardView({
   edges,
   relations,
   capacityByUser,
+  slaPolicy,
 }: {
   filtered: TicketRow[];
   onSelect: (id: string) => void;
@@ -338,9 +394,12 @@ export function TicketBoardView({
   relations?: readonly RelationInput[];
   /** Optional per-assignee capacity limits that tint the workload chips. */
   capacityByUser?: Partial<Record<string, CapacityLimits>>;
+  /** Optional SLA budget that adds a per-ticket `ok`/`warning`/`overdue` chip. */
+  slaPolicy?: TicketSlaPolicy;
 }) {
   const dependencies = buildDependencyView(filtered, edges, relations);
   const workload = buildWorkloadView(filtered, capacityByUser);
+  const sla = buildSlaView(filtered, slaPolicy);
   const assigneeNames = new Map(
     filtered
       .filter((ticket) => ticket.assigneeId)
@@ -396,6 +455,7 @@ export function TicketBoardView({
                 const capacity = ticket.assigneeId
                   ? workload.capacityById.get(ticket.assigneeId)
                   : undefined;
+                const slaRow = sla.get(ticket.id);
                 return (
                   <li
                     key={ticket.id}
@@ -427,6 +487,7 @@ export function TicketBoardView({
                             {<LocalTime value={ticket.dueDate} mode="date" />}
                           </span>
                         )}
+                        {slaRow && <SlaChip status={slaRow.status} remainingMs={slaRow.remainingMs} />}
                       </span>
                       {blockers && (
                         <span className="mt-1 flex flex-wrap items-center gap-1">
