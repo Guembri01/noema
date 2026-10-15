@@ -98,14 +98,16 @@ export function PropertyHeader({
   // (e.g. PLACE) can still reach its editor without a cast at every check.
   const typeCode: string = property.type;
   // Selecting…/multi/status configure options; DATE / UNIQUE_ID / PLACE
-  // configure their engine settings through the same dialog.
+  // configure their engine settings through the same dialog; BUTTON opens the
+  // Button config editor (feat/q06) so its label/icon/action are reachable here.
   const hasOptionsEditor =
     typeCode === "SELECT" ||
     typeCode === "MULTI_SELECT" ||
     typeCode === "STATUS" ||
     typeCode === "DATE" ||
     typeCode === "UNIQUE_ID" ||
-    typeCode === "PLACE";
+    typeCode === "PLACE" ||
+    typeCode === "BUTTON";
   // Single shared clamp so the header agrees with `setColumnWidth`/`autoFitWidths`.
   const widthStyle = width === undefined ? undefined : { width: clampWidth(width) };
   if (editing) {
