@@ -7,6 +7,7 @@
  */
 
 import { formatGeo, parseGeo } from "@/lib/geo";
+import { formatNumberValue, type NumberFormatSpec } from "@/lib/number-format";
 
 export type PropertyOption = {
   id: string;
@@ -24,6 +25,14 @@ export type PropertyConfig = {
   format?: string;
   /** NUMBER + format "currency": ISO 4217 code (defaults to USD). */
   currency?: string;
+  /**
+   * NUMBER: the richer display spec from `@/lib/number-format` (decimal /
+   * percent / currency / compact, with fixed decimals and grouping). When
+   * present it supersedes the legacy `format`/`currency` pair; when absent the
+   * cell renders exactly as before. Untrusted-JSON safe — the formatter
+   * validates the spec.
+   */
+  numberFormat?: NumberFormatSpec;
 } | null;
 
 export type QueryProperty = {
@@ -287,6 +296,13 @@ export function formatCell(value: unknown, property: QueryProperty): string {
   switch (property.type) {
     case "NUMBER": {
       if (v.number === undefined || v.number === null) return "";
+      const spec = property.config?.numberFormat;
+      if (spec) {
+        const n = Number(v.number);
+        if (!Number.isFinite(n)) return "";
+        // Fixed locale: server and client must render byte-identically.
+        return formatNumberValue(n, spec, "en-US");
+      }
       const format = property.config?.format;
       if (format === "percent" || format === "currency") {
         const n = Number(v.number);

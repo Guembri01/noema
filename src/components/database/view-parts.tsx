@@ -8,6 +8,7 @@ import { useAction } from "@/lib/actions-client";
 import { cn } from "@/lib/utils";
 import { PropertyType } from "@prisma/client";
 import { formatCell, normalizeOptionIds } from "@/lib/database-query";
+import { formatNumberValue, type NumberFormatSpec } from "@/lib/number-format";
 import { uploadFile } from "@/lib/upload-client";
 import { toast } from "sonner";
 import { ROLLUP_FUNCTIONS } from "@/lib/rollup";
@@ -315,6 +316,19 @@ function uniqueIdNumber(value: unknown): number | null {
 /** Editable draft for a PLACE cell: the three raw input strings. */
 type PlaceDraft = { lat: string; lng: string; label: string };
 
+/**
+ * Read the optional NUMBER `numberFormat` spec off a property config, or
+ * `undefined` when the property predates the number-format engine. The shared
+ * `DBProperty` config type is closed and read-only here, so the key is read
+ * defensively; the formatter re-validates it, so untrusted stored JSON degrades
+ * safely.
+ */
+function readNumberFormat(property: DBProperty): NumberFormatSpec | undefined {
+  const config = property.config;
+  if (!config || !("numberFormat" in config)) return undefined;
+  return (config as { numberFormat?: NumberFormatSpec }).numberFormat;
+}
+
 export function Cell({
   property,
   value,
@@ -372,6 +386,16 @@ export function Cell({
     <span className="text-muted">{node}</span>
   );
   const numberFormat = property.config?.format;
+  // Optional richer NUMBER spec (`@/lib/number-format`). Present → it supersedes
+  // the legacy percent/currency pair; absent → the cell renders exactly as
+  // before, so every pre-existing property is unchanged.
+  const numberFormatSpec = readNumberFormat(property);
+  // Percent values are stored as a fraction (0.075) but edited as the displayed
+  // percentage (7.5); the spec's style, else the legacy `format`, decides.
+  const percentFormat =
+    numberFormatSpec !== undefined
+      ? numberFormatSpec.style === "percent"
+      : numberFormat === "percent";
   const dateFormatted = property.config?.format === "friendly";
   // Widened once so the switch can reach types the generated enum may not list
   // yet (PLACE) without a cast on every case.
@@ -415,7 +439,7 @@ export function Cell({
     if (!Number.isFinite(n)) return;
     // Percent edits are entered as the displayed percentage (7.5) but stored
     // as the fraction (0.075), like the product.
-    onChange({ number: numberFormat === "percent" ? n / 100 : n });
+    onChange({ number: percentFormat ? n / 100 : n });
   };
 
   // Validate + persist a PLACE draft. `parseGeo` owns the finiteness/bounds
@@ -466,9 +490,16 @@ export function Cell({
     case "NUMBER": {
       const raw = typeof v.number === "number" ? v.number : null;
       const formatted =
-        numberFormat === "percent" || numberFormat === "currency";
+        numberFormatSpec !== undefined ||
+        numberFormat === "percent" ||
+        numberFormat === "currency";
       if (formatted) {
-        const text = formatCell(value, property);
+        const text =
+          numberFormatSpec !== undefined
+            ? raw === null
+              ? ""
+              : formatNumberValue(raw, numberFormatSpec, locale)
+            : formatCell(value, property);
         if (!editable) {
           return (
             <span aria-label={property.name} className="text-muted">
@@ -488,7 +519,7 @@ export function Cell({
                 raw === null
                   ? ""
                   : String(
-                      numberFormat === "percent"
+                      percentFormat
                         ? Math.round(raw * 1e6) / 1e6
                         : raw,
                     )
