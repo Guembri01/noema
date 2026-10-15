@@ -13,6 +13,7 @@ import {
 } from "@/lib/dependencies";
 import { t } from "@/lib/i18n";
 import { slaStatus, type SlaClock, type SlaStatusResult } from "@/lib/sla-timer";
+import { applySort, type SortSpec } from "@/lib/sort-compare";
 import {
   capacityStatus,
   formatEstimate,
@@ -173,6 +174,73 @@ function buildSlaView(
   return view;
 }
 
+/**
+ * Ticket fields the list view can be sorted by. These are the `propertyId`s the
+ * engine receives; any other key is ignored rather than guessed at, so a stale
+ * spec can never reorder rows the caller did not name.
+ */
+export type TicketSortField = "estimate" | "priority" | "status" | "date" | "assignee";
+
+/**
+ * A `SortSpec` narrowed to one of the ticket fields above. `dir`, `type`,
+ * `optionOrder` and `nulls` keep their engine meaning, so a caller can rank
+ * `priority` or `status` into a custom order via `optionOrder` and the shared
+ * engine honours it.
+ */
+export type TicketSortSpec = Omit<SortSpec, "propertyId"> & { propertyId: TicketSortField };
+
+const TICKET_SORT_FIELDS: readonly string[] = [
+  "estimate",
+  "priority",
+  "status",
+  "date",
+  "assignee",
+];
+
+function isTicketSortField(propertyId: string): propertyId is TicketSortField {
+  return TICKET_SORT_FIELDS.includes(propertyId);
+}
+
+/**
+ * Raw cell value for one sortable ticket field, shaped for the engine's typed
+ * comparisons: `estimate` is a number, `date` an ISO string (`dateKey` parses
+ * it), and `priority`/`status`/`assignee` plain text. `null`/`undefined` marks
+ * an empty cell, which the engine keeps at the chosen end.
+ */
+const TICKET_SORT_VALUES: Record<TicketSortField, (ticket: TicketRow) => unknown> = {
+  estimate: (ticket) => ticket.estimate,
+  priority: (ticket) => ticket.priority,
+  status: (ticket) => ticket.status,
+  date: (ticket) => ticket.dueDate,
+  assignee: (ticket) => ticket.assigneeName,
+};
+
+/**
+ * Order the list rows through the shared multi-key sort engine
+ * (`@/lib/sort-compare`). Rows are wrapped into the engine's `SortRow` shape
+ * (carrying the original ticket) so the ordering stays a pure comparison, then
+ * unwrapped. An absent/empty `sortSpecs` — or one with no recognised ticket
+ * field — returns an equal copy in the incoming order, so a list without a
+ * supplied sort renders exactly as before.
+ */
+function sortTicketRows(
+  rows: readonly TicketRow[],
+  specs: readonly TicketSortSpec[] | undefined,
+): TicketRow[] {
+  if (!specs || specs.length === 0) return [...rows];
+  const known = specs.filter((spec) => isTicketSortField(spec.propertyId));
+  if (known.length === 0) return [...rows];
+  const wrapped = rows.map((ticket) => ({
+    id: ticket.id,
+    propertyValues: known.map((spec) => ({
+      propertyId: spec.propertyId,
+      value: TICKET_SORT_VALUES[spec.propertyId](ticket),
+    })),
+    ticket,
+  }));
+  return applySort(wrapped, known).map((entry) => entry.ticket);
+}
+
 /** Dev-only flag when the supplied relations close a loop. */
 function DevCycleNotice({ cycle }: { cycle: string[] | null }) {
   if (!cycle) return null;
@@ -254,6 +322,7 @@ export function TicketListView({
   relations,
   capacityByUser,
   slaPolicy,
+  sortSpecs,
 }: {
   filtered: TicketRow[];
   checked: string[];
@@ -272,10 +341,16 @@ export function TicketListView({
   capacityByUser?: Partial<Record<string, CapacityLimits>>;
   /** Optional SLA budget that adds a per-ticket `ok`/`warning`/`overdue` chip. */
   slaPolicy?: TicketSlaPolicy;
+  /**
+   * Optional ordered sort keys (see `@/lib/sort-compare`). Omitted/empty keeps
+   * the incoming order untouched, so this stays purely additive.
+   */
+  sortSpecs?: readonly TicketSortSpec[];
 }) {
-  const dependencies = buildDependencyView(filtered, edges, relations);
-  const workload = buildWorkloadView(filtered, capacityByUser);
-  const sla = buildSlaView(filtered, slaPolicy);
+  const rows = sortTicketRows(filtered, sortSpecs);
+  const dependencies = buildDependencyView(rows, edges, relations);
+  const workload = buildWorkloadView(rows, capacityByUser);
+  const sla = buildSlaView(rows, slaPolicy);
   const blocked = dependencies.blockersByTicket.size;
 
   return (
@@ -288,8 +363,8 @@ export function TicketListView({
       )}
 
       <ul className="divide-y divide-border rounded-xl border border-border">
-        {filtered.length === 0 && <li className="px-3 py-6 text-sm text-muted">No tickets match.</li>}
-        {filtered.map((ticket) => {
+        {rows.length === 0 && <li className="px-3 py-6 text-sm text-muted">No tickets match.</li>}
+        {rows.map((ticket) => {
           const blockers = dependencies.blockersByTicket.get(ticket.id);
           const dependents = dependencies.dependentsByTicket.get(ticket.id);
           const bucket = ticket.assigneeId
