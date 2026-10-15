@@ -21,8 +21,10 @@ import {
   visibleColumns,
   type QueryProperty,
   type QueryRow,
+  type Sort,
   type ViewConfig,
 } from "@/lib/database-query";
+import { applySort, type SortSpec } from "@/lib/sort-compare";
 import { groupRowsByProperty, visibleGroups as filterVisibleGroups } from "@/lib/board-groups";
 import { buildSwimlanes, laneCounts } from "@/lib/board-swimlanes";
 import { reorderRows, sortByOrder } from "@/lib/row-order";
@@ -68,6 +70,96 @@ function persistRowOrder(
   void reorderRowsAction(orderedIds[0], orderedIds).catch(() => {
     /* keep the in-session order */
   });
+}
+
+/** A column's `PropertyType` (Prisma, upper-case) → the sort engine's kind. */
+function sortTypeFor(type: DBProperty["type"]): SortSpec["type"] {
+  switch (type) {
+    case "NUMBER":
+      return "number";
+    case "DATE":
+      return "date";
+    case "CHECKBOX":
+      return "checkbox";
+    case "SELECT":
+    case "STATUS":
+      return "select";
+    default:
+      return "text";
+  }
+}
+
+/** The declared option order of a choice column, when it has one. */
+function optionOrderFor(property: DBProperty): string[] | undefined {
+  if (property.type !== "SELECT" && property.type !== "STATUS") return undefined;
+  const options = property.config?.options;
+  if (!options || options.length === 0) return undefined;
+  return options.map((option) => option.id);
+}
+
+/**
+ * Translate a view's stored sort keys (the existing sort-state UI) into the
+ * sort engine's specs. A key for a column that no longer exists is dropped, so
+ * a stale stored sort can never hide or reorder rows unexpectedly.
+ */
+function sortSpecsFor(sorts: Sort[] | undefined, properties: DBProperty[]): SortSpec[] {
+  if (!sorts || sorts.length === 0) return [];
+  const byId = new Map(properties.map((property) => [property.id, property]));
+  const specs: SortSpec[] = [];
+  for (const sort of sorts) {
+    const property = byId.get(sort.propertyId);
+    if (!property) continue;
+    specs.push({
+      propertyId: sort.propertyId,
+      dir: sort.direction,
+      type: sortTypeFor(property.type),
+      optionOrder: optionOrderFor(property),
+      // The product convention: empty cells sit at the end in both directions.
+      nulls: "last",
+    });
+  }
+  return specs;
+}
+
+/**
+ * A row's value for one sort key, mirroring the query layer: the primary
+ * column is backed by `row.title` rather than a stored property value, so an
+ * empty cell falls back to `{ text }`.
+ */
+function sortValueFor(
+  row: DBRow,
+  property: DBProperty | undefined,
+  valueFor: (row: DBRow, propertyId: string) => unknown,
+): unknown {
+  const direct = property ? valueFor(row, property.id) : undefined;
+  if (direct !== undefined && direct !== null) return direct;
+  if (property?.config?.primary) return { text: row.title };
+  return direct;
+}
+
+/**
+ * Order rows with the shared multi-key sort engine. Rows are wrapped into the
+ * engine's `SortRow` shape (carrying the original `DBRow`) so the sort is a
+ * pure comparison, then unwrapped. No specs (or no resolvable keys) leaves the
+ * incoming order untouched, so a view without sorts renders exactly as before.
+ */
+function sortRowsWith(
+  rows: readonly DBRow[],
+  specs: SortSpec[],
+  properties: DBProperty[],
+  valueFor: (row: DBRow, propertyId: string) => unknown,
+): DBRow[] {
+  if (specs.length === 0) return [...rows];
+  const byId = new Map(properties.map((property) => [property.id, property]));
+  const wrapped = rows.map((row) => ({
+    id: row.id,
+    propertyValues: specs.map((spec) => ({
+      propertyId: spec.propertyId,
+      value: sortValueFor(row, byId.get(spec.propertyId), valueFor),
+    })),
+    row,
+  }));
+  return applySort(wrapped, specs).map((entry) => entry.row);
 }
 
 export function TableView({
@@ -151,7 +243,13 @@ export function TableView({
     config,
   ) as unknown as DBProperty[];
   const frozen = config.freezeFirstColumn !== false;
-  const orderedRows = orderRows(rows, rowOrder);
+  // Sorting goes through the shared engine (`@/lib/sort-compare`) driven by the
+  // view's saved sort keys; the manual row order, when set, still wins on top.
+  const sortSpecs = sortSpecsFor(config.sorts, properties);
+  const orderedRows = orderRows(
+    sortRowsWith(rows, sortSpecs, properties, valueFor),
+    rowOrder,
+  );
   // HTML5 drag state for property reorder: the dragged column id and the
   // column currently under the pointer (highlighted as the drop target).
   const [draggingId, setDraggingId] = useState<string | null>(null);
