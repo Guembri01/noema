@@ -1,13 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import {
-  hostOf,
-  isHttpUrl,
-  isPrivateHost,
-  normalizeUrl,
-  parseHtmlMetadata,
-  safeImageUrl,
-} from "@/lib/embeds";
+import { hostOf, isHttpUrl, normalizeUrl, safeImageUrl } from "@/lib/embeds";
+import { isPreviewable, parseLinkMeta, resolveUrl } from "@/lib/link-preview-meta";
 import { rateLimit } from "@/lib/api-guard";
 
 export const runtime = "nodejs";
@@ -17,8 +11,8 @@ const TIMEOUT_MS = 6000;
 
 /**
  * Fetch OpenGraph metadata for a URL so bookmark blocks can render a card.
- * Guards against SSRF (http(s) only, no private/loopback hosts), caps the
- * response size and enforces a timeout.
+ * Guards against SSRF via `isPreviewable` (http(s) only, no private/loopback
+ * hosts), caps the response size and enforces a timeout.
  */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "preview", 60, 60_000);
@@ -33,8 +27,7 @@ export async function GET(request: Request) {
   if (!isHttpUrl(url)) {
     return NextResponse.json({ error: "Invalid url" }, { status: 400 });
   }
-  const host = new URL(url).hostname;
-  if (isPrivateHost(host)) {
+  if (!isPreviewable(url)) {
     return NextResponse.json({ error: "Blocked host" }, { status: 400 });
   }
 
@@ -70,24 +63,18 @@ export async function GET(request: Request) {
       }
     }
     const html = Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf8");
-    const meta = parseHtmlMetadata(html);
-
-    const resolve = (value: string | null): string | null => {
-      if (!value) return null;
-      try {
-        return new URL(value, response.url).toString();
-      } catch {
-        return null;
-      }
-    };
+    // `link-preview-meta` reads og:*/twitter:*/title/description/favicon and
+    // resolves every URL field against the fetched page, replacing the ad-hoc
+    // regex + `new URL` parsing that used to live here.
+    const meta = parseLinkMeta(html, { baseUrl: response.url });
 
     return NextResponse.json({
       url,
       host: hostOf(url),
-      title: meta.title,
-      description: meta.description,
-      image: safeImageUrl(resolve(meta.image)),
-      icon: safeImageUrl(resolve(meta.icon)),
+      title: meta.title ?? null,
+      description: meta.description ?? null,
+      image: safeImageUrl(resolveUrl(response.url, meta.image ?? "")),
+      icon: safeImageUrl(resolveUrl(response.url, meta.favicon ?? "")),
     });
   } catch {
     return NextResponse.json(fallback);
