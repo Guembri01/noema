@@ -48,6 +48,13 @@ import {
 } from "@/lib/page-cover";
 import { PAGE_ICON_EMOJI, isEmoji, isImageIcon } from "@/lib/page-icon";
 import { computeStats, type TextBlock } from "@/lib/text-stats";
+import {
+  AUDIT_RULES,
+  auditDocument,
+  summarizeAudit,
+  type A11yBlock,
+  type AuditCode,
+} from "@/lib/a11y-audit";
 import type { PageMenuData } from "@/server/actions/page-menu";
 
 /**
@@ -153,6 +160,70 @@ const EXPORTS = [
   { format: "pdf", label: "PDF (.pdf)" },
 ];
 
+/**
+ * "Accessibility check" is owned by this component rather than
+ * `lib/actions-menu.ts`: the canonical item list is an engine other surfaces
+ * depend on, so the extra entry is appended additively here instead of editing
+ * it. It sits in the `insights` group so it renders beside "Updates &
+ * analytics" / "Version history" and still matches the live search box.
+ */
+const A11Y_CHECK_ITEM: MenuItem = {
+  id: "a11y-check",
+  label: "Accessibility check",
+  group: "insights",
+  kind: "action",
+  keywords: ["a11y", "accessibility", "audit", "screen reader", "wcag"],
+};
+
+/** Flatten a `RichText` value to plain text; marks/attrs are not retained. */
+function auditText(value: TextBlock["text"]): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    const parts = value
+      .map(auditText)
+      .filter((part): part is string => typeof part === "string" && part !== "");
+    return parts.length > 0 ? parts.join(" ") : undefined;
+  }
+  if (value && typeof value === "object") {
+    if (typeof value.text === "string") return value.text;
+    if (Array.isArray(value.content)) {
+      const parts = value.content
+        .map(auditText)
+        .filter((part): part is string => typeof part === "string" && part !== "");
+      return parts.length > 0 ? parts.join(" ") : undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Project the text-stats block tree into the audit's `A11yBlock` shape. The
+ * projection is structural only — `TextBlock` deliberately drops `attrs`,
+ * `marks` and heading levels — so ids are synthesised from the node path and
+ * `image` nodes are omitted: their `alt` is unknowable here, and flagging every
+ * image as missing alt text would be a false positive (see report follow-ups).
+ */
+function toAuditBlocks(
+  blocks: readonly TextBlock[],
+  path = "0",
+): A11yBlock[] {
+  const result: A11yBlock[] = [];
+  blocks.forEach((block, index) => {
+    if (!block || typeof block.type !== "string") return;
+    if (block.type === "image") return;
+    const id = `${path}-${index}`;
+    const children = block.children ? toAuditBlocks(block.children, id) : [];
+    const text = auditText(block.text);
+    result.push({
+      id,
+      type: block.type,
+      ...(text !== undefined ? { text } : {}),
+      ...(children.length > 0 ? { children } : {}),
+    });
+  });
+  return result;
+}
+
 const LIST_ID = "actions-menu-list";
 
 export type NotifyLevel = "all" | "mentions" | "none";
@@ -250,7 +321,9 @@ export function ActionsMenu(props: ActionsMenuProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
-  const [view, setView] = useState<"main" | "customize" | "updates">("main");
+  const [view, setView] = useState<
+    "main" | "customize" | "accessibility" | "updates"
+  >("main");
   const [submenu, setSubmenu] = useState<{
     id: string;
     top: number;
@@ -274,12 +347,14 @@ export function ActionsMenu(props: ActionsMenuProps) {
 
   // ---- data model ---------------------------------------------------------
   const baseItems = useMemo(
-    () =>
-      visibleMenuItems({ editable, locked }).filter((item) => {
+    () => [
+      ...visibleMenuItems({ editable, locked }).filter((item) => {
         if (item.id === "workspace-move") return workspaces.length > 0;
         if (item.id === "teamspace-move") return teamspaces.length > 0;
         return true;
       }),
+      A11Y_CHECK_ITEM,
+    ],
     [editable, locked, workspaces.length, teamspaces.length],
   );
   const groups = useMemo(
@@ -318,6 +393,29 @@ export function ActionsMenu(props: ActionsMenuProps) {
   const statReading = pageStats
     ? pageStats.readingTimeLabel
     : (data?.stats.reading ?? "less than a minute");
+
+  // The accessibility check runs the pure audit engine over the same block
+  // tree the footer stats use; it never throws and never blocks, so a missing
+  // or malformed document just yields "content unavailable" / a clean report.
+  const a11yReport = useMemo(() => {
+    if (!content) return null;
+    const issues = auditDocument(toAuditBlocks(content));
+    return { issues, summary: summarizeAudit(issues) };
+  }, [content]);
+
+  const a11yBreakdown = useMemo(
+    () =>
+      a11yReport
+        ? (Object.keys(AUDIT_RULES) as AuditCode[])
+            .map((code) => ({
+              code,
+              title: AUDIT_RULES[code].title,
+              count: a11yReport.summary.byCode[code] ?? 0,
+            }))
+            .filter((row) => row.count > 0)
+        : [],
+    [a11yReport],
+  );
 
   const toggleState: Record<string, boolean> = {
     "small-text": resolvedAppearance.fontSize === "small",
@@ -640,6 +738,10 @@ export function ActionsMenu(props: ActionsMenuProps) {
       case "customize":
         setSubmenu(null);
         setView("customize");
+        break;
+      case "a11y-check":
+        setSubmenu(null);
+        setView("accessibility");
         break;
       case "suggest":
         onChatPrompt(
@@ -1115,6 +1217,42 @@ export function ActionsMenu(props: ActionsMenuProps) {
                   </button>
                 ))}
               </div>
+            </div>
+          </>
+        ) : view === "accessibility" ? (
+          <>
+            <PanelHeader title="Accessibility check" onBack={backToMain} />
+            <div className="max-h-80 overflow-y-auto p-2 text-sm">
+              {a11yReport === null ? (
+                <p className="text-muted">Page content isn&apos;t loaded yet.</p>
+              ) : a11yReport.summary.total === 0 ? (
+                <p className="text-muted">
+                  No accessibility issues found.
+                </p>
+              ) : (
+                <>
+                  <p>
+                    {a11yReport.summary.errors} errors ·{" "}
+                    {a11yReport.summary.warnings} warnings ·{" "}
+                    {a11yReport.summary.infos} info
+                  </p>
+                  <ul className="mt-2 space-y-1 border-t border-border pt-2">
+                    {a11yBreakdown.map((row) => (
+                      <li key={row.code} className="flex items-center gap-2">
+                        <span className="flex-1 truncate">{row.title}</span>
+                        <span className="shrink-0 text-muted">{row.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <ul className="mt-2 space-y-1 border-t border-border pt-2 text-xs text-muted">
+                    {a11yReport.issues.map((issue, index) => (
+                      <li key={`${issue.blockId}:${issue.code}:${index}`}>
+                        {issue.message}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
             </div>
           </>
         ) : (
