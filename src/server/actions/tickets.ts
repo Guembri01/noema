@@ -8,6 +8,8 @@ import { canEditContent, canManageMembers, getWorkspaceAccess } from "@/lib/perm
 import { parsePageContent } from "@/lib/validation";
 import { DESCRIPTION_MAX, descriptionDoc, sanitizeDescription } from "@/lib/description";
 import { getTicketsPage } from "@/server/queries";
+import { addBusinessHours, type WorkingHours } from "@/lib/business-hours";
+import { computeSlaDue, type SlaKind, type SlaPolicy } from "@/lib/sla-timer";
 import {
   RELATION_TYPES,
   TICKET_PRIORITIES,
@@ -32,7 +34,7 @@ async function authorizeTicket(ticketId: string) {
   const user = await requireUser();
   const ticket = await prisma.ticket.findUnique({
     where: { id: ticketId },
-    select: { id: true, workspaceId: true, status: true, title: true, key: true },
+    select: { id: true, workspaceId: true, status: true, title: true, key: true, createdAt: true },
   });
   if (!ticket) return { ok: false as const, error: "Ticket not found." };
   const access = await getWorkspaceAccess(user.id, ticket.workspaceId);
@@ -140,6 +142,44 @@ export async function deleteLabelAction(labelId: string): Promise<TicketResult> 
 // Tickets
 // ---------------------------------------------------------------------------
 
+/** Wall-clock milliseconds in one hour (`computeSlaDue` ↔ `addBusinessHours`). */
+const MS_PER_HOUR = 3_600_000;
+
+/**
+ * Optional SLA policy attached to a ticket write. The whole config is opt-in:
+ * omit it and every action behaves byte-for-byte as before. When present the
+ * server derives `dueDate` itself rather than trusting the caller's value.
+ *
+ * `computeSlaDue` turns the policy into a wall-clock deadline measured from the
+ * ticket's creation instant; supplying `workingHours` then re-measures the same
+ * budget on the team's office calendar via `addBusinessHours`, so weekends and
+ * holidays stretch — not shrink — the deadline.
+ */
+export type TicketSlaInput = {
+  /** Minute budgets for the response / resolve timers (see `SlaPolicy`). */
+  policy: SlaPolicy;
+  /** Which deadline lands on `dueDate`. Defaults to `"resolve"`. */
+  kind?: SlaKind;
+  /** UTC working calendar; when set the deadline skips closed hours. */
+  workingHours?: WorkingHours;
+};
+
+/**
+ * The due instant `sla` implies for a ticket created at `createdAt`, or `null`
+ * when there is no policy, the timer is unconfigured, or the result is
+ * unparseable — in which case the caller keeps its existing `dueDate` handling.
+ */
+function slaDueDate(sla: TicketSlaInput | undefined, createdAt: Date): Date | null {
+  if (!sla) return null;
+  const due = computeSlaDue(createdAt, sla.policy, { kind: sla.kind ?? "resolve" });
+  if (!due) return null;
+  if (!sla.workingHours) {
+    return Number.isFinite(due.dueAt) ? new Date(due.dueAt) : null;
+  }
+  const stretched = addBusinessHours(createdAt, due.windowMs / MS_PER_HOUR, sla.workingHours);
+  return Number.isFinite(stretched.getTime()) ? stretched : null;
+}
+
 export async function createTicketAction(input: {
   workspaceId: string;
   title: string;
@@ -156,6 +196,8 @@ export async function createTicketAction(input: {
   assigneeId?: string | null;
   parentId?: string | null;
   labelIds?: string[];
+  /** Optional SLA policy; when set the server computes `dueDate` from it. */
+  sla?: TicketSlaInput;
 }): Promise<TicketResult<{ id: string; key: string }>> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, input.workspaceId);
@@ -168,6 +210,10 @@ export async function createTicketAction(input: {
   const priority = PRIORITY_IDS.includes(input.priority ?? "none") ? input.priority ?? "none" : "none";
   const type = TYPE_IDS.includes(input.type ?? "task") ? input.type ?? "task" : "task";
   const descriptionText = sanitizeDescription(input.description ?? "");
+
+  // The SLA clock starts at creation; when no policy is supplied this is `null`
+  // and `dueDate` keeps its existing caller-supplied behaviour.
+  const slaDue = slaDueDate(input.sla, new Date());
 
   const workspace = await prisma.workspace.findUnique({
     where: { id: input.workspaceId },
@@ -205,7 +251,7 @@ export async function createTicketAction(input: {
       estimate: typeof input.estimate === "number" && Number.isFinite(input.estimate) ? input.estimate : null,
       estimateUnit: input.estimateUnit ?? "points",
       startDate: input.startDate ? new Date(input.startDate) : null,
-      dueDate: input.dueDate ? new Date(input.dueDate) : null,
+      dueDate: slaDue ?? (input.dueDate ? new Date(input.dueDate) : null),
       projectId: input.projectId ?? null,
       milestoneId: input.milestoneId ?? null,
       assigneeId: input.assigneeId ?? null,
@@ -239,6 +285,8 @@ export async function updateTicketAction(input: {
   milestoneId?: string | null;
   assigneeId?: string | null;
   archived?: boolean;
+  /** Optional SLA policy; when set the server recomputes `dueDate` from it. */
+  sla?: TicketSlaInput;
 }): Promise<TicketResult> {
   const auth = await authorizeTicket(input.ticketId);
   if (!auth.ok) return { error: auth.error };
@@ -302,6 +350,15 @@ export async function updateTicketAction(input: {
   if (input.archived !== undefined) {
     data.archived = input.archived;
     changes.archived = input.archived;
+  }
+  // An SLA policy owns `dueDate`, so it wins over any explicit value above; the
+  // deadline is measured from the ticket's creation instant.
+  if (input.sla) {
+    const slaDue = slaDueDate(input.sla, auth.ticket.createdAt);
+    if (slaDue) {
+      data.dueDate = slaDue;
+      changes.dueDate = slaDue.toISOString();
+    }
   }
 
   if (Object.keys(data).length === 0) return { ok: true };
