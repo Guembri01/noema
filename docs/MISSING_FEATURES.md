@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Scoreboard:** 563 feature rows — 191 implemented · 142 partial · 216 planned · 14 deliberately out of scope.
+**Scoreboard:** 563 feature rows — 212 implemented · 123 partial · 214 planned · 14 deliberately out of scope.
 
-This file lists the **358** rows that are not finished, area by area, plus 14 intentional divergences.
+This file lists the **337** rows that are not finished, area by area, plus 14 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -30,7 +30,7 @@ This file lists the **358** rows that are not finished, area by area, plus 14 in
 
 ### 1. Editor & blocks
 
-44 done · 46 partial · 8 planned · 2 out of scope
+54 done · 37 partial · 7 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -41,7 +41,6 @@ This file lists the **358** rows that are not finished, area by area, plus 14 in
 | Inline equation | Small LaTeX expression inside a text line. | 🟡 | KaTeX renderer wired; editing UX rough. |
 | Block equation | Centered display equation. | 🟡 | Renders via KaTeX; edit/preview split unstable. |
 | KaTeX/LaTeX support | Math syntax engine for equations. | 🟡 | KaTeX chosen; macro support limited. |
-| Math editor UX | Popover to compose equations with symbols. | 🟡 | Planned composer with symbol palette. |
 | Columns (2/3/4/5) | Arrange blocks side by side. | 🟡 | Two-column layout works; add/remove columns UI missing. Spec: docs/specs/editor-deep.md (R84.1-R84.3; cap is 4 today — custom-blocks.tsx:240). |
 | Simple table block | Grid of rows and columns in a page. | 🟡 | Basic table; no header styling controls yet. Spec: docs/specs/editor-deep.md (R84.4-R84.6). |
 | Table header row/column | Designate header row/column. | 🟡 | Toggle exists in logic; styling minimal. Spec: docs/specs/editor-deep.md (R84.4-R84.6; in-table toolbar binds the unbound TableKit commands, th scope in the read-only renderer). |
@@ -64,21 +63,13 @@ This file lists the **358** rows that are not finished, area by area, plus 14 in
 | Page link mention | Inline link to another page. | 🟡 | `@` picker inserts a page link node. |
 | Block reference / mention | Inline reference to a specific block. | 🟡 | Planned; block-id resolution needed. |
 | Person mention | Inline user chip. | 🟡 | Renders user; notifications on mention minimal. |
-| Unlinked mention | Detects the page name typed without a link. | 🟡 | Planned as a backlink-discovery pass. |
 | Drag to another page | Move a block into a different page. | 🟡 | Planned. |
 | Multi-block selection | Select a range of blocks. | 🟡 | Shift+click works; select-all edge cases. Spec: docs/specs/editor-deep.md (R84.10-R84.12 for the range edges; select-all subset owned by B18). |
-| Copy block link | Copy a deep link to a block. | 🟡 | Planned. |
-| Page icon | Emoji or image as a page icon. | 🟡 | Emoji icons work; image icons limited. |
+| Copy as Markdown | Copy selection as Markdown text. | 🟡 | Planned. |
 | Page cover | Banner image on a page. | 🟡 | Upload works; reposition/resize missing. |
-| Cover reposition | Drag the cover image position. | 🟡 | Planned. |
-| Callout icon picker | Choose the callout's icon. | 🟡 | Planned. [B84 audit] Ships today — in-block icon picker at src/components/editor/extensions/custom-blocks.tsx:104-116; glyph left for orchestrator re-baseline. |
 | Sub-pages section | Auto-list of child pages on a parent. | 🟡 | Inline listing exists; reorder partial. |
 | Full-width toggle | Expand content to the full viewport width. | 🟡 | Toggle works per page; persisted. |
-| Small text | Reduce body font size for a page. | 🟡 | Planned page-level style setting. [B84 audit] Ships today — src/app/w/[slug]/[pageId]/page.tsx:115,130 + src/components/page-title.tsx:270-273; glyph left for orchestrator re-baseline. |
-| Page fonts | Choose from preset font families. | 🟡 | Planned; ships three classic pairings. |
-| Line spacing | Control paragraph line-height. | 🟡 | Planned as a page/appearance option. |
 | Page locking | Prevent edits to a page. | 🟡 | Planned; depends on permission layer. [B84 audit] Ships today — Page.locked + topbar toggle (src/app/w/[slug]/[pageId]/page.tsx:88; src/components/page-title.tsx:279-281); server-side enforcement gap tracked as D6 in docs/specs/realtime-collab.md §2.3; glyph left for orchestrator re-baseline. |
-| Page description | Short summary surfaced in previews. | 🟡 | Planned; used by search previews. |
 | Page breadcrumb header | Ancestor path in the page header. | 🟡 | Renders; interactions partial. |
 | Column resize | Drag the divider to change column width. | 🧭 | Planned with persisted widths. |
 | Synced block source marker | Visual marker of the canonical source. | 🧭 | Planned. |
@@ -87,13 +78,12 @@ This file lists the **358** rows that are not finished, area by area, plus 14 in
 | PDF preview block | Inline PDF viewer. | 🧭 | Planned; needs a viewer component. |
 | Linked view of a database | Re-display an existing database elsewhere. | 🧭 | Planned; requires stable view model. |
 | Synced/reference content | Reference that mirrors another block. | 🧭 | Shares machinery with synced blocks. |
-| Copy as Markdown | Copy selection as Markdown text. | 🧭 | Planned. |
 | Comment block (doc annotation) | Pulls comments conceptually into flow. | ⛔ | Superseded by the inline comment model; not a block. |
 | Table merge/split cells | Combine or split cells. | ⛔ | High complexity for low demand; revisit if requested. |
 
 ### 2. Text formatting
 
-10 done · 8 partial · 3 planned · 1 out of scope
+11 done · 7 partial · 3 planned · 1 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -104,7 +94,6 @@ This file lists the **358** rows that are not finished, area by area, plus 14 in
 | Inline math | LaTeX span inside text. | 🟡 | KaTeX renderer; inline edit rough. |
 | Paste with formatting | Preserve rich formatting on paste. | 🟡 | HTML paste works; style cleanup partial. |
 | Paste without formatting | Strip styles on paste. | 🟡 | Shortcut present; some wrappers leak. |
-| Ligatures & smart quotes | Typographic niceties while typing. | 🟡 | Planned as an editor option. |
 | Clear formatting | Reset marks on a range. | 🧭 | Planned as a keyboard action. |
 | Subscript | Baseline-lowered text. | 🧭 | Planned if demand justifies. |
 | Superscript | Baseline-raised text. | 🧭 | Planned if demand justifies. |
@@ -112,13 +101,10 @@ This file lists the **358** rows that are not finished, area by area, plus 14 in
 
 ### 3. Databases
 
-15 done · 32 partial · 6 planned
+21 done · 26 partial · 6 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Board view | Kanban grouped by a property. | 🟡 | Planned; grouping engine needed. Renderer + grouping landed (B15); depth gaps spec'd: docs/specs/database-deep.md (R89.7). |
-| List view | Compact single-line list. | 🟡 | Planned. Renderer landed (B15); grouped/compact depth spec'd: docs/specs/database-deep.md (R89.8). |
-| Gallery view | Card grid with previews. | 🟡 | Planned. Card grid + first-image banner landed (B15); cover/content-preview depth spec'd: docs/specs/database-deep.md (R89.9). |
 | Calendar view | Rows on a month/week calendar. | 🟡 | Planned; needs date property engine. Month grid landed but single-day only (B15); week scale + multi-day spans + date-property picker spec'd: docs/specs/database-deep.md (R89.10). |
 | Chart view | Aggregate charts over the database. | 🟡 | Planned; aggregation dependency. Count-only bars landed (B15); chart type/measure/group-by over ROLLUP_FUNCTIONS spec'd: docs/specs/database-deep.md (R89.12). |
 | Form view | Public/Internal form that creates rows. | 🟡 | Planned. No ViewType.FORM exists yet; builder + submit path spec'd: docs/specs/database-deep.md (R89.29). |
@@ -132,17 +118,14 @@ This file lists the **358** rows that are not finished, area by area, plus 14 in
 | Quick filter from header | Filter directly from a column header. | 🟡 | Planned. Spec'd as an entry point into the filter panel: docs/specs/database-deep.md (R89.6). |
 | Open row as page | Full-page row view. | 🟡 | Route, editor blocks and comments work, and the table/peek offer one-click *Open as page*; a properties strip + back-to-database breadcrumb on the row page needs `app/w/[slug]/[pageId]/page.tsx`, outside B15's ownership (queued for the page-route batch). |
 | Inline database | Database embedded in a page body. | 🟡 | Renders through the editor's linked-database node view; its height/scroll shell lives in `src/components/editor/**` (editor slot), so the scroll fix is queued there rather than patched from B15. |
-| Row reordering | Drag rows in a view order. | 🟡 | Planned with manual order property. Page.position already orders rows (queries.ts:155-157); drag UI + moveRowAction spec'd: docs/specs/database-deep.md (R89.19). |
 | Column resize/reorder | Resize and reorder columns. | 🟡 | Planned. Per-view width/order in view config spec'd: docs/specs/database-deep.md (R89.13). |
 | Calculations/footer | Aggregations under columns. | 🟡 | Planned (count, sum, average, etc.). Spec'd over rollup ROLLUP_FUNCTIONS: docs/specs/database-deep.md (R89.4). |
 | Database lock | Prevent schema edits. | 🟡 | Planned; depends on permissions. Database-scoped capability split (readRows/editRows/editSchema) + schemaLocked flag spec'd: docs/specs/database-deep.md (R89.23, R89.24). |
-| Duplicate database | Copy a database with structure. | 🟡 | Planned. Atomic structure copy (properties/views/templates, optional rows) spec'd: docs/specs/database-deep.md (R89.22). |
 | Sub-items / sub-tasks | Parent-child rows inside a database. | 🟡 | Planned; tree ordering needed. Page.subOfId (depth cap 1) spec'd independent of relations: docs/specs/database-deep.md (R89.30). |
 | Dependencies | Blocking/blocked-by between rows. | 🟡 | Planned; mainly for timeline. RowDependency join model with cycle guard spec'd: docs/specs/database-deep.md (R89.31). |
 | Timeline dependencies | Draw dependency arrows on timeline. | 🟡 | Planned. Arrow rendering inside the gantt depth spec: docs/specs/database-deep.md (R89.31 with R89.11). |
 | Calendar multi-day events | Span events across days. | 🟡 | Planned. Span-day expansion replaces today's single-day match (view-renderers.tsx:624-634): docs/specs/database-deep.md (R89.10). |
 | Gallery previews | Show cover or page content on cards. | 🟡 | Planned. First-image banner landed (B15); cover property + page-content preview spec'd: docs/specs/database-deep.md (R89.9). |
-| Board grouping | Group board columns by property. | 🟡 | Planned. groupBy + status buckets landed (B15); group-by picker, order, collapse and per-column create spec'd: docs/specs/database-deep.md (R89.7). |
 | Buttons in databases | Row actions via buttons. | 🟡 | Planned; depends on automations. Property shell (label/style/config) spec'd: docs/specs/database-deep.md (R89.26); action execution owned by docs/specs/automations.md (R27.x). |
 | Database templates | Pre-filled row templates. | 🟡 | Planned. Minimal CRUD shipped (save row as template / instantiate / recurrence, database.ts:464-588); depth (default, preview, edit) integration spec'd: docs/specs/database-deep.md (R89.16) with docs/specs/templates.md (R31.x). |
 | Default template | Auto-apply a template to new rows. | 🟡 | Planned. Flag + semantics owned by docs/specs/templates.md (R31.13); createRowAction application + New-row split button spec'd: docs/specs/database-deep.md (R89.16). |
@@ -220,15 +203,13 @@ This file lists the **358** rows that are not finished, area by area, plus 14 in
 
 ### 7. Collaboration
 
-13 done · 5 partial · 8 planned
+15 done · 3 partial · 8 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Presence | See who is viewing a page. | 🟡 | Planned. |
 | Avatars | Per-user avatars in the UI. | 🟡 | Avatar field exists; presence UI pending. |
 | Page comments | Comment threads on a page. | 🟡 | Data model basic; UI minimal. B79 audit: threads/resolve/reactions/mentions all live; deepest gaps are server-side depth validation, block anchors and dispatch scoping (see rows below). Spec: docs/specs/collaboration-deep.md. |
-| Suggestions mode | Propose edits for approval. | 🟡 | Planned; diff overlay needed. |
-| Notification inbox | Central list of notifications. | 🟡 | Planned. B79 audit: route already exists at `/w/<slug>/inbox` (`inbox/page.tsx:17-99`, newest-first `take 50`, unread dot, sidebar badge) fed by `comment.reply`/`page.mention`; the `page.shared` label has no writer, labels are hardcoded English, and links stop at the page (no `commentId`/anchor). Glyph left as-is per append-only rule — orchestrator re-baseline candidate (O79.5). R79.3e, R79.4f-g. B82 spec `docs/specs/notifications.md` owns delivery: rows gain `workspaceId`/`actorId`/payload actor+title (D2/D9), inbox gets workspace filter + cursor paging + `t()` labels (D3), badge semantics frozen — R82.2, R82.21-R82.26. |
 | Real-time multiplayer editing | Multiple users edit simultaneously. | 🧭 | Planned; local-first CRDT then sync. Spec: docs/specs/realtime-collab.md. |
 | CRDT data model | Conflict-free replicated structures. | 🧭 | Planned (automerge/Yjs-style). Spec: docs/specs/realtime-collab.md. |
 | Live cursors | Remote carets and selections. | 🧭 | Planned; needs presence transport. |
@@ -322,12 +303,13 @@ This file lists the **358** rows that are not finished, area by area, plus 14 in
 
 ### 12. Import & export
 
-0 done · 2 partial · 20 planned
+0 done · 3 partial · 19 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Import Markdown | Bring in `.md` files. | 🟡 | Basic parser; frontmatter partial. Spec: docs/specs/import-export.md. |
 | Export Markdown | Page as `.md`. | 🟡 | Basic export; nested content partial. Spec: docs/specs/import-export.md. |
+| Export PDF | Page as PDF. | 🟡 | Planned; headless render. Spec: docs/specs/import-export.md. |
 | Import CSV | Create databases from CSV. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
 | Import HTML | Import HTML documents. | 🧭 | Planned. |
 | Import from another Notion-class workspace | Migrate an external export. | 🧭 | Planned; mapping to blocks. Spec: docs/specs/import-export.md. |
@@ -342,7 +324,6 @@ This file lists the **358** rows that are not finished, area by area, plus 14 in
 | Import rollback | Undo a failed import. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
 | Export CSV | Database as CSV. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
 | Export HTML | Page as static HTML. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
-| Export PDF | Page as PDF. | 🧭 | Planned; headless render. Spec: docs/specs/import-export.md. |
 | Bulk export | Export a whole workspace. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
 | Export with subpages | Include child pages. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
 | Export without subpages | Exclude children. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
@@ -351,11 +332,10 @@ This file lists the **358** rows that are not finished, area by area, plus 14 in
 
 ### 13. Integrations & API
 
-0 done · 4 partial · 18 planned
+1 done · 3 partial · 18 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| API pagination | Cursor-based list endpoints. | 🟡 | Planned. Spec: docs/specs/integrations-api.md. |
 | Google Calendar sync | Two-way calendar sync. | 🟡 | ICS subscription import (read-only); no two-way OAuth sync yet. |
 | Outlook Calendar sync | Two-way calendar sync. | 🟡 | Works through the published ICS URL; native OAuth pending. |
 | Public embed oEmbed | Resolve third-party link metadata. | 🟡 | Basic title/favicon fetch. |
@@ -449,13 +429,12 @@ This file lists the **358** rows that are not finished, area by area, plus 14 in
 
 ### 17. Data model & platform
 
-6 done · 9 partial · 22 planned
+7 done · 8 partial · 22 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Stable block ids | Every block has a durable id. | 🟡 | Ids exist; not enforced on all operations. Spec: docs/specs/engineering-hardening.md. |
 | Transactions / atomic writes | All-or-nothing updates. | 🟡 | Planned; Prisma transactions. Spec: docs/specs/engineering-hardening.md. |
-| Audit log | Record sensitive actions. | 🟡 | Planned. |
 | Soft delete | Mark-deleted rather than purge. | 🟡 | `deletedAt` columns used. |
 | Multi-tenancy | Isolate workspaces. | 🟡 | Workspace scoping modeled. |
 | Authentication | Sign-up and sign-in. | 🟡 | Session auth; providers limited. |
