@@ -22,6 +22,13 @@ import { formatGeo, normalizeGeo, parseGeo } from "@/lib/geo";
 import { isValidEmail } from "@/lib/email-validation";
 import { isValidPhone, normalizePhone } from "@/lib/phone-format";
 import { classifyLink } from "@/lib/link-check";
+import {
+  isSafeButtonUrl,
+  resolveButtonAction,
+  validateButton,
+  type ButtonActionPlan,
+  type ButtonRow,
+} from "@/lib/row-buttons";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
 
@@ -361,6 +368,72 @@ function typedValueError(type: string, value: unknown): string {
     }
     default:
       return "";
+  }
+}
+
+/** A BUTTON property's action, normalised for the `@/lib/row-buttons` engine. */
+type ButtonSource = {
+  /** A `ButtonConfig`-shaped value; `validateButton` re-checks untrusted JSON. */
+  config: unknown;
+  /** True when reshaped from the legacy `targetPropertyId`/`value` pair. */
+  legacy: boolean;
+};
+
+/**
+ * Read a BUTTON property's action as a value the `@/lib/row-buttons` engine can
+ * validate and resolve. A button configured through the row-buttons engine
+ * stores a `ButtonConfig` under `config.button`; a button configured before the
+ * engine carries only the legacy `targetPropertyId`/`value` pair, which is
+ * reshaped into the equivalent `set_property` action so every BUTTON cell flows
+ * through the same plan. Returns `undefined` for a property with no action — the
+ * pre-engine shell keeps rendering exactly as before.
+ */
+function readButtonSource(
+  property: DBProperty,
+  fallbackLabel: string,
+): ButtonSource | undefined {
+  const config = property.config;
+  if (!config || typeof config !== "object") return undefined;
+  if ("button" in config && config.button !== undefined) {
+    return { config: config.button, legacy: false };
+  }
+  if (
+    "targetPropertyId" in config &&
+    typeof config.targetPropertyId === "string" &&
+    config.targetPropertyId !== ""
+  ) {
+    return {
+      legacy: true,
+      config: {
+        id: property.id,
+        label: fallbackLabel,
+        action: {
+          kind: "set_property",
+          propertyId: config.targetPropertyId,
+          value: "value" in config ? config.value ?? { checked: true } : { checked: true },
+        },
+      },
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Why a resolved BUTTON cell stays disabled here. `open_url` runs as a link and
+ * the legacy `set_property` pair runs through `onRunButton`; the other kinds
+ * (`set_property` from the engine, `insert_template`, `notify`) need the
+ * automations dispatcher (spec R27.x) this view does not wire yet.
+ */
+function buttonUnrunnableReason(plan: ButtonActionPlan): string {
+  switch (plan.kind) {
+    case "set_property":
+      return "This property-write button runs from automations.";
+    case "insert_template":
+      return "Insert-template buttons run from automations.";
+    case "notify":
+      return "Notification buttons run from automations.";
+    default:
+      return "This button is not runnable in this view.";
   }
 }
 
@@ -1121,18 +1194,84 @@ export function Cell({
         </div>
       );
     }
-    case "BUTTON":
-      return editable && onRunButton ? (
+    case "BUTTON": {
+      const buttonLabel = t(locale, "runWord");
+      const source = readButtonSource(property, buttonLabel);
+      // No stored action: the pre-engine shell is byte-for-byte unchanged.
+      if (source === undefined) {
+        return editable && onRunButton ? (
+          <button
+            type="button"
+            onClick={onRunButton}
+            className="rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
+          >
+            {buttonLabel}
+          </button>
+        ) : (
+          readOnly("—")
+        );
+      }
+      // `{{token}}` interpolation runs against the row when the caller provided
+      // it (table), else against just this cell's value (board/peek cards).
+      const buttonRow: ButtonRow = (() => {
+        if (!row) return { id: "", values: { [property.id]: value } };
+        const values: Record<string, unknown> = {};
+        for (const entry of row.propertyValues) values[entry.propertyId] = entry.value;
+        return { id: row.id, title: row.title, values };
+      })();
+      const issues = validateButton(source.config);
+      const plan = resolveButtonAction(source.config, buttonRow);
+      const reason =
+        issues.length > 0
+          ? issues[0].message
+          : plan.kind === "open_url"
+            ? "This link is not safe to open."
+            : buttonUnrunnableReason(plan);
+      // `open_url` is the kind this view can execute: a safe link. The href is
+      // re-checked after interpolation, so a `{{token}}` can never smuggle a
+      // `javascript:`/`data:` scheme into the anchor.
+      if (plan.kind === "open_url" && plan.enabled && isSafeButtonUrl(plan.href)) {
+        return (
+          <a
+            href={plan.href}
+            target={plan.openInNewTab ? "_blank" : undefined}
+            rel={plan.openInNewTab ? "noreferrer" : undefined}
+            className="inline-block rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
+          >
+            {plan.label || buttonLabel}
+          </a>
+        );
+      }
+      // A legacy target pair keeps its pre-engine behaviour (a property write
+      // through `onRunButton`); without an editable runner it stays blank.
+      if (source.legacy && plan.kind === "set_property" && plan.enabled) {
+        return editable && onRunButton ? (
+          <button
+            type="button"
+            onClick={onRunButton}
+            className="rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
+          >
+            {plan.label || buttonLabel}
+          </button>
+        ) : (
+          readOnly("—")
+        );
+      }
+      // Invalid config or an action kind no dispatcher runs here: the button is
+      // present but disabled, the reason carried on its tooltip.
+      return (
         <button
           type="button"
-          onClick={onRunButton}
-          className="rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
+          disabled
+          title={reason}
+          aria-label={`${plan.label || property.name}: ${reason}`}
+          data-testid="button-cell-disabled"
+          className="rounded border border-border px-2 py-0.5 text-xs opacity-60"
         >
-          {t(locale, "runWord")}
+          {plan.label || buttonLabel}
         </button>
-      ) : (
-        readOnly("—")
       );
+    }
     case "AI_AUTOFILL":
       return editable && onRunAi ? (
         <button
