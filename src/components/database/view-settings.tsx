@@ -454,8 +454,15 @@ function configPatchForPreset(
        the per-column WIP editor backed by `@/lib/kanban-wip`.
    --------------------------------------------------------------------------- */
 
-/** The app view config plus the optional WIP-limit map this toolbar persists. */
+/** The app view config plus the optional swimlane/WIP keys this toolbar persists. */
 type ViewSettingsConfig = ViewConfig & {
+  /**
+   * BOARD: an optional second property id that slices the board into horizontal
+   * swimlanes (the "Group by (lanes)" picker below). Like `wipLimits`, it is a
+   * view-config key this toolbar owns and rides through `sanitizeViewSettings`
+   * untouched; the swimlane engine validates the id at render time.
+   */
+  laneBy?: string | null;
   wipLimits?: WipLimits;
   /**
    * The serialized `ColumnLayout` (see `@/lib/column-layout`) this toolbar
@@ -648,6 +655,7 @@ export function ViewSettings({
   const filters = config.filters ?? [];
   const sorts = config.sorts ?? [];
   const groupBy = config.groupByPropertyId ?? "";
+  const laneBy = config.laneBy ?? "";
   const groupable = properties.filter((p) =>
     ["SELECT", "STATUS", "MULTI_SELECT"].includes(p.type),
   );
@@ -1341,7 +1349,7 @@ export function ViewSettings({
             type="button"
             className={cn(
               "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              groupBy && "bg-surface-2 text-fg",
+              (groupBy || laneBy) && "bg-surface-2 text-fg",
             )}
           >
             <Layers className="h-3.5 w-3.5" />
@@ -1366,6 +1374,27 @@ export function ViewSettings({
           <p className="mt-2 text-xs text-muted">
             Grouping stacks rows by a select/status property (used by Board).
           </p>
+          <div className="mt-3 border-t border-border pt-2">
+            <label className="mb-1 block text-xs text-muted" htmlFor="lane-by">
+              Group by (lanes)
+            </label>
+            <select
+              id="lane-by"
+              data-testid="lane-by"
+              value={laneBy}
+              onChange={(e) => onChange({ laneBy: e.target.value || null })}
+              className={cn(CONTROL_CLASS, "w-full")}
+            >
+              <option value="">None</option>
+              {groupable.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-muted">
+              A second grouping slices the board into horizontal lanes
+              (swimlanes).
+            </p>
+          </div>
         </PopoverContent>
       </Popover>
 
