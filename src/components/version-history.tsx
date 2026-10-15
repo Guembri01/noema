@@ -138,6 +138,34 @@ export function VersionHistory({
   const [selected, setSelected] = useState<string | null>(null);
   /** Diff baseline for the expanded row; `current` preserves old behaviour. */
   const [comparison, setComparison] = useState<DiffComparison>("current");
+  /**
+   * Version id whose diff-panel restore is awaiting a confirmation click, or
+   * null. Keyed by the row so collapsing or switching rows drops the prompt.
+   */
+  const [confirmingRestore, setConfirmingRestore] = useState<string | null>(null);
+
+  /**
+   * Single restore path shared by the per-row control and the diff-panel
+   * affordance (same `restorePageVersionAction`, same toast/refresh): the row
+   * button stays one-click, the affordance asks first. Collapsing the panel on
+   * success shows the refreshed page content.
+   */
+  const restoreVersion = (versionId: string) =>
+    startTransition(async () => {
+      const outcome = await safeAction(
+        () => restorePageVersionAction(versionId),
+        { locale },
+      );
+      const value = outcome.ok ? outcome.value : { error: outcome.error };
+      if ("error" in value) {
+        toast.error(value.error);
+        return;
+      }
+      toast.success(t(locale, "restoredVersion"));
+      setConfirmingRestore(null);
+      setOpen(false);
+      router.refresh();
+    });
 
   return (
     <>
@@ -213,6 +241,12 @@ export function VersionHistory({
                   // baseline is the older snapshot and the target is this one.
                   const previousSnapshot =
                     effectiveComparison === "previous" ? versions[index + 1] : null;
+                  // The stored snapshot the open diff is based on: the selected
+                  // row in "vs current" mode, or the predecessor it is read
+                  // against in "vs previous" mode. The restore affordance acts
+                  // on this one, so "this version" always matches what the diff
+                  // shows while still respecting the chosen comparison mode.
+                  const restoreTarget = previousSnapshot ?? version;
                   const before = previousSnapshot
                     ? previousSnapshot.content ?? previousSnapshot.title
                     : version.content ?? version.title;
@@ -266,22 +300,7 @@ export function VersionHistory({
                       <button
                         type="button"
                         disabled={pending}
-                        onClick={() =>
-                          startTransition(async () => {
-                            const outcome = await safeAction(
-                              () => restorePageVersionAction(version.id),
-                              { locale },
-                            );
-                            const value = outcome.ok ? outcome.value : { error: outcome.error };
-                            if ("error" in value) {
-                              toast.error(value.error);
-                              return;
-                            }
-                            toast.success(t(locale, "restoredVersion"));
-                            setOpen(false);
-                            router.refresh();
-                          })
-                        }
+                        onClick={() => restoreVersion(version.id)}
                         className="mt-2 inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-50"
                       >
                         <RotateCcw className="h-3 w-3" /> {t(locale, "restore")}
@@ -293,9 +312,10 @@ export function VersionHistory({
                       <button
                         type="button"
                         aria-expanded={selected === version.id}
-                        onClick={() =>
-                          setSelected((previous) => (previous === version.id ? null : version.id))
-                        }
+                        onClick={() => {
+                          setConfirmingRestore(null);
+                          setSelected((previous) => (previous === version.id ? null : version.id));
+                        }}
                         className="mt-2 inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2"
                       >
                         {t(locale, "suggestionReplaced")}
@@ -313,7 +333,10 @@ export function VersionHistory({
                             <button
                               type="button"
                               aria-pressed={effectiveComparison === "current"}
-                              onClick={() => setComparison("current")}
+                              onClick={() => {
+                                setComparison("current");
+                                setConfirmingRestore(null);
+                              }}
                               className={cn(
                                 "rounded px-2 py-0.5 text-[11px]",
                                 effectiveComparison === "current"
@@ -327,7 +350,10 @@ export function VersionHistory({
                               type="button"
                               aria-pressed={effectiveComparison === "previous"}
                               disabled={!hasPrevious}
-                              onClick={() => setComparison("previous")}
+                              onClick={() => {
+                                setComparison("previous");
+                                setConfirmingRestore(null);
+                              }}
                               className={cn(
                                 "rounded px-2 py-0.5 text-[11px]",
                                 effectiveComparison === "previous"
@@ -340,6 +366,48 @@ export function VersionHistory({
                             </button>
                           </div>
                           <InlineDiff before={before} after={after} />
+                          {/* Restore affordance scoped to the open comparison:
+                              it reuses the row's restore action on
+                              `restoreTarget` and asks for confirmation first.
+                              Labels are literal English pending i18n keys. */}
+                          <div className="mt-3 border-t border-border pt-2">
+                            {confirmingRestore === version.id ? (
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[11px] text-muted">
+                                  {effectiveComparison === "previous"
+                                    ? "Restore the previous snapshot and replace the current page?"
+                                    : "Restore this version and replace the current page?"}
+                                </span>
+                                <button
+                                  type="button"
+                                  data-testid="version-restore-confirm"
+                                  disabled={pending}
+                                  onClick={() => restoreVersion(restoreTarget.id)}
+                                  className="rounded bg-red-500/90 px-2 py-0.5 text-[11px] text-white hover:bg-red-500 disabled:opacity-50"
+                                >
+                                  {t(locale, "restore")}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmingRestore(null)}
+                                  className="rounded px-2 py-0.5 text-[11px] text-muted hover:bg-surface"
+                                >
+                                  {t(locale, "close")}
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                data-testid="version-restore-affordance"
+                                data-comparison={effectiveComparison}
+                                disabled={pending}
+                                onClick={() => setConfirmingRestore(version.id)}
+                                className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-50"
+                              >
+                                <RotateCcw className="h-3 w-3" /> Restore this version
+                              </button>
+                            )}
+                          </div>
                         </div>
                       )}
                     </li>
