@@ -19,6 +19,12 @@ import {
   typeaheadIndex,
 } from "@/lib/keyboard-nav";
 import { DEFAULT_SHORTCUTS, formatCombo } from "@/lib/keyboard-shortcuts";
+import {
+  MAX_RECENT_PAGES,
+  recentPages,
+  recordVisit,
+  type RecentPage,
+} from "@/lib/recent-pages";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { PageTreeNode } from "@/server/queries";
@@ -28,7 +34,9 @@ import type { PageTreeNode } from "@/server/queries";
  * opened with Ctrl/Cmd+K or Ctrl/Cmd+P from the workspace shell.
  *
  * - Fuzzy-ranked via `src/lib/fuzzy.ts` (pure, unit-tested): actions first,
- *   then workspace pages; an empty query lists everything in natural order.
+ *   then workspace pages; an empty query lists everything in natural order
+ *   except pages, which open again rank first via `src/lib/recent-pages.ts`
+ *   (`recentPages`/`recordVisit`; history persisted per workspace).
  * - Filters: a leading `type:<value>` scope in the query narrows results by
  *   item type (`parseTypeScope` + `filterByType`).
  * - a11y: Radix gives `role="dialog"` + focus trap; the results container is
@@ -52,6 +60,8 @@ type PaletteItem = {
   label: string;
   searchText: string;
   icon: React.ReactNode;
+  /** Page identity for page rows; absent on action/theme rows. */
+  pageId?: string;
   run: () => void;
 };
 
@@ -77,6 +87,75 @@ function commandShortcutHints(isMac: boolean): Record<string, string> {
     if (binding) hints[itemKey] = formatCombo(binding.combo, { isMac });
   }
   return hints;
+}
+
+/** localStorage key holding this workspace's recently opened pages. */
+function recentStorageKey(workspaceSlug: string): string {
+  return `noema:recent-pages:${workspaceSlug}`;
+}
+
+/**
+ * Read the persisted visit history. A missing key, corrupt JSON or an entry
+ * whose shape doesn't match is dropped rather than thrown; {@link recentPages}
+ * (the pure engine) then dedupes, trims and caps the survivors, so a broken row
+ * can never shadow a good one.
+ */
+function loadRecentPages(storageKey: string): RecentPage[] {
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(storageKey);
+  } catch {
+    return [];
+  }
+  if (!raw) return [];
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const entries: RecentPage[] = [];
+    for (const entry of parsed) {
+      if (!entry || typeof entry !== "object") continue;
+      const record = entry as { pageId?: unknown; visitedAt?: unknown };
+      if (typeof record.pageId !== "string" || typeof record.visitedAt !== "number") {
+        continue;
+      }
+      entries.push({ pageId: record.pageId, visitedAt: record.visitedAt });
+    }
+    return recentPages(entries, { limit: MAX_RECENT_PAGES, now: 0 });
+  } catch {
+    return [];
+  }
+}
+
+/** Persist the history, tolerating private mode / disabled storage. */
+function saveRecentPages(storageKey: string, list: readonly RecentPage[]): void {
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(list));
+  } catch {
+    // No storage — the in-memory history still ranks this session.
+  }
+}
+
+/**
+ * Promote pages the user opened most recently ahead of the rest of the pages
+ * slice, preserving the recency order. Only used for the empty-query list:
+ * once the user types, the fuzzy score must win, so callers don't apply it.
+ * Unvisited pages keep their natural order behind the recents.
+ */
+function orderPagesByRecency(
+  pages: PaletteItem[],
+  recentRank: ReadonlyMap<string, number>,
+): PaletteItem[] {
+  if (recentRank.size === 0) return pages;
+  const ranked = pages
+    .filter((item) => item.pageId !== undefined && recentRank.has(item.pageId))
+    .sort(
+      (a, b) =>
+        (recentRank.get(a.pageId ?? "") ?? 0) - (recentRank.get(b.pageId ?? "") ?? 0),
+    );
+  if (ranked.length === 0) return pages;
+  const promoted = new Set(ranked.map((item) => item.pageId));
+  return [...ranked, ...pages.filter((item) => !promoted.has(item.pageId))];
 }
 
 /** macOS detection for shortcut glyphs; false during SSR to avoid a mismatch. */
@@ -135,6 +214,15 @@ export function CommandPalette({
   const listRef = useRef<HTMLDivElement | null>(null);
   const isMac = useIsMac();
   const shortcutHints = useMemo(() => commandShortcutHints(isMac), [isMac]);
+
+  // Recently opened pages, most-recent first — recorded on selection and
+  // restored from localStorage on mount. Read in an effect (not during render)
+  // so the first client paint matches the server HTML.
+  const recentKey = recentStorageKey(workspaceSlug);
+  const [recent, setRecent] = useState<RecentPage[]>([]);
+  useEffect(() => {
+    setRecent(loadRecentPages(recentKey));
+  }, [recentKey]);
 
   // Fresh state on every open: no stale query, first item preselected.
   useEffect(() => {
@@ -196,6 +284,7 @@ export function CommandPalette({
       type: page.type === "DATABASE" ? "database" : "page",
       label: page.title || t(locale, "untitled"),
       searchText: page.title || t(locale, "untitled"),
+      pageId: page.id,
       icon: (
         <span className="w-4 text-center">
           {page.icon ?? (page.type === "DATABASE" ? "🗂️" : "📄")}
@@ -215,6 +304,28 @@ export function CommandPalette({
     [items, scope.type],
   );
 
+  // Recency order (0 = most recent) for the empty-query page ranking. Passed a
+  // fixed `now` so it's pure and deterministic; without a half-life the ranking
+  // is exactly the move-to-front visit log.
+  const recentRank = useMemo(() => {
+    const rank = new Map<string, number>();
+    for (const [index, entry] of recentPages(recent, {
+      limit: recent.length,
+      now: 0,
+    }).entries()) {
+      rank.set(entry.pageId, index);
+    }
+    return rank;
+  }, [recent]);
+
+  // An empty query has no fuzzy score to order by, so pages open again sort
+  // by recency instead; a typed query keeps pure fuzzy ranking.
+  const isQueryEmpty = scope.query.trim() === "";
+  const pageSlice = useMemo(() => {
+    const pageItems = scoped.filter((item) => item.group === "pages");
+    return isQueryEmpty ? orderPagesByRecency(pageItems, recentRank) : pageItems;
+  }, [scoped, isQueryEmpty, recentRank]);
+
   // Two ranked slices keep the Actions/Theme/Pages group order stable while
   // still ordering each group by fuzzy score.
   const ranked = useMemo(
@@ -230,12 +341,12 @@ export function CommandPalette({
         (item) => item.searchText,
       ),
       pages: fuzzyFilter(
-        scoped.filter((item) => item.group === "pages"),
+        pageSlice,
         scope.query,
         (item) => item.searchText,
       ),
     }),
-    [scoped, scope],
+    [scoped, pageSlice, scope],
   );
 
   const flat = useMemo(
@@ -273,6 +384,15 @@ export function CommandPalette({
 
   const select = (item: PaletteItem) => {
     onOpenChange(false);
+    // Opening a page is the visit the "recent" ranking reads back: move it to
+    // the front of the history and persist, so it ranks first next time the
+    // palette opens with an empty query. Action/theme rows have no page id.
+    const pageId = item.pageId;
+    if (pageId !== undefined) {
+      const next = recordVisit(recent, pageId, Date.now());
+      setRecent(next);
+      saveRecentPages(recentKey, next);
+    }
     item.run();
   };
 
