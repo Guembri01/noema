@@ -8,6 +8,7 @@ import { t } from "@/lib/i18n";
 import { highlightSnippet } from "@/lib/fuzzy";
 import { refineByRelevance } from "@/lib/search-ranking";
 import { offsetForIndex, totalHeight, visibleRange } from "@/lib/virtual-list";
+import { cn } from "@/lib/utils";
 import {
   DEFAULT_SUMMARY_LENGTH,
   extractDescription,
@@ -44,6 +45,20 @@ const VIEWPORT_HEIGHT = 480;
 const OVERSCAN = 4;
 /** Above this many rows the list switches to windowed rendering. */
 const VIRTUAL_THRESHOLD = 40;
+
+/**
+ * Result types the page search can return, in chip order. Mirrors the engine's
+ * `PageType` (PAGE | DATABASE): `searchPages` only indexes `Page` rows, so
+ * tickets — a separate model with its own search — are never results here.
+ */
+export const SEARCH_RESULT_TYPES = ["PAGE", "DATABASE"] as const;
+
+/** Chip label for a result type; matches the Library page's section wording. */
+function resultTypeLabel(type: string): string {
+  if (type === "PAGE") return "Pages";
+  if (type === "DATABASE") return "Databases";
+  return type;
+}
 
 /** Estimated rendered height of one result row, from its (possibly empty) teaser. */
 function heightFromTeaser(teaser: string): number {
@@ -139,6 +154,7 @@ export function SearchResults({
   nextOffset,
   locale,
   previewLength = DEFAULT_SUMMARY_LENGTH,
+  types = SEARCH_RESULT_TYPES,
 }: {
   workspaceId: string;
   slug: string;
@@ -148,6 +164,12 @@ export function SearchResults({
   locale: string;
   /** Longest teaser shown per result, including the trailing ellipsis. */
   previewLength?: number;
+  /**
+   * Result types offered as filter chips (the `row.type` values to match).
+   * Defaults to every type the page search can return; a caller may narrow the
+   * set to the types it knows are present.
+   */
+  types?: readonly string[];
 }) {
   const { run, pending, error } = useAction(locale);
   const [rows, setRows] = useState<SearchRow[]>(initial);
@@ -166,6 +188,21 @@ export function SearchResults({
     [rows, query],
   );
 
+  // Result-type filter (client-side): every selectable type starts on; a chip
+  // toggle narrows the rendered rows only. Ranking and pagination are untouched,
+  // so "Load more" still appends the engine's next window underneath.
+  const [selectedTypes, setSelectedTypes] = useState<readonly string[]>(() => [...types]);
+  const filteredRows = useMemo(
+    () => orderedRows.filter((row) => selectedTypes.includes(row.type)),
+    [orderedRows, selectedTypes],
+  );
+  const toggleType = (type: string) =>
+    setSelectedTypes((current) =>
+      current.includes(type)
+        ? current.filter((candidate) => candidate !== type)
+        : [...current, type],
+    );
+
   const loadMore = () =>
     run(
       () => loadMoreSearchAction({ workspaceId, query, offset: offset ?? 0 }),
@@ -179,23 +216,23 @@ export function SearchResults({
     );
 
   // One teaser per row, computed once: it both renders the row and sizes it.
-  // Computed over the ranked order so windowing and rendering agree.
-  const teasers = orderedRows.map((row) => pageTeaser(row, previewLength, query));
+  // Computed over the filtered ranked order so windowing and rendering agree.
+  const teasers = filteredRows.map((row) => pageTeaser(row, previewLength, query));
   const heightOf = (index: number) => heightFromTeaser(teasers[index] ?? "");
 
   // Long lists mount only the visible slice; short lists keep the plain <ul>.
-  const windowed = orderedRows.length > VIRTUAL_THRESHOLD;
+  const windowed = filteredRows.length > VIRTUAL_THRESHOLD;
   const range = windowed
     ? visibleRange({
         scrollTop,
         viewportSize: VIEWPORT_HEIGHT,
         itemHeight: ROW_BASE_HEIGHT,
-        itemCount: orderedRows.length,
+        itemCount: filteredRows.length,
         overscan: OVERSCAN,
         heightOf,
       })
     : { start: 0, end: 0 };
-  const visible = windowed ? orderedRows.slice(range.start, range.end) : orderedRows;
+  const visible = windowed ? filteredRows.slice(range.start, range.end) : filteredRows;
 
   // Shared row body so the plain and windowed lists stay byte-identical in what
   // they render (only the positioning wrapper differs).
@@ -216,8 +253,36 @@ export function SearchResults({
   return (
     <>
       <p className="mt-4 text-sm text-muted">
-        {rows.length} result{rows.length === 1 ? "" : "s"} for “{query}”
+        {filteredRows.length} result{filteredRows.length === 1 ? "" : "s"} for “{query}”
       </p>
+
+      {types.length > 1 && (
+        <div
+          role="group"
+          aria-label="Filter results by type"
+          className="mt-3 flex flex-wrap items-center gap-2"
+        >
+          {types.map((type) => {
+            const active = selectedTypes.includes(type);
+            return (
+              <button
+                key={type}
+                type="button"
+                aria-pressed={active}
+                onClick={() => toggleType(type)}
+                className={cn(
+                  "h-7 rounded-full border px-3 text-xs font-medium transition",
+                  active
+                    ? "border-accent bg-accent/15 text-fg"
+                    : "border-border text-muted hover:bg-surface-2 hover:text-fg",
+                )}
+              >
+                {resultTypeLabel(type)}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {windowed ? (
         <div
@@ -230,7 +295,7 @@ export function SearchResults({
         >
           <ul
             className="relative"
-            style={{ height: totalHeight(orderedRows.length, ROW_BASE_HEIGHT, heightOf) }}
+            style={{ height: totalHeight(filteredRows.length, ROW_BASE_HEIGHT, heightOf) }}
           >
             {visible.map((page, offsetInWindow) => {
               const index = range.start + offsetInWindow;
@@ -250,10 +315,10 @@ export function SearchResults({
         </div>
       ) : (
         <ul className="mt-4 divide-y divide-border rounded-lg border border-border">
-          {orderedRows.map((page, index) => (
+          {filteredRows.map((page, index) => (
             <li key={page.id}>{resultBody(page, teasers[index] ?? "")}</li>
           ))}
-          {orderedRows.length === 0 && (
+          {filteredRows.length === 0 && (
             <li className="px-4 py-6 text-center text-sm text-muted">
               {t(locale, "noResults")}
             </li>
