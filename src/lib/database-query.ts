@@ -119,6 +119,25 @@ export type ViewConfig = {
   numberFormat?: unknown;
   /** TABLE: the serialized column layout (order / widths / hidden). */
   columnLayout?: string;
+  /**
+   * BOARD: per-column visibility keyed by group id (option id, or the "no
+   * value" group key). A key mapped to `false` hides that column; a missing key
+   * stays visible, so an absent/empty map means "show every group". The same
+   * shape `@/lib/board-groups` filters with.
+   */
+  visibleGroups?: Record<string, boolean>;
+  /**
+   * GALLERY: a forced card size. Kept as an open string rather than a narrow
+   * enum so a size added by a newer client still round-trips; the renderer
+   * ignores an unrecognised value and falls back to the container width.
+   */
+  cardSize?: string;
+  /** An optional per-view description shown under the view's title. */
+  description?: string;
+  /** CHART: the chart shape (bar / line / pie / donut). Absent renders a bar. */
+  chartType?: string;
+  /** CHART: the per-group aggregation (see `@/lib/aggregations`). */
+  chartAggregate?: string;
 };
 
 type OperatorSpec = { value: FilterOperator; label: string };
@@ -801,6 +820,23 @@ function normalizeWipLimits(input: unknown): Record<string, number> | undefined 
   return Object.keys(limits).length > 0 ? limits : undefined;
 }
 
+/**
+ * Keep only the boolean entries of a stored group-visibility map. Unknown keys
+ * and non-boolean values are dropped; an empty map normalises away so "every
+ * group visible" is the absence of the key — the same rule `wipLimits` uses and
+ * the same one the board reads back through `@/lib/board-groups`.
+ */
+function normalizeVisibleGroups(input: unknown): Record<string, boolean> | undefined {
+  const record = asRecord(input);
+  if (!record) return undefined;
+  const visibility: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (key === "") continue;
+    if (typeof value === "boolean") visibility[key] = value;
+  }
+  return Object.keys(visibility).length > 0 ? visibility : undefined;
+}
+
 /** Strip a stored/patched view config down to the keys this build understands. */
 export function normalizeViewConfig(input: unknown): ViewConfig {
   const record = asRecord(input);
@@ -858,6 +894,20 @@ export function normalizeViewConfig(input: unknown): ViewConfig {
   }
   if (typeof record.columnLayout === "string") {
     out.columnLayout = record.columnLayout;
+  }
+  // Optional keys owned by other features (board group visibility, gallery card
+  // size, per-view description, chart shape/aggregation). Like the keys above
+  // they round-trip rather than being dropped, so a save from a newer client is
+  // not silently erased by this one. The scalar keys are deliberately not
+  // validated against an enum: an unrecognised value is still persisted and the
+  // feature simply renders its own default.
+  const visibleGroups = normalizeVisibleGroups(record.visibleGroups);
+  if (visibleGroups) out.visibleGroups = visibleGroups;
+  if (typeof record.cardSize === "string") out.cardSize = record.cardSize;
+  if (typeof record.description === "string") out.description = record.description;
+  if (typeof record.chartType === "string") out.chartType = record.chartType;
+  if (typeof record.chartAggregate === "string") {
+    out.chartAggregate = record.chartAggregate;
   }
   return out;
 }
