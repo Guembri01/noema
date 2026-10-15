@@ -27,6 +27,15 @@ import {
   isComputedType,
   type StoredPropertyValue,
 } from "@/lib/property-defaults";
+import {
+  BUTTON_ACTION_CATALOG,
+  BUTTON_NOTIFY_LEVELS,
+  validateButton,
+  type ButtonAction,
+  type ButtonActionKind,
+  type ButtonConfig,
+  type ButtonNotifyLevel,
+} from "@/lib/row-buttons";
 import { DialogContent } from "@/components/ui/dialog";
 
 type OptionDraft = { id: string; name: string; color: string; group?: string };
@@ -63,6 +72,117 @@ function readNumberFormat(config: PropertyConfig): unknown {
 function readDefault(config: PropertyConfig): unknown {
   if (!config || !("default" in config)) return undefined;
   return (config as { default?: unknown }).default;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Read the optional BUTTON `config.button` (a `ButtonConfig`-shaped value). The
+ * shared `PropertyConfig` type is closed, so the key is read defensively, like
+ * `readNumberFormat`; `normalizeButtonDraft` re-checks every field.
+ */
+function readButton(config: PropertyConfig): unknown {
+  if (!config || !("button" in config)) return undefined;
+  return (config as { button?: unknown }).button;
+}
+
+/** Editable draft of a BUTTON property's `config.button`. */
+type ButtonDraft = {
+  id: string;
+  label: string;
+  icon: string;
+  kind: ButtonActionKind;
+  url: string;
+  openInNewTab: boolean;
+  propertyId: string;
+  value: string;
+  templateId: string;
+  message: string;
+  level: ButtonNotifyLevel;
+};
+
+function emptyButtonDraft(property: DBProperty): ButtonDraft {
+  return {
+    id: property.id,
+    label: property.name,
+    icon: "",
+    kind: "open_url",
+    url: "",
+    openInNewTab: true,
+    propertyId: "",
+    value: "",
+    templateId: "",
+    message: "",
+    level: "info",
+  };
+}
+
+/**
+ * Coerce an untrusted stored `config.button` into a draft, defaulting every
+ * absent/ill-typed field so a half-written config still opens the editor.
+ * Unknown action kinds fall back to `open_url` but are never silently written.
+ */
+function normalizeButtonDraft(raw: unknown, property: DBProperty): ButtonDraft {
+  const base = emptyButtonDraft(property);
+  if (!isRecord(raw)) return base;
+  const action = isRecord(raw.action) ? raw.action : {};
+  const kindSpec = BUTTON_ACTION_CATALOG.find((spec) => spec.kind === action.kind);
+  return {
+    id:
+      typeof raw.id === "string" && raw.id.trim() !== "" ? raw.id : base.id,
+    label: typeof raw.label === "string" ? raw.label : base.label,
+    icon: typeof raw.icon === "string" ? raw.icon : base.icon,
+    kind: kindSpec ? kindSpec.kind : base.kind,
+    url: typeof action.url === "string" ? action.url : base.url,
+    openInNewTab:
+      typeof action.openInNewTab === "boolean"
+        ? action.openInNewTab
+        : base.openInNewTab,
+    propertyId:
+      typeof action.propertyId === "string" ? action.propertyId : base.propertyId,
+    value: typeof action.value === "string" ? action.value : base.value,
+    templateId:
+      typeof action.templateId === "string" ? action.templateId : base.templateId,
+    message: typeof action.message === "string" ? action.message : base.message,
+    level:
+      typeof action.level === "string" &&
+      (BUTTON_NOTIFY_LEVELS as readonly unknown[]).includes(action.level)
+        ? (action.level as ButtonNotifyLevel)
+        : base.level,
+  };
+}
+
+/** Build the `ButtonConfig` to store from an editor draft. */
+function draftToButtonConfig(draft: ButtonDraft): ButtonConfig {
+  const action: ButtonAction = (() => {
+    switch (draft.kind) {
+      case "open_url":
+        return {
+          kind: "open_url",
+          url: draft.url,
+          openInNewTab: draft.openInNewTab,
+        };
+      case "set_property":
+        return {
+          kind: "set_property",
+          propertyId: draft.propertyId,
+          value: draft.value,
+        };
+      case "insert_template":
+        return { kind: "insert_template", templateId: draft.templateId };
+      case "notify":
+        return { kind: "notify", message: draft.message, level: draft.level };
+    }
+  })();
+  const icon = draft.icon.trim();
+  return {
+    id: draft.id,
+    label: draft.label,
+    ...(icon !== "" ? { icon } : {}),
+    action,
+  };
 }
 
 /**
@@ -181,6 +301,7 @@ export function PropertyOptionsEditor({
   const isPlace = typeCode === "PLACE";
   const isDate = typeCode === "DATE";
   const isNumber = typeCode === "NUMBER";
+  const isButton = typeCode === "BUTTON";
 
   // --- Default value (config.default) --------------------------------------
   // Live option list (SELECT/MULTI_SELECT/STATUS edits are already reflected in
@@ -357,6 +478,31 @@ export function PropertyOptionsEditor({
     persist({
       ...(configRef.current ?? {}),
       numberFormat: next,
+    } as PropertyConfig);
+  };
+
+  // --- BUTTON: label / icon / action (`@/lib/row-buttons`) ------------------
+  // The draft is validated through the engine's own `validateButton` before it
+  // reaches storage, so `config.button` only ever holds a runnable config (the
+  // Button cell then resolves it with no `invalid` plan).
+  const [buttonDraft, setButtonDraft] = useState<ButtonDraft>(() =>
+    normalizeButtonDraft(readButton(property.config), property),
+  );
+  const buttonCandidate = draftToButtonConfig(buttonDraft);
+  const buttonIssues = isButton ? validateButton(buttonCandidate) : [];
+  const buttonSpec = BUTTON_ACTION_CATALOG.find(
+    (spec) => spec.kind === buttonDraft.kind,
+  );
+
+  const commitButton = (patch: Partial<ButtonDraft>) => {
+    const next: ButtonDraft = { ...buttonDraft, ...patch };
+    setButtonDraft(next);
+    const candidate = draftToButtonConfig(next);
+    // Persist only a config the engine accepts, so the cell can always run it.
+    if (validateButton(candidate).length > 0) return;
+    persist({
+      ...(configRef.current ?? {}),
+      button: candidate,
     } as PropertyConfig);
   };
 
@@ -736,6 +882,178 @@ export function PropertyOptionsEditor({
           </p>
           <p className="text-xs text-muted" data-testid="number-format-description">
             {describeFormat(numberFormat)}
+          </p>
+        </section>
+      )}
+
+      {isButton && (
+        <section className="mt-4 space-y-3" data-testid="button-config">
+          <h3 className="text-sm font-medium">Button</h3>
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <span className="w-24 shrink-0">Label</span>
+            <input
+              data-testid="button-label"
+              aria-label="Button label"
+              value={buttonDraft.label}
+              onChange={(event) => commitButton({ label: event.target.value })}
+              className={cn(CONTROL_CLASS, "flex-1")}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <span className="w-24 shrink-0">Icon</span>
+            <input
+              data-testid="button-icon"
+              aria-label="Button icon"
+              placeholder="e.g. 🔗"
+              value={buttonDraft.icon}
+              onChange={(event) => commitButton({ icon: event.target.value })}
+              className={cn(CONTROL_CLASS, "w-24")}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <span className="w-24 shrink-0">Action</span>
+            <select
+              data-testid="button-action-kind"
+              aria-label="Button action"
+              value={buttonDraft.kind}
+              onChange={(event) => {
+                const spec = BUTTON_ACTION_CATALOG.find(
+                  (candidate) => candidate.kind === event.target.value,
+                );
+                if (spec) commitButton({ kind: spec.kind });
+              }}
+              className={cn(CONTROL_CLASS, "flex-1")}
+            >
+              {BUTTON_ACTION_CATALOG.map((spec) => (
+                <option key={spec.kind} value={spec.kind}>
+                  {spec.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {buttonSpec && <p className="text-xs text-muted">{buttonSpec.description}</p>}
+
+          {buttonDraft.kind === "open_url" && (
+            <>
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <span className="w-24 shrink-0">URL</span>
+                <input
+                  data-testid="button-url"
+                  aria-label="Button URL"
+                  placeholder="https://…"
+                  value={buttonDraft.url}
+                  onChange={(event) => commitButton({ url: event.target.value })}
+                  className={cn(CONTROL_CLASS, "flex-1")}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <input
+                  data-testid="button-open-new-tab"
+                  type="checkbox"
+                  checked={buttonDraft.openInNewTab}
+                  onChange={(event) =>
+                    commitButton({ openInNewTab: event.target.checked })
+                  }
+                />
+                <span>Open in a new tab</span>
+              </label>
+            </>
+          )}
+
+          {buttonDraft.kind === "set_property" && (
+            <>
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <span className="w-24 shrink-0">Property ID</span>
+                <input
+                  data-testid="button-property-id"
+                  aria-label="Button target property id"
+                  value={buttonDraft.propertyId}
+                  onChange={(event) =>
+                    commitButton({ propertyId: event.target.value })
+                  }
+                  className={cn(CONTROL_CLASS, "flex-1")}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <span className="w-24 shrink-0">Value</span>
+                <input
+                  data-testid="button-value"
+                  aria-label="Button property value"
+                  value={buttonDraft.value}
+                  onChange={(event) => commitButton({ value: event.target.value })}
+                  className={cn(CONTROL_CLASS, "flex-1")}
+                />
+              </label>
+            </>
+          )}
+
+          {buttonDraft.kind === "insert_template" && (
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <span className="w-24 shrink-0">Template ID</span>
+              <input
+                data-testid="button-template-id"
+                aria-label="Button template id"
+                value={buttonDraft.templateId}
+                onChange={(event) =>
+                  commitButton({ templateId: event.target.value })
+                }
+                className={cn(CONTROL_CLASS, "flex-1")}
+              />
+            </label>
+          )}
+
+          {buttonDraft.kind === "notify" && (
+            <>
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <span className="w-24 shrink-0">Message</span>
+                <input
+                  data-testid="button-message"
+                  aria-label="Button notification message"
+                  value={buttonDraft.message}
+                  onChange={(event) => commitButton({ message: event.target.value })}
+                  className={cn(CONTROL_CLASS, "flex-1")}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <span className="w-24 shrink-0">Level</span>
+                <select
+                  data-testid="button-notify-level"
+                  aria-label="Button notification level"
+                  value={buttonDraft.level}
+                  onChange={(event) => {
+                    const level = BUTTON_NOTIFY_LEVELS.find(
+                      (candidate) => candidate === event.target.value,
+                    );
+                    if (level) commitButton({ level });
+                  }}
+                  className={cn(CONTROL_CLASS, "flex-1")}
+                >
+                  {BUTTON_NOTIFY_LEVELS.map((level) => (
+                    <option key={level} value={level}>
+                      {level}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+
+          {buttonIssues.length > 0 && (
+            <ul className="space-y-1" data-testid="button-issues">
+              {buttonIssues.map((issue) => (
+                <li key={issue.path} className="text-xs text-red-500">
+                  {issue.message}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-xs text-muted">
+            Preview:{" "}
+            <span className="font-mono" data-testid="button-preview">
+              {buttonIssues.length > 0
+                ? "—"
+                : `${buttonDraft.icon.trim() !== "" ? `${buttonDraft.icon.trim()} ` : ""}${buttonDraft.label}`}
+            </span>
           </p>
         </section>
       )}
