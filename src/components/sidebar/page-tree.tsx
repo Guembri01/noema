@@ -14,6 +14,7 @@ import {
 import {
   ChevronRight,
   CircleDot,
+  Copy,
   CornerUpRight,
   FileText,
   FolderKanban,
@@ -34,6 +35,7 @@ import {
   toggleFavoriteAction,
   updatePageAction,
 } from "@/server/actions/pages";
+import { duplicatePageSubtreeAction } from "@/server/actions/page-duplicate";
 import { ticketFromPageAction } from "@/server/actions/tickets";
 import { setPageTeamspaceAction } from "@/server/actions/teamspaces";
 import { setPageProjectAction } from "@/server/actions/projects";
@@ -138,6 +140,24 @@ export function PageTree({
         return;
       }
       if (message) toast.success(message);
+      router.refresh();
+    });
+
+  /**
+   * Duplicate a page and its subtree (`duplicatePageSubtreeAction` plans the
+   * copy via `@/lib/page-duplicate`), then land on the copy. Unlike `remote`
+   * this navigates instead of refreshing, so the new branch is in view.
+   */
+  const duplicate = (node: PageTreeNode) =>
+    startTransition(async () => {
+      const outcome = await safeAction(() => duplicatePageSubtreeAction(node.id));
+      const value = outcome.ok ? outcome.value : { error: outcome.error };
+      if ("error" in value) {
+        toast.error(value.error);
+        return;
+      }
+      toast.success("Page duplicated");
+      router.push(`/w/${workspace.slug}/${value.id}`);
       router.refresh();
     });
 
@@ -366,6 +386,9 @@ export function PageTree({
                       >
                         <FileText className="h-4 w-4 text-muted" /> Copy link
                       </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => duplicate(node)}>
+                        <Copy className="h-4 w-4 text-muted" /> Duplicate
+                      </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
                         onSelect={() =>
@@ -440,6 +463,9 @@ export function PageTree({
                     }}
                   >
                     <Link2 className="h-4 w-4 text-muted" /> Copy link
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => duplicate(node)}>
+                    <Copy className="h-4 w-4 text-muted" /> Duplicate
                   </ContextMenuItem>
                   {teamspaces.length > 0 && (
                     <ContextMenuSub>
