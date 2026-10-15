@@ -19,7 +19,17 @@
  *   • `parseFrontmatter` — YAML-ish `---` head of a `.md` file → typed data
  *   • `blocksToMarkdown` / `selectionToMarkdown` / `blocksToMarkdownTree` —
  *     editor blocks → Markdown (nested content, copy, subpage export)
+ *
+ * Optional block variants survive the round trip too, reusing the editor's own
+ * conventions rather than forking them: a pull quote is a blockquote carrying
+ * `size: "large"` (see `pull-quote.ts`), and a code block may carry
+ * `lineNumbers` / `caption` (see `code-block.ts`, whose `formatCaption`
+ * normalises the text).
  */
+
+import { formatCaption } from "./code-block";
+import { DEFAULT_PULL_QUOTE_SIZE, isPullQuoteSize } from "./pull-quote";
+import type { PullQuoteSize } from "./pull-quote";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,8 +56,8 @@ export type ListBlock = { type: "list"; ordered: boolean; items: ListItem[] };
 export type Block =
   | { type: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; content: Inline[] }
   | { type: "paragraph"; content: Inline[] }
-  | { type: "code"; lang: string | null; value: string }
-  | { type: "quote"; blocks: Block[] }
+  | { type: "code"; lang: string | null; value: string; lineNumbers?: boolean; caption?: string }
+  | { type: "quote"; blocks: Block[]; size?: PullQuoteSize }
   | ListBlock
   | { type: "table"; align: (("left" | "center" | "right") | null)[]; header: Inline[][]; rows: Inline[][][] }
   | { type: "hr" }
@@ -191,8 +201,26 @@ export function parseInline(input: string): Inline[] {
 // Blocks
 // ---------------------------------------------------------------------------
 
-const FENCE = /^(```+|~~~+)\s*([\w+#.-]*)\s*$/;
+const FENCE = /^(```+|~~~+)\s*([\w+#.-]*)\s*(?:\{([^}]*)\})?\s*$/;
 const HEADING = /^(#{1,6})\s+(.*)$/;
+
+/**
+ * Recognise the optional `{lineNumbers caption="…"}` fence options the export
+ * emits. Unknown tokens are ignored so a hand-written fence never fails to
+ * parse; the caption is normalised with `code-block.ts`'s `formatCaption`.
+ */
+function parseFenceOptions(options: string | undefined): { lineNumbers?: boolean; caption?: string } {
+  const parsed: { lineNumbers?: boolean; caption?: string } = {};
+  if (!options) return parsed;
+  if (/\blineNumbers\b/.test(options)) parsed.lineNumbers = true;
+  const caption = /caption="((?:[^"\\]|\\.)*)"|caption=(\S+)/.exec(options);
+  if (caption) {
+    const raw = (caption[1] ?? caption[2] ?? "").replace(/\\(["\\])/g, "$1");
+    const text = formatCaption(raw);
+    if (text) parsed.caption = text;
+  }
+  return parsed;
+}
 
 /** A line that is exactly one image: `![alt](src)` or `![alt](src "caption")`. */
 const IMAGE = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)\s*$/;
@@ -319,7 +347,7 @@ export function parseMarkdown(input: string): Block[] {
         index += 1;
       }
       index += 1; // closing fence
-      blocks.push({ type: "code", lang: fence[2] || null, value: body.join("\n") });
+      blocks.push({ type: "code", lang: fence[2] || null, value: body.join("\n"), ...parseFenceOptions(fence[3]) });
       continue;
     }
 
@@ -390,7 +418,19 @@ export function parseMarkdown(input: string): Block[] {
         inner.push(nested[1]);
         index += 1;
       }
-      blocks.push({ type: "quote", blocks: parseMarkdown(inner.join("\n")) });
+      // A leading `[!large]` marker (the markdown form of a pull quote, see
+      // `pull-quote.ts`) sets the display scale; it is consumed, not quoted.
+      const marker = inner.findIndex((text) => text.trim() !== "");
+      const sized: { type: "quote"; blocks: Block[]; size?: PullQuoteSize } = {
+        type: "quote",
+        blocks: [],
+      };
+      if (marker !== -1 && /^\[!large\]$/i.test(inner[marker].trim())) {
+        sized.size = "large";
+        inner.splice(marker, 1);
+      }
+      sized.blocks = parseMarkdown(inner.join("\n"));
+      blocks.push(sized);
       continue;
     }
 
@@ -766,10 +806,22 @@ function blockToTipTap(block: Block): TipTapNode[] {
       ];
     case "paragraph":
       return block.content.length > 0 ? [{ type: "paragraph", content: inlineToTipTap(block.content) }] : [];
-    case "code":
-      return [{ type: "codeBlock", ...(block.lang ? { attrs: { language: block.lang } } : {}), content: block.value ? [{ type: "text", text: block.value }] : [] }];
-    case "quote":
-      return block.blocks.flatMap(blockToTipTap).map((node) => node);
+    case "code": {
+      const attrs: Record<string, unknown> = {};
+      if (block.lang) attrs.language = block.lang;
+      if (block.lineNumbers) attrs.lineNumbers = true;
+      if (block.caption) attrs.caption = block.caption;
+      return [{ type: "codeBlock", ...(Object.keys(attrs).length > 0 ? { attrs } : {}), content: block.value ? [{ type: "text", text: block.value }] : [] }];
+    }
+    case "quote": {
+      const inner = block.blocks.flatMap(blockToTipTap);
+      // A large quote keeps its `blockquote` wrapper + `size` attr; a plain
+      // quote flattens exactly as before (the editor path this always fed).
+      if (block.size && block.size !== DEFAULT_PULL_QUOTE_SIZE) {
+        return [{ type: "blockquote", attrs: { size: block.size }, content: inner }];
+      }
+      return inner;
+    }
     case "list": {
       const items: TipTapNode[] = block.items.map((item) => {
         const children = item.children.flatMap(blockToTipTap);
@@ -931,6 +983,20 @@ function imageMarkdown(block: RichBlock): string {
   return caption ? `![${alt}](${src} "${caption}")` : `![${alt}](${src})`;
 }
 
+/**
+ * The `{lineNumbers caption="…"}` fence suffix for a code block, or `""` when
+ * it carries neither optional affordance. The caption is normalised with
+ * `code-block.ts`'s `formatCaption` (mirroring the editor/HTML renderer) and
+ * quotes inside it are escaped so the fence info string stays one line.
+ */
+function codeFenceOptions(attrs: RichBlock["attrs"]): string {
+  const parts: string[] = [];
+  if (attrs?.lineNumbers) parts.push("lineNumbers");
+  const caption = formatCaption(typeof attrs?.caption === "string" ? attrs.caption : null);
+  if (caption) parts.push(`caption="${caption.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`);
+  return parts.length > 0 ? ` {${parts.join(" ")}}` : "";
+}
+
 /** Inline nodes (either a paragraph's children) → Markdown. */
 function inlineToMarkdown(nodes: readonly RichBlock[] | undefined): string {
   if (!nodes) return "";
@@ -1038,14 +1104,20 @@ function blockToMarkdown(block: RichBlock): string {
       const run = code.match(/`+/g)?.reduce((max, tick) => Math.max(max, tick.length), 0) ?? 0;
       const fence = "`".repeat(Math.max(3, run + 1));
       const lang = block.attrs?.language == null ? "" : String(block.attrs.language);
-      return `${fence}${lang}\n${code}\n${fence}`;
+      return `${fence}${lang}${codeFenceOptions(block.attrs)}\n${code}\n${fence}`;
     }
     case "blockquote": {
       const inner = (block.content ?? [])
         .map(blockToMarkdown)
         .filter((part) => part !== "")
         .join("\n\n");
-      return inner ? quoteLines(inner) : "";
+      if (!inner) return "";
+      // A large pull quote (see `pull-quote.ts`) leads with a `[!large]` marker
+      // inside the quote; every other quote round-trips byte-for-byte as before.
+      const size = block.attrs?.size;
+      const body =
+        isPullQuoteSize(size) && size !== DEFAULT_PULL_QUOTE_SIZE ? `[!${size}]\n${inner}` : inner;
+      return quoteLines(body);
     }
     case "bulletList":
     case "orderedList":
