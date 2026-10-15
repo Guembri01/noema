@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -55,6 +56,12 @@ import {
   type DropRect,
 } from "@/lib/drag-drop-targets";
 import { truncateEnd } from "@/lib/truncate";
+import {
+  MAX_RECENT_PAGES,
+  recentPages,
+  recordVisit,
+  type RecentPage,
+} from "@/lib/recent-pages";
 import { toast } from "sonner";
 import { safeAction } from "@/lib/actions-client";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -102,6 +109,44 @@ type PageTreeProps = {
 const SIDEBAR_TITLE_MAX = 48;
 
 /**
+ * How many recently visited pages the sidebar "Recent" section renders. The
+ * history itself is capped at `MAX_RECENT_PAGES`; the sidebar shows a shorter
+ * "top N" slice of it.
+ */
+const RECENT_SECTION_LIMIT = 5;
+
+/** localStorage key holding one workspace's most-recent-first visit log. */
+const recentStorageKey = (workspaceId: string) =>
+  `notion:recent-pages:${workspaceId}`;
+
+/** Narrow one parsed storage entry to a `RecentPage` without trusting disk. */
+function isRecentEntry(value: unknown): value is RecentPage {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry.pageId === "string" && typeof entry.visitedAt === "number"
+  );
+}
+
+/**
+ * Load a workspace's persisted visit log, tolerating absent, blocked
+ * (private mode) or corrupt storage by falling back to an empty history.
+ */
+function readRecent(workspaceId: string): RecentPage[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(recentStorageKey(workspaceId));
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const entries: unknown[] = parsed;
+    return entries.filter(isRecentEntry).slice(0, MAX_RECENT_PAGES);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Pure page-tree helpers (moveCandidates, grouping, expand toggles, the
  * visible-rows plan) live in `@/lib/page-tree` — extracted verbatim by B66 so
  * they are unit-testable without a DOM.
@@ -126,6 +171,11 @@ export function PageTree({
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+
+  // Most-recently-visited pages (most recent first), hydrated from
+  // localStorage after mount so SSR and the first client render agree.
+  const [recent, setRecent] = useState<RecentPage[]>([]);
+  const [recentLoaded, setRecentLoaded] = useState(false);
 
   const byParent = useMemo(() => groupByParent(tree), [tree]);
 
@@ -163,6 +213,53 @@ export function PageTree({
 
   /** id → node, for the drag helpers' parent lookups. */
   const byId = useMemo(() => new Map(tree.map((node) => [node.id, node])), [tree]);
+
+  /** The page currently open in the route, when it is a bare page URL. */
+  const pagePrefix = `/w/${workspace.slug}/`;
+  const activePageId =
+    pathname.startsWith(pagePrefix) &&
+    !pathname.slice(pagePrefix.length).includes("/")
+      ? pathname.slice(pagePrefix.length)
+      : null;
+
+  // Hydrate the visit log once per workspace. Declared before the persistence
+  // effect so a fresh load can never overwrite stored history with `[]`.
+  useEffect(() => {
+    setRecent(readRecent(workspace.id));
+    setRecentLoaded(true);
+  }, [workspace.id]);
+
+  // Persist every change so "Recent" survives reloads. Storage being
+  // unavailable (private mode / quota) leaves the in-memory log intact.
+  useEffect(() => {
+    if (!recentLoaded) return;
+    try {
+      window.localStorage.setItem(
+        recentStorageKey(workspace.id),
+        JSON.stringify(recent),
+      );
+    } catch {
+      // Ignore — the session keeps rendering from state.
+    }
+  }, [recentLoaded, workspace.id, recent]);
+
+  // Navigating to a page (a tree link or browser history) stamps a visit,
+  // moving that page to the front of the log. `recordVisit` dedupes and caps.
+  useEffect(() => {
+    if (!activePageId || !byId.has(activePageId)) return;
+    setRecent((prev) => recordVisit(prev, activePageId, Date.now()));
+  }, [activePageId, byId]);
+
+  /** The recent log ranked and resolved to live nodes for display. */
+  const recentNodes = useMemo(() => {
+    const ranked = recentPages(recent, {
+      limit: RECENT_SECTION_LIMIT,
+      now: Date.now(),
+    });
+    return ranked
+      .map((entry) => byId.get(entry.pageId))
+      .filter((node): node is PageTreeNode => node !== undefined);
+  }, [recent, byId]);
 
   // Drag-and-drop intention (docs "Drag & drop"): the pointer is hit-tested by
   // `resolveDropTarget` over the rows currently laid out in the nav and gated by
@@ -616,6 +713,36 @@ export function PageTree({
             {renderNodes(null, 0, (node) => !node.teamspaceId)}
           </div>
         </>
+      )}
+      {recentNodes.length > 0 && (
+        <div className="mt-4">
+          <p className="px-1 pb-1 text-[11px] font-medium text-muted/90">
+            Recent
+          </p>
+          <ul className="space-y-px">
+            {recentNodes.map((node) => {
+              const href = `/w/${workspace.slug}/${node.id}`;
+              return (
+                <li key={node.id}>
+                  <Link
+                    href={href}
+                    className={cn(
+                      "flex items-center gap-2 rounded-md px-1 py-1 text-sm hover:bg-surface-2",
+                      pathname === href && "bg-surface-2",
+                    )}
+                  >
+                    <span className="w-4 shrink-0 text-center text-sm">
+                      {node.icon ?? (node.type === "DATABASE" ? "🗂️" : "📄")}
+                    </span>
+                    <span className="truncate">
+                      {truncateEnd(node.title || "Untitled", SIDEBAR_TITLE_MAX)}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
       {children}
     </nav>
