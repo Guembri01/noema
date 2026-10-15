@@ -8,8 +8,10 @@ import {
   Filter as FilterIcon,
   Gauge,
   Layers,
+  Maximize2,
   Palette,
   Plus,
+  RotateCcw,
   Trash2,
   X } from "lucide-react";
 import {
@@ -53,7 +55,15 @@ import {
   type FilterTreeNode,
 } from "@/lib/filter-tree";
 import {
+  DEFAULT_COLUMN_WIDTH,
+  DEFAULT_MAX_WIDTH,
+  DEFAULT_MIN_WIDTH,
+  autoFitWidths,
+  clampWidth,
+  deserializeLayout,
   mergeLayout,
+  serializeLayout,
+  setColumnWidth,
   toggleColumnVisibility,
   visibleColumns,
   type ColumnLayout,
@@ -445,7 +455,16 @@ function configPatchForPreset(
    --------------------------------------------------------------------------- */
 
 /** The app view config plus the optional WIP-limit map this toolbar persists. */
-type ViewSettingsConfig = ViewConfig & { wipLimits?: WipLimits };
+type ViewSettingsConfig = ViewConfig & {
+  wipLimits?: WipLimits;
+  /**
+   * The serialized `ColumnLayout` (see `@/lib/column-layout`) this toolbar
+   * persists when the caller does not wire `onLayoutChange` — the view config's
+   * own column layout. Read back through `deserializeLayout`, so a malformed
+   * value degrades to an empty layout instead of throwing.
+   */
+  columnLayout?: string;
+};
 
 /** A JSON object (not an array, not null), or `null` for anything else. */
 function wipRecord(input: unknown): Record<string, unknown> | null {
@@ -546,6 +565,14 @@ function sanitizeViewSettings(
 
   return sanitized;
 }
+
+/**
+ * Nominal table width the "Auto-fit" action shares across the visible columns.
+ * The settings popover has no measured pixel width, so `autoFitWidths` spreads
+ * this reference width evenly (clamped per column) to reset a table to a tidy,
+ * uniform set of columns.
+ */
+const AUTO_FIT_WIDTH = 960;
 
 /**
  * Filter / sort / group / colour-rule / column-visibility controls for one
@@ -706,25 +733,71 @@ export function ViewSettings({
   // `visiblePropertyIds`) with the live schema, then read visibility through
   // `visibleColumns` so this popover agrees with the table header.
   const columnIds = properties.map((property) => property.id);
+  // When the caller does not pass a layout, fall back to the view config's own
+  // serialized `columnLayout`; visibility still seeds from the legacy
+  // `visiblePropertyIds` list when that is set, so older configs are unchanged.
+  const storedLayout = deserializeLayout(config.columnLayout);
+  const legacyHidden =
+    config.visiblePropertyIds === undefined
+      ? storedLayout.hidden
+      : Object.fromEntries(
+          secondary
+            .filter(
+              (property) => !config.visiblePropertyIds?.includes(property.id),
+            )
+            .map((property) => [property.id, true] as const),
+        );
   const baseLayout: ColumnLayout = layout ?? {
-    order: [],
-    widths: {},
-    hidden:
-      config.visiblePropertyIds === undefined
-        ? {}
-        : Object.fromEntries(
-            secondary
-              .filter(
-                (property) => !config.visiblePropertyIds?.includes(property.id),
-              )
-              .map((property) => [property.id, true] as const),
-          ),
+    order: storedLayout.order,
+    widths: storedLayout.widths,
+    hidden: legacyHidden,
   };
   const mergedLayout = mergeLayout(baseLayout, columnIds);
   const visibleSet = new Set(visibleColumns(baseLayout, columnIds));
   const hiddenCount = secondary.filter(
     (property) => !visibleSet.has(property.id),
   ).length;
+
+  /** Visible column ids in layout order — the columns a width applies to. */
+  const visibleIds = visibleColumns(mergedLayout, columnIds);
+
+  /**
+   * Commit a column layout. Through `onLayoutChange` when the caller wires it
+   * (database-view keeps the session layout and mirrors visibility), else
+   * serialized into the view config's `columnLayout` so widths survive a read
+   * back through `deserializeLayout`.
+   */
+  const commitLayout = (next: ColumnLayout) => {
+    if (onLayoutChange) {
+      onLayoutChange(next);
+      return;
+    }
+    onChange({ columnLayout: serializeLayout(mergeLayout(next, columnIds)) });
+  };
+
+  /** Set one column's width (clamped); blank or non-numeric input is ignored. */
+  const setWidth = (propertyId: string, raw: string) => {
+    if (raw.trim() === "") return;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return;
+    commitLayout(setColumnWidth(mergedLayout, propertyId, clampWidth(parsed)));
+  };
+
+  /** Reset every column to `DEFAULT_COLUMN_WIDTH`, keeping order and visibility. */
+  const resetWidths = () => {
+    commitLayout({ ...mergedLayout, widths: {} });
+  };
+
+  /** Share the nominal table width evenly across the visible columns. */
+  const autoFitWidthsForView = () => {
+    commitLayout({
+      ...mergedLayout,
+      widths: {
+        ...mergedLayout.widths,
+        ...autoFitWidths(AUTO_FIT_WIDTH, visibleIds),
+      },
+    });
+  };
 
   /** Toggle one column's visibility (primary is pinned). */
   const toggleProperty = (propertyId: string) => {
@@ -1397,10 +1470,10 @@ export function ViewSettings({
               const isPrimary = Boolean(property.config?.primary);
               const shown = isPrimary || visibleSet.has(property.id);
               return (
-                <li key={property.id}>
+                <li key={property.id} className="flex items-center gap-1">
                   <label
                     className={cn(
-                      "flex items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-surface-2",
+                      "flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-surface-2",
                       isPrimary && "opacity-60",
                     )}
                   >
@@ -1414,10 +1487,40 @@ export function ViewSettings({
                     />
                     <span className="truncate">{property.name}</span>
                   </label>
+                  <input
+                    type="number"
+                    min={DEFAULT_MIN_WIDTH}
+                    max={DEFAULT_MAX_WIDTH}
+                    step={10}
+                    value={mergedLayout.widths[property.id] ?? DEFAULT_COLUMN_WIDTH}
+                    data-testid={`column-width-${property.id}`}
+                    aria-label={`${property.name} width`}
+                    disabled={!shown}
+                    onChange={(event) => setWidth(property.id, event.target.value)}
+                    className={cn(CONTROL_CLASS, "w-16 shrink-0 disabled:opacity-40")}
+                  />
                 </li>
               );
             })}
           </ul>
+          <div className="mt-2 flex items-center gap-3 border-t border-border pt-2">
+            <button
+              type="button"
+              data-testid="columns-auto-fit"
+              onClick={autoFitWidthsForView}
+              className="flex items-center gap-1 text-xs text-accent"
+            >
+              <Maximize2 className="h-3 w-3" /> Auto-fit widths
+            </button>
+            <button
+              type="button"
+              data-testid="columns-reset-widths"
+              onClick={resetWidths}
+              className="flex items-center gap-1 text-xs text-muted hover:text-fg"
+            >
+              <RotateCcw className="h-3 w-3" /> Reset widths
+            </button>
+          </div>
           <label className="mt-3 flex items-center gap-2 border-t border-border pt-2 text-sm">
             <input
               type="checkbox"
