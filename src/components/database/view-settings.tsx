@@ -493,13 +493,13 @@ type ViewSettingsConfig = ViewConfig & {
    * defaults to a bar chart when it is unset, and the picker mirrors that
    * default so it shows what would render.
    */
-  chartType?: ChartType;
+  chartType?: string;
   /**
    * CHART: the aggregation applied per group, in the table-footer vocabulary
    * (`AggregationFn` in `@/lib/aggregations`). Owned here like `chartType`; the
    * chart engine defaults to a plain row count when it is unset.
    */
-  chartAggregate?: AggregationFn;
+  chartAggregate?: string;
   /**
    * GALLERY: the property whose value each card shows as its preview image.
    * Passed to `resolveCardPreview` (as the cover property) and to
