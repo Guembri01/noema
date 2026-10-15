@@ -5,7 +5,15 @@ import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tip
 import Image, { type ImageOptions } from "@tiptap/extension-image";
 import { AlignCenter, AlignLeft, AlignRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { alignOf, alignStyle, resizeWidthPercent } from "@/lib/media";
+import { alignOf, alignStyle, MIN_IMAGE_WIDTH_PERCENT } from "@/lib/media";
+import {
+  aspectRatio,
+  clampSize,
+  fitContain,
+  percentToPx,
+  resizeByWidth,
+  type Size,
+} from "@/lib/image-dimensions";
 import { t } from "@/lib/i18n";
 
 /**
@@ -20,7 +28,9 @@ import { t } from "@/lib/i18n";
  *
  * Width is stored as a percent of the block (`width` attr, serialised as
  * `data-width`) so it survives responsive layouts; alignment is stored as
- * `align` (`data-align`).
+ * `align` (`data-align`). The resize-handle arithmetic is pixel geometry from
+ * `src/lib/image-dimensions.ts` (ratio-preserving, clamped), rounded back to a
+ * percent for the attribute.
  */
 /** Image options plus the locale threaded from `page-editor.tsx`. */
 type ImageBlockOptions = ImageOptions & { locale: string };
@@ -78,7 +88,48 @@ export const ImageBlock = Image.extend<ImageBlockOptions>({
   },
 });
 
-type DragState = { startX: number; startPercent: number; containerWidth: number };
+type DragState = {
+  startX: number;
+  startPercent: number;
+  containerWidth: number;
+  /** Natural pixel box of the picture, captured when the drag begins. */
+  intrinsic: Size;
+};
+
+/** The width window the block has always resized inside, as a percent. */
+const MAX_IMAGE_WIDTH_PERCENT = 100;
+
+/** Round a width into the block's `[MIN, MAX]` percent window, fail-safe. */
+function clampImageWidthPercent(percent: number): number {
+  if (!Number.isFinite(percent)) return MIN_IMAGE_WIDTH_PERCENT;
+  return Math.min(MAX_IMAGE_WIDTH_PERCENT, Math.max(MIN_IMAGE_WIDTH_PERCENT, Math.round(percent)));
+}
+
+/**
+ * One resize-drag step, driven by `src/lib/image-dimensions.ts`. The stored
+ * `width` is a percent, but the drag itself is pixel geometry: the starting
+ * width becomes pixels (`percentToPx`), follows the pointer, is re-derived
+ * from the picture's intrinsic ratio (`resizeByWidth`, guarded by
+ * `aspectRatio`) and clamped inside the content column (`clampSize`) — the
+ * percent that survives is what the node persists. A picture whose intrinsic
+ * size is unknown (`aspectRatio === 0`) keeps the legacy pointer-percent maths
+ * so a drag never collapses it.
+ */
+function dragResizePercent(input: {
+  intrinsic: Size;
+  startPercent: number;
+  deltaX: number;
+  containerWidth: number;
+}): number {
+  const { intrinsic, startPercent, deltaX, containerWidth } = input;
+  if (aspectRatio(intrinsic) <= 0 || containerWidth <= 0) {
+    const travel = containerWidth > 0 ? (deltaX / containerWidth) * 100 : 0;
+    return clampImageWidthPercent(startPercent + travel);
+  }
+  const targetPx = percentToPx(startPercent, containerWidth) + deltaX;
+  const bounded = clampSize(resizeByWidth(intrinsic, targetPx), { maxW: containerWidth });
+  return clampImageWidthPercent((bounded.w / containerWidth) * 100);
+}
 
 const ALIGNS = [
   { value: "left", labelKey: "imageAlignLeft", icon: AlignLeft },
@@ -96,6 +147,7 @@ function ImageView({
   const [altOpen, setAltOpen] = useState(false);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
   const editable = editor.isEditable;
   const attrs = node.attrs as {
     src: string;
@@ -109,6 +161,15 @@ function ImageView({
   const align = alignOf(attrs.align);
   const width = dragWidth ?? (typeof attrs.width === "number" ? attrs.width : null);
 
+  /** The decoded picture size, or a zero box while it has not loaded. */
+  const intrinsicSize = (): Size => {
+    const img = imgRef.current;
+    if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
+      return { w: img.naturalWidth, h: img.naturalHeight };
+    }
+    return { w: 0, h: 0 };
+  };
+
   const beginResize = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!editable) return;
     const handle = event.currentTarget;
@@ -118,18 +179,24 @@ function ImageView({
     event.preventDefault();
     const containerWidth = wrapper.getBoundingClientRect().width;
     const figureWidth = figure.getBoundingClientRect().width;
-    const startPercent =
-      width ?? (containerWidth > 0 ? (figureWidth / containerWidth) * 100 : 100);
-    dragRef.current = { startX: event.clientX, startPercent, containerWidth };
+    const intrinsic = intrinsicSize();
+    // A fresh image renders at its natural size, capped to the column
+    // (`fitContain`); a stored width wins. `figureWidth` is the fallback when
+    // the picture has not decoded yet.
+    const natural = fitContain(intrinsic, { w: containerWidth, h: intrinsic.h });
+    const startWidth = natural.w > 0 ? natural.w : figureWidth;
+    const startPercent = width ?? (containerWidth > 0 ? (startWidth / containerWidth) * 100 : 100);
+    dragRef.current = { startX: event.clientX, startPercent, containerWidth, intrinsic };
     handle.setPointerCapture(event.pointerId);
-    setDragWidth(resizeWidthPercent({ startPercent, deltaX: 0, containerWidth }));
+    setDragWidth(dragResizePercent({ intrinsic, startPercent, deltaX: 0, containerWidth }));
   };
 
   const moveResize = (event: React.PointerEvent<HTMLDivElement>) => {
     const state = dragRef.current;
     if (!state) return;
     setDragWidth(
-      resizeWidthPercent({
+      dragResizePercent({
+        intrinsic: state.intrinsic,
         startPercent: state.startPercent,
         deltaX: event.clientX - state.startX,
         containerWidth: state.containerWidth,
@@ -143,7 +210,8 @@ function ImageView({
     dragRef.current = null;
     setDragWidth(null);
     if (commit) {
-      const next = resizeWidthPercent({
+      const next = dragResizePercent({
+        intrinsic: state.intrinsic,
         startPercent: state.startPercent,
         deltaX: event.clientX - state.startX,
         containerWidth: state.containerWidth,
@@ -174,6 +242,7 @@ function ImageView({
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- user uploads; alt is editable below */}
         <img
+          ref={imgRef}
           src={attrs.src}
           alt={attrs.alt ?? ""}
           title={attrs.title ?? undefined}
