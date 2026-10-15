@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import {
   ArrowDown,
   ArrowUp,
+  ClipboardCopy,
   Copy,
   Link2,
   ListOrdered,
@@ -45,6 +46,7 @@ import {
 } from "@/lib/blocks";
 import { formatCaption, validateCaption } from "@/lib/code-block";
 import { buildBlockDeepLink } from "@/lib/deep-links";
+import { selectionToMarkdown, type RichBlock } from "@/lib/markdown";
 import { t } from "@/lib/i18n";
 import {
   CONVERSION_GROUPS,
@@ -372,6 +374,41 @@ export function BlockContextMenu({
       : `${origin}${pathname}`;
     void navigator.clipboard?.writeText(url);
     toast.success(t(locale, "copied"));
+  };
+
+  /**
+   * Copy the block under the menu — or every top-level block the current
+   * selection spans — as Markdown. Delegates to `selectionToMarkdown` in
+   * `src/lib/markdown.ts`, the same serializer the export path uses, so the
+   * clipboard reads exactly like the exported page (nested lists/quotes/tables
+   * included). A right-click leaves a node selection on the block, so the range
+   * is normally that one block; a wider text selection copies its range. Empty
+   * output (a blank block) reports instead of writing an empty clipboard.
+   */
+  const copyMarkdown = () => {
+    const { doc, selection } = editor.state;
+    const { from, to } = selection;
+    const blocks: RichBlock[] = [];
+    let start = 0;
+    for (let i = 0; i < doc.childCount; i += 1) {
+      const child = doc.child(i);
+      const end = start + child.nodeSize;
+      const inRange =
+        from === to ? start <= from && from < end : end > from && start < to;
+      if (inRange) blocks.push(child.toJSON() as RichBlock);
+      start = end;
+    }
+    if (blocks.length === 0 && pos !== null) {
+      const node = doc.nodeAt(pos);
+      if (node) blocks.push(node.toJSON() as RichBlock);
+    }
+    const markdown = selectionToMarkdown(blocks);
+    if (blocks.length === 0 || markdown.trim() === "") {
+      toast.error(t(locale, "nothingToWorkWith"));
+      return;
+    }
+    void navigator.clipboard?.writeText(markdown);
+    toast.success(t(locale, "copiedWord"));
   };
 
   const paint = (value: string | null, kind: "text" | "highlight" | "background") => {
@@ -722,6 +759,15 @@ export function BlockContextMenu({
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={copyLink}>
             <Link2 className="h-4 w-4 text-muted" /> {t(locale, "copyLinkToBlock")}
+          </DropdownMenuItem>
+          {/*
+           * "Copy as Markdown" (§1). Reuses the shipped `copy` label: a
+           * dedicated `copyAsMarkdown` key would have to land in all five
+           * catalogues, out of this single-file slice (same convention as the
+           * code-block toggles above).
+           */}
+          <DropdownMenuItem onSelect={copyMarkdown}>
+            <ClipboardCopy className="h-4 w-4 text-muted" /> {t(locale, "copy")}
           </DropdownMenuItem>
 
           <DropdownMenuSeparator />
