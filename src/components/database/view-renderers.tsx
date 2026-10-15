@@ -32,6 +32,13 @@ import { reorderRows, sortByOrder } from "@/lib/row-order";
 import { reorderRowsAction } from "@/server/actions/database";
 import { evaluateRowColors, type RowColorRule } from "@/lib/row-color-rules";
 import {
+  AGGREGATION_FUNCTIONS,
+  aggregateGroups,
+  type AggregateOptions,
+  type AggregationFn,
+  type GroupAggregationSpec,
+} from "@/lib/aggregations";
+import {
   CARD_SIZES,
   cardFieldOrder,
   cardSizeFor,
@@ -671,6 +678,60 @@ const WIP_STYLES: Record<WipStatus, string> = {
   over: "bg-red-500/15 text-red-600",
 };
 
+/**
+ * Functions a grouped view reports per group, in display order. `sum`/`average`
+ * only mean something for numeric cells and fall back to the lib's "—" sentinel
+ * when a group holds none; `countValues` counts non-empty cells (rollup's
+ * "count" semantics) so it differs from the plain row count beside the header.
+ */
+const GROUP_SUMMARY_FNS: readonly AggregationFn[] = ["sum", "average", "countValues"];
+
+/** One formatted aggregation in a group's summary line. */
+type GroupSummaryEntry = { fn: AggregationFn; label: string; display: string };
+
+/** Map a NUMBER column's stored format/currency onto the aggregator's options. */
+function aggregateOptionsFor(property: DBProperty): AggregateOptions | undefined {
+  const format = property.config?.format;
+  if (format === "percent") return { showAs: "percent" };
+  if (format === "currency") {
+    const currency = property.config?.currency;
+    return currency ? { showAs: "currency", currency } : { showAs: "currency" };
+  }
+  return undefined;
+}
+
+/**
+ * Summarize one group's rows through the shared `aggregateGroups` helper so a
+ * board column agrees with the footer/chart maths instead of re-implementing
+ * any of it. `property` is the metric column; an empty or non-numeric group
+ * reports the aggregator's "—" display rather than a fabricated zero.
+ */
+function summarizeGroup(
+  rows: readonly DBRow[],
+  property: DBProperty,
+  valueFor: (row: DBRow, propertyId: string) => unknown,
+): GroupSummaryEntry[] {
+  const options = aggregateOptionsFor(property);
+  const specs: Record<string, GroupAggregationSpec<DBRow>> = {};
+  for (const fn of GROUP_SUMMARY_FNS) {
+    specs[fn] = {
+      fn,
+      value: (row) => valueFor(row, property.id),
+      ...(options ? { options } : {}),
+    };
+  }
+  const [aggregated] = aggregateGroups(
+    [{ key: property.id, label: property.name, rows: [...rows] }],
+    specs,
+  );
+  if (!aggregated) return [];
+  return GROUP_SUMMARY_FNS.map((fn) => ({
+    fn,
+    label: AGGREGATION_FUNCTIONS.find((entry) => entry.id === fn)?.label ?? fn,
+    display: aggregated.aggregates[fn]?.display ?? "—",
+  }));
+}
+
 export function BoardView({
   locale,
   workspaceSlug,
@@ -688,6 +749,7 @@ export function BoardView({
   visibleGroups: visibleGroupsProp,
   laneBy,
   wipLimits,
+  aggregationPropertyId,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -702,6 +764,12 @@ export function BoardView({
   computedFor?: (row: DBRow, property: DBProperty) => string | undefined;
   peopleOptions?: { id: string; name: string }[];
   editable: boolean;
+  /**
+   * Column whose cells feed each board column's group summary (Sum / Average /
+   * Count). Defaults to the first NUMBER column; a board without one — or with
+   * the prop pointing at an unknown id — renders its columns exactly as before.
+   */
+  aggregationPropertyId?: string | null;
   /** Per-column visibility: a column key mapped to `false` is hidden. */
   visibleGroups?: Record<string, boolean>;
   /**
@@ -790,6 +858,22 @@ export function BoardView({
   const wipFor = (key: string) =>
     wipCheck.columns.find((column) => column.key === key);
 
+  // Group summary metric: an explicit `aggregationPropertyId` wins, otherwise
+  // the first NUMBER column that is neither the group/primary column. `null`
+  // (no metric) skips the summary entirely, so a board without an aggregatable
+  // column is byte-for-byte its previous self.
+  const summaryProperty =
+    (aggregationPropertyId
+      ? properties.find((candidate) => candidate.id === aggregationPropertyId)
+      : undefined) ??
+    properties.find(
+      (candidate) =>
+        candidate.type === "NUMBER" &&
+        candidate.id !== property.id &&
+        !candidate.config?.primary,
+    ) ??
+    null;
+
   const renderCard = (row: DBRow) => (
     <Link
       key={row.id}
@@ -836,6 +920,11 @@ export function BoardView({
 
   const renderColumn = (column: BoardColumn, groupRows: DBRow[]) => {
     const wip = wipFor(column.key);
+    // Aggregation runs over this column's own rows, so a swimlane's slice
+    // reports its lane totals rather than the whole column's.
+    const summary = summaryProperty
+      ? summarizeGroup(groupRows, summaryProperty, valueFor)
+      : [];
     return (
       <div key={column.key} className="w-64 shrink-0">
         <div className="mb-2 flex items-center gap-2 text-sm">
@@ -863,6 +952,19 @@ export function BoardView({
             </span>
           )}
         </div>
+        {summaryProperty && summary.length > 0 && (
+          <p
+            data-testid={`board-aggregation-${column.key}`}
+            className="mb-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted"
+          >
+            <span className="font-medium">{summaryProperty.name}</span>
+            {summary.map((entry) => (
+              <span key={entry.fn}>
+                {entry.label} {entry.display}
+              </span>
+            ))}
+          </p>
+        )}
         <div className="space-y-2">{groupRows.map((row) => renderCard(row))}</div>
       </div>
     );
