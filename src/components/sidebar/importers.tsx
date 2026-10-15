@@ -141,10 +141,33 @@ export function ImportSection({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  /**
+   * File name currently being submitted by a sidebar picker, or null when
+   * idle. Drives the `import-progress` status region for the whole upload
+   * (the actions expose no byte-level progress, so this stays indeterminate).
+   */
+  const [activeImport, setActiveImport] = useState<string | null>(null);
+
+  /**
+   * Run a file-submit import inside the sidebar's existing `startTransition`
+   * while surfacing `label` in the progress region for the duration of `task`.
+   * Callers have already run `acceptImportFile`, so validation is unchanged.
+   */
+  const runImport = (label: string, task: () => Promise<void>) => {
+    setActiveImport(label);
+    startTransition(async () => {
+      try {
+        await task();
+      } finally {
+        setActiveImport(null);
+      }
+    });
+  };
+
   const onImportFile = (file: File) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      startTransition(async () => {
+    reader.onload = () =>
+      runImport(file.name, async () => {
         const outcome = await safeAction(() =>
           importMarkdownAction({
             workspaceId: workspace.id,
@@ -165,7 +188,6 @@ export function ImportSection({
           toast.error(result.error);
         }
       });
-    };
     reader.readAsText(file);
   };
 
@@ -231,7 +253,7 @@ export function ImportSection({
   };
 
   const onImportZip = (file: File) =>
-    startTransition(async () => {
+    runImport(file.name, async () => {
       const form = new FormData();
       form.append("workspaceId", workspace.id);
       form.append("file", file);
@@ -253,7 +275,7 @@ export function ImportSection({
   const docxInputRef = useRef<HTMLInputElement | null>(null);
 
   const onImportDocx = (file: File) =>
-    startTransition(async () => {
+    runImport(file.name, async () => {
       const form = new FormData();
       form.append("workspaceId", workspace.id);
       form.append("file", file);
@@ -275,7 +297,7 @@ export function ImportSection({
   const transcribeInputRef = useRef<HTMLInputElement | null>(null);
 
   const onTranscribe = (file: File) =>
-    startTransition(async () => {
+    runImport(file.name, async () => {
       const form = new FormData();
       form.append("file", file);
       const response = await fetch("/api/ai/transcribe", { method: "POST", body: form });
@@ -423,6 +445,18 @@ export function ImportSection({
 
   return (
     <div className="mt-3 space-y-px border-t border-border pt-3">
+      {activeImport !== null && (
+        <div
+          data-testid="import-progress"
+          aria-live="polite"
+          className="mb-1 flex items-center gap-2 rounded border border-border bg-surface-2 px-2 py-1.5 text-xs text-muted"
+        >
+          <span aria-hidden className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-accent" />
+          <span role="status" className="truncate">
+            {t(locale, "importing")} {activeImport}
+          </span>
+        </div>
+      )}
       <button
         type="button"
         onClick={() => addPage(null, "DATABASE")}
