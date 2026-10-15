@@ -14,6 +14,7 @@ import {
   CARD_SIZES,
   cardFieldOrder,
   cardSizeFor,
+  listRowModel,
   resolveCardPreview,
   type ViewPropertyLike,
   type ViewRowLike,
@@ -175,6 +176,13 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
   }
 
   const primary = data?.properties[0];
+  // The source database's first view decides how the embed renders. `table` and
+  // `list` get their own read-only renderers below; `gallery` (and any other or
+  // absent view type — board, calendar, …) uses the card grid this node has
+  // always rendered.
+  const firstViewType = data?.views[0]?.type?.toUpperCase();
+  const viewMode: "table" | "list" | "gallery" =
+    firstViewType === "TABLE" ? "table" : firstViewType === "LIST" ? "list" : "gallery";
   // The shared view-presets engine reads lower-case property types (e.g.
   // "files"), matching `COVER_PROPERTY_TYPES`; the linked-database payload
   // stores them upper-case.
@@ -239,7 +247,7 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
-        <div className="noema-linked-body" contentEditable={false}>
+        <div className="noema-linked-body" contentEditable={false} data-view-mode={viewMode}>
           {loading ? (
             <span className="noema-linked-loading">
               <Loader2 className="h-4 w-4 animate-spin" /> {t(locale, "loading")}
@@ -248,6 +256,19 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
             <p className="noema-linked-empty">{t(locale, "linkedLoadFailed")}</p>
           ) : data.rows.length === 0 ? (
             <p className="noema-linked-empty">{t(locale, "dbNoRows")}</p>
+          ) : viewMode === "table" ? (
+            <LinkedTableView
+              locale={locale}
+              columns={data.properties}
+              rows={data.rows.slice(0, 20)}
+              primaryId={primary?.id ?? null}
+            />
+          ) : viewMode === "list" ? (
+            <LinkedListView
+              locale={locale}
+              properties={presetProperties}
+              rows={data.rows.slice(0, 20)}
+            />
           ) : (
             <div
               ref={containerRef}
@@ -324,5 +345,114 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
         </div>
       </div>
     </NodeViewWrapper>
+  );
+}
+
+/** One fetched linked-database row, as exposed by the server action. */
+type LinkedDatabaseRow = LinkedDatabaseData["rows"][number];
+
+/** Reduce a fetched row to the shared `ViewRowLike` shape the presets read. */
+function toViewRow(row: LinkedDatabaseRow): ViewRowLike {
+  return {
+    id: row.id,
+    title: row.title,
+    icon: row.icon,
+    propertyValues: Object.entries(row.values).map(([propertyId, value]) => ({
+      propertyId,
+      value,
+    })),
+  };
+}
+
+/**
+ * Read-only table mode, used when the source database's first view is a table.
+ * The primary property (the first in schema order, matching the card grid's
+ * title) renders the row's page title; every other cell formats through the
+ * shared `formatCell` engine, so the embed shows the same text a full table
+ * view would.
+ */
+function LinkedTableView({
+  locale,
+  columns,
+  rows,
+  primaryId,
+}: {
+  locale: string;
+  columns: { id: string; name: string; type: string }[];
+  rows: readonly LinkedDatabaseRow[];
+  primaryId: string | null;
+}) {
+  return (
+    <table className="noema-linked-table">
+      <thead>
+        <tr>
+          {columns.map((property) => (
+            <th key={property.id}>{property.name}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.id}>
+            {columns.map((property) => (
+              <td key={property.id}>
+                {property.id === primaryId
+                  ? `${row.icon ? `${row.icon} ` : ""}${row.title || t(locale, "untitled")}`
+                  : formatCell(
+                      row.values[property.id],
+                      {
+                        id: property.id,
+                        name: property.name,
+                        type: property.type,
+                        config: null,
+                      } as QueryProperty,
+                    ) || "—"}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * Read-only list mode, used when the source database's first view is a list.
+ * Each row's primary/secondary text comes from the shared `listRowModel`; the
+ * embed has no density toolbar, so it picks `comfortable` to surface the first
+ * non-empty property value alongside the title.
+ */
+function LinkedListView({
+  locale,
+  properties,
+  rows,
+}: {
+  locale: string;
+  properties: readonly ViewPropertyLike[];
+  rows: readonly LinkedDatabaseRow[];
+}) {
+  return (
+    <ul className="divide-y divide-border">
+      {rows.map((row) => {
+        const model = listRowModel(toViewRow(row), properties, {
+          density: "comfortable",
+        });
+        return (
+          <li key={row.id} className="flex items-center gap-2 py-1.5">
+            <span className="w-4 text-center">{row.icon ?? "📄"}</span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm">
+                {model.primary || t(locale, "untitled")}
+              </span>
+              {model.expanded && model.secondary && (
+                <span className="block truncate text-xs text-muted">
+                  {model.secondary}
+                </span>
+              )}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
