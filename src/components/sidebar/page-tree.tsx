@@ -109,6 +109,16 @@ type PageTreeProps = {
 const SIDEBAR_TITLE_MAX = 48;
 
 /**
+ * Longest entity label (page, teamspace or project name) rendered inside the
+ * row/context menus, in code points. A menu's width is driven by its content,
+ * so a long target title in the "Move to" submenu would stretch it past the
+ * sidebar. Bounding the *computed* label with `truncateEnd` keeps the popover
+ * compact; the head is kept, matching the sidebar rows, and a surrogate pair is
+ * never sliced. See `@/lib/truncate`.
+ */
+const MENU_LABEL_MAX = 40;
+
+/**
  * How many recently visited pages the sidebar "Recent" section renders. The
  * history itself is capped at `MAX_RECENT_PAGES`; the sidebar shows a shorter
  * "top N" slice of it.
@@ -580,7 +590,7 @@ export function PageTree({
                               )
                             }
                           >
-                            {teamspace.icon ?? "👥"} {teamspace.name}
+                            {teamspace.icon ?? "👥"} {truncateEnd(teamspace.name, MENU_LABEL_MAX)}
                           </ContextMenuItem>
                         ))}
                         <ContextMenuItem
@@ -609,7 +619,7 @@ export function PageTree({
                               )
                             }
                           >
-                            {project.icon ?? "🚀"} {project.name}
+                            {project.icon ?? "🚀"} {truncateEnd(project.name, MENU_LABEL_MAX)}
                           </ContextMenuItem>
                         ))}
                         <ContextMenuItem
@@ -640,7 +650,7 @@ export function PageTree({
                             )
                           }
                         >
-                          {target.icon ?? "📄"} {target.title || "Untitled"}
+                          {target.icon ?? "📄"} {truncateEnd(target.title || "Untitled", MENU_LABEL_MAX)}
                         </ContextMenuItem>
                       ))}
                     </ContextMenuSubContent>
