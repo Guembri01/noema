@@ -107,6 +107,13 @@ export function AiSettings({
     (entry) => entry.id === provider,
   );
 
+  // Static catalogue ids for the selected provider, kept alongside any live
+  // ids returned by `listAiModelsAction` so refreshing never drops a known model.
+  const staticModelIds = useMemo(
+    () => AI_PROVIDERS.find((entry) => entry.id === provider)?.models.map((m) => m.id) ?? [],
+    [provider],
+  );
+
   // Reset the form when the provider changes.
   useEffect(() => {
     const next = AI_PROVIDERS.find((entry) => entry.id === provider);
@@ -134,8 +141,14 @@ export function AiSettings({
       const result = await listAiModelsAction({ workspaceId, provider, baseUrl, apiKey });
       if ("error" in result) return { ok: false, message: result.error };
       if (!result.ok) return { ok: false, message: t(locale, "somethingWentWrong") };
-      setModels(result.models);
-      if (!result.models.includes(model) && result.models[0]) setModel(result.models[0]);
+      // Merge the live ids into the static catalogue: known models keep their
+      // catalogue order, live-only ids are appended.
+      const merged = [...staticModelIds];
+      for (const id of result.models) {
+        if (!merged.includes(id)) merged.push(id);
+      }
+      setModels(merged);
+      if (!merged.includes(model) && merged[0]) setModel(merged[0]);
       return { ok: true, message: `${result.models.length} ${t(locale, "modelsCount")} (${result.source})` };
     });
 
