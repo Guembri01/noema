@@ -14,6 +14,7 @@ import {
   rewriteAttachments,
   type WorkspaceZipFile,
 } from "@/lib/export-format";
+import { buildZipPlan, planManifest, validatePlan } from "@/lib/export-zip-plan";
 import { collectFileUrls, fileKeyFromUrl } from "@/lib/trash";
 import { storageDriver } from "@/lib/storage";
 import { matrixToCsv, pageToMarkdown } from "@/lib/serialize";
@@ -66,30 +67,38 @@ export async function GET(
     orderBy: { position: "asc" },
     select: { id: true, parentId: true, title: true, type: true, content: true, coverUrl: true },
   });
-  const byId = new Map(pages.map((p) => [p.id, p]));
-
   // Depth toggle: `?includeSubpages=false` keeps top-level pages only.
   const exportIds = new Set(collectExportPageIds(pages, { includeSubpages }));
   const exported = pages.filter((page) => exportIds.has(page.id));
+  const exportedById = new Map(exported.map((page) => [page.id, page]));
 
-  const pathFor = (id: string): string => {
-    const segments: string[] = [];
-    let cursor: string | null = id;
-    let guard = 0;
-    while (cursor && guard < 50) {
-      const page = byId.get(cursor);
-      if (!page) break;
-      segments.unshift(safeName(page.title || "Untitled"));
-      cursor = page.parentId;
-      guard += 1;
-    }
-    return segments.join("/");
-  };
+  // Deterministic archive layout: `buildZipPlan` owns every path decision —
+  // nesting by ancestry, slugged and deduped sibling names, the `.md`/`.csv`
+  // extension — so this route no longer re-derives paths ad hoc.
+  const plan = buildZipPlan(
+    exported.map((page) => ({
+      id: page.id,
+      title: page.title,
+      parentId: page.parentId,
+      kind: page.type === "DATABASE" ? ("database" as const) : ("page" as const),
+    })),
+  );
+  const validation = validatePlan(plan.entries);
+  if (!validation.ok) {
+    return NextResponse.json(
+      { error: "Export plan failed validation", issues: validation.issues },
+      { status: 500 },
+    );
+  }
 
   const files: WorkspaceZipFile[] = [];
 
-  for (const page of exported) {
-    if (page.type === "DATABASE") {
+  // Walk the path-sorted manifest so the archive (and the `manifest.json`
+  // `buildWorkspaceZip` writes) is byte-stable regardless of query order.
+  for (const entry of planManifest(plan.entries).entries) {
+    const page = exportedById.get(entry.id);
+    if (!page) continue;
+    if (entry.kind === "database") {
       const [properties, rows] = await Promise.all([
         prisma.property.findMany({
           where: { databasePageId: page.id },
@@ -115,12 +124,12 @@ export async function GET(
           ),
         ),
       );
-      files.push({ path: `${pathFor(page.id)}.csv`, kind: "database", pageId: page.id, content: csv });
+      files.push({ path: entry.path, kind: "database", pageId: entry.id, content: csv });
     } else {
       files.push({
-        path: `${pathFor(page.id)}.md`,
+        path: entry.path,
         kind: "page",
-        pageId: page.id,
+        pageId: entry.id,
         // Rewrite /api/files/... references to the bundled copies so the
         // export stands on its own.
         content: rewriteAttachments(pageToMarkdown(page.title, page.content)),
