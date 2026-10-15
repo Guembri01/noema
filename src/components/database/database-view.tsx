@@ -21,6 +21,7 @@ import {
   createViewAction,
   deletePropertyAction,
   deleteRowAction,
+  duplicateDatabaseAction,
   duplicateViewAction,
   importCsvAction,
   createRowFromTemplateAction,
@@ -630,6 +631,21 @@ export function DatabaseView({
       router.refresh();
     });
 
+  /**
+   * Duplicate the whole database (properties, views and rows) into a new page
+   * under the same parent, then open it.
+   */
+  const duplicateDatabase = () =>
+    startTransition(async () => {
+      const result = await duplicateDatabaseAction(databasePageId);
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(t(locale, "copiedWord"));
+      router.push(`/w/${workspaceSlug}/${result.id}`);
+    });
+
   /** Convert the view between types without touching its configuration. */
   const changeViewType = (view: DBView, type: ViewTypeName) =>
     startTransition(async () => {
@@ -900,6 +916,16 @@ export function DatabaseView({
             >
               <Plus className="h-4 w-4" />
               {t(locale, "newProperty")}
+            </button>
+          )}
+          {editable && (
+            <button
+              type="button"
+              onClick={duplicateDatabase}
+              className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
+            >
+              <Copy className="h-4 w-4" />
+              {t(locale, "duplicate")}
             </button>
           )}
           <a

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { randomUUID } from "node:crypto";
 import type { Prisma, PropertyType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser, type SessionUser } from "@/lib/auth";
@@ -12,6 +13,11 @@ import {
 import { csvToMatrix } from "@/lib/serialize";
 import type { ImportCounts } from "@/lib/importers";
 import { normalizeViewConfig } from "@/lib/database-query";
+import {
+  duplicateDatabase,
+  validateCopy,
+  type DatabaseStructure,
+} from "@/lib/database-copy";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { nextRunFor } from "@/lib/recurrence";
 import { ORDER_STEP } from "@/lib/row-order";
@@ -586,6 +592,174 @@ export async function duplicateViewAction(
   });
   revalidateDatabase(auth.page.workspaceId);
   return { ok: true, id: copy.id };
+}
+
+/**
+ * R89.22 — Duplicate a database "with structure".
+ *
+ * A fresh DATABASE page is appended under the same parent, then every property
+ * (and each select/status option), view and row is cloned through
+ * `src/lib/database-copy.ts`: fresh ids are allocated for all of them and every
+ * reference *inside* the copied set — option ids in configs and cells, property
+ * ids in views/cells, relation targets pointing at a copied row — is rewritten
+ * to the new id. References to entities outside the database (other databases,
+ * rows they own, external relation targets) are preserved verbatim, and
+ * `validateCopy` is the safety net before anything is written.
+ *
+ * The new page, its properties, views, rows and their cell values commit or
+ * roll back as one transaction; row bodies (`content`) are carried over too.
+ */
+export async function duplicateDatabaseAction(
+  databasePageId: string,
+): Promise<Result<{ id: string }>> {
+  const auth = await authorizeDatabase(databasePageId);
+  if ("error" in auth) return auth;
+  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+
+  const source = await prisma.page.findUnique({
+    where: { id: databasePageId },
+    select: { parentId: true, title: true, icon: true },
+  });
+  if (!source) return { error: "Database not found." };
+
+  const [properties, views, rows] = await Promise.all([
+    prisma.property.findMany({
+      where: { databasePageId },
+      orderBy: { position: "asc" },
+    }),
+    prisma.databaseView.findMany({
+      where: { databasePageId },
+      orderBy: { position: "asc" },
+    }),
+    prisma.page.findMany({
+      where: { parentId: databasePageId, deletedAt: null },
+      orderBy: { position: "asc" },
+      include: { propertyValues: { select: { propertyId: true, value: true } } },
+    }),
+  ]);
+
+  // The structural snapshot the copy planner works on: only what a faithful
+  // clone needs, so the remap never touches unrelated page metadata.
+  const structure: DatabaseStructure = {
+    properties: properties.map((property) => ({
+      id: property.id,
+      name: property.name,
+      type: property.type,
+      config: (property.config ?? null) as Record<string, unknown> | null,
+      position: property.position,
+    })),
+    views: views.map((view) => ({
+      id: view.id,
+      name: view.name,
+      type: view.type,
+      config: (view.config ?? null) as Record<string, unknown> | null,
+      position: view.position,
+    })),
+    rows: rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      icon: row.icon,
+      content: row.content,
+      position: row.position,
+      propertyValues: row.propertyValues.map((value) => ({
+        propertyId: value.propertyId,
+        value: value.value,
+      })),
+    })),
+  };
+
+  const copy = duplicateDatabase(structure, () => randomUUID());
+  const validation = validateCopy(structure, copy);
+  if (!validation.ok) {
+    return {
+      error: `Could not duplicate database: ${validation.errors.join("; ")}`,
+    };
+  }
+
+  // Ids are allocated before the transaction so every child row can be built
+  // in one `createMany` per model. `null` JSON columns stay unset (their DB
+  // default) instead of being written as a JSON `null`.
+  const newPageId = randomUUID();
+  const asJson = (value: unknown): Prisma.InputJsonValue | undefined =>
+    value == null ? undefined : (value as Prisma.InputJsonValue);
+
+  const propertyRows: Prisma.PropertyCreateManyInput[] = copy.properties.map(
+    (property) => {
+      const config = asJson(property.config);
+      return {
+        id: property.id,
+        databasePageId: newPageId,
+        name: typeof property.name === "string" ? property.name : "Property",
+        type: property.type as PropertyType,
+        position: typeof property.position === "number" ? property.position : 0,
+        ...(config !== undefined ? { config } : {}),
+      };
+    },
+  );
+
+  const viewRows: Prisma.DatabaseViewCreateManyInput[] = copy.views.map((view) => {
+    const config = asJson(view.config);
+    return {
+      id: view.id,
+      databasePageId: newPageId,
+      name: typeof view.name === "string" && view.name ? view.name : "View",
+      type: view.type as Prisma.DatabaseViewCreateManyInput["type"],
+      position: typeof view.position === "number" ? view.position : 0,
+      ...(config !== undefined ? { config } : {}),
+    };
+  });
+
+  const rowPages: Prisma.PageCreateManyInput[] = copy.rows.map((row) => {
+    const content = asJson(row.content);
+    return {
+      id: row.id,
+      workspaceId: auth.page.workspaceId,
+      parentId: newPageId,
+      title: typeof row.title === "string" ? row.title : "Untitled",
+      icon: typeof row.icon === "string" ? row.icon : null,
+      createdById: auth.user.id,
+      position: typeof row.position === "number" ? row.position : 0,
+      ...(content !== undefined ? { content } : {}),
+    };
+  });
+
+  const cellRows: Prisma.PropertyValueCreateManyInput[] = copy.rows.flatMap((row) =>
+    row.propertyValues.map((cell) => {
+      const value = asJson(cell.value);
+      return {
+        propertyId: cell.propertyId,
+        pageId: row.id,
+        ...(value !== undefined ? { value } : {}),
+      };
+    }),
+  );
+
+  await prisma.$transaction(async (tx) => {
+    const last = await tx.page.findFirst({
+      where: { parentId: source.parentId, deletedAt: null },
+      orderBy: { position: "desc" },
+      select: { position: true },
+    });
+    await tx.page.create({
+      data: {
+        id: newPageId,
+        workspaceId: auth.page.workspaceId,
+        parentId: source.parentId,
+        type: "DATABASE",
+        title: `${source.title || "Untitled"} copy`.slice(0, 80),
+        icon: source.icon,
+        createdById: auth.user.id,
+        position: (last?.position ?? 0) + 1000,
+      },
+    });
+    if (propertyRows.length > 0) await tx.property.createMany({ data: propertyRows });
+    if (viewRows.length > 0) await tx.databaseView.createMany({ data: viewRows });
+    if (rowPages.length > 0) await tx.page.createMany({ data: rowPages });
+    if (cellRows.length > 0) await tx.propertyValue.createMany({ data: cellRows });
+  });
+
+  revalidateDatabase(auth.page.workspaceId);
+  return { ok: true, id: newPageId };
 }
 
 /** Coerce a CSV cell into the JSON shape for a property type. */
