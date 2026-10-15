@@ -245,7 +245,7 @@ export type RelationData = {
 };
 
 export async function getDatabase(databasePageId: string) {
-  const [properties, views, rows, templates] = await Promise.all([
+  const [properties, views, rows, templateRows] = await Promise.all([
     prisma.property.findMany({
       where: { databasePageId },
       orderBy: { position: "asc" },
@@ -265,7 +265,12 @@ export async function getDatabase(databasePageId: string) {
     prisma.template.findMany({
       where: { databasePageId },
       orderBy: { createdAt: "asc" },
-      select: { id: true, name: true, icon: true, recurrence: true },
+      // R31.15 — expose the planner inputs so `database-view`'s template engine
+      // can read a template's property defaults (`config.values`) and body
+      // (`content`) instead of showing display-only rows. `isDefault`/`locked`/
+      // `position` are spec'd (templates.md §5) but not columns on the current
+      // `Template` model, so they are omitted until that migration lands.
+      select: { id: true, name: true, icon: true, recurrence: true, config: true, content: true },
     }),
   ]);
 
@@ -326,6 +331,17 @@ export async function getDatabase(databasePageId: string) {
       };
     }),
   );
+
+  // Narrow each template's `config` (a Prisma `JsonValue`) to the shape
+  // `database-view`'s template engine reads (`config.values` = property
+  // defaults); `content` passes through untouched. Purely a type projection —
+  // the stored JSON is unchanged.
+  const templates = templateRows.map((template) => ({
+    ...template,
+    config: (template.config ?? null) as unknown as {
+      values?: { propertyId: string; value: unknown }[];
+    } | null,
+  }));
 
   return { properties, views, rows, templates, relationData, lastEditedBy };
 }
