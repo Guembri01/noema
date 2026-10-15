@@ -91,11 +91,20 @@ const ONE_LEVEL_REPLY_HINT = "Replies can only be one level deep.";
  */
 type ResolvedFilter = "all" | "open" | "resolved";
 
-/** Filter chips, in display order; `all` is first so "showing all" is default. */
-const RESOLVED_FILTERS: readonly { value: ResolvedFilter; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "open", label: "Open" },
-  { value: "resolved", label: "Resolved" },
+/**
+ * Filter chips, in display order; `all` is first so "showing all" is default.
+ * Chip labels resolve through the shared i18n layer where an equivalent key
+ * already exists (`open`, `resolvedLabel`); `all` has no such key yet, so its
+ * chip keeps the literal `label` fallback.
+ */
+const RESOLVED_FILTERS: readonly {
+  value: ResolvedFilter;
+  labelKey: Parameters<typeof t>[1] | null;
+  label: string;
+}[] = [
+  { value: "all", labelKey: null, label: "All" },
+  { value: "open", labelKey: "open", label: "Open" },
+  { value: "resolved", labelKey: "resolvedLabel", label: "Resolved" },
 ];
 
 /**
@@ -283,7 +292,7 @@ export function CommentPanel({
             aria-label="Filter threads"
             className="flex items-center gap-1 text-xs"
           >
-            {RESOLVED_FILTERS.map(({ value, label }) => (
+            {RESOLVED_FILTERS.map(({ value, label, labelKey }) => (
               <button
                 key={value}
                 type="button"
@@ -296,7 +305,7 @@ export function CommentPanel({
                     : "text-muted hover:text-fg",
                 )}
               >
-                {label} ({filterCounts[value]})
+                {labelKey ? t(locale, labelKey) : label} ({filterCounts[value]})
               </button>
             ))}
           </div>
