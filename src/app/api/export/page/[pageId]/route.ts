@@ -4,10 +4,27 @@ import { rateLimit } from "@/lib/api-guard";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { PAGE_EXPORT_FORMATS, parseExportFormat } from "@/lib/export-format";
-import { pageToHtml, pageToMarkdown } from "@/lib/serialize";
+import { pageToMarkdown } from "@/lib/serialize";
+import { documentToHtml } from "@/lib/html-export";
+import type { RichBlock } from "@/lib/markdown";
 import { docToPdf } from "@/lib/pdf";
 
 export const runtime = "nodejs";
+
+/**
+ * Pull the block array out of a stored page document, tolerating junk: a
+ * missing/!object root or a non-array `content` yields `[]` rather than a
+ * throw. Elements are filtered to objects so the pure exporter only ever sees
+ * `RichBlock`-shaped nodes.
+ */
+function docBlocks(content: unknown): RichBlock[] {
+  if (!content || typeof content !== "object") return [];
+  const inner = (content as { content?: unknown }).content;
+  if (!Array.isArray(inner)) return [];
+  return inner.filter(
+    (node): node is RichBlock => Boolean(node) && typeof node === "object",
+  );
+}
 
 /**
  * Export a page as Markdown (`?format=md`, default), JSON, HTML or PDF.
@@ -63,7 +80,7 @@ export async function GET(
   }
 
   if (format === "html") {
-    return new NextResponse(pageToHtml(page.title, page.content), {
+    return new NextResponse(documentToHtml(docBlocks(page.content), { title: page.title }), {
       headers: {
         "content-type": "text/html; charset=utf-8",
         "content-disposition": `attachment; filename="${safeName}.html"`,
