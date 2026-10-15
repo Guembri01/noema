@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { t } from "@/lib/i18n";
 import { highlightSnippet } from "@/lib/fuzzy";
 import { nextIndex, pageStepIndex, rovingTabIndex } from "@/lib/keyboard-nav";
+import { buildIndex, rank } from "@/lib/search-ranking";
 import {
   DEFAULT_SUMMARY_LENGTH,
   extractDescription,
@@ -62,8 +63,53 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
 const NEW_PAGE_VALUE = "__new_page__";
 
 /**
+ * How strongly a title hit outranks an equally frequent body hit in the
+ * client-side refinement below. Above `1` so the page name the user typed
+ * surfaces first, matching the search page's and API's own BM25 refinement.
+ */
+const QUICK_FIND_TITLE_WEIGHT = 3;
+
+/**
+ * Re-rank the rows the server already filtered with the shared BM25 scorer
+ * (`search-ranking.ts`), weighting title matches so a page-name hit surfaces
+ * first. Additive and lossless: rows the scorer does not recognise (prefix and
+ * substring-fallback hits, whose terms fold differently) keep the server order
+ * and follow the scored rows, so the palette still shows every match and the
+ * count is unchanged. `Array.prototype.sort` is stable, leaving the server's
+ * order intact for any remaining ties.
+ */
+function refineByRelevance(
+  rows: readonly QuickFindResult[],
+  query: string,
+): QuickFindResult[] {
+  if (rows.length <= 1) return [...rows];
+  const index = buildIndex(
+    rows.map((row) => ({
+      id: row.id,
+      fields: { title: row.title, body: row.snippet },
+    })),
+  );
+  const ranked = rank(index, query, {
+    titleWeight: QUICK_FIND_TITLE_WEIGHT,
+    limit: rows.length,
+  });
+  if (ranked.length === 0) return [...rows];
+  const position = new Map(ranked.map((result, index) => [result.id, index]));
+  return [...rows].sort((a, b) => {
+    const left = position.get(a.id);
+    const right = position.get(b.id);
+    if (left === undefined && right === undefined) return 0;
+    if (left === undefined) return 1;
+    if (right === undefined) return -1;
+    return left - right;
+  });
+}
+
+/**
  * Quick find (B43 predecessor): a debounced server search rendered through
- * `cmdk`. Filtering is server-side (`shouldFilter={false}`), so list
+ * `cmdk`. Filtering is server-side (`shouldFilter={false}`), plus an additive,
+ * lossless in-memory BM25 re-rank (`search-ranking.ts`, title-weighted) so
+ * title matches surface first without dropping any server hit. List
  * navigation is driven explicitly here — the shared `src/lib/keyboard-nav.ts`
  * helpers (`nextIndex` for ↑↓/Home/End with wrap, `pageStepIndex` for a
  * PageUp/PageDown screenful) replace cmdk's built-in index math by owning the
@@ -92,9 +138,12 @@ export function QuickFind({
   const [activeValue, setActiveValue] = useState<string>(NEW_PAGE_VALUE);
   const [loading, startTransition] = useTransition();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Server hits, re-ordered by the shared BM25 scorer (title-weighted) so a
+  // page-name match rises to the top while unrecognised rows keep their order.
+  const orderedItems = useMemo(() => refineByRelevance(items, query), [items, query]);
   const itemValues = useMemo(
-    () => [NEW_PAGE_VALUE, ...items.map((item) => item.id)],
-    [items],
+    () => [NEW_PAGE_VALUE, ...orderedItems.map((item) => item.id)],
+    [orderedItems],
   );
 
   useEffect(() => {
@@ -193,7 +242,7 @@ export function QuickFind({
               heading={t(locale, "pages")}
               className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:text-muted"
             >
-              {items.map((item) => {
+              {orderedItems.map((item) => {
                 const teaser = pageTeaser(item, previewLength);
                 return (
                   <Command.Item
