@@ -8,6 +8,8 @@ import { createPortal } from "react-dom";
 import { type Editor } from "@tiptap/react";
 import {
   Bold,
+  CaseLower,
+  CaseUpper,
   Code,
   Eraser,
   Highlighter,
@@ -29,6 +31,11 @@ import { AI_SKILLS, type AiSkillId } from "@/lib/ai-skills";
 import { runAiSkill } from "@/lib/ai-client";
 import { Tooltip } from "@/components/ui/tooltip";
 import { t } from "@/lib/i18n";
+import {
+  TEXT_TRANSFORMS,
+  applyTextTransform,
+  type TextTransformKind
+} from "@/lib/text-transform";
 
 type I18nKey = Parameters<typeof t>[1];
 
@@ -56,6 +63,13 @@ const HIGHLIGHTS: { labelKey: I18nKey; value: string | null }[] = [
   { labelKey: "colorRed", value: "#ffe2dd" },
   { labelKey: "colorOrange", value: "#fadec9" },
 ];
+
+/* Case transforms offered as toolbar actions. `none` is the default and needs
+   no button, so it is filtered out; labels/descriptions come from the shared
+   catalog so the menu stays in sync with the transform engine. */
+const TRANSFORM_ACTIONS = TEXT_TRANSFORMS.filter(
+  (transform) => transform.kind !== "none",
+);
 
 /* ---------------------------------------------------------------------------
    Bubble menu
@@ -130,6 +144,26 @@ export function BubbleToolbar({
     if (value) editor.chain().focus().setHighlight({ color: value }).run();
     else editor.chain().focus().unsetHighlight().run();
     closePanel();
+  };
+
+  // Replace the selected range with its transformed casing. The engine is
+  // pure, so the text keeps every character and only its display form changes.
+  const applyTransform = (kind: TextTransformKind) => {
+    const { from, to } = editor.state.selection;
+    if (from === to) {
+      toast.error(t(locale, "selectTextFirst"));
+      return;
+    }
+    const text = editor.state.doc.textBetween(from, to, "\n");
+    const transformed = applyTextTransform(kind, text);
+    if (transformed === text) return;
+    // Insert a text node rather than a raw string: tiptap parses strings as
+    // HTML, which would mangle selections containing `<` or `&`.
+    editor
+      .chain()
+      .focus()
+      .insertContentAt({ from, to }, { type: "text", text: transformed })
+      .run();
   };
 
   const setLink = () => {
@@ -214,6 +248,20 @@ export function BubbleToolbar({
       >
         <Sigma className="h-4 w-4" />
       </BubbleButton>
+
+      {TRANSFORM_ACTIONS.map((transform) => (
+        <BubbleButton
+          key={transform.kind}
+          label={transform.label}
+          onClick={() => applyTransform(transform.kind)}
+        >
+          {transform.kind === "uppercase" ? (
+            <CaseUpper className="h-4 w-4" />
+          ) : (
+            <CaseLower className="h-4 w-4" />
+          )}
+        </BubbleButton>
+      ))}
 
       <span className="mx-0.5 h-5 w-px bg-border" />
 
