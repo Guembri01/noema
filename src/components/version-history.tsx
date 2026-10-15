@@ -51,6 +51,24 @@ const INLINE_DIFF_CLASS: Record<DiffSegment["op"], string> = {
 };
 
 /**
+ * Which baseline the inline diff is read against: the live page (`current`,
+ * the pre-existing behaviour) or the next-older snapshot in the list
+ * (`previous`). `versions` arrives newest-first (see `getPageDetail`), so a
+ * row's predecessor is simply the next array entry.
+ */
+type DiffComparison = "current" | "previous";
+
+/**
+ * Toggle labels. Durable translations live in `src/lib/i18n.ts`, which is
+ * out of scope for this slice (single-file change), so the two modes use
+ * literal English here and the i18n keys are a reported follow-up.
+ */
+const DIFF_MODE_LABEL: Record<DiffComparison, string> = {
+  current: "vs current",
+  previous: "vs previous snapshot",
+};
+
+/**
  * Inline character-level diff of the selected snapshot against the live page
  * (F7 `diffText`): `equal` runs render plainly, while `insert`/`delete` use the
  * semantic `<ins>`/`<del>` elements so a change is conveyed by more than colour
@@ -118,6 +136,8 @@ export function VersionHistory({
   const [pending, startTransition] = useTransition();
   /** Version id whose inline diff is expanded, or null when none is open. */
   const [selected, setSelected] = useState<string | null>(null);
+  /** Diff baseline for the expanded row; `current` preserves old behaviour. */
+  const [comparison, setComparison] = useState<DiffComparison>("current");
 
   return (
     <>
@@ -182,7 +202,24 @@ export function VersionHistory({
                 {versions.length === 0 && (
                   <li className="p-2 text-sm text-muted">{t(locale, "noVersionsYet")}</li>
                 )}
-                {versions.map((version) => (
+                {versions.map((version, index) => {
+                  // Newest-first list: the next entry is the previous (older)
+                  // snapshot. The oldest row has none, so "vs previous" is
+                  // disabled there and the view falls back to "vs current".
+                  const hasPrevious = index + 1 < versions.length;
+                  const effectiveComparison: DiffComparison =
+                    comparison === "previous" && hasPrevious ? "previous" : "current";
+                  // Non-null only while comparing against a predecessor, so the
+                  // baseline is the older snapshot and the target is this one.
+                  const previousSnapshot =
+                    effectiveComparison === "previous" ? versions[index + 1] : null;
+                  const before = previousSnapshot
+                    ? previousSnapshot.content ?? previousSnapshot.title
+                    : version.content ?? version.title;
+                  const after = previousSnapshot
+                    ? version.content ?? version.title
+                    : current.content ?? current.title;
+                  return (
                   <li key={version.id} className="rounded-lg border border-border p-3">
                       <div className="flex items-center gap-2">
                         <span
@@ -250,8 +287,9 @@ export function VersionHistory({
                         <RotateCcw className="h-3 w-3" /> {t(locale, "restore")}
                       </button>
                       {/* Inline character-level diff (F7 text-diff) of this
-                          snapshot against the live page - additive to the
-                          existing row controls, collapses when re-toggled. */}
+                          snapshot against the live page or the previous
+                          snapshot - additive to the existing row controls,
+                          collapses when re-toggled. */}
                       <button
                         type="button"
                         aria-expanded={selected === version.id}
@@ -267,14 +305,46 @@ export function VersionHistory({
                           data-testid="version-inline-diff"
                           className="mt-3 rounded border border-border bg-surface-2 p-2"
                         >
-                          <InlineDiff
-                            before={version.content ?? version.title}
-                            after={current.content ?? current.title}
-                          />
+                          <div
+                            role="group"
+                            aria-label="Compare version with"
+                            className="mb-2 flex items-center gap-0.5"
+                          >
+                            <button
+                              type="button"
+                              aria-pressed={effectiveComparison === "current"}
+                              onClick={() => setComparison("current")}
+                              className={cn(
+                                "rounded px-2 py-0.5 text-[11px]",
+                                effectiveComparison === "current"
+                                  ? "bg-surface text-fg"
+                                  : "text-muted hover:bg-surface",
+                              )}
+                            >
+                              {DIFF_MODE_LABEL.current}
+                            </button>
+                            <button
+                              type="button"
+                              aria-pressed={effectiveComparison === "previous"}
+                              disabled={!hasPrevious}
+                              onClick={() => setComparison("previous")}
+                              className={cn(
+                                "rounded px-2 py-0.5 text-[11px]",
+                                effectiveComparison === "previous"
+                                  ? "bg-surface text-fg"
+                                  : "text-muted hover:bg-surface",
+                                !hasPrevious && "cursor-not-allowed opacity-40",
+                              )}
+                            >
+                              {DIFF_MODE_LABEL.previous}
+                            </button>
+                          </div>
+                          <InlineDiff before={before} after={after} />
                         </div>
                       )}
                     </li>
-                  ))}
+                  );
+                })}
                 </ul>
             </div>
           </aside>
