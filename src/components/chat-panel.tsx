@@ -1,17 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Bot,
   Check,
+  CheckCircle2,
   Copy,
+  Gauge,
   History,
   MessageSquarePlus,
   MoreHorizontal,
   Send,
   Sparkles,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -40,6 +43,13 @@ import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/markdown";
 import { OPEN_CHAT_EVENT } from "@/components/sidebar-chat";
+import {
+  assembleContext,
+  estimateTokens,
+  fitToBudget,
+  type ContextChunk,
+  type ContextDoc,
+} from "@/lib/ai-context";
 
 export type ChatMessageMeta = {
   activity?: string[];
@@ -74,6 +84,77 @@ const QUICK_PROMPTS = [
   { label: "Who is on the team?", prompt: "Who are the members of this workspace and what are their roles?" },
   { label: "What should I do next?", prompt: "Based on my notes, projects and open tasks, what should I focus on next?" },
 ];
+
+/** Default token budget for the conversation context attached to a question. */
+const DEFAULT_CONTEXT_BUDGET = 1024;
+
+/** Bounds and step for the context-budget control. */
+const MIN_CONTEXT_BUDGET = 0;
+const MAX_CONTEXT_BUDGET = 8192;
+const CONTEXT_BUDGET_STEP = 128;
+
+/** Standing instruction mirrored from the server prompt (`chat-runtime`). */
+const CONTEXT_SYSTEM_HINT =
+  "You answer from the workspace data provided, never from the open internet.";
+
+/** Shared empty list so the context memo never allocates a fresh dependency. */
+const NO_MESSAGES: readonly PanelMessage[] = [];
+
+/** A locally budgeted view of the conversation context sent with a question. */
+type ContextAttachment = {
+  /** The assembled prompt: instruction, kept turns, then the question. */
+  prompt: string;
+  /** `estimateTokens(prompt)`. */
+  usedTokens: number;
+  /** Tokens spent on the kept conversation turns alone. */
+  contextTokens: number;
+  /** `estimateTokens(question)`. */
+  questionTokens: number;
+  keptTurns: number;
+  totalTurns: number;
+  droppedTurns: number;
+  /** True when a kept turn was shortened to fit the budget. */
+  truncated: boolean;
+};
+
+/**
+ * Budget the conversation context that accompanies a question, using the pure
+ * sizing layer in `@/lib/ai-context`. The newest turns win the token budget and
+ * the oldest are trimmed first, so a long discussion still grounds the question
+ * without blowing the window; the survivors are then assembled into one prompt.
+ */
+function buildContextAttachment(
+  messages: readonly PanelMessage[],
+  question: string,
+  maxTokens: number,
+): ContextAttachment {
+  const chunks: ContextChunk[] = messages.map((message) => ({
+    id: message.id,
+    text: `${message.role === "assistant" ? "Assistant" : "User"}: ${message.body}`,
+  }));
+  // Higher index = more recent = kept first; the oldest turns drop out.
+  const fit = fitToBudget(chunks, { maxTokens, priorityOf: (_chunk, index) => index });
+  const docs: ContextDoc[] = fit.kept.map((chunk) => ({ id: chunk.id, text: chunk.text }));
+  const questionTokens = estimateTokens(question);
+  // The turns already fit the budget; leave room for the mandatory instruction
+  // and question so `assembleContext` keeps exactly what survived above.
+  const assembled = assembleContext({
+    system: CONTEXT_SYSTEM_HINT,
+    docs,
+    question,
+    maxTokens: maxTokens + estimateTokens(CONTEXT_SYSTEM_HINT) + questionTokens + 4,
+  });
+  return {
+    prompt: assembled.prompt,
+    usedTokens: assembled.usedTokens,
+    contextTokens: fit.usedTokens,
+    questionTokens,
+    keptTurns: fit.kept.length,
+    totalTurns: chunks.length,
+    droppedTurns: fit.dropped.length,
+    truncated: fit.kept.some((chunk) => chunk.truncated),
+  };
+}
 
 /** Narrow the stored JSON metadata (Prisma returns JsonValue). */
 function asMeta(value: unknown): ChatMessageMeta | null {
@@ -117,10 +198,19 @@ export function ChatPanel({
   const [optimistic, setOptimistic] = useState<{ id: string; body: string }[]>([]);
   const [streaming, setStreaming] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(thread?.id ?? null);
+  const [contextBudget, setContextBudget] = useState(DEFAULT_CONTEXT_BUDGET);
+  const [contextOpen, setContextOpen] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const active = threads.find((item) => item.id === activeThreadId) ?? thread ?? null;
+  const messages = active?.messages ?? NO_MESSAGES;
+
+  // Show and limit the conversation context attached to the next question.
+  const contextPreview = useMemo(
+    () => buildContextAttachment(messages, draft.trim(), contextBudget),
+    [messages, draft, contextBudget],
+  );
 
   useEffect(() => {
     if (thread?.id) setActiveThreadId(thread.id);
@@ -155,6 +245,8 @@ export function ChatPanel({
   const send = (text?: string) => {
     const body = (text ?? draft).trim();
     if (!body) return;
+    // Budget the conversation context that will accompany this question.
+    const attachment = buildContextAttachment(messages, body, contextBudget);
     const optimisticId = `pending-${Date.now()}`;
     // Only a composer send consumes the draft. Prompts sent from the quick
     // actions or the answer menu never touch text the user is still typing.
@@ -201,7 +293,16 @@ export function ChatPanel({
         const response = await fetch("/api/chat/stream", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ threadId, body }),
+          body: JSON.stringify({
+            threadId,
+            body,
+            // The panel budgets the conversation context locally; the streaming
+            // route rebuilds its own grounded context today, so these fields are
+            // additive and safely ignored.
+            context: attachment.prompt,
+            contextTokens: attachment.usedTokens,
+            maxTokens: contextBudget,
+          }),
         });
         // A 200 means the route already wrote the question row (route.ts:56).
         acknowledged = response.ok;
@@ -521,6 +622,83 @@ export function ChatPanel({
       </div>
 
       <div className="border-t border-border p-3">
+        {/* Context budget: shows and limits the conversation context attached to a
+            question. Labels are inline English; add i18n keys in a follow-up. */}
+        <div className="mb-2">
+          <button
+            type="button"
+            aria-label="Context budget"
+            aria-expanded={contextOpen}
+            onClick={() => setContextOpen((value) => !value)}
+            className="flex w-full items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-surface-2"
+          >
+            <Gauge className="h-3.5 w-3.5 shrink-0" />
+            <span className="font-medium text-fg">Context</span>
+            <span className="truncate">
+              {contextPreview.keptTurns}/{contextPreview.totalTurns} msgs ·{" "}
+              {contextPreview.contextTokens}/{contextBudget} tokens
+            </span>
+            <span className="ml-auto shrink-0">
+              {contextPreview.droppedTurns > 0 || contextPreview.truncated ? (
+                <TriangleAlert className="h-3 w-3 text-amber-500" />
+              ) : (
+                <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+              )}
+            </span>
+          </button>
+
+          {contextOpen && (
+            <div className="mt-1 rounded-lg border border-border p-2 text-[11px] text-muted">
+              <label className="flex items-center gap-2">
+                <span className="shrink-0 font-medium uppercase tracking-wide">Token budget</span>
+                <input
+                  type="number"
+                  min={MIN_CONTEXT_BUDGET}
+                  max={MAX_CONTEXT_BUDGET}
+                  step={CONTEXT_BUDGET_STEP}
+                  value={contextBudget}
+                  aria-label="Context token budget"
+                  onChange={(event) => {
+                    const next = event.target.valueAsNumber;
+                    setContextBudget(
+                      Number.isFinite(next)
+                        ? Math.min(MAX_CONTEXT_BUDGET, Math.max(MIN_CONTEXT_BUDGET, Math.floor(next)))
+                        : DEFAULT_CONTEXT_BUDGET,
+                    );
+                  }}
+                  className="h-7 w-24 rounded border border-border bg-bg px-2 text-right text-xs text-fg outline-none focus:border-accent"
+                />
+              </label>
+              <p className="mt-1.5">
+                Newest turns fill the budget first; older turns are trimmed to fit.
+              </p>
+              <dl className="mt-1.5 grid grid-cols-3 gap-1">
+                <div>
+                  <dt className="inline">Question: </dt>
+                  <dd className="inline text-fg">{contextPreview.questionTokens} tok</dd>
+                </div>
+                <div>
+                  <dt className="inline">Context: </dt>
+                  <dd className="inline text-fg">{contextPreview.contextTokens} tok</dd>
+                </div>
+                <div>
+                  <dt className="inline">Assembled: </dt>
+                  <dd className="inline text-fg">{contextPreview.usedTokens} tok</dd>
+                </div>
+              </dl>
+              <p className="mt-1.5">
+                {contextPreview.totalTurns === 0
+                  ? "No earlier messages yet — the question is sent on its own."
+                  : contextPreview.droppedTurns > 0
+                    ? `Trimmed the oldest ${contextPreview.droppedTurns} message(s) to fit.`
+                    : contextPreview.truncated
+                      ? "The oldest kept message was shortened to fit."
+                      : "All earlier messages fit within the budget."}
+              </p>
+            </div>
+          )}
+        </div>
+
         <div className="rounded-xl border border-border bg-bg p-2 focus-within:border-accent">
           <textarea
             ref={composerRef}
