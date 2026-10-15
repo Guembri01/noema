@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
+import { buildIntervals, maxOverlap } from "@/lib/interval-tree";
 import {
   computeEdgeRoutes,
   type BarRect,
@@ -26,6 +27,14 @@ const DAY = 24 * 60 * 60 * 1000;
 const PROJECT_ROW_HEIGHT = 20;
 const MILESTONE_ROW_HEIGHT = 12;
 const ROW_GAP = 12;
+/**
+ * Vertical start of the first bar lane below the project row, and the pitch of
+ * one lane (a bar row plus the gap after it). The derived milestone bars sit on
+ * `LANE_TOP + index * LANE_PITCH`, and lane-packed overlay bars reuse the same
+ * geometry so both feed the arrow overlay from one coordinate space.
+ */
+const LANE_TOP = PROJECT_ROW_HEIGHT + ROW_GAP;
+const LANE_PITCH = MILESTONE_ROW_HEIGHT + ROW_GAP;
 /** Width of a derived milestone bar, as a percentage of the track. */
 const MILESTONE_BAR_WIDTH = 2;
 /**
@@ -69,6 +78,34 @@ function arrowHead(route: EdgeRoute): string {
     default:
       return tip;
   }
+}
+
+/**
+ * Greedy interval-graph colouring over the bars' time extents: every bar takes
+ * the lowest lane whose previous occupant has already ended, and lane `n` is
+ * drawn at `LANE_TOP + n * LANE_PITCH`. Because the extents are half-open, two
+ * bars that merely touch may share a lane. `buildIntervals` supplies the stable
+ * `(start, end)`-ordered walk the greedy pass needs and `maxOverlap` the lane
+ * count the busiest instant forces, so the overlay can size itself to the
+ * packed stack. Inputs are never mutated and bars are returned in time order.
+ */
+export function packBars(bars: readonly BarRect[]): { bars: BarRect[]; laneCount: number } {
+  const entries = buildIntervals(bars, {
+    startOf: (bar) => bar.x,
+    endOf: (bar) => bar.x + bar.width,
+  });
+  const laneEnds: number[] = [];
+  const packed = entries.map((entry) => {
+    let lane = laneEnds.findIndex((end) => end <= entry.start);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(entry.end);
+    } else {
+      laneEnds[lane] = entry.end;
+    }
+    return { ...entry.item, y: LANE_TOP + lane * LANE_PITCH };
+  });
+  return { bars: packed, laneCount: Math.max(maxOverlap(entries), laneEnds.length) };
 }
 
 /**
@@ -123,14 +160,22 @@ export function ProjectGantt({
     derivedBars.push({
       id: milestone.id,
       x: Math.max(0, Math.min(100 - MILESTONE_BAR_WIDTH, center - MILESTONE_BAR_WIDTH / 2)),
-      y: PROJECT_ROW_HEIGHT + ROW_GAP + index * (MILESTONE_ROW_HEIGHT + ROW_GAP),
+      y: LANE_TOP + index * LANE_PITCH,
       width: MILESTONE_BAR_WIDTH,
       height: MILESTONE_ROW_HEIGHT,
     });
   });
-  const totalHeight = PROJECT_ROW_HEIGHT + milestones.length * (MILESTONE_ROW_HEIGHT + ROW_GAP);
-  const routeBars = bars && bars.length > 0 ? bars : derivedBars;
+  const totalHeight = PROJECT_ROW_HEIGHT + milestones.length * LANE_PITCH;
+  // Caller-supplied bars may overlap in time; lane-pack them so no two arrows
+  // stack on the same row. The derived milestone bars already occupy one lane
+  // each, so they are used as-is — packing them would collapse non-overlapping
+  // milestones onto one row and detach the arrows from the milestone dots.
+  const packed = bars && bars.length > 0 ? packBars(bars) : null;
+  const routeBars = packed ? packed.bars : derivedBars;
   const routes = edges && edges.length > 0 ? computeEdgeRoutes(routeBars, edges) : [];
+  const overlayHeight = packed
+    ? PROJECT_ROW_HEIGHT + packed.laneCount * LANE_PITCH
+    : totalHeight;
 
   return (
     <div className="rounded-xl border border-border p-4">
@@ -204,7 +249,7 @@ export function ProjectGantt({
           <svg
             className="pointer-events-none absolute inset-y-0 right-0 z-20 h-full overflow-visible text-accent"
             style={{ left: TRACK_LEFT }}
-            viewBox={`0 0 100 ${totalHeight}`}
+            viewBox={`0 0 100 ${overlayHeight}`}
             preserveAspectRatio="none"
             aria-hidden
           >
