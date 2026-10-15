@@ -11,6 +11,7 @@ import {
   type WorkspaceAccess,
 } from "@/lib/permissions";
 import { csvToMatrix } from "@/lib/serialize";
+import { coerceCsvValue, type CsvPropertyConfig } from "@/lib/csv-value-coercion";
 import type { ImportCounts } from "@/lib/importers";
 import { normalizeViewConfig } from "@/lib/database-query";
 import {
@@ -762,50 +763,6 @@ export async function duplicateDatabaseAction(
   return { ok: true, id: newPageId };
 }
 
-/** Coerce a CSV cell into the JSON shape for a property type. */
-function coerceCsvValue(
-  raw: string,
-  property: { type: PropertyType; config: unknown },
-): Prisma.InputJsonValue | null {
-  const options =
-    (property.config as { options?: { id: string; name: string }[] } | null)?.options ?? [];
-  const findOption = (name: string) =>
-    options.find((o) => o.name.toLowerCase() === name.trim().toLowerCase())?.id;
-  switch (property.type) {
-    case "NUMBER": {
-      // Display-formatted cells round-trip: "7.5%" → 0.075 (the percent
-      // format stores the fraction), "$1,234.50" → 1234.5. A plain number in
-      // a percent-formatted column is read as the percentage, exactly like
-      // typing it into the cell.
-      const text = raw.trim();
-      const percentFormat =
-        (property.config as { format?: string } | null)?.format === "percent";
-      const numeric = Number(text.replace(/[%,$\s€£¥]/g, ""));
-      if (!Number.isFinite(numeric)) return null;
-      const asFraction = text.endsWith("%") || percentFormat;
-      return { number: asFraction ? numeric / 100 : numeric };
-    }
-    case "CHECKBOX":
-      return { checked: ["true", "yes", "1", "x", "✓"].includes(raw.toLowerCase()) };
-    case "DATE":
-      return { start: raw };
-    case "SELECT":
-    case "STATUS": {
-      const id = findOption(raw);
-      return id ? { optionId: id } : null;
-    }
-    case "MULTI_SELECT": {
-      const ids = raw
-        .split(",")
-        .map((part) => findOption(part))
-        .filter((id): id is string => Boolean(id));
-      return ids.length ? { optionIds: ids } : null;
-    }
-    default:
-      return { text: raw };
-  }
-}
-
 /** Save a row's values as a reusable database template. */
 export async function saveRowAsTemplateAction(
   databasePageId: string,
@@ -999,7 +956,11 @@ export async function importCsvAction(
           if (property.config && (property.config as { primary?: boolean }).primary) continue;
           const raw = (row[i] ?? "").trim();
           if (raw === "") continue;
-          const value = coerceCsvValue(raw, property);
+          const value = coerceCsvValue(
+            raw,
+            property.type,
+            property.config as CsvPropertyConfig | null,
+          );
           if (value === null) {
             skippedCells += 1;
             continue;
