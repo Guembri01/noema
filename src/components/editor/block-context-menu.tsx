@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useTransition, type ReactNode } from "react";
+import { Fragment, useCallback, useState, useTransition, type ReactNode } from "react";
 import type { Editor } from "@tiptap/react";
 import { toast } from "sonner";
 import {
@@ -42,6 +42,14 @@ import {
 } from "@/lib/blocks";
 import { buildBlockDeepLink } from "@/lib/deep-links";
 import { t } from "@/lib/i18n";
+import {
+  CONVERSION_GROUPS,
+  allowedTargets,
+  convertBlock,
+  type BlockAttrs,
+  type BlockType,
+  type ConvertibleBlock,
+} from "@/lib/block-conversion";
 
 type I18nKey = Parameters<typeof t>[1];
 
@@ -109,38 +117,78 @@ function blockAnchorId(doc: Editor["state"]["doc"], at: number): string | undefi
   return readId(node);
 }
 
-type TurnKind =
-  | "paragraph"
-  | "h1"
-  | "h2"
-  | "h3"
-  | "h4"
-  | "h5"
-  | "h6"
-  | "bullet"
-  | "ordered"
-  | "task"
-  | "toggle"
-  | "quote"
-  | "callout"
-  | "code";
+/**
+ * "Turn into" targets. The pure graph in `@/lib/block-conversion` owns the
+ * canonical block list, the menu sections (`CONVERSION_GROUPS`) and the
+ * target-attribute mapping (`convertBlock`); this file only adapts a
+ * ProseMirror node to that model and routes the result to editor commands.
+ */
 
-const TURN_ITEMS: { kind: TurnKind; labelKey: I18nKey }[] = [
-  { kind: "paragraph", labelKey: "blockText" },
-  { kind: "h1", labelKey: "blockHeading1" },
-  { kind: "h2", labelKey: "blockHeading2" },
-  { kind: "h3", labelKey: "blockHeading3" },
-  { kind: "h4", labelKey: "blockHeading4" },
-  { kind: "h5", labelKey: "blockHeading5" },
-  { kind: "h6", labelKey: "blockHeading6" },
-  { kind: "bullet", labelKey: "blockBulletedList" },
-  { kind: "ordered", labelKey: "blockNumberedList" },
-  { kind: "task", labelKey: "blockTodoList" },
-  { kind: "toggle", labelKey: "blockToggleList" },
-  { kind: "quote", labelKey: "blockQuote" },
-  { kind: "callout", labelKey: "blockCallout" },
-  { kind: "code", labelKey: "code" },
-];
+/** Graph type ⇄ editor node name. Headings carry a `level` instead of a name. */
+function blockTypeOfNode(name: string, attrs: Record<string, unknown>): BlockType | null {
+  switch (name) {
+    case "paragraph":
+      return "paragraph";
+    case "heading": {
+      const level = Number(attrs.level);
+      return level === 1 ? "h1" : level === 2 ? "h2" : level === 3 ? "h3" : null;
+    }
+    case "bulletList":
+      return "bulletedList";
+    case "orderedList":
+      return "numberedList";
+    case "taskList":
+      return "todoList";
+    case "toggle":
+      return "toggle";
+    case "blockquote":
+      return "quote";
+    case "callout":
+      return "callout";
+    case "codeBlock":
+      return "code";
+    default:
+      return null;
+  }
+}
+
+/** Project a node's type + attrs into the shape {@link convertBlock} reads. */
+function toConvertible(name: string, attrs: Record<string, unknown>): ConvertibleBlock {
+  const blockAttrs: BlockAttrs = {};
+  const level = Number(attrs.level);
+  if (Number.isInteger(level) && level > 0) blockAttrs.level = level;
+  if (typeof attrs.checked === "boolean") blockAttrs.checked = attrs.checked;
+  if (typeof attrs.language === "string") blockAttrs.language = attrs.language;
+  if (typeof attrs.emoji === "string") blockAttrs.emoji = attrs.emoji;
+  if (typeof attrs.open === "boolean") blockAttrs.open = attrs.open;
+  // Only the *target* decides which attributes survive, and the editor command
+  // preserves the inline content, so a source the graph does not name (h4–h6)
+  // safely falls back to `paragraph` without changing the outcome.
+  return { type: blockTypeOfNode(name, attrs) ?? "paragraph", attrs: blockAttrs };
+}
+
+/**
+ * i18n label for each convertible target. `pullQuote` is deliberately unmapped:
+ * the editor has no pull-quote node yet (`@/lib/pull-quote` is only a data
+ * model), so offering it would silently no-op. It returns to the menu once the
+ * node and its label land.
+ */
+const TURN_TARGET_LABELS: Partial<Record<BlockType, I18nKey>> = {
+  paragraph: "blockText",
+  h1: "blockHeading1",
+  h2: "blockHeading2",
+  h3: "blockHeading3",
+  bulletedList: "blockBulletedList",
+  numberedList: "blockNumberedList",
+  todoList: "blockTodoList",
+  toggle: "blockToggleList",
+  quote: "blockQuote",
+  callout: "blockCallout",
+  code: "code",
+};
+
+/** Every graph type in canonical menu order (the union of `CONVERSION_GROUPS`). */
+const ALL_TARGET_TYPES: readonly BlockType[] = CONVERSION_GROUPS.flatMap((group) => group.types);
 
 /**
  * Notion-style block menu: right-click anywhere in the editor to act on the
@@ -197,51 +245,54 @@ export function BlockContextMenu({
     return { from: at + 1, to: at + node.nodeSize - 1 };
   };
 
-  const turnInto = (kind: TurnKind) => {
+  /**
+   * Turn the block under the menu into `target`. `convertBlock` derives the
+   * target's attributes (heading level, to-do `checked`, toggle `open`, callout
+   * `emoji`, code `language`); this only routes that result to the matching
+   * TipTap command, keeping the node selection taken on right-click so the
+   * inline content survives.
+   */
+  const turnInto = (target: BlockType) => {
     if (pos === null) return;
+    const node = editor.state.doc.nodeAt(pos);
+    if (!node) return;
+    const converted = convertBlock(toConvertible(node.type.name, node.attrs), target);
+    if (!converted) return;
     const chain = editor.chain().focus().setNodeSelection(pos);
-    switch (kind) {
+    switch (converted.type) {
       case "paragraph":
         chain.setParagraph().run();
         break;
       case "h1":
-        chain.setHeading({ level: 1 }).run();
-        break;
       case "h2":
-        chain.setHeading({ level: 2 }).run();
+      case "h3": {
+        const level = converted.attrs?.level;
+        chain.setHeading({ level: level === 2 ? 2 : level === 3 ? 3 : 1 }).run();
         break;
-      case "h3":
-        chain.setHeading({ level: 3 }).run();
-        break;
-      case "h4":
-        chain.setHeading({ level: 4 }).run();
-        break;
-      case "h5":
-        chain.setHeading({ level: 5 }).run();
-        break;
-      case "h6":
-        chain.setHeading({ level: 6 }).run();
-        break;
-      case "bullet":
+      }
+      case "bulletedList":
         chain.toggleBulletList().run();
         break;
-      case "ordered":
+      case "numberedList":
         chain.toggleOrderedList().run();
         break;
-      case "task":
+      case "todoList":
         chain.toggleTaskList().run();
         break;
       case "toggle":
-        chain.wrapIn("toggle").run();
+        chain.wrapIn("toggle", { open: converted.attrs?.open ?? true }).run();
         break;
       case "quote":
         chain.toggleBlockquote().run();
         break;
       case "callout":
-        chain.wrapIn("callout").run();
+        chain.wrapIn("callout", { emoji: converted.attrs?.emoji }).run();
         break;
       case "code":
-        chain.setCodeBlock().run();
+        chain.setCodeBlock({ language: converted.attrs?.language ?? "" }).run();
+        break;
+      default:
+        // `pullQuote` has no editor node yet; the menu never offers it.
         break;
     }
   };
@@ -430,6 +481,16 @@ export function BlockContextMenu({
   const isEquation =
     selectedNode?.type.name === "inlineMath" || selectedNode?.type.name === "blockMath";
 
+  // `allowedTargets` drops the source type from the menu. When the source is not
+  // named by the graph (h4–h6, a nested paragraph…) show every target rather
+  // than hiding the whole submenu.
+  const currentType = selectedNode
+    ? blockTypeOfNode(selectedNode.type.name, selectedNode.attrs)
+    : null;
+  const allowed = new Set<BlockType>(
+    currentType ? allowedTargets(currentType) : ALL_TARGET_TYPES,
+  );
+
   return (
     <div onContextMenuCapture={onContextMenu} className="relative">
       {children}
@@ -452,11 +513,26 @@ export function BlockContextMenu({
               <Type className="h-4 w-4 text-muted" /> {t(locale, "turnInto")}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
-              {TURN_ITEMS.map((item) => (
-                <DropdownMenuItem key={item.kind} onSelect={() => turnInto(item.kind)}>
-                  {t(locale, item.labelKey)}
-                </DropdownMenuItem>
-              ))}
+              {CONVERSION_GROUPS.map((group, index) => {
+                const types = group.types.filter(
+                  (type) => allowed.has(type) && TURN_TARGET_LABELS[type] !== undefined,
+                );
+                if (types.length === 0) return null;
+                return (
+                  <Fragment key={group.id}>
+                    {index > 0 && <DropdownMenuSeparator />}
+                    {types.map((type) => {
+                      const label = TURN_TARGET_LABELS[type];
+                      if (!label) return null;
+                      return (
+                        <DropdownMenuItem key={type} onSelect={() => turnInto(type)}>
+                          {t(locale, label)}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </Fragment>
+                );
+              })}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
 
