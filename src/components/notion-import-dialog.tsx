@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { importNotionPageAction } from "@/server/actions/notion-import";
+import type { NotionMappingSummary } from "@/server/actions/import";
 import { t } from "@/lib/i18n";
 import {
   mapNotionBlockType,
@@ -92,6 +93,12 @@ export function NotionImportDialog({
   const [failure, setFailure] = useState("");
   const [importedId, setImportedId] = useState("");
   /**
+   * K32: server-reported loss report `result.unmapped` for the last successful
+   * import, so the result UI can show how many Notion block/property types were
+   * dropped instead of only the pre-import preview estimate.
+   */
+  const [importedUnmapped, setImportedUnmapped] = useState<NotionMappingSummary | null>(null);
+  /**
    * J30: mapped-vs-unmapped preview so the user sees what will be dropped
    * before confirming. The submission path below is untouched; the
    * acknowledgement only gates the button when a preview reports a loss.
@@ -104,11 +111,21 @@ export function NotionImportDialog({
   const unmappedCount = preview.blockUnmapped.length + preview.propertyUnmapped.length;
   const [acknowledged, setAcknowledged] = useState(false);
 
+  /**
+   * K32: what the server actually dropped on the last successful import
+   * (`result.unmapped`), surfaced as counts after the fact. Empty when the
+   * import had no losses or none has run yet.
+   */
+  const importedBlocksUnmapped = importedUnmapped?.blocks.unmapped ?? [];
+  const importedPropertiesUnmapped = importedUnmapped?.properties.unmapped ?? [];
+  const importedUnmappedCount = importedBlocksUnmapped.length + importedPropertiesUnmapped.length;
+
   const reset = () => {
     setStage("idle");
     setSummary("");
     setFailure("");
     setImportedId("");
+    setImportedUnmapped(null);
     setAcknowledged(false);
   };
 
@@ -133,6 +150,7 @@ export function NotionImportDialog({
             .replace("{failed}", String(counts.failed)),
         );
         setImportedId(result.id);
+        setImportedUnmapped(result.unmapped);
         setStage("done");
         setToken("");
         setPageId("");
@@ -252,6 +270,32 @@ export function NotionImportDialog({
               <p role="status" className="text-muted">
                 {summary}
               </p>
+            )}
+            {stage === "done" && importedUnmappedCount > 0 && (
+              <div
+                className="mt-2 rounded border border-amber-500/40 bg-amber-500/10 p-2"
+                data-testid="notion-import-unmapped"
+              >
+                <p className="text-amber-600 dark:text-amber-400">
+                  {importedUnmappedCount} Notion{" "}
+                  {importedUnmappedCount === 1 ? "type was" : "types were"} skipped and not
+                  imported:
+                </p>
+                <p className="mt-1 text-amber-600 dark:text-amber-400">
+                  Blocks: {importedBlocksUnmapped.length} unmapped
+                  {importedPropertiesUnmapped.length > 0
+                    ? ` · Properties: ${importedPropertiesUnmapped.length} unmapped`
+                    : ""}
+                </p>
+                <ul className="mt-1 list-disc pl-4 text-amber-600 dark:text-amber-400">
+                  {importedBlocksUnmapped.map((type) => (
+                    <li key={`imported-block:${type}`}>block · {type}</li>
+                  ))}
+                  {importedPropertiesUnmapped.map((type) => (
+                    <li key={`imported-property:${type}`}>property · {type}</li>
+                  ))}
+                </ul>
+              </div>
             )}
             {failure !== "" && (
               <p role="alert" className="text-red-500">
