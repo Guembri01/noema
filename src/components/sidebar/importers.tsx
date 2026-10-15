@@ -21,6 +21,7 @@ import {
   type InferredColumnType,
 } from "@/lib/csv-mapping";
 import { parseTrelloBoard, type TrelloImportMeta } from "@/lib/trello-import";
+import { fileCategory, iconForFile, isAllowedType, mimeForExt } from "@/lib/file-type";
 import { t } from "@/lib/i18n";
 import { toast } from "sonner";
 import { safeAction } from "@/lib/actions-client";
@@ -52,6 +53,58 @@ const SAMPLE_ROWS = 50;
 const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
 /**
+ * Accepted file types per import entry, mirroring each `<input accept>`.
+ * Validation runs through `file-type` (extension → MIME alongside the shared
+ * allow-list matcher) rather than trusting `File.type`, which browsers leave
+ * blank on many systems.
+ */
+const IMPORT_ALLOW: Record<string, readonly string[]> = {
+  markdown: [".md", ".markdown", ".txt"],
+  csv: [".csv"],
+  trello: [".json"],
+  zip: [".zip"],
+  docx: [".docx"],
+  audio: ["audio/*"],
+};
+
+/** Lower-cased extension of a file name, or "" when it has none. */
+function fileExt(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? "";
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+/** MIME the app infers for a picked file from its extension (never `File.type`). */
+function importMime(file: File): string {
+  return mimeForExt(fileExt(file.name));
+}
+
+/**
+ * Reject a picked file whose type is outside `allow` with a message naming the
+ * file, its detected category and the expected rules. Returns `true` when the
+ * caller may proceed with the import.
+ */
+function acceptImportFile(file: File, allow: readonly string[]): boolean {
+  if (isAllowedType(importMime(file), { allow })) return true;
+  const category = capitalize(fileCategory(file.name));
+  toast.error(`Unsupported file type: ${file.name} (${category}). Expected ${allow.join(", ")}.`);
+  return false;
+}
+
+/** Inline annotation for a picked file: its glyph and detected category. */
+function FileTypeBadge({ name }: { name: string }) {
+  return (
+    <span
+      data-testid="import-file-type"
+      className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-xs text-muted"
+    >
+      <span aria-hidden>{iconForFile(name)}</span>
+      {capitalize(fileCategory(name))}
+    </span>
+  );
+}
+
+/**
  * A parsed CSV awaiting its mapping step. `mapping`/`include`/`types` are
  * index-aligned with `headers`; `types` starts from the inferred suggestions
  * and is what the user can override before the create-database payload is
@@ -70,6 +123,7 @@ type CsvDraft = {
 /** A parsed Trello board awaiting confirmation (built from the trello-import engine). */
 type TrelloDraft = {
   json: string;
+  fileName: string;
   boardName: string;
   meta: TrelloImportMeta;
   properties: { id: string; name: string; type: string }[];
@@ -104,7 +158,7 @@ export function ImportSection({
         }
         const result = outcome.value;
         if ("ok" in result) {
-          toast.success(`Imported ${file.name}`);
+          toast.success(`${iconForFile(file.name)} Imported ${file.name}`);
           router.push(`/w/${workspace.slug}/${result.id}`);
           router.refresh();
         } else {
@@ -139,6 +193,7 @@ export function ImportSection({
       const board = parseTrelloBoard(raw);
       setTrelloDraft({
         json: text,
+        fileName: file.name,
         boardName: board.meta.boardName || "Trello board",
         meta: board.meta,
         properties: board.properties.map((property) => ({
@@ -165,7 +220,7 @@ export function ImportSection({
       }
       const result = outcome.value;
       if ("ok" in result) {
-        toast.success(`Imported Trello board “${draft.boardName}”`);
+        toast.success(`${iconForFile(draft.fileName)} Imported Trello board “${draft.boardName}”`);
         setTrelloDraft(null);
         router.push(`/w/${workspace.slug}/${result.id}`);
         router.refresh();
@@ -187,7 +242,7 @@ export function ImportSection({
       }
       const result = outcome.value;
       if ("ok" in result) {
-        toast.success("Imported archive");
+        toast.success(`${iconForFile(file.name)} Imported archive`);
         router.push(`/w/${workspace.slug}/${result.id}`);
         router.refresh();
       } else {
@@ -209,7 +264,7 @@ export function ImportSection({
       }
       const result = outcome.value;
       if ("ok" in result) {
-        toast.success("Imported Word document");
+        toast.success(`${iconForFile(file.name)} Imported Word document`);
         router.push(`/w/${workspace.slug}/${result.id}`);
         router.refresh();
       } else {
@@ -243,7 +298,7 @@ export function ImportSection({
       }
       const result = outcome.value;
       if ("ok" in result) {
-        toast.success("Transcript added");
+        toast.success(`${iconForFile(file.name)} Transcript added`);
         router.push(`/w/${workspace.slug}/${result.id}`);
         router.refresh();
       } else {
@@ -392,7 +447,7 @@ export function ImportSection({
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = "";
-          if (file) onImportFile(file);
+          if (file && acceptImportFile(file, IMPORT_ALLOW.markdown)) onImportFile(file);
         }}
       />
       <button
@@ -411,7 +466,7 @@ export function ImportSection({
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = "";
-          if (file) openCsv(file);
+          if (file && acceptImportFile(file, IMPORT_ALLOW.csv)) openCsv(file);
         }}
       />
       <button
@@ -430,7 +485,7 @@ export function ImportSection({
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = "";
-          if (file) onImportTrello(file);
+          if (file && acceptImportFile(file, IMPORT_ALLOW.trello)) onImportTrello(file);
         }}
       />
       <button
@@ -449,7 +504,7 @@ export function ImportSection({
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = "";
-          if (file) onImportZip(file);
+          if (file && acceptImportFile(file, IMPORT_ALLOW.zip)) onImportZip(file);
         }}
       />
       <button
@@ -468,7 +523,7 @@ export function ImportSection({
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = "";
-          if (file) onImportDocx(file);
+          if (file && acceptImportFile(file, IMPORT_ALLOW.docx)) onImportDocx(file);
         }}
       />
       <button
@@ -495,7 +550,7 @@ export function ImportSection({
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = "";
-          if (file) onTranscribe(file);
+          if (file && acceptImportFile(file, IMPORT_ALLOW.audio)) onTranscribe(file);
         }}
       />
 
@@ -505,9 +560,13 @@ export function ImportSection({
           {csvDraft && (
             <div data-testid="csv-mapping-dialog">
               <h2 className="text-lg font-semibold">{t(locale, "importCsv")}</h2>
-              <p className="mt-1 text-sm text-muted">
-                {csvDraft.fileName} · {csvDraft.rows.length} rows · {csvDraft.headers.length} columns
-              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+                <span className="truncate">{csvDraft.fileName}</span>
+                <FileTypeBadge name={csvDraft.fileName} />
+                <span>
+                  {csvDraft.rows.length} rows · {csvDraft.headers.length} columns
+                </span>
+              </div>
 
               {csvDuplicates.length > 0 && (
                 <p role="alert" className="mt-3 rounded border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-500">
@@ -598,7 +657,10 @@ export function ImportSection({
         <DialogContent className="max-w-2xl p-6" aria-describedby={undefined}>
           {trelloDraft && (
             <div data-testid="trello-import-preview">
-              <h2 className="text-lg font-semibold">{trelloDraft.boardName}</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-lg font-semibold">{trelloDraft.boardName}</h2>
+                <FileTypeBadge name={trelloDraft.fileName} />
+              </div>
               <p className="mt-1 text-sm text-muted">
                 {trelloDraft.meta.lists} lists · {trelloDraft.meta.cards} cards ·{" "}
                 {trelloDraft.meta.labels} labels
