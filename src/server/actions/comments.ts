@@ -8,8 +8,25 @@ import { commentSchema } from "@/lib/validation";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { logActivity } from "@/lib/activity";
 import { extractMentions, mentionMatches } from "@/lib/comments";
+import {
+  validateThreadDepth,
+  type Comment as ThreadComment,
+  type DepthIssueReason,
+} from "@/lib/comment-threads";
 
 type Result<T = unknown> = ({ ok: true } & T) | { error: string };
+
+/**
+ * Distinct copy per `validateThreadDepth` issue so a rejected reply tells the
+ * author why (R79.1). `cross-thread-parent`/`cycle` are defensive: the chain we
+ * feed the validator is linear, so they should not fire on live data.
+ */
+const REPLY_DEPTH_ERRORS: Record<DepthIssueReason, string> = {
+  "missing-parent": "The comment you are replying to no longer exists.",
+  "cross-thread-parent": "That comment belongs to a different thread.",
+  "max-depth-exceeded": "Replies can only be one level deep.",
+  cycle: "That comment's thread is malformed.",
+};
 
 export async function addCommentAction(input: {
   pageId: string;
@@ -38,6 +55,69 @@ export async function addCommentAction(input: {
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to comment." };
+  }
+
+  // Thread depth is enforced before the write (R79.1): a reply may only target
+  // a thread root, so a reply-to-a-reply creates no row. We walk the prospective
+  // parent's ancestor chain, add the pending reply, and let the pure thread model
+  // (`validateThreadDepth`, maxDepth 1) flag it. Done before `create` so a bad
+  // target never reaches the database.
+  if (parsed.data.parentId) {
+    const parentId = parsed.data.parentId;
+    const ancestors: ThreadComment[] = [];
+    const seenIds = new Set<string>();
+    let parentPageId: string | undefined;
+    let cursor: string | null = parentId;
+    while (cursor !== null && !seenIds.has(cursor)) {
+      seenIds.add(cursor);
+      const row: {
+        id: string;
+        parentId: string | null;
+        pageId: string;
+        authorId: string;
+        body: string;
+        createdAt: Date;
+      } | null = await prisma.comment.findUnique({
+        where: { id: cursor },
+        select: {
+          id: true,
+          parentId: true,
+          pageId: true,
+          authorId: true,
+          body: true,
+          createdAt: true,
+        },
+      });
+      if (!row) break;
+      if (ancestors.length === 0) parentPageId = row.pageId;
+      ancestors.push({
+        id: row.id,
+        threadId: row.parentId ?? row.id,
+        parentId: row.parentId ?? undefined,
+        authorId: row.authorId,
+        body: row.body,
+        createdAt: row.createdAt.toISOString(),
+      });
+      cursor = row.parentId;
+    }
+
+    if (parentPageId !== undefined && parentPageId !== parsed.data.pageId) {
+      return { error: "That comment belongs to a different page." };
+    }
+
+    const threadId = ancestors[ancestors.length - 1]?.id ?? parentId;
+    const pending: ThreadComment = {
+      id: "__pending_reply__",
+      threadId,
+      parentId,
+      authorId: user.id,
+      body: parsed.data.body,
+      createdAt: new Date().toISOString(),
+    };
+    const issue = validateThreadDepth([...ancestors, pending], { maxDepth: 1 }).find(
+      (candidate) => candidate.commentId === pending.id,
+    );
+    if (issue) return { error: REPLY_DEPTH_ERRORS[issue.reason] };
   }
 
   const comment = await prisma.comment.create({
