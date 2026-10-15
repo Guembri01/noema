@@ -5,6 +5,23 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canManageMembers } from "@/lib/permissions";
 import { WEBHOOK_EVENTS, encryptWebhookSecret } from "@/lib/webhooks";
+import {
+  isWebhookEventType,
+  matchesSubscription,
+} from "@/lib/webhook-event-catalog";
+
+/**
+ * B91 follow-up — a stored subscription is either an exact event id or a
+ * wildcard pattern (`*`, `page.*`) that selects at least one catalog event.
+ * Anything else (a bare prefix like `page`, an unknown `nope.*`) selects
+ * nothing at dispatch time, so it is dropped here instead of being persisted.
+ */
+function isSupportedSubscription(subscription: string): boolean {
+  if (isWebhookEventType(subscription)) return true;
+  return WEBHOOK_EVENTS.some((event) =>
+    matchesSubscription(event, subscription),
+  );
+}
 
 export async function createWebhookAction(input: {
   workspaceId: string;
@@ -29,7 +46,7 @@ export async function createWebhookAction(input: {
   }
 
   const events = input.events.filter((event) =>
-    (WEBHOOK_EVENTS as readonly string[]).includes(event),
+    isSupportedSubscription(event),
   );
 
   // R28.17 — signed deliveries only: a non-empty secret is mandatory, and it is
