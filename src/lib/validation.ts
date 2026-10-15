@@ -1,9 +1,25 @@
 import { z } from "zod";
+import { validatePassword } from "@/lib/password-policy";
+
+/**
+ * Message surfaced when {@link validatePassword} rejects a signup password for
+ * a reason the base string checks cannot express (composition, denylist). The
+ * length bounds keep their own, more specific messages.
+ */
+const SIGNUP_PASSWORD_POLICY_MESSAGE =
+  "Choose a stronger password: use an uppercase letter, a lowercase letter and a number, and avoid common passwords";
 
 export const signupSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(80),
   email: z.string().trim().toLowerCase().email("Enter a valid email"),
-  password: z.string().min(8, "Use at least 8 characters").max(200),
+  password: z
+    .string()
+    .min(8, "Use at least 8 characters")
+    .max(200, "Password must be at most 200 characters")
+    // Delegate composition/denylist rules to the shared password policy so the
+    // client meter, this schema and the change-password flow agree on what is
+    // acceptable. `validatePassword` is pure and never throws.
+    .refine((value) => validatePassword(value).ok, SIGNUP_PASSWORD_POLICY_MESSAGE),
 });
 
 export const loginSchema = z.object({

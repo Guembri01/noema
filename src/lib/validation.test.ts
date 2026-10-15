@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as validation from "./validation";
+import { validatePassword } from "./password-policy";
 
 /**
  * B59 / audit H2 - stored XSS gate (red-first).
@@ -217,5 +218,55 @@ describe("parsePageContent - deep href validation (H2)", () => {
     expect(parsePageContent("not json").ok).toBe(false);
     expect(parsePageContent(JSON.stringify({ type: "doc" })).ok).toBe(false);
     expect(parsePageContent(undefined)).toEqual({ ok: true, doc: undefined });
+  });
+});
+
+/**
+ * K02 - `signupSchema.password` delegates to the shared `validatePassword`
+ * policy (`src/lib/password-policy.ts`) via a zod refine. These tests pin that
+ * delegation and the length messages the schema keeps for itself.
+ */
+describe("signupSchema - password policy delegation", () => {
+  const identity = { name: "Ada Lovelace", email: "ada@example.com" };
+
+  it("accepts a password the shared policy accepts", () => {
+    expect(validatePassword("Tr0ub4dor&3").ok).toBe(true);
+    const result = validation.signupSchema.safeParse({
+      ...identity,
+      password: "Tr0ub4dor&3",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("keeps the existing minimum-length message", () => {
+    const result = validation.signupSchema.safeParse({ ...identity, password: "Ab1" });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.message).toBe("Use at least 8 characters");
+  });
+
+  it("caps password length", () => {
+    const result = validation.signupSchema.safeParse({
+      ...identity,
+      password: `Aa1${"x".repeat(200)}`,
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues[0]?.message).toBe("Password must be at most 200 characters");
+  });
+
+  it("rejects exactly what validatePassword rejects", () => {
+    const weak = [
+      "alllowercase1", // missing upper
+      "ALLUPPERCASE1", // missing lower
+      "NoDigitsHere", // missing digit
+      "Password1", // denylisted despite satisfying composition
+      "abcabcabc", // missing upper + digit
+    ];
+    for (const password of weak) {
+      expect(validatePassword(password).ok, password).toBe(false);
+      const result = validation.signupSchema.safeParse({ ...identity, password });
+      expect(result.success, password).toBe(false);
+    }
   });
 });
