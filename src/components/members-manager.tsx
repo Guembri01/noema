@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Crown, LogOut, ShieldCheck, UserMinus } from "lucide-react";
 import { toast } from "sonner";
@@ -12,6 +12,12 @@ import {
 } from "@/server/actions/workspaces";
 import { sendWorkspaceInviteAction } from "@/server/actions/email";
 import { useAction } from "@/lib/actions-client";
+import {
+  isDisposableDomain,
+  isValidEmail,
+  normalizeEmail,
+  suggestDomainFixes,
+} from "@/lib/email-validation";
 import { t } from "@/lib/i18n";
 
 export type MemberRow = {
@@ -60,18 +66,44 @@ export function MembersManager({
   const [transferring, setTransferring] = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"GUEST" | "MEMBER" | "ADMIN">("MEMBER");
+  const [inviteTouched, setInviteTouched] = useState(false);
 
   const isOwner = currentUserRole === "OWNER" || currentUserId === ownerId;
   const canManage = isOwner || currentUserRole === "ADMIN";
   const refresh = () => router.refresh();
 
+  // Live validation of the invite address via `@/lib/email-validation`: the same
+  // helpers the server re-checks with. Errors stay hidden until the field is
+  // blurred or submit is pressed so the form does not scold mid-typing; a typo
+  // hint (`gmial.com` → `gmail.com`) is offered whenever the engine recognises
+  // one, even while the address is still syntactically valid.
+  const inviteValue = inviteEmail.trim();
+  const inviteInputId = useId();
+  const inviteHintId = `${inviteInputId}-hint`;
+  const inviteSuggestions = inviteValue ? suggestDomainFixes(inviteValue) : [];
+  const inviteError =
+    inviteTouched && inviteValue
+      ? !isValidEmail(inviteValue)
+        ? "Enter a valid email address."
+        : isDisposableDomain(inviteValue)
+          ? "Disposable email addresses are not allowed."
+          : ""
+      : "";
+
+  /** Swap a recognised typo domain in while keeping the local part untouched. */
+  const applyDomainFix = (domain: string) => {
+    const at = inviteEmail.lastIndexOf("@");
+    const local = at > 0 ? inviteEmail.slice(0, at) : "";
+    setInviteEmail(local ? `${local}@${domain}` : domain);
+  };
+
   /** Invite by email: existing members join instantly, everyone else gets a link. */
-  const invite = () =>
+  const invite = (email: string) =>
     run(
       () =>
         sendWorkspaceInviteAction({
           workspaceId,
-          email: inviteEmail.trim(),
+          email,
           role: inviteRole,
         }),
       {
@@ -210,16 +242,27 @@ export function MembersManager({
           className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-3"
           onSubmit={(event) => {
             event.preventDefault();
-            void invite();
+            setInviteTouched(true);
+            // Submit the canonical form (trimmed, domain lowercased); refuse
+            // anything the engine rejects or flags as throwaway.
+            const email = normalizeEmail(inviteEmail);
+            if (!email || isDisposableDomain(email)) return;
+            void invite(email);
           }}
         >
           <input
+            id={inviteInputId}
             type="email"
             required
             value={inviteEmail}
             aria-label={t(locale, "inviteEmailAria")}
+            aria-invalid={inviteError ? true : undefined}
+            aria-describedby={
+              inviteError || inviteSuggestions.length > 0 ? inviteHintId : undefined
+            }
             placeholder="client@example.com"
             onChange={(event) => setInviteEmail(event.target.value)}
+            onBlur={() => setInviteTouched(true)}
             className="h-8 min-w-44 flex-1 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
           />
           <select
@@ -234,11 +277,33 @@ export function MembersManager({
           </select>
           <button
             type="submit"
-            disabled={pending || !inviteEmail.trim()}
+            disabled={pending || !inviteValue}
             className="h-8 rounded bg-accent px-3 text-xs text-accent-fg disabled:opacity-50"
           >
             {t(locale, "invite")}
           </button>
+          {(inviteError || inviteSuggestions.length > 0) && (
+            <div id={inviteHintId} className="w-full space-y-0.5">
+              {inviteError && (
+                <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+                  {inviteError}
+                </p>
+              )}
+              {inviteSuggestions.length > 0 && (
+                <p className="text-xs text-muted">
+                  Did you mean{" "}
+                  <button
+                    type="button"
+                    onClick={() => applyDomainFix(inviteSuggestions[0])}
+                    className="font-medium text-accent underline-offset-2 hover:underline"
+                  >
+                    {inviteSuggestions[0]}
+                  </button>
+                  ?
+                </p>
+              )}
+            </div>
+          )}
         </form>
       )}
 
