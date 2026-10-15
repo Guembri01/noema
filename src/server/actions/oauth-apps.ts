@@ -9,6 +9,7 @@ import { randomToken } from "@/lib/slug";
 export async function createOAuthAppAction(
   name: string,
   redirectUris: string,
+  requiresPkce = false,
 ): Promise<{ clientId: string; clientSecret: string } | { error: string }> {
   const user = await requireUser();
   const label = name.trim().slice(0, 80) || "OAuth app";
@@ -24,6 +25,9 @@ export async function createOAuthAppAction(
       return { error: `Invalid redirect URI: ${uri}` };
     }
   }
+  if (typeof requiresPkce !== "boolean") {
+    return { error: "requiresPkce must be a boolean." };
+  }
 
   const app = await prisma.oAuthApp.create({
     data: {
@@ -32,6 +36,7 @@ export async function createOAuthAppAction(
       clientId: `noema_${randomToken(12)}`,
       clientSecret: randomToken(24),
       redirectUris: uris,
+      requiresPkce,
     },
   });
   revalidatePath("/w", "layout");
