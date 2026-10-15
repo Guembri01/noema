@@ -9,6 +9,7 @@ import {
 } from "@tiptap/react";
 import { ExternalLink, Pencil, Trash2 } from "lucide-react";
 import { embedMeta, hostOf, isHttpUrl, normalizeUrl, resolveEmbed } from "@/lib/embeds";
+import { classifyLink, normalizeLink } from "@/lib/link-check";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -60,29 +61,77 @@ export const Bookmark = Node.create({
   },
 });
 
+/** Why a typed bookmark target was refused, or the URLs worth using. */
+type BookmarkTarget =
+  | { ok: true; url: string; requestUrl: string }
+  | { ok: false; message: string };
+
+const UNSAFE_LINK_MESSAGE = "That link uses a scheme that isn't allowed.";
+const INVALID_LINK_MESSAGE = "Enter a valid web address.";
+
+/**
+ * Classify and canonicalise a bookmarked URL through the shared `link-check`
+ * kernel. Unsafe targets (`javascript:`, `data:`, protocol-relative, `%3A`
+ * smuggling) and unparseable values are refused with an inline message;
+ * external links are canonicalised through the URL parser and same-origin
+ * links collapse to their in-app path (`/w/<slug>/<pageId>`). Only `http(s)`
+ * targets the preview API can fetch survive, so `mailto:`/`tel:`/anchors are
+ * refused too.
+ */
+function resolveBookmarkTarget(raw: string, origin: string): BookmarkTarget {
+  const candidate = normalizeUrl(raw);
+  const context = origin ? { origin } : {};
+  const kind = classifyLink(candidate, context);
+  if (kind === "unsafe") return { ok: false, message: UNSAFE_LINK_MESSAGE };
+  if (kind === "invalid") return { ok: false, message: INVALID_LINK_MESSAGE };
+
+  const url = normalizeLink(candidate, context);
+  if (url === null || (!url.startsWith("/") && !isHttpUrl(url))) {
+    return { ok: false, message: INVALID_LINK_MESSAGE };
+  }
+
+  // Same-origin pages normalise to a root-relative path; the preview request
+  // still needs an absolute URL to fetch.
+  let requestUrl = url;
+  if (!isHttpUrl(requestUrl)) {
+    try {
+      requestUrl = new URL(url, origin).toString();
+    } catch {
+      return { ok: false, message: INVALID_LINK_MESSAGE };
+    }
+  }
+  return { ok: true, url, requestUrl };
+}
+
 function BookmarkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
   const url = node.attrs.url as string | null;
   const [editing, setEditing] = useState(!url);
   const [value, setValue] = useState(url ?? "");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const host = (node.attrs.host as string) || (url ? hostOf(url) : "");
 
   const submit = async () => {
-    const normalized = normalizeUrl(value);
-    if (!isHttpUrl(normalized)) return;
+    const origin = typeof window === "undefined" ? "" : window.location.origin;
+    const target = resolveBookmarkTarget(value, origin);
+    if (!target.ok) {
+      setError(target.message);
+      return;
+    }
+    setError(null);
     setLoading(true);
     try {
       const response = await fetch(
-        `/api/link-preview?url=${encodeURIComponent(normalized)}`,
+        `/api/link-preview?url=${encodeURIComponent(target.requestUrl)}`,
       );
       const meta = (await response.json()) as Record<string, unknown>;
       updateAttributes({
-        url: normalized,
+        url: target.url,
         title: (meta.title as string) ?? null,
         description: (meta.description as string) ?? null,
         image: (meta.image as string) ?? null,
         icon: (meta.icon as string) ?? null,
-        host: (meta.host as string) ?? hostOf(normalized),
+        host: (meta.host as string) ?? hostOf(target.requestUrl),
       });
       setEditing(false);
     } finally {
@@ -93,30 +142,45 @@ function BookmarkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
   return (
     <NodeViewWrapper className="noema-bookmark" data-bookmark="">
       {editing || !url ? (
-        <div className="noema-bookmark-input" contentEditable={false}>
-          <input
-            autoFocus
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void submit();
-              }
-              if (e.key === "Escape") setEditing(false);
-            }}
-            placeholder="Paste a link…"
-            className="noema-bookmark-field"
-          />
-          <button type="button" className="noema-bookmark-btn" disabled={loading} onClick={() => void submit()}>
-            {loading ? "Loading…" : "Add"}
-          </button>
-          {url && (
-            <button type="button" className="noema-bookmark-btn" onClick={() => setEditing(false)}>
-              Cancel
+        <>
+          <div className="noema-bookmark-input" contentEditable={false}>
+            <input
+              autoFocus
+              value={value}
+              onChange={(e) => {
+                setValue(e.target.value);
+                if (error) setError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void submit();
+                }
+                if (e.key === "Escape") setEditing(false);
+              }}
+              placeholder="Paste a link…"
+              aria-invalid={error ? true : undefined}
+              className="noema-bookmark-field"
+            />
+            <button type="button" className="noema-bookmark-btn" disabled={loading} onClick={() => void submit()}>
+              {loading ? "Loading…" : "Add"}
             </button>
+            {url && (
+              <button type="button" className="noema-bookmark-btn" onClick={() => setEditing(false)}>
+                Cancel
+              </button>
+            )}
+          </div>
+          {error && (
+            <p
+              role="alert"
+              contentEditable={false}
+              className="noema-bookmark-error mt-1 text-sm text-red-600 dark:text-red-400"
+            >
+              {error}
+            </p>
           )}
-        </div>
+        </>
       ) : (
         <div className="noema-bookmark-card" contentEditable={false}>
           <a href={url} target="_blank" rel="noreferrer noopener" className="noema-bookmark-link">
