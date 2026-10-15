@@ -5,6 +5,7 @@ import {
   ArrowUpDown,
   Bookmark,
   Columns3,
+  Eye,
   Filter as FilterIcon,
   Gauge,
   Layers,
@@ -35,7 +36,9 @@ import {
 } from "@/lib/database-query";
 import {
   groupRowsByProperty,
+  visibleGroups as filterVisibleGroups,
   type BoardPropertyDescriptor,
+  type GroupVisibility,
 } from "@/lib/board-groups";
 import { checkWip, wipSummary, type WipLimits } from "@/lib/kanban-wip";
 import {
@@ -465,6 +468,15 @@ type ViewSettingsConfig = ViewConfig & {
   laneBy?: string | null;
   wipLimits?: WipLimits;
   /**
+   * BOARD: per-column visibility keyed by column key (option id, or the empty
+   * group key `__empty`). A key mapped to `false` is hidden and a missing key
+   * stays visible — the exact semantics of `visibleGroups` in
+   * `@/lib/board-groups`, which the board renderer filters with. Like
+   * `wipLimits`, it is a view-config key this toolbar owns and rides through
+   * `sanitizeViewSettings`; "hide every group" is a real persisted state.
+   */
+  visibleGroups?: GroupVisibility;
+  /**
    * The serialized `ColumnLayout` (see `@/lib/column-layout`) this toolbar
    * persists when the caller does not wire `onLayoutChange` — the view config's
    * own column layout. Read back through `deserializeLayout`, so a malformed
@@ -544,6 +556,23 @@ function normalizeWipLimits(input: unknown): WipLimits | undefined {
 }
 
 /**
+ * Keep only boolean group-visibility entries; an empty map normalises away, so
+ * "all groups visible" is the absence of the key rather than `{}` — the same
+ * rule the WIP limits use. Round-trips through `visibleGroups` in
+ * `@/lib/board-groups`, where a missing key means visible.
+ */
+function normalizeVisibleGroups(input: unknown): GroupVisibility | undefined {
+  const record = wipRecord(input);
+  if (!record) return undefined;
+  const visibility: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (key === "") continue;
+    if (typeof value === "boolean") visibility[key] = value;
+  }
+  return Object.keys(visibility).length > 0 ? visibility : undefined;
+}
+
+/**
  * Read an untrusted config into the shape this toolbar edits: schema-normalised
  * against `properties`, with WIP limits validated. Unknown top-level keys are
  * preserved; only the fields this toolbar owns are rewritten.
@@ -569,6 +598,10 @@ function sanitizeViewSettings(
   const wipLimits = normalizeWipLimits(config.wipLimits);
   if (wipLimits) sanitized.wipLimits = wipLimits;
   else delete sanitized.wipLimits;
+
+  const visibleGroups = normalizeVisibleGroups(config.visibleGroups);
+  if (visibleGroups) sanitized.visibleGroups = visibleGroups;
+  else delete sanitized.visibleGroups;
 
   return sanitized;
 }
@@ -685,6 +718,24 @@ export function ViewSettings({
     wipCheck.columns.map((column) => [column.key, column]),
   );
   const limitedCount = Object.keys(wipLimits).length;
+
+  // --- Group visibility (board columns) ------------------------------------
+  // The same buckets the WIP editor grades, filtered through the engine's
+  // `visibleGroups` so this editor agrees with what the board renders: a key
+  // mapped to `false` hides its column and missing keys stay visible. The map
+  // is owned here and persisted as the view's `visibleGroups`.
+  const groupVisibility: GroupVisibility = config.visibleGroups ?? {};
+  const groupColumns = wipProperty ? wipGroups : [];
+  const hiddenGroupCount =
+    groupColumns.length - filterVisibleGroups(groupColumns, groupVisibility).length;
+
+  /** Show or hide one board column and persist the visibility map. */
+  const setGroupVisible = (key: string, visible: boolean) => {
+    const next: Record<string, boolean> = { ...groupVisibility };
+    if (visible) delete next[key];
+    else next[key] = false;
+    onChange({ visibleGroups: next });
+  };
 
   /** Set (or clear, on blank) one column's limit and persist the map. */
   const setWipLimit = (key: string, value: string) => {
@@ -1382,7 +1433,7 @@ export function ViewSettings({
               id="lane-by"
               data-testid="lane-by"
               value={laneBy}
-              onChange={(e) => onChange({ laneBy: e.target.value || null })}
+              onChange={(e) => onChange({ laneBy: e.target.value || undefined })}
               className={cn(CONTROL_CLASS, "w-full")}
             >
               <option value="">None</option>
@@ -1471,6 +1522,68 @@ export function ViewSettings({
           ) : (
             <p className="text-xs text-muted">
               Group by a select or status property to set per-column limits.
+            </p>
+          )}
+        </PopoverContent>
+      </Popover>
+
+      {/* Groups — show/hide board columns, persisted per view as `visibleGroups` */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-testid="groups-trigger"
+            className={cn(
+              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
+              hiddenGroupCount > 0 && "bg-surface-2 text-fg",
+            )}
+          >
+            <Eye className="h-3.5 w-3.5" />
+            Groups{hiddenGroupCount > 0 ? ` (${hiddenGroupCount})` : ""}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-64" data-testid="db-groups-popover">
+          {wipProperty ? (
+            <div className="space-y-1">
+              <p className="mb-2 text-xs text-muted">
+                Show or hide the columns of “{wipProperty.name}”.
+              </p>
+              <ul className="space-y-1">
+                {groupColumns.map((group) => (
+                  <li key={group.key}>
+                    <label className="flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-surface-2">
+                      <input
+                        type="checkbox"
+                        checked={groupVisibility[group.key] !== false}
+                        data-testid={`group-visibility-${group.key}`}
+                        aria-label={`${group.label} visible`}
+                        onChange={(event) =>
+                          setGroupVisible(group.key, event.target.checked)
+                        }
+                        className="accent-[var(--accent)]"
+                      />
+                      <span className="flex-1 truncate">{group.label}</span>
+                      <span className="shrink-0 text-xs tabular-nums text-muted">
+                        {group.rows.length}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              {hiddenGroupCount > 0 && (
+                <button
+                  type="button"
+                  data-testid="groups-show-all"
+                  onClick={() => onChange({ visibleGroups: {} })}
+                  className="flex items-center gap-1 border-t border-border pt-2 text-xs text-accent"
+                >
+                  <RotateCcw className="h-3 w-3" /> Show all groups
+                </button>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-muted">
+              Group by a select or status property to hide or show groups.
             </p>
           )}
         </PopoverContent>
