@@ -8,6 +8,7 @@ import {
   ArrowUp,
   Copy,
   Link2,
+  ListOrdered,
   MessageSquare,
   Palette,
   Sigma,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSub,
@@ -25,6 +27,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { PromptDialog } from "@/components/prompt-dialog";
 import { AI_SKILLS, type AiSkillId } from "@/lib/ai-skills";
 import { runAiSkill } from "@/lib/ai-client";
 import { COMMENT_EVENT } from "@/components/comment-panel";
@@ -40,6 +43,7 @@ import {
   type BlockDeletion,
   type BlockDoc,
 } from "@/lib/blocks";
+import { formatCaption, validateCaption } from "@/lib/code-block";
 import { buildBlockDeepLink } from "@/lib/deep-links";
 import { t } from "@/lib/i18n";
 import {
@@ -210,6 +214,7 @@ export function BlockContextMenu({
   const [open, setOpen] = useState(false);
   const [point, setPoint] = useState({ x: 0, y: 0 });
   const [pos, setPos] = useState<number | null>(null);
+  const [captionOpen, setCaptionOpen] = useState(false);
   const [, startTransition] = useTransition();
 
   const resolveBlock = useCallback(
@@ -403,6 +408,67 @@ export function BlockContextMenu({
     }
   };
 
+  /**
+   * Merge `patch` into the code block under the menu, preserving every other
+   * attribute. Mirrors the block-background path in {@link paint}: a node
+   * markup transaction keeps the node selection and the inline content, and it
+   * writes exactly the attributes the code-block node view reads
+   * (`lineNumbers`, `caption`). No-op unless the block is still a `codeBlock`.
+   */
+  const setCodeBlockAttr = (patch: Record<string, unknown>) => {
+    if (pos === null) return;
+    const node = editor.state.doc.nodeAt(pos);
+    if (!node || node.type.name !== "codeBlock") return;
+    const at = pos;
+    const attrs = { ...node.attrs, ...patch };
+    editor
+      .chain()
+      .focus()
+      .command(({ tr }) => {
+        tr.setNodeMarkup(at, undefined, attrs);
+        return true;
+      })
+      .run();
+  };
+
+  /** Flip the gutter attribute the node view renders as `data-line-numbers`. */
+  const toggleLineNumbers = () => {
+    if (pos === null) return;
+    const node = editor.state.doc.nodeAt(pos);
+    if (!node || node.type.name !== "codeBlock") return;
+    setCodeBlockAttr({ lineNumbers: !node.attrs.lineNumbers });
+  };
+
+  /**
+   * Store a caption via the shared `code-block.ts` helpers: `validateCaption`
+   * rejects over-long text with a safe message, `formatCaption` collapses
+   * whitespace so the stored attribute is always the normalised form.
+   */
+  const applyCodeCaption = (text: string) => {
+    const result = validateCaption(text);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    setCodeBlockAttr({ caption: formatCaption(text) });
+  };
+
+  /**
+   * Toggle the caption: an existing caption clears to `""`, otherwise prompt
+   * for the text (the node view's inline input covers later edits).
+   */
+  const toggleCaption = () => {
+    if (pos === null) return;
+    const node = editor.state.doc.nodeAt(pos);
+    if (!node || node.type.name !== "codeBlock") return;
+    const current = formatCaption(String(node.attrs.caption ?? ""));
+    if (current !== "") {
+      setCodeBlockAttr({ caption: "" });
+      return;
+    }
+    setCaptionOpen(true);
+  };
+
   const move = (direction: -1 | 1) => {
     if (pos === null) return;
     const { state } = editor;
@@ -480,6 +546,14 @@ export function BlockContextMenu({
   const selectedNode = pos === null ? null : editor.state.doc.nodeAt(pos);
   const isEquation =
     selectedNode?.type.name === "inlineMath" || selectedNode?.type.name === "blockMath";
+
+  // The code-block toggles only apply to `codeBlock` nodes and reflect the two
+  // optional attributes the node view consumes (`lineNumbers`, `caption`).
+  const isCodeBlock = selectedNode?.type.name === "codeBlock";
+  const showCodeLineNumbers = isCodeBlock ? Boolean(selectedNode?.attrs?.lineNumbers) : false;
+  const codeCaption = isCodeBlock
+    ? formatCaption(String(selectedNode?.attrs?.caption ?? ""))
+    : "";
 
   // `allowedTargets` drops the source type from the menu. When the source is not
   // named by the graph (h4–h6, a nested paragraph…) show every target rather
@@ -577,6 +651,29 @@ export function BlockContextMenu({
             </DropdownMenuSubContent>
           </DropdownMenuSub>
 
+          {/*
+           * Code-block toggles. `lineNumbers`/`caption` are the attrs the node
+           * view reads; the labels reuse the closest shipped node-view keys
+           * (dedicated code-line / code-caption keys are out of this slice).
+           */}
+          {isCodeBlock && pos !== null && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem
+                checked={showCodeLineNumbers}
+                onSelect={toggleLineNumbers}
+              >
+                <ListOrdered className="h-4 w-4 text-muted" /> {t(locale, "numberWord")}
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                checked={codeCaption !== ""}
+                onSelect={toggleCaption}
+              >
+                <Type className="h-4 w-4 text-muted" /> {t(locale, "imageCaptionAria")}
+              </DropdownMenuCheckboxItem>
+            </>
+          )}
+
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
               <Sparkles className="h-4 w-4 text-muted" /> {t(locale, "askAI")}
@@ -634,6 +731,28 @@ export function BlockContextMenu({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/*
+       * Caption prompt for the code-block "Caption" toggle. `PromptDialog` is
+       * the app-wide replacement for `window.prompt`; the entered text is
+       * validated/formatted by `applyCodeCaption` before it is stored.
+       */}
+      <PromptDialog
+        open={captionOpen}
+        locale={locale}
+        title={t(locale, "imageCaptionAria")}
+        fields={[
+          {
+            name: "caption",
+            label: t(locale, "imageCaptionAria"),
+            defaultValue: codeCaption,
+            placeholder: t(locale, "imageCaptionPlaceholder"),
+            required: false,
+          },
+        ]}
+        onSubmit={(values) => applyCodeCaption(values.caption ?? "")}
+        onClose={() => setCaptionOpen(false)}
+      />
     </div>
   );
 }
