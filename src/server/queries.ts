@@ -4,6 +4,7 @@ import { prosemirrorToText } from "@/lib/blocks";
 import { docMentionsPage } from "@/lib/mentions";
 import { promptTerms, scorePage, snippetAround } from "@/lib/retrieval";
 import { paginateSlice, type PaginateResult } from "@/lib/cursor-pagination";
+import { normalizeAuditEvent, paginateAudit, type AuditEvent } from "@/lib/audit-log";
 import type { SummaryBlock } from "@/lib/page-summary";
 
 export type PageTreeNode = {
@@ -980,6 +981,56 @@ export async function getRecentActivity(workspaceId: string, take = 40) {
       actor: { select: { id: true, name: true, email: true } },
     },
   });
+}
+
+/** Internal scan cap for the cursor-paged activity feed (see follow-up: keyset in SQL). */
+const ACTIVITY_PAGE_SCAN = 1000;
+
+/**
+ * One keyset page of a workspace's activity/audit feed, newest first.
+ *
+ * Additive companion to {@link getRecentActivity}: the same `Activity` rows, but
+ * projected through the pure `@/lib/audit-log` reference implementation and
+ * walked with the shared opaque `@/lib/cursor-pagination` dialect, so "Load more"
+ * never re-reads the workspace and the boundary row is never repeated or skipped.
+ * A row without a `targetId` falls back to its own id and a missing actor to
+ * `SYSTEM_ACTOR_ID` (both via `normalizeAuditEvent`), so the feed never silently
+ * drops an event. A malformed cursor fails closed (`items: []`, `hasMore: false`).
+ */
+export async function getActivityPage(
+  workspaceId: string,
+  options: { limit?: number; cursor?: string | null } = {},
+): Promise<PaginateResult<AuditEvent>> {
+  const rows = await prisma.activity.findMany({
+    where: { workspaceId },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: ACTIVITY_PAGE_SCAN,
+    select: {
+      id: true,
+      actorId: true,
+      action: true,
+      targetType: true,
+      targetId: true,
+      meta: true,
+      createdAt: true,
+    },
+  });
+
+  const events: AuditEvent[] = [];
+  for (const row of rows) {
+    const event = normalizeAuditEvent({
+      id: row.id,
+      actorId: row.actorId,
+      type: row.action,
+      entityId: row.targetId ?? row.id,
+      entityType: row.targetType,
+      createdAt: row.createdAt,
+      meta: row.meta ?? undefined,
+    });
+    if (event !== null) events.push(event);
+  }
+
+  return paginateAudit(events, { limit: options.limit, cursor: options.cursor });
 }
 
 /**
