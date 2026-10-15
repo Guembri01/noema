@@ -9,23 +9,30 @@ import { safeAction } from "@/lib/actions-client";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import { stableTime } from "@/lib/time";
+import { bucketKey, bucketLabel } from "@/lib/date-bucket";
+import { truncateMiddle } from "@/lib/truncate";
 import { offsetForIndex, totalHeight, visibleRange } from "@/lib/virtual-list";
 
 /*
  * Windowed mode geometry. The trash can grow without bound, so past
  * VIRTUAL_THRESHOLD rows we only mount the slice in view inside a fixed-height
- * scroller. Rows are uniform here — a title + timestamp beside the controls on
- * one line — so a constant stride is close enough and lets
- * `visibleRange`/`offsetForIndex` stay O(1).
+ * scroller. Deletion-day headers are their own lines in that stream, so the
+ * window is computed over the flattened `header | page` items with per-item
+ * heights (`heightOf`) — the variable-height path of `virtual-list` that
+ * `search-results.tsx` already uses — instead of a single uniform stride.
  */
 /** Estimated row height (`py-3` + title + timestamp, controls on one line). */
 const ROW_HEIGHT = 64;
+/** Height of a deletion-day header line. */
+const HEADER_HEIGHT = 32;
 /** Height of the windowed scroll viewport. */
 const VIEWPORT_HEIGHT = 480;
 /** Rows rendered beyond the viewport on each side to hide fast-scroll gaps. */
 const OVERSCAN = 4;
 /** Below this many rows the whole list renders at once. */
 const VIRTUAL_THRESHOLD = 40;
+/** Longest title kept before its middle is elided (code points, incl. `…`). */
+const TITLE_MAX = 64;
 
 export type TrashRow = {
   id: string;
@@ -33,6 +40,15 @@ export type TrashRow = {
   icon: string | null;
   deletedAt: string | null;
 };
+
+/**
+ * One line of the trash list: a deletion-day header, or a trashed page.
+ * Flattening to a single stream before windowing keeps the virtual geometry (and
+ * its arithmetic) over one index space.
+ */
+type TrashItem =
+  | { kind: "header"; key: string; label: string }
+  | { kind: "page"; page: TrashRow };
 
 function deletedLabel(value: string | null) {
   if (!value) return "Deleted";
@@ -47,8 +63,41 @@ function deletedLabel(value: string | null) {
 }
 
 /**
+ * Day bucket of a trashed page via `date-bucket`'s UTC `day` unit, so a header
+ * always names exactly the calendar day (UTC) the row falls in and never varies
+ * with the machine timezone. A page with no usable `deletedAt` is keyed `""` and
+ * labelled with a stable fallback rather than being dropped from the list.
+ */
+function deletedDay(page: TrashRow): { key: string; label: string } {
+  const key = page.deletedAt ? bucketKey(page.deletedAt, "day") : "";
+  if (!key) return { key: "", label: "Undated" };
+  return { key, label: bucketLabel(key, "day") };
+}
+
+/**
+ * Flatten pages into `header | page` items, one header per consecutive run of
+ * the same deletion day. `getTrash` already orders by `deletedAt desc`, so a day's
+ * pages are contiguous; run-based grouping therefore preserves the existing
+ * order without re-sorting and never emits a duplicate header for a day.
+ */
+function groupByDay(pages: TrashRow[]): TrashItem[] {
+  const items: TrashItem[] = [];
+  let current: string | null = null;
+  for (const page of pages) {
+    const day = deletedDay(page);
+    if (day.key !== current) {
+      items.push({ kind: "header", key: day.key, label: day.label });
+      current = day.key;
+    }
+    items.push({ kind: "page", page });
+  }
+  return items;
+}
+
+/**
  * Trash list. Restoring is reversible and instant; deleting for good asks once
- * inline (no native `confirm()` dialog).
+ * inline (no native `confirm()` dialog). Rows are grouped under the (UTC) day
+ * they were deleted.
  */
 export function TrashList({
   workspaceId,
@@ -82,14 +131,18 @@ export function TrashList({
     });
 
   // Shared row body so the plain and windowed lists stay byte-identical in
-  // what they render (only the positioning wrapper differs).
+  // what they render (only the positioning wrapper differs). Long titles keep
+  // both ends (`truncateMiddle`): trashed pages often share a long prefix
+  // ("Title (copy)") or end in a disambiguating timestamp.
   const rowBody = (page: TrashRow) => (
     <>
       <span aria-hidden className="text-lg">
         {page.icon ?? "📄"}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm">{page.title || "Untitled"}</span>
+        <span className="block truncate text-sm">
+          {truncateMiddle(page.title || "Untitled", TITLE_MAX)}
+        </span>
         <span className="block text-[11px] text-muted" suppressHydrationWarning>{deletedLabel(page.deletedAt)}</span>
       </span>
 
@@ -155,6 +208,11 @@ export function TrashList({
     </>
   );
 
+  // Shared header body so the plain and windowed lists stay byte-identical.
+  const headerBody = (label: string) => (
+    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</span>
+  );
+
   if (pages.length === 0) {
     return (
       <div className="notion-empty rounded-lg border border-dashed border-border">
@@ -167,6 +225,11 @@ export function TrashList({
     );
   }
 
+  // Flattened `header | page` stream the window (and both layouts) render from.
+  const items = groupByDay(pages);
+  const heightOf = (index: number) =>
+    items[index]?.kind === "header" ? HEADER_HEIGHT : ROW_HEIGHT;
+
   // Long lists mount only the visible slice; short lists keep the plain <ul>.
   const windowed = pages.length > VIRTUAL_THRESHOLD;
   const range = windowed
@@ -174,11 +237,12 @@ export function TrashList({
         scrollTop,
         viewportSize: VIEWPORT_HEIGHT,
         itemHeight: ROW_HEIGHT,
-        itemCount: pages.length,
+        itemCount: items.length,
         overscan: OVERSCAN,
+        heightOf,
       })
-    : { start: 0, end: 0 };
-  const visible = windowed ? pages.slice(range.start, range.end) : pages;
+    : { start: 0, end: items.length };
+  const visible = windowed ? items.slice(range.start, range.end) : items;
 
   return (
     <>
@@ -234,18 +298,27 @@ export function TrashList({
           className="overflow-y-auto rounded-xl border border-border"
           style={{ height: VIEWPORT_HEIGHT }}
         >
-          <ul className="relative" style={{ height: totalHeight(pages.length, ROW_HEIGHT) }}>
-            {visible.map((page, offset) => {
+          <ul className="relative" style={{ height: totalHeight(items.length, ROW_HEIGHT, heightOf) }}>
+            {visible.map((item, offset) => {
               const index = range.start + offset;
-              return (
+              // Absolute items stacked at their true offset: the spacer <ul>
+              // carries the full height so the scrollbar matches the list.
+              const style = { top: offsetForIndex(index, ROW_HEIGHT, heightOf) };
+              return item.kind === "header" ? (
                 <li
-                  key={page.id}
-                  // Absolute rows stacked at their true offset: the spacer <ul>
-                  // carries the full height so the scrollbar matches the list.
-                  className="absolute inset-x-0 flex items-center gap-3 overflow-hidden border-b border-border px-4"
-                  style={{ top: offsetForIndex(index, ROW_HEIGHT), height: ROW_HEIGHT }}
+                  key={`header:${item.key}`}
+                  className="absolute inset-x-0 flex items-center border-b border-border bg-surface-2 px-4"
+                  style={{ ...style, height: HEADER_HEIGHT }}
                 >
-                  {rowBody(page)}
+                  {headerBody(item.label)}
+                </li>
+              ) : (
+                <li
+                  key={item.page.id}
+                  className="absolute inset-x-0 flex items-center gap-3 overflow-hidden border-b border-border px-4"
+                  style={{ ...style, height: ROW_HEIGHT }}
+                >
+                  {rowBody(item.page)}
                 </li>
               );
             })}
@@ -253,11 +326,17 @@ export function TrashList({
         </div>
       ) : (
         <ul className="divide-y divide-border rounded-xl border border-border">
-          {pages.map((page) => (
-            <li key={page.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-              {rowBody(page)}
-            </li>
-          ))}
+          {visible.map((item) =>
+            item.kind === "header" ? (
+              <li key={`header:${item.key}`} className="bg-surface-2 px-4 py-2">
+                {headerBody(item.label)}
+              </li>
+            ) : (
+              <li key={item.page.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                {rowBody(item.page)}
+              </li>
+            ),
+          )}
         </ul>
       )}
     </>
