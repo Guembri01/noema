@@ -1,7 +1,15 @@
 import type { ReactNode } from "react";
+import { formatCaption, numberLines } from "@/lib/code-block";
 import { embedMeta, resolveEmbed } from "@/lib/embeds";
 import { t } from "@/lib/i18n";
 import { alignOf, alignStyle } from "@/lib/media";
+import {
+  blocksToQuote,
+  formatPullQuote,
+  parsePullQuote,
+  type PullQuote,
+  type PullQuoteBlock,
+} from "@/lib/pull-quote";
 import { sanitizeHref } from "@/lib/validation";
 
 /**
@@ -107,7 +115,101 @@ function colorProps(node: PMNode): Record<string, string> {
   return color ? { "data-block-color": String(color) } : {};
 }
 
-function renderBlock(node: PMNode, key: string, locale: string = "en"): ReactNode {
+/* -------------------------------------------------------------------------- *
+ * Read-side block variants: pull quotes and the two optional code-block
+ * affordances. Both delegate their semantics to the shared libs so the editor,
+ * the read paths and the unit tests agree on one definition.
+ * -------------------------------------------------------------------------- */
+
+/** Flatten a node's inline text (a code block's code, a paragraph's words, …). */
+function nodeText(node: PMNode): string {
+  if (typeof node.text === "string") return node.text;
+  return (node.content ?? []).map(nodeText).join("");
+}
+
+/** Project a read-side block into `pull-quote.ts`'s minimal block shape. */
+function pullQuoteBlockOf(node: PMNode): PullQuoteBlock {
+  const text = nodeText(node).trim();
+  const block: PullQuoteBlock = {
+    type: node.type === "blockquote" ? "blockquote" : "paragraph",
+    content: text ? [{ type: "text", text }] : [],
+  };
+  if (node.type === "blockquote" && node.attrs?.size === "large") {
+    block.attrs = { size: "large" };
+  }
+  return block;
+}
+
+/**
+ * Read a `size: "large"` blockquote as a pull quote through `pull-quote.ts`.
+ * Returns undefined for a normal blockquote — or a large one the lib rejects
+ * (blank text) — so it keeps the ordinary blockquote rendering untouched.
+ */
+function pullQuoteOf(node: PMNode): PullQuote | undefined {
+  if (node.type !== "blockquote" || node.attrs?.size !== "large") return undefined;
+  const parsed = parsePullQuote({ text: nodeText(node), size: "large" });
+  return parsed.ok ? parsed.value : undefined;
+}
+
+/**
+ * Resolve a top-level pull-quote pair: the `large` blockquote plus the optional
+ * attribution paragraph that `quoteToBlocks` writes immediately after it. The
+ * lib strips a leading dash when it reads the pair back, so a following
+ * paragraph only counts as an attribution when that strip changes its text; a
+ * plain paragraph is left in place for normal rendering.
+ */
+function resolvePullQuote(
+  node: PMNode,
+  next: PMNode | undefined,
+): { quote?: PullQuote; consumed: boolean } {
+  const base = pullQuoteOf(node);
+  if (!base) return { consumed: false };
+  if (!next || next.type !== "paragraph") return { quote: base, consumed: false };
+
+  const nextText = nodeText(next).trim();
+  if (!nextText) return { quote: base, consumed: false };
+
+  const parsed = parsePullQuote(blocksToQuote([pullQuoteBlockOf(node), pullQuoteBlockOf(next)]));
+  if (!parsed.ok) return { quote: base, consumed: false };
+  const { attribution } = parsed.value;
+  if (attribution === undefined || attribution === nextText) {
+    return { quote: base, consumed: false };
+  }
+  return { quote: parsed.value, consumed: true };
+}
+
+/** Display-scale pull quote — the read-side twin of the editor's decoration. */
+function renderPullQuote(quote: PullQuote, node: PMNode, key: string): ReactNode {
+  return (
+    <blockquote
+      key={key}
+      {...colorProps(node)}
+      className="noema-pull-quote"
+      data-pull-quote=""
+      data-size="large"
+      style={{ fontSize: "1.5em", fontWeight: 600, lineHeight: 1.45 }}
+      title={formatPullQuote(quote)}
+    >
+      {quote.text}
+      {quote.attribution !== undefined && (
+        <footer
+          className="noema-pull-quote-attribution"
+          style={{ fontSize: "0.9em", fontWeight: 400, opacity: 0.75, textAlign: "right" }}
+        >
+          {"\u2014 "}
+          {quote.attribution}
+        </footer>
+      )}
+    </blockquote>
+  );
+}
+
+function renderBlock(
+  node: PMNode,
+  key: string,
+  locale: string = "en",
+  quote?: PullQuote,
+): ReactNode {
   switch (node.type) {
     case "paragraph":
       return <p key={key} {...colorProps(node)}>{renderInline(node.content)}</p>;
@@ -138,21 +240,67 @@ function renderBlock(node: PMNode, key: string, locale: string = "en"): ReactNod
         </li>
       );
     }
-    case "blockquote":
+    case "blockquote": {
+      // A `size: "large"` quote (already resolved with any attribution
+      // paragraph) renders at display scale; everything else is unchanged.
+      const pullQuote = quote ?? pullQuoteOf(node);
+      if (pullQuote) return renderPullQuote(pullQuote, node, key);
       return <blockquote key={key} {...colorProps(node)}>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}</blockquote>;
+    }
     case "codeBlock": {
       // Parity with the editor's code block: keep the language class so the
       // same styles (and, later, any highlighting) apply in read-only views.
       const language = String(node.attrs?.language ?? "").trim();
+      const codeClass = language ? `language-${language}` : undefined;
+      const rawCaption = node.attrs?.caption;
+      const caption = formatCaption(typeof rawCaption === "string" ? rawCaption : null);
+      const showLineNumbers = Boolean(node.attrs?.lineNumbers);
+
+      // Unchanged fast path: neither optional affordance is on, so emit exactly
+      // the markup this renderer produced before.
+      if (!showLineNumbers && caption === "") {
+        return (
+          <pre key={key} {...colorProps(node)}>
+            <code className={codeClass} data-language={language || undefined}>
+              {renderInline(node.content)}
+            </code>
+          </pre>
+        );
+      }
+
+      const gutter = showLineNumbers ? numberLines(nodeText(node)) : [];
       return (
-        <pre key={key} {...colorProps(node)}>
-          <code
-            className={language ? `language-${language}` : undefined}
-            data-language={language || undefined}
+        <div key={key} className="noema-code-block-view">
+          <pre
+            {...colorProps(node)}
+            style={showLineNumbers ? { display: "flex", gap: 12, overflow: "visible" } : undefined}
           >
-            {renderInline(node.content)}
-          </code>
-        </pre>
+            {showLineNumbers && (
+              <div
+                aria-hidden="true"
+                className="noema-code-gutter"
+                style={{
+                  userSelect: "none",
+                  textAlign: "right",
+                  color: "var(--muted)",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {gutter.map((row, index) => (
+                  <div key={`${index}-${row.n ?? "wrap"}`}>{row.n === null ? "\u00a0" : row.n}</div>
+                ))}
+              </div>
+            )}
+            <code
+              className={codeClass}
+              data-language={language || undefined}
+              style={showLineNumbers ? { flex: 1, minWidth: 0, overflowX: "auto" } : undefined}
+            >
+              {renderInline(node.content)}
+            </code>
+          </pre>
+          {caption !== "" && <p className="noema-image-caption-view">{caption}</p>}
+        </div>
       );
     }
     case "horizontalRule":
@@ -312,9 +460,14 @@ export function DocRenderer({
 }) {
   const root = doc as PMNode | null;
   if (!root || !Array.isArray(root.content)) return null;
-  return (
-    <div className="noema-doc-renderer">
-      {root.content.map((node, index) => renderBlock(node, `b${index}`, locale))}
-    </div>
-  );
+  const nodes = root.content;
+  const rendered: ReactNode[] = [];
+  for (let index = 0; index < nodes.length; index += 1) {
+    // A large blockquote may consume the attribution paragraph right after it;
+    // every other node (and key) is untouched.
+    const { quote, consumed } = resolvePullQuote(nodes[index], nodes[index + 1]);
+    rendered.push(renderBlock(nodes[index], `b${index}`, locale, quote));
+    if (consumed) index += 1;
+  }
+  return <div className="noema-doc-renderer">{rendered}</div>;
 }
