@@ -182,6 +182,14 @@ function normalizeCardSize(value: unknown): CardSizeName | undefined {
     : undefined;
 }
 
+/**
+ * A view's parsed config plus the additive keys this component owns that the
+ * general `ViewConfig` schema does not model — today the database `description`
+ * (R89.21). Declared locally so a save can carry the extra key without widening
+ * the engine's type.
+ */
+type EditableViewConfig = ViewConfig & { description?: string };
+
 export function DatabaseView({
   locale,
   databasePageId,
@@ -223,7 +231,7 @@ export function DatabaseView({
   >(null);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
   /** Latest intended view config while a save is still in flight (see below). */
-  const pendingConfig = useRef<ViewConfig | undefined>(undefined);
+  const pendingConfig = useRef<EditableViewConfig | undefined>(undefined);
   /**
    * In-session column layout (order/widths/hidden) per view. Like the manual
    * row order below it is remembered for the session and seeded from the legacy
@@ -333,7 +341,16 @@ export function DatabaseView({
     (activeView?.config as { cardSize?: unknown } | null | undefined)?.cardSize,
   );
 
-  const setViewConfig = (patch: Partial<ViewConfig>) => {
+  // DATABASE DESCRIPTION (R89.21): the intro text shown between the toolbar and
+  // the active view. Like `defaultTemplateId`/`form` above, the key is not part
+  // of the parsed `viewConfig`, so it is read off the raw view config; an absent
+  // or non-string value means "no description" and renders nothing.
+  const rawDescription = (
+    activeView?.config as { description?: unknown } | null | undefined
+  )?.description;
+  const viewDescription = typeof rawDescription === "string" ? rawDescription : "";
+
+  const setViewConfig = (patch: Partial<EditableViewConfig>) => {
     if (!activeView) return;
     // Two config writes in quick succession used to race: the second one was
     // built from props the server had not re-delivered yet and silently
@@ -341,13 +358,26 @@ export function DatabaseView({
     // the direction came back). Build each patch on the latest *intended*
     // config instead of the last rendered one.
     const base = pendingConfig.current ?? viewConfig;
-    const next = { ...base, ...patch };
+    // Carry the description across every write so a filter/sort save never
+    // drops it; a patch can still override it explicitly.
+    const next: EditableViewConfig = {
+      ...base,
+      ...(viewDescription ? { description: viewDescription } : {}),
+      ...patch,
+    };
     pendingConfig.current = next;
     startTransition(async () => {
       const result = await updateViewAction(activeView.id, { config: next });
       if ("error" in result) toast.error(result.error);
       router.refresh();
     });
+  };
+
+  /** Persist the database intro text (trimmed, 500-char cap); blank clears it. */
+  const saveDescription = (value: string) => {
+    const trimmed = value.trim().slice(0, 500);
+    if (trimmed === viewDescription) return;
+    setViewConfig({ description: trimmed || undefined });
   };
 
   const colorOf = (row: DBRow): string | null =>
@@ -1188,6 +1218,28 @@ export function DatabaseView({
           )}
         </div>
       </div>
+
+      {/* Database description (R89.21): intro text above the view. Editors get
+          an inline field; everyone else sees the stored text, and an empty
+          description renders nothing. */}
+      {editable ? (
+        <textarea
+          key={activeView.id}
+          defaultValue={viewDescription}
+          aria-label={t(locale, "descriptionLabel")}
+          placeholder={t(locale, "addDescription")}
+          maxLength={500}
+          rows={2}
+          onBlur={(event) => saveDescription(event.target.value)}
+          className="mb-3 w-full resize-y rounded-lg border border-transparent bg-transparent px-1 py-1 text-sm text-muted outline-none placeholder:text-muted hover:border-border focus:border-border focus:bg-surface"
+        />
+      ) : (
+        viewDescription !== "" && (
+          <p className="mb-3 whitespace-pre-wrap px-1 text-sm text-muted">
+            {viewDescription}
+          </p>
+        )
+      )}
 
       {/* Deleted rows: soft-deleted rows of this database, restorable inline. */}
       {deletedRows !== null && (
