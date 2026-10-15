@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { getProjects, getWorkspaceBySlug } from "@/server/queries";
 import { ProjectsBoard } from "@/components/projects-board";
+import { updateProjectAction, type ProjectStatus } from "@/server/actions/projects";
 import { t } from "@/lib/i18n";
 
 export const metadata = { title: "Projects" };
@@ -23,6 +24,18 @@ export default async function ProjectsPage({
 
   const projects = await getProjects(workspace.id);
 
+  /**
+   * Move a project between board columns. Handed to the client board as a
+   * Server Action; the board only surfaces the move controls once WIP limits
+   * are configured. `updateProjectAction` re-validates the status server-side.
+   */
+  async function moveProject(projectId: string, status: string): Promise<void> {
+    "use server";
+    await updateProjectAction({ projectId, status: status as ProjectStatus });
+  }
+
+  // No persisted project-board config exists yet, so `wipLimits` stays unset —
+  // the WIP strip and move controls remain hidden until one is added.
   return (
     <div className="mx-auto max-w-5xl px-8 py-12">
       <p className="text-sm text-muted">Workspace</p>
@@ -52,6 +65,7 @@ export default async function ProjectsPage({
             dueDate: milestone.dueDate?.toISOString() ?? null,
           })),
         }))}
+        onMoveProject={moveProject}
       />
     </div>
   );
