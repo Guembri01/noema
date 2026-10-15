@@ -81,7 +81,14 @@ export type {
 } from "@/components/database/database-types";
 import { stableTime } from "@/lib/time";
 import { AddPropertyForm, Cell, icon as propertyIcon } from "./view-parts";
-import { TableView, ListView, BoardView, GalleryView, CalendarView } from "./view-renderers";
+import {
+  TableView,
+  ListView,
+  BoardView,
+  GalleryView,
+  CalendarView,
+  FormView,
+} from "./view-renderers";
 
 export {
   COLOR_CHOICES,
@@ -262,6 +269,14 @@ export function DatabaseView({
   const defaultTemplate = defaultEngineTemplate
     ? templates.find((template) => template.id === defaultEngineTemplate.id) ?? null
     : null;
+
+  // A FORM view keeps its question config under `config.form`; read it off the
+  // raw view because the parsed `viewConfig` drops keys the general view schema
+  // does not know. An absent/malformed value falls back to the full list of
+  // non-computed questions inside `FormView`.
+  const formConfig = (
+    activeView?.config as { form?: unknown } | null | undefined
+  )?.form;
 
   const setViewConfig = (patch: Partial<ViewConfig>) => {
     if (!activeView) return;
@@ -641,6 +656,38 @@ export function DatabaseView({
       await createRowAction(databasePageId);
       router.refresh();
     });
+
+  /**
+   * Submit a FORM view. The row is created through the same `createRowAction`
+   * path the table's "New row" uses — the submitted title (the primary column,
+   * when it is a question) seeds the row so its cell is not written twice —
+   * then every other accepted answer is written with `setPropertyValueAction`,
+   * exactly as a cell edit would. `FormView` owns validation, so only accepted
+   * answers reach here.
+   */
+  const submitForm = (values: { propertyId: string; value: unknown }[]) => {
+    startTransition(async () => {
+      const primaryAnswer = primary
+        ? values.find((cell) => cell.propertyId === primary.id)
+        : undefined;
+      const submittedTitle = (primaryAnswer?.value as { text?: unknown } | undefined)?.text;
+      const created = await createRowAction(
+        databasePageId,
+        typeof submittedTitle === "string" ? submittedTitle : "",
+      );
+      if (!("ok" in created)) {
+        toast.error(created.error);
+        return;
+      }
+      for (const cell of values) {
+        // `createRowAction` already seeded the primary cell from the title.
+        if (cell.propertyId === primary?.id) continue;
+        await setPropertyValueAction(created.id, cell.propertyId, cell.value);
+      }
+      toast.success(t(locale, "done"));
+      router.refresh();
+    });
+  };
 
   const onSaveTemplate = (row: DBRow) =>
     startTransition(async () => {
@@ -1202,6 +1249,15 @@ export function DatabaseView({
           rows={viewRows}
           groupByPropertyId={viewConfig.groupByPropertyId}
         />
+      ) : activeView.type === "FORM" ? (
+        <FormView
+          locale={locale}
+          properties={properties}
+          config={formConfig}
+          // A read-only database shows the questions without a submit seam,
+          // matching how every other view omits its editors when not editable.
+          onSubmit={editable ? submitForm : undefined}
+        />
       ) : activeView.type === "TABLE" ? (
         <TableView
           locale={locale}
@@ -1469,6 +1525,7 @@ function ViewIcon({ type }: { type: string }) {
     CALENDAR: "🗓",
     TIMELINE: "⟷",
     CHART: "📈",
+    FORM: "📝",
   };
   return <span className="text-xs text-muted">{map[type] ?? "⊞"}</span>;
 }
