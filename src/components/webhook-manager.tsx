@@ -14,6 +14,7 @@ import { WEBHOOK_EVENT_CATALOG } from "@/lib/webhook-events";
 import {
   WEBHOOK_EVENTS,
   isWebhookEventType,
+  matchesSubscription,
   validateEventPayload,
 } from "@/lib/webhook-event-catalog";
 import {
@@ -52,20 +53,86 @@ const EVENT_LABELS = new Map<string, string>(
   WEBHOOK_EVENT_CATALOG.map((event) => [event.id, event.label]),
 );
 
-/** Join stored event ids into picker labels, falling back to the raw id. */
-function subscriptionLabels(ids: readonly string[]): string {
-  return ids.map((id) => EVENT_LABELS.get(id) ?? id).join(", ");
+/**
+ * A wildcard subscription the picker offers on top of the exact event ids:
+ * `*` for everything, or a namespace prefix (`page.*`, `row.*`, …) derived from
+ * the catalog. `matchesSubscription` decides which events each one selects, and
+ * the delivery path (`dispatchWebhooks`) already honours the stored pattern.
+ */
+type WildcardSubscription = {
+  /** Wire pattern stored on the webhook. */
+  readonly pattern: string;
+  /** How many catalog events the pattern selects (a neutral count badge). */
+  readonly matchCount: number;
+  /** One-line description for the picker, naming how many events it selects. */
+  readonly description: string;
+};
+
+/** The distinct namespaces in the catalog — the segment before the first dot. */
+const EVENT_NAMESPACES = [
+  ...new Set(
+    WEBHOOK_EVENTS.map((event) =>
+      event.type.slice(0, event.type.indexOf(".")),
+    ),
+  ),
+].sort();
+
+/** How many catalog events a subscription pattern selects — via the shared matcher. */
+function matchedEventCount(pattern: string): number {
+  return WEBHOOK_EVENTS.filter((event) =>
+    matchesSubscription(event.type, pattern),
+  ).length;
+}
+
+/** Wildcard patterns the picker offers: `*` first, then one per namespace. */
+const WILDCARD_SUBSCRIPTIONS: readonly WildcardSubscription[] = [
+  {
+    pattern: "*",
+    matchCount: matchedEventCount("*"),
+    description: `Subscribe to every event (${matchedEventCount("*")}).`,
+  },
+  ...EVENT_NAMESPACES.map((namespace) => {
+    const pattern = `${namespace}.*`;
+    return {
+      pattern,
+      matchCount: matchedEventCount(pattern),
+      description: `Subscribe to every ${namespace} event (${matchedEventCount(pattern)}).`,
+    };
+  }),
+];
+
+/**
+ * Join stored subscription patterns into picker labels: `*` renders as the
+ * locale's "all events", namespace prefixes (`page.*`) render as themselves,
+ * exact ids through the identity catalog, and anything else falls back verbatim.
+ */
+function subscriptionLabels(ids: readonly string[], locale: string): string {
+  return ids
+    .map((id) => {
+      const wildcard = WILDCARD_SUBSCRIPTIONS.find(
+        (option) => option.pattern === id,
+      );
+      if (wildcard) {
+        return wildcard.pattern === "*" ? t(locale, "allEvents") : wildcard.pattern;
+      }
+      return EVENT_LABELS.get(id) ?? id;
+    })
+    .join(", ");
 }
 
 /**
- * Validate a picked event set against the B91 catalog before creating the hook,
- * mirroring the server's `WEBHOOK_EVENTS` filter in `createWebhookAction`.
- * Returns the first problem message, or `null` when every id is a known event.
+ * Validate a picked subscription set against the B91 catalog before creating the
+ * hook, mirroring the server's `WEBHOOK_EVENTS` filter in `createWebhookAction`.
+ * Accepts exact event ids and the wildcard patterns the picker offers; returns
+ * the first problem message, or `null` when every entry is known.
  */
 function validateEventSelection(selected: readonly string[]): string | null {
-  for (const type of selected) {
-    if (isWebhookEventType(type)) continue;
-    return validateEventPayload(type, {})[0].message;
+  for (const pattern of selected) {
+    if (isWebhookEventType(pattern)) continue;
+    if (WILDCARD_SUBSCRIPTIONS.some((option) => option.pattern === pattern)) {
+      continue;
+    }
+    return validateEventPayload(pattern, {})[0].message;
   }
   return null;
 }
@@ -185,6 +252,20 @@ export function WebhookManager({
           className="h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
         />
         <div className="flex flex-wrap gap-3 text-sm">
+          {WILDCARD_SUBSCRIPTIONS.map((option) => (
+            <label key={option.pattern} className="flex items-center gap-1.5" title={option.description}>
+              <input
+                type="checkbox"
+                checked={events.includes(option.pattern)}
+                onChange={() => toggleEvent(option.pattern)}
+              />
+              {option.pattern}
+              <code className="rounded bg-surface px-1 font-mono text-[10px] text-muted">
+                {option.matchCount}
+              </code>
+            </label>
+          ))}
+          <span className="w-px self-stretch bg-border" aria-hidden />
           {WEBHOOK_EVENTS.map((event) => (
             <label key={event.type} className="flex items-center gap-1.5" title={event.description}>
               <input
@@ -222,7 +303,7 @@ export function WebhookManager({
               <li key={webhook.id} className="flex items-center gap-3 px-4 py-3 text-sm">
                 <span className="flex-1 truncate font-mono text-xs">{webhook.url}</span>
                 <span className="text-xs text-muted">
-                  {webhook.events.length === 0 ? t(locale, "allEvents") : subscriptionLabels(webhook.events)}
+                  {webhook.events.length === 0 ? t(locale, "allEvents") : subscriptionLabels(webhook.events, locale)}
                 </span>
                 {health && (
                   <span
