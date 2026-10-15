@@ -34,10 +34,14 @@ function dayEndIso(day: string | undefined): string | undefined {
 /**
  * Workspace-wide audit log: the `Activity` feed the settings summary draws from,
  * but walked one cursor page at a time (newest first) through the additive
- * `getActivityPage`, then narrowed by actor/action/date and sectioned into UTC
- * day buckets by the pure `@/lib/audit-log` module. This page is only the thin
- * server shell (permission gate + URL filters + first page); appending later
- * pages is the `AuditFeed` client component's "Load more" control.
+ * `getActivityPage`. The active actor/action/date filters are passed straight
+ * into that cursor query (its `ActivityPageFilters`), so every page — the first
+ * one here and each "Load more" — is filled with matching rows instead of a
+ * workspace-wide window trimmed afterwards; the same filter still reaches the
+ * `AuditFeed` client component, which re-applies it idempotently and sections
+ * the events into UTC day buckets via the pure `@/lib/audit-log` module. This
+ * page is only the thin server shell (permission gate + URL filters + first
+ * page); appending later pages is the `AuditFeed` "Load more" control.
  */
 export default async function AuditLogPage({
   params,
@@ -58,20 +62,6 @@ export default async function AuditLogPage({
   if (!canManageMembers(access.role)) notFound();
 
   const workspaceId = workspace.id;
-  const [page, members] = await Promise.all([
-    getActivityPage(workspaceId, { limit: AUDIT_PAGE_SIZE }),
-    // `getActivityPage` only carries actor ids; member records supply the names
-    // the filter's actor select shows.
-    getWorkspaceMembers(workspaceId),
-  ]);
-  const events = page.items;
-
-  const nameById = new Map<string, string>();
-  for (const member of members) nameById.set(member.id, member.name);
-  const actorOptions = [...new Set(events.map((event) => event.actorId))]
-    .sort()
-    .map((id) => ({ id, label: nameById.get(id) ?? id }));
-  const typeOptions = [...new Set(events.map((event) => event.type))].sort();
 
   const filter: AuditFilter = {
     ...(actor ? { actorIds: [actor] } : {}),
@@ -79,6 +69,31 @@ export default async function AuditLogPage({
     ...(dayStartIso(from) ? { from: dayStartIso(from) } : {}),
     ...(dayEndIso(to) ? { to: dayEndIso(to) } : {}),
   };
+  // The feed's own cursor walk is narrowed in the query, so a filtered page is
+  // dense (it fills its window with matches) rather than a workspace-wide window
+  // trimmed after the fact. The actor/action selects still have to reflect the
+  // whole workspace, though: deriving them from the filtered page would erase
+  // every other option the moment a filter is applied, so an extra unfiltered
+  // window supplies them (skipped when no filter is active, when the feed page
+  // is already unfiltered).
+  const filtered = Object.keys(filter).length > 0;
+
+  const [page, members, optionPage] = await Promise.all([
+    getActivityPage(workspaceId, { limit: AUDIT_PAGE_SIZE, ...filter }),
+    // `getActivityPage` only carries actor ids; member records supply the names
+    // the filter's actor select shows.
+    getWorkspaceMembers(workspaceId),
+    filtered ? getActivityPage(workspaceId, { limit: AUDIT_PAGE_SIZE }) : null,
+  ]);
+  const events = page.items;
+  const optionEvents = optionPage?.items ?? events;
+
+  const nameById = new Map<string, string>();
+  for (const member of members) nameById.set(member.id, member.name);
+  const actorOptions = [...new Set(optionEvents.map((event) => event.actorId))]
+    .sort()
+    .map((id) => ({ id, label: nameById.get(id) ?? id }));
+  const typeOptions = [...new Set(optionEvents.map((event) => event.type))].sort();
 
   /** Next page of the audit feed, handed to `AuditFeed`'s "Load more". */
   async function loadMoreActivity(input: { cursor: string }) {
@@ -92,6 +107,7 @@ export default async function AuditLogPage({
       const next = await getActivityPage(workspaceId, {
         limit: AUDIT_PAGE_SIZE,
         cursor: input.cursor,
+        ...filter,
       });
       return { ok: true as const, events: next.items, nextCursor: next.nextCursor };
     } catch {
