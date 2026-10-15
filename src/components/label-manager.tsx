@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Tag, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -10,6 +10,13 @@ import {
   updateLabelAction,
 } from "@/server/actions/tickets";
 import { safeAction } from "@/lib/actions-client";
+import {
+  PALETTE_STEPS,
+  generatePalette,
+  isValidHex,
+  shade,
+  tint,
+} from "@/lib/color-palette";
 import { LABEL_COLORS } from "@/lib/tickets";
 import { allocateSlugs, uniqueSlug } from "@/lib/slug-uniqueness";
 import { cn } from "@/lib/utils";
@@ -61,6 +68,114 @@ const TONES: Record<string, string> = {
   purple: "bg-purple-500/10 text-purple-600",
   pink: "bg-pink-500/10 text-pink-600",
 };
+
+/**
+ * Base hex seed per named label colour, mirroring the `TONES` Tailwind chips.
+ * The seeds only *derive* swatch paint — the stored label colour stays the
+ * named value, so persistence, validation and the `TONES` rendering are
+ * untouched.
+ */
+const LABEL_COLOR_SEEDS: Record<string, string> = {
+  gray: "#6b7280",
+  blue: "#3b82f6",
+  green: "#10b981",
+  yellow: "#f59e0b",
+  orange: "#f97316",
+  red: "#ef4444",
+  purple: "#a855f7",
+  pink: "#ec4899",
+};
+
+/** Neutral seed used when a label carries an unknown or malformed colour. */
+const FALLBACK_SEED = "#6b7280";
+
+/** Resolve a named colour to a usable `#RRGGBB` seed (unknown names → gray). */
+function labelSeed(color: string): string {
+  const candidate = LABEL_COLOR_SEEDS[color] ?? FALLBACK_SEED;
+  return isValidHex(candidate) ? candidate : FALLBACK_SEED;
+}
+
+/**
+ * Derived swatch paint for a named colour: the generated palette's base stop is
+ * tinted for the background/border and shaded for the text, so every swatch is
+ * deterministic and always a valid `#rrggbb`.
+ */
+function labelSwatchStyle(color: string): CSSProperties {
+  const base = generatePalette(labelSeed(color))[500];
+  return {
+    backgroundColor: tint(base, 82),
+    borderColor: tint(base, 45),
+    color: shade(base, 35),
+  };
+}
+
+/**
+ * Colour swatch picker for labels. The grid is a radiogroup over the existing
+ * `LABEL_COLORS` values — so the stored value domain and CRUD are unchanged —
+ * while each swatch is derived through the shared palette engine. The create
+ * box also previews the active colour's generated 50–900 ramp.
+ */
+function LabelColorPicker({
+  value,
+  onSelect,
+  ariaLabel,
+  showRamp = false,
+}: {
+  value: string;
+  onSelect: (color: string) => void;
+  ariaLabel: string;
+  showRamp?: boolean;
+}) {
+  const [selected, setSelected] = useState(value);
+  const choose = (color: string) => {
+    setSelected(color);
+    onSelect(color);
+  };
+  const ramp = showRamp ? generatePalette(labelSeed(selected)) : null;
+  return (
+    <div className="flex flex-col gap-1">
+      <div
+        role="radiogroup"
+        aria-label={ariaLabel}
+        className="flex flex-wrap items-center gap-1"
+      >
+        {LABEL_COLORS.map((option) => {
+          const active = option === selected;
+          return (
+            <button
+              key={option}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              aria-label={option}
+              title={option}
+              onClick={() => choose(option)}
+              style={labelSwatchStyle(option)}
+              className={cn(
+                "h-6 w-6 rounded-full border text-[10px] font-medium transition",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+                active ? "ring-2 ring-accent ring-offset-1 ring-offset-bg" : "hover:scale-110",
+              )}
+            />
+          );
+        })}
+      </div>
+      {ramp && (
+        <div aria-hidden className="flex overflow-hidden rounded">
+          {PALETTE_STEPS.map((step) => (
+            <span
+              key={step}
+              data-step={step}
+              className="h-2 flex-1"
+              style={{ backgroundColor: ramp[step] }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 /** Workspace-level label catalogue used by every ticket. */
 export function LabelManager({
@@ -130,18 +245,12 @@ export function LabelManager({
           onChange={(event) => setDescription(event.target.value)}
           className="h-9 w-64 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
         />
-        <select
+        <LabelColorPicker
           value={color}
-          aria-label={t(locale, "labelColourAria")}
-          onChange={(event) => setColor(event.target.value)}
-          className="h-9 rounded border border-border bg-bg px-2 text-sm"
-        >
-          {LABEL_COLORS.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
+          onSelect={setColor}
+          ariaLabel={t(locale, "labelColourAria")}
+          showRamp
+        />
         <button
           type="button"
           disabled={pending || !name.trim()}
@@ -206,26 +315,19 @@ export function LabelManager({
               >
                 {renamedSlug[label.id] ?? slugById.get(label.id) ?? ""}
               </code>
-              <select
-                defaultValue={label.color}
-                aria-label={`${t(locale, "colourFor")} ${label.name}`}
-                onChange={(event) =>
+              <LabelColorPicker
+                value={label.color}
+                ariaLabel={`${t(locale, "colourFor")} ${label.name}`}
+                onSelect={(nextColor) =>
                   run(t(locale, "colourUpdated"), async () => {
                     const result = await updateLabelAction({
                       labelId: label.id,
-                      color: event.target.value,
+                      color: nextColor,
                     });
                     return "error" in result ? { ok: false, message: result.error } : { ok: true };
                   })
                 }
-                className="h-8 rounded border border-border bg-bg px-1 text-xs"
-              >
-                {LABEL_COLORS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
+              />
               <input
                 defaultValue={label.description ?? ""}
                 aria-label={`${t(locale, "descriptionFor")} ${label.name}`}
