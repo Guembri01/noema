@@ -5,24 +5,30 @@ import { prisma } from "@/lib/db";
 import { randomToken } from "@/lib/slug";
 import { rateLimit } from "@/lib/api-guard";
 import { storageDriver } from "@/lib/storage";
+import { extForMime, fileNameExt, isAllowedType, mimeForExt } from "@/lib/file-type";
 
 export const runtime = "nodejs";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
-const ALLOWED_TYPES = new Map<string, string>([
-  ["image/png", ".png"],
-  ["image/jpeg", ".jpg"],
-  ["image/gif", ".gif"],
-  ["image/webp", ".webp"],
-  ["image/svg+xml", ".svg"],
-  ["image/avif", ".avif"],
-  ["application/pdf", ".pdf"],
-  ["text/plain", ".txt"],
-  ["text/markdown", ".md"],
-  ["application/json", ".json"],
-  ["application/zip", ".zip"],
-]);
+/**
+ * MIME types the uploader accepts. Kept as an allow-list of rules so the shared
+ * `isAllowedType` matcher owns the comparison and `extForMime` derives the
+ * stored extension — `@/lib/file-type` is the single source of truth.
+ */
+const ALLOWED_TYPES: readonly string[] = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/svg+xml",
+  "image/avif",
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "application/json",
+  "application/zip",
+];
 
 /**
  * File upload. Validates auth + workspace access, type and size, hands the
@@ -59,21 +65,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "File too large (max 10 MB)" }, { status: 413 });
   }
 
-  const extension = ALLOWED_TYPES.get(file.type);
-  if (!extension) {
+  // Validate against the shared allow-list. `File.type` is blank on many
+  // systems, so fall back to the MIME implied by the file name's extension.
+  const mime = file.type || mimeForExt(fileNameExt(file.name));
+  if (!isAllowedType(mime, { allow: ALLOWED_TYPES })) {
     return NextResponse.json(
       { error: `Unsupported file type: ${file.type || "unknown"}` },
       { status: 415 },
     );
   }
 
+  const extension = `.${extForMime(mime)}`;
   const storedName = `${randomToken(12)}${extension}`;
   const driver = storageDriver();
   try {
     await driver.put(
       `${workspaceId}/${storedName}`,
       new Uint8Array(await file.arrayBuffer()),
-      file.type,
+      mime,
     );
   } catch (error) {
     return NextResponse.json(
@@ -87,7 +96,7 @@ export async function POST(request: Request) {
     data: {
       name: file.name || storedName,
       url,
-      mimeType: file.type,
+      mimeType: mime,
       size: file.size,
     },
   });
@@ -95,7 +104,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     url,
     name: file.name || storedName,
-    mimeType: file.type,
+    mimeType: mime,
     size: file.size,
   });
 }
