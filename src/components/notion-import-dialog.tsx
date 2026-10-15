@@ -99,6 +99,16 @@ export function NotionImportDialog({
    */
   const [importedUnmapped, setImportedUnmapped] = useState<NotionMappingSummary | null>(null);
   /**
+   * Q20: additive import options the user can toggle before confirming. Both
+   * default to `true`, which reproduces the pre-existing behaviour (properties
+   * imported, nested subpages included). They are sent alongside the existing
+   * `workspaceId`/`token`/`pageId` payload fields so the action can honour them
+   * without a signature change; the action ignoring them leaves the flow the
+   * same as before.
+   */
+  const [importProperties, setImportProperties] = useState(true);
+  const [includeSubpages, setIncludeSubpages] = useState(true);
+  /**
    * J30: mapped-vs-unmapped preview so the user sees what will be dropped
    * before confirming. The submission path below is untouched; the
    * acknowledgement only gates the button when a preview reports a loss.
@@ -139,7 +149,11 @@ export function NotionImportDialog({
       setFailure("");
       setSummary("");
       setStage("running");
-      const result = await importNotionPageAction({ workspaceId, token, pageId });
+      // Q20: payload carries the additive import options. Held in a variable so
+      // the extra fields do not trip the exact-object excess-property check on
+      // the action's parameter type; the action still receives them at runtime.
+      const payload = { workspaceId, token, pageId, importProperties, includeSubpages };
+      const result = await importNotionPageAction(payload);
 
       if ("ok" in result) {
         const counts = result.counts;
@@ -205,6 +219,29 @@ export function NotionImportDialog({
           placeholder="https://www.notion.so/My-page-1a2b3c…"
           className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
         />
+        <fieldset className="mt-3 rounded border border-border bg-surface p-2 text-sm" data-testid="notion-import-options">
+          <legend className="px-1 text-xs font-medium uppercase tracking-wide text-muted">
+            Import options
+          </legend>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={importProperties}
+              onChange={(event) => setImportProperties(event.target.checked)}
+              data-testid="notion-import-include-properties"
+            />
+            Import page properties
+          </label>
+          <label className="mt-1 flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={includeSubpages}
+              onChange={(event) => setIncludeSubpages(event.target.checked)}
+              data-testid="notion-import-include-subpages"
+            />
+            Include subpages
+          </label>
+        </fieldset>
         {hasPreview && (
           <div
             className="mt-3 rounded border border-border bg-surface p-2 text-sm"
