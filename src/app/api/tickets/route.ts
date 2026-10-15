@@ -18,9 +18,85 @@ import {
   unlinkTicketAction,
   updateLabelAction,
   updateTicketAction,
+  type TicketSlaInput,
 } from "@/server/actions/tickets";
+import type { SlaPolicy } from "@/lib/sla-timer";
+import type { WorkingHours } from "@/lib/business-hours";
 
 export const runtime = "nodejs";
+
+/** A finite SLA window in minutes, or `undefined` when the value is unusable. */
+function slaMinutes(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * A validated UTC working calendar, or `undefined` when the value cannot
+ * describe business time. The engine tolerates partial configs, but an
+ * unusable one silently collapses the deadline to the creation instant, so
+ * anything malformed is dropped here and the SLA falls back to wall-clock.
+ */
+function readWorkingHours(raw: unknown): WorkingHours | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const source = raw as Record<string, unknown>;
+  const startMinutes = source.startMinutes;
+  const endMinutes = source.endMinutes;
+  if (
+    typeof startMinutes !== "number" ||
+    typeof endMinutes !== "number" ||
+    !Number.isInteger(startMinutes) ||
+    !Number.isInteger(endMinutes) ||
+    startMinutes < 0 ||
+    endMinutes > 1440 ||
+    startMinutes >= endMinutes
+  ) {
+    return undefined;
+  }
+  const days = Array.isArray(source.days)
+    ? (source.days as unknown[]).filter(
+        (day): day is number =>
+          typeof day === "number" && Number.isInteger(day) && day >= 0 && day <= 6,
+      )
+    : [];
+  if (days.length === 0) return undefined;
+  const hours: WorkingHours = { days, startMinutes, endMinutes };
+  if (Array.isArray(source.holidays)) {
+    hours.holidays = (source.holidays as unknown[]).filter(
+      (key): key is string => typeof key === "string",
+    );
+  }
+  return hours;
+}
+
+/**
+ * The optional `sla` policy from a ticket create/update body as a
+ * {@link TicketSlaInput}, or `undefined` when absent or malformed. Per-field
+ * degradation mirrors the engine: an unusable optional part (`kind`,
+ * `workingHours`) is dropped rather than failing the whole write, and a policy
+ * without its two windows is treated as no SLA at all.
+ */
+function readSla(raw: unknown): TicketSlaInput | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const source = raw as Record<string, unknown>;
+  const policySource = source.policy;
+  if (!policySource || typeof policySource !== "object" || Array.isArray(policySource)) {
+    return undefined;
+  }
+  const policyRaw = policySource as Record<string, unknown>;
+  const responseMinutes = slaMinutes(policyRaw.responseMinutes);
+  const resolveMinutes = slaMinutes(policyRaw.resolveMinutes);
+  if (responseMinutes === undefined || resolveMinutes === undefined) return undefined;
+  const policy: SlaPolicy = { responseMinutes, resolveMinutes };
+  const warnAtPercent = slaMinutes(policyRaw.warnAtPercent);
+  if (warnAtPercent !== undefined) policy.warnAtPercent = warnAtPercent;
+
+  const sla: TicketSlaInput = { policy };
+  const kind = source.kind;
+  if (kind === "response" || kind === "resolve") sla.kind = kind;
+  const workingHours = readWorkingHours(source.workingHours);
+  if (workingHours) sla.workingHours = workingHours;
+  return sla;
+}
 
 /** List tickets (and their labels) for a workspace. */
 export async function GET(request: Request) {
@@ -65,7 +141,9 @@ export async function GET(request: Request) {
  * Ticket mutations. Body: `{ action, … }`
  *   create · update · label · unlabel · relation · unlink · comment · archive ·
  *   bulk · move · from-page · label-create · label-update · label-delete
- * The same server actions back the UI.
+ * The same server actions back the UI. `create` and `update` also accept an
+ * optional `sla` (`{ policy, kind?, workingHours? }`) that derives `dueDate`
+ * server-side; omit it and the body/response behaviour is unchanged.
  */
 export async function POST(request: Request) {
   const limited = rateLimit(request, "tickets-write", 60, 60_000);
@@ -103,6 +181,7 @@ export async function POST(request: Request) {
         assigneeId: str("assigneeId") ?? (body.assigneeId === null ? null : undefined),
         parentId: str("parentId") ?? (body.parentId === null ? null : undefined),
         labelIds: list("labelIds"),
+        sla: readSla(body.sla),
       });
       break;
     case "update":
@@ -121,6 +200,7 @@ export async function POST(request: Request) {
         milestoneId: str("milestoneId") ?? (body.milestoneId === null ? null : undefined),
         assigneeId: str("assigneeId") ?? (body.assigneeId === null ? null : undefined),
         archived: typeof body.archived === "boolean" ? body.archived : undefined,
+        sla: readSla(body.sla),
       });
       break;
     case "label":
