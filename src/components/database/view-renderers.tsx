@@ -1023,6 +1023,7 @@ export function GalleryView({
   valueFor,
   computedFor,
   cardSize: cardSizeProp,
+  previewPropertyId,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -1033,6 +1034,14 @@ export function GalleryView({
   computedFor?: (row: DBRow, property: DBProperty) => string | undefined;
   /** Force a card size; without it the size follows the container width. */
   cardSize?: CardSizeName;
+  /**
+   * The property each card draws its preview image from (the persisted gallery
+   * setting). Feeds `resolveCardPreview` (as the cover property) and
+   * `cardFieldOrder` (as the field to skip). Unset or blank falls back to the
+   * first cover-eligible (FILES) property, so an unconfigured gallery renders
+   * exactly as it did before.
+   */
+  previewPropertyId?: string | null;
 }) {
   // The card size tracks the container: `cardSizeFor` maps a measured width to
   // a preset, and `CARD_SIZES` supplies the column count, aspect and whether
@@ -1061,7 +1070,14 @@ export function GalleryView({
     name: property.name,
     type: property.type.toLowerCase(),
   }));
-  const coverPropertyId = properties.find((property) => property.type === "FILES")?.id ?? null;
+  // The persisted preview choice wins; unset or blank keeps the automatic
+  // cover (the first FILES property), so a gallery with no stored choice is
+  // byte-for-byte its previous self. `coverPropertyId` is the single source for
+  // both the preview and the field that must not be repeated below.
+  const coverPropertyId =
+    previewPropertyId ||
+    properties.find((property) => property.type === "FILES")?.id ||
+    null;
   const fields = cardFieldOrder(
     // The primary/name property is the card title, so it is never listed twice.
     presetProperties.filter((property) => property.id !== primary?.id),
