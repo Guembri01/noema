@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import {
   ArrowUpDown,
+  BarChart3,
   Bookmark,
   Columns3,
   Eye,
   Filter as FilterIcon,
   Gauge,
+  Image as ImageIcon,
   Layers,
   Maximize2,
   Palette,
@@ -41,6 +43,8 @@ import {
   type GroupVisibility,
 } from "@/lib/board-groups";
 import { checkWip, wipSummary, type WipLimits } from "@/lib/kanban-wip";
+import { AGGREGATION_FUNCTIONS, type AggregationFn } from "@/lib/aggregations";
+import type { ChartType } from "@/lib/charts";
 import {
   normalizeViewConfig as normalizeSchemaViewConfig,
   validateViewConfig,
@@ -483,6 +487,26 @@ type ViewSettingsConfig = ViewConfig & {
    * value degrades to an empty layout instead of throwing.
    */
   columnLayout?: string;
+  /**
+   * CHART: the render shape `ChartView` draws. A view-config key this toolbar
+   * owns and rides through `sanitizeViewSettings` untouched; the chart engine
+   * defaults to a bar chart when it is unset, and the picker mirrors that
+   * default so it shows what would render.
+   */
+  chartType?: ChartType;
+  /**
+   * CHART: the aggregation applied per group, in the table-footer vocabulary
+   * (`AggregationFn` in `@/lib/aggregations`). Owned here like `chartType`; the
+   * chart engine defaults to a plain row count when it is unset.
+   */
+  chartAggregate?: AggregationFn;
+  /**
+   * GALLERY: the property whose value each card shows as its preview image.
+   * Passed to `resolveCardPreview` (as the cover property) and to
+   * `cardFieldOrder` (as the field to skip); unset (or blank) means the gallery
+   * picks the first cover-eligible property itself, as before.
+   */
+  previewPropertyId?: string | null;
 };
 
 /** A JSON object (not an array, not null), or `null` for anything else. */
@@ -615,6 +639,25 @@ function sanitizeViewSettings(
 const AUTO_FIT_WIDTH = 960;
 
 /**
+ * The chart shapes `ChartView` renders, in menu order. Local to the picker
+ * because the chart engine exports the `ChartType` union but no menu.
+ */
+const CHART_TYPE_OPTIONS: { value: ChartType; label: string }[] = [
+  { value: "bar", label: "Bar" },
+  { value: "line", label: "Line" },
+  { value: "pie", label: "Pie" },
+  { value: "donut", label: "Donut" },
+];
+
+/**
+ * The database property types a gallery card can draw a preview from. These are
+ * the upper-case counterparts of `COVER_PROPERTY_TYPES` in `@/lib/view-presets`
+ * (`files`/`url`; there is no `media` type in the schema), so the picker only
+ * offers properties `resolveCardPreview` would actually honour.
+ */
+const GALLERY_PREVIEW_TYPES: DBProperty["type"][] = ["FILES", "URL"];
+
+/**
  * Filter / sort / group / colour-rule / column-visibility controls for one
  * database view. Everything here writes into `config`, which the caller
  * persists per view — so each tab keeps its own settings across reloads.
@@ -696,6 +739,19 @@ export function ViewSettings({
     properties.find((p) => !p.config?.primary) ?? properties[0];
 
   const secondary = properties.filter((p) => !p.config?.primary);
+
+  // --- Chart + gallery settings --------------------------------------------
+  // Both are plain view-config keys this toolbar owns (like `laneBy`): the
+  // chart/gallery engines read them at render time, so a picker only needs the
+  // current value and a patch. The defaults below mirror the engines' own
+  // (`ChartView` draws a bar chart aggregating by count; an unset gallery
+  // preview falls back to the first cover-eligible property).
+  const chartType = config.chartType ?? "bar";
+  const chartAggregate = config.chartAggregate ?? "count";
+  const previewPropertyId = config.previewPropertyId ?? "";
+  const previewable = properties.filter((property) =>
+    GALLERY_PREVIEW_TYPES.includes(property.type),
+  );
 
   // --- WIP limits (board columns) ------------------------------------------
   // A board's columns are the declared options of the group property plus the
@@ -1744,6 +1800,97 @@ export function ViewSettings({
               </button>
             </div>
           </div>
+        </PopoverContent>
+      </Popover>
+
+      {/* Chart — shape + aggregation, persisted as `chartType`/`chartAggregate`
+          for `ChartView`. */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-testid="chart-trigger"
+            className={cn(
+              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
+              (config.chartType || config.chartAggregate) && "bg-surface-2 text-fg",
+            )}
+          >
+            <BarChart3 className="h-3.5 w-3.5" />
+            Chart
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-64" data-testid="db-chart-popover">
+          <label className="mb-1 block text-xs text-muted" htmlFor="chart-type">
+            Chart type
+          </label>
+          <select
+            id="chart-type"
+            data-testid="chart-type"
+            value={chartType}
+            onChange={(e) => onChange({ chartType: e.target.value as ChartType })}
+            className={cn(CONTROL_CLASS, "w-full")}
+          >
+            {CHART_TYPE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <label className="mt-3 mb-1 block text-xs text-muted" htmlFor="chart-aggregate">
+            Aggregate
+          </label>
+          <select
+            id="chart-aggregate"
+            data-testid="chart-aggregate"
+            value={chartAggregate}
+            onChange={(e) =>
+              onChange({ chartAggregate: e.target.value as AggregationFn })
+            }
+            className={cn(CONTROL_CLASS, "w-full")}
+          >
+            {AGGREGATION_FUNCTIONS.map((fn) => (
+              <option key={fn.id} value={fn.id}>{fn.label}</option>
+            ))}
+          </select>
+          <p className="mt-2 text-xs text-muted">
+            The shape and totals the Chart view draws per group.
+          </p>
+        </PopoverContent>
+      </Popover>
+
+      {/* Gallery — the preview property cards show, persisted as
+          `previewPropertyId` for `resolveCardPreview`. */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-testid="gallery-trigger"
+            className={cn(
+              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
+              previewPropertyId && "bg-surface-2 text-fg",
+            )}
+          >
+            <ImageIcon className="h-3.5 w-3.5" />
+            Gallery
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-64" data-testid="db-gallery-popover">
+          <label className="mb-1 block text-xs text-muted" htmlFor="gallery-preview">
+            Preview property
+          </label>
+          <select
+            id="gallery-preview"
+            data-testid="gallery-preview-property"
+            value={previewPropertyId}
+            onChange={(e) => onChange({ previewPropertyId: e.target.value || null })}
+            className={cn(CONTROL_CLASS, "w-full")}
+          >
+            <option value="">Automatic (first image)</option>
+            {previewable.map((property) => (
+              <option key={property.id} value={property.id}>{property.name}</option>
+            ))}
+          </select>
+          <p className="mt-2 text-xs text-muted">
+            The image a card shows; falls back to the page icon.
+          </p>
         </PopoverContent>
       </Popover>
 
