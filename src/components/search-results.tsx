@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { loadMoreSearchAction } from "@/server/actions/search";
 import { useAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
 import { highlightSnippet } from "@/lib/fuzzy";
+import { buildIndex, rank } from "@/lib/search-ranking";
 import {
   DEFAULT_SUMMARY_LENGTH,
   extractDescription,
@@ -78,8 +79,52 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
 }
 
 /**
+ * How strongly a title hit outranks an equally frequent body hit when the
+ * merged list is re-ranked below. Matches the server page's refinement pass so
+ * the order a result lands in does not depend on which window carried it.
+ */
+const SEARCH_TITLE_WEIGHT = 3;
+
+/**
+ * Order search rows by the shared BM25 scorer (`search-ranking.ts`), weighting
+ * title matches, so the initial window and every appended "Load more" window
+ * are ranked as one corpus rather than the first window alone. Additive and
+ * lossless: rows the scorer does not recognise (prefix and substring-fallback
+ * hits, whose terms fold differently) keep their arrival order and follow the
+ * scored rows, and a stable sort leaves that order intact for remaining ties.
+ */
+function orderByRelevance<T extends { id: string; title: string; snippet: string }>(
+  rows: readonly T[],
+  query: string,
+): T[] {
+  if (rows.length <= 1) return [...rows];
+  const index = buildIndex(
+    rows.map((row) => ({
+      id: row.id,
+      fields: { title: row.title, body: row.snippet },
+    })),
+  );
+  const ranked = rank(index, query, {
+    titleWeight: SEARCH_TITLE_WEIGHT,
+    limit: rows.length,
+  });
+  if (ranked.length === 0) return [...rows];
+  const position = new Map(ranked.map((result, index) => [result.id, index]));
+  return [...rows].sort((a, b) => {
+    const left = position.get(a.id);
+    const right = position.get(b.id);
+    if (left === undefined && right === undefined) return 0;
+    if (left === undefined) return 1;
+    if (right === undefined) return -1;
+    return left - right;
+  });
+}
+
+/**
  * The search results list, with a keyset "Load more" that appends the next
- * window instead of re-running the query.
+ * window instead of re-running the query. The merged initial + appended rows
+ * are re-ranked together, so relevance order stays consistent as more pages
+ * load rather than pinning later windows below the first.
  */
 export function SearchResults({
   workspaceId,
@@ -102,6 +147,9 @@ export function SearchResults({
   const { run, pending, error } = useAction(locale);
   const [rows, setRows] = useState<SearchRow[]>(initial);
   const [offset, setOffset] = useState<number | null>(nextOffset);
+  // Rank the whole merged set (initial + appended) so ordering is stable as
+  // pages load; `rows` keeps arrival order underneath for lossless ties.
+  const orderedRows = useMemo(() => orderByRelevance(rows, query), [rows, query]);
 
   const loadMore = () =>
     run(
@@ -122,7 +170,7 @@ export function SearchResults({
       </p>
 
       <ul className="mt-4 divide-y divide-border rounded-lg border border-border">
-        {rows.map((page) => {
+        {orderedRows.map((page) => {
           const teaser = pageTeaser(page, previewLength, query);
           return (
             <li key={page.id}>
