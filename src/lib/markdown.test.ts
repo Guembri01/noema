@@ -776,3 +776,110 @@ describe("blocksToMarkdownTree (§12 export with subpages)", () => {
     ]);
   });
 });
+
+/**
+ * §1 Export fidelity — optional block variants (🟡→✅).
+ *
+ * The serializer and the parser must agree on the two optional block variants
+ * the editor already stores, so an exported `.md` file re-imports with the
+ * variant intact:
+ *   • a pull quote — a `blockquote` carrying `attrs.size === "large"`;
+ *   • a code block — `attrs.lineNumbers` / `attrs.caption`.
+ * Conventions come from `pull-quote.ts` (`DEFAULT_PULL_QUOTE_SIZE`) and
+ * `code-block.ts` (`formatCaption`): the same defaults/normalisation the
+ * editor uses, so nothing here forks a second definition.
+ */
+describe("blocksToMarkdown (§1 pull-quote + code-block variants)", () => {
+  it("carries a large pull quote through markdown and back", () => {
+    const large: RichBlock = {
+      type: "blockquote",
+      attrs: { size: "large" },
+      content: [{ type: "paragraph", content: [{ type: "text", text: "Stay hungry." }] }],
+    };
+    const md = blocksToMarkdown([large]);
+    expect(md).toBe("> [!large]\n> Stay hungry.");
+    expect(markdownToTipTap(md)[0]).toMatchObject({
+      type: "blockquote",
+      attrs: { size: "large" },
+    });
+    expect(blocksToMarkdown(markdownToTipTap(md))).toBe(md);
+  });
+
+  it("leaves a default quote unmarked and un-attributed", () => {
+    const quote: RichBlock = {
+      type: "blockquote",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "ordinary" }] }],
+    };
+    expect(blocksToMarkdown([quote])).toBe("> ordinary");
+    // An explicit `size: "default"` is not a large quote either.
+    expect(blocksToMarkdown([{ ...quote, attrs: { size: "default" } }])).toBe("> ordinary");
+    expect(parseMarkdown("> ordinary")[0]).toEqual({
+      type: "quote",
+      blocks: [{ type: "paragraph", content: [{ type: "text", value: "ordinary" }] }],
+    });
+  });
+
+  it("carries code-block lineNumbers and caption through markdown and back", () => {
+    const code: RichBlock = {
+      type: "codeBlock",
+      attrs: { language: "ts", lineNumbers: true, caption: "Run it" },
+      content: [{ type: "text", text: "const a = 1;" }],
+    };
+    const md = blocksToMarkdown([code]);
+    expect(md).toBe('```ts {lineNumbers caption="Run it"}\nconst a = 1;\n```');
+    expect(markdownToTipTap(md)[0]).toMatchObject({
+      type: "codeBlock",
+      attrs: { language: "ts", lineNumbers: true, caption: "Run it" },
+    });
+    expect(blocksToMarkdown(markdownToTipTap(md))).toBe(md);
+  });
+
+  it("normalises the caption and escapes quotes on the way out", () => {
+    const code: RichBlock = {
+      type: "codeBlock",
+      attrs: { language: "js", caption: 'He said "hi"   twice' },
+      content: [{ type: "text", text: "x" }],
+    };
+    const md = blocksToMarkdown([code]);
+    expect(md).toBe('```js {caption="He said \\"hi\\" twice"}\nx\n```');
+    expect(markdownToTipTap(md)[0]).toMatchObject({ attrs: { caption: 'He said "hi" twice' } });
+  });
+
+  it("keeps a fence with no variants byte-for-byte unchanged", () => {
+    const code: RichBlock = {
+      type: "codeBlock",
+      attrs: { language: "md" },
+      content: [{ type: "text", text: "plain" }],
+    };
+    expect(blocksToMarkdown([code])).toBe("```md\nplain\n```");
+    expect(parseMarkdown("```md\nplain\n```")[0]).toEqual({
+      type: "code",
+      lang: "md",
+      value: "plain",
+    });
+  });
+
+  it("parses lineNumbers and caption independently, and from a language-less fence", () => {
+    expect(parseMarkdown("```ts {lineNumbers}\nx\n```")[0]).toEqual({
+      type: "code",
+      lang: "ts",
+      value: "x",
+      lineNumbers: true,
+    });
+    expect(parseMarkdown('``` {caption="Only a caption"}\nx\n```')[0]).toEqual({
+      type: "code",
+      lang: null,
+      value: "x",
+      caption: "Only a caption",
+    });
+  });
+
+  it("drops an empty caption but keeps lineNumbers", () => {
+    const code: RichBlock = {
+      type: "codeBlock",
+      attrs: { language: "ts", lineNumbers: true, caption: "   " },
+      content: [{ type: "text", text: "x" }],
+    };
+    expect(blocksToMarkdown([code])).toBe("```ts {lineNumbers}\nx\n```");
+  });
+});
