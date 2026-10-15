@@ -38,6 +38,7 @@ import {
   patchAppearance,
   type PageAppearance,
 } from "@/lib/page-appearance";
+import { pageIconToCss, parsePageIcon } from "@/lib/page-icon";
 import { pageToMarkdown } from "@/lib/serialize";
 import type { TextBlock } from "@/lib/text-stats";
 import { cn } from "@/lib/utils";
@@ -155,6 +156,12 @@ export function PageTitle({
   // The two legacy booleans now read through the appearance engine.
   const smallText = appearance.fontSize === "small";
   const font = appearance.font;
+
+  // A stored icon is either an emoji glyph or an http(s) image URL; classify it
+  // so the renderer shows text for the former and a CSS background for the
+  // latter, instead of spilling a raw URL into the heading.
+  const pageIcon = parsePageIcon(icon);
+  const iconStyle = pageIconToCss(pageIcon);
 
   const notifyKey = `noema:page-notify:${pageId}`;
   const [notifyLevel, setNotifyLevel] = useState<NotifyLevel>("all");
@@ -520,15 +527,21 @@ export function PageTitle({
       )}
 
       <div className="relative px-0">
-        {icon ? (
+        {pageIcon.kind !== "none" ? (
           <button
             type="button"
             disabled={!editable}
             onClick={() => setShowEmoji((v) => !v)}
             aria-label="Change icon"
-            className="mb-1 block text-6xl leading-none"
+            className={cn(
+              "mb-1 block leading-none",
+              pageIcon.kind === "emoji" && "text-6xl",
+              pageIcon.kind === "image" &&
+                "h-16 w-16 rounded bg-cover bg-center bg-no-repeat",
+            )}
+            style={iconStyle}
           >
-            {icon}
+            {pageIcon.kind === "emoji" ? pageIcon.value : null}
           </button>
         ) : editable ? (
           <button
