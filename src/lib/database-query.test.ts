@@ -22,6 +22,7 @@ import {
   visibleColumns,
   type QueryProperty,
   type QueryRow,
+  type ViewConfig,
 } from "@/lib/database-query";
 
 const properties: QueryProperty[] = [
@@ -493,6 +494,46 @@ describe("view config serialization", () => {
     const out = normalizeViewConfig({ wipLimits: { todo: "nope" } } as never);
     expect(out).not.toHaveProperty("wipLimits");
     expect(normalizeViewConfig({ numberFormat: null }).numberFormat).toBeNull();
+  });
+
+  it("round-trips the optional group-visibility, card-size, description and chart keys", () => {
+    const config: ViewConfig = {
+      visibleGroups: { todo: true, doing: false },
+      cardSize: "large",
+      description: "Sprint overview",
+      chartType: "donut",
+      chartAggregate: "sum",
+    };
+    const stored = JSON.parse(JSON.stringify(normalizeViewConfig(config)));
+    expect(parseViewConfig(stored)).toEqual(config);
+  });
+
+  it("keeps the optional board/gallery/chart keys but drops malformed values", () => {
+    const out = normalizeViewConfig({
+      visibleGroups: { todo: true, doing: false, done: "no", "": true },
+      cardSize: 7,
+      description: { text: "nope" },
+      chartType: ["pie"],
+      chartAggregate: 12,
+    } as never);
+
+    expect(out.visibleGroups).toEqual({ todo: true, doing: false });
+    expect(out).not.toHaveProperty("cardSize");
+    expect(out).not.toHaveProperty("description");
+    expect(out).not.toHaveProperty("chartType");
+    expect(out).not.toHaveProperty("chartAggregate");
+  });
+
+  it("normalises an empty or invalid group-visibility map away, like the WIP limits", () => {
+    expect(normalizeViewConfig({ visibleGroups: {} } as never)).not.toHaveProperty(
+      "visibleGroups",
+    );
+    expect(normalizeViewConfig({ visibleGroups: { todo: 1 } } as never)).not.toHaveProperty(
+      "visibleGroups",
+    );
+    expect(normalizeViewConfig({ visibleGroups: [] } as never)).not.toHaveProperty(
+      "visibleGroups",
+    );
   });
 });
 
