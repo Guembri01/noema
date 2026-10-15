@@ -37,6 +37,7 @@ import {
 import { cn } from "@/lib/utils";
 import { EQUATION_EVENT } from "@/components/editor/equation-editor";
 import { t } from "@/lib/i18n";
+import { BLOCK_TYPES } from "@/lib/block-conversion";
 import {
   filterCommands,
   groupCommands,
@@ -62,22 +63,64 @@ type SlashItem = {
   action?: () => void;
 };
 
+/** Slash metadata for a graph type: a {@link SlashItem} minus the injected action. */
+type BlockTypeItem = Omit<SlashItem, "action">;
+
+/**
+ * The conversion-graph block types the menu can insert. The graph is complete
+ * (every block converts into every other, `allowedTargets` reaches all of
+ * `BLOCK_TYPES`), so the only exclusions are graph types with no editor
+ * adapter. `pullQuote` is the sole one: the editor models it as a `blockquote`
+ * variant (`size: "large"`) with no insertion command and no i18n label, so an
+ * entry would silently no-op — the same call `block-context-menu.tsx` makes for
+ * its "turn into" submenu. It returns here once it gains a command and a label.
+ *
+ * Keying the table off `BLOCK_TYPES` is the sync guarantee: adding a type to
+ * the conversion graph is a `tsc` error here until it is either given an entry
+ * (and so reaches the menu through {@link blockItem}) or added to the `Exclude`.
+ */
+type SlashBlockType = Exclude<(typeof BLOCK_TYPES)[number], "pullQuote">;
+
+/** Insertion command for each insertable graph block type, keyed by type. */
+const BLOCK_TYPE_ITEMS: Record<SlashBlockType, BlockTypeItem> = {
+  paragraph: { label: "Text", labelKey: "blockText", hint: "Plain paragraph", hintKey: "paragraphHint", icon: <Pilcrow className="h-4 w-4" />, keywords: "text paragraph body", run: (c) => c.setParagraph().run() },
+  h1: { label: "Heading 1", labelKey: "blockHeading1", hint: "Large heading", hintKey: "heading1Hint", icon: <Heading1 className="h-4 w-4" />, keywords: "h1 title", run: (c) => c.toggleHeading({ level: 1 }).run() },
+  h2: { label: "Heading 2", labelKey: "blockHeading2", hint: "Medium heading", hintKey: "heading2Hint", icon: <Heading2 className="h-4 w-4" />, keywords: "h2 subtitle", run: (c) => c.toggleHeading({ level: 2 }).run() },
+  h3: { label: "Heading 3", labelKey: "blockHeading3", hint: "Small heading", hintKey: "heading3Hint", icon: <Heading3 className="h-4 w-4" />, keywords: "h3", run: (c) => c.toggleHeading({ level: 3 }).run() },
+  bulletedList: { label: "Bulleted list", labelKey: "blockBulletedList", hint: "Unordered list", hintKey: "bulletedListHint", icon: <List className="h-4 w-4" />, keywords: "bullet ul list", run: (c) => c.toggleBulletList().run() },
+  numberedList: { label: "Numbered list", labelKey: "blockNumberedList", hint: "Ordered list", hintKey: "numberedListHint", icon: <ListOrdered className="h-4 w-4" />, keywords: "number ol list", run: (c) => c.toggleOrderedList().run() },
+  todoList: { label: "To-do list", labelKey: "blockTodoList", hint: "Checklist", hintKey: "todoListHint", icon: <ListTodo className="h-4 w-4" />, keywords: "todo task checkbox", run: (c) => c.toggleTaskList().run() },
+  toggle: { label: "Toggle", labelKey: "blockToggle", hint: "Collapsible block", hintKey: "toggleHint", icon: <ChevronRight className="h-4 w-4" />, keywords: "toggle collapse fold", run: (c) => c.setToggle({}).run() },
+  quote: { label: "Quote", labelKey: "blockQuote", hint: "Capture a quote", hintKey: "quoteHint", icon: <Quote className="h-4 w-4" />, keywords: "quote blockquote", run: (c) => c.toggleBlockquote().run() },
+  callout: { label: "Callout", labelKey: "blockCallout", hint: "Emphasised box", hintKey: "calloutHint", icon: <Lightbulb className="h-4 w-4" />, keywords: "callout note info", run: (c) => c.setCallout({ emoji: "💡" }).run() },
+  code: { label: "Code", labelKey: "code", hint: "Code block", hintKey: "codeBlockHint", icon: <SquareCode className="h-4 w-4" />, keywords: "code snippet", run: (c) => c.toggleCodeBlock().run() },
+};
+
+/** Look an insertable graph type's command up by type. */
+const blockItem = (type: SlashBlockType): SlashItem => BLOCK_TYPE_ITEMS[type];
+
+/**
+ * The menu, in shipped order. Block-type rows are sourced from the graph table
+ * above ({@link blockItem}); the inline rows are blocks the conversion matrix
+ * does not model (the h4–h6 levels and the embedded/atomic nodes), kept verbatim
+ * so their commands and the catalog order the ranker sees are unchanged.
+ */
 const SLASH_ITEMS: SlashItem[] = [
-  { label: "Text", labelKey: "blockText", hint: "Plain paragraph", hintKey: "paragraphHint", icon: <Pilcrow className="h-4 w-4" />, keywords: "text paragraph body", run: (c) => c.setParagraph().run() },
-  { label: "Heading 1", labelKey: "blockHeading1", hint: "Large heading", hintKey: "heading1Hint", icon: <Heading1 className="h-4 w-4" />, keywords: "h1 title", run: (c) => c.toggleHeading({ level: 1 }).run() },
-  { label: "Heading 2", labelKey: "blockHeading2", hint: "Medium heading", hintKey: "heading2Hint", icon: <Heading2 className="h-4 w-4" />, keywords: "h2 subtitle", run: (c) => c.toggleHeading({ level: 2 }).run() },
-  { label: "Heading 3", labelKey: "blockHeading3", hint: "Small heading", hintKey: "heading3Hint", icon: <Heading3 className="h-4 w-4" />, keywords: "h3", run: (c) => c.toggleHeading({ level: 3 }).run() },
+  blockItem("paragraph"),
+  blockItem("h1"),
+  blockItem("h2"),
+  blockItem("h3"),
   { label: "Heading 4", labelKey: "blockHeading4", hint: "Extra small heading", hintKey: "heading4Hint", icon: <Heading4 className="h-4 w-4" />, keywords: "h4 small", run: (c) => c.toggleHeading({ level: 4 }).run() },
   { label: "Heading 5", labelKey: "blockHeading5", hint: "Tiny heading", hintKey: "heading5Hint", icon: <Heading5 className="h-4 w-4" />, keywords: "h5 tiny", run: (c) => c.toggleHeading({ level: 5 }).run() },
   { label: "Heading 6", labelKey: "blockHeading6", hint: "Smallest heading", hintKey: "heading6Hint", icon: <Heading6 className="h-4 w-4" />, keywords: "h6 smallest", run: (c) => c.toggleHeading({ level: 6 }).run() },
-  { label: "Bulleted list", labelKey: "blockBulletedList", hint: "Unordered list", hintKey: "bulletedListHint", icon: <List className="h-4 w-4" />, keywords: "bullet ul list", run: (c) => c.toggleBulletList().run() },
-  { label: "Numbered list", labelKey: "blockNumberedList", hint: "Ordered list", hintKey: "numberedListHint", icon: <ListOrdered className="h-4 w-4" />, keywords: "number ol list", run: (c) => c.toggleOrderedList().run() },
-  { label: "To-do list", labelKey: "blockTodoList", hint: "Checklist", hintKey: "todoListHint", icon: <ListTodo className="h-4 w-4" />, keywords: "todo task checkbox", run: (c) => c.toggleTaskList().run() },
-  { label: "Callout", labelKey: "blockCallout", hint: "Emphasised box", hintKey: "calloutHint", icon: <Lightbulb className="h-4 w-4" />, keywords: "callout note info", run: (c) => c.setCallout({ emoji: "💡" }).run() },
-  { label: "Toggle", labelKey: "blockToggle", hint: "Collapsible block", hintKey: "toggleHint", icon: <ChevronRight className="h-4 w-4" />, keywords: "toggle collapse fold", run: (c) => c.setToggle({}).run() },
+  blockItem("bulletedList"),
+  blockItem("numberedList"),
+  blockItem("todoList"),
+  blockItem("callout"),
+  blockItem("toggle"),
   { label: "Columns", labelKey: "blockColumns", hint: "Side-by-side layout", hintKey: "columnsHint", icon: <Columns2 className="h-4 w-4" />, keywords: "columns layout grid", run: (c) => c.setColumns(2).run() },
-  { label: "Quote", labelKey: "blockQuote", hint: "Capture a quote", hintKey: "quoteHint", icon: <Quote className="h-4 w-4" />, keywords: "quote blockquote", run: (c) => c.toggleBlockquote().run() },
-  { label: "Code", labelKey: "code", hint: "Code block", hintKey: "codeBlockHint", icon: <SquareCode className="h-4 w-4" />, keywords: "code snippet", run: (c) => c.toggleCodeBlock().run() },
+  blockItem("quote"),
+  blockItem("code"),
   { label: "Table", labelKey: "blockTable", hint: "3×3 table", hintKey: "tableHint", icon: <TableIcon className="h-4 w-4" />, keywords: "table grid rows", run: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
   { label: "Image", labelKey: "blockImage", hint: "Upload or embed", hintKey: "imageHint", icon: <ImagePlus className="h-4 w-4" />, keywords: "image picture photo upload file", action: () => {} },
   { label: "Bookmark", labelKey: "blockBookmark", hint: "Link preview card", hintKey: "bookmarkHint", icon: <BookmarkIcon className="h-4 w-4" />, keywords: "bookmark link card url", run: (c) => c.setBookmark().run() },
