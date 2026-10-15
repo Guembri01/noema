@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { type Editor } from "@tiptap/react";
 import {
+  Layers,
   Redo2,
   Undo2
 } from "lucide-react";
@@ -20,6 +21,13 @@ import { t } from "@/lib/i18n";
  * TipTap stays authoritative for the buttons below: this control only *reads*
  * the wrapper attributes to surface the extra shadow levels, and never
  * dispatches to the shadow stack, so the built-in undo/redo is untouched.
+ *
+ * A "redo to depth" menu would need to restore a snapshot, but the shadow
+ * stack lives inside `PageEditor`'s closure: it exposes only its *depths* on
+ * the wrapper, not the snapshots, and registers no editor command to restore
+ * one. Until such a command exists this control therefore stays an
+ * informational affordance — the depths are surfaced through `title` /
+ * `aria-label` chrome and a read-only level chip, never through a dispatch.
  */
 
 /** Editor-wrapper attribute carrying the shadow stack's undoable depth. */
@@ -68,6 +76,19 @@ function DepthBadge({ depth }: { depth: number }) {
   );
 }
 
+/**
+ * A localised, read-only summary of the shadow trail's depth, drawn from the
+ * existing `undo` / `redo` labels plus the numeric counts. This is the whole
+ * informational payload of the "redo to depth" affordance: because no editor
+ * command can restore a shadow snapshot, the depth is only ever *stated*, never
+ * acted on.
+ */
+function shadowDepthSummary(locale: string, depth: ShadowDepth): string {
+  const undo = `${t(locale, "undo")} +${depth.undo}`;
+  if (depth.redo <= 0) return undo;
+  return `${undo} · ${t(locale, "redo")} +${depth.redo}`;
+}
+
 export function HistoryControls({ editor, locale = "en" }: { editor: Editor; locale?: string }) {
   const [, force] = useState(0);
   const [depth, setDepth] = useState<ShadowDepth>(NO_DEPTH);
@@ -105,8 +126,18 @@ export function HistoryControls({ editor, locale = "en" }: { editor: Editor; loc
   const label = (action: string, extra: number) =>
     extra > 0 ? `${action} · +${extra}` : action;
 
+  // The shadow trail's informational payload: a localised summary plus the
+  // total number of extra levels, exposed for tooltip/`title` chrome only.
+  const hasShadow = depth.undo > 0 || depth.redo > 0;
+  const shadowLevels = depth.undo + depth.redo;
+  const shadowSummary = shadowDepthSummary(locale, depth);
+
   return (
-    <div className="fixed bottom-4 right-4 z-20 flex items-center gap-1 rounded-lg border border-border bg-bg p-1 shadow-lg">
+    <div
+      className="fixed bottom-4 right-4 z-20 flex items-center gap-1 rounded-lg border border-border bg-bg p-1 shadow-lg"
+      data-shadow-levels={hasShadow ? shadowLevels : undefined}
+      title={hasShadow ? shadowSummary : undefined}
+    >
       <button
         type="button"
         aria-label={label(t(locale, "undo"), depth.undo)}
@@ -129,6 +160,21 @@ export function HistoryControls({ editor, locale = "en" }: { editor: Editor; loc
         <Redo2 className="h-4 w-4" />
         <DepthBadge depth={depth.redo} />
       </button>
+      {hasShadow && (
+        // Read-only shadow-level chip. It is deliberately not a `<button>`:
+        // with no restore command there is nothing to activate, so it carries
+        // the depth as `title`-only information rather than a dead control.
+        <span
+          aria-hidden
+          data-shadow-undo={depth.undo}
+          data-shadow-redo={depth.redo}
+          title={shadowSummary}
+          className="flex select-none items-center gap-0.5 pl-0.5 pr-1 text-[10px] text-muted"
+        >
+          <Layers className="h-3 w-3" />
+          {shadowLevels}
+        </span>
+      )}
     </div>
   );
 }
