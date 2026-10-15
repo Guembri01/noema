@@ -32,6 +32,7 @@ import { Fragment, Slice } from "@tiptap/pm/model";
 import { Selection } from "@tiptap/pm/state";
 import { normalizePasteHtml, pastePlan } from "@/lib/paste";
 import { analyzeBlockDrop, dropZone } from "@/lib/drag-indent";
+import { createStack, push as pushSnapshot, type UndoStack } from "@/lib/undo-stack";
 
 /** Clicking an equation anywhere in the document reopens the LaTeX editor. */
 const editEquation = (node: { type: { name: string }; attrs: { latex?: string } }, pos: number) => {
@@ -82,6 +83,11 @@ import {
 import type { Suggestion } from "@/lib/suggestions";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
+
+/** How many document snapshots the shadow history retains (F8). */
+const SNAPSHOT_HISTORY_LIMIT = 50;
+/** Rapid edits inside this window merge into one snapshot step. */
+const SNAPSHOT_COALESCE_MS = 500;
 
 /** Human label for one pending suggestion (kind + the affected text). */
 function suggestionLabel(suggestion: Suggestion, locale: string): string {
@@ -235,8 +241,22 @@ export function PageEditor({
 }) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [bubblePanelOpen, setBubblePanelOpen] = useState(false);
+  const [snapshotDepth, setSnapshotDepth] = useState({ undoable: 0, redoable: 0 });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editorRef = useRef<Editor | null>(null);
+  /**
+   * Shadow document-snapshot history (F8). TipTap owns the live undo/redo —
+   * its `undoRedo` plugin, or the collaboration extension in a shared session —
+   * so this bounded `UndoStack` never dispatches editor commands (that would
+   * fork history against the editor). It records a JSON snapshot of the
+   * document on every change and exposes its depth on the wrapper, giving the
+   * history chrome a bounded, collision-free seam to grow extra levels from.
+   */
+  const snapshotsRef = useRef<UndoStack<string>>(
+    createStack<string>({ limit: SNAPSHOT_HISTORY_LIMIT }),
+  );
+  /** Editor instance whose initial state was already seeded into the stack. */
+  const seededEditorRef = useRef<Editor | null>(null);
   /** Pointer X where the drag handle drag started, for indent-by-offset. */
   const dragStartXRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -280,6 +300,26 @@ export function PageEditor({
     },
     [runSave],
   );
+
+  /**
+   * Record the current document into the shadow snapshot history, coalescing a
+   * run of rapid edits (typing) into a single bounded step. `at` is supplied
+   * here because `undo-stack` is deliberately clock-free. Only the derived
+   * depth reaches React state, and only when it actually moves.
+   */
+  const recordSnapshot = useCallback((editor: Editor) => {
+    const next = pushSnapshot(snapshotsRef.current, JSON.stringify(editor.getJSON()), {
+      coalesceKey: "edit",
+      coalesceWindowMs: SNAPSHOT_COALESCE_MS,
+      at: Date.now(),
+    });
+    snapshotsRef.current = next;
+    const undoable = Math.max(0, next.entries.length - 1);
+    const redoable = next.future.length;
+    setSnapshotDepth((prev) =>
+      prev.undoable === undoable && prev.redoable === redoable ? prev : { undoable, redoable },
+    );
+  }, []);
 
   const insertFiles = useCallback(    async (files: File[]) => {
       const editor = editorRef.current;
@@ -513,11 +553,25 @@ export function PageEditor({
         return false;
       },
     },
-    onUpdate: ({ editor: e }) => persist(e),
+    onUpdate: ({ editor: e }) => {
+      persist(e);
+      recordSnapshot(e);
+    },
   });
 
   useEffect(() => {
     editorRef.current = editor;
+  }, [editor]);
+
+  // Seed the shadow history with the document's initial state, once per editor
+  // instance, so the first user edit yields exactly one undoable step.
+  useEffect(() => {
+    if (!editor || seededEditorRef.current === editor) return;
+    seededEditorRef.current = editor;
+    snapshotsRef.current = pushSnapshot(
+      createStack<string>({ limit: SNAPSHOT_HISTORY_LIMIT }),
+      JSON.stringify(editor.getJSON()),
+    );
   }, [editor]);
 
   // Test hook: Playwright opts in with an init script (`window.__NOEMA_E2E`),
@@ -560,7 +614,11 @@ export function PageEditor({
   }
 
   return (
-    <div className="noema-editor relative">
+    <div
+      className="noema-editor relative"
+      data-undo-depth={snapshotDepth.undoable}
+      data-redo-depth={snapshotDepth.redoable}
+    >
       {editable && (
         <>
           <BubbleMenu
