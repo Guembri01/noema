@@ -11,7 +11,13 @@ import {
 import { assignTicketToCycleAction } from "@/server/actions/cycles";
 import { safeAction } from "@/lib/actions-client";
 import { DESCRIPTION_MAX } from "@/lib/description";
-import { formatEstimate } from "@/lib/estimate-units";
+import {
+  convert,
+  formatEstimate,
+  isEstimateUnit,
+  sumEstimates,
+  type EstimateUnit,
+} from "@/lib/estimate-units";
 import { t } from "@/lib/i18n";
 import { progressOf, rollupByAssignee, rollupEstimate } from "@/lib/sub-ticket-rollup";
 import {
@@ -24,6 +30,24 @@ import {
 import { cn } from "@/lib/utils";
 import { StatusPill } from "./ticket-bits";
 import { LABEL_TONES, type LabelRow, type TicketRow } from "./ticket-types";
+
+/** Whether a raw estimate is a usable number (missing/non-finite = absent). */
+const hasFiniteEstimate = (value: number | null | undefined): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+/**
+ * Convert one raw estimate into `unit`, rounding per row. Missing/non-finite
+ * values stay absent (the roll-up engine already counts them as 0) and unknown
+ * units are coerced to `points`, matching `sumEstimates`'s own normalisation.
+ */
+function estimateInUnit(
+  estimate: number | null | undefined,
+  from: string | null | undefined,
+  unit: EstimateUnit,
+): number | null {
+  if (!hasFiniteEstimate(estimate)) return null;
+  return convert(estimate, isEstimateUnit(from) ? from : "points", unit);
+}
 
 /** Right-hand drawer with every ticket field, relations, comments, activity. */
 export function TicketDrawer({
@@ -105,19 +129,31 @@ export function TicketDrawer({
   // Roll the direct children up through the shared sub-ticket engine instead of
   // a flat sum: `rollupEstimate` gives total/remaining, `progressOf` the done
   // split, `rollupByAssignee` the per-assignee share. The engine is unit-blind
-  // (one unit per tree), so labels reuse the children's own unit.
+  // (one bare number per tree), so first collapse mixed child units onto one
+  // "dominant" unit — `sumEstimates` picks the children's most common unit
+  // (ties broken by `ESTIMATE_UNITS`) — convert every row with `convert`, then
+  // label the totals with that unit. With no child estimate we fall back to the
+  // ticket's own unit, so the label never silently defaults to points.
+  const childEstimates = children.map((child) => ({
+    estimate: child.estimate,
+    estimateUnit: child.estimateUnit,
+  }));
+  const childSummary = sumEstimates(childEstimates);
+  const childUnit: EstimateUnit = childEstimates.some((child) => hasFiniteEstimate(child.estimate))
+    ? childSummary.unit
+    : isEstimateUnit(ticket.estimateUnit)
+      ? ticket.estimateUnit
+      : "points";
   const childTickets = children.map((child) => ({
     id: child.id,
     parentId: child.parentId,
-    estimate: child.estimate,
+    estimate: estimateInUnit(child.estimate, child.estimateUnit, childUnit),
     state: child.status,
     assigneeId: child.assigneeId,
-    estimateUnit: child.estimateUnit,
   }));
   const childRollup = rollupEstimate(childTickets);
   const childProgress = progressOf(childTickets);
   const childByAssignee = rollupByAssignee(childTickets);
-  const childUnit = childTickets.find((child) => child.estimateUnit)?.estimateUnit ?? "points";
   const assigneeNames = new Map(members.map((member) => [member.id, member.name]));
   const candidates = relationQuery
     ? allTickets
