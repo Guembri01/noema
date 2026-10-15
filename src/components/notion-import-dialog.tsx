@@ -1,11 +1,58 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { importNotionPageAction } from "@/server/actions/notion-import";
 import { t } from "@/lib/i18n";
+import {
+  mapNotionBlockType,
+  mapNotionPropertyType,
+  unmappedBlocks,
+} from "@/lib/import-notion-map";
+
+/** Distinct, non-empty type strings in first-seen order (mirrors `unmappedBlocks`). */
+function distinctTypes(types: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of types as readonly unknown[]) {
+    if (typeof raw !== "string" || raw.trim() === "" || seen.has(raw)) continue;
+    seen.add(raw);
+    out.push(raw);
+  }
+  return out;
+}
+
+/** Mapped-vs-unmapped tally for a Notion import preview. */
+type NotionPreview = {
+  blockTotal: number;
+  blockMapped: number;
+  blockUnmapped: string[];
+  propertyTotal: number;
+  propertyMapped: number;
+  propertyUnmapped: string[];
+};
+
+/**
+ * Summarise what an import will map using the vocabulary layer
+ * (`src/lib/import-notion-map.ts`) rather than a second copy of the rules.
+ */
+function summarizeNotionPreview(
+  blockTypes: readonly string[],
+  propertyTypes: readonly string[],
+): NotionPreview {
+  const blocks = distinctTypes(blockTypes);
+  const properties = distinctTypes(propertyTypes);
+  return {
+    blockTotal: blocks.length,
+    blockMapped: blocks.filter((type) => mapNotionBlockType(type) !== null).length,
+    blockUnmapped: unmappedBlocks(blocks),
+    propertyTotal: properties.length,
+    propertyMapped: properties.filter((type) => mapNotionPropertyType(type) !== null).length,
+    propertyUnmapped: properties.filter((type) => mapNotionPropertyType(type) === null),
+  };
+}
 
 export function NotionImportDialog({
   locale = "en",
@@ -13,12 +60,23 @@ export function NotionImportDialog({
   onOpenChange,
   workspaceId,
   slug,
+  blockTypes = [],
+  propertyTypes = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   workspaceId: string;
   slug: string;
   locale?: string;
+  /**
+   * Optional import-preview input: the Notion block / property types the page
+   * contains. When supplied, the dialog tallies how many map to Noema
+   * (`mapNotionBlockType` / `mapNotionPropertyType`) and warns about the ones
+   * that do not (`unmappedBlocks`) before the user confirms. Purely additive:
+   * a caller that passes neither sees the dialog exactly as before.
+   */
+  blockTypes?: readonly string[];
+  propertyTypes?: readonly string[];
 }) {
   const router = useRouter();
   const [token, setToken] = useState("");
@@ -33,12 +91,25 @@ export function NotionImportDialog({
   const [summary, setSummary] = useState("");
   const [failure, setFailure] = useState("");
   const [importedId, setImportedId] = useState("");
+  /**
+   * J30: mapped-vs-unmapped preview so the user sees what will be dropped
+   * before confirming. The submission path below is untouched; the
+   * acknowledgement only gates the button when a preview reports a loss.
+   */
+  const preview = useMemo(
+    () => summarizeNotionPreview(blockTypes, propertyTypes),
+    [blockTypes, propertyTypes],
+  );
+  const hasPreview = preview.blockTotal > 0 || preview.propertyTotal > 0;
+  const unmappedCount = preview.blockUnmapped.length + preview.propertyUnmapped.length;
+  const [acknowledged, setAcknowledged] = useState(false);
 
   const reset = () => {
     setStage("idle");
     setSummary("");
     setFailure("");
     setImportedId("");
+    setAcknowledged(false);
   };
 
   const handleOpenChange = (next: boolean) => {
@@ -116,6 +187,56 @@ export function NotionImportDialog({
           placeholder="https://www.notion.so/My-page-1a2b3c…"
           className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
         />
+        {hasPreview && (
+          <div
+            className="mt-3 rounded border border-border bg-surface p-2 text-sm"
+            data-testid="notion-import-preview"
+          >
+            <p className="text-xs font-medium uppercase tracking-wide text-muted">
+              Import preview
+            </p>
+            {preview.blockTotal > 0 && (
+              <p className="mt-1 text-muted">
+                Blocks: {preview.blockMapped} of {preview.blockTotal} types mapped
+                {preview.blockUnmapped.length > 0
+                  ? ` · ${preview.blockUnmapped.length} unsupported`
+                  : ""}
+              </p>
+            )}
+            {preview.propertyTotal > 0 && (
+              <p className="mt-1 text-muted">
+                Properties: {preview.propertyMapped} of {preview.propertyTotal} types mapped
+                {preview.propertyUnmapped.length > 0
+                  ? ` · ${preview.propertyUnmapped.length} unsupported`
+                  : ""}
+              </p>
+            )}
+            {unmappedCount > 0 && (
+              <div className="mt-2 rounded border border-red-500/40 bg-red-500/10 p-2" role="alert">
+                <p className="text-red-500">
+                  {unmappedCount} Notion {unmappedCount === 1 ? "type has" : "types have"} no
+                  equivalent and will be skipped:
+                </p>
+                <ul className="mt-1 list-disc pl-4 text-red-500">
+                  {preview.blockUnmapped.map((type) => (
+                    <li key={`block:${type}`}>block · {type}</li>
+                  ))}
+                  {preview.propertyUnmapped.map((type) => (
+                    <li key={`property:${type}`}>property · {type}</li>
+                  ))}
+                </ul>
+                <label className="mt-2 flex items-center gap-2 text-red-500">
+                  <input
+                    type="checkbox"
+                    checked={acknowledged}
+                    onChange={(event) => setAcknowledged(event.target.checked)}
+                  />
+                  Import anyway
+                </label>
+              </div>
+            )}
+          </div>
+        )}
         {showStatus && (
           <div
             className="mt-3 rounded border border-border bg-surface p-2 text-sm"
@@ -158,7 +279,7 @@ export function NotionImportDialog({
           ) : (
             <button
               type="button"
-              disabled={pending || !token.trim() || !pageId.trim()}
+              disabled={pending || !token.trim() || !pageId.trim() || (unmappedCount > 0 && !acknowledged)}
               onClick={submit}
               className="h-9 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
             >
