@@ -15,7 +15,7 @@
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "next-themes";
-import { ArrowLeft, Check, ChevronRight } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Lock, LockOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LOCALES } from "@/lib/i18n";
 import { localTime } from "@/lib/time";
@@ -348,11 +348,28 @@ export function ActionsMenu(props: ActionsMenuProps) {
   // ---- data model ---------------------------------------------------------
   const baseItems = useMemo(
     () => [
-      ...visibleMenuItems({ editable, locked }).filter((item) => {
-        if (item.id === "workspace-move") return workspaces.length > 0;
-        if (item.id === "teamspace-move") return teamspaces.length > 0;
-        return true;
-      }),
+      ...visibleMenuItems({ editable, locked })
+        .filter((item) => {
+          if (item.id === "workspace-move") return workspaces.length > 0;
+          if (item.id === "teamspace-move") return teamspaces.length > 0;
+          return true;
+        })
+        // The Lock toggle is state-dependent: the same canonical row reads
+        // "Lock page" when unlocked and "Unlock page" when locked. The label is
+        // resolved here (not in `lib/actions-menu.ts`) so the engine's item list
+        // stays static; only the presentation reacts to `locked`. Both spellings
+        // are added as keywords so the row stays findable in either state.
+        .map((item): MenuItem =>
+          item.id === "lock"
+            ? {
+                ...item,
+                label: locked ? "Unlock page" : "Lock page",
+                keywords: Array.from(
+                  new Set([...(item.keywords ?? []), "lock", "unlock"]),
+                ),
+              }
+            : item,
+        ),
       A11Y_CHECK_ITEM,
     ],
     [editable, locked, workspaces.length, teamspaces.length],
@@ -422,6 +439,13 @@ export function ActionsMenu(props: ActionsMenuProps) {
     "full-width": fullWidth,
     lock: locked,
   };
+
+  // Leading glyph for the state-dependent Lock/Unlock row. It mirrors the
+  // action the row performs: a closed padlock offers to lock an open page, an
+  // open padlock offers to unlock a locked one. The trailing check still marks
+  // the toggle as on; the sr-only "(on)"/"(off)" text carries the same state
+  // for assistive tech.
+  const LockIcon = locked ? LockOpen : Lock;
 
   // ---- submenu spec -------------------------------------------------------
   const closeAll = () => {
@@ -1000,6 +1024,12 @@ export function ActionsMenu(props: ActionsMenuProps) {
                         item.kind === "disabled" && "opacity-50",
                       )}
                     >
+                      {item.id === "lock" && (
+                        <LockIcon
+                          className="h-3.5 w-3.5 shrink-0 text-muted"
+                          aria-hidden
+                        />
+                      )}
                       <span className="flex-1 truncate">
                         {item.label}
                         {item.kind === "toggle" && (
