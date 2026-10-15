@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
 import { FileText, Loader2, Plus, Search } from "lucide-react";
@@ -13,6 +13,7 @@ import { createPageAction } from "@/server/actions/pages";
 import { toast } from "sonner";
 import { t } from "@/lib/i18n";
 import { highlightSnippet } from "@/lib/fuzzy";
+import { nextIndex, pageStepIndex, rovingTabIndex } from "@/lib/keyboard-nav";
 import {
   DEFAULT_SUMMARY_LENGTH,
   extractDescription,
@@ -57,6 +58,17 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
 }
 
 
+/** Stable cmdk value for the always-present "create a new page" row (first). */
+const NEW_PAGE_VALUE = "__new_page__";
+
+/**
+ * Quick find (B43 predecessor): a debounced server search rendered through
+ * `cmdk`. Filtering is server-side (`shouldFilter={false}`), so list
+ * navigation is driven explicitly here — the shared `src/lib/keyboard-nav.ts`
+ * helpers (`nextIndex` for ↑↓/Home/End with wrap, `pageStepIndex` for a
+ * PageUp/PageDown screenful) replace cmdk's built-in index math by owning the
+ * controlled selection value.
+ */
 export function QuickFind({
   open,
   onOpenChange,
@@ -76,13 +88,20 @@ export function QuickFind({
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<QuickFindResult[]>([]);
+  // Controlled cmdk selection: the "create" row first, then the pages.
+  const [activeValue, setActiveValue] = useState<string>(NEW_PAGE_VALUE);
   const [loading, startTransition] = useTransition();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const itemValues = useMemo(
+    () => [NEW_PAGE_VALUE, ...items.map((item) => item.id)],
+    [items],
+  );
 
   useEffect(() => {
     if (!open) {
       setQuery("");
       setItems([]);
+      setActiveValue(NEW_PAGE_VALUE);
       return;
     }
     if (timer.current) clearTimeout(timer.current);
@@ -118,11 +137,32 @@ export function QuickFind({
     });
   };
 
+  // ArrowUp/Down/Home/End (wrapping) and PageUp/PageDown (one screenful,
+  // clamped) move the controlled cmdk selection through the flat row order.
+  const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    // Leave IME composition alone (cmdk's own handler bails here too).
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    const count = itemValues.length;
+    if (count === 0) return;
+    const current = rovingTabIndex(itemValues.indexOf(activeValue), count);
+    const { key } = event;
+    if (key === "ArrowDown" || key === "ArrowUp" || key === "Home" || key === "End") {
+      event.preventDefault();
+      setActiveValue(itemValues[nextIndex(current, { key, count })]);
+    } else if (key === "PageDown" || key === "PageUp") {
+      event.preventDefault();
+      setActiveValue(itemValues[pageStepIndex(current, { key, count })]);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="overflow-hidden p-0">
         <Command
           shouldFilter={false}
+          value={activeValue}
+          onValueChange={setActiveValue}
+          onKeyDown={onListKeyDown}
           className="flex max-h-[420px] flex-col"
         >
           <div className="flex items-center gap-2 border-b border-border px-3">
@@ -141,7 +181,7 @@ export function QuickFind({
             </Command.Empty>
 
             <Command.Item
-              value="__new_page__"
+              value={NEW_PAGE_VALUE}
               onSelect={createNew}
               className="flex cursor-pointer items-center gap-2 rounded px-2 py-2 text-sm data-[selected=true]:bg-surface-2"
             >

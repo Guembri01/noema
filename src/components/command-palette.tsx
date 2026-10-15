@@ -7,15 +7,17 @@ import { Monitor, Moon, PanelLeft, Plus, Search, Sun } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   filterByType,
-  firstIndex,
   fuzzyFilter,
   highlightSnippet,
-  lastIndex,
-  nextIndex,
   parseTypeScope,
-  prevIndex,
   type SearchType,
 } from "@/lib/fuzzy";
+import {
+  nextIndex,
+  pageStepIndex,
+  rovingTabIndex,
+  typeaheadIndex,
+} from "@/lib/keyboard-nav";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { PageTreeNode } from "@/server/queries";
@@ -30,9 +32,10 @@ import type { PageTreeNode } from "@/server/queries";
  *   item type (`parseTypeScope` + `filterByType`).
  * - a11y: Radix gives `role="dialog"` + focus trap; the results container is
  *   a `role="listbox"` of `role="option"`s driven by `aria-activedescendant`,
- *   so the input keeps focus while ↑↓ (wrapping) and Home/End move the
- *   selection via the unit-tested `nextIndex`/`prevIndex`/`firstIndex`/
- *   `lastIndex` helpers.
+ *   so the input keeps focus while ↑↓ (wrapping), Home/End and PageUp/PageDown
+ *   move the selection via the shared, unit-tested `src/lib/keyboard-nav.ts`
+ *   helpers (`nextIndex`/`pageStepIndex`), and a fresh query highlights the
+ *   first label that starts with what was typed (`typeaheadIndex`).
  * - Server Actions never live here: `onCreatePage` is owned by the shell,
  *   which wraps it in `useAction()` (coherence ratchet).
  */
@@ -207,11 +210,24 @@ export function CommandPalette({
     [ranked],
   );
 
-  // Clamp after any list change, then keep the active row scrolled into view.
-  const active = Math.min(activeIndex, Math.max(flat.length - 1, 0));
+  // Pin a stale cursor back into range after any list change, then keep the
+  // active row scrolled into view.
+  const active = flat.length > 0 ? rovingTabIndex(activeIndex, flat.length) : 0;
+  // A fresh query highlights the first label starting with what was typed
+  // (typeahead), falling back to the top-ranked hit when nothing matches. The
+  // guard keeps later re-renders (items reloading) from resetting a cursor the
+  // user already moved.
+  const lastQuery = useRef<string | null>(null);
   useEffect(() => {
-    setActiveIndex(0);
-  }, [query]);
+    if (lastQuery.current === scope.query) return;
+    lastQuery.current = scope.query;
+    const match = typeaheadIndex(
+      flat.map((item) => item.label),
+      scope.query,
+      -1,
+    );
+    setActiveIndex(match >= 0 ? match : 0);
+  }, [flat, scope.query]);
   useEffect(() => {
     listRef.current
       ?.querySelector(`#${CSS.escape(optionId(active))}`)
@@ -224,23 +240,24 @@ export function CommandPalette({
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "ArrowDown") {
+    const count = flat.length;
+    const { key } = event;
+    if (count === 0) {
+      // Nothing to move between; let Escape/Enter fall through to the branches
+      // below so the dialog can still close / a stale row can't be selected.
+      if (key !== "Enter" && key !== "Escape") return;
+    }
+    if (key === "ArrowDown" || key === "ArrowUp" || key === "Home" || key === "End") {
       event.preventDefault();
-      setActiveIndex(nextIndex(flat.length, active));
-    } else if (event.key === "ArrowUp") {
+      setActiveIndex(nextIndex(active, { key, count }));
+    } else if (key === "PageDown" || key === "PageUp") {
       event.preventDefault();
-      setActiveIndex(prevIndex(flat.length, active));
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      setActiveIndex(firstIndex(flat.length));
-    } else if (event.key === "End") {
-      event.preventDefault();
-      setActiveIndex(lastIndex(flat.length));
-    } else if (event.key === "Enter") {
+      setActiveIndex(pageStepIndex(active, { key, count }));
+    } else if (key === "Enter") {
       event.preventDefault();
       const item = flat[active];
       if (item) select(item);
-    } else if (event.key === "Escape") {
+    } else if (key === "Escape") {
       // Stop here so window-level Escape listeners (chat panel, editor)
       // don't also react to closing the palette.
       event.preventDefault();
