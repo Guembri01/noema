@@ -17,6 +17,13 @@ import {
   type WipLimits,
   type WipStatus,
 } from "@/lib/kanban-wip";
+import {
+  progressOf,
+  rollupEstimate,
+  type EstimateRollup,
+  type RollupTicket,
+  type TicketProgress,
+} from "@/lib/sub-ticket-rollup";
 
 export type ProjectCard = {
   id: string;
@@ -54,6 +61,55 @@ const WIP_STYLES: Record<WipStatus, string> = {
   at: "border-amber-500/50 text-amber-600",
   over: "border-red-500/50 text-red-600",
 };
+
+/** Ticket-derived health grades for a project card. */
+type ProjectHealthGrade = "done" | "on-track" | "at-risk" | "off-track";
+
+/** Badge colours keyed by `ProjectHealthGrade`. */
+const HEALTH_STYLES: Record<ProjectHealthGrade, string> = {
+  done: "bg-emerald-500/10 text-emerald-600",
+  "on-track": "bg-sky-500/10 text-sky-600",
+  "at-risk": "bg-amber-500/10 text-amber-600",
+  "off-track": "bg-red-500/10 text-red-600",
+};
+
+const HEALTH_LABELS: Record<ProjectHealthGrade, string> = {
+  done: "Done",
+  "on-track": "On track",
+  "at-risk": "At risk",
+  "off-track": "Off track",
+};
+
+/** A project's ticket-derived health, or `null` when there is nothing to show. */
+type ProjectHealth = {
+  grade: ProjectHealthGrade;
+  progress: TicketProgress;
+  rollup: EstimateRollup;
+};
+
+/**
+ * Derive a health badge from a project's own tickets through
+ * `@/lib/sub-ticket-rollup`: `progressOf` supplies the done/total percentage
+ * and `rollupEstimate` the counts plus the remaining (open) estimate.
+ * `null`/empty ticket data yields `null`, so the badge stays hidden and the
+ * board is unchanged for callers that supply no tickets. Grades: every ticket
+ * closed → `"done"`; otherwise the completion percentage buckets into
+ * on-track (≥75%), at-risk (≥40%) and off-track.
+ */
+function projectHealth(tickets: readonly RollupTicket[] | undefined): ProjectHealth | null {
+  if (!tickets || tickets.length === 0) return null;
+  const progress = progressOf(tickets);
+  const rollup = rollupEstimate(tickets);
+  const grade: ProjectHealthGrade =
+    progress.done === progress.total
+      ? "done"
+      : progress.percent >= 75
+        ? "on-track"
+        : progress.percent >= 40
+          ? "at-risk"
+          : "off-track";
+  return { grade, progress, rollup };
+}
 
 /**
  * Adapt the project cards into the column shape `@/lib/kanban-wip` grades:
@@ -162,6 +218,7 @@ export function ProjectsBoard({
   workspaceId,
   slug,
   projects,
+  ticketsByProject,
   wipLimits,
   wipOverride = false,
   onMoveProject,
@@ -169,6 +226,14 @@ export function ProjectsBoard({
   workspaceId: string;
   slug: string;
   projects: ProjectCard[];
+  /**
+   * Optional ticket roll-up data keyed by project id (the flat `{ id, parentId,
+   * estimate, done|state, ... }` shape `@/lib/sub-ticket-rollup` consumes). When
+   * a project has at least one ticket a health badge is derived from it; when
+   * this prop is omitted (or a project has no entry/empty list) no badge is
+   * rendered and the board behaves exactly as before.
+   */
+  ticketsByProject?: Record<string, readonly RollupTicket[]>;
   locale: string;
   /**
    * Optional per-status WIP limits (keyed by project status, e.g.
@@ -341,6 +406,7 @@ export function ProjectsBoard({
             const done = project.milestones.filter((m) => m.status === "done").length;
             const progress = total === 0 ? 0 : Math.round((done / total) * 100);
             const next = project.milestones.find((m) => m.status !== "done");
+            const health = projectHealth(ticketsByProject?.[project.id]);
             return (
               <li key={project.id}>
                 <div className="flex h-full flex-col">
@@ -360,6 +426,18 @@ export function ProjectsBoard({
                     >
                       {project.status}
                     </span>
+                    {health && (
+                      <span
+                        data-testid="project-health-badge"
+                        data-health={health.grade}
+                        title={`${health.progress.done}/${health.progress.total} tickets done · ${health.progress.percent}%${
+                          health.rollup.total > 0 ? ` · ${health.rollup.remaining} left` : ""
+                        }`}
+                        className={`rounded px-1.5 py-0.5 text-[10px] uppercase ${HEALTH_STYLES[health.grade]}`}
+                      >
+                        {HEALTH_LABELS[health.grade]}
+                      </span>
+                    )}
                   </div>
                   {project.description && (
                     <p className="line-clamp-1 text-xs text-muted">{project.description}</p>
