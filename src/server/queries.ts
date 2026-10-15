@@ -213,6 +213,9 @@ export async function getPageDetail(pageId: string) {
           charDelta: true,
           createdAt: true,
           createdById: true,
+          // Stored ProseMirror body, folded here so the page route can derive its
+          // inline-diff plain text without a second `pageVersion.findMany`.
+          content: true,
         },
       },
       shareLinks: {
