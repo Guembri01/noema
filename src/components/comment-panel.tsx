@@ -84,6 +84,21 @@ const PENDING_REPLY_ID = "__ui_pending_reply__";
 const ONE_LEVEL_REPLY_HINT = "Replies can only be one level deep.";
 
 /**
+ * Which threads the panel lists: every thread (the default), only open ones, or
+ * only resolved ones. A thread counts as resolved when its root carries a
+ * `resolvedAt` stamp in the shared `src/lib/comment-threads.ts` model - the same
+ * truth `threadCounts` tallies.
+ */
+type ResolvedFilter = "all" | "open" | "resolved";
+
+/** Filter chips, in display order; `all` is first so "showing all" is default. */
+const RESOLVED_FILTERS: readonly { value: ResolvedFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "open", label: "Open" },
+  { value: "resolved", label: "Resolved" },
+];
+
+/**
  * Whether a new reply may target `parentId` under the one-level thread rule
  * (R79.1, feat/m07). Mirrors `addCommentAction`: append a synthetic reply to
  * the flattened thread rows and let the shared pure `validateThreadDepth`
@@ -132,6 +147,8 @@ export function CommentPanel({
   const [replyBody, setReplyBody] = useState("");
   const [pending, startTransition] = useTransition();
   const [flash, setFlash] = useState(false);
+  // Resolved/open filter; `all` keeps every thread visible by default.
+  const [resolvedFilter, setResolvedFilter] = useState<ResolvedFilter>("all");
   const composerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -141,13 +158,42 @@ export function CommentPanel({
   // shape changes.
   const threadComments = useMemo(() => toThreadComments(comments), [comments]);
 
-  const counts = useMemo(
-    () => threadCounts(buildThreads(threadComments)),
-    [threadComments],
+  const threads = useMemo(() => buildThreads(threadComments), [threadComments]);
+
+  const counts = useMemo(() => threadCounts(threads), [threads]);
+
+  // Threads the filter admits, keyed by root id. `buildThreads` owns the
+  // resolved truth (`root.resolvedAt`), so filtering the grouped threads keeps
+  // the readout and the list on one source; props order is preserved when the
+  // visible roots are projected back, so nothing but visibility changes.
+  const visibleThreadIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const thread of threads) {
+      const resolved = thread.root.resolvedAt !== undefined;
+      if (
+        resolvedFilter === "all" ||
+        resolved === (resolvedFilter === "resolved")
+      ) {
+        ids.add(thread.root.id);
+      }
+    }
+    return ids;
+  }, [threads, resolvedFilter]);
+
+  const visibleComments = useMemo(
+    () => comments.filter((comment) => visibleThreadIds.has(comment.id)),
+    [comments, visibleThreadIds],
   );
 
+  const filterCounts: Record<ResolvedFilter, number> = {
+    all: counts.threads,
+    open: counts.unresolved,
+    resolved: counts.resolved,
+  };
+
   // Which comments may be replied to, per the shared one-level depth rule: a
-  // root is replyable, a depth-1 reply is not (R79.1, feat/m07).
+  // root is replyable, a depth-1 reply is not (R79.1, feat/m07). Computed over
+  // every thread - filtering the visible list never relaxes the reply gate.
   const replyableIds = useMemo(
     () =>
       new Set(
@@ -228,10 +274,44 @@ export function CommentPanel({
             {counts.resolved} resolved · {counts.unresolved} open
           </p>
         )}
+        {counts.threads > 0 && (
+          // Resolved/open filter: `All` (default) shows every thread, while
+          // `Open`/`Resolved` hide the other side. Counts come from the shared
+          // `threadCounts`, so the chips and the readout never disagree.
+          <div
+            role="group"
+            aria-label="Filter threads"
+            className="flex items-center gap-1 text-xs"
+          >
+            {RESOLVED_FILTERS.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={resolvedFilter === value}
+                onClick={() => setResolvedFilter(value)}
+                className={cn(
+                  "rounded px-2 py-0.5 transition",
+                  resolvedFilter === value
+                    ? "bg-surface text-fg"
+                    : "text-muted hover:text-fg",
+                )}
+              >
+                {label} ({filterCounts[value]})
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <ul className="space-y-5">
-        {comments.map((comment) => (
+        {visibleComments.length === 0 && counts.threads > 0 && (
+          <li className="text-sm text-muted">
+            {resolvedFilter === "resolved"
+              ? "No resolved threads."
+              : "No open threads."}
+          </li>
+        )}
+        {visibleComments.map((comment) => (
           <li key={comment.id} className="flex gap-3">
             <Avatar name={comment.author.name} seed={comment.author.id} />
             <div className="flex-1">
