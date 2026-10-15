@@ -15,6 +15,13 @@ import { t } from "@/lib/i18n";
 import { formatUniqueId, isValidPrefix, type UniqueIdConfig } from "@/lib/unique-id";
 import { formatGeo, normalizeGeo, parseGeo } from "@/lib/geo";
 import { formatDateRange, isValidTimeZone, type DateValue } from "@/lib/date-range";
+import {
+  describeFormat,
+  formatNumberValue,
+  validateFormatSpec,
+  type NumberFormatSpec,
+} from "@/lib/number-format";
+import { CURRENCIES, isCurrencyCode } from "@/lib/currency";
 import { DialogContent } from "@/components/ui/dialog";
 
 type OptionDraft = { id: string; name: string; color: string; group?: string };
@@ -30,6 +37,22 @@ const MAX_ZOOM = 22;
 /** Fixed sample bounds so the DATE preview never depends on the wall clock. */
 const PREVIEW_START = "2026-03-03";
 const PREVIEW_END = "2026-03-05";
+
+/** Fixed sample so the NUMBER preview never depends on the wall clock. */
+const NUMBER_PREVIEW_VALUE = 1234.56;
+
+/** Fraction-digit choices offered by the NUMBER format picker (0–8). */
+const NUMBER_DECIMAL_CHOICES = [0, 1, 2, 3, 4, 5, 6, 7, 8] as const;
+
+/**
+ * Read the optional NUMBER `numberFormat` spec off a property config. The
+ * shared `PropertyConfig` type is closed, so the key is read defensively (like
+ * `view-parts.ts`); `validateFormatSpec` repairs anything untrusted.
+ */
+function readNumberFormat(config: PropertyConfig): unknown {
+  if (!config || !("numberFormat" in config)) return undefined;
+  return (config as { numberFormat?: NumberFormatSpec }).numberFormat;
+}
 
 /** Parse a positive integer, falling back to the engine default when invalid. */
 function parsePositiveInt(text: string, fallback: number): number {
@@ -70,6 +93,7 @@ export function PropertyOptionsEditor({
   const isUniqueId = typeCode === "UNIQUE_ID";
   const isPlace = typeCode === "PLACE";
   const isDate = typeCode === "DATE";
+  const isNumber = typeCode === "NUMBER";
 
   const persist = (config: PropertyConfig) => {
     configRef.current = config;
@@ -212,6 +236,23 @@ export function PropertyOptionsEditor({
         timeZone: storedZone,
       },
     });
+  };
+
+  // --- NUMBER: display style / decimals / currency -------------------------
+  // The spec is normalized on read and every write, so an untrusted stored
+  // value (or an out-of-range pick) can never reach `Intl` unchecked.
+  const [numberFormat, setNumberFormat] = useState<NumberFormatSpec>(() =>
+    validateFormatSpec(readNumberFormat(property.config)),
+  );
+  const numberPreview = formatNumberValue(NUMBER_PREVIEW_VALUE, numberFormat, locale);
+
+  const commitNumberFormat = (patch: Record<string, unknown>) => {
+    const next = validateFormatSpec({ ...numberFormat, ...patch });
+    setNumberFormat(next);
+    persist({
+      ...(configRef.current ?? {}),
+      numberFormat: next,
+    } as PropertyConfig);
   };
 
   return (
@@ -492,6 +533,79 @@ export function PropertyOptionsEditor({
             <span className="font-mono" data-testid="date-preview">
               {datePreview}
             </span>
+          </p>
+        </section>
+      )}
+
+      {isNumber && (
+        <section className="mt-4 space-y-3" data-testid="number-format-config">
+          <h3 className="text-sm font-medium">Number</h3>
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <span className="w-24 shrink-0">Style</span>
+            <select
+              data-testid="number-format-style"
+              aria-label="Number format style"
+              value={numberFormat.style}
+              onChange={(event) => commitNumberFormat({ style: event.target.value })}
+              className={cn(CONTROL_CLASS, "flex-1")}
+            >
+              <option value="decimal">Number</option>
+              <option value="percent">Percent</option>
+              <option value="currency">Currency</option>
+              <option value="compact">Compact</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <span className="w-24 shrink-0">Decimals</span>
+            <select
+              data-testid="number-format-decimals"
+              aria-label="Number format decimals"
+              value={numberFormat.decimals === undefined ? "" : String(numberFormat.decimals)}
+              onChange={(event) =>
+                commitNumberFormat({
+                  decimals: event.target.value === "" ? undefined : Number(event.target.value),
+                })
+              }
+              className={cn(CONTROL_CLASS, "w-24")}
+            >
+              <option value="">Default</option>
+              {NUMBER_DECIMAL_CHOICES.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          {numberFormat.style === "currency" && (
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <span className="w-24 shrink-0">Currency</span>
+              <select
+                data-testid="number-format-currency"
+                aria-label="Currency"
+                value={numberFormat.currency ?? "USD"}
+                onChange={(event) => {
+                  if (isCurrencyCode(event.target.value)) {
+                    commitNumberFormat({ currency: event.target.value });
+                  }
+                }}
+                className={cn(CONTROL_CLASS, "flex-1")}
+              >
+                {CURRENCIES.map((currency) => (
+                  <option key={currency.code} value={currency.code}>
+                    {currency.name} ({currency.code})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <p className="text-xs text-muted">
+            Preview:{" "}
+            <span className="font-mono" data-testid="number-format-preview">
+              {numberPreview}
+            </span>
+          </p>
+          <p className="text-xs text-muted" data-testid="number-format-description">
+            {describeFormat(numberFormat)}
           </p>
         </section>
       )}
