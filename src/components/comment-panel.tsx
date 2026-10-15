@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { CommentReactions } from "@/components/comment-reactions";
 import { actionError, safeAction } from "@/lib/actions-client";
 import { cn, initials, avatarColor } from "@/lib/utils";
+import { parseCommentBody, toPlainText, type CommentSegment } from "@/lib/comment-body";
+import { sanitizeHref } from "@/lib/validation";
 import { t } from "@/lib/i18n";
 import { LocalTime } from "@/components/local-time";
 
@@ -190,7 +192,7 @@ export function CommentPanel({
                   </span>
                 </form>
               ) : (
-                <p className="mt-1 whitespace-pre-wrap text-sm">{comment.body}</p>
+                <CommentBody body={comment.body} className="mt-1 text-sm" />
               )}
 
               <div className="mt-1 flex items-center gap-3 text-xs text-muted">
@@ -260,9 +262,7 @@ export function CommentPanel({
                             {<LocalTime value={reply.createdAt} />}
                           </span>
                         </div>
-                        <p className="mt-0.5 whitespace-pre-wrap text-sm">
-                          {reply.body}
-                        </p>
+                        <CommentBody body={reply.body} className="mt-0.5 text-sm" />
                       </div>
                     </li>
                   ))}
@@ -340,6 +340,66 @@ export function CommentPanel({
       )}
     </section>
   );
+}
+
+/**
+ * Render a stored comment body: split it with {@link parseCommentBody} so
+ * `@[Label](userId)` mentions become chips, bare URLs become links and
+ * `:shortcode:` tokens become their glyph, while everything else stays literal
+ * text. Bodies with no rich segments take the canonical {@link toPlainText}
+ * path. Presentation only — the wire body is never rewritten.
+ */
+function CommentBody({ body, className }: { body: string; className?: string }) {
+  const segments = parseCommentBody(body);
+  const rich = segments.some((segment) => segment.type !== "text");
+  return (
+    <p className={cn("whitespace-pre-wrap", className)}>
+      {rich
+        ? segments.map((segment, index) => (
+            <CommentSegmentView key={index} segment={segment} />
+          ))
+        : toPlainText(segments)}
+    </p>
+  );
+}
+
+/** One parsed segment: a mention chip, an external link, an emoji or raw text. */
+function CommentSegmentView({ segment }: { segment: CommentSegment }) {
+  switch (segment.type) {
+    case "mention":
+      return (
+        <span className="rounded bg-accent/10 px-1 font-medium text-accent">
+          @{segment.value}
+        </span>
+      );
+    case "link": {
+      // `parseCommentBody` only yields http(s)/www links; `sanitizeHref` is the
+      // same scheme gate the renderer/markdown use, and `www.` needs a scheme.
+      const href = sanitizeHref(
+        /^www\./i.test(segment.value) ? `https://${segment.value}` : segment.value,
+      );
+      return href ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="text-accent underline underline-offset-2"
+        >
+          {segment.value}
+        </a>
+      ) : (
+        <span>{segment.value}</span>
+      );
+    }
+    case "emoji":
+      return (
+        <span role="img" aria-label={`:${segment.id}:`} title={`:${segment.id}:`}>
+          {segment.value}
+        </span>
+      );
+    default:
+      return <>{segment.value}</>;
+  }
 }
 
 function Avatar({
