@@ -84,6 +84,7 @@ model User {
   avatarUrl    String?
   locale       String   @default("en")
   theme        String   @default("system")
+  notificationPrefs Json?
   twoFactorSecret  String?
   twoFactorEnabled Boolean @default(false)
   createdAt    DateTime @default(now())
@@ -206,6 +207,7 @@ model Page {
   font        String   @default("default")
   lineSpacing String   @default("normal")
   locked      Boolean  @default(false)
+  schemaLocked Boolean @default(false)
   content     Json?
   /// Plain-text mirror of the document, maintained on write, used for Postgres
   /// full-text search (GIN index created by `npm run setup:search`).
@@ -252,6 +254,7 @@ model PageVersion {
   createdById String?
   summary     String?
   charDelta   Int?
+  label       String?
   createdAt   DateTime @default(now())
 
   page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
@@ -316,6 +319,8 @@ model Template {
   content        Json?
   config         Json?
   recurrence     String?
+  isDefault      Boolean   @default(false)
+  position       Float     @default(0)
   nextRunAt      DateTime?
   createdAt      DateTime  @default(now())
 
@@ -458,6 +463,7 @@ model ApiToken {
   id         String    @id @default(cuid())
   userId     String
   name       String
+  scopes     String[]  @default([])
   tokenHash  String    @unique
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
@@ -873,6 +879,7 @@ model OAuthApp {
   clientId     String   @unique
   clientSecret String
   redirectUris String[] @default([])
+  requiresPkce Boolean  @default(false)
   createdAt    DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -886,6 +893,8 @@ model OAuthCode {
   clientId    String
   userId      String
   redirectUri String
+  codeChallenge String?
+  codeChallengeMethod String?
   expiresAt   DateTime
   used        Boolean  @default(false)
   createdAt   DateTime @default(now())
