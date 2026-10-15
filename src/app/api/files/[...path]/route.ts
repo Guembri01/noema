@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { contentTypeFor, isValidAssetKey, storageDriver } from "@/lib/storage";
+import { buildTransformQuery, parseTransformQuery } from "@/lib/image-transform";
 
 export const runtime = "nodejs";
 
@@ -9,9 +11,16 @@ export const runtime = "nodejs";
  * Serve an uploaded asset from the storage driver (local disk or S3-compatible).
  * The file is streamed only to members of the owning workspace, and the path
  * segments are validated to prevent traversal.
+ *
+ * Image transforms: derived-rendition query params (`w`,`h`,`fit`,`format`,`q`)
+ * are parsed and clamped by `parseTransformQuery`, so invalid values are dropped
+ * and equivalent URLs collapse to one identity. That normalised query is folded
+ * into the `ETag` so browser/CDN caches never conflate two renditions, and
+ * `Vary: Accept` keeps a `format=auto` encoding negotiable. This build declares
+ * no server-side encoder, so the bytes pass through unchanged.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
   const { path: segments } = await params;
@@ -44,10 +53,22 @@ export async function GET(
   try {
     const stored = await storageDriver().get(key);
     if (!stored) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return new NextResponse(new Uint8Array(stored.body), {
+
+    // Normalise the requested rendition (`w`,`h`,`fit`,`format`,`q`) and
+    // canonicalise it so a cache key reflects the validated knobs, not the raw
+    // query. Empty when the URL asked for no transform.
+    const transform = parseTransformQuery(request.url);
+    const rendition = buildTransformQuery(transform, { baseUrl: "", path: "" });
+
+    const body = new Uint8Array(stored.body);
+    const etag = `"${createHash("sha256").update(body).update(rendition).digest("hex").slice(0, 32)}"`;
+
+    return new NextResponse(body, {
       headers: {
         "content-type": stored.contentType || contentTypeFor(name),
         "cache-control": "private, max-age=3600",
+        vary: "Accept",
+        etag,
       },
     });
   } catch {
