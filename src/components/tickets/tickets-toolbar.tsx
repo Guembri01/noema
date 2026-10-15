@@ -1,4 +1,6 @@
-import type { Dispatch, SetStateAction } from "react";
+"use client";
+
+import { useState, type Dispatch, type SetStateAction } from "react";
 import {
   Bookmark,
   CalendarDays,
@@ -7,6 +9,8 @@ import {
   Plus,
   Rows3,
   Search,
+  Star,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -16,12 +20,111 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { bulkUpdateTicketsAction } from "@/server/actions/tickets";
 import { deleteTicketViewAction } from "@/server/actions/ticket-views";
+import {
+  applySavedView,
+  deserializeSavedViews,
+  parseSavedView,
+  type FilterNode,
+  type SavedView,
+  type ViewConfigLike,
+} from "@/lib/saved-views";
 import { TICKET_PRIORITIES, TICKET_STATUSES, formatEstimate } from "@/lib/tickets";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { LabelRow } from "./ticket-types";
+
+/** The three ticket layouts the toolbar switches between. */
+type TicketView = "list" | "board" | "timeline";
+
+/** The flat, in-session ticket filter set the toolbar edits and a preset captures. */
+type TicketFilterState = {
+  query: string;
+  status: string;
+  priority: string;
+  labelId: string;
+  assigneeId: string;
+  projectId: string;
+  hideClosed: boolean;
+};
+
+/**
+ * Ticket presets bridge the toolbar to `@/lib/saved-views`, whose `SavedView` is
+ * the storage-only, scope-tagged preset shape shared with databases
+ * (`scope: "tickets"`). Nothing is persisted: presets live in this component's
+ * state for the session and overlay the live config through `applySavedView`,
+ * so the preset's list replaces the current one while fields it leaves unset
+ * survive. A preset carries the full filter/sort/group shape; this surface owns
+ * filters (one opaque node each) and the view type, so those are what it reads
+ * back and writes to the toolbar's controls.
+ */
+const TICKET_FILTER_FIELDS = [
+  "query",
+  "status",
+  "priority",
+  "labelId",
+  "assigneeId",
+  "projectId",
+] as const;
+
+/** One `FilterNode` per active toolbar filter; inactive filters are omitted. */
+function ticketFilterNodes(state: TicketFilterState): FilterNode[] {
+  const nodes: FilterNode[] = [];
+  for (const field of TICKET_FILTER_FIELDS) {
+    const value = state[field];
+    if (value) nodes.push({ field, value });
+  }
+  if (state.hideClosed) nodes.push({ field: "hideClosed", value: true });
+  return nodes;
+}
+
+/**
+ * Read a preset's filter nodes back into the toolbar's flat filter state. Every
+ * field starts blank, so a preset that sets a filter replaces the whole set and
+ * one that omits a field clears it.
+ */
+function ticketFilterState(nodes: readonly FilterNode[] | undefined): TicketFilterState {
+  const state: TicketFilterState = {
+    query: "",
+    status: "",
+    priority: "",
+    labelId: "",
+    assigneeId: "",
+    projectId: "",
+    hideClosed: false,
+  };
+  for (const node of nodes ?? []) {
+    const field = node.field;
+    const value = node.value;
+    if (field === "hideClosed") {
+      state.hideClosed = value === true;
+    } else if (
+      typeof field === "string" &&
+      (TICKET_FILTER_FIELDS as readonly string[]).includes(field) &&
+      typeof value === "string"
+    ) {
+      state[field as (typeof TICKET_FILTER_FIELDS)[number]] = value;
+    }
+  }
+  return state;
+}
+
+/** The base config a preset overlays: the toolbar's live filters and view type. */
+function ticketViewConfig(view: TicketView, state: TicketFilterState): ViewConfigLike {
+  const config: ViewConfigLike = { viewType: view };
+  const filter = ticketFilterNodes(state);
+  if (filter.length > 0) config.filter = filter;
+  return config;
+}
+
+/** Narrow a merged `viewType` back to the toolbar's view union. */
+function asTicketView(viewType: string | undefined, fallback: TicketView): TicketView {
+  return viewType === "list" || viewType === "board" || viewType === "timeline"
+    ? viewType
+    : fallback;
+}
 
 /** Shared shape of the orchestrator's action runner (wraps a server action). */
 export type RunAction = (
@@ -95,6 +198,61 @@ export function TicketsToolbar({
   checked: string[];
   setChecked: Dispatch<SetStateAction<string[]>>;
 }) {
+  // In-session named presets — saved views tagged `scope: "tickets"`. They are
+  // never persisted; applying one overlays the live filters and view type.
+  const [presets, setPresets] = useState<SavedView[]>([]);
+  const [presetName, setPresetName] = useState("");
+
+  const liveFilters: TicketFilterState = {
+    query,
+    status: statusFilter,
+    priority: priorityFilter,
+    labelId: labelFilter,
+    assigneeId: assigneeFilter,
+    projectId: projectFilter,
+    hideClosed: hideDone,
+  };
+
+  /** Overlay a preset over the live filters and view type. */
+  const applyPreset = (preset: SavedView) => {
+    const merged = applySavedView(ticketViewConfig(view, liveFilters), preset);
+    const next = ticketFilterState(merged.filter);
+    setQuery(next.query);
+    setStatusFilter(next.status);
+    setPriorityFilter(next.priority);
+    setLabelFilter(next.labelId);
+    setAssigneeFilter(next.assigneeId);
+    setProjectFilter(next.projectId);
+    setHideDone(next.hideClosed);
+    setView(asTicketView(merged.viewType, view));
+  };
+
+  /** Capture the live filters + view type under a name (replacing a same-named one). */
+  const savePreset = () => {
+    const name = presetName.trim();
+    if (!name) return;
+    const filter = ticketFilterNodes(liveFilters);
+    const preset = parseSavedView({
+      name,
+      scope: "tickets",
+      viewType: view,
+      ...(filter.length > 0 ? { filter } : {}),
+    });
+    if (!preset) return;
+    setPresets((previous) =>
+      deserializeSavedViews([
+        ...previous.filter(
+          (candidate) => candidate.name.trim().toLowerCase() !== name.toLowerCase(),
+        ),
+        preset,
+      ]),
+    );
+    setPresetName("");
+  };
+
+  const removePreset = (id: string) =>
+    setPresets((previous) => previous.filter((candidate) => candidate.id !== id));
+
   return (
     <>
       {/* Toolbar */}
@@ -270,6 +428,74 @@ export function TicketsToolbar({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* In-session presets — named filter/sort/group saved views for tickets,
+            applied locally through `applySavedView` (nothing hits the server). */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label="View presets"
+              data-testid="ticket-presets-trigger"
+              className={cn(
+                "flex h-8 items-center gap-1 rounded border border-border px-2 text-sm hover:bg-surface-2",
+                presets.length > 0 ? "text-fg" : "text-muted",
+              )}
+            >
+              <Star className="h-3.5 w-3.5" /> Presets
+              {presets.length > 0 ? ` (${presets.length})` : ""}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-72" data-testid="ticket-presets-popover">
+            <div className="space-y-2">
+              {presets.length === 0 && (
+                <p className="text-xs text-muted">No presets yet. Capture the current filters below.</p>
+              )}
+              {presets.map((preset) => (
+                <div key={preset.id} className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    data-testid={`apply-ticket-preset-${preset.id}`}
+                    onClick={() => applyPreset(preset)}
+                    className="flex-1 truncate rounded px-1 py-0.5 text-left text-sm hover:bg-surface-2"
+                  >
+                    {preset.name}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`${t(locale, "delete")} ${preset.name}`}
+                    onClick={() => removePreset(preset.id)}
+                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-red-500"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              <div className="flex items-center gap-1 border-t border-border pt-2">
+                <input
+                  value={presetName}
+                  data-testid="ticket-preset-name"
+                  aria-label={t(locale, "viewName")}
+                  placeholder={t(locale, "viewNamePlaceholder")}
+                  onChange={(event) => setPresetName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") savePreset();
+                  }}
+                  className="h-8 min-w-0 flex-1 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
+                />
+                <button
+                  type="button"
+                  data-testid="save-ticket-preset"
+                  disabled={presetName.trim().length === 0}
+                  onClick={savePreset}
+                  className="flex items-center gap-1 text-xs text-accent disabled:opacity-50"
+                >
+                  <Plus className="h-3 w-3" /> {t(locale, "save")}
+                </button>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
 
         <button
           type="button"
