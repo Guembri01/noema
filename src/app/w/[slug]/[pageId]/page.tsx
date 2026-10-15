@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import type { PropertyType } from "@prisma/client";
 import { cn } from "@/lib/utils";
+import { prosemirrorToText } from "@/lib/blocks";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { t } from "@/lib/i18n";
@@ -51,7 +52,7 @@ export default async function PageRoute({
     notFound();
   }
 
-  const [database, references, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces] = await Promise.all([
+  const [database, references, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces, versionContents] = await Promise.all([
     page.type === "DATABASE" ? getDatabase(page.id) : Promise.resolve(null),
     getPageReferences(workspace.id, page.id, page.title, visiblePageIds),
     getAncestorTrail(workspace.id, page.id),
@@ -72,7 +73,27 @@ export default async function PageRoute({
       take: 1,
     }),
     getTeamspaces(workspace.id),
+    // Snapshot bodies for the version timeline's inline text diff. `getPageDetail`
+    // returns the rows without `content`, so load exactly the same page's
+    // snapshots and fold each stored ProseMirror doc into a plain-text preview
+    // below; the `in` list keeps this bounded to the versions actually rendered.
+    prisma.pageVersion.findMany({
+      where: { id: { in: page.versions.map((version) => version.id) } },
+      select: { id: true, content: true },
+    }),
   ]);
+
+  const versionContentById = new Map(
+    versionContents.map((version) => [version.id, version.content]),
+  );
+
+  /**
+   * Stored ProseMirror doc → plain-text preview for the inline diff (F7 reads
+   * raw strings). A snapshot that carried no body returns `null` so the
+   * component keeps its documented fallback to the row title.
+   */
+  const previewText = (doc: unknown): string | null =>
+    doc === null || doc === undefined ? null : prosemirrorToText(doc);
 
   // One shared authorship resolver for BOTH history surfaces (R30.11 of
   // docs/specs/version-history-v2.md): the User row is looked up by
@@ -206,10 +227,15 @@ export default async function PageRoute({
         <VersionHistory
           pageId={page.id}
           locale={locale}
-          current={{ title: page.title, updatedAt: page.updatedAt.toISOString() }}
+          current={{
+            title: page.title,
+            updatedAt: page.updatedAt.toISOString(),
+            content: previewText(page.content),
+          }}
           versions={page.versions.map((version) => ({
             id: version.id,
             title: version.title,
+            content: previewText(versionContentById.get(version.id)),
             summary: version.summary,
             charDelta: version.charDelta,
             createdAt: version.createdAt.toISOString(),
