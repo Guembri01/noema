@@ -40,6 +40,13 @@ import {
   type CardSizeName,
   type ListDensity,
 } from "@/lib/view-presets";
+import {
+  answersToPropertyValues,
+  buildFormSchema,
+  resolveFormMeta,
+  validateSubmission,
+  type FormIssue,
+} from "@/lib/form-view";
 import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
 
 /**
@@ -1099,6 +1106,137 @@ export function CalendarView({
         ))}
       </div>
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Form view
+   --------------------------------------------------------------------------- */
+
+/**
+ * Render a database as a respondent form.
+ *
+ * `buildFormSchema` resolves the ordered questions from the database's
+ * properties plus the stored form config (`config.form`), so computed/system
+ * types (formula, relation, rollup, audit, id, button…) are skipped and stale
+ * ids are tolerated. Each question is edited with the existing `Cell` editor
+ * for its property type, so the form can only offer answers the rest of the app
+ * accepts. On submit, `validateSubmission` gates the answers with the same
+ * rules a cell write uses and `answersToPropertyValues` maps an accepted
+ * submission to the `{ propertyId, value }` cells a new row stores.
+ *
+ * `onSubmit` is the create-row seam: it receives those cells in field order and
+ * the parent creates the row (the same `createRowAction` path the table's "+"
+ * uses) and applies the values. Without it the form is render-only — the
+ * questions show read-only and no submit is offered.
+ */
+export function FormView({
+  locale,
+  properties,
+  config,
+  onSubmit,
+}: {
+  locale: string;
+  properties: DBProperty[];
+  /** Stored form configuration (`config.form`); every value is untrusted JSON. */
+  config?: unknown;
+  /**
+   * Persist an accepted submission: receives the mapped property values for a
+   * new row, in field order. Absent → the form renders read-only.
+   */
+  onSubmit?: (values: { propertyId: string; value: unknown }[]) => void;
+}) {
+  const fields = buildFormSchema(properties, config);
+  const meta = resolveFormMeta(config);
+  const propertyById = new Map(properties.map((property) => [property.id, property]));
+  const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  const [issues, setIssues] = useState<FormIssue[]>([]);
+  const editable = onSubmit !== undefined;
+
+  const setAnswer = (propertyId: string, value: unknown) => {
+    setAnswers((current) => {
+      const next = { ...current };
+      // A cleared editor (empty text/number) writes nothing, mirroring an
+      // unanswered optional question; objects like `{ checked: false }` stay.
+      if (value === undefined || value === null) delete next[propertyId];
+      else next[propertyId] = value;
+      return next;
+    });
+    // Editing a field clears its previous error so the form can be resubmitted.
+    setIssues((current) =>
+      current.some((issue) => issue.propertyId === propertyId)
+        ? current.filter((issue) => issue.propertyId !== propertyId)
+        : current,
+    );
+  };
+
+  const submit = () => {
+    if (!onSubmit) return;
+    const validation = validateSubmission(fields, answers);
+    if (!validation.ok) {
+      setIssues(validation.issues);
+      return;
+    }
+    setIssues([]);
+    onSubmit(answersToPropertyValues(fields, answers));
+  };
+
+  return (
+    <form
+      data-testid="form-view"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+      className="mx-auto max-w-xl space-y-4 rounded-lg border border-border p-4"
+    >
+      {meta.description !== "" && <p className="text-sm text-muted">{meta.description}</p>}
+      {fields.map((field) => {
+        const property = propertyById.get(field.propertyId);
+        if (!property) return null;
+        const issue = issues.find((candidate) => candidate.propertyId === field.propertyId);
+        return (
+          <div key={field.propertyId} className="space-y-1">
+            <div className="flex items-center gap-1 text-sm font-medium">
+              <span>{field.label}</span>
+              {field.required && (
+                <span className="text-red-500" aria-hidden="true">
+                  *
+                </span>
+              )}
+            </div>
+            <div className="rounded border border-border bg-bg px-2 py-1.5">
+              <Cell
+                locale={locale}
+                property={property}
+                value={answers[field.propertyId]}
+                editable={editable}
+                onChange={(value) => setAnswer(field.propertyId, value)}
+              />
+            </div>
+            {issue && (
+              <ul
+                data-testid={`form-issue-${field.propertyId}`}
+                className="space-y-0.5 text-xs text-red-500"
+              >
+                {issue.errors.map((error) => (
+                  <li key={error.code}>{error.message}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+      {editable && (
+        <button
+          type="submit"
+          data-testid="form-submit"
+          className="rounded bg-accent px-4 py-1.5 text-sm text-accent-fg hover:opacity-90"
+        >
+          {meta.submitLabel}
+        </button>
+      )}
+    </form>
   );
 }
 
