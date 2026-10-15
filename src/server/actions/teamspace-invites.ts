@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
+import { normalizeEmail } from "@/lib/email-validation";
 import { hashToken, randomToken } from "@/lib/secrets";
 import { emailTemplate, escapeHtml, sendMail } from "@/lib/mailer";
 import { appOrigin } from "@/server/actions/email";
@@ -11,11 +12,6 @@ import { appOrigin } from "@/server/actions/email";
 export type InviteResult<T = unknown> = ({ ok: true } & T) | { error: string };
 
 const INVITE_TTL_DAYS = 14;
-
-function normalizeEmail(value: string): string | null {
-  const email = value.trim().toLowerCase();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) ? email : null;
-}
 
 type TeamspaceAuth =
   | { ok: false; error: string }
@@ -57,7 +53,9 @@ export async function inviteTeamspaceMemberAction(input: {
   const auth = await authorizeTeamspace(input.teamspaceId);
   if (!auth.ok) return { error: auth.error };
 
-  const email = normalizeEmail(input.email);
+  // `@/lib/email-validation` validates and lowercases the domain; the app keys
+  // invites/users on a fully-lowercase address, so fold the local part too.
+  const email = normalizeEmail(input.email)?.toLowerCase() ?? null;
   if (!email) return { error: "Enter a valid email address." };
   const role = input.role === "ADMIN" ? "ADMIN" : "MEMBER";
 
