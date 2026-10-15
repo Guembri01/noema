@@ -1,6 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
 import { Ban, CircleDot } from "lucide-react";
-import { LocalTime } from "@/components/local-time";
 import { addBusinessHours, type WorkingHours } from "@/lib/business-hours";
 import {
   blockersOf,
@@ -31,7 +30,14 @@ import {
   type WorkloadBucket,
 } from "@/lib/tickets";
 import { cn } from "@/lib/utils";
-import { LabelChip, SlaChip, StatusPill } from "./ticket-bits";
+import {
+  CountChip,
+  KeyListChip,
+  LabelChip,
+  RelativeDateChip,
+  SlaChip,
+  StatusPill,
+} from "./ticket-bits";
 import { LABEL_TONES, type TicketRow } from "./ticket-types";
 
 /** `TicketRelation`-shaped rows accepted as an optional dependency source. */
@@ -285,14 +291,18 @@ function BlockingBadge({ dependents, locale }: { dependents: TicketRow[]; locale
 function WorkloadChip({
   bucket,
   capacity,
+  locale,
   className,
 }: {
   bucket: WorkloadBucket | undefined;
   capacity: CapacityRow | undefined;
+  /** BCP-47 locale for the open count's number/noun; English when omitted. */
+  locale?: string;
   className?: string;
 }) {
   if (!bucket) return null;
-  const load = `${bucket.openCount} open · ${formatEstimate(bucket.points, bucket.unit)}`;
+  const estimate = formatEstimate(bucket.points, bucket.unit);
+  const load = `${bucket.openCount} open · ${estimate}`;
   return (
     <span
       className={cn(
@@ -302,7 +312,14 @@ function WorkloadChip({
       )}
       title={capacity && capacity.limit !== null ? `${load} / ${capacity.limit}` : load}
     >
-      {load}
+      <CountChip
+        count={bucket.openCount}
+        one="open"
+        other="open"
+        locale={locale}
+        className="rounded-none p-0 text-inherit"
+      />
+      {` · ${estimate}`}
     </span>
   );
 }
@@ -406,11 +423,26 @@ export function TicketListView({
                 )}
               </button>
               {blockers && <DependencyBadge blockers={blockers} locale={locale} />}
+              {blockers && (
+                <KeyListChip
+                  keys={blockers.map((blocker) => blocker.key)}
+                  locale={locale}
+                  className="hidden lg:inline-flex"
+                />
+              )}
               {dependents && <BlockingBadge dependents={dependents} locale={locale} />}
+              {dependents && (
+                <KeyListChip
+                  keys={dependents.map((dependent) => dependent.key)}
+                  locale={locale}
+                  className="hidden lg:inline-flex"
+                />
+              )}
               {bucket && (
                 <WorkloadChip
                   bucket={bucket}
                   capacity={capacity}
+                  locale={locale}
                   className="hidden lg:inline-flex"
                 />
               )}
@@ -423,6 +455,11 @@ export function TicketListView({
               <span className="hidden w-20 text-xs text-muted lg:block">
                 {priorityMeta(ticket.priority).label}
               </span>
+              <RelativeDateChip
+                date={ticket.dueDate}
+                locale={locale}
+                className="hidden sm:inline-flex"
+              />
               {slaRow && <SlaChip status={slaRow.status} remainingMs={slaRow.remainingMs} />}
               <StatusPill status={ticket.status} />
             </li>
@@ -496,7 +533,11 @@ export function TicketBoardView({
               <span className="max-w-24 truncate">
                 {assigneeNames.get(bucket.assigneeId) ?? bucket.assigneeId}
               </span>
-              <WorkloadChip bucket={bucket} capacity={workload.capacityById.get(bucket.assigneeId)} />
+              <WorkloadChip
+                bucket={bucket}
+                capacity={workload.capacityById.get(bucket.assigneeId)}
+                locale={locale}
+              />
             </span>
           ))}
         </div>
@@ -557,33 +598,31 @@ export function TicketBoardView({
                             {formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")}
                           </span>
                         )}
-                        {ticket.dueDate && (
-                          <span className="text-[10px] text-muted">
-                            {<LocalTime value={ticket.dueDate} mode="date" />}
-                          </span>
-                        )}
+                        <RelativeDateChip date={ticket.dueDate} locale={locale} />
                         {slaRow && <SlaChip status={slaRow.status} remainingMs={slaRow.remainingMs} />}
                       </span>
                       {blockers && (
                         <span className="mt-1 flex flex-wrap items-center gap-1">
                           <DependencyBadge blockers={blockers} locale={locale} />
-                          <span className="text-[10px] text-muted">
-                            {blockers.map((blocker) => blocker.key).join(", ")}
-                          </span>
+                          <KeyListChip
+                            keys={blockers.map((blocker) => blocker.key)}
+                            locale={locale}
+                          />
                         </span>
                       )}
                       {dependents && (
                         <span className="mt-1 flex flex-wrap items-center gap-1">
                           <BlockingBadge dependents={dependents} locale={locale} />
-                          <span className="text-[10px] text-muted">
-                            {dependents.map((dependent) => dependent.key).join(", ")}
-                          </span>
+                          <KeyListChip
+                            keys={dependents.map((dependent) => dependent.key)}
+                            locale={locale}
+                          />
                         </span>
                       )}
                       {bucket && (
                         <span className="mt-1 flex items-center gap-1 text-[10px] text-muted">
                           <span className="max-w-24 truncate">{ticket.assigneeName}</span>
-                          <WorkloadChip bucket={bucket} capacity={capacity} />
+                          <WorkloadChip bucket={bucket} capacity={capacity} locale={locale} />
                         </span>
                       )}
                     </button>
