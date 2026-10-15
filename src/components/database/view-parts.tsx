@@ -19,6 +19,9 @@ import { cellColorFor, type RowColorRule } from "@/lib/row-color-rules";
 import { formatUniqueId } from "@/lib/unique-id";
 import { formatDateRange, parseDateValue } from "@/lib/date-range";
 import { formatGeo, normalizeGeo, parseGeo } from "@/lib/geo";
+import { isValidEmail } from "@/lib/email-validation";
+import { isValidPhone, normalizePhone } from "@/lib/phone-format";
+import { classifyLink } from "@/lib/link-check";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
 
@@ -329,6 +332,38 @@ function readNumberFormat(property: DBProperty): NumberFormatSpec | undefined {
   return (config as { numberFormat?: NumberFormatSpec }).numberFormat;
 }
 
+/**
+ * Engine-backed validation for the "typed text" property types, evaluated on
+ * the committed value so the affordance clears itself as soon as a valid edit
+ * lands. EMAIL delegates to `isValidEmail` (`@/lib/email-validation`), PHONE to
+ * `isValidPhone` (`@/lib/phone-format`) and URL rejects the `"unsafe"` /
+ * `"invalid"` classifications from `classifyLink` (`@/lib/link-check`); a
+ * relative path or anchor stays a valid page/email/tel link. TEXT and any other
+ * default-case type have no such rule and never report. Returns an English
+ * message (the same convention as `@/lib/cell-validation`) or `""`.
+ */
+function typedValueError(type: string, value: unknown): string {
+  const text =
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>).text
+      : undefined;
+  if (typeof text !== "string" || text.trim() === "") return "";
+  switch (type) {
+    case "EMAIL":
+      return isValidEmail(text) ? "" : "Enter a valid email address.";
+    case "PHONE":
+      return isValidPhone(text) ? "" : "Enter a valid phone number.";
+    case "URL": {
+      const kind = classifyLink(text);
+      return kind === "unsafe" || kind === "invalid"
+        ? "Enter a safe, well-formed link."
+        : "";
+    }
+    default:
+      return "";
+  }
+}
+
 export function Cell({
   property,
   value,
@@ -404,9 +439,14 @@ export function Cell({
   // Inline, non-blocking validation: any failure shows a red ring plus the
   // engine's message (as `title`), never an alert or a prevented edit.
   const validation = validateCell(property, value);
-  const errorMessage = validation.ok
+  const validationMessage = validation.ok
     ? ""
     : validation.errors.map((error) => error.message).join(" ");
+  // EMAIL/PHONE/URL run their own `@/lib` engine on the committed value; an
+  // invalid commit is kept (never dropped) and only flagged by this message.
+  const typedMessage = typedValueError(typeCode, value);
+  const errorMessage =
+    validationMessage !== "" ? validationMessage : typedMessage;
   // Cell-targeted colour rules. Without a rule set (the default) this is a
   // no-op; the caller may pass the surrounding row/schema so conditions on
   // other properties can be evaluated, else the cell validates against itself.
@@ -440,6 +480,20 @@ export function Cell({
     // Percent edits are entered as the displayed percentage (7.5) but stored
     // as the fraction (0.075), like the product.
     onChange({ number: percentFormat ? n / 100 : n });
+  };
+
+  // Commit a default-case text edit. TEXT keeps its raw value byte-for-byte;
+  // PHONE stores the engine-normalized E.164 form when one is derivable
+  // (`@/lib/phone-format`), falling back to the typed text when it is not.
+  // EMAIL/URL keep the typed value as-is — an unrecognized commit is never
+  // dropped; `typedValueError` below is what flags it.
+  const commitText = (raw: string): { text: string } | null => {
+    if (raw === "") return null;
+    if (typeCode === "PHONE") {
+      const trimmed = raw.trim();
+      return { text: normalizePhone(trimmed) || trimmed };
+    }
+    return { text: raw };
   };
 
   // Validate + persist a PLACE draft. `parseGeo` owns the finiteness/bounds
@@ -1148,9 +1202,7 @@ export function Cell({
           defaultValue={(v.text as string) ?? ""}
           readOnly={!editable}
           placeholder="—"
-          onBlur={(e) =>
-            onChange(e.target.value ? { text: e.target.value } : null)
-          }
+          onBlur={(e) => onChange(commitText(e.target.value))}
           className="w-full bg-transparent outline-none placeholder:text-muted"
         />
       );
