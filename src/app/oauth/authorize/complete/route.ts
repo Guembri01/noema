@@ -15,6 +15,8 @@ export async function POST(request: Request) {
   const redirectUri = String(form.get("redirect_uri") ?? "");
   const state = String(form.get("state") ?? "");
   const decision = String(form.get("decision") ?? "deny");
+  const codeChallenge = String(form.get("code_challenge") ?? "");
+  const codeChallengeMethod = String(form.get("code_challenge_method") ?? "").toUpperCase();
 
   const app = await prisma.oAuthApp.findUnique({ where: { clientId } });
   if (!app || !app.redirectUris.includes(redirectUri)) {
@@ -28,6 +30,11 @@ export async function POST(request: Request) {
     return NextResponse.redirect(url.toString(), 303);
   }
 
+  // RFC 7636: apps flagged `requiresPkce` must present an S256 challenge.
+  if (app.requiresPkce && (codeChallenge.length === 0 || codeChallengeMethod !== "S256")) {
+    return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+  }
+
   const code = randomToken(24);
   await prisma.oAuthCode.create({
     data: {
@@ -35,6 +42,9 @@ export async function POST(request: Request) {
       clientId,
       userId: user.id,
       redirectUri,
+      // RFC 7636 §4.3: an omitted method defaults to `plain`.
+      codeChallenge: codeChallenge || null,
+      codeChallengeMethod: codeChallenge ? codeChallengeMethod || "PLAIN" : null,
       expiresAt: new Date(Date.now() + 5 * 60_000),
     },
   });

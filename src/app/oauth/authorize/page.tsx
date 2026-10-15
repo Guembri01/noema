@@ -17,6 +17,8 @@ export default async function AuthorizePage({
   const clientId = params.client_id ?? "";
   const redirectUri = params.redirect_uri ?? "";
   const state = params.state ?? "";
+  const codeChallenge = params.code_challenge ?? "";
+  const codeChallengeMethod = params.code_challenge_method ?? "";
   const app = clientId ? await prisma.oAuthApp.findUnique({ where: { clientId } }) : null;
   const valid = app !== null && app.redirectUris.includes(redirectUri);
 
@@ -46,6 +48,8 @@ export default async function AuthorizePage({
           <input type="hidden" name="client_id" value={clientId} />
           <input type="hidden" name="redirect_uri" value={redirectUri} />
           <input type="hidden" name="state" value={state} />
+          <input type="hidden" name="code_challenge" value={codeChallenge} />
+          <input type="hidden" name="code_challenge_method" value={codeChallengeMethod} />
           <button
             type="submit"
             name="decision"
