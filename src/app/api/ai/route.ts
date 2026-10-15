@@ -4,8 +4,34 @@ import { getWorkspaceAccess } from "@/lib/permissions";
 import { searchPagesForPrompt } from "@/server/queries";
 import { rateLimit } from "@/lib/api-guard";
 import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfig } from "@/lib/ai-provider";
+import { assembleContext, estimateTokens, type ContextDoc } from "@/lib/ai-context";
 
 export const runtime = "nodejs";
+
+/** Default token window for the request prompt when the client sends none. */
+const DEFAULT_MAX_TOKENS = 2000;
+/** Hard floor/ceiling (in tokens) for a client-supplied prompt budget. */
+const MIN_MAX_TOKENS = 64;
+const MAX_MAX_TOKENS = 8000;
+
+/** Clamp an untrusted client budget to a finite, sane token window. */
+function clampMaxTokens(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_MAX_TOKENS;
+  return Math.min(MAX_MAX_TOKENS, Math.max(MIN_MAX_TOKENS, Math.floor(value)));
+}
+
+/**
+ * Split the joined context blob into paragraph blocks in input order. Later
+ * blocks are treated as the most recent, so `assembleContext` keeps them first
+ * and drops the oldest blocks when the token budget is tight.
+ */
+function contextToDocs(context: string): ContextDoc[] {
+  const blocks = context
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter((block) => block.length > 0);
+  return blocks.map((text, index) => ({ id: `context-${index}`, text, priority: index }));
+}
 
 /**
  * Small AI proxy (OpenAI-compatible chat completions). Modes:
@@ -20,7 +46,13 @@ export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  let body: { prompt?: string; context?: string; mode?: string; workspaceId?: string };
+  let body: {
+    prompt?: string;
+    context?: string;
+    mode?: string;
+    workspaceId?: string;
+    maxTokens?: number;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -67,6 +99,18 @@ export async function POST(request: Request) {
         ? "You fill a single database cell. Reply with ONLY the value, no quotes, no explanation, no trailing punctuation."
         : "You are a writing assistant embedded in a notes app. Reply in GitHub-flavoured Markdown: answer in the first sentence, then use short `-` bullets, `**bold**` for key terms, `| a | b |` tables to compare, and fenced code blocks for code. Answer only from the provided context when context is given.";
 
+  // Budget the request prompt: `system` and the user's question are mandatory,
+  // so the client's token window is spent on the context blocks (oldest first to
+  // be dropped). `maxTokens` is clamped to a sane range.
+  const userMessage = mode === "summarize" ? "Summarize the context above." : prompt;
+  const maxTokens = clampMaxTokens(body.maxTokens);
+  const contextBudget = Math.max(0, maxTokens - estimateTokens(system) - estimateTokens(userMessage));
+  const { prompt: budgetedContext } = assembleContext({
+    docs: contextToDocs(context),
+    question: "",
+    maxTokens: contextBudget,
+  });
+
   const config = await resolveAiConfig(body.workspaceId);
   if (!config) {
     return NextResponse.json({ error: AI_NOT_CONFIGURED }, { status: 503 });
@@ -75,8 +119,8 @@ export async function POST(request: Request) {
   const result = await chatComplete(
     {
       system,
-      context: context || undefined,
-      user: mode === "summarize" ? "Summarize the context above." : prompt,
+      context: budgetedContext || undefined,
+      user: userMessage,
       temperature: mode === "autofill" ? 0.1 : 0.4,
       ...(mode === "autofill" ? { maxTokens: 60 } : {}),
     },
