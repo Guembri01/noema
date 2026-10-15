@@ -1,16 +1,29 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { Prisma } from "@prisma/client";
+import { Prisma, type WorkspaceRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { pageSearchText } from "@/lib/search";
 import { prosemirrorToText } from "@/lib/blocks";
 import { restoreVersionSummary } from "@/lib/version-history";
 
 export type Result<T = unknown> = ({ ok: true } & T) | { error: string };
+
+/**
+ * Reduce workspace access to the lock policy's role shape
+ * (`src/lib/database-lock.ts`), mirroring `updatePageAction`'s content lock:
+ * only the owner keeps the locked-page override so the lock stays releasable.
+ */
+function lockRoleFor(role: WorkspaceRole): LockRole {
+  return {
+    isOwner: role === "OWNER",
+    isMember: role === "ADMIN" || role === "MEMBER",
+  };
+}
 
 /**
  * Restore a past revision. The current state is pushed onto the history first,
@@ -29,7 +42,9 @@ export async function restorePageVersionAction(versionId: string): Promise<Resul
       content: true,
       createdAt: true,
       pageId: true,
-      page: { select: { id: true, title: true, content: true, workspaceId: true } },
+      page: {
+        select: { id: true, title: true, content: true, workspaceId: true, locked: true },
+      },
     },
   });
   if (!version) return { error: "Version not found." };
@@ -37,6 +52,16 @@ export async function restorePageVersionAction(versionId: string): Promise<Resul
   const access = await getWorkspaceAccess(user.id, version.page.workspaceId);
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to restore this page." };
+  }
+
+  // R15 (docs/audits/security-1.md L4): the render-time `Page.locked` gate must
+  // also hold on restore, or any editor can bypass the lock by restoring an old
+  // revision (D6 in docs/specs/realtime-collab.md). Same policy as the q17
+  // content-edit lock in `updatePageAction`: only the owner keeps the override.
+  if (
+    !canEditSchema({ locked: Boolean(version.page.locked) }, lockRoleFor(access.role))
+  ) {
+    return { error: "This page is locked. Unlock it to restore a version." };
   }
 
   const before = prosemirrorToText(version.page.content).length;
