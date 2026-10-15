@@ -45,6 +45,13 @@ import {
   normalizeCalloutIcon,
   searchIcons,
 } from "@/lib/callout-icons";
+import {
+  blocksToQuote,
+  formatPullQuote,
+  parsePullQuote,
+  validatePullQuote,
+  type PullQuoteBlock,
+} from "@/lib/pull-quote";
 import { t } from "@/lib/i18n";
 
 declare module "@tiptap/core" {
@@ -226,11 +233,15 @@ export const Toggle = Node.create<{ locale: string }>({
     };
   },
 
-  // Anchors the toggle-heading chevron to the editor without touching the
-  // shared `page-editor.tsx` (the same `addExtensions` pattern the input-rules
-  // slice uses). Drop this hook once `ToggleHeading` is mounted directly.
+  // Anchors the toggle-heading chevron and the pull-quote blockquote variant to
+  // the editor without touching the shared `page-editor.tsx` (the same
+  // `addExtensions` pattern the input-rules slice uses). Drop this hook once
+  // both are mounted directly.
   addExtensions() {
-    return [ToggleHeading.configure({ locale: this.options.locale })];
+    return [
+      ToggleHeading.configure({ locale: this.options.locale }),
+      PullQuote,
+    ];
   },
 
   addNodeView() {
@@ -464,6 +475,154 @@ export const ToggleHeading = Extension.create<{ locale: string }>({
             const pluginState = toggleHeadingPluginKey.getState(state);
             if (!pluginState) return DecorationSet.empty;
             return toggleHeadingDecorations(state.doc, pluginState.collapsed, locale);
+          },
+        },
+      }),
+    ];
+  },
+});
+
+/* --------------------------------------------------------------- pull quote */
+
+/**
+ * Pull-quote / large-quote variant for blockquotes (docs/MISSING_FEATURES §1,
+ * "display-scale quotation styling" — planned as a quote variant).
+ *
+ * A pull quote is not a new node: it is an ordinary `blockquote` that carries
+ * `size: 'large'` and, optionally, an attribution in the paragraph that
+ * follows it — exactly the two-block shape `src/lib/pull-quote.ts` models.
+ *
+ * The `size` attribute is added globally (the same `addGlobalAttributes`
+ * pattern `BlockColors` uses) so the variant round-trips through JSON and HTML
+ * as `data-size="large"`. The display scale and the attribution emphasis are
+ * view-local node decorations, so a normal blockquote (no `size`, or
+ * `"default"`) renders byte-for-byte as it did before.
+ *
+ * Anchored through `Toggle.addExtensions()` — this file's established hook —
+ * because `page-editor.tsx` owns the (fleet-shared) extension list. Drop the
+ * hook once `PullQuote` is mounted there directly.
+ */
+
+/** Inline scale for the quoted words of a display-size blockquote. */
+const PULL_QUOTE_STYLE = "font-size: 1.5em; font-weight: 600; line-height: 1.45;";
+
+/** Inline de-emphasis for the attribution line under the quote. */
+const PULL_QUOTE_ATTRIBUTION_STYLE = "font-size: 0.9em; opacity: 0.75; text-align: right;";
+
+/** Project a ProseMirror block into the lib's minimal block shape. */
+function pullQuoteBlock(node: PMNode): PullQuoteBlock {
+  const text = node.textContent.trim();
+  const block: PullQuoteBlock = {
+    type: node.type.name === "blockquote" ? "blockquote" : "paragraph",
+    content: text ? [{ type: "text", text }] : [],
+  };
+  if (node.type.name === "blockquote" && node.attrs.size === "large") {
+    block.attrs = { size: "large" };
+  }
+  return block;
+}
+
+/** Identifies the pull-quote plugin (its decoration provider). */
+export const pullQuotePluginKey = new PluginKey("pullQuote");
+
+/**
+ * Decorations for every top-level pull quote in `doc`: the blockquote gets the
+ * display scale and (when present) the attribution paragraph that follows it
+ * is emphasised. Pure — reads the document, returns decorations, never mutates.
+ *
+ * The quote/attribution split is delegated to `src/lib/pull-quote.ts`:
+ * `blocksToQuote` reads the pair, `parsePullQuote` normalises it and
+ * `validatePullQuote` gates the variant, so a malformed `size: 'large'` node
+ * (empty or invalid) falls back to an ordinary blockquote. An ordinary
+ * following paragraph — one that carried no attribution dash, and so survived
+ * the lib's strip unchanged — is left as a plain paragraph.
+ */
+export function pullQuoteDecorations(doc: PMNode): DecorationSet {
+  const blocks: PMNode[] = [];
+  const offsets: number[] = [];
+  doc.forEach((node, offset) => {
+    blocks.push(node);
+    offsets.push(offset);
+  });
+
+  const decorations: Decoration[] = [];
+  for (let index = 0; index < blocks.length; index += 1) {
+    const node = blocks[index];
+    if (node.type.name !== "blockquote" || node.attrs.size !== "large") continue;
+    if (node.textContent.trim() === "") continue;
+
+    const next = blocks[index + 1];
+    const pair: PullQuoteBlock[] = [pullQuoteBlock(node)];
+    if (next && next.type.name === "paragraph") pair.push(pullQuoteBlock(next));
+
+    const quote = blocksToQuote(pair);
+    const parsed = parsePullQuote(quote);
+    if (!parsed.ok) continue;
+    if (!validatePullQuote(parsed.value).ok) continue;
+
+    const start = offsets[index];
+    decorations.push(
+      Decoration.node(start, start + node.nodeSize, {
+        class: "noema-pull-quote",
+        "data-pull-quote": "",
+        style: PULL_QUOTE_STYLE,
+        title: formatPullQuote(parsed.value),
+      }),
+    );
+
+    // Only a paragraph the lib actually read as an attribution is emphasised.
+    // When `blocksToQuote` found an attribution different from the raw text,
+    // the lib stripped a leading dash — i.e. this really is an attribution.
+    const rawNext = next?.textContent.trim() ?? "";
+    const isAttribution =
+      next?.type.name === "paragraph" &&
+      quote.attribution !== undefined &&
+      quote.attribution !== rawNext;
+    if (isAttribution && next) {
+      const attrStart = offsets[index + 1];
+      decorations.push(
+        Decoration.node(attrStart, attrStart + next.nodeSize, {
+          class: "noema-pull-quote-attribution",
+          style: PULL_QUOTE_ATTRIBUTION_STYLE,
+        }),
+      );
+    }
+  }
+
+  return DecorationSet.create(doc, decorations);
+}
+
+/**
+ * The pull-quote variant: a global `size` attribute on `blockquote` plus a
+ * decoration-only plugin. No new node type and no document mutation, so normal
+ * blockquotes are unchanged.
+ */
+export const PullQuote = Extension.create({
+  name: "pullQuote",
+
+  addGlobalAttributes() {
+    return [
+      {
+        types: ["blockquote"],
+        attributes: {
+          size: {
+            default: null,
+            parseHTML: (element) => element.getAttribute("data-size"),
+            renderHTML: (attributes) =>
+              attributes.size === "large" ? { "data-size": "large" } : {},
+          },
+        },
+      },
+    ];
+  },
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: pullQuotePluginKey,
+        props: {
+          decorations(state: EditorState) {
+            return pullQuoteDecorations(state.doc);
           },
         },
       }),
