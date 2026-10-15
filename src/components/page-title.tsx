@@ -142,6 +142,10 @@ export function PageTitle({
   const [shareToken, setShareToken] = useState(initialSharedToken);
   const [following, setFollowing] = useState(initialFollowing);
   const [locked, setLocked] = useState(initialLocked);
+  // A locked page is read-only even for otherwise-editable members; the server
+  // already folds `!page.locked` into `editable`, but the lock can also flip at
+  // runtime through the actions menu before the route refreshes.
+  const canEdit = editable && !locked;
   const [showEmoji, setShowEmoji] = useState(false);
   const [showCover, setShowCover] = useState(false);
   const [titleEl, setTitleEl] = useState<HTMLTextAreaElement | null>(null);
@@ -211,7 +215,7 @@ export function PageTitle({
     });
 
   const saveTitle = () => {
-    if (!editable || title === initialTitle) return;
+    if (!canEdit || title === initialTitle) return;
     save({ title });
   };
 
@@ -417,6 +421,16 @@ export function PageTitle({
           <span className="truncate">{workspaceName}</span>
           <span aria-hidden className="px-0.5">/</span>
           <span aria-current="page" className="truncate text-fg">{title || "Untitled"}</span>
+          {locked && (
+            <span
+              className="flex shrink-0 items-center rounded px-1 text-muted"
+              role="img"
+              aria-label="Page locked"
+              title="This page is locked"
+            >
+              <Lock className="h-3.5 w-3.5" aria-hidden />
+            </span>
+          )}
         </nav>
 
         <div className="flex items-center gap-1">
@@ -530,7 +544,7 @@ export function PageTitle({
         {pageIcon.kind !== "none" ? (
           <button
             type="button"
-            disabled={!editable}
+            disabled={!canEdit}
             onClick={() => setShowEmoji((v) => !v)}
             aria-label="Change icon"
             className={cn(
@@ -543,7 +557,7 @@ export function PageTitle({
           >
             {pageIcon.kind === "emoji" ? pageIcon.value : null}
           </button>
-        ) : editable ? (
+        ) : canEdit ? (
           <button
             type="button"
             onClick={() => setShowEmoji((v) => !v)}
@@ -591,7 +605,7 @@ export function PageTitle({
           ref={setTitleEl}
           aria-label="Page title"
           value={title}
-          readOnly={!editable}
+          readOnly={!canEdit}
           placeholder="Untitled"
           rows={1}
           onChange={(e) => {
@@ -609,7 +623,7 @@ export function PageTitle({
           className="w-full resize-none overflow-hidden bg-transparent text-[40px] font-bold leading-[1.2] tracking-[-0.02em] outline-none placeholder:text-muted/40"
         />
 
-        {editable && !cover && (
+        {canEdit && !cover && (
           <div className="mt-2">
             <button
               type="button"
