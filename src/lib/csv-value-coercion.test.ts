@@ -24,6 +24,7 @@ describe("isCoercible", () => {
     expect(isCoercible("number")).toBe(true);
     expect(isCoercible("multi_select")).toBe(true);
     expect(isCoercible("people")).toBe(true);
+    expect(isCoercible("PLACE")).toBe(true);
   });
 
   it("rejects types a CSV cell cannot supply", () => {
@@ -118,6 +119,43 @@ describe("coerceCsvValue — MULTI_SELECT / PEOPLE", () => {
       names: ["Ada Lovelace", "Grace Hopper"],
     });
     expect(coerceCsvValue(" , ", "PEOPLE")).toBeNull();
+  });
+});
+
+describe("coerceCsvValue — PLACE", () => {
+  it("parses `lat,lng` into { lat, lng }", () => {
+    expect(coerceCsvValue("48.8566,2.3522", "PLACE")).toStrictEqual({
+      lat: 48.8566,
+      lng: 2.3522,
+    });
+    expect(coerceCsvValue(" -33.8688 , 151.2093 ", "PLACE")).toStrictEqual({
+      lat: -33.8688,
+      lng: 151.2093,
+    });
+  });
+
+  it("keeps an optional label, even one containing commas", () => {
+    expect(coerceCsvValue("48.8566,2.3522,Paris HQ", "PLACE")).toStrictEqual({
+      lat: 48.8566,
+      lng: 2.3522,
+      label: "Paris HQ",
+    });
+    expect(coerceCsvValue("48.8566,2.3522,Paris, France", "PLACE")).toStrictEqual({
+      lat: 48.8566,
+      lng: 2.3522,
+      label: "Paris, France",
+    });
+  });
+
+  it("normalizes the coordinate like the PLACE cell editor", () => {
+    expect(coerceCsvValue("0,180", "PLACE")).toStrictEqual({ lat: 0, lng: -180 });
+  });
+
+  it("returns null for values that are not a coordinate", () => {
+    expect(coerceCsvValue("not-a-coordinate", "PLACE")).toBeNull();
+    expect(coerceCsvValue("48.8566", "PLACE")).toBeNull();
+    expect(coerceCsvValue("91,0", "PLACE")).toBeNull();
+    expect(coerceCsvValue(",", "PLACE")).toBeNull();
   });
 });
 

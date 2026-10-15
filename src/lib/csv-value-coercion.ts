@@ -11,10 +11,13 @@
  *   SELECT | STATUS              -> { optionId: string }   (needs an option map)
  *   MULTI_SELECT                 -> { optionIds: string[] } (needs an option map)
  *   PEOPLE                       -> { names: string[] }
+ *   PLACE                        -> { lat: number; lng: number; label?: string }
  *
  * No I/O, no DB, no React. Blank cells return `null` (and `coerceRow` omits
  * them) and nothing here throws — malformed input is treated as an empty cell.
  */
+
+import { normalizeGeo, parseGeo, type GeoValue } from "@/lib/geo";
 
 /** An option of a SELECT/STATUS/MULTI_SELECT property (`config.options`). */
 export type CsvOption = { id: string; name: string };
@@ -43,7 +46,8 @@ export type CsvValue =
   | { start: string }
   | { optionId: string }
   | { optionIds: string[] }
-  | { names: string[] };
+  | { names: string[] }
+  | GeoValue;
 
 /** A non-empty cell bound to the property it belongs to. */
 export type CsvRowValue = { propertyId: string; value: CsvValue };
@@ -62,6 +66,7 @@ const COERCIBLE_TYPES = new Set([
   "EMAIL",
   "PHONE",
   "PEOPLE",
+  "PLACE",
 ]);
 
 /** Truthy checkbox tokens; anything else (after trim/lowercase) is unchecked. */
@@ -147,6 +152,24 @@ export function coerceCsvValue(
     case "PEOPLE": {
       const names = splitList(text);
       return names.length > 0 ? { names } : null;
+    }
+    case "PLACE": {
+      // `"lat,lng[,label]"` — the optional label may itself contain commas, so
+      // everything after the longitude (trimmed) is the caption. `parseGeo`
+      // owns the finiteness/bounds checks and `normalizeGeo` clamps/wraps
+      // before storage, mirroring the PLACE cell editor.
+      const parts = text.split(",");
+      if (parts.length < 2) return null;
+      const latText = parts[0].trim();
+      const lngText = parts[1].trim();
+      const label = parts.slice(2).join(",").trim();
+      if (latText === "" || lngText === "") return null;
+      const parsed = parseGeo({
+        lat: Number(latText),
+        lng: Number(lngText),
+        label: label === "" ? undefined : label,
+      });
+      return parsed.ok ? normalizeGeo(parsed.value) : null;
     }
     default:
       return { text };
