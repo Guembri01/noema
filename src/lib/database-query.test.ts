@@ -463,6 +463,37 @@ describe("view config serialization", () => {
     expect(parseViewConfig({ filters: [] }).filters).toEqual([]);
     expect(parseViewConfig({ filters: "nope" }).filters).toBeUndefined();
   });
+
+  it("round-trips the optional swimlane, WIP-limit, number-format and layout keys", () => {
+    const config = {
+      filters: [],
+      laneBy: "owner",
+      wipLimits: { todo: 3, doing: 2 },
+      numberFormat: { style: "percent", decimals: 1 },
+      columnLayout: "name:240,status:160",
+    };
+    const stored = JSON.parse(JSON.stringify(normalizeViewConfig(config)));
+    expect(parseViewConfig(stored)).toEqual(config);
+  });
+
+  it("keeps the optional keys but drops malformed values", () => {
+    const out = normalizeViewConfig({
+      laneBy: 7,
+      wipLimits: { todo: 3, doing: -1, done: "many", "": 1, review: 2.5 },
+      columnLayout: ["nope"],
+    } as never);
+
+    expect(out.laneBy).toBeUndefined();
+    expect(out.wipLimits).toEqual({ todo: 3 });
+    expect(out.columnLayout).toBeUndefined();
+    expect(out).not.toHaveProperty("numberFormat");
+  });
+
+  it("normalises an empty WIP-limit map away, like the settings editor", () => {
+    const out = normalizeViewConfig({ wipLimits: { todo: "nope" } } as never);
+    expect(out).not.toHaveProperty("wipLimits");
+    expect(normalizeViewConfig({ numberFormat: null }).numberFormat).toBeNull();
+  });
 });
 
 /* ---------------------------------------------------------------------------

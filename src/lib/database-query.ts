@@ -103,6 +103,22 @@ export type ViewConfig = {
   visiblePropertyIds?: string[];
   freezeFirstColumn?: boolean;
   colorRules?: ColorRule[];
+  /** BOARD: an optional second property id that slices the board into swimlanes. */
+  laneBy?: string;
+  /**
+   * BOARD: per-column WIP limits keyed by column key (option id, or the empty
+   * key for the "no value" column). Only non-negative integer counts survive
+   * normalisation; an empty map means "no limits".
+   */
+  wipLimits?: Record<string, number>;
+  /**
+   * NUMBER: an optional per-view display spec. Deliberately `unknown` — the
+   * formatter validates it at render time, so this layer passes it through
+   * untouched rather than mis-casting a stored value.
+   */
+  numberFormat?: unknown;
+  /** TABLE: the serialized column layout (order / widths / hidden). */
+  columnLayout?: string;
 };
 
 type OperatorSpec = { value: FilterOperator; label: string };
@@ -767,6 +783,24 @@ function uniqueStrings(input: unknown): string[] | undefined {
   return seen;
 }
 
+/**
+ * Keep only finite, non-negative integer WIP limits. An object with no valid
+ * entry normalises away, so "no limits" is the absence of the key rather than
+ * an empty map (matching the settings editor's own rule).
+ */
+function normalizeWipLimits(input: unknown): Record<string, number> | undefined {
+  const record = asRecord(input);
+  if (!record) return undefined;
+  const limits: Record<string, number> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (key === "") continue;
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+      limits[key] = value;
+    }
+  }
+  return Object.keys(limits).length > 0 ? limits : undefined;
+}
+
 /** Strip a stored/patched view config down to the keys this build understands. */
 export function normalizeViewConfig(input: unknown): ViewConfig {
   const record = asRecord(input);
@@ -810,6 +844,20 @@ export function normalizeViewConfig(input: unknown): ViewConfig {
     out.colorRules = record.colorRules
       .map(normalizeColorRule)
       .filter((rule): rule is ColorRule => rule !== null);
+  }
+  // Optional keys that predate this build must round-trip instead of being
+  // dropped, so a save from a newer client (swimlanes, WIP limits, per-view
+  // number format, column layout) is not silently erased by an older one.
+  if (typeof record.laneBy === "string") {
+    out.laneBy = record.laneBy;
+  }
+  const wipLimits = normalizeWipLimits(record.wipLimits);
+  if (wipLimits) out.wipLimits = wipLimits;
+  if (record.numberFormat !== undefined) {
+    out.numberFormat = record.numberFormat;
+  }
+  if (typeof record.columnLayout === "string") {
+    out.columnLayout = record.columnLayout;
   }
   return out;
 }
