@@ -4,50 +4,9 @@ import { getWorkspaceAccess } from "@/lib/permissions";
 import { searchPagesPage } from "@/server/queries";
 import { rateLimit } from "@/lib/api-guard";
 import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
-import { buildIndex, rank } from "@/lib/search-ranking";
+import { refineByRelevance } from "@/lib/search-ranking";
 
 export const runtime = "nodejs";
-
-/**
- * How strongly a title hit outranks an equally frequent body hit in the
- * opt-in `rank=bm25` refinement. Above `1` so a page-name match surfaces first.
- */
-const BM25_TITLE_WEIGHT = 3;
-
-/**
- * Re-rank one loaded page of hits with the shared BM25 scorer
- * (`search-ranking.ts`), weighting title matches. Additive and lossless: rows
- * the scorer does not recognise (prefix and substring-fallback hits, whose
- * terms fold differently) keep their engine order and follow the scored rows,
- * so the result count and the `(rank, id)` keyset window are unchanged. A
- * stable sort leaves the engine's order intact for any remaining ties.
- */
-function reRankByBm25<
-  T extends { id: string; title: string; snippet: string; updatedAt: Date },
->(rows: readonly T[], query: string): T[] {
-  if (rows.length <= 1) return [...rows];
-  const index = buildIndex(
-    rows.map((row) => ({
-      id: row.id,
-      fields: { title: row.title, body: row.snippet },
-      updatedAt: row.updatedAt.getTime(),
-    })),
-  );
-  const ranked = rank(index, query, {
-    titleWeight: BM25_TITLE_WEIGHT,
-    limit: rows.length,
-  });
-  if (ranked.length === 0) return [...rows];
-  const position = new Map(ranked.map((result, index) => [result.id, index]));
-  return [...rows].sort((a, b) => {
-    const left = position.get(a.id);
-    const right = position.get(b.id);
-    if (left === undefined && right === undefined) return 0;
-    if (left === undefined) return 1;
-    if (right === undefined) return -1;
-    return left - right;
-  });
-}
 
 /**
  * GET /api/v1/search?workspaceId=…&q=…&page_size=…&start_cursor=… — search page
@@ -84,7 +43,9 @@ export async function GET(request: Request) {
 
   const page = await searchPagesPage(workspaceId, query, null, { limit, cursor });
   const items =
-    url.searchParams.get("rank") === "bm25" ? reRankByBm25(page.items, query) : page.items;
+    url.searchParams.get("rank") === "bm25"
+      ? refineByRelevance(page.items, query, { titleWeight: 3, getBody: (r) => r.snippet })
+      : page.items;
   return NextResponse.json({
     results: items.map((result) => ({
       id: result.id,
