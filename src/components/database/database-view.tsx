@@ -48,6 +48,7 @@ import { evaluateFormula } from "@/lib/formula";
 import { aggregate, type RollupFunction } from "@/lib/rollup";
 import type { RowColorRule } from "@/lib/row-color-rules";
 import { mergeLayout, type ColumnLayout } from "@/lib/column-layout";
+import { CARD_SIZES, type CardSizeName } from "@/lib/view-presets";
 import type { RelationData } from "@/server/queries";
 import {
   DropdownMenu,
@@ -151,6 +152,34 @@ function toEngineTemplate(template: ViewTemplate): DatabaseTemplate {
       (template.config?.values ?? []).map((value) => [value.propertyId, value.value]),
     ),
   };
+}
+
+/**
+ * Keep only the boolean entries of a stored BOARD `visibleGroups` map. Unknown
+ * keys and non-boolean values are dropped, so a malformed value leaves every
+ * group visible — the same rendering as a view with no visibility map at all.
+ */
+function normalizeVisibleGroups(value: unknown): Record<string, boolean> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const out: Record<string, boolean> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === "boolean") out[key] = entry;
+  }
+  return out;
+}
+
+/**
+ * A GALLERY view's forced `cardSize`, or `undefined` when the stored value is
+ * absent / not one of the known presets. Returning `undefined` keeps the card
+ * size following the measured container, exactly as before.
+ */
+function normalizeCardSize(value: unknown): CardSizeName | undefined {
+  if (typeof value !== "string") return undefined;
+  return Object.prototype.hasOwnProperty.call(CARD_SIZES, value)
+    ? (value as CardSizeName)
+    : undefined;
 }
 
 export function DatabaseView({
@@ -290,6 +319,19 @@ export function DatabaseView({
   const boardWipLimits = (
     activeView?.config as { wipLimits?: Record<string, number> } | null | undefined
   )?.wipLimits;
+
+  // GROUP VISIBILITY (BOARD) + CARD SIZE (GALLERY): the general `viewConfig`
+  // schema carries neither key, so — like `laneBy`/`wipLimits` above — both are
+  // read off the raw view config and normalised. An absent or malformed value
+  // resolves to `undefined`, so `BoardView` shows every column and `GalleryView`
+  // keeps sizing cards from the container, exactly as before.
+  const boardVisibleGroups = normalizeVisibleGroups(
+    (activeView?.config as { visibleGroups?: unknown } | null | undefined)
+      ?.visibleGroups,
+  );
+  const galleryCardSize = normalizeCardSize(
+    (activeView?.config as { cardSize?: unknown } | null | undefined)?.cardSize,
+  );
 
   const setViewConfig = (patch: Partial<ViewConfig>) => {
     if (!activeView) return;
@@ -1220,6 +1262,7 @@ export function DatabaseView({
           editable={editable}
           laneBy={boardLaneBy}
           wipLimits={boardWipLimits}
+          visibleGroups={boardVisibleGroups}
         />
       ) : activeView.type === "LIST" ? (
         <ListView
@@ -1241,6 +1284,7 @@ export function DatabaseView({
           primary={primary}
           valueFor={valueFor}
           computedFor={computedFor}
+          cardSize={galleryCardSize}
         />
       ) : activeView.type === "CALENDAR" ? (
         <CalendarView
