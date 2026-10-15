@@ -93,6 +93,43 @@ const MIN_CONTEXT_BUDGET = 0;
 const MAX_CONTEXT_BUDGET = 8192;
 const CONTEXT_BUDGET_STEP = 128;
 
+/** localStorage key holding one workspace's saved context-token budget. */
+function contextBudgetStorageKey(workspaceId: string): string {
+  return `noema:context-budget:${workspaceId}`;
+}
+
+/** Clamp a raw budget into the supported range as a whole number of tokens. */
+function clampContextBudget(value: number): number {
+  return Math.min(MAX_CONTEXT_BUDGET, Math.max(MIN_CONTEXT_BUDGET, Math.floor(value)));
+}
+
+/**
+ * Read the workspace's persisted context budget, tolerating absent, blocked
+ * (private mode) or corrupt storage by falling back to the default. An
+ * out-of-range stored value is clamped so the control always has a legal value.
+ */
+function loadContextBudget(workspaceId: string): number {
+  if (typeof window === "undefined") return DEFAULT_CONTEXT_BUDGET;
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(contextBudgetStorageKey(workspaceId));
+  } catch {
+    return DEFAULT_CONTEXT_BUDGET;
+  }
+  if (raw === null || raw.trim() === "") return DEFAULT_CONTEXT_BUDGET;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? clampContextBudget(parsed) : DEFAULT_CONTEXT_BUDGET;
+}
+
+/** Persist the budget, tolerating private mode / disabled storage. */
+function saveContextBudget(workspaceId: string, budget: number): void {
+  try {
+    window.localStorage.setItem(contextBudgetStorageKey(workspaceId), String(budget));
+  } catch {
+    // No storage — the in-memory budget still applies this session.
+  }
+}
+
 /** Standing instruction mirrored from the server prompt (`chat-runtime`). */
 const CONTEXT_SYSTEM_HINT =
   "You answer from the workspace data provided, never from the open internet.";
@@ -199,6 +236,7 @@ export function ChatPanel({
   const [streaming, setStreaming] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(thread?.id ?? null);
   const [contextBudget, setContextBudget] = useState(DEFAULT_CONTEXT_BUDGET);
+  const [budgetLoaded, setBudgetLoaded] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -241,6 +279,21 @@ export function ChatPanel({
     window.addEventListener(OPEN_CHAT_EVENT, handler);
     return () => window.removeEventListener(OPEN_CHAT_EVENT, handler);
   }, []);
+
+  // Hydrate the saved budget once per workspace. Declared before the persistence
+  // effect so a fresh load can never overwrite the stored choice with the
+  // default; an unset value keeps the default.
+  useEffect(() => {
+    setContextBudget(loadContextBudget(workspaceId));
+    setBudgetLoaded(true);
+  }, [workspaceId]);
+
+  // Persist every change so the choice survives reloads. Storage being
+  // unavailable (private mode / quota) leaves the in-memory budget intact.
+  useEffect(() => {
+    if (!budgetLoaded) return;
+    saveContextBudget(workspaceId, contextBudget);
+  }, [budgetLoaded, workspaceId, contextBudget]);
 
   const send = (text?: string) => {
     const body = (text ?? draft).trim();
@@ -661,9 +714,7 @@ export function ChatPanel({
                   onChange={(event) => {
                     const next = event.target.valueAsNumber;
                     setContextBudget(
-                      Number.isFinite(next)
-                        ? Math.min(MAX_CONTEXT_BUDGET, Math.max(MIN_CONTEXT_BUDGET, Math.floor(next)))
-                        : DEFAULT_CONTEXT_BUDGET,
+                      Number.isFinite(next) ? clampContextBudget(next) : DEFAULT_CONTEXT_BUDGET,
                     );
                   }}
                   className="h-7 w-24 rounded border border-border bg-bg px-2 text-right text-xs text-fg outline-none focus:border-accent"
