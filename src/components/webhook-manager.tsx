@@ -11,6 +11,11 @@ import {
 } from "@/server/actions/webhooks";
 import { t } from "@/lib/i18n";
 import { WEBHOOK_EVENT_CATALOG } from "@/lib/webhook-events";
+import {
+  WEBHOOK_EVENTS,
+  isWebhookEventType,
+  validateEventPayload,
+} from "@/lib/webhook-event-catalog";
 
 /** Transport-safe wrappers (F-09): a failed request now returns `{ error }`. */
 const createWebhookAction = guarded(createWebhookActionRaw);
@@ -33,6 +38,29 @@ export type DeliveryRow = {
   url: string;
   createdAt: string;
 };
+
+/** Stored subscriptions are raw wire ids; render them through the identity catalog. */
+const EVENT_LABELS = new Map<string, string>(
+  WEBHOOK_EVENT_CATALOG.map((event) => [event.id, event.label]),
+);
+
+/** Join stored event ids into picker labels, falling back to the raw id. */
+function subscriptionLabels(ids: readonly string[]): string {
+  return ids.map((id) => EVENT_LABELS.get(id) ?? id).join(", ");
+}
+
+/**
+ * Validate a picked event set against the B91 catalog before creating the hook,
+ * mirroring the server's `WEBHOOK_EVENTS` filter in `createWebhookAction`.
+ * Returns the first problem message, or `null` when every id is a known event.
+ */
+function validateEventSelection(selected: readonly string[]): string | null {
+  for (const type of selected) {
+    if (isWebhookEventType(type)) continue;
+    return validateEventPayload(type, {})[0].message;
+  }
+  return null;
+}
 
 export function WebhookManager({
   workspaceId,
@@ -58,6 +86,11 @@ export function WebhookManager({
 
   const create = () =>
     startTransition(async () => {
+      const problem = validateEventSelection(events);
+      if (problem) {
+        toast.error(problem);
+        return;
+      }
       const result = await createWebhookAction({ workspaceId, url, events, secret });
       if ("ok" in result) {
         setUrl("");
@@ -98,14 +131,17 @@ export function WebhookManager({
           className="h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
         />
         <div className="flex flex-wrap gap-3 text-sm">
-          {WEBHOOK_EVENT_CATALOG.map((event) => (
-            <label key={event.id} className="flex items-center gap-1.5">
+          {WEBHOOK_EVENTS.map((event) => (
+            <label key={event.type} className="flex items-center gap-1.5" title={event.description}>
               <input
                 type="checkbox"
-                checked={events.includes(event.id)}
-                onChange={() => toggleEvent(event.id)}
+                checked={events.includes(event.type)}
+                onChange={() => toggleEvent(event.type)}
               />
               {event.label}
+              <code className="rounded bg-surface px-1 font-mono text-[10px] text-muted">
+                {event.requiredFields.join(", ")}
+              </code>
             </label>
           ))}
         </div>
@@ -130,7 +166,7 @@ export function WebhookManager({
             <li key={webhook.id} className="flex items-center gap-3 px-4 py-3 text-sm">
               <span className="flex-1 truncate font-mono text-xs">{webhook.url}</span>
               <span className="text-xs text-muted">
-                {webhook.events.length === 0 ? t(locale, "allEvents") : webhook.events.join(", ")}
+                {webhook.events.length === 0 ? t(locale, "allEvents") : subscriptionLabels(webhook.events)}
               </span>
               {webhook.hasSecret && (
                 <span className="rounded bg-surface px-1 text-[10px] text-muted">{t(locale, "signedBadge")}</span>
