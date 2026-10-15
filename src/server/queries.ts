@@ -1,10 +1,16 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { makeSnippet, searchTerms } from "@/lib/search";
 import { prosemirrorToText } from "@/lib/blocks";
 import { docMentionsPage } from "@/lib/mentions";
 import { promptTerms, scorePage, snippetAround } from "@/lib/retrieval";
 import { paginateSlice, type PaginateResult } from "@/lib/cursor-pagination";
-import { normalizeAuditEvent, paginateAudit, type AuditEvent } from "@/lib/audit-log";
+import {
+  normalizeAuditEvent,
+  paginateAudit,
+  SYSTEM_ACTOR_ID,
+  type AuditEvent,
+} from "@/lib/audit-log";
 import type { SummaryBlock } from "@/lib/page-summary";
 
 export type PageTreeNode = {
@@ -1006,6 +1012,57 @@ export async function getRecentActivity(workspaceId: string, take = 40) {
 const ACTIVITY_PAGE_SCAN = 1000;
 
 /**
+ * Optional server-side narrowing for {@link getActivityPage}: the same axes the
+ * pure `AuditFilter` in `@/lib/audit-log` exposes, pushed into the Prisma query
+ * rather than applied to a fetched window.
+ *
+ * A present-but-empty `actorIds`/`types` matches nothing; an omitted axis is
+ * unconstrained; `from`/`to` are inclusive and accept a `Date` or an ISO-8601
+ * string. `actorIds` follows `normalizeAuditEvent`, so `SYSTEM_ACTOR_ID` also
+ * keeps authorless rows (`actorId: null`).
+ */
+export type ActivityPageFilters = {
+  actorIds?: readonly string[];
+  types?: readonly string[];
+  from?: Date | string;
+  to?: Date | string;
+};
+
+/**
+ * Translate {@link ActivityPageFilters} into an `Activity` predicate so the
+ * narrowing happens in the database: a filtered page fills its
+ * `ACTIVITY_PAGE_SCAN` window from matching rows only, instead of trimming a
+ * workspace-wide window after the fact (which left filtered pages sparse).
+ */
+function activityWhere(
+  workspaceId: string,
+  filters: ActivityPageFilters,
+): Prisma.ActivityWhereInput {
+  const where: Prisma.ActivityWhereInput = { workspaceId };
+
+  if (filters.actorIds !== undefined) {
+    // `actorId` is nullable; the normaliser reports those rows as
+    // `SYSTEM_ACTOR_ID`, so a filter naming it must keep `null` rows as well.
+    const ids = [...filters.actorIds];
+    where.OR = [
+      { actorId: { in: ids.filter((id) => id !== SYSTEM_ACTOR_ID) } },
+      ...(ids.includes(SYSTEM_ACTOR_ID) ? [{ actorId: null }] : []),
+    ];
+  }
+  if (filters.types !== undefined) {
+    where.action = { in: [...filters.types] };
+  }
+  if (filters.from !== undefined || filters.to !== undefined) {
+    where.createdAt = {
+      ...(filters.from !== undefined ? { gte: filters.from } : {}),
+      ...(filters.to !== undefined ? { lte: filters.to } : {}),
+    };
+  }
+
+  return where;
+}
+
+/**
  * One keyset page of a workspace's activity/audit feed, newest first.
  *
  * Additive companion to {@link getRecentActivity}: the same `Activity` rows, but
@@ -1015,13 +1072,17 @@ const ACTIVITY_PAGE_SCAN = 1000;
  * A row without a `targetId` falls back to its own id and a missing actor to
  * `SYSTEM_ACTOR_ID` (both via `normalizeAuditEvent`), so the feed never silently
  * drops an event. A malformed cursor fails closed (`items: []`, `hasMore: false`).
+ *
+ * Optional {@link ActivityPageFilters} (`actorIds`/`types`/`from`/`to`) are
+ * applied to the Prisma query, so a filtered walk pages over matching rows only
+ * instead of over-fetching then discarding — see `activityWhere`.
  */
 export async function getActivityPage(
   workspaceId: string,
-  options: { limit?: number; cursor?: string | null } = {},
+  options: { limit?: number; cursor?: string | null } & ActivityPageFilters = {},
 ): Promise<PaginateResult<AuditEvent>> {
   const rows = await prisma.activity.findMany({
-    where: { workspaceId },
+    where: activityWhere(workspaceId, options),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: ACTIVITY_PAGE_SCAN,
     select: {
