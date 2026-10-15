@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { PromptDialog } from "@/components/prompt-dialog";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -67,6 +67,11 @@ import { ViewSettings } from "@/components/database/view-settings";
 import { PropertyOptionsEditor } from "@/components/database/property-options-editor";
 import { Dialog } from "@/components/ui/dialog";
 import { t } from "@/lib/i18n";
+import {
+  applyTemplate,
+  resolveDefaultTemplate,
+  type DatabaseTemplate,
+} from "@/lib/database-templates";
 
 export type {
   DBProperty,
@@ -103,6 +108,44 @@ const VIEW_TYPES: { type: ViewTypeName; label: string }[] = [
   { type: "CHART", label: "Chart" },
 ];
 
+/**
+ * A saved row template as the database view receives it. The display fields
+ * (name/icon) are always present; the planner inputs (`config.values`,
+ * `content`, `isDefault`) are optional so the view typechecks against today's
+ * `getDatabase` projection and lights up automatically once it exposes them
+ * (docs/specs/database-deep.md R89.16). Everything below is additive.
+ */
+type ViewTemplate = {
+  id: string;
+  name: string;
+  icon: string | null;
+  recurrence?: string | null;
+  /** `Template.config`, the saved `{ values }` property defaults. */
+  config?: { values?: { propertyId: string; value: unknown }[] } | null;
+  /** `Template.content` (a ProseMirror doc once the query exposes it). */
+  content?: unknown;
+  isDefault?: boolean;
+};
+
+/**
+ * Project a view template onto `@/lib/database-templates`' input shape. The
+ * planner spreads `content` as an array of body blocks, so a non-array value
+ * (e.g. the `{ type: "doc", content: [...] }` a row stores) is treated as
+ * "no body the planner can represent" rather than spread blindly.
+ */
+function toEngineTemplate(template: ViewTemplate): DatabaseTemplate {
+  return {
+    id: template.id,
+    name: template.name,
+    icon: template.icon,
+    isDefault: template.isDefault,
+    content: Array.isArray(template.content) ? template.content : null,
+    propertyDefaults: Object.fromEntries(
+      (template.config?.values ?? []).map((value) => [value.propertyId, value.value]),
+    ),
+  };
+}
+
 export function DatabaseView({
   locale,
   databasePageId,
@@ -120,7 +163,7 @@ export function DatabaseView({
   databasePageId: string;
   workspaceId: string;
   workspaceSlug: string;
-  templates: { id: string; name: string; icon: string | null; recurrence?: string | null }[];
+  templates: ViewTemplate[];
   relationData: Record<string, RelationData>;
   databases: { id: string; title: string; icon: string | null }[];
   properties: DBProperty[];
@@ -198,6 +241,27 @@ export function DatabaseView({
     properties as unknown as QueryProperty[],
     viewConfig,
   );
+
+  // R31.13 — resolve the database's default template through the pure planner
+  // so "New row" and the row-creation helpers below share one source of truth.
+  // A template flagged `isDefault` wins, with an optional per-view
+  // `defaultTemplateId` pin layered on top; today's props expose neither, so
+  // this is `null` and New row stays exactly the blank row it has always been.
+  const engineTemplates = useMemo(
+    () => templates.map(toEngineTemplate),
+    [templates],
+  );
+  const viewDefaultTemplateId = (
+    activeView?.config as { defaultTemplateId?: string | null } | null | undefined
+  )?.defaultTemplateId;
+  // Resolve through the planner, then map back to the raw prop so the creation
+  // helper below still sees the original `content` shape.
+  const defaultEngineTemplate = resolveDefaultTemplate(engineTemplates, {
+    defaultTemplateId: viewDefaultTemplateId ?? null,
+  });
+  const defaultTemplate = defaultEngineTemplate
+    ? templates.find((template) => template.id === defaultEngineTemplate.id) ?? null
+    : null;
 
   const setViewConfig = (patch: Partial<ViewConfig>) => {
     if (!activeView) return;
@@ -520,8 +584,60 @@ export function DatabaseView({
     });
   };
 
+  /**
+   * Materialize a template's prefills into a fresh row. The pure planner
+   * (`applyTemplate`) plans the row's starting values from the template's
+   * exposed defaults. A template body stays the server action's job: the
+   * stored `Template.content` is a ProseMirror doc that only the action writes
+   * verbatim, so as long as a body (or no property defaults) is present the
+   * action — which always reads the persisted template — owns creation and a
+   * template-backed row is never silently blank.
+   */
+  const prefillFromTemplate = async (template: ViewTemplate) => {
+    const applied = applyTemplate(
+      toEngineTemplate(template),
+      {},
+      properties.map((property) => property.id),
+    );
+
+    if (applied.values.length === 0 || template.content != null) {
+      const result = await createRowFromTemplateAction(databasePageId, template.id);
+      if ("ok" in result) {
+        toast.success(`${t(locale, "rowCreatedFrom")} “${template.name}”`);
+        router.refresh();
+      } else {
+        toast.error(result.error);
+      }
+      return;
+    }
+
+    const created = await createRowAction(databasePageId, applied.name);
+    if (!("ok" in created)) {
+      toast.error(created.error);
+      return;
+    }
+    if (applied.icon !== null) {
+      await updatePageAction(created.id, { icon: applied.icon });
+    }
+    for (const cell of applied.values) {
+      await setPropertyValueAction(created.id, cell.propertyId, cell.value);
+    }
+    toast.success(`${t(locale, "rowCreatedFrom")} “${template.name}”`);
+    router.refresh();
+  };
+
+  /** Create a row from a chosen template ("New from template"). */
+  const addRowFromTemplate = (template: ViewTemplate) =>
+    startTransition(() => prefillFromTemplate(template));
+
   const addRow = () =>
     startTransition(async () => {
+      // R31.13 — when a default template is exposed, a plain new row starts
+      // from it; otherwise this is the blank row it has always been.
+      if (defaultTemplate) {
+        await prefillFromTemplate(defaultTemplate);
+        return;
+      }
       await createRowAction(databasePageId);
       router.refresh();
     });
@@ -794,6 +910,11 @@ export function DatabaseView({
             <button
               type="button"
               onClick={addRow}
+              title={
+                defaultTemplate
+                  ? `${t(locale, "newRow")} — ${defaultTemplate.name}`
+                  : undefined
+              }
               className="flex items-center gap-1 rounded bg-accent px-2.5 py-1 text-sm text-accent-fg hover:opacity-90"
             >
               <Plus className="h-4 w-4" />
@@ -821,6 +942,7 @@ export function DatabaseView({
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
+                  aria-label={t(locale, "chooseTemplate")}
                   className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
                 >
                   <LayoutTemplate className="h-4 w-4" />
@@ -833,28 +955,17 @@ export function DatabaseView({
                     <DropdownMenuSubTrigger>
                       <span>{template.icon ?? "📄"}</span>
                       <span className="flex-1 truncate">{template.name}</span>
+                      {template.isDefault && (
+                        <span aria-hidden title={t(locale, "templates")}>
+                          ★
+                        </span>
+                      )}
                       {template.recurrence && (
                         <span className="text-[10px] text-muted">{template.recurrence}</span>
                       )}
                     </DropdownMenuSubTrigger>
                     <DropdownMenuSubContent>
-                      <DropdownMenuItem
-                        onSelect={() =>
-                          startTransition(async () => {
-                            const result = await createRowFromTemplateAction(
-                              databasePageId,
-                              template.id,
-                            );
-
-                            if ("ok" in result) {
-                              toast.success(`${t(locale, "rowCreatedFrom")} “${template.name}”`);
-                              router.refresh();
-                            } else {
-                              toast.error(result.error);
-                            }
-                          })
-                        }
-                      >
+                      <DropdownMenuItem onSelect={() => addRowFromTemplate(template)}>
                         {t(locale, "newRow")}
                       </DropdownMenuItem>
                       <DropdownMenuSub>
