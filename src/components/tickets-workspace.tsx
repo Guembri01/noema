@@ -21,6 +21,7 @@ import {
   TicketBoardView,
   TicketListView,
   TicketTimeline,
+  type TicketSortSpec,
 } from "@/components/tickets/ticket-view-renderers";
 import { TicketDrawer } from "@/components/tickets/ticket-drawer";
 
@@ -68,6 +69,9 @@ export function TicketsWorkspace({
   const [composerOpen, setComposerOpen] = useState(false);
   const [checked, setChecked] = useState<string[]>([]);
   const [viewDialog, setViewDialog] = useState(false);
+  // Ordered sort keys for the list view. Empty means "keep the incoming order",
+  // which is the default until the toolbar's sort control picks a field.
+  const [sortSpecs, setSortSpecs] = useState<TicketSortSpec[]>([]);
   // Extra pages fetched with "Load more".
   const [moreRows, setMoreRows] = useState<TicketRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(nextCursor);
@@ -174,6 +178,7 @@ export function TicketsWorkspace({
         closed={closed}
         checked={checked}
         setChecked={setChecked}
+        onSortChange={(spec) => setSortSpecs(spec ? [spec] : [])}
       />
 
       {composerOpen && (
@@ -198,6 +203,7 @@ export function TicketsWorkspace({
           pending={pending}
           cursor={cursor}
           rowsCount={rows.length}
+          sortSpecs={sortSpecs}
           onLoadMore={() => {
             if (!cursor) return;
             run(null, async () => {
