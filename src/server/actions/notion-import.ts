@@ -7,11 +7,17 @@ import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import type { ImportCounts } from "@/lib/importers";
 import {
+  mapNotionBlockType,
+  mapNotionPropertyType,
+  unmappedBlocks,
+} from "@/lib/import-notion-map";
+import {
   NOTION_PAGE_BLOCKS,
   notionBlocksToDoc,
   notionPageTitle,
   type NotionBlock,
 } from "@/lib/notion-api";
+import type { NotionMappingSummary } from "./import";
 
 const NOTION_VERSION = process.env.NOTION_VERSION ?? "2022-06-28";
 
@@ -63,8 +69,66 @@ function normalizeId(value: string): string | null {
   return `${raw.slice(0, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}-${raw.slice(16, 20)}-${raw.slice(20)}`;
 }
 
+/** Distinct, non-empty type strings in first-seen order (mirrors `unmappedBlocks`). */
+function distinctTypes(types: readonly unknown[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const type of types) {
+    if (typeof type !== "string" || type.trim() === "" || seen.has(type)) continue;
+    seen.add(type);
+    out.push(type);
+  }
+  return out;
+}
+
+/**
+ * Mapped-vs-unmapped Notion type coverage for the import, computed through the
+ * shared vocabulary layer (`src/lib/import-notion-map.ts`) so the caller can
+ * see which block/property types the import dropped instead of losing them
+ * silently (D23.4). Total and additive: unknown or malformed types degrade to
+ * an empty count rather than throwing.
+ */
+function summarizeNotionMapping(
+  blockTypes: readonly unknown[] = [],
+  propertyTypes: readonly unknown[] = [],
+): NotionMappingSummary {
+  const blocks = distinctTypes(blockTypes);
+  const properties = distinctTypes(propertyTypes);
+  return {
+    blocks: {
+      total: blocks.length,
+      mapped: blocks.filter((type) => mapNotionBlockType(type) !== null).length,
+      unmapped: unmappedBlocks(blocks),
+    },
+    properties: {
+      total: properties.length,
+      mapped: properties.filter((type) => mapNotionPropertyType(type) !== null).length,
+      unmapped: properties.filter((type) => mapNotionPropertyType(type) === null),
+    },
+  };
+}
+
+/** Property type strings from a Notion page's `properties` object. */
+function notionPropertyTypes(properties: unknown): string[] {
+  if (!properties || typeof properties !== "object") return [];
+  const types: string[] = [];
+  for (const value of Object.values(properties as Record<string, unknown>)) {
+    const type = (value as { type?: unknown } | null)?.type;
+    if (typeof type === "string") types.push(type);
+  }
+  return types;
+}
+
 export type NotionImportResult =
-  | { ok: true; id: string; slug: string; pages: number; counts: ImportCounts }
+  | {
+      ok: true;
+      id: string;
+      slug: string;
+      pages: number;
+      counts: ImportCounts;
+      /** Which Notion block/property types had no Noema mapping (loss report). */
+      unmapped: NotionMappingSummary;
+    }
   | { error: string };
 
 /** Fetch-phase payload; every Notion read happens before any DB write. */
@@ -110,6 +174,12 @@ export async function importNotionPageAction(input: {
 
   let failed = 0;
 
+  // Vocabulary coverage gathered while fetching, so the result can report which
+  // Notion block/property types had no Noema mapping (see
+  // `summarizeNotionMapping`). Only additive: it never changes what is written.
+  const blockTypes: string[] = [];
+  const propertyTypes: string[] = [];
+
   // Phase 1 — fetch (network only, no DB writes): pre-order so parents
   // always precede their children.
   const fetched: FetchedPage[] = [];
@@ -123,6 +193,12 @@ export async function importNotionPageAction(input: {
     const title = notionPageTitle(pageData.properties);
     const children = await listChildren(blockId, token);
     const doc = notionBlocksToDoc(children);
+    for (const child of children) {
+      // `child_page` / `child_database` become nested pages, not blocks, so
+      // they are not a mapping loss and are left out of the report.
+      if (!NOTION_PAGE_BLOCKS.includes(child.type)) blockTypes.push(child.type);
+    }
+    propertyTypes.push(...notionPropertyTypes(pageData.properties));
     fetched.push({ blockId, parentBlockId, title, doc });
 
     if (depth >= 4) return;
@@ -197,5 +273,6 @@ export async function importNotionPageAction(input: {
     slug: workspace.slug,
     pages: created,
     counts: { imported: created, skippedColumns: 0, skippedCells: 0, failed },
+    unmapped: summarizeNotionMapping(blockTypes, propertyTypes),
   };
 }
