@@ -1,12 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import {
   ArrowUpDown,
+  Bookmark,
   Columns3,
   Filter as FilterIcon,
   Layers,
   Palette,
   Plus,
+  Trash2,
   X } from "lucide-react";
 import {
   COLOR_CHOICES,
@@ -41,6 +44,13 @@ import {
   visibleColumns,
   type ColumnLayout,
 } from "@/lib/column-layout";
+import {
+  applySavedView,
+  deserializeSavedViews,
+  parseSavedView,
+  type SavedView,
+  type ViewConfigLike,
+} from "@/lib/saved-views";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import {
@@ -323,6 +333,88 @@ function FilterGroupRows({
   );
 }
 
+/* ---------------------------------------------------------------------------
+   Saved views — named presets over the current view config
+   `@/lib/saved-views` owns a storage-only preset shape that deliberately does
+   not import the query layer. These three helpers bridge it to the app's
+   `ViewConfig` without coupling either side:
+     - `presetViewConfig`   ViewConfig → the loose `ViewConfigLike` base.
+     - `presetFromConfig`   ViewConfig → a `SavedView` (id derived from name).
+     - `configPatchForPreset` merged `ViewConfigLike` → a `Partial<ViewConfig>`.
+   `visiblePropertyIds` round-trips as the *inverse* (`hidden`) so a preset can
+   say which columns it hides without pinning the ones a later schema adds.
+   --------------------------------------------------------------------------- */
+
+/** Property ids a preset may hide — everything but the pinned primary. */
+function presetSecondaryIds(properties: DBProperty[]): string[] {
+  return properties
+    .filter((property) => !property.config?.primary)
+    .map((property) => property.id);
+}
+
+/** The current `ViewConfig` as the loose base a preset is applied over. */
+function presetViewConfig(config: ViewConfig, secondary: string[]): ViewConfigLike {
+  const like: ViewConfigLike = {};
+  // Nested trees take precedence over the flat list, mirroring `applyView`.
+  const filter = config.filterTree ?? config.filters;
+  if (filter) like.filter = filter.map((node) => ({ ...node })) as ViewConfigLike["filter"];
+  if (config.sorts) {
+    like.sort = config.sorts.map((sort) => ({
+      propertyId: sort.propertyId,
+      direction: sort.direction,
+    }));
+  }
+  if (config.groupByPropertyId) like.group = config.groupByPropertyId;
+  if (config.visiblePropertyIds !== undefined) {
+    const visible = config.visiblePropertyIds;
+    like.hidden = secondary.filter((id) => !visible.includes(id));
+  }
+  return like;
+}
+
+/** A named preset capturing the current config (id derived from the name). */
+function presetFromConfig(
+  name: string,
+  config: ViewConfig,
+  secondary: string[],
+): SavedView | null {
+  const like = presetViewConfig(config, secondary);
+  return parseSavedView({
+    name,
+    scope: "database",
+    filter: like.filter,
+    sort: like.sort,
+    group: like.group,
+    hidden: like.hidden,
+  });
+}
+
+/** The `ViewConfig` patch that writes a merged preset back onto the view. */
+function configPatchForPreset(
+  merged: ViewConfigLike,
+  secondary: string[],
+): Partial<ViewConfig> {
+  const patch: Partial<ViewConfig> = {};
+  if (merged.filter !== undefined) {
+    // Presets store a generic node list; adopt it as the nested tree and drop
+    // the flat filters it replaces (the same trade `commitTree` makes).
+    patch.filterTree = merged.filter as unknown as FilterNode[];
+    patch.filters = [];
+  }
+  if (merged.sort !== undefined) {
+    patch.sorts = merged.sort.map((sort) => ({
+      propertyId: sort.propertyId,
+      direction: sort.direction === "desc" ? "desc" : "asc",
+    }));
+  }
+  if (merged.group !== undefined) patch.groupByPropertyId = merged.group;
+  if (merged.hidden !== undefined) {
+    const hidden = merged.hidden;
+    patch.visiblePropertyIds = secondary.filter((id) => !hidden.includes(id));
+  }
+  return patch;
+}
+
 /**
  * Filter / sort / group / colour-rule / column-visibility controls for one
  * database view. Everything here writes into `config`, which the caller
@@ -355,6 +447,11 @@ export function ViewSettings({
    */
   onLayoutChange?: (layout: ColumnLayout) => void;
 }) {
+  // Saved views live for the session only (no server persistence yet). The
+  // hook sits above the `editable` early return so the call order is stable.
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [savedViewName, setSavedViewName] = useState("");
+
   if (!editable) return null;
 
   const filters = config.filters ?? [];
@@ -367,6 +464,36 @@ export function ViewSettings({
     properties.find((p) => !p.config?.primary) ?? properties[0];
 
   const secondary = properties.filter((p) => !p.config?.primary);
+
+  // --- Saved-view actions --------------------------------------------------
+  const secondaryIds = presetSecondaryIds(properties);
+
+  /** Overlay a stored preset onto the current config (base fields it omits survive). */
+  const applyPreset = (view: SavedView) => {
+    const merged = applySavedView(presetViewConfig(config, secondaryIds), view);
+    onChange(configPatchForPreset(merged, secondaryIds));
+  };
+
+  /** Capture the current config as a named preset (updating a same-named one). */
+  const savePreset = () => {
+    const name = savedViewName.trim();
+    if (!name) return;
+    const preset = presetFromConfig(name, config, secondaryIds);
+    if (!preset) return;
+    setSavedViews((previous) =>
+      deserializeSavedViews([
+        ...previous.filter(
+          (view) => view.name.trim().toLowerCase() !== name.toLowerCase(),
+        ),
+        preset,
+      ]),
+    );
+    setSavedViewName("");
+  };
+
+  const removeSavedView = (view: SavedView) => {
+    setSavedViews((previous) => previous.filter((candidate) => candidate.id !== view.id));
+  };
 
   // Nested filters: a non-empty `config.filterTree` takes over from the flat
   // `filters` — the same precedence `applyView` uses. The tree editor below
@@ -1025,6 +1152,75 @@ export function ViewSettings({
             />
             {t(locale, "dbFreezeFirst")}
           </label>
+        </PopoverContent>
+      </Popover>
+
+      {/* Saved views — named filter/sort/group presets for this database.
+          In-session only: each preset overlays the current config through
+          `applySavedView`, and the config can be captured under a name. */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-testid="saved-views-trigger"
+            className={cn(
+              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
+              savedViews.length > 0 && "bg-surface-2 text-fg",
+            )}
+          >
+            <Bookmark className="h-3.5 w-3.5" />
+            {t(locale, "savedViews")}
+            {savedViews.length > 0 ? ` (${savedViews.length})` : ""}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-72" data-testid="saved-views-popover">
+          <div className="space-y-2">
+            {savedViews.length === 0 && (
+              <p className="text-xs text-muted">No saved views yet.</p>
+            )}
+            {savedViews.map((view) => (
+              <div key={view.id} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  data-testid={`apply-saved-view-${view.id}`}
+                  onClick={() => applyPreset(view)}
+                  className="flex-1 truncate rounded px-1 py-0.5 text-left text-sm hover:bg-surface-2"
+                >
+                  {view.name}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`${t(locale, "delete")} ${view.name}`}
+                  onClick={() => removeSavedView(view)}
+                  className="text-muted hover:text-red-500"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+            <div className="flex items-center gap-1 border-t border-border pt-2">
+              <input
+                value={savedViewName}
+                data-testid="saved-view-name"
+                aria-label={t(locale, "savedViews")}
+                placeholder="Name this view"
+                onChange={(event) => setSavedViewName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") savePreset();
+                }}
+                className={cn(CONTROL_CLASS, "flex-1")}
+              />
+              <button
+                type="button"
+                data-testid="save-saved-view"
+                disabled={savedViewName.trim().length === 0}
+                onClick={savePreset}
+                className="flex items-center gap-1 text-xs text-accent disabled:opacity-50"
+              >
+                <Plus className="h-3 w-3" /> {t(locale, "save")}
+              </button>
+            </div>
+          </div>
         </PopoverContent>
       </Popover>
     </div>
