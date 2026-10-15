@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, CircleDot, FolderKanban, Pause, Plus, Target } from "lucide-react";
+import { CheckCircle2, CircleDot, FolderKanban, Gauge, Pause, Plus, Target } from "lucide-react";
 import { toast } from "sonner";
 import { createProjectAction } from "@/server/actions/projects";
 import { safeAction } from "@/lib/actions-client";
@@ -13,6 +13,7 @@ import {
   canMoveRow,
   checkWip,
   wipSummary,
+  type WipColumn,
   type WipLimits,
   type WipStatus,
 } from "@/lib/kanban-wip";
@@ -82,6 +83,79 @@ function projectStatusGroups(projects: readonly ProjectCard[]): BoardGroup<Board
   return [...groups, other];
 }
 
+/**
+ * Self-contained WIP-limit editor for the project status columns.
+ *
+ * The limits live only in the board's local state (there is no persisted
+ * project-board config yet), which is what makes the WIP strip and move guards
+ * from `@/lib/kanban-wip` reachable before anything is saved. Blank input
+ * clears a column's limit; only finite, non-negative integers are accepted,
+ * mirroring the engine's own validation. The grade shown next to a field is the
+ * live `checkWip` status for that column's current row count.
+ */
+function WipLimitsEditor({
+  limits,
+  columns,
+  onChange,
+  onClear,
+}: {
+  limits: WipLimits;
+  columns: readonly WipColumn[];
+  onChange: (key: string, value: string) => void;
+  onClear: () => void;
+}) {
+  const statusByKey = new Map(columns.map((column) => [column.key, column.status]));
+  const limited = Object.keys(limits).length > 0;
+  return (
+    <div className="mb-6 rounded-xl border border-border p-4" data-testid="wip-editor">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="flex items-center gap-2 text-sm font-medium">
+          <Gauge className="h-4 w-4" /> WIP limits
+        </p>
+        <div className="flex items-center gap-2">
+          <p className="text-[11px] text-muted">Local only — leave blank for no limit.</p>
+          {limited && (
+            <button
+              type="button"
+              onClick={onClear}
+              className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted hover:bg-surface-2"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+      <ul className="flex flex-wrap gap-3">
+        {STATUS_ORDER.map((status) => {
+          const label = STATUS_LABELS[status] ?? status;
+          const limit = limits[status];
+          const grade = statusByKey.get(status);
+          return (
+            <li key={status} className="flex items-center gap-2">
+              <span className="text-xs">{label}</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={limit ?? ""}
+                placeholder="∞"
+                aria-label={`${label} WIP limit`}
+                onChange={(event) => onChange(status, event.target.value)}
+                className="h-8 w-16 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
+              />
+              {grade === "over" ? (
+                <span className="text-[11px] text-red-600">over</span>
+              ) : grade === "at" ? (
+                <span className="text-[11px] text-amber-600">at limit</span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 /** Projects list: progress at a glance, with inline creation. */
 export function ProjectsBoard({
   locale,
@@ -98,8 +172,9 @@ export function ProjectsBoard({
   locale: string;
   /**
    * Optional per-status WIP limits (keyed by project status, e.g.
-   * `{ active: 3 }`). Omit to leave the board unlimited — the WIP strip and
-   * move controls only appear when at least one limit is configured.
+   * `{ active: 3 }`) used to seed the board's local editor. Omit to start
+   * unlimited — the WIP strip and move controls only appear once a limit is set
+   * (in the editor, or through this prop for callers that already have config).
    */
   wipLimits?: WipLimits;
   /** Allow a move into a column that is already at/over its limit. */
@@ -112,16 +187,37 @@ export function ProjectsBoard({
   const [name, setName] = useState("");
   const [summary, setSummary] = useState("");
   const [dueDate, setDueDate] = useState("");
+  // WIP limits are edited locally so the strip and move guards are reachable
+  // without a persisted config. Seeded once from the optional prop; an unset
+  // prop means no limits, exactly as before.
+  const [localLimits, setLocalLimits] = useState<WipLimits>(() => wipLimits ?? {});
 
   const groups = useMemo(() => projectStatusGroups(projects), [projects]);
-  const wipEnabled = wipLimits !== undefined && Object.keys(wipLimits).length > 0;
-  const check = useMemo(() => checkWip(groups, wipLimits ?? {}), [groups, wipLimits]);
-  const wip = useMemo(() => wipSummary(groups, wipLimits ?? {}), [groups, wipLimits]);
+  const limits = localLimits;
+  const wipEnabled = Object.keys(limits).length > 0;
+  const check = useMemo(() => checkWip(groups, limits), [groups, limits]);
+  const wip = useMemo(() => wipSummary(groups, limits), [groups, limits]);
   const movable = wipEnabled && onMoveProject !== undefined;
+
+  /** Set (or clear, on blank) one status column's limit in local state. */
+  const setLimit = (key: string, value: string) => {
+    setLocalLimits((previous) => {
+      const next: Record<string, number> = { ...previous };
+      if (value.trim() === "") {
+        delete next[key];
+      } else {
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed < 0) return previous;
+        next[key] = parsed;
+      }
+      return next;
+    });
+  };
+  const clearLimits = () => setLocalLimits({});
 
   const moveTo = (projectId: string, status: string) => {
     if (!onMoveProject) return;
-    if (!canMoveRow(groups, wipLimits ?? {}, projectId, status, { override: wipOverride })) {
+    if (!canMoveRow(groups, limits, projectId, status, { override: wipOverride })) {
       toast.error(`${STATUS_LABELS[status] ?? status} is at its WIP limit`);
       return;
     }
@@ -186,6 +282,13 @@ export function ProjectsBoard({
           </button>
         </div>
       </div>
+
+      <WipLimitsEditor
+        limits={limits}
+        columns={check.columns}
+        onChange={setLimit}
+        onClear={clearLimits}
+      />
 
       {wipEnabled && (
         <div className="mb-6 rounded-xl border border-border p-4">
@@ -300,7 +403,7 @@ export function ProjectsBoard({
                   <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px]">
                     <span className="text-muted">Move to</span>
                     {STATUS_ORDER.filter((status) => status !== project.status).map((status) => {
-                      const allowed = canMoveRow(groups, wipLimits ?? {}, project.id, status, {
+                      const allowed = canMoveRow(groups, limits, project.id, status, {
                         override: wipOverride,
                       });
                       const label = STATUS_LABELS[status] ?? status;
