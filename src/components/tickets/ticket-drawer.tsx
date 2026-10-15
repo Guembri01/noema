@@ -19,6 +19,7 @@ import {
   type EstimateUnit,
 } from "@/lib/estimate-units";
 import { t } from "@/lib/i18n";
+import { formatRelativeTime } from "@/lib/i18n-format";
 import { progressOf, rollupByAssignee, rollupEstimate } from "@/lib/sub-ticket-rollup";
 import {
   ESTIMATE_UNITS,
@@ -49,6 +50,59 @@ function estimateInUnit(
   return convert(estimate, isEstimateUnit(from) ? from : "points", unit);
 }
 
+/**
+ * One per-ticket activity row, shaped exactly like the `activity` selection in
+ * `getTicketDetail` (`{ id, kind, detail, createdAt, actor }`). Passed in
+ * optionally so the drawer's history section is additive: a caller that has the
+ * data (e.g. the ticket detail query) supplies it, and a caller without it
+ * (the tracker list, which does not select `TicketActivity`) renders unchanged.
+ */
+export type TicketActivityRow = {
+  id: string;
+  /** Action verb written by `logActivity`, e.g. `status_changed`, `label_added`. */
+  kind: string;
+  /** Optional JSON payload (`updated` snapshots, `{ to }`, `{ label }`, …). */
+  detail: unknown;
+  /** Creation instant — any input `formatRelativeTime` accepts. */
+  createdAt: string | number | Date;
+  actor: { id: string; name: string } | null;
+};
+
+/** Turn an activity `kind` into a readable verb ("status_changed" → "Status changed"). */
+function activityVerb(kind: string): string {
+  const words = kind.replace(/[_-]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : kind;
+}
+
+/**
+ * Flatten an activity `detail` payload into one compact line. Plain values pass
+ * through, arrays join with commas, and objects render `key: value` pairs joined
+ * by `·`; anything else (or an empty object/array) yields `""` so the row simply
+ * omits the detail rather than printing `[object Object]`.
+ */
+function activityDetail(detail: unknown): string {
+  if (detail === null || detail === undefined) return "";
+  if (typeof detail === "string") return detail;
+  if (typeof detail === "number" || typeof detail === "boolean") return String(detail);
+  if (Array.isArray(detail)) return detail.map(activityDetail).filter(Boolean).join(", ");
+  if (typeof detail === "object") {
+    return Object.entries(detail as Record<string, unknown>)
+      .map(([key, value]) => {
+        const text = activityDetail(value);
+        return text ? `${key}: ${text}` : "";
+      })
+      .filter(Boolean)
+      .join(" · ");
+  }
+  return "";
+}
+
+/** Safe `datetime` attribute for a `<time>`, or `undefined` when unparsable. */
+function activityIso(value: string | number | Date): string | undefined {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
 /** Right-hand drawer with every ticket field, relations, comments, activity. */
 export function TicketDrawer({
   ticket,
@@ -56,6 +110,7 @@ export function TicketDrawer({
   members,
   projects,
   allTickets,
+  activity = [],
   slug,
   locale,
   onClose,
@@ -70,6 +125,8 @@ export function TicketDrawer({
   projects: { id: string; name: string; icon: string | null }[];
   allTickets: TicketRow[];
   workspaceId: string;
+  /** Per-ticket activity trail; omit/empty hides the section. */
+  activity?: TicketActivityRow[];
   slug: string;
   locale: string;
   onClose: () => void;
@@ -645,6 +702,38 @@ export function TicketDrawer({
                 {t(locale, "comment")}
               </button>
             </div>
+          </section>
+
+          <section data-testid="ticket-activity">
+            <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">
+              {t(locale, "activityHeading")}
+            </p>
+            {activity.length === 0 ? (
+              <p className="text-xs text-muted">{t(locale, "youAreAllCaughtUp")}</p>
+            ) : (
+              <ol className="space-y-1.5">
+                {activity.map((entry) => {
+                  const detail = activityDetail(entry.detail);
+                  const iso = activityIso(entry.createdAt);
+                  return (
+                    <li key={entry.id} className="flex items-baseline gap-1.5 text-xs">
+                      <span className="shrink-0 text-fg">{activityVerb(entry.kind)}</span>
+                      {entry.actor && (
+                        <span className="shrink-0 text-muted">{entry.actor.name}</span>
+                      )}
+                      {detail && <span className="min-w-0 flex-1 truncate text-muted">{detail}</span>}
+                      <time
+                        dateTime={iso}
+                        title={iso}
+                        className="ml-auto shrink-0 text-[11px] text-muted"
+                      >
+                        {formatRelativeTime(entry.createdAt, { locale })}
+                      </time>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
           </section>
 
           <section>
