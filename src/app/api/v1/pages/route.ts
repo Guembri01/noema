@@ -5,9 +5,16 @@ import { prisma } from "@/lib/db";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { rateLimit } from "@/lib/api-guard";
 import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
-import { getPagesPage } from "@/server/queries";
+import { buildBreadcrumb } from "@/lib/breadcrumb";
+import { getPagesPage, getPageTree, type ApiPageRow } from "@/server/queries";
 
 export const runtime = "nodejs";
+
+/** One crumb of a `breadcrumbs` trail: the ancestor id plus its display title. */
+type BreadcrumbTrailItem = { id: string; title: string };
+
+/** An `ApiPageRow` enriched with its root → page chain (`include=breadcrumbs`). */
+type ApiPageWithBreadcrumbs = ApiPageRow & { breadcrumbs: BreadcrumbTrailItem[] };
 
 /**
  * Build the RFC-5988 `Link` header for the list response. Only `rel="next"` is
@@ -32,6 +39,13 @@ function nextPageLink(requestUrl: URL, nextCursor: string | null): string | null
  * `invalid_cursor`; omitting both returns the first page (`has_more` /
  * `next_cursor` always accompany the `pages` key). When there is a next page a
  * `Link: <…>; rel="next"` response header mirrors `next_cursor` (R24.2).
+ *
+ * Additive `include=breadcrumbs`: when the query parameter equals exactly
+ * `breadcrumbs`, each returned page also carries a `breadcrumbs` array — its
+ * root → page ancestor chain as `{ id, title }` crumbs, resolved with
+ * {@link buildBreadcrumb} over the workspace's live pages (`getPageTree`).
+ * The option is omitted by default, so the plain body and the `Link` header /
+ * pagination behaviour are unchanged.
  */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "v1");
@@ -57,13 +71,30 @@ export async function GET(request: Request) {
     return NextResponse.json(malformedCursorResult(), { status: 400 });
   }
 
+  const withBreadcrumbs = url.searchParams.get("include") === "breadcrumbs";
+
   const page = await getPagesPage(workspaceId, { limit, cursor });
+  let items: (ApiPageRow | ApiPageWithBreadcrumbs)[] = page.items;
+  if (withBreadcrumbs) {
+    // Ancestors can fall outside the current keyset slice, so resolve trails
+    // against the whole (live) workspace tree, matching `buildBreadcrumb`'s
+    // fail-closed contract when an ancestor is missing/deleted.
+    const tree = await getPageTree(workspaceId);
+    items = page.items.map((item) => ({
+      ...item,
+      breadcrumbs: buildBreadcrumb(tree, item.id).map((crumb) => ({
+        id: crumb.id,
+        title: crumb.label,
+      })),
+    }));
+  }
+
   const headers = new Headers();
   const link = nextPageLink(url, page.nextCursor);
   if (link) headers.set("Link", link);
   return NextResponse.json(
     {
-      pages: page.items,
+      pages: items,
       has_more: page.hasMore,
       next_cursor: page.nextCursor,
     },
