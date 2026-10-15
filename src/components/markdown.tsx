@@ -10,6 +10,16 @@ import {
   type ListBlock,
   type ListItem,
 } from "@/lib/markdown";
+import { formatCaption, numberLines } from "@/lib/code-block";
+import {
+  blocksToQuote,
+  formatPullQuote,
+  isPullQuoteSize,
+  parsePullQuote,
+  type PullQuote,
+  type PullQuoteBlock,
+  type PullQuoteSize,
+} from "@/lib/pull-quote";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -35,11 +45,19 @@ export function Markdown({
 }) {
   const blocks = parseMarkdown(text ?? "");
   if (blocks.length === 0) return null;
+  const rendered: React.ReactNode[] = [];
+  for (let index = 0; index < blocks.length; index += 1) {
+    // A `size: "large"` pull quote may consume the attribution paragraph that
+    // immediately follows it; every other node (and key) is untouched.
+    const { quote, consumed } = resolvePullQuote(blocks[index], blocks[index + 1]);
+    rendered.push(
+      <BlockView key={index} block={blocks[index]} slug={slug} locale={locale} quote={quote} />,
+    );
+    if (consumed) index += 1;
+  }
   return (
     <div className={cn("notion-markdown", compact && "notion-markdown-compact", className)}>
-      {blocks.map((block, index) => (
-        <BlockView key={index} block={block} slug={slug} locale={locale} />
-      ))}
+      {rendered}
     </div>
   );
 }
@@ -62,7 +80,164 @@ export function InlineMarkdown({
   return <span className={className}>{renderInline(inline, slug)}</span>;
 }
 
-function BlockView({ block, slug, locale }: { block: Block; slug?: string; locale?: string }) {
+/* -------------------------------------------------------------------------- *
+ * Block variants: a pull quote (a blockquote the parser marks `size: "large"`,
+ * serialised as a leading `[!large]` marker) and the two optional code-block
+ * affordances (`lineNumbers` / `caption`, serialised as a `{…}` fence suffix).
+ * Semantics come from the shared libs so the editor, the read-only doc renderer
+ * and this Markdown surface agree on one definition. Everything below stays
+ * element-only: text is placed as JSX children, never through innerHTML.
+ * -------------------------------------------------------------------------- */
+
+/** Flatten inline nodes to their text (a heading's label, a paragraph's words…). */
+function inlineText(nodes: Inline[]): string {
+  return nodes
+    .map((node) => {
+      switch (node.type) {
+        case "text":
+        case "code":
+          return node.value;
+        case "ref":
+          return node.title;
+        case "br":
+          return "\n";
+        default:
+          return inlineText(node.children);
+      }
+    })
+    .join("");
+}
+
+/** Flatten a block to plain text (`pull-quote.ts` models text, not marks). */
+function blockText(block: Block): string {
+  switch (block.type) {
+    case "heading":
+    case "paragraph":
+      return inlineText(block.content);
+    case "code":
+      return block.value;
+    case "quote":
+      return block.blocks.map(blockText).join("\n");
+    case "list":
+      return block.items.map((item) => inlineText(item.content)).join("\n");
+    case "table":
+      return [block.header, ...block.rows].map((row) => row.map(inlineText).join(" | ")).join("\n");
+    case "image":
+      return block.caption ?? block.alt;
+    case "hr":
+      return "";
+  }
+}
+
+/**
+ * The optional code-block affordances the parser attached to a `code` block.
+ * `lineNumbers` is only honoured when set to `true`; the caption is normalised
+ * with `formatCaption` so stray whitespace never reaches the DOM.
+ */
+function codeBlockOptions(block: { lang: string | null; value: string }): {
+  lineNumbers: boolean;
+  caption: string;
+} {
+  const extra = block as { lineNumbers?: unknown; caption?: unknown };
+  return {
+    lineNumbers: extra.lineNumbers === true,
+    caption: formatCaption(typeof extra.caption === "string" ? extra.caption : null),
+  };
+}
+
+/** The display scale the parser attached to a quote, when it is a known one. */
+function quoteSize(block: { blocks: Block[] }): PullQuoteSize | undefined {
+  const extra = block as { size?: unknown };
+  return isPullQuoteSize(extra.size) ? extra.size : undefined;
+}
+
+/** Project a Markdown block into `pull-quote.ts`'s minimal block shape. */
+function pullQuoteBlockOf(block: Block, size?: PullQuoteSize): PullQuoteBlock {
+  const text = blockText(block).trim();
+  const projected: PullQuoteBlock = {
+    type: block.type === "quote" ? "blockquote" : "paragraph",
+    content: text ? [{ type: "text", text }] : [],
+  };
+  if (size) projected.attrs = { size };
+  return projected;
+}
+
+/**
+ * Read a `size: "large"` quote through `pull-quote.ts`. Returns undefined for an
+ * ordinary quote — or a large one the lib rejects (blank text) — so normal
+ * blockquotes keep their existing rendering untouched.
+ */
+function pullQuoteOf(block: Block): PullQuote | undefined {
+  if (block.type !== "quote") return undefined;
+  const size = quoteSize(block);
+  if (size !== "large") return undefined;
+  const parsed = parsePullQuote({ text: blockText(block), size });
+  return parsed.ok ? parsed.value : undefined;
+}
+
+/**
+ * Resolve a top-level pull-quote pair: the `large` quote plus the optional
+ * attribution paragraph that follows it. The lib strips a leading dash when it
+ * reads the pair back, so a following paragraph only counts as an attribution
+ * when that strip changes its text; a plain paragraph is left in place.
+ */
+function resolvePullQuote(
+  block: Block,
+  next: Block | undefined,
+): { quote?: PullQuote; consumed: boolean } {
+  const base = pullQuoteOf(block);
+  if (!base) return { consumed: false };
+  if (!next || next.type !== "paragraph") return { quote: base, consumed: false };
+
+  const nextText = blockText(next).trim();
+  if (!nextText) return { quote: base, consumed: false };
+
+  const parsed = parsePullQuote(
+    blocksToQuote([pullQuoteBlockOf(block, "large"), pullQuoteBlockOf(next)]),
+  );
+  if (!parsed.ok) return { quote: base, consumed: false };
+  const { attribution } = parsed.value;
+  if (attribution === undefined || attribution === nextText) {
+    return { quote: base, consumed: false };
+  }
+  return { quote: parsed.value, consumed: true };
+}
+
+/** Display-scale pull quote — the read-side twin of the editor's decoration. */
+function renderPullQuote(quote: PullQuote): React.ReactNode {
+  return (
+    <blockquote
+      className="notion-pull-quote"
+      data-pull-quote=""
+      data-size="large"
+      style={{ fontSize: "1.5em", fontWeight: 600, lineHeight: 1.45 }}
+      title={formatPullQuote(quote)}
+    >
+      {quote.text}
+      {quote.attribution !== undefined && (
+        <footer
+          className="notion-pull-quote-attribution"
+          style={{ fontSize: "0.9em", fontWeight: 400, opacity: 0.75, textAlign: "right" }}
+        >
+          {"\u2014 "}
+          {quote.attribution}
+        </footer>
+      )}
+    </blockquote>
+  );
+}
+
+function BlockView({
+  block,
+  slug,
+  locale,
+  quote,
+}: {
+  block: Block;
+  slug?: string;
+  locale?: string;
+  quote?: PullQuote;
+}) {
   switch (block.type) {
     case "heading": {
       const Tag = (`h${Math.min(block.level, 4)}`) as "h1" | "h2" | "h3" | "h4";
@@ -70,9 +245,22 @@ function BlockView({ block, slug, locale }: { block: Block; slug?: string; local
     }
     case "paragraph":
       return <p>{renderInline(block.content, slug)}</p>;
-    case "code":
-      return <CodeBlock lang={block.lang} value={block.value} locale={locale} />;
-    case "quote":
+    case "code": {
+      const { lineNumbers, caption } = codeBlockOptions(block);
+      return (
+        <CodeBlock
+          lang={block.lang}
+          value={block.value}
+          locale={locale}
+          lineNumbers={lineNumbers}
+          caption={caption}
+        />
+      );
+    }
+    case "quote": {
+      // A `size: "large"` quote (already resolved with any attribution
+      // paragraph) renders at display scale; everything else is unchanged.
+      if (quote) return renderPullQuote(quote);
       return (
         <blockquote>
           {block.blocks.map((inner, index) => (
@@ -80,6 +268,7 @@ function BlockView({ block, slug, locale }: { block: Block; slug?: string; local
           ))}
         </blockquote>
       );
+    }
     case "list":
       return <ListView list={block} slug={slug} />;
     case "table":
@@ -147,12 +336,19 @@ function CodeBlock({
   lang,
   value,
   locale = "en",
+  lineNumbers = false,
+  caption = "",
 }: {
   lang: string | null;
   value: string;
   locale?: string;
+  /** Optional gutter numbering (`code-block.ts`'s `numberLines`). */
+  lineNumbers?: boolean;
+  /** Optional caption under the block, already normalised via `formatCaption`. */
+  caption?: string;
 }) {
   const [copied, setCopied] = useState(false);
+  const gutter = lineNumbers ? numberLines(value) : [];
   return (
     <div className="notion-code">
       <div className="notion-code-head">
@@ -171,9 +367,28 @@ function CodeBlock({
           {copied ? t(locale, "copiedWord") : t(locale, "copy")}
         </button>
       </div>
-      <pre>
-        <code>{value}</code>
+      <pre style={lineNumbers ? { display: "flex", gap: 12, overflow: "visible" } : undefined}>
+        {lineNumbers && (
+          <div
+            aria-hidden
+            className="notion-code-gutter"
+            style={{
+              userSelect: "none",
+              textAlign: "right",
+              color: "var(--muted)",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {gutter.map((row, index) => (
+              <div key={`${index}-${row.n ?? "wrap"}`}>{row.n === null ? "\u00a0" : row.n}</div>
+            ))}
+          </div>
+        )}
+        <code style={lineNumbers ? { flex: 1, minWidth: 0, overflowX: "auto" } : undefined}>
+          {value}
+        </code>
       </pre>
+      {caption !== "" && <p className="notion-code-caption">{caption}</p>}
     </div>
   );
 }
