@@ -16,6 +16,7 @@ import {
 } from "@/server/actions/teamspace-invites";
 import { safeAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
+import { can, describeRole, type PermissionAction } from "@/lib/permission-matrix";
 
 export type TeamspaceInviteRow = {
   id: string;
@@ -30,6 +31,22 @@ export type TeamspaceRow = {
   memberIds: string[];
   invites: TeamspaceInviteRow[];
 };
+
+/**
+ * The actions a guest may hold inside a teamspace, paired with the label key
+ * the "who has access" surfaces already use. Read from the permission matrix
+ * (`can`) rather than hard-coded, so this card can never advertise access the
+ * server would deny — teamspace membership lets a guest open and comment the
+ * teamspace's pages (`guest-access.ts`), nothing more.
+ */
+const GUEST_SCOPE_ACTIONS: readonly {
+  action: PermissionAction;
+  label: "canView" | "canComment" | "canEdit";
+}[] = [
+  { action: "read", label: "canView" },
+  { action: "comment", label: "canComment" },
+  { action: "edit", label: "canEdit" },
+];
 
 export function TeamspaceManager({
   workspaceId,
@@ -51,6 +68,13 @@ export function TeamspaceManager({
   const [inviteLink, setInviteLink] = useState<Record<string, string>>({});
 
   const fail = (error: string) => toast.error(error);
+
+  // What a guest gets in any teamspace, read straight from the permission
+  // matrix so the summary tracks the enforced role table instead of drifting.
+  const guestScope = GUEST_SCOPE_ACTIONS.filter(({ action }) => can("guest", action))
+    .map(({ label }) => t(locale, label))
+    .join(" · ");
+  const guestScopeTitle = describeRole("guest");
 
   return (
     <section className="mt-10">
@@ -111,6 +135,12 @@ export function TeamspaceManager({
                 <span aria-hidden>{teamspace.icon ?? "👥"}</span>
                 <span className="flex-1 truncate text-sm font-medium">
                   {teamspace.name}
+                </span>
+                <span
+                  className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted"
+                  title={guestScopeTitle}
+                >
+                  {t(locale, "guest")} · {guestScope}
                 </span>
                 <button
                   type="button"
