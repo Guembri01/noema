@@ -362,6 +362,47 @@ describe("one row per logical delivery (R24.10–R24.12)", () => {
   });
 });
 
+describe("delivery-time subscription matching (B91)", () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  const hookWith = (events: string[]) => [{ ...HOOK, events }];
+
+  it("delivers when the hook subscribes via the `*` wildcard", async () => {
+    mocks.webhookFindMany.mockResolvedValue(hookWith(["*"]));
+    await dispatchWebhooks("ws_1", "comment.created", { commentId: "c1" });
+    await vi.waitFor(() => expect(mocks.fetch).toHaveBeenCalledTimes(1));
+    expect(mocks.deliveryCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("delivers when the hook subscribes via a `page.*` prefix", async () => {
+    mocks.webhookFindMany.mockResolvedValue(hookWith(["page.*"]));
+    await dispatchWebhooks("ws_1", "page.updated", { pageId: "p1" });
+    await vi.waitFor(() => expect(mocks.fetch).toHaveBeenCalledTimes(1));
+    expect(mocks.deliveryCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("still delivers an exact-id subscription", async () => {
+    mocks.webhookFindMany.mockResolvedValue(hookWith(["page.created"]));
+    await dispatchWebhooks("ws_1", "page.created", { pageId: "p1" });
+    await vi.waitFor(() => expect(mocks.fetch).toHaveBeenCalledTimes(1));
+  });
+
+  it("skips a hook whose subscriptions select nothing for the event", async () => {
+    mocks.webhookFindMany.mockResolvedValue(hookWith(["comment.created"]));
+    await dispatchWebhooks("ws_1", "page.created", { pageId: "p1" });
+    await flush();
+    expect(mocks.deliveryCreate).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it("skips a `page.*` hook for a non-page event", async () => {
+    mocks.webhookFindMany.mockResolvedValue(hookWith(["page.*"]));
+    await dispatchWebhooks("ws_1", "comment.created", { commentId: "c1" });
+    await flush();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+});
+
 describe("shared signing scheme — dispatcher ⇄ verifier (D24)", () => {
   // A fixed clock is injected via `Date.now`, so the timestamp bound into the
   // MAC is deterministic and nothing here depends on the wall clock.

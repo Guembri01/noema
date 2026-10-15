@@ -5,6 +5,7 @@ import {
   WEBHOOK_EVENT_CATALOG,
   type WebhookEvent,
 } from "@/lib/webhook-events";
+import { filterSubscribed } from "@/lib/webhook-event-catalog";
 import {
   constantTimeEqualHex,
   parseSignatureHeader,
@@ -302,8 +303,11 @@ export async function dispatchWebhooks(
       where: { workspaceId, active: true },
       select: { id: true, url: true, secret: true, events: true },
     });
+    // B91 — subscription matching lives in the pure catalog module, so a hook's
+    // filter supports the `*` wildcard and `page.*` prefixes; an empty filter
+    // still means "all events" (both handled by `filterSubscribed`).
     const matching = hooks.filter(
-      (hook) => hook.events.length === 0 || hook.events.includes(event),
+      (hook) => filterSubscribed([event], hook.events).length > 0,
     );
     if (matching.length === 0) return;
 
