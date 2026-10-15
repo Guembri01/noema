@@ -9,6 +9,24 @@ export const runtime = "nodejs";
 type ConfiguredValue = { propertyId: string; value: unknown };
 
 /**
+ * Normalize the stored `Template.recurrence` before it ever reaches the
+ * recurrence engine. The column is a free `String?`, so an unknown/corrupt
+ * cadence must not silently fall through `nextRunFor`'s catch-all `else`
+ * (which is monthly). Anything outside the `TemplateRecurrence` vocabulary
+ * `recurrence.ts` understands falls back to the route's historical default
+ * (`daily`), reported once so a bad row is observable in the cron log.
+ */
+function normalizeRecurrence(id: string, value: unknown): TemplateRecurrence {
+  if (value === "daily" || value === "weekly" || value === "monthly") return value;
+  if (value !== null && value !== undefined) {
+    console.warn(
+      `[cron/templates] template ${id}: invalid recurrence ${String(value)}; using "daily"`,
+    );
+  }
+  return "daily";
+}
+
+/**
  * Advance the schedule (D4): compute from the *stored* `nextRunAt` so
  * execution jitter never drifts the schedule, pinned to the schedule's own
  * wall clock (`config.anchorAt` when set, else the stored nextRunAt). A
@@ -86,9 +104,14 @@ export async function POST(request: Request) {
   for (const template of due) {
     // D3: one template's failure is reported, not thrown — the queue continues.
     try {
-      const recurrence = (template.recurrence ?? "daily") as TemplateRecurrence;
+      const recurrence = normalizeRecurrence(template.id, template.recurrence);
       const scheduled = template.nextRunAt ?? now;
       const next = advanceOf(recurrence, scheduled, anchorOf(template.config, scheduled), now);
+      // Report the next run the schedule advanced to, so the cron log records
+      // both the fire and the cadence it was normalized against.
+      console.info(
+        `[cron/templates] template ${template.id} (${recurrence}) next run ${next.toISOString()}`,
+      );
 
       const database = await prisma.page.findUnique({
         where: { id: template.databasePageId },
