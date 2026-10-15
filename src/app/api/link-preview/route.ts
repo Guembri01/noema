@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { hostOf, isHttpUrl, normalizeUrl, safeImageUrl } from "@/lib/embeds";
@@ -9,10 +10,62 @@ export const runtime = "nodejs";
 const MAX_BYTES = 256 * 1024;
 const TIMEOUT_MS = 6000;
 
+/** Resolved preview card sent to the client (and hashed into the `ETag`). */
+type PreviewCard = {
+  url: string;
+  host: string;
+  title: string | null;
+  description: string | null;
+  image: string | null;
+  icon: string | null;
+};
+
+/**
+ * Shared-cache policy for a resolved card: a short CDN TTL plus
+ * `stale-while-revalidate` so a burst of revalidations is served from cache
+ * while one background fetch refreshes it. Degraded/error cards are `no-store`
+ * so a transient upstream failure is never cached.
+ */
+const RESOLVED_CACHE_CONTROL = "public, s-maxage=3600, stale-while-revalidate=86400";
+const NO_STORE = "no-store";
+
+/** Strong `ETag` over the serialised card: identical metadata yields one tag. */
+function etagFor(card: PreviewCard): string {
+  const digest = createHash("sha256").update(JSON.stringify(card)).digest("hex");
+  return `"${digest.slice(0, 32)}"`;
+}
+
+/**
+ * RFC 7232 weak comparison of an `If-None-Match` header against our strong tag.
+ * Tolerates a comma-separated list, a `W/` prefix and the `*` wildcard.
+ */
+function matchesIfNoneMatch(header: string | null, etag: string): boolean {
+  if (header === null) return false;
+  for (const candidate of header.split(",")) {
+    const token = candidate.trim().replace(/^W\//, "");
+    if (token === "*" || token === etag) return true;
+  }
+  return false;
+}
+
+/**
+ * Response for a resolved card: cacheable with validators, or an empty 304 when
+ * the caller's `If-None-Match` matches so it reuses its cached copy.
+ */
+function cardResponse(card: PreviewCard, request: Request): NextResponse {
+  const etag = etagFor(card);
+  const headers = { "cache-control": RESOLVED_CACHE_CONTROL, etag };
+  if (matchesIfNoneMatch(request.headers.get("if-none-match"), etag)) {
+    return new NextResponse(null, { status: 304, headers });
+  }
+  return NextResponse.json(card, { headers });
+}
+
 /**
  * Fetch OpenGraph metadata for a URL so bookmark blocks can render a card.
  * Guards against SSRF via `isPreviewable` (http(s) only, no private/loopback
- * hosts), caps the response size and enforces a timeout.
+ * hosts), caps the response size and enforces a timeout. The resolved card is
+ * cached with an `ETag` and conditional `If-None-Match` handling.
  */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "preview", 60, 60_000);
@@ -31,7 +84,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Blocked host" }, { status: 400 });
   }
 
-  const fallback = { url, host: hostOf(url), title: null, description: null, image: null, icon: null };
+  const fallback: PreviewCard = {
+    url,
+    host: hostOf(url),
+    title: null,
+    description: null,
+    image: null,
+    icon: null,
+  };
 
   try {
     const controller = new AbortController();
@@ -44,7 +104,7 @@ export async function GET(request: Request) {
     clearTimeout(timer);
 
     if (!response.ok || !response.body) {
-      return NextResponse.json(fallback);
+      return NextResponse.json(fallback, { headers: { "cache-control": NO_STORE } });
     }
 
     const reader = response.body.getReader();
@@ -68,15 +128,17 @@ export async function GET(request: Request) {
     // regex + `new URL` parsing that used to live here.
     const meta = parseLinkMeta(html, { baseUrl: response.url });
 
-    return NextResponse.json({
+    const card: PreviewCard = {
       url,
       host: hostOf(url),
       title: meta.title ?? null,
       description: meta.description ?? null,
       image: safeImageUrl(resolveUrl(response.url, meta.image ?? "")),
       icon: safeImageUrl(resolveUrl(response.url, meta.favicon ?? "")),
-    });
+    };
+
+    return cardResponse(card, request);
   } catch {
-    return NextResponse.json(fallback);
+    return NextResponse.json(fallback, { headers: { "cache-control": NO_STORE } });
   }
 }
