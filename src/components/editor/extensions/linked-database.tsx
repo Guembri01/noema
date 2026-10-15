@@ -29,7 +29,10 @@ import {
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     linkedDatabase: {
-      setLinkedDatabase: (attrs?: { databasePageId?: string }) => ReturnType;
+      setLinkedDatabase: (attrs?: {
+        databasePageId?: string;
+        title?: string;
+      }) => ReturnType;
     };
   }
 }
@@ -89,6 +92,13 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
   const databasePageId = node.attrs.databasePageId as string | null;
   const [query, setQuery] = useState("");
   const [options_, setOptions] = useState<{ id: string; title: string; icon: string | null }[]>([]);
+  // The candidate list starts out "loading" because the picker is the first
+  // thing an unbound node renders; it is cleared once the action settles so the
+  // picker never flashes the "no databases" empty state before the fetch.
+  const [optionsLoading, setOptionsLoading] = useState(true);
+  // Repointing keeps the current `databasePageId` while the picker is open, so a
+  // cancelled change preserves the rendered view instead of dropping the link.
+  const [picking, setPicking] = useState(false);
   const [data, setData] = useState<LinkedDatabaseData | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -98,15 +108,25 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
   const [containerWidth, setContainerWidth] = useState(0);
 
   useEffect(() => {
-    if (databasePageId) return;
+    // Candidates are only needed while the picker is visible: for a brand-new
+    // node (no id yet) and while the user is repointing an existing one.
+    if (databasePageId && !picking) return;
     let cancelled = false;
-    listDatabasesAction(options.workspaceId).then((found) => {
-      if (!cancelled) setOptions(found);
-    });
+    setOptionsLoading(true);
+    listDatabasesAction(options.workspaceId)
+      .then((found) => {
+        if (!cancelled) setOptions(found);
+      })
+      .catch(() => {
+        if (!cancelled) setOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setOptionsLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [databasePageId, options.workspaceId]);
+  }, [databasePageId, picking, options.workspaceId]);
 
   useEffect(() => {
     if (!databasePageId) return;
@@ -139,7 +159,7 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
     return () => observer.disconnect();
   }, [data]);
 
-  if (!databasePageId) {
+  if (!databasePageId || picking) {
     const filtered = options_.filter((option) =>
       option.title.toLowerCase().includes(query.toLowerCase()),
     );
@@ -150,24 +170,47 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
             autoFocus
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              // Escape abandons a repoint, leaving the node bound to its current
+              // database (a fresh, unbound node has nothing to cancel back to).
+              if (event.key === "Escape" && picking) {
+                event.preventDefault();
+                setQuery("");
+                setPicking(false);
+              }
+            }}
             placeholder={t(locale, "linkedLinkPlaceholder")}
             className="noema-linked-field"
           />
-          <div className="noema-linked-results">
+          <div className="noema-linked-results" aria-busy={optionsLoading}>
             {filtered.map((option) => (
               <button
                 key={option.id}
                 type="button"
+                aria-current={option.id === databasePageId ? "true" : undefined}
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => updateAttributes({ databasePageId: option.id, title: option.title })}
+                onClick={() => {
+                  // Binds a fresh node or repoints an existing one; the read
+                  // path resolves the canonical title through
+                  // `getLinkedDatabaseAction` once the id lands.
+                  setQuery("");
+                  setPicking(false);
+                  updateAttributes({ databasePageId: option.id, title: option.title });
+                }}
                 className="noema-linked-result"
               >
                 <span>{option.icon ?? "🗂️"}</span>
                 <span className="truncate">{option.title || t(locale, "untitled")}</span>
               </button>
             ))}
-            {filtered.length === 0 && (
-              <p className="noema-linked-empty">{t(locale, "linkedNoDatabases")}</p>
+            {optionsLoading ? (
+              <p className="noema-linked-empty">
+                <Loader2 className="h-4 w-4 animate-spin" /> {t(locale, "loading")}
+              </p>
+            ) : (
+              filtered.length === 0 && (
+                <p className="noema-linked-empty">{t(locale, "linkedNoDatabases")}</p>
+              )
             )}
           </div>
         </div>
@@ -233,7 +276,12 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
           <button
             type="button"
             aria-label={t(locale, "linkedChangeAria")}
-            onClick={() => updateAttributes({ databasePageId: null })}
+            onClick={() => {
+              // Repoint in place: keep the current id so the view survives a
+              // cancelled change; the picker replaces it only on selection.
+              setQuery("");
+              setPicking(true);
+            }}
             className="noema-linked-open"
           >
             <Pencil className="h-3.5 w-3.5" />
