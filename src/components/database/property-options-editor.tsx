@@ -22,6 +22,11 @@ import {
   type NumberFormatSpec,
 } from "@/lib/number-format";
 import { CURRENCIES, isCurrencyCode } from "@/lib/currency";
+import {
+  defaultValueFor,
+  isComputedType,
+  type StoredPropertyValue,
+} from "@/lib/property-defaults";
 import { DialogContent } from "@/components/ui/dialog";
 
 type OptionDraft = { id: string; name: string; color: string; group?: string };
@@ -53,6 +58,88 @@ function readNumberFormat(config: PropertyConfig): unknown {
   if (!config || !("numberFormat" in config)) return undefined;
   return (config as { numberFormat?: NumberFormatSpec }).numberFormat;
 }
+
+/** Read the optional `default` authored for a property (config is closed-typed). */
+function readDefault(config: PropertyConfig): unknown {
+  if (!config || !("default" in config)) return undefined;
+  return (config as { default?: unknown }).default;
+}
+
+/**
+ * The canonical `config.default` to store for a resolved default value, or
+ * `undefined` when the property should carry no default at all (an empty cell).
+ * Derived from `defaultValueFor`'s validated output, so what is stored is
+ * exactly what a brand-new row would start with.
+ */
+function canonicalDefault(
+  type: string,
+  resolved: StoredPropertyValue | null,
+): unknown | undefined {
+  if (resolved === null) return undefined;
+  switch (type) {
+    case "CHECKBOX":
+      return "checked" in resolved ? resolved.checked : undefined;
+    case "MULTI_SELECT":
+      return "optionIds" in resolved && resolved.optionIds.length > 0
+        ? resolved.optionIds
+        : undefined;
+    case "SELECT":
+    case "STATUS":
+      return "optionId" in resolved ? resolved.optionId : undefined;
+    case "DATE":
+      return "start" in resolved ? resolved.start : undefined;
+    case "NUMBER":
+      return "number" in resolved ? resolved.number : undefined;
+    case "PEOPLE":
+      return "names" in resolved && resolved.names.length > 0
+        ? resolved.names
+        : undefined;
+    case "TEXT":
+    case "URL":
+    case "EMAIL":
+    case "PHONE":
+      return "text" in resolved ? resolved.text : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** Human-readable preview of a resolved default cell, with option names. */
+function describeDefault(
+  value: StoredPropertyValue | null,
+  options: readonly { id: string; name: string }[],
+): string {
+  if (value === null) return "—";
+  const optionName = (id: string) =>
+    options.find((option) => option.id === id)?.name ?? id;
+  if ("text" in value) return value.text;
+  if ("number" in value) return String(value.number);
+  if ("checked" in value) return value.checked ? "Checked" : "Unchecked";
+  if ("start" in value) return value.start;
+  if ("optionId" in value) return optionName(value.optionId);
+  if ("optionIds" in value) return value.optionIds.map(optionName).join(", ") || "—";
+  if ("names" in value) return value.names.join(", ") || "—";
+  return "—";
+}
+
+/**
+ * Property types that can carry a configured default. Excludes every computed
+ * type (see `isComputedType`) as well as PLACE/FILES, whose cells have no
+ * stored default shape in `property-defaults`.
+ */
+const DEFAULTABLE_TYPES: ReadonlySet<string> = new Set([
+  "TEXT",
+  "URL",
+  "EMAIL",
+  "PHONE",
+  "NUMBER",
+  "CHECKBOX",
+  "DATE",
+  "SELECT",
+  "STATUS",
+  "MULTI_SELECT",
+  "PEOPLE",
+]);
 
 /** Parse a positive integer, falling back to the engine default when invalid. */
 function parsePositiveInt(text: string, fallback: number): number {
@@ -94,6 +181,24 @@ export function PropertyOptionsEditor({
   const isPlace = typeCode === "PLACE";
   const isDate = typeCode === "DATE";
   const isNumber = typeCode === "NUMBER";
+
+  // --- Default value (config.default) --------------------------------------
+  // Live option list (SELECT/MULTI_SELECT/STATUS edits are already reflected in
+  // `draft`), used both to author a default and to resolve it back for display.
+  const options: readonly { id: string; name: string }[] = isOptions
+    ? draft
+    : property.config?.options ?? [];
+  // Computed/derived types never take a default; neither do PLACE/FILES.
+  const showDefault = DEFAULTABLE_TYPES.has(typeCode) && !isComputedType(typeCode);
+  const isTextLike =
+    typeCode === "TEXT" ||
+    typeCode === "URL" ||
+    typeCode === "EMAIL" ||
+    typeCode === "PHONE";
+  const isDefaultCheckbox = typeCode === "CHECKBOX";
+  const isDefaultSelect = typeCode === "SELECT" || typeCode === "STATUS";
+  const isDefaultMulti = typeCode === "MULTI_SELECT";
+  const isDefaultPeople = typeCode === "PEOPLE";
 
   const persist = (config: PropertyConfig) => {
     configRef.current = config;
@@ -254,6 +359,31 @@ export function PropertyOptionsEditor({
       numberFormat: next,
     } as PropertyConfig);
   };
+
+  // --- Default value: validated through `defaultValueFor` ------------------
+  const [defaultDraft, setDefaultDraft] = useState<unknown>(() => readDefault(property.config));
+
+  // Keep the raw draft for display, but persist the engine-validated canonical
+  // form (or drop `default` entirely when nothing resolves, i.e. an empty cell).
+  const commitDefault = (raw: unknown) => {
+    setDefaultDraft(raw);
+    const resolved = defaultValueFor(typeCode, { options, default: raw });
+    const value = canonicalDefault(typeCode, resolved);
+    const next: Record<string, unknown> = { ...(configRef.current ?? {}) };
+    if (value === undefined) delete next.default;
+    else next.default = value;
+    persist(next as unknown as PropertyConfig);
+  };
+
+  const defaultPreview = showDefault
+    ? defaultValueFor(typeCode, { options, default: defaultDraft })
+    : null;
+  const defaultString = typeof defaultDraft === "string" ? defaultDraft : "";
+  const defaultChecked = defaultDraft === true;
+  const defaultOptionIds = Array.isArray(defaultDraft)
+    ? defaultDraft.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const defaultNamesText = defaultOptionIds.join(", ");
 
   return (
     <DialogContent
@@ -606,6 +736,124 @@ export function PropertyOptionsEditor({
           </p>
           <p className="text-xs text-muted" data-testid="number-format-description">
             {describeFormat(numberFormat)}
+          </p>
+        </section>
+      )}
+
+      {showDefault && (
+        <section className="mt-4 space-y-3" data-testid="property-default-config">
+          <h3 className="text-sm font-medium">Default value</h3>
+          {(isTextLike || isDate) && (
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <span className="w-24 shrink-0">Value</span>
+              <input
+                data-testid="property-default-text"
+                aria-label="Default value"
+                type={isDate ? "date" : "text"}
+                value={defaultString}
+                onChange={(event) => commitDefault(event.target.value)}
+                className={cn(CONTROL_CLASS, "flex-1")}
+              />
+            </label>
+          )}
+          {isNumber && (
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <span className="w-24 shrink-0">Value</span>
+              <input
+                data-testid="property-default-number"
+                aria-label="Default value"
+                type="number"
+                value={defaultString}
+                onChange={(event) => commitDefault(event.target.value)}
+                className={cn(CONTROL_CLASS, "w-32")}
+              />
+            </label>
+          )}
+          {isDefaultCheckbox && (
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <input
+                data-testid="property-default-checkbox"
+                type="checkbox"
+                checked={defaultChecked}
+                onChange={(event) => commitDefault(event.target.checked)}
+              />
+              <span>Checked by default</span>
+            </label>
+          )}
+          {isDefaultSelect && (
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <span className="w-24 shrink-0">Option</span>
+              <select
+                data-testid="property-default-select"
+                aria-label="Default option"
+                value={defaultString}
+                onChange={(event) => commitDefault(event.target.value)}
+                className={cn(CONTROL_CLASS, "flex-1")}
+              >
+                <option value="">None</option>
+                {options.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {isDefaultMulti && (
+            <fieldset className="space-y-1" data-testid="property-default-multi">
+              <legend className="text-xs text-muted">Options</legend>
+              {options.length === 0 && (
+                <p className="text-xs text-muted">{t(locale, "noOptionsYet")}</p>
+              )}
+              {options.map((option) => {
+                const checked = defaultOptionIds.includes(option.id);
+                return (
+                  <label
+                    key={option.id}
+                    className="flex items-center gap-2 text-xs text-muted"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() =>
+                        commitDefault(
+                          checked
+                            ? defaultOptionIds.filter((id) => id !== option.id)
+                            : [...defaultOptionIds, option.id],
+                        )
+                      }
+                    />
+                    <span>{option.name}</span>
+                  </label>
+                );
+              })}
+            </fieldset>
+          )}
+          {isDefaultPeople && (
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <span className="w-24 shrink-0">Names</span>
+              <input
+                data-testid="property-default-people"
+                aria-label="Default people"
+                placeholder="Comma-separated"
+                value={defaultNamesText}
+                onChange={(event) =>
+                  commitDefault(
+                    event.target.value
+                      .split(",")
+                      .map((name) => name.trim())
+                      .filter((name) => name !== ""),
+                  )
+                }
+                className={cn(CONTROL_CLASS, "flex-1")}
+              />
+            </label>
+          )}
+          <p className="text-xs text-muted">
+            Preview:{" "}
+            <span className="font-mono" data-testid="property-default-preview">
+              {describeDefault(defaultPreview, options)}
+            </span>
           </p>
         </section>
       )}
