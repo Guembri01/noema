@@ -25,6 +25,12 @@ import {
   type TocHeading,
   type TocItem,
 } from "@/lib/toc";
+import {
+  CALLOUT_ICONS,
+  DEFAULT_CALLOUT_ICON,
+  normalizeCalloutIcon,
+  searchIcons,
+} from "@/lib/callout-icons";
 import { t } from "@/lib/i18n";
 
 declare module "@tiptap/core" {
@@ -57,10 +63,6 @@ const CALLOUT_COLORS: Record<string, string> = {
   pink: "#faf1f5",
 };
 
-const CALLOUT_EMOJIS = [
-  "💡", "📌", "❗", "✅", "🔥", "⚠️", "📝", "🎯", "📚", "🚀", "❤️", "🧠",
-];
-
 export const Callout = Node.create<{ locale: string }>({
   name: "callout",
   group: "block",
@@ -73,7 +75,7 @@ export const Callout = Node.create<{ locale: string }>({
 
   addAttributes() {
     return {
-      emoji: { default: "💡" },
+      emoji: { default: DEFAULT_CALLOUT_ICON },
       color: { default: "gray" },
     };
   },
@@ -109,7 +111,18 @@ export const Callout = Node.create<{ locale: string }>({
 
 function CalloutView({ node, updateAttributes, locale }: NodeViewProps & { locale: string }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const color = CALLOUT_COLORS[String(node.attrs.color)] ?? CALLOUT_COLORS.gray;
+  const emoji = normalizeCalloutIcon(node.attrs.emoji);
+  // Empty query surfaces the curated catalog in picker order; a query routes
+  // through the shared emoji search (keywords + category prefixes).
+  const icons = query.trim() === "" ? CALLOUT_ICONS : searchIcons(query);
+
+  const chooseIcon = (icon: string) => {
+    updateAttributes({ emoji: normalizeCalloutIcon(icon) });
+    setQuery("");
+    setPickerOpen(false);
+  };
 
   return (
     <NodeViewWrapper
@@ -123,22 +136,34 @@ function CalloutView({ node, updateAttributes, locale }: NodeViewProps & { local
           aria-label={t(locale, "calloutChangeIcon")}
           onClick={() => setPickerOpen((v) => !v)}
         >
-          {String(node.attrs.emoji)}
+          {emoji}
         </button>
         {pickerOpen && (
           <div className="noema-callout-picker">
-            {CALLOUT_EMOJIS.map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                onClick={() => {
-                  updateAttributes({ emoji });
-                  setPickerOpen(false);
-                }}
-              >
-                {emoji}
-              </button>
-            ))}
+            <input
+              type="search"
+              value={query}
+              placeholder={t(locale, "search")}
+              aria-label={t(locale, "search")}
+              onChange={(e) => setQuery(e.target.value)}
+              style={{ gridColumn: "1 / -1" }}
+            />
+            {icons.length === 0 ? (
+              <span style={{ gridColumn: "1 / -1" }}>
+                {t(locale, "noResults")}
+              </span>
+            ) : (
+              icons.map((icon) => (
+                <button
+                  key={icon.shortcode}
+                  type="button"
+                  aria-label={icon.shortcode}
+                  onClick={() => chooseIcon(icon.emoji)}
+                >
+                  {icon.emoji}
+                </button>
+              ))
+            )}
           </div>
         )}
       </div>
