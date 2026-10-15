@@ -268,3 +268,82 @@ export function rank(index: SearchIndex, query: string, options: RankOptions = {
   const capped = limit > 0 ? scored.slice(0, Math.trunc(limit)) : scored;
   return capped.map(({ id, score, matched }) => ({ id, score, matched }));
 }
+
+/**
+ * The shape {@link refineByRelevance} reads by default: a stable `id`, the
+ * `title` to weight, and the `body` (snippet/description) to match against.
+ */
+export type RelevanceRow = {
+  id: string;
+  title: string;
+  body: string;
+};
+
+/** Query-time knobs for {@link refineByRelevance}. */
+export type RefineByRelevanceOptions<T> = {
+  /** Multiplier on the title BM25 term (default `1`, via {@link rank}). */
+  titleWeight?: number;
+  /** Override how a row's stable id is read (default `row.id`). */
+  getId?: (row: T) => string;
+  /** Override how a row's title text is read (default `row.title`). */
+  getTitle?: (row: T) => string;
+  /** Override how a row's body/snippet text is read (default `row.body`). */
+  getBody?: (row: T) => string;
+};
+
+/** Read a string field from a row without assuming its concrete type. */
+function readTextField(row: unknown, key: string): string {
+  if (typeof row !== "object" || row === null) return "";
+  const value = (row as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : "";
+}
+
+/**
+ * Re-order already-filtered rows by the shared BM25 scorer ({@link rank}),
+ * weighting title matches, so a title hit surfaces above an equally frequent
+ * body hit. This is the pure core shared by the search page, the v1 search
+ * API, `search-results.tsx`, and `quick-find.tsx`.
+ *
+ * The pass is **lossless**: every row is returned and the input is never
+ * mutated. Rows the scorer recognises are ordered best-first; rows it does
+ * not (prefix/substring-fallback hits, or an empty/stopword query) keep their
+ * incoming relative order and follow the scored rows, so result counts and any
+ * surrounding pagination are unchanged. Ties among scored rows also keep the
+ * incoming order via a stable sort on the ranked positions.
+ *
+ * Rows are read through `row.id` / `row.title` / `row.body` by default; pass
+ * the `getId` / `getTitle` / `getBody` accessors for a different shape (for
+ * example `snippet` in place of `body`).
+ */
+export function refineByRelevance<T = RelevanceRow>(
+  rows: readonly T[],
+  query: string,
+  options: RefineByRelevanceOptions<T> = {},
+): T[] {
+  const ordered = [...rows];
+  if (ordered.length <= 1) return ordered;
+
+  const getId = options.getId ?? ((row: T) => readTextField(row, "id"));
+  const getTitle = options.getTitle ?? ((row: T) => readTextField(row, "title"));
+  const getBody = options.getBody ?? ((row: T) => readTextField(row, "body"));
+
+  const index = buildIndex(
+    ordered.map((row) => ({
+      id: getId(row),
+      fields: { title: getTitle(row), body: getBody(row) },
+    })),
+  );
+  const ranked = rank(index, query, { titleWeight: options.titleWeight, limit: ordered.length });
+  if (ranked.length === 0) return ordered;
+
+  const position = new Map(ranked.map((result, i) => [result.id, i]));
+  ordered.sort((a, b) => {
+    const left = position.get(getId(a));
+    const right = position.get(getId(b));
+    if (left === undefined && right === undefined) return 0;
+    if (left === undefined) return 1;
+    if (right === undefined) return -1;
+    return left - right;
+  });
+  return ordered;
+}

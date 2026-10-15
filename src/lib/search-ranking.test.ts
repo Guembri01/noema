@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildIndex, rank, tokenize, type SearchDoc } from "./search-ranking";
+import { buildIndex, rank, refineByRelevance, tokenize, type SearchDoc } from "./search-ranking";
 
 /**
  * Full-text search ranking (docs top gap #8) — pure BM25-style scoring that
@@ -225,5 +225,94 @@ describe("rank", () => {
     rank(built, "roadmap");
     expect(JSON.stringify(input)).toBe(snapshot);
     expect(JSON.stringify(buildIndex(input))).toBe(snapshotIndex);
+  });
+});
+
+/**
+ * The shared refinement pass extracted from the search page, the v1 search
+ * API, `search-results.tsx`, and `quick-find.tsx`: re-order already-filtered
+ * rows by the same BM25 scorer, title-weighted, while staying lossless — every
+ * row comes back and the ones the scorer does not recognise keep their
+ * incoming position, after the scored ones.
+ */
+describe("refineByRelevance", () => {
+  it("re-orders by BM25, surfacing a title hit above a body hit", () => {
+    const rows = [
+      { id: "body", title: "Notes", body: "search" },
+      { id: "title", title: "search", body: "unrelated words here" },
+    ];
+    const ordered = refineByRelevance(rows, "search", { titleWeight: 3 });
+    expect(ordered.map((row) => row.id)).toEqual(["title", "body"]);
+    // Same objects, merely re-ordered.
+    expect(ordered[0]).toBe(rows[1]);
+    expect(ordered[1]).toBe(rows[0]);
+
+    // A zero title weight ignores titles, so only the body hit scores and the
+    // title-only row falls back to its incoming position.
+    expect(refineByRelevance(rows, "search", { titleWeight: 0 }).map((row) => row.id)).toEqual([
+      "body",
+      "title",
+    ]);
+  });
+
+  it("is lossless: unmatched rows keep their order and follow the scored ones", () => {
+    const rows = [
+      { id: "u1", title: "Cookbook", body: "recipes for dinner" },
+      { id: "m2", title: "Roadmap", body: "plan" },
+      { id: "u2", title: "Travel", body: "flights and hotels" },
+      { id: "m1", title: "Roadmap", body: "plan" },
+    ];
+    const ordered = refineByRelevance(rows, "roadmap", { titleWeight: 3 });
+    expect(ordered).toHaveLength(rows.length);
+    expect(ordered.map((row) => row.id)).toEqual(["m1", "m2", "u1", "u2"]);
+  });
+
+  it("returns the rows unchanged for an empty/stopword query or a short input", () => {
+    const rows = [
+      { id: "a", title: "Alpha", body: "one" },
+      { id: "b", title: "Beta", body: "two" },
+    ];
+    expect(refineByRelevance(rows, "the and of").map((row) => row.id)).toEqual(["a", "b"]);
+    expect(refineByRelevance([], "alpha")).toEqual([]);
+
+    const single = [rows[0]];
+    const result = refineByRelevance(single, "alpha");
+    expect(result).toEqual(single);
+    expect(result).not.toBe(single);
+  });
+
+  it("does not mutate the input array or its rows", () => {
+    const rows = [
+      { id: "body", title: "Notes", body: "search" },
+      { id: "title", title: "search", body: "zzz" },
+    ];
+    const snapshot = JSON.stringify(rows);
+    refineByRelevance(rows, "search", { titleWeight: 3 });
+    expect(JSON.stringify(rows)).toBe(snapshot);
+    expect(rows.map((row) => row.id)).toEqual(["body", "title"]);
+  });
+
+  it("reads alternate fields through accessor overrides", () => {
+    const rows = [
+      { key: "b", label: "Notes", snippet: "search" },
+      { key: "a", label: "search", snippet: "zzz" },
+    ];
+    const ordered = refineByRelevance(rows, "search", {
+      titleWeight: 3,
+      getId: (row) => row.key,
+      getTitle: (row) => row.label,
+      getBody: (row) => row.snippet,
+    });
+    expect(ordered.map((row) => row.key)).toEqual(["a", "b"]);
+  });
+
+  it("defaults titleWeight to 1 when options are omitted", () => {
+    const rows = [
+      { id: "body", title: "Notes", body: "search" },
+      { id: "title", title: "search", body: "zzz" },
+    ];
+    expect(refineByRelevance(rows, "search").map((row) => row.id)).toEqual(
+      refineByRelevance(rows, "search", { titleWeight: 1 }).map((row) => row.id),
+    );
   });
 });
