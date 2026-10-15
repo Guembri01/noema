@@ -278,6 +278,19 @@ export function DatabaseView({
     activeView?.config as { form?: unknown } | null | undefined
   )?.form;
 
+  // BOARD options: an optional swimlane axis (`laneBy`, a second property id)
+  // and per-column WIP limits (`wipLimits`, keyed by column/option id). Like
+  // `defaultTemplateId`/`form` above, neither key is part of the parsed
+  // `viewConfig`, so both are read off the raw view config; `BoardView` and the
+  // pure kanban engine ignore malformed values, so an absent/unset pair leaves
+  // the plain single-axis, unlimited board exactly as it rendered before.
+  const boardLaneBy = (
+    activeView?.config as { laneBy?: string | null } | null | undefined
+  )?.laneBy;
+  const boardWipLimits = (
+    activeView?.config as { wipLimits?: Record<string, number> } | null | undefined
+  )?.wipLimits;
+
   const setViewConfig = (patch: Partial<ViewConfig>) => {
     if (!activeView) return;
     // Two config writes in quick succession used to race: the second one was
@@ -1205,6 +1218,8 @@ export function DatabaseView({
           computedFor={computedFor}
           peopleOptions={members ?? []}
           editable={editable}
+          laneBy={boardLaneBy}
+          wipLimits={boardWipLimits}
         />
       ) : activeView.type === "LIST" ? (
         <ListView
