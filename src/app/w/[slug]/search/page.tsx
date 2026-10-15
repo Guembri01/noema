@@ -9,6 +9,7 @@ import { t } from "@/lib/i18n";
 import { SearchResults } from "@/components/search-results";
 import { truncate } from "@/lib/utils";
 import { refineByRelevance } from "@/lib/search-ranking";
+import { filterByType, parseTypeScope, type SearchType } from "@/lib/fuzzy";
 
 /**
  * How strongly a title hit outranks an equally frequent body hit in the shared
@@ -17,15 +18,42 @@ import { refineByRelevance } from "@/lib/search-ranking";
  */
 const SEARCH_TITLE_WEIGHT = 3;
 
+/**
+ * Item types the search page can be narrowed to via the URL `type` param
+ * (§11 Search filters / Search by type). A subset of the shared engine's
+ * `SEARCH_TYPES`: page search only indexes pages, so `page`/`database` map onto
+ * the stored `PageType`, while `ticket` is accepted for URL parity with the
+ * palette and simply yields no page hits. Anything else means "all types".
+ */
+const SEARCH_PAGE_TYPES = ["page", "database", "ticket"] as const;
+
+type SearchPageType = (typeof SEARCH_PAGE_TYPES)[number];
+
+function isSearchPageType(value: SearchType | null): value is SearchPageType {
+  return value !== null && (SEARCH_PAGE_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * Parse the `type` URL param into a scope, normalising case and plurals the way
+ * the shared `parseTypeScope` engine does (`?type=Databases` → `database`).
+ * Unknown or empty values fall back to `null`, i.e. no scoping.
+ */
+function parseSearchPageType(raw: string | undefined): SearchPageType | null {
+  if (!raw) return null;
+  const { type } = parseTypeScope(`type:${raw}`);
+  return isSearchPageType(type) ? type : null;
+}
+
 export default async function SearchPage({
   params,
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; type?: string }>;
 }) {
   const { slug } = await params;
-  const { q = "" } = await searchParams;
+  const { q = "", type } = await searchParams;
+  const searchType = parseSearchPageType(type);
   const user = await requireUser();
   const locale = user.locale ?? "en";
   const workspace = await getWorkspaceBySlug(slug);
@@ -46,7 +74,14 @@ export default async function SearchPage({
   // follow the scored rows, so pagination and result counts are unchanged. The
   // hit's `snippet` is the body the scorer should read (the shared default is
   // `row.body`), so it is supplied through the `getBody` accessor.
-  const results = refineByRelevance(paged.results, q, {
+  //
+  // The URL `type` scope narrows the window before ranking: `filterByType` is
+  // order-preserving and score-free, so it composes in front of the scorer.
+  // Default is all types (`searchType === null`).
+  const scoped = searchType
+    ? filterByType(paged.results, searchType, (row) => row.type)
+    : paged.results;
+  const results = refineByRelevance(scoped, q, {
     titleWeight: SEARCH_TITLE_WEIGHT,
     getBody: (row) => row.snippet,
   });
@@ -56,6 +91,7 @@ export default async function SearchPage({
       <h1 className="mb-5 text-2xl font-semibold tracking-tight">{t(locale, "search")}</h1>
 
       <form method="GET" className="relative">
+        {searchType && <input type="hidden" name="type" value={searchType} />}
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
         <input
           name="q"
