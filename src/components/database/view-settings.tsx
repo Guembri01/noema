@@ -462,7 +462,7 @@ type ViewSettingsConfig = ViewConfig & {
    * view-config key this toolbar owns and rides through `sanitizeViewSettings`
    * untouched; the swimlane engine validates the id at render time.
    */
-  laneBy?: string | null;
+  laneBy?: string;
   wipLimits?: WipLimits;
   /**
    * The serialized `ColumnLayout` (see `@/lib/column-layout`) this toolbar
@@ -1382,7 +1382,7 @@ export function ViewSettings({
               id="lane-by"
               data-testid="lane-by"
               value={laneBy}
-              onChange={(e) => onChange({ laneBy: e.target.value || null })}
+              onChange={(e) => onChange({ laneBy: e.target.value || undefined })}
               className={cn(CONTROL_CLASS, "w-full")}
             >
               <option value="">None</option>
