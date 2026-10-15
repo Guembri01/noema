@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Node, mergeAttributes } from "@tiptap/core";
 import {
   NodeViewWrapper,
@@ -10,6 +10,14 @@ import {
 import { ExternalLink, Loader2, Pencil, Trash2 } from "lucide-react";
 import { formatCell, type QueryProperty } from "@/lib/database-query";
 import { t } from "@/lib/i18n";
+import {
+  CARD_SIZES,
+  cardFieldOrder,
+  cardSizeFor,
+  resolveCardPreview,
+  type ViewPropertyLike,
+  type ViewRowLike,
+} from "@/lib/view-presets";
 import {
   getLinkedDatabaseAction,
   listDatabasesAction,
@@ -83,6 +91,11 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
   const [data, setData] = useState<LinkedDatabaseData | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Gallery card preview: the size follows the measured body width, mirroring
+  // `GalleryView` (the initial width of 0 keeps server and client identical).
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+
   useEffect(() => {
     if (databasePageId) return;
     let cancelled = false;
@@ -114,6 +127,16 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [databasePageId]);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      setContainerWidth(entries[0]?.contentRect.width ?? 0);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [data]);
 
   if (!databasePageId) {
     const filtered = options_.filter((option) =>
@@ -152,7 +175,37 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
   }
 
   const primary = data?.properties[0];
-  const columns = (data?.properties ?? []).slice(0, 4);
+  // The shared view-presets engine reads lower-case property types (e.g.
+  // "files"), matching `COVER_PROPERTY_TYPES`; the linked-database payload
+  // stores them upper-case.
+  const presetProperties: ViewPropertyLike[] = (data?.properties ?? []).map(
+    (property) => ({
+      id: property.id,
+      name: property.name,
+      type: property.type.toLowerCase(),
+    }),
+  );
+  // The cover is the first files property, exactly as the database `GalleryView`
+  // picks it; `resolveCardPreview` decides whether it renders or falls back to
+  // the row icon.
+  const coverPropertyId =
+    data?.properties.find((property) => property.type === "FILES")?.id ?? null;
+  // Size follows the measured container: `cardSizeFor` chooses a preset and
+  // `CARD_SIZES` supplies the column count, cover aspect and whether the cover
+  // is shown at all.
+  const size = cardSizeFor(containerWidth);
+  const spec = CARD_SIZES[size];
+  // Fields are the schema order minus the card's title (the first property) and
+  // the cover, capped by the preset exactly like `GalleryView`.
+  const cardFields = cardFieldOrder(
+    presetProperties.filter((property) => property.id !== primary?.id),
+    { previewPropertyId: coverPropertyId, maxFields: spec.showPreview ? 3 : 4 },
+  )
+    .map((id) => data?.properties.find((property) => property.id === id))
+    .filter(
+      (property): property is { id: string; name: string; type: string } =>
+        property !== undefined,
+    );
 
   return (
     <NodeViewWrapper className="noema-linked-db" data-linked-database="">
@@ -196,31 +249,77 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
           ) : data.rows.length === 0 ? (
             <p className="noema-linked-empty">{t(locale, "dbNoRows")}</p>
           ) : (
-            <table className="noema-linked-table">
-              <thead>
-                <tr>
-                  {columns.map((column) => (
-                    <th key={column.id}>{column.name}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.rows.slice(0, 20).map((row) => (
-                  <tr key={row.id}>
-                    {columns.map((column) => (
-                      <td key={column.id}>
-                        {column.id === primary?.id
-                          ? row.title || t(locale, "untitled")
-                          : formatCell(
-                              row.values[column.id],
-                              { id: column.id, name: column.name, type: column.type, config: null } as QueryProperty,
-                            ) || "—"}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div
+              ref={containerRef}
+              className="grid gap-3"
+              style={{ gridTemplateColumns: `repeat(${spec.columns}, minmax(0, 1fr))` }}
+              data-card-size={size}
+            >
+              {data.rows.slice(0, 20).map((row) => {
+                const viewRow: ViewRowLike = {
+                  id: row.id,
+                  title: row.title,
+                  icon: row.icon,
+                  propertyValues: Object.entries(row.values).map(
+                    ([propertyId, value]) => ({ propertyId, value }),
+                  ),
+                };
+                const preview = resolveCardPreview(viewRow, presetProperties, {
+                  coverPropertyId,
+                });
+                return (
+                  <div
+                    key={row.id}
+                    className="overflow-hidden rounded-lg border border-border bg-bg"
+                  >
+                    {spec.showPreview && (
+                      <div
+                        className="grid place-items-center overflow-hidden bg-surface text-3xl"
+                        style={{ aspectRatio: spec.aspect }}
+                      >
+                        {preview.kind === "cover" ? (
+                          /* eslint-disable-next-line @next/next/no-img-element -- raw attachment URLs are not statically analysable for next/image */
+                          <img
+                            src={preview.value}
+                            alt={row.title}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          preview.value ?? row.icon ?? "🗂️"
+                        )}
+                      </div>
+                    )}
+                    <div className="space-y-1 p-3">
+                      <p className="truncate text-sm font-medium">
+                        {!spec.showPreview && <span className="mr-1">{row.icon ?? "🗂️"}</span>}
+                        {row.title || t(locale, "untitled")}
+                      </p>
+                      <dl className="space-y-0.5">
+                        {cardFields.map((property) => (
+                          <div
+                            key={property.id}
+                            className="flex items-center justify-between gap-2 text-xs text-muted"
+                          >
+                            <dt className="truncate">{property.name}</dt>
+                            <dd className="truncate">
+                              {formatCell(
+                                row.values[property.id],
+                                {
+                                  id: property.id,
+                                  name: property.name,
+                                  type: property.type,
+                                  config: null,
+                                } as QueryProperty,
+                              ) || "—"}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>
