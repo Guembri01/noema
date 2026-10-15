@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowUpDown,
   Bookmark,
   Columns3,
   Filter as FilterIcon,
+  Gauge,
   Layers,
   Palette,
   Plus,
@@ -15,10 +16,12 @@ import {
   COLOR_CHOICES,
   CONTROL_CLASS,
   type DBProperty,
+  type DBRow,
 } from "@/components/database/database-types";
 import {
   addFilter,
   addSort,
+  isFilterOperator,
   moveSort,
   operatorsFor,
   removeSort,
@@ -28,6 +31,17 @@ import {
   type Sort,
   type ViewConfig,
 } from "@/lib/database-query";
+import {
+  groupRowsByProperty,
+  type BoardPropertyDescriptor,
+} from "@/lib/board-groups";
+import { checkWip, wipSummary, type WipLimits } from "@/lib/kanban-wip";
+import {
+  normalizeViewConfig as normalizeSchemaViewConfig,
+  validateViewConfig,
+  type ViewColorRule,
+  type ViewProperty as SchemaViewProperty,
+} from "@/lib/view-config-schema";
 import {
   countActiveFilters,
   hasActiveFilters,
@@ -415,6 +429,124 @@ function configPatchForPreset(
   return patch;
 }
 
+/* ---------------------------------------------------------------------------
+   Config sanitisation + per-column WIP limits
+   Two pure bridges for this toolbar:
+     - `sanitizeViewSettings` reads the untrusted view config through
+       `@/lib/view-config-schema`'s tolerant `normalizeViewConfig` against the
+       live property schema, so a stale key or a reference to a since-deleted
+       property is dropped before the UI reads — or rewrites — it. The schema
+       speaks its own key names (`sort` / `group` / `rowColorRules`), so a small
+       map converts both ways; fields it does not model (`filters`,
+       `filterTree`, `filterMode`, `freezeFirstColumn`, `wipLimits`) ride
+       through untouched. `validateViewConfig` is the strict safety net.
+     - `normalizeWipLimits` keeps only finite, non-negative integer limits for
+       the per-column WIP editor backed by `@/lib/kanban-wip`.
+   --------------------------------------------------------------------------- */
+
+/** The app view config plus the optional WIP-limit map this toolbar persists. */
+type ViewSettingsConfig = ViewConfig & { wipLimits?: WipLimits };
+
+/** A JSON object (not an array, not null), or `null` for anything else. */
+function wipRecord(input: unknown): Record<string, unknown> | null {
+  return typeof input === "object" && input !== null && !Array.isArray(input)
+    ? (input as Record<string, unknown>)
+    : null;
+}
+
+/** An app colour rule → the schema's row-colour shape (its condition lives in `filter`). */
+function colorRuleToSchema(rule: ColorRule): Record<string, unknown> {
+  const condition: Record<string, unknown> = {
+    propertyId: rule.propertyId,
+    operator: rule.operator,
+  };
+  if (rule.value !== undefined) condition.value = rule.value;
+  const schemaRule: Record<string, unknown> = {
+    propertyId: rule.propertyId,
+    color: rule.color,
+    filter: condition,
+  };
+  if (rule.target) schemaRule.target = rule.target;
+  return schemaRule;
+}
+
+/** The schema-shaped projection of an app config, the input to normalise/validate. */
+function toSchemaConfig(config: ViewSettingsConfig): Record<string, unknown> {
+  const raw: Record<string, unknown> = {};
+  if (config.sorts) {
+    raw.sort = config.sorts.map((sort) => ({
+      propertyId: sort.propertyId,
+      direction: sort.direction,
+    }));
+  }
+  if (config.groupByPropertyId) raw.group = config.groupByPropertyId;
+  if (config.visiblePropertyIds !== undefined) {
+    raw.visiblePropertyIds = config.visiblePropertyIds;
+  }
+  if (config.colorRules) raw.rowColorRules = config.colorRules.map(colorRuleToSchema);
+  return raw;
+}
+
+/**
+ * A schema row-colour rule → an app colour rule. A rule whose property the
+ * schema dropped (deleted property) or whose condition is unreadable is
+ * skipped, so a dangling rule never reaches the editor.
+ */
+function colorRuleFromSchema(rule: ViewColorRule): ColorRule | null {
+  if (!rule.propertyId) return null;
+  const condition = rule.filter ?? {};
+  const operator = condition.operator;
+  if (!isFilterOperator(operator)) return null;
+  const next: ColorRule = { propertyId: rule.propertyId, operator, color: rule.color };
+  if (typeof condition.value === "string") next.value = condition.value;
+  if (rule.target) next.target = rule.target;
+  return next;
+}
+
+/** Keep only finite, non-negative integer limits; an empty map means "no limits". */
+function normalizeWipLimits(input: unknown): WipLimits | undefined {
+  const record = wipRecord(input);
+  if (!record) return undefined;
+  const limits: Record<string, number> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (key === "") continue;
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+      limits[key] = value;
+    }
+  }
+  return Object.keys(limits).length > 0 ? limits : undefined;
+}
+
+/**
+ * Read an untrusted config into the shape this toolbar edits: schema-normalised
+ * against `properties`, with WIP limits validated. Unknown top-level keys are
+ * preserved; only the fields this toolbar owns are rewritten.
+ */
+function sanitizeViewSettings(
+  config: ViewSettingsConfig,
+  properties: SchemaViewProperty[],
+): ViewSettingsConfig {
+  const normalized = normalizeSchemaViewConfig(toSchemaConfig(config), properties);
+
+  const sanitized: ViewSettingsConfig = { ...config };
+  sanitized.sorts = normalized.sort ?? [];
+  sanitized.groupByPropertyId = normalized.group ?? null;
+  if (config.visiblePropertyIds === undefined) {
+    delete sanitized.visiblePropertyIds;
+  } else {
+    sanitized.visiblePropertyIds = normalized.visiblePropertyIds ?? [];
+  }
+  sanitized.colorRules = (normalized.rowColorRules ?? [])
+    .map(colorRuleFromSchema)
+    .filter((rule): rule is ColorRule => rule !== null);
+
+  const wipLimits = normalizeWipLimits(config.wipLimits);
+  if (wipLimits) sanitized.wipLimits = wipLimits;
+  else delete sanitized.wipLimits;
+
+  return sanitized;
+}
+
 /**
  * Filter / sort / group / colour-rule / column-visibility controls for one
  * database view. Everything here writes into `config`, which the caller
@@ -424,16 +556,19 @@ function configPatchForPreset(
 export function ViewSettings({
   locale,
   properties,
-  config,
+  config: incoming,
   editable,
   onChange,
   layout,
   onLayoutChange,
+  rows,
 }: {
   properties: DBProperty[];
-  config: ViewConfig;
+  /** The view's untrusted config; sanitised against `properties` below. */
+  config: ViewSettingsConfig;
   editable: boolean;
-  onChange: (patch: Partial<ViewConfig>) => void;
+  /** Persist a config patch (may carry the optional `wipLimits` key). */
+  onChange: (patch: Partial<ViewSettingsConfig>) => void;
   locale: string;
   /**
    * Saved column layout (order/widths/hidden). Optional: when omitted it is
@@ -446,11 +581,40 @@ export function ViewSettings({
    * legacy `visiblePropertyIds` list exactly as it always has.
    */
   onLayoutChange?: (layout: ColumnLayout) => void;
+  /**
+   * Rows the view is rendering, when known. Optional: it feeds the `checkWip`
+   * status shown by the WIP-limit editor. Without it every column reports zero
+   * rows, so only the limits themselves are editable.
+   */
+  rows?: DBRow[];
 }) {
+  // Sanitise the untrusted config against the live property schema before the
+  // toolbar reads it, so stale keys and references to deleted properties are
+  // already gone by the time a control writes its patch back.
+  const schemaProperties: SchemaViewProperty[] = properties.map((property) => ({
+    id: property.id,
+    type: property.type,
+  }));
+  const config = sanitizeViewSettings(incoming, schemaProperties);
+  // Strict safety net: shape problems the tolerant read path cannot express.
+  const configIssues = validateViewConfig(toSchemaConfig(config)).filter(
+    (issue) => issue.code !== "invalid_view_type",
+  );
+  const persistedWipLimits = config.wipLimits ?? {};
+
   // Saved views live for the session only (no server persistence yet). The
-  // hook sits above the `editable` early return so the call order is stable.
+  // hooks sit above the `editable` early return so the call order is stable.
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [savedViewName, setSavedViewName] = useState("");
+  // WIP limits are edited locally so the number inputs stay responsive while
+  // the server round-trips the config; each change is still written through
+  // `onChange` (see `setWipLimit`).
+  const [wipLimits, setWipLimits] = useState<WipLimits>(persistedWipLimits);
+  const persistedWipKey = JSON.stringify(persistedWipLimits);
+  useEffect(() => {
+    setWipLimits(persistedWipLimits);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistedWipKey]);
 
   if (!editable) return null;
 
@@ -464,6 +628,42 @@ export function ViewSettings({
     properties.find((p) => !p.config?.primary) ?? properties[0];
 
   const secondary = properties.filter((p) => !p.config?.primary);
+
+  // --- WIP limits (board columns) ------------------------------------------
+  // A board's columns are the declared options of the group property plus the
+  // trailing "No value" bucket — exactly what `groupRowsByProperty` builds.
+  // Limits are keyed by that column key, and `checkWip` grades each column
+  // against its limit; the editor below shows the grade and persists the map.
+  const wipProperty = properties.find((property) => property.id === groupBy) ?? null;
+  const boardProperties: BoardPropertyDescriptor[] = properties.map((property) => ({
+    id: property.id,
+    name: property.name,
+    type: property.type,
+    config: property.config,
+  }));
+  const wipGroups = wipProperty
+    ? groupRowsByProperty(rows ?? [], boardProperties, wipProperty.id)
+    : [];
+  const wipCheck = checkWip(wipGroups, wipLimits);
+  const wipRollup = wipSummary(wipGroups, wipLimits);
+  const wipStatusByKey = new Map(
+    wipCheck.columns.map((column) => [column.key, column]),
+  );
+  const limitedCount = Object.keys(wipLimits).length;
+
+  /** Set (or clear, on blank) one column's limit and persist the map. */
+  const setWipLimit = (key: string, value: string) => {
+    const next: Record<string, number> = { ...wipLimits };
+    if (value.trim() === "") {
+      delete next[key];
+    } else {
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 0) return;
+      next[key] = parsed;
+    }
+    setWipLimits(next);
+    onChange({ wipLimits: next });
+  };
 
   // --- Saved-view actions --------------------------------------------------
   const secondaryIds = presetSecondaryIds(properties);
@@ -1096,6 +1296,84 @@ export function ViewSettings({
         </PopoverContent>
       </Popover>
 
+      {/* WIP limits — one per board column, persisted in the view config */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-testid="wip-trigger"
+            className={cn(
+              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
+              limitedCount > 0 && "bg-surface-2 text-fg",
+              wipRollup.overCount > 0 && "text-red-500",
+            )}
+          >
+            <Gauge className="h-3.5 w-3.5" />
+            WIP limits{limitedCount > 0 ? ` (${limitedCount})` : ""}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-72" data-testid="wip-popover">
+          {wipProperty ? (
+            <div className="space-y-2">
+              <p className="text-xs text-muted">
+                Work-in-progress limits for “{wipProperty.name}”. Leave a field
+                blank for no limit.
+              </p>
+              {wipGroups.map((group) => {
+                const status = wipStatusByKey.get(group.key);
+                const limit = wipLimits[group.key];
+                return (
+                  <div key={group.key} className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm">{group.label}</span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted">
+                      {group.rows.length}
+                      {limit !== undefined ? ` / ${limit}` : ""}
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={limit ?? ""}
+                      data-testid={`wip-limit-${group.key}`}
+                      aria-label={`${group.label} WIP limit`}
+                      placeholder="∞"
+                      onChange={(event) => setWipLimit(group.key, event.target.value)}
+                      className={cn(CONTROL_CLASS, "w-16")}
+                    />
+                    {status?.status === "over" && (
+                      <span
+                        data-testid={`wip-status-${group.key}`}
+                        className="shrink-0 text-xs text-red-500"
+                      >
+                        over
+                      </span>
+                    )}
+                    {status?.status === "at" && (
+                      <span
+                        data-testid={`wip-status-${group.key}`}
+                        className="shrink-0 text-xs text-amber-500"
+                      >
+                        at limit
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+              {wipRollup.limitedColumns > 0 && (
+                <p className="border-t border-border pt-2 text-xs text-muted">
+                  {wipRollup.limitedColumns} limited · {wipRollup.overCount} over ·{" "}
+                  {wipRollup.remainingCapacity} slots free
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-muted">
+              Group by a select or status property to set per-column limits.
+            </p>
+          )}
+        </PopoverContent>
+      </Popover>
+
       {/* Show / hide properties (per view) */}
       <Popover>
         <PopoverTrigger asChild>
@@ -1223,6 +1501,16 @@ export function ViewSettings({
           </div>
         </PopoverContent>
       </Popover>
+
+      {configIssues.length > 0 && (
+        <span
+          data-testid="view-config-issues"
+          title={configIssues.map((issue) => issue.message).join("\n")}
+          className="rounded px-1.5 py-0.5 text-xs text-amber-500"
+        >
+          {configIssues.length} config warning{configIssues.length === 1 ? "" : "s"}
+        </span>
+      )}
     </div>
   );
 }
