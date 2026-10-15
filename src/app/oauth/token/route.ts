@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { randomToken } from "@/lib/slug";
 import { hashApiToken } from "@/lib/api-auth";
 import { rateLimit } from "@/lib/api-guard";
+import { verifyChallenge } from "@/lib/oauth-pkce";
 
 export const runtime = "nodejs";
 
@@ -19,6 +20,7 @@ export async function POST(request: Request) {
   const clientId = String(form.get("client_id") ?? "");
   const clientSecret = String(form.get("client_secret") ?? "");
   const redirectUri = String(form.get("redirect_uri") ?? "");
+  const codeVerifier = String(form.get("code_verifier") ?? "");
 
   const app = await prisma.oAuthApp.findUnique({ where: { clientId } });
   if (!app || app.clientSecret !== clientSecret) {
@@ -34,6 +36,13 @@ export async function POST(request: Request) {
     record.expiresAt < new Date()
   ) {
     return NextResponse.json({ error: "invalid_grant" }, { status: 400 });
+  }
+
+  if (record.codeChallenge) {
+    const method = record.codeChallengeMethod ?? "S256";
+    if (!codeVerifier || !verifyChallenge(codeVerifier, record.codeChallenge, method)) {
+      return NextResponse.json({ error: "invalid_grant" }, { status: 400 });
+    }
   }
 
   await prisma.oAuthCode.update({ where: { id: record.id }, data: { used: true } });
