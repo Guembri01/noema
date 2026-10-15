@@ -13,6 +13,7 @@ import {
   type WorkspaceAccess,
 } from "@/lib/permissions";
 import { parsePageContent } from "@/lib/validation";
+import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { prosemirrorToText } from "@/lib/blocks";
 import { fileKeyFromUrl, purgeableError, staleFileUrls, subtreeClosure } from "@/lib/trash";
 import { storageDriver } from "@/lib/storage";
@@ -42,6 +43,18 @@ async function authorizePage(
 function revalidateWorkspace(workspaceId: string): void {
   revalidatePath(`/w`, "layout");
   void workspaceId;
+}
+
+/**
+ * Reduce workspace access to the lock policy's role shape
+ * (`src/lib/database-lock.ts`). Only the owner keeps the locked-page content
+ * override so the lock stays releasable; admins and members do not.
+ */
+function lockRoleFor(role: NonNullable<WorkspaceAccess>["role"]): LockRole {
+  return {
+    isOwner: role === "OWNER",
+    isMember: role === "ADMIN" || role === "MEMBER",
+  };
 }
 
 /** Create a page (or database) and return its id. */
@@ -229,9 +242,20 @@ export async function updatePageAction(
   const author = await requireUser();
   const previous = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { title: true, content: true },
+    select: { title: true, content: true, locked: true },
   });
   const contentChanged = contentResult.doc !== undefined;
+  // R15 (docs/audits/security-1.md L4): the render-time `Page.locked` gate must
+  // also hold here, or any editor can bypass the lock with a direct action call
+  // (D6 in docs/specs/realtime-collab.md). The owner keeps the override so the
+  // lock stays releasable; only *content* is frozen - the lock toggle, title,
+  // icon and layout stay writable.
+  if (
+    contentChanged &&
+    !canEditSchema({ locked: Boolean(previous?.locked) }, lockRoleFor(auth.access.role))
+  ) {
+    return { error: "This page is locked. Unlock it to edit its content." };
+  }
   const titleChanged =
     patch.title !== undefined && previous !== null && patch.title !== previous.title;
   if (previous && (contentChanged || titleChanged)) {
