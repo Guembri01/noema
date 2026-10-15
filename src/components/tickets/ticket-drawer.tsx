@@ -11,14 +11,14 @@ import {
 import { assignTicketToCycleAction } from "@/server/actions/cycles";
 import { safeAction } from "@/lib/actions-client";
 import { DESCRIPTION_MAX } from "@/lib/description";
+import { formatEstimate } from "@/lib/estimate-units";
 import { t } from "@/lib/i18n";
+import { progressOf, rollupByAssignee, rollupEstimate } from "@/lib/sub-ticket-rollup";
 import {
   ESTIMATE_UNITS,
   TICKET_PRIORITIES,
   TICKET_STATUSES,
-  formatEstimate,
-  isClosed,
-  sumEstimates,
+  UNASSIGNED_BUCKET,
   typeMeta,
 } from "@/lib/tickets";
 import { cn } from "@/lib/utils";
@@ -102,7 +102,23 @@ export function TicketDrawer({
   const related = ticket.labelIds;
   const parent = ticket.parentId ? allTickets.find((row) => row.id === ticket.parentId) ?? null : null;
   const children = allTickets.filter((row) => row.parentId === ticket.id);
-  const childEstimate = sumEstimates(children);
+  // Roll the direct children up through the shared sub-ticket engine instead of
+  // a flat sum: `rollupEstimate` gives total/remaining, `progressOf` the done
+  // split, `rollupByAssignee` the per-assignee share. The engine is unit-blind
+  // (one unit per tree), so labels reuse the children's own unit.
+  const childTickets = children.map((child) => ({
+    id: child.id,
+    parentId: child.parentId,
+    estimate: child.estimate,
+    state: child.status,
+    assigneeId: child.assigneeId,
+    estimateUnit: child.estimateUnit,
+  }));
+  const childRollup = rollupEstimate(childTickets);
+  const childProgress = progressOf(childTickets);
+  const childByAssignee = rollupByAssignee(childTickets);
+  const childUnit = childTickets.find((child) => child.estimateUnit)?.estimateUnit ?? "points";
+  const assigneeNames = new Map(members.map((member) => [member.id, member.name]));
   const candidates = relationQuery
     ? allTickets
         .filter(
@@ -381,15 +397,37 @@ export function TicketDrawer({
             {children.length > 0 ? (
               <>
                 <p className="mb-1.5 text-[11px] text-muted">
-                  {children.length}{" "}
-                  {children.length === 1
+                  {childRollup.count}{" "}
+                  {childRollup.count === 1
                     ? t(locale, "subTicketOne")
                     : t(locale, "subTicketMany")}{" "}
-                  ·{" "}
-                  {children.filter((child) => !isClosed(child.status)).length}{" "}
-                  {t(locale, "openWord")} ·{" "}
-                  {formatEstimate(childEstimate.total, childEstimate.unit)}
+                  · {childProgress.open} {t(locale, "openWord")} ·{" "}
+                  {t(locale, "estimateTotal")}:{" "}
+                  <span className="text-fg">{formatEstimate(childRollup.total, childUnit)}</span> ·{" "}
+                  {t(locale, "remaining")}:{" "}
+                  <span className="text-fg">{formatEstimate(childRollup.remaining, childUnit)}</span>{" "}
+                  · {childProgress.percent}%
                 </p>
+                {childByAssignee.length > 1 && (
+                  <ul className="mb-2 space-y-0.5">
+                    {childByAssignee.map((bucket) => (
+                      <li
+                        key={bucket.assigneeId}
+                        className="flex items-center justify-between gap-2 text-[11px] text-muted"
+                      >
+                        <span className="min-w-0 flex-1 truncate">
+                          {bucket.assigneeId === UNASSIGNED_BUCKET
+                            ? t(locale, "unassigned")
+                            : (assigneeNames.get(bucket.assigneeId) ?? bucket.assigneeId)}
+                        </span>
+                        <span className="shrink-0">
+                          {formatEstimate(bucket.points, childUnit)} · {bucket.open}{" "}
+                          {t(locale, "openWord")}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <ul className="mb-2 divide-y divide-border rounded border border-border">
                   {children.map((child) => (
                     <li key={child.id}>
