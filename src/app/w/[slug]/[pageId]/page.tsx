@@ -52,7 +52,7 @@ export default async function PageRoute({
     notFound();
   }
 
-  const [database, references, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces, versionContents] = await Promise.all([
+  const [database, references, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces] = await Promise.all([
     page.type === "DATABASE" ? getDatabase(page.id) : Promise.resolve(null),
     getPageReferences(workspace.id, page.id, page.title, visiblePageIds),
     getAncestorTrail(workspace.id, page.id),
@@ -73,19 +73,7 @@ export default async function PageRoute({
       take: 1,
     }),
     getTeamspaces(workspace.id),
-    // Snapshot bodies for the version timeline's inline text diff. `getPageDetail`
-    // returns the rows without `content`, so load exactly the same page's
-    // snapshots and fold each stored ProseMirror doc into a plain-text preview
-    // below; the `in` list keeps this bounded to the versions actually rendered.
-    prisma.pageVersion.findMany({
-      where: { id: { in: page.versions.map((version) => version.id) } },
-      select: { id: true, content: true },
-    }),
   ]);
-
-  const versionContentById = new Map(
-    versionContents.map((version) => [version.id, version.content]),
-  );
 
   /**
    * Stored ProseMirror doc → plain-text preview for the inline diff (F7 reads
@@ -235,7 +223,7 @@ export default async function PageRoute({
           versions={page.versions.map((version) => ({
             id: version.id,
             title: version.title,
-            content: previewText(versionContentById.get(version.id)),
+            content: previewText(version.content),
             summary: version.summary,
             charDelta: version.charDelta,
             createdAt: version.createdAt.toISOString(),
