@@ -16,6 +16,7 @@ import type { ImportCounts } from "@/lib/importers";
 import { normalizeViewConfig } from "@/lib/database-query";
 import {
   duplicateDatabase,
+  remapReferences,
   validateCopy,
   type DatabaseStructure,
 } from "@/lib/database-copy";
@@ -627,19 +628,76 @@ export async function duplicateViewAction(
 }
 
 /**
+ * Option ids a property config declares, in storage order. Mirrors the
+ * `optionsOf` walk the copy planner uses, so pairing source and copy options by
+ * index reconstructs the exact old→new ids for template cells.
+ */
+function configOptionIds(config: unknown): string[] {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return [];
+  const options = (config as { options?: unknown }).options;
+  if (!Array.isArray(options)) return [];
+  const ids: string[] = [];
+  for (const option of options) {
+    if (
+      option &&
+      typeof option === "object" &&
+      typeof (option as { id?: unknown }).id === "string"
+    ) {
+      ids.push((option as { id: string }).id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * The old→new id map the copy planner applied. It remaps properties (and their
+ * options), views and rows while preserving array order, so pairing the source
+ * snapshot with its finished copy by index yields the same mapping — which lets
+ * templates (entities the planner does not know about) follow their database.
+ */
+function copiedIdMap(
+  source: DatabaseStructure,
+  copy: DatabaseStructure,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  const pair = (before: unknown, after: unknown) => {
+    if (
+      typeof before === "string" &&
+      before &&
+      typeof after === "string" &&
+      after
+    ) {
+      map.set(before, after);
+    }
+  };
+  source.properties.forEach((property, index) => {
+    const cloned = copy.properties[index];
+    pair(property.id, cloned?.id);
+    const options = configOptionIds(property.config);
+    const clonedOptions = configOptionIds(cloned?.config);
+    options.forEach((id, position) => pair(id, clonedOptions[position]));
+  });
+  source.views.forEach((view, index) => pair(view.id, copy.views[index]?.id));
+  source.rows.forEach((row, index) => pair(row.id, copy.rows[index]?.id));
+  return map;
+}
+
+/**
  * R89.22 — Duplicate a database "with structure".
  *
  * A fresh DATABASE page is appended under the same parent, then every property
- * (and each select/status option), view and row is cloned through
- * `src/lib/database-copy.ts`: fresh ids are allocated for all of them and every
- * reference *inside* the copied set — option ids in configs and cells, property
- * ids in views/cells, relation targets pointing at a copied row — is rewritten
- * to the new id. References to entities outside the database (other databases,
- * rows they own, external relation targets) are preserved verbatim, and
- * `validateCopy` is the safety net before anything is written.
+ * (and each select/status option), view, row and saved template is cloned
+ * through `src/lib/database-copy.ts`: fresh ids are allocated for all of them and
+ * every reference *inside* the copied set — option ids in configs and cells,
+ * property ids in views/cells/template values, relation targets pointing at a
+ * copied row — is rewritten to the new id. References to entities outside the
+ * database (other databases, rows they own, external relation targets) are
+ * preserved verbatim, and `validateCopy` is the safety net before anything is
+ * written.
  *
- * The new page, its properties, views, rows and their cell values commit or
- * roll back as one transaction; row bodies (`content`) are carried over too.
+ * The new page, its properties, views, rows, their cell values and its templates
+ * commit or roll back as one transaction; row bodies (`content`) and template
+ * bodies, recurrence and schedule are carried over too.
  */
 export async function duplicateDatabaseAction(
   databasePageId: string,
@@ -654,7 +712,7 @@ export async function duplicateDatabaseAction(
   });
   if (!source) return { error: "Database not found." };
 
-  const [properties, views, rows] = await Promise.all([
+  const [properties, views, rows, templates] = await Promise.all([
     prisma.property.findMany({
       where: { databasePageId },
       orderBy: { position: "asc" },
@@ -667,6 +725,10 @@ export async function duplicateDatabaseAction(
       where: { parentId: databasePageId, deletedAt: null },
       orderBy: { position: "asc" },
       include: { propertyValues: { select: { propertyId: true, value: true } } },
+    }),
+    prisma.template.findMany({
+      where: { databasePageId },
+      orderBy: { createdAt: "asc" },
     }),
   ]);
 
@@ -766,6 +828,28 @@ export async function duplicateDatabaseAction(
     }),
   );
 
+  // Templates are outside the copy planner's `DatabaseStructure`, so their
+  // property/option/row references are remapped through the ids the planner
+  // assigned. Each copy gets a fresh id and lands under the new database; name,
+  // icon, body, recurrence and schedule are carried over verbatim.
+  const templateIdMap = copiedIdMap(structure, copy);
+  const templateRows: Prisma.TemplateCreateManyInput[] = templates.map(
+    (template) => {
+      const config = asJson(remapReferences(template.config, templateIdMap));
+      const content = asJson(template.content);
+      return {
+        id: randomUUID(),
+        databasePageId: newPageId,
+        name: template.name,
+        icon: template.icon,
+        recurrence: template.recurrence,
+        nextRunAt: template.nextRunAt,
+        ...(content !== undefined ? { content } : {}),
+        ...(config !== undefined ? { config } : {}),
+      };
+    },
+  );
+
   await prisma.$transaction(async (tx) => {
     const last = await tx.page.findFirst({
       where: { parentId: source.parentId, deletedAt: null },
@@ -788,6 +872,7 @@ export async function duplicateDatabaseAction(
     if (viewRows.length > 0) await tx.databaseView.createMany({ data: viewRows });
     if (rowPages.length > 0) await tx.page.createMany({ data: rowPages });
     if (cellRows.length > 0) await tx.propertyValue.createMany({ data: cellRows });
+    if (templateRows.length > 0) await tx.template.createMany({ data: templateRows });
   });
 
   revalidateDatabase(auth.page.workspaceId);
