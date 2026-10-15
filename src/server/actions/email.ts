@@ -8,6 +8,7 @@ import { requireUser } from "@/lib/auth";
 import { canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
 import { decryptSecret, encryptSecret, hashToken, randomToken } from "@/lib/secrets";
 import { emailTemplate, escapeHtml, sendMail, verifyMail } from "@/lib/mailer";
+import { normalizeEmail } from "@/lib/email-validation";
 
 export type EmailResult<T = unknown> = ({ ok: true } & T) | { error: string };
 
@@ -40,11 +41,6 @@ export async function appOrigin(): Promise<string> {
     store.get("x-forwarded-proto") ??
     (/^(localhost|127\.|10\.|192\.168\.)/.test(host) ? "http" : "https");
   return `${proto}://${host}`;
-}
-
-function normalizeEmail(value: string): string | null {
-  const email = value.trim().toLowerCase();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) ? email : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +123,7 @@ export async function saveEmailConfigAction(input: {
   if (!auth.ok) return { error: auth.error };
 
   const host = input.host.trim();
-  const fromEmail = normalizeEmail(input.fromEmail ?? "");
+  const fromEmail = normalizeEmail(input.fromEmail ?? "")?.toLowerCase() ?? null;
   if (!host) return { error: "An SMTP host is required." };
   if (!fromEmail) return { error: "A valid sender address is required." };
   const port = Number.isFinite(input.port) ? Math.min(Math.max(input.port, 1), 65535) : 587;
@@ -189,7 +185,9 @@ export async function testEmailAction(
   const verified = await verifyMail(workspaceId);
   if ("error" in verified) return { error: verified.error };
 
-  const recipient = to.trim() ? normalizeEmail(to) : auth.user.email;
+  const recipient = to.trim()
+    ? normalizeEmail(to)?.toLowerCase() ?? null
+    : auth.user.email;
   if (!recipient) return { error: "Enter a valid test recipient address." };
 
   const template = emailTemplate({
@@ -244,7 +242,7 @@ export async function sendWorkspaceInviteAction(input: {
   const auth = await authorizeAdmin(input.workspaceId);
   if (!auth.ok) return { error: auth.error };
 
-  const email = normalizeEmail(input.email);
+  const email = normalizeEmail(input.email)?.toLowerCase() ?? null;
   if (!email) return { error: "Enter a valid email address." };
   const role: WorkspaceRole = input.role ?? "MEMBER";
   if (!["GUEST", "MEMBER", "ADMIN"].includes(role)) {
