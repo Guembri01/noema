@@ -33,6 +33,15 @@ import { Selection } from "@tiptap/pm/state";
 import { normalizePasteHtml, pastePlan } from "@/lib/paste";
 import { analyzeBlockDrop, dropZone } from "@/lib/drag-indent";
 import { createStack, push as pushSnapshot, type UndoStack } from "@/lib/undo-stack";
+import {
+  assignColor,
+  cursorLabel,
+  upsertParticipant,
+  visibleParticipants,
+  type Participant,
+} from "@/lib/presence";
+import { initials } from "@/lib/utils";
+import { OPTION_COLORS } from "@/components/database/database-types";
 
 /** Clicking an equation anywhere in the document reopens the LaTeX editor. */
 const editEquation = (node: { type: { name: string }; attrs: { latex?: string } }, pos: number) => {
@@ -88,6 +97,22 @@ type SaveState = "idle" | "saving" | "saved" | "error";
 const SNAPSHOT_HISTORY_LIMIT = 50;
 /** Rapid edits inside this window merge into one snapshot step. */
 const SNAPSHOT_COALESCE_MS = 500;
+
+/**
+ * The collaboration awareness protocol drops a silent peer after its 30s
+ * timeout; hold a little longer before the avatar stack drops someone, so a
+ * slow heartbeat never blinks a collaborator out of the room.
+ */
+const PRESENCE_TTL_MS = 45_000;
+
+/** Resolve a presence palette name (`assignColor`) to its avatar CSS colour. */
+function presenceColor(name: string | undefined): string {
+  if (typeof name === "string") {
+    const hex = OPTION_COLORS[name];
+    if (hex) return hex;
+  }
+  return OPTION_COLORS.gray;
+}
 
 /** Human label for one pending suggestion (kind + the affected text). */
 function suggestionLabel(suggestion: Suggestion, locale: string): string {
@@ -364,14 +389,39 @@ export function PageEditor({
     return { ydoc, provider };
   }, [collabUrl, pageId]);
   const [peers, setPeers] = useState(1);
+  /**
+   * Live collaborators for the avatar stack, projected from the collab
+   * provider's awareness states. The peer count above is kept as-is; the roster
+   * is derived alongside it so the presence module (`src/lib/presence.ts`) owns
+   * identity colour, recency ordering and idle eviction.
+   */
+  const [participants, setParticipants] = useState<Participant[]>([]);
 
   useEffect(() => {
     if (!collab) return;
-    const update = () => setPeers(collab.provider.awareness.getStates().size);
+    const awareness = collab.provider.awareness;
+    const update = () => {
+      const states = awareness.getStates();
+      const now = Date.now();
+      let roster: Participant[] = [];
+      states.forEach((state, clientId) => {
+        const id = String(clientId);
+        const user = state["user"] as { name?: unknown } | undefined;
+        const seen = awareness.meta.get(clientId)?.lastUpdated;
+        roster = upsertParticipant(roster, {
+          id,
+          name: typeof user?.name === "string" ? user.name : "",
+          color: assignColor(id),
+          lastSeen: typeof seen === "number" ? seen : now,
+        });
+      });
+      setPeers(states.size);
+      setParticipants(visibleParticipants(roster, { now, ttlMs: PRESENCE_TTL_MS }));
+    };
     update();
-    collab.provider.awareness.on("change", update);
+    awareness.on("change", update);
     return () => {
-      collab.provider.awareness.off("change", update);
+      awareness.off("change", update);
     };
   }, [collab]);
 
@@ -684,6 +734,28 @@ export function PageEditor({
       )}
 
       <div className="pointer-events-none absolute right-0 top-0 flex items-center gap-2 text-xs text-muted">
+        {collab && participants.length > 0 && (
+          <div
+            className="pointer-events-auto flex items-center"
+            aria-label={t(locale, "liveWord")}
+          >
+            {participants.map((participant) => {
+              const label = cursorLabel(participant);
+              return (
+                <span
+                  key={participant.id}
+                  role="img"
+                  aria-label={label}
+                  title={label}
+                  className="-ml-1.5 grid h-6 w-6 place-items-center rounded-full border-2 border-bg text-[10px] font-medium text-white first:ml-0"
+                  style={{ backgroundColor: presenceColor(participant.color) }}
+                >
+                  {initials(label)}
+                </span>
+              );
+            })}
+          </div>
+        )}
         {collab && (
           <span className="flex items-center gap-1 rounded bg-surface px-1.5 py-0.5">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
