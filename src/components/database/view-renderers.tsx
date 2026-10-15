@@ -24,6 +24,7 @@ import {
   type ViewConfig,
 } from "@/lib/database-query";
 import { groupRowsByProperty, visibleGroups as filterVisibleGroups } from "@/lib/board-groups";
+import { buildSwimlanes, laneCounts } from "@/lib/board-swimlanes";
 import { reorderRows, sortByOrder } from "@/lib/row-order";
 import { reorderRowsAction } from "@/server/actions/database";
 import { evaluateRowColors, type RowColorRule } from "@/lib/row-color-rules";
@@ -572,6 +573,7 @@ export function BoardView({
   peopleOptions,
   editable,
   visibleGroups: visibleGroupsProp,
+  laneBy,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -588,6 +590,12 @@ export function BoardView({
   editable: boolean;
   /** Per-column visibility: a column key mapped to `false` is hidden. */
   visibleGroups?: Record<string, boolean>;
+  /**
+   * Optional swimlane grouping: a second property id slices the rows into
+   * horizontal lanes while the board columns stay vertical. Unknown / equal to
+   * `groupBy` falls back to the plain single-axis board.
+   */
+  laneBy?: string | null;
 }) {
   const groupProperty = properties.find((p) => p.id === groupBy);
   const statusProperty = properties.find(
@@ -633,74 +641,122 @@ export function BoardView({
         color: group.color ?? "gray",
         rows: group.rows,
       }));
-  const counts = new Map(columns.map((column) => [column.key, column.rows.length]));
+  // A second grouping property turns the single-axis board into a swimlane
+  // board: `buildSwimlanes` owns the horizontal lanes (membership, order and
+  // counts), while the board-groups columns above stay the vertical axis — so
+  // an unknown / equal lane id, or a board with no rows, renders exactly as it
+  // did before.
+  const laneProperty =
+    laneBy && laneBy !== property.id
+      ? properties.find((candidate) => candidate.id === laneBy)
+      : undefined;
+  const swimlaneMatrix = laneProperty
+    ? buildSwimlanes(rows, laneProperty.id, property.id)
+    : null;
+  const swimlaneCounts = swimlaneMatrix ? laneCounts(swimlaneMatrix) : [];
+
+  const renderCard = (row: DBRow) => (
+    <Link
+      key={row.id}
+      href={`/w/${workspaceSlug}/${row.id}`}
+      className="block rounded-lg border border-border bg-bg p-3 hover:bg-surface-2"
+      style={{
+        borderLeft: (() => {
+          const color = colorOf(row);
+          return color
+            ? `3px solid ${OPTION_COLORS[color] ?? color}`
+            : undefined;
+        })(),
+      }}
+    >
+      <p className="text-sm font-medium">
+        {row.icon ? `${row.icon} ` : ""}
+        {row.title || t(locale, "untitled")}
+      </p>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {properties
+          .filter(
+            (p) =>
+              p.id !== property.id &&
+              p.id !== primary?.id &&
+              !p.config?.primary,
+          )
+          .slice(0, 3)
+          .map((p) => (
+            <Cell
+              key={p.id}
+              locale={locale}
+              property={p}
+              value={valueFor(row, p.id)}
+              computed={computedFor?.(row, p)}
+              peopleOptions={peopleOptions}
+              workspaceId={workspaceId}
+              editable={editable}
+              onChange={(v) => setValue(row.id, p.id, v)}
+            />
+          ))}
+      </div>
+    </Link>
+  );
+
+  const renderColumn = (column: BoardColumn, groupRows: DBRow[]) => (
+    <div key={column.key} className="w-64 shrink-0">
+      <div className="mb-2 flex items-center gap-2 text-sm">
+        <span
+          className="inline-block h-2.5 w-2.5 rounded-sm"
+          style={{
+            backgroundColor: OPTION_COLORS[column.color] ?? "#8a8a85",
+          }}
+        />
+        <span className="font-medium" data-testid={`board-column-${column.key}`}>
+          {column.label}
+        </span>
+        <span className="text-muted">{groupRows.length}</span>
+      </div>
+      <div className="space-y-2">{groupRows.map((row) => renderCard(row))}</div>
+    </div>
+  );
+
+  if (swimlaneMatrix && swimlaneMatrix.lanes.length > 0) {
+    const laneRowIds = new Map<string, Set<string>>();
+    for (const lane of swimlaneMatrix.lanes) {
+      const ids = new Set<string>();
+      for (const bucket of lane.buckets) {
+        for (const row of bucket.rows) ids.add(row.id);
+      }
+      laneRowIds.set(lane.key, ids);
+    }
+
+    return (
+      <div className="space-y-4 pb-2">
+        {swimlaneMatrix.lanes.map((lane, index) => {
+          const ids = laneRowIds.get(lane.key) ?? new Set<string>();
+          return (
+            <div key={lane.key} data-testid={`swimlane-${lane.key}`}>
+              <div className="mb-2 flex items-center gap-2 text-sm">
+                <span className="font-medium">{lane.label}</span>
+                <span className="text-muted">
+                  {swimlaneCounts[index]?.count ?? ids.size}
+                </span>
+              </div>
+              <div className="flex gap-4 overflow-x-auto">
+                {columns.map((column) =>
+                  renderColumn(
+                    column,
+                    column.rows.filter((row) => ids.has(row.id)),
+                  ),
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   return (
     <div className="flex gap-4 overflow-x-auto pb-2">
-      {columns.map((column) => {
-        const groupRows = column.rows;
-        return (
-          <div key={column.key} className="w-64 shrink-0">
-            <div className="mb-2 flex items-center gap-2 text-sm">
-              <span
-                className="inline-block h-2.5 w-2.5 rounded-sm"
-                style={{
-                  backgroundColor: OPTION_COLORS[column.color] ?? "#8a8a85",
-                }}
-              />
-              <span className="font-medium" data-testid={`board-column-${column.key}`}>
-                {column.label}
-              </span>
-              <span className="text-muted">{counts.get(column.key)}</span>
-            </div>
-            <div className="space-y-2">
-              {groupRows.map((row) => (
-                <Link
-                  key={row.id}
-                  href={`/w/${workspaceSlug}/${row.id}`}
-                  className="block rounded-lg border border-border bg-bg p-3 hover:bg-surface-2"
-                  style={{
-                    borderLeft: (() => {
-                      const color = colorOf(row);
-                      return color
-                        ? `3px solid ${OPTION_COLORS[color] ?? color}`
-                        : undefined;
-                    })(),
-                  }}
-                >
-                  <p className="text-sm font-medium">
-                    {row.icon ? `${row.icon} ` : ""}
-                    {row.title || t(locale, "untitled")}
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {properties
-                      .filter(
-                        (p) =>
-                          p.id !== property.id &&
-                          p.id !== primary?.id &&
-                          !p.config?.primary,
-                      )
-                      .slice(0, 3)
-                      .map((p) => (
-                        <Cell
-                          key={p.id}
-                          locale={locale}
-                          property={p}
-                          value={valueFor(row, p.id)}
-                          computed={computedFor?.(row, p)}
-                          peopleOptions={peopleOptions}
-                          workspaceId={workspaceId}
-                          editable={editable}
-                          onChange={(v) => setValue(row.id, p.id, v)}
-                        />
-                      ))}
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </div>
-        );
-      })}
+      {columns.map((column) => renderColumn(column, column.rows))}
     </div>
   );
 }
