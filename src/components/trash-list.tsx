@@ -9,8 +9,23 @@ import { safeAction } from "@/lib/actions-client";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import { stableTime } from "@/lib/time";
+import { offsetForIndex, totalHeight, visibleRange } from "@/lib/virtual-list";
 
-
+/*
+ * Windowed mode geometry. The trash can grow without bound, so past
+ * VIRTUAL_THRESHOLD rows we only mount the slice in view inside a fixed-height
+ * scroller. Rows are uniform here — a title + timestamp beside the controls on
+ * one line — so a constant stride is close enough and lets
+ * `visibleRange`/`offsetForIndex` stay O(1).
+ */
+/** Estimated row height (`py-3` + title + timestamp, controls on one line). */
+const ROW_HEIGHT = 64;
+/** Height of the windowed scroll viewport. */
+const VIEWPORT_HEIGHT = 480;
+/** Rows rendered beyond the viewport on each side to hide fast-scroll gaps. */
+const OVERSCAN = 4;
+/** Below this many rows the whole list renders at once. */
+const VIRTUAL_THRESHOLD = 40;
 
 export type TrashRow = {
   id: string;
@@ -51,6 +66,8 @@ export function TrashList({
   const [pending, startTransition] = useTransition();
   const [confirming, setConfirming] = useState<string | null>(null);
   const [confirmingEmpty, setConfirmingEmpty] = useState(false);
+  // Top of the windowed scroller; only read in windowed mode.
+  const [scrollTop, setScrollTop] = useState(0);
 
   const run = (label: string, task: () => Promise<{ ok: boolean; message?: string }>) =>
     startTransition(async () => {
@@ -64,6 +81,80 @@ export function TrashList({
       router.refresh();
     });
 
+  // Shared row body so the plain and windowed lists stay byte-identical in
+  // what they render (only the positioning wrapper differs).
+  const rowBody = (page: TrashRow) => (
+    <>
+      <span aria-hidden className="text-lg">
+        {page.icon ?? "📄"}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm">{page.title || "Untitled"}</span>
+        <span className="block text-[11px] text-muted" suppressHydrationWarning>{deletedLabel(page.deletedAt)}</span>
+      </span>
+
+      {canEdit && (
+        <>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() =>
+              run("Page restored", async () => {
+                const result = await restorePageAction(page.id);
+
+                return "error" in result ? { ok: false, message: result.error } : { ok: true };
+              })
+            }
+            className="flex h-8 items-center gap-1.5 rounded border border-border px-2.5 text-sm hover:bg-surface-2 disabled:opacity-50"
+          >
+            <ArchiveRestore className="h-3.5 w-3.5" /> {t(locale, "restore")}
+          </button>
+
+          {confirming === page.id ? (
+            <span className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() =>
+                  run("Deleted forever", async () => {
+                    const result = await deletePageAction(page.id, workspaceId);
+
+                    if ("error" in result) return { ok: false, message: result.error };
+                    setConfirming(null);
+                    return { ok: true };
+                  })
+                }
+                className="h-8 rounded bg-red-500/90 px-2.5 text-sm text-white hover:bg-red-500 disabled:opacity-50"
+              >
+                {t(locale, "deleteForever")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(null)}
+                className="h-8 rounded px-2 text-sm text-muted hover:bg-surface-2"
+              >
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              aria-label={`Delete ${page.title || "Untitled"} forever`}
+              disabled={pending}
+              onClick={() => setConfirming(page.id)}
+              className={cn(
+                "flex h-8 w-8 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-red-500",
+                "disabled:opacity-50",
+              )}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+        </>
+      )}
+    </>
+  );
+
   if (pages.length === 0) {
     return (
       <div className="notion-empty rounded-lg border border-dashed border-border">
@@ -75,6 +166,19 @@ export function TrashList({
       </div>
     );
   }
+
+  // Long lists mount only the visible slice; short lists keep the plain <ul>.
+  const windowed = pages.length > VIRTUAL_THRESHOLD;
+  const range = windowed
+    ? visibleRange({
+        scrollTop,
+        viewportSize: VIEWPORT_HEIGHT,
+        itemHeight: ROW_HEIGHT,
+        itemCount: pages.length,
+        overscan: OVERSCAN,
+      })
+    : { start: 0, end: 0 };
+  const visible = windowed ? pages.slice(range.start, range.end) : pages;
 
   return (
     <>
@@ -121,79 +225,41 @@ export function TrashList({
         ))}
       </div>
 
-      <ul className="divide-y divide-border rounded-xl border border-border">
-        {pages.map((page) => (
-          <li key={page.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-            <span aria-hidden className="text-lg">
-              {page.icon ?? "📄"}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm">{page.title || "Untitled"}</span>
-              <span className="block text-[11px] text-muted" suppressHydrationWarning>{deletedLabel(page.deletedAt)}</span>
-            </span>
-
-            {canEdit && (
-              <>
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={() =>
-                    run("Page restored", async () => {
-                      const result = await restorePageAction(page.id);
-
-                      return "error" in result ? { ok: false, message: result.error } : { ok: true };
-                    })
-                  }
-                  className="flex h-8 items-center gap-1.5 rounded border border-border px-2.5 text-sm hover:bg-surface-2 disabled:opacity-50"
+      {windowed ? (
+        <div
+          role="region"
+          aria-label="Trash pages"
+          tabIndex={0}
+          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+          className="overflow-y-auto rounded-xl border border-border"
+          style={{ height: VIEWPORT_HEIGHT }}
+        >
+          <ul className="relative" style={{ height: totalHeight(pages.length, ROW_HEIGHT) }}>
+            {visible.map((page, offset) => {
+              const index = range.start + offset;
+              return (
+                <li
+                  key={page.id}
+                  // Absolute rows stacked at their true offset: the spacer <ul>
+                  // carries the full height so the scrollbar matches the list.
+                  className="absolute inset-x-0 flex items-center gap-3 overflow-hidden border-b border-border px-4"
+                  style={{ top: offsetForIndex(index, ROW_HEIGHT), height: ROW_HEIGHT }}
                 >
-                  <ArchiveRestore className="h-3.5 w-3.5" /> {t(locale, "restore")}
-                </button>
-
-                {confirming === page.id ? (
-                  <span className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={pending}
-                      onClick={() =>
-                        run("Deleted forever", async () => {
-                          const result = await deletePageAction(page.id, workspaceId);
-
-                          if ("error" in result) return { ok: false, message: result.error };
-                          setConfirming(null);
-                          return { ok: true };
-                        })
-                      }
-                      className="h-8 rounded bg-red-500/90 px-2.5 text-sm text-white hover:bg-red-500 disabled:opacity-50"
-                    >
-                      {t(locale, "deleteForever")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirming(null)}
-                      className="h-8 rounded px-2 text-sm text-muted hover:bg-surface-2"
-                    >
-                      Cancel
-                    </button>
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    aria-label={`Delete ${page.title || "Untitled"} forever`}
-                    disabled={pending}
-                    onClick={() => setConfirming(page.id)}
-                    className={cn(
-                      "flex h-8 w-8 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-red-500",
-                      "disabled:opacity-50",
-                    )}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                )}
-              </>
-            )}
-          </li>
-        ))}
-      </ul>
+                  {rowBody(page)}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : (
+        <ul className="divide-y divide-border rounded-xl border border-border">
+          {pages.map((page) => (
+            <li key={page.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+              {rowBody(page)}
+            </li>
+          ))}
+        </ul>
+      )}
     </>
   );
 }
