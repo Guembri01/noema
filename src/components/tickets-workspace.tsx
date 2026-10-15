@@ -225,6 +225,7 @@ export function TicketsWorkspace({
         <TicketBoardView
           filtered={filtered}
           onSelect={setSelected}
+          locale={locale}
           onMove={(ticketId, status) =>
             run(null, async () => {
               const result = await moveTicketAction({ ticketId, status });
