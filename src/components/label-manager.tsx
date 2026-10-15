@@ -11,6 +11,7 @@ import {
 } from "@/server/actions/tickets";
 import { safeAction } from "@/lib/actions-client";
 import { LABEL_COLORS } from "@/lib/tickets";
+import { allocateSlugs, uniqueSlug } from "@/lib/slug-uniqueness";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 
@@ -22,6 +23,33 @@ export type LabelManagerRow = {
   description: string | null;
   count: number;
 };
+
+/**
+ * Allocate a unique, deduped slug for every label, positionally.
+ *
+ * Slugs are derived from the label name through the shared engine: comparison
+ * is case-insensitive and trimmed (`"Bug"` / `"bug "` collapse), reserved route
+ * words (`new`, `settings`, …) are skipped, and the first free `-1`/`-2` suffix
+ * resolves a collision — the same slug shape a `/w/<slug>` path would carry.
+ */
+function labelSlugs(labels: readonly LabelManagerRow[]): string[] {
+  return allocateSlugs(labels.map((label) => label.name));
+}
+
+/**
+ * The unique slug `name` would receive against the workspace's labels,
+ * ignoring `exceptId` so renaming a label never collides with its own name.
+ */
+function slugForName(
+  name: string,
+  labels: readonly LabelManagerRow[],
+  exceptId?: string,
+): string {
+  const taken = labels
+    .filter((label) => label.id !== exceptId)
+    .map((label) => label.name);
+  return uniqueSlug(name, taken);
+}
 
 const TONES: Record<string, string> = {
   gray: "bg-surface-2 text-muted",
@@ -49,6 +77,13 @@ export function LabelManager({
   const [name, setName] = useState("");
   const [color, setColor] = useState("blue");
   const [description, setDescription] = useState("");
+  const [renamedSlug, setRenamedSlug] = useState<Record<string, string>>({});
+
+  // Stable slug per row, plus the slug the label in the create box would get.
+  const slugById = new Map(
+    labelSlugs(labels).map((slug, index) => [labels[index].id, slug] as const),
+  );
+  const draftSlug = name.trim() ? slugForName(name, labels) : "";
 
   const run = (label: string, task: () => Promise<{ ok: boolean; message?: string }>) =>
     startTransition(async () => {
@@ -79,6 +114,15 @@ export function LabelManager({
           onChange={(event) => setName(event.target.value)}
           className="h-9 w-48 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
         />
+        {draftSlug && (
+          <code
+            data-slug={draftSlug}
+            title={`${t(locale, "permalinkLabel")} ${draftSlug}`}
+            className="inline-flex h-9 items-center rounded bg-surface-2 px-2 font-mono text-xs text-muted"
+          >
+            {draftSlug}
+          </code>
+        )}
         <input
           value={description}
           aria-label={t(locale, "labelDescriptionAria")}
@@ -123,21 +167,29 @@ export function LabelManager({
           {labels.map((label) => (
             <li
               key={label.id}
+              data-slug={renamedSlug[label.id] ?? slugById.get(label.id) ?? ""}
               className="flex flex-wrap items-center gap-2 rounded-lg border border-border px-3 py-2"
             >
               <input
                 defaultValue={label.name}
                 aria-label={`${t(locale, "rename")} ${label.name}`}
-                onBlur={(event) =>
-                  event.target.value !== label.name &&
+                onBlur={(event) => {
+                  const nextName = event.target.value;
+                  if (nextName === label.name) return;
+                  // Derive the renamed label's unique slug up front so the row
+                  // shows the same slug the refreshed label list will allocate.
+                  setRenamedSlug((previous) => ({
+                    ...previous,
+                    [label.id]: slugForName(nextName, labels, label.id),
+                  }));
                   run(t(locale, "labelRenamed"), async () => {
                     const result = await updateLabelAction({
                       labelId: label.id,
-                      name: event.target.value,
+                      name: nextName,
                     });
                     return "error" in result ? { ok: false, message: result.error } : { ok: true };
-                  })
-                }
+                  });
+                }}
                 className="h-8 w-40 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
               />
               <span
@@ -148,6 +200,12 @@ export function LabelManager({
               >
                 {label.color}
               </span>
+              <code
+                title={`${t(locale, "permalinkLabel")} ${renamedSlug[label.id] ?? slugById.get(label.id) ?? ""}`}
+                className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-muted"
+              >
+                {renamedSlug[label.id] ?? slugById.get(label.id) ?? ""}
+              </code>
               <select
                 defaultValue={label.color}
                 aria-label={`${t(locale, "colourFor")} ${label.name}`}
