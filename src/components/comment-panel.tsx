@@ -20,6 +20,7 @@ import { t } from "@/lib/i18n";
 import {
   buildThreads,
   threadCounts,
+  validateThreadDepth,
   type Comment as ThreadComment,
 } from "@/lib/comment-threads";
 import { LocalTime } from "@/components/local-time";
@@ -72,6 +73,43 @@ function toThreadComments(comments: CommentNode[]): ThreadComment[] {
   ]);
 }
 
+/** Synthetic row id for the probe reply the depth gate below validates. */
+const PENDING_REPLY_ID = "__ui_pending_reply__";
+
+/**
+ * Copy for the annotate-only Reply shown where replying would break the thread
+ * rule; matches the server's `max-depth-exceeded` message (feat/m07) so the UI
+ * and the write path tell the same story.
+ */
+const ONE_LEVEL_REPLY_HINT = "Replies can only be one level deep.";
+
+/**
+ * Whether a new reply may target `parentId` under the one-level thread rule
+ * (R79.1, feat/m07). Mirrors `addCommentAction`: append a synthetic reply to
+ * the flattened thread rows and let the shared pure `validateThreadDepth`
+ * decide with `maxDepth: 1`. A root (depth 0) is always replyable; a depth-1
+ * reply never is, so the Reply affordance can be hidden/annotated exactly where
+ * the server would reject the write.
+ */
+function canReplyTo(
+  comments: readonly ThreadComment[],
+  parentId: string,
+): boolean {
+  const parent = comments.find((comment) => comment.id === parentId);
+  if (!parent) return false;
+  const pending: ThreadComment = {
+    id: PENDING_REPLY_ID,
+    threadId: parent.threadId,
+    parentId,
+    authorId: "",
+    body: "",
+    createdAt: parent.createdAt,
+  };
+  return !validateThreadDepth([...comments, pending], { maxDepth: 1 }).some(
+    (issue) => issue.commentId === PENDING_REPLY_ID,
+  );
+}
+
 export function CommentPanel({
   locale,
   pageId,
@@ -97,12 +135,27 @@ export function CommentPanel({
   const composerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Purely derived from the props: grouping replies under their root via
-  // `buildThreads` and tallying resolved vs open threads via `threadCounts`.
-  // Read-only presentation - no action or wire shape changes.
+  // Purely derived from the props: flatten the roots/replies into the pure
+  // thread model once, then group via `buildThreads` and tally resolved vs open
+  // threads via `threadCounts`. Read-only presentation - no action or wire
+  // shape changes.
+  const threadComments = useMemo(() => toThreadComments(comments), [comments]);
+
   const counts = useMemo(
-    () => threadCounts(buildThreads(toThreadComments(comments))),
-    [comments],
+    () => threadCounts(buildThreads(threadComments)),
+    [threadComments],
+  );
+
+  // Which comments may be replied to, per the shared one-level depth rule: a
+  // root is replyable, a depth-1 reply is not (R79.1, feat/m07).
+  const replyableIds = useMemo(
+    () =>
+      new Set(
+        threadComments
+          .filter((comment) => canReplyTo(threadComments, comment.id))
+          .map((comment) => comment.id),
+      ),
+    [threadComments],
   );
 
   // The editor's "Comment" action hands the selection to us here.
@@ -250,15 +303,28 @@ export function CommentPanel({
                   reactions={comment.reactions}
                   locale={locale}
                 />
-                <button
-                  type="button"
-                  onClick={() =>
-                    setReplyTo((v) => (v === comment.id ? null : comment.id))
-                  }
-                  className="hover:text-fg"
-                >
-                  Reply
-                </button>
+                {replyableIds.has(comment.id) ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setReplyTo((v) => (v === comment.id ? null : comment.id))
+                    }
+                    className="hover:text-fg"
+                  >
+                    {t(locale, "reply")}
+                  </button>
+                ) : (
+                  // A root should always be replyable; if the depth gate ever
+                  // rejects one, keep the affordance visible but annotate-only
+                  // rather than dispatching a write the server would refuse.
+                  <span
+                    title={ONE_LEVEL_REPLY_HINT}
+                    data-reply-limited="true"
+                    className="cursor-default select-none text-muted/60"
+                  >
+                    {t(locale, "reply")}
+                  </span>
+                )}
                 {canComment && (
                   <button
                     type="button"
@@ -312,6 +378,19 @@ export function CommentPanel({
                           </span>
                         </div>
                         <CommentBody body={reply.body} className="mt-0.5 text-sm" />
+                        {/* Depth-aware reply affordance: a reply is a depth-1
+                            node, so replying to it would exceed the one-level
+                            thread rule (R79.1). Keep the action visible but
+                            annotate it instead of dispatching a rejected write. */}
+                        {!replyableIds.has(reply.id) && (
+                          <span
+                            title={ONE_LEVEL_REPLY_HINT}
+                            data-reply-limited="true"
+                            className="mt-1 inline-block cursor-default select-none text-xs text-muted/60"
+                          >
+                            {t(locale, "reply")}
+                          </span>
+                        )}
                       </div>
                     </li>
                   ))}
