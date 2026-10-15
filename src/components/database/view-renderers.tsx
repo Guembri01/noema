@@ -27,6 +27,7 @@ import {
 import { applySort, type SortSpec } from "@/lib/sort-compare";
 import { groupRowsByProperty, visibleGroups as filterVisibleGroups } from "@/lib/board-groups";
 import { buildSwimlanes, laneCounts } from "@/lib/board-swimlanes";
+import { checkWip, type WipLimits, type WipStatus } from "@/lib/kanban-wip";
 import { reorderRows, sortByOrder } from "@/lib/row-order";
 import { reorderRowsAction } from "@/server/actions/database";
 import { evaluateRowColors, type RowColorRule } from "@/lib/row-color-rules";
@@ -663,6 +664,13 @@ export function ListView({
   );
 }
 
+/** WIP badge colours keyed by `checkWip`'s grade. */
+const WIP_STYLES: Record<WipStatus, string> = {
+  ok: "bg-surface-2 text-muted",
+  at: "bg-amber-500/15 text-amber-600",
+  over: "bg-red-500/15 text-red-600",
+};
+
 export function BoardView({
   locale,
   workspaceSlug,
@@ -679,6 +687,7 @@ export function BoardView({
   editable,
   visibleGroups: visibleGroupsProp,
   laneBy,
+  wipLimits,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -701,6 +710,12 @@ export function BoardView({
    * `groupBy` falls back to the plain single-axis board.
    */
   laneBy?: string | null;
+  /**
+   * Optional per-column WIP limits (keyed by column key, i.e. option id or the
+   * empty key). When supplied, every column header shows its graded count/limit
+   * badge; unset (or a column without a valid limit) renders exactly as before.
+   */
+  wipLimits?: WipLimits;
 }) {
   const groupProperty = properties.find((p) => p.id === groupBy);
   const statusProperty = properties.find(
@@ -760,6 +775,21 @@ export function BoardView({
     : null;
   const swimlaneCounts = swimlaneMatrix ? laneCounts(swimlaneMatrix) : [];
 
+  // Per-column WIP standings (kanban limits). Graded once from the full column
+  // rows — not a lane's slice — so every lane of a swimlane board reports the
+  // same status. With no limits every column is `ok` and no badge is drawn.
+  const wipCheck = checkWip(
+    columns.map((column) => ({
+      key: column.key,
+      label: column.label,
+      optionId: column.key,
+      rows: column.rows,
+    })),
+    wipLimits ?? {},
+  );
+  const wipFor = (key: string) =>
+    wipCheck.columns.find((column) => column.key === key);
+
   const renderCard = (row: DBRow) => (
     <Link
       key={row.id}
@@ -804,23 +834,39 @@ export function BoardView({
     </Link>
   );
 
-  const renderColumn = (column: BoardColumn, groupRows: DBRow[]) => (
-    <div key={column.key} className="w-64 shrink-0">
-      <div className="mb-2 flex items-center gap-2 text-sm">
-        <span
-          className="inline-block h-2.5 w-2.5 rounded-sm"
-          style={{
-            backgroundColor: OPTION_COLORS[column.color] ?? "#8a8a85",
-          }}
-        />
-        <span className="font-medium" data-testid={`board-column-${column.key}`}>
-          {column.label}
-        </span>
-        <span className="text-muted">{groupRows.length}</span>
+  const renderColumn = (column: BoardColumn, groupRows: DBRow[]) => {
+    const wip = wipFor(column.key);
+    return (
+      <div key={column.key} className="w-64 shrink-0">
+        <div className="mb-2 flex items-center gap-2 text-sm">
+          <span
+            className="inline-block h-2.5 w-2.5 rounded-sm"
+            style={{
+              backgroundColor: OPTION_COLORS[column.color] ?? "#8a8a85",
+            }}
+          />
+          <span className="font-medium" data-testid={`board-column-${column.key}`}>
+            {column.label}
+          </span>
+          <span className="text-muted">{groupRows.length}</span>
+          {wip && wip.limit !== undefined && (
+            <span
+              data-testid={`board-wip-${column.key}`}
+              data-wip-status={wip.status}
+              title={`${wip.count}/${wip.limit}`}
+              className={cn(
+                "rounded px-1 py-0.5 text-[10px] font-medium",
+                WIP_STYLES[wip.status],
+              )}
+            >
+              {wip.count}/{wip.limit}
+            </span>
+          )}
+        </div>
+        <div className="space-y-2">{groupRows.map((row) => renderCard(row))}</div>
       </div>
-      <div className="space-y-2">{groupRows.map((row) => renderCard(row))}</div>
-    </div>
-  );
+    );
+  };
 
   if (swimlaneMatrix && swimlaneMatrix.lanes.length > 0) {
     const laneRowIds = new Map<string, Set<string>>();
