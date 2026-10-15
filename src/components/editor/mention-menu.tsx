@@ -6,8 +6,15 @@ import {
 } from "react";
 import { type Editor } from "@tiptap/react";
 import { cn } from "@/lib/utils";
-import { mentionSearchAction } from "@/server/actions/mentions";
+import { mentionSearchAction, type MentionSuggestion } from "@/server/actions/mentions";
 import { dateMention } from "@/lib/mentions";
+import {
+  filterCandidates,
+  highlightRanges,
+  rankCandidates,
+  splitByKind,
+  type Candidate,
+} from "@/lib/mention-candidates";
 import { t } from "@/lib/i18n";
 
 type MentionItem = {
@@ -15,6 +22,61 @@ type MentionItem = {
   label: string;
   type: "page" | "user" | "date";
 };
+
+/** Rows the picker keeps before appending the fixed date suggestions. */
+const MENTION_LIMIT = 12;
+
+/** Glyph shown ahead of a row, keyed by the mention kind. */
+function glyphFor(type: MentionItem["type"]): string {
+  if (type === "user") return "👤";
+  if (type === "date") return "🗓";
+  return "📄";
+}
+
+/**
+ * Split a label into plain/matched runs using the pure `highlightRanges`
+ * helper, so the row renderer can paint the query matches without slicing
+ * the original title itself.
+ */
+function labelSegments(text: string, query: string): Array<{ text: string; match: boolean }> {
+  const ranges = highlightRanges(text, query);
+  if (ranges.length === 0) return [{ text, match: false }];
+  const segments: Array<{ text: string; match: boolean }> = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range.start > cursor) segments.push({ text: text.slice(cursor, range.start), match: false });
+    segments.push({ text: text.slice(range.start, range.end), match: true });
+    cursor = range.end;
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor), match: false });
+  return segments;
+}
+
+/** A mention row label with the matching query runs underlined in the accent colour. */
+function MentionLabel({ text, query }: { text: string; query: string }) {
+  return (
+    <span className="truncate">
+      {labelSegments(text, query).map((segment, index) =>
+        segment.match ? (
+          <mark key={index} className="bg-transparent font-medium text-accent">
+            {segment.text}
+          </mark>
+        ) : (
+          <span key={index}>{segment.text}</span>
+        ),
+      )}
+    </span>
+  );
+}
+
+/** Small pages/members section header inside the popover. */
+function SectionHeading({ label }: { label: string }) {
+  return (
+    <p className="px-2 pt-1 pb-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+      {label}
+    </p>
+  );
+}
 
 export function MentionMenu({
   editor,
@@ -28,7 +90,7 @@ export function MentionMenu({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  const [results, setResults] = useState<MentionItem[]>([]);
+  const [results, setResults] = useState<MentionSuggestion[]>([]);
   const [active, setActive] = useState(0);
 
   useEffect(() => {
@@ -67,18 +129,47 @@ export function MentionMenu({
     return () => clearTimeout(timer);
   }, [open, query, workspaceId]);
 
-  const items = useMemo<MentionItem[]>(() => {
-    const q = query.toLowerCase();
+  // The server rows are plain `{ id, label, type }`; project them onto the
+  // picker row shape so the pure helpers can shape them.
+  const candidates = useMemo<Candidate[]>(
+    () => results.map((row) => ({ id: row.id, title: row.label, kind: row.type })),
+    [results],
+  );
+
+  // Rank first (best match floats up, recency/input order break ties), then
+  // filter (drop non-matches, cap) and split into the pages/people sections.
+  const sections = useMemo(() => {
+    const ranked = rankCandidates(candidates, query);
+    const visible = filterCandidates(ranked, query, { limit: MENTION_LIMIT });
+    const grouped = splitByKind(visible);
+    return {
+      pages: grouped.pages.map((row): MentionItem => ({ id: row.id, label: row.title, type: "page" })),
+      users: grouped.users.map((row): MentionItem => ({ id: row.id, label: row.title, type: "user" })),
+    };
+  }, [candidates, query]);
+
+  const dates = useMemo<MentionItem[]>(() => {
+    const q = query.trim().toLowerCase();
     const today = new Date();
-    const dates: MentionItem[] = [
+    return [
       dateMention(today, { style: "weekday" }),
       dateMention(new Date(today.getTime() + 86_400_000), { style: "weekday" }),
       dateMention(new Date(today.getTime() + 7 * 86_400_000), { style: "weekday" }),
     ]
       .filter((d) => !q || d.label.toLowerCase().includes(q) || d.id.includes(q))
       .map((d) => ({ id: d.id, label: d.label, type: "date" as const }));
-    return [...results, ...dates].slice(0, 12);
-  }, [results, query]);
+  }, [query]);
+
+  // Flattened in render order (pages → people → dates) so arrow keys walk the
+  // same sequence the eye reads.
+  const items = useMemo<MentionItem[]>(
+    () => [...sections.pages, ...sections.users, ...dates],
+    [sections, dates],
+  );
+
+  useEffect(() => {
+    setActive((current) => (current < items.length ? current : 0));
+  }, [items.length]);
 
   const insert = useCallback(
     (item: MentionItem) => {
@@ -122,6 +213,25 @@ export function MentionMenu({
 
   if (!open || !pos || items.length === 0) return null;
 
+  const renderItem = (item: MentionItem, index: number) => (
+    <button
+      key={`${item.type}-${item.id}`}
+      type="button"
+      onMouseDown={(e) => e.preventDefault()}
+      onMouseEnter={() => setActive(index)}
+      onClick={() => insert(item)}
+      className={cn(
+        "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm",
+        index === active ? "bg-surface-2" : "hover:bg-surface-2",
+      )}
+    >
+      <span className="w-4 text-center">{glyphFor(item.type)}</span>
+      <MentionLabel text={item.label} query={query} />
+    </button>
+  );
+
+  const userOffset = sections.pages.length;
+
   return (
     <div
       className="fixed z-50 max-h-72 w-72 overflow-y-auto rounded-lg border border-border bg-bg p-1 shadow-xl"
@@ -130,24 +240,11 @@ export function MentionMenu({
       <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted">
         {t(locale, "mentionHeading")}
       </p>
-      {items.map((item, index) => (
-        <button
-          key={`${item.type}-${item.id}`}
-          type="button"
-          onMouseDown={(e) => e.preventDefault()}
-          onMouseEnter={() => setActive(index)}
-          onClick={() => insert(item)}
-          className={cn(
-            "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm",
-            index === active ? "bg-surface-2" : "hover:bg-surface-2",
-          )}
-        >
-          <span className="w-4 text-center">
-            {item.type === "user" ? "👤" : item.type === "date" ? "🗓" : "📄"}
-          </span>
-          <span className="truncate">{item.label}</span>
-        </button>
-      ))}
+      {sections.pages.length > 0 && <SectionHeading label={t(locale, "pages")} />}
+      {sections.pages.map((item, index) => renderItem(item, index))}
+      {sections.users.length > 0 && <SectionHeading label={t(locale, "members")} />}
+      {sections.users.map((item, index) => renderItem(item, userOffset + index))}
+      {dates.map((item, index) => renderItem(item, userOffset + sections.users.length + index))}
     </div>
   );
 }
