@@ -119,6 +119,17 @@ const SIDEBAR_TITLE_MAX = 48;
 const MENU_LABEL_MAX = 40;
 
 /**
+ * Longest teamspace name rendered as a section header above its branch tree, in
+ * code points. Unlike the tree rows, the header `<p>` has no width budget of its
+ * own, so a long teamspace name would wrap onto a second line or push the nav
+ * wide. Bounding the *computed* label with `truncateEnd` (paired with the
+ * `truncate` class for CSS elision) keeps it to one line; the head is kept,
+ * matching the rows and menus, and a surrogate pair is never sliced. See
+ * `@/lib/truncate`.
+ */
+const SECTION_LABEL_MAX = 32;
+
+/**
  * How many recently visited pages the sidebar "Recent" section renders. The
  * history itself is capped at `MAX_RECENT_PAGES`; the sidebar shows a shorter
  * "top N" slice of it.
@@ -709,8 +720,9 @@ export function PageTree({
             if (roots.length === 0) return null;
             return (
               <div key={teamspace.id} className="mt-3">
-                <p className="px-1 pb-1 text-[11px] font-medium text-muted/90">
-                  {teamspace.icon ?? "👥"} {teamspace.name}
+                <p className="truncate px-1 pb-1 text-[11px] font-medium text-muted/90">
+                  {teamspace.icon ?? "👥"}{" "}
+                  {truncateEnd(teamspace.name, SECTION_LABEL_MAX)}
                 </p>
                 {renderNodes(null, 0, (node) => node.teamspaceId === teamspace.id)}
               </div>
