@@ -96,6 +96,15 @@ export function CyclesBoard({
       );
       return holder?.assigneeName ?? assigneeId;
     };
+    // Read the cycle's tickets as a small schedule: one bucket per UTC due
+    // day, chronological. The engine skips tickets with no (or an invalid)
+    // due date, so the undated tally is derived from what it did bucket.
+    const byDue = groupByBucket(cycle.tickets, {
+      dateOf: (ticket) => ticket.dueDate,
+      unit: "day",
+    });
+    const dated = byDue.reduce((sum, bucket) => sum + bucket.entries.length, 0);
+    const undated = cycle.tickets.length - dated;
     return (
       <li
         key={cycle.id}
@@ -248,21 +257,35 @@ export function CyclesBoard({
         )}
 
         {cycle.tickets.length > 0 && (
-          <ul className="mt-2 flex flex-wrap gap-1.5">
-            {cycle.tickets.slice(0, 8).map((ticket) => (
-              <li
-                key={ticket.id}
-                className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted"
-                title={ticket.title}
-              >
-                <span className="font-mono">{ticket.key}</span>{" "}
-                {formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")}
-              </li>
+          <div className="mt-3 space-y-2">
+            {byDue.map((bucket) => (
+              <div key={bucket.key}>
+                <h4 className="flex items-baseline gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+                  {bucket.label}
+                  <span className="font-normal normal-case tracking-normal">
+                    {bucket.entries.length}
+                  </span>
+                </h4>
+                <ul className="mt-0.5 flex flex-wrap gap-1.5">
+                  {bucket.entries.map((ticket) => (
+                    <li
+                      key={ticket.id}
+                      className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted"
+                      title={ticket.title}
+                    >
+                      <span className="font-mono">{ticket.key}</span>{" "}
+                      {formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-            {cycle.tickets.length > 8 && (
-              <li className="text-[11px] text-muted">+{cycle.tickets.length - 8} more</li>
+            {undated > 0 && (
+              <p className="text-[11px] text-muted">
+                {undated} ticket{undated === 1 ? "" : "s"} without a due date
+              </p>
             )}
-          </ul>
+          </div>
         )}
       </li>
     );
