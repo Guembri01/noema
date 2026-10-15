@@ -37,6 +37,12 @@ import {
 import { cn } from "@/lib/utils";
 import { EQUATION_EVENT } from "@/components/editor/equation-editor";
 import { t } from "@/lib/i18n";
+import {
+  filterCommands,
+  groupCommands,
+  rankCommands,
+  type SlashCommand,
+} from "@/lib/slash-commands";
 
 /* ---------------------------------------------------------------------------
    Slash menu
@@ -86,6 +92,34 @@ const SLASH_ITEMS: SlashItem[] = [
   { label: "Divider", labelKey: "blockDivider", hint: "Visual separator", hintKey: "dividerHint", icon: <Minus className="h-4 w-4" />, keywords: "divider hr separator", run: (c) => c.setHorizontalRule().run() },
 ];
 
+/* ---------------------------------------------------------------------------
+   Ranking model
+   ------------------------------------------------------------------------- */
+
+/**
+ * Catalogue consumed by `@/lib/slash-commands`. Ids reuse the stable English
+ * `label` so ranking, the recency list and React keys all agree on one
+ * identity. Every entry is currently a "basic block"; the `group` is carried
+ * on the command so the model owns the section order, and a future category
+ * only needs its heading added to `SLASH_GROUP_LABELS`.
+ */
+const SLASH_COMMANDS: SlashCommand[] = SLASH_ITEMS.map((item) => ({
+  id: item.label,
+  title: item.label,
+  keywords: item.keywords.split(/\s+/).filter(Boolean),
+  group: "basic",
+}));
+
+/** Localized section heading per group id; unknown ids fall back to Basic. */
+const SLASH_GROUP_LABELS: Partial<Record<string, I18nKey>> = {
+  basic: "slashBasicBlocks",
+};
+
+/** Flat rows fed to the list: a section heading, or an item with its index. */
+type SlashRow =
+  | { kind: "header"; group: string }
+  | { kind: "item"; item: SlashItem; index: number };
+
 export function SlashMenu({
   editor,
   onPickImage,
@@ -99,33 +133,57 @@ export function SlashMenu({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  // Recently picked command ids, most-recent-first: a soft tiebreak that lets
+  // the shared ranker float a habitually chosen block above its peers.
+  const [recentIds, setRecentIds] = useState<string[]>([]);
 
-  const items = useMemo(() => {
-    const q = query.toLowerCase().trim();
-    const all = SLASH_ITEMS.map((item) =>
-      item.label === "Image" ? { ...item, action: onPickImage } : item,
-    );
-    if (!q) return all;
-    // Tiered ranking, Notion-style: exact label first, then label prefix,
-    // then a keyword that starts the query, then any substring match.
-    const rank = (label: string, keywords: string): number | null => {
-      const l = label.toLowerCase();
-      const k = keywords.toLowerCase();
-      if (l === q) return 0;
-      if (l.startsWith(q)) return 1;
-      if (k.split(/\s+/).some((word) => word.startsWith(q))) return 2;
-      if (l.includes(q) || k.includes(q)) return 3;
-      return null;
-    };
-    return all
-      .map((item) => ({ item, score: rank(item.label, item.keywords) }))
-      .filter(
-        (entry): entry is { item: (typeof all)[number]; score: number } =>
-          entry.score !== null,
-      )
-      .sort((a, b) => a.score - b.score)
-      .map((entry) => entry.item);
-  }, [query, onPickImage]);
+  // Display metadata keyed by the stable English label, with the image picker
+  // bound once. Kept separate from ranking so `onPickImage` identity changes
+  // don't re-sort the list.
+  const itemById = useMemo(
+    () =>
+      new Map<string, SlashItem>(
+        SLASH_ITEMS.map((item): [string, SlashItem] =>
+          item.label === "Image"
+            ? [item.label, { ...item, action: onPickImage }]
+            : [item.label, item],
+        ),
+      ),
+    [onPickImage],
+  );
+
+  // The shared model replaces the old inline tiered match: filter (enable /
+  // disable), rank (title → keyword → substring, recency tiebreak), then group
+  // into sections. An empty query keeps the catalogue's original order.
+  const groups = useMemo(
+    () =>
+      groupCommands(
+        rankCommands(filterCommands(SLASH_COMMANDS), query, { recentIds }),
+      ),
+    [query, recentIds],
+  );
+
+  const rows = useMemo<SlashRow[]>(() => {
+    const next: SlashRow[] = [];
+    let index = 0;
+    for (const group of groups) {
+      next.push({ kind: "header", group: group.group });
+      for (const command of group.items) {
+        const item = itemById.get(command.id);
+        if (item) {
+          next.push({ kind: "item", item, index });
+          index += 1;
+        }
+      }
+    }
+    return next;
+  }, [groups, itemById]);
+
+  // Flat pick order driving keyboard navigation and the active-row clamp.
+  const items = useMemo(
+    () => rows.flatMap((row) => (row.kind === "item" ? [row.item] : [])),
+    [rows],
+  );
 
   useEffect(() => {
     const handler = () => {
@@ -168,6 +226,10 @@ export function SlashMenu({
       } else {
         item.run?.(chain);
       }
+      // Remember the pick so the next search can float it (bounded, deduped).
+      setRecentIds((previous) =>
+        [item.label, ...previous.filter((id) => id !== item.label)].slice(0, 6),
+      );
       setOpen(false);
     },
     [editor, query],
@@ -202,31 +264,37 @@ export function SlashMenu({
       className="fixed z-50 max-h-80 w-72 overflow-y-auto rounded-lg border border-border bg-bg p-1 shadow-xl"
       style={{ left: pos.x, top: pos.y }}
     >
-      <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted">
-        {t(locale, "slashBasicBlocks")}
-      </p>
-      {items.map((item, index) => (
-        <button
-          key={item.label}
-          type="button"
-          onMouseDown={(e) => e.preventDefault()}
-          onMouseEnter={() => setActive(index)}
-          onClick={() => applySuggestion(item)}
-          className={cn(
-            "flex w-full items-center gap-3 rounded px-2 py-1.5 text-left text-sm",
-            index === active ? "bg-surface-2" : "hover:bg-surface-2",
-          )}
-        >
-          <span className="grid h-8 w-8 place-items-center rounded border border-border bg-bg text-muted">
-            {item.icon}
-          </span>
-          <span className="flex-1">
-            <span className="block font-medium">{t(locale, item.labelKey)}</span>
-            <span className="block text-xs text-muted">{t(locale, item.hintKey)}</span>
-          </span>
-          {index === active && <CornerDownLeft className="h-3.5 w-3.5 text-muted" />}
-        </button>
-      ))}
+      {rows.map((row) =>
+        row.kind === "header" ? (
+          <p
+            key={`group-${row.group}`}
+            className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted"
+          >
+            {t(locale, SLASH_GROUP_LABELS[row.group] ?? "slashBasicBlocks")}
+          </p>
+        ) : (
+          <button
+            key={row.item.label}
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onMouseEnter={() => setActive(row.index)}
+            onClick={() => applySuggestion(row.item)}
+            className={cn(
+              "flex w-full items-center gap-3 rounded px-2 py-1.5 text-left text-sm",
+              row.index === active ? "bg-surface-2" : "hover:bg-surface-2",
+            )}
+          >
+            <span className="grid h-8 w-8 place-items-center rounded border border-border bg-bg text-muted">
+              {row.item.icon}
+            </span>
+            <span className="flex-1">
+              <span className="block font-medium">{t(locale, row.item.labelKey)}</span>
+              <span className="block text-xs text-muted">{t(locale, row.item.hintKey)}</span>
+            </span>
+            {row.index === active && <CornerDownLeft className="h-3.5 w-3.5 text-muted" />}
+          </button>
+        ),
+      )}
     </div>
   );
 }
