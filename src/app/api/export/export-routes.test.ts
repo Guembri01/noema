@@ -8,8 +8,8 @@ import { resetRateLimits } from "@/lib/rate-limit";
  *   workspace 5/min, checked before auth (same ordering as the other routes)
  *
  * B91 — database `?format=json` (R23.16) + fidelity pins:
- * - database JSON: array of N row objects keyed by property name, primary key
- *   first, values = computed cell values (same `formatCell` output as CSV)
+ * - database JSON: the `json-export.ts` snapshot
+ *   `{ schemaVersion, name, properties, rows, views }`
  * - fidelity pins: the md/html/pdf/csv outputs must not change byte-wise
  *   (red evidence incl. a deliberate control mismatch: `scripts/_logs/b91-red.log`)
  *
@@ -21,6 +21,7 @@ const db = vi.hoisted(() => ({
   pageFindUnique: vi.fn(),
   pageFindMany: vi.fn(),
   propertyFindMany: vi.fn(),
+  databaseViewFindMany: vi.fn(),
 }));
 const edge = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     page: { findUnique: db.pageFindUnique, findMany: db.pageFindMany },
     property: { findMany: db.propertyFindMany },
+    databaseView: { findMany: db.databaseViewFindMany },
   },
 }));
 vi.mock("@/lib/auth", () => ({ getCurrentUser: edge.getCurrentUser }));
@@ -86,6 +88,7 @@ beforeEach(() => {
   });
   db.pageFindMany.mockResolvedValue([]);
   db.propertyFindMany.mockResolvedValue([]);
+  db.databaseViewFindMany.mockResolvedValue([]);
 });
 
 describe("format validation (R23.16)", () => {
@@ -124,6 +127,52 @@ describe("format validation (R23.16)", () => {
     const res = await databaseCall("", "10.1.0.5");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/csv");
+  });
+
+  it("database export: ?format=json returns the json-export snapshot", async () => {
+    db.pageFindUnique.mockResolvedValue(DATABASE);
+    db.propertyFindMany.mockResolvedValue([
+      { id: "p1", name: "Name", type: "TEXT", position: 1000, config: { primary: true } },
+      { id: "p2", name: "Status", type: "STATUS", position: 2000, config: null },
+    ]);
+    db.pageFindMany.mockResolvedValue([
+      {
+        id: "r1",
+        title: "A",
+        position: 1000,
+        propertyValues: [
+          { id: "v1", propertyId: "p1", value: { text: "A" } },
+          { id: "v2", propertyId: "p2", value: null },
+        ],
+      },
+    ]);
+    db.databaseViewFindMany.mockResolvedValue([
+      { id: "view1", name: "Table", type: "TABLE", position: 1000, config: null },
+    ]);
+
+    const res = await databaseCall("?format=json", "10.1.0.8");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(res.headers.get("content-disposition")).toContain(".json");
+
+    const body = await res.json();
+    expect(Object.keys(body)).toEqual([
+      "schemaVersion",
+      "name",
+      "properties",
+      "rows",
+      "views",
+    ]);
+    expect(body.name).toBe("Rows");
+    expect(body.schemaVersion).toBe(1);
+    expect(body.properties).toHaveLength(2);
+    expect(body.properties[0]).toMatchObject({ id: "p1", name: "Name", type: "TEXT" });
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0]).toMatchObject({ id: "r1", title: "A", position: 1000 });
+    expect(body.rows[0].propertyValues).toHaveLength(2);
+    expect(body.views).toEqual([
+      { config: null, id: "view1", name: "Table", position: 1000, type: "TABLE" },
+    ]);
   });
 
   it("workspace export: unknown format → 400 before the zip work", async () => {

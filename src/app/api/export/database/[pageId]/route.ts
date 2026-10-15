@@ -6,11 +6,14 @@ import { prisma } from "@/lib/db";
 import { DATABASE_EXPORT_FORMATS, parseExportFormat } from "@/lib/export-format";
 import { matrixToCsv } from "@/lib/serialize";
 import { formatCell, type QueryProperty } from "@/lib/database-query";
+import { exportDatabaseJson } from "@/lib/json-export";
 
 export const runtime = "nodejs";
 
 /**
- * Export a database page's rows as CSV (default).
+ * Export a database page as CSV (`?format=csv`, default) or JSON
+ * (`?format=json`, the full `{ schemaVersion, name, properties, rows, views }`
+ * snapshot from `json-export.ts`).
  * Unknown `?format` → 400 (R23.16); 30 exports/min (R23.22).
  */
 export async function GET(
@@ -47,8 +50,12 @@ export async function GET(
     );
   }
 
-  const [properties, rows] = await Promise.all([
+  const [properties, views, rows] = await Promise.all([
     prisma.property.findMany({
+      where: { databasePageId: page.id },
+      orderBy: { position: "asc" },
+    }),
+    prisma.databaseView.findMany({
       where: { databasePageId: page.id },
       orderBy: { position: "asc" },
     }),
@@ -59,6 +66,47 @@ export async function GET(
     }),
   ]);
 
+  const safeName =
+    (page.title || "database").replace(/[^\w.-]+/g, "-").slice(0, 60) || "database";
+
+  if (parsedFormat.format === "json") {
+    return new NextResponse(
+      exportDatabaseJson({
+        name: page.title,
+        properties: properties.map((property) => ({
+          id: property.id,
+          name: property.name,
+          type: property.type,
+          position: property.position,
+          config: property.config ?? null,
+        })),
+        rows: rows.map((row) => ({
+          id: row.id,
+          title: row.title,
+          position: row.position,
+          propertyValues: row.propertyValues.map((value) => ({
+            id: value.id,
+            propertyId: value.propertyId,
+            value: value.value ?? null,
+          })),
+        })),
+        views: views.map((view) => ({
+          id: view.id,
+          name: view.name,
+          type: view.type,
+          position: view.position,
+          config: view.config ?? null,
+        })),
+      }),
+      {
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "content-disposition": `attachment; filename="${safeName}.json"`,
+        },
+      },
+    );
+  }
+
   const columns = properties as unknown as QueryProperty[];
   const header = properties.map((p) => p.name);
   const matrix = rows.map((row) =>
@@ -68,9 +116,6 @@ export async function GET(
       return formatCell(value, property);
     }),
   );
-
-  const safeName =
-    (page.title || "database").replace(/[^\w.-]+/g, "-").slice(0, 60) || "database";
 
   return new NextResponse(matrixToCsv(header, matrix), {
     headers: {
