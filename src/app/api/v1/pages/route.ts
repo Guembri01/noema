@@ -10,13 +10,28 @@ import { getPagesPage } from "@/server/queries";
 export const runtime = "nodejs";
 
 /**
+ * Build the RFC-5988 `Link` header for the list response. Only `rel="next"` is
+ * emitted, derived from `next_cursor` by cloning the request URL and swapping
+ * its `start_cursor`; every other query parameter (notably `workspaceId` and
+ * `page_size`) is preserved. Returns `null` on the last page so callers can
+ * omit the header entirely. Purely additive: the JSON body is untouched.
+ */
+function nextPageLink(requestUrl: URL, nextCursor: string | null): string | null {
+  if (!nextCursor) return null;
+  const next = new URL(requestUrl.toString());
+  next.searchParams.set("start_cursor", nextCursor);
+  return `<${next.toString()}>; rel="next"`;
+}
+
+/**
  * GET /api/v1/pages?workspaceId=…&page_size=…&start_cursor=… — list pages.
  *
  * Keyset pagination over the stable total order `(position, createdAt, id)`.
  * `page_size` defaults to 50 and is clamped to 1..100; a non-numeric value is
  * a 400 `invalid_page_size`. An unreadable `start_cursor` is a 400
  * `invalid_cursor`; omitting both returns the first page (`has_more` /
- * `next_cursor` always accompany the `pages` key).
+ * `next_cursor` always accompany the `pages` key). When there is a next page a
+ * `Link: <…>; rel="next"` response header mirrors `next_cursor` (R24.2).
  */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "v1");
@@ -43,11 +58,17 @@ export async function GET(request: Request) {
   }
 
   const page = await getPagesPage(workspaceId, { limit, cursor });
-  return NextResponse.json({
-    pages: page.items,
-    has_more: page.hasMore,
-    next_cursor: page.nextCursor,
-  });
+  const headers = new Headers();
+  const link = nextPageLink(url, page.nextCursor);
+  if (link) headers.set("Link", link);
+  return NextResponse.json(
+    {
+      pages: page.items,
+      has_more: page.hasMore,
+      next_cursor: page.nextCursor,
+    },
+    { headers },
+  );
 }
 
 /** POST /api/v1/pages — create a page. Body: { workspaceId, title?, parentId?, type? } */
