@@ -7,10 +7,26 @@ import { getWorkspacesPage } from "@/server/queries";
 export const runtime = "nodejs";
 
 /**
+ * RFC 5988 `Link` header value pointing at the next page, or `null` when the
+ * caller has reached the end (`next_cursor == null`). The request URL is reused
+ * so `page_size` and any other query parameters carry over; only `start_cursor`
+ * is replaced with the opaque next token. Purely additive: it does not alter
+ * the JSON body or the pagination envelope.
+ */
+function nextLinkHeader(requestUrl: string, nextCursor: string | null): string | null {
+  if (!nextCursor) return null;
+  const next = new URL(requestUrl);
+  next.searchParams.set("start_cursor", nextCursor);
+  return `<${next.toString()}>; rel="next"`;
+}
+
+/**
  * GET /api/v1/workspaces?page_size=…&start_cursor=… — list the caller's
  * workspaces (owner or member) in the stable total order `(createdAt, id)`.
  * `page_size` defaults to 50, clamped to 1..100; bad values are 400
- * `invalid_page_size`, unreadable cursors 400 `invalid_cursor`.
+ * `invalid_page_size`, unreadable cursors 400 `invalid_cursor`. When another
+ * page exists, the response carries a `Link: <…>; rel="next"` header derived
+ * from `next_cursor`; the body is unchanged.
  */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "v1");
@@ -30,9 +46,12 @@ export async function GET(request: Request) {
   }
 
   const page = await getWorkspacesPage(auth.userId, { limit, cursor });
-  return NextResponse.json({
+  const response = NextResponse.json({
     workspaces: page.items,
     has_more: page.hasMore,
     next_cursor: page.nextCursor,
   });
+  const link = nextLinkHeader(request.url, page.nextCursor);
+  if (link) response.headers.set("Link", link);
+  return response;
 }
