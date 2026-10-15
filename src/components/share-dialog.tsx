@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Copy, Globe, Link2, Lock } from "lucide-react";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ import {
 } from "@/server/actions/share";
 import { useAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
+import { generateShortCode, isValidShortCode, shortUrl } from "@/lib/short-link";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { AccessList } from "@/components/who-has-access";
 
@@ -63,6 +64,21 @@ export function ShareDialog({
 
   const link = (value: string) =>
     typeof window === "undefined" ? `/s/${value}` : `${window.location.origin}/s/${value}`;
+
+  // Session-only short code for this page: seeded by the page id so it is
+  // stable across re-renders and never reshuffles. Nothing is persisted — the
+  // generated code lives only in this dialog. `isValidShortCode` is a defensive
+  // guard (generateShortCode already avoids RESERVED_CODES), so a bad draw
+  // simply hides the row instead of advertising a broken link.
+  const shortCode = useMemo(() => {
+    const code = generateShortCode({ seed: pageId });
+    return isValidShortCode(code) ? code : null;
+  }, [pageId]);
+
+  const shortLink =
+    shortCode === null
+      ? null
+      : shortUrl(typeof window === "undefined" ? "/s" : `${window.location.origin}/s`, shortCode);
 
   const publish = () =>
     run(
@@ -173,6 +189,32 @@ export function ShareDialog({
                   </button>
                 </span>
               </label>
+
+              {shortLink !== null && (
+                <label className="block text-sm">
+                  {t(locale, "link")}
+                  <span className="mt-1 flex gap-2">
+                    <input
+                      readOnly
+                      value={shortLink}
+                      aria-label={t(locale, "link")}
+                      onFocus={(event) => event.currentTarget.select()}
+                      className="h-9 w-full rounded border border-border bg-surface px-2 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(shortLink);
+                        toast.success(t(locale, "copied"));
+                      }}
+                      className="flex h-9 shrink-0 items-center gap-1 rounded border border-border px-3 text-sm hover:bg-surface-2"
+                    >
+                      <Copy className="h-3.5 w-3.5" /> {t(locale, "copy")}
+                    </button>
+                  </span>
+                  <span className="mt-1 block font-mono text-[11px] text-muted">{shortCode}</span>
+                </label>
+              )}
 
               <div className="flex items-center justify-between">
                 <button
