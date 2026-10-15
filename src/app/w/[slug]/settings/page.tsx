@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSessionId, requireUser } from "@/lib/auth";
 import { listActiveSessions } from "@/lib/session-store";
@@ -235,6 +236,12 @@ export default async function SettingsPage({
           <p className="mb-3 text-xs text-muted">
             {t(locale, "activityIntro")}
           </p>
+          <Link
+            href={`/w/${workspace.slug}/settings/audit`}
+            className="mb-3 inline-block text-xs text-accent hover:underline"
+          >
+            View full audit log →
+          </Link>
           <ul className="divide-y divide-border rounded-lg border border-border">
             {activity.map((entry) => (
               <li key={entry.id} className="flex items-center gap-3 px-4 py-2 text-sm">
