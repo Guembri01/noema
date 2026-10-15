@@ -10,7 +10,16 @@ import {
 } from "@/server/actions/cycles";
 import { useAction } from "@/lib/actions-client";
 import { PromptDialog } from "@/components/prompt-dialog";
-import { activeCycle, cycleDays, cycleProgress, velocity, type CycleTicket } from "@/lib/cycles";
+import {
+  activeCycle,
+  burndownSeries,
+  cycleDays,
+  cycleProgress,
+  scopeChange,
+  velocity,
+  type Cycle,
+  type CycleTicket,
+} from "@/lib/cycles";
 import { formatEstimate, UNASSIGNED_BUCKET, workloadByAssignee } from "@/lib/tickets";
 import { LocalTime } from "@/components/local-time";
 import { cn } from "@/lib/utils";
@@ -119,6 +128,16 @@ export function CyclesBoard({
             const progress = cycleProgress(cycle.tickets, cycle);
             const isCurrent = current?.id === cycle.id;
             const max = Math.max(progress.committed, 1);
+            // The pure burndown/scope helpers read the stored `start`/`end`
+            // shape, so map the row's `startDate`/`endDate` onto it.
+            const cycleRef: Cycle = {
+              id: cycle.id,
+              name: cycle.name,
+              start: cycle.startDate,
+              end: cycle.endDate,
+            };
+            const burndown = burndownSeries(cycleRef, cycle.tickets);
+            const scope = scopeChange(cycle.tickets, cycleRef);
             // Per-person load inside this cycle's window; the page only ships
             // the assignee name, so fall back to it when there is no id.
             const load = workloadByAssignee(
@@ -198,6 +217,22 @@ export function CyclesBoard({
                     {progress.remaining} {progress.unit} remaining · {progress.percent}%
                   </span>
                   <span className="text-muted">{cycle.tickets.length} tickets</span>
+                  <span
+                    className={cn(
+                      "rounded border px-1.5 py-0.5",
+                      scope.added > 0
+                        ? "border-amber-500/40 bg-amber-500/10 font-medium text-amber-600 dark:text-amber-400"
+                        : "border-border text-muted",
+                    )}
+                    title={`Planned ${scope.planned} · added ${scope.added} · ${formatEstimate(
+                      scope.addedEstimate,
+                      progress.unit,
+                    )} added after the cycle started`}
+                  >
+                    {scope.added > 0
+                      ? `+${scope.added} added · ${Math.round(scope.ratio * 100)}% scope change`
+                      : "No scope change"}
+                  </span>
                 </div>
 
                 <div
@@ -214,33 +249,45 @@ export function CyclesBoard({
                   />
                 </div>
 
-                {/* Burndown: actual line over the ideal line. */}
-                <svg
-                  viewBox={`0 0 ${Math.max(progress.days - 1, 1)} ${Math.max(max, 1)}`}
-                  preserveAspectRatio="none"
-                  className="mt-3 h-16 w-full"
-                  role="img"
-                  aria-label={`${cycle.name} burndown`}
-                >
-                  <polyline
-                    fill="none"
-                    stroke="currentColor"
-                    strokeOpacity="0.25"
-                    strokeWidth="0.12"
-                    points={progress.burndown
-                      .map((point) => `${point.day - 1},${point.ideal}`)
-                      .join(" ")}
-                  />
-                  <polyline
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="0.2"
-                    points={progress.burndown
-                      .filter((point) => point.remaining !== null)
-                      .map((point) => `${point.day - 1},${point.remaining}`)
-                      .join(" ")}
-                  />
-                </svg>
+                {/* Burndown: measured remaining effort against the ideal line. */}
+                <figure className="mt-3">
+                  <svg
+                    viewBox={`0 0 ${Math.max(burndown.length - 1, 1)} ${max}`}
+                    preserveAspectRatio="none"
+                    className="h-16 w-full text-fg"
+                    role="img"
+                    aria-label={`${cycle.name} burndown: remaining vs ideal`}
+                  >
+                    <polyline
+                      fill="none"
+                      stroke="currentColor"
+                      strokeOpacity="0.25"
+                      strokeWidth="0.12"
+                      points={burndown.map((point, index) => `${index},${point.ideal}`).join(" ")}
+                    />
+                    <polyline
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="0.2"
+                      points={burndown
+                        .map((point, index) =>
+                          point.remaining === null ? null : `${index},${point.remaining}`,
+                        )
+                        .filter((value): value is string => value !== null)
+                        .join(" ")}
+                    />
+                  </svg>
+                  <figcaption className="mt-1 flex items-center gap-3 text-[10px] text-muted">
+                    <span className="inline-flex items-center gap-1">
+                      <span aria-hidden className="inline-block h-px w-3 bg-current" />
+                      remaining
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span aria-hidden className="inline-block h-px w-3 bg-current opacity-25" />
+                      ideal
+                    </span>
+                  </figcaption>
+                </figure>
 
                 {load.length > 0 && (
                   <ul className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
