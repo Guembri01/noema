@@ -19,6 +19,7 @@ import {
   validateCopy,
   type DatabaseStructure,
 } from "@/lib/database-copy";
+import { initializeRowValues } from "@/lib/property-defaults";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { nextRunFor } from "@/lib/recurrence";
 import { ORDER_STEP } from "@/lib/row-order";
@@ -82,6 +83,22 @@ function revalidateDatabase(workspaceId: string) {
  * Out of scope for this slice: backfilling ids for rows that predate a Unique
  * ID property (a property added later only allocates on the next row created).
  */
+
+/**
+ * Does a stored property config carry an authored `default`? `initializeRowValues`
+ * also yields empty container shapes for CHECKBOX, MULTI_SELECT, PEOPLE and FILES
+ * even when no default was configured; a new row should only be seeded when
+ * someone actually authored one, so this gates that call. Mirrors `readDefault`
+ * in `property-options-editor.tsx` (`"default" in config`).
+ */
+function hasConfiguredDefault(config: Prisma.JsonValue | null): boolean {
+  return (
+    !!config &&
+    typeof config === "object" &&
+    !Array.isArray(config) &&
+    "default" in config
+  );
+}
 
 /** The `config.uniqueId` block of a property, or `{}` when absent/malformed. */
 function readUniqueIdConfig(
@@ -426,6 +443,20 @@ export async function createRowAction(
           readUniqueIdConfig(property.config),
         ),
       );
+    }
+
+    // An authored `config.default` seeds the fresh row (e.g. a Status, Number or
+    // Date starting value), unless the primary text cell or a UNIQUE_ID
+    // allocation already owns that column — the same override order the read-only
+    // grid uses. `initializeRowValues` validates each stored config and omits
+    // computed types, so a malformed config can never break row creation.
+    for (const seeded of initializeRowValues(
+      properties.filter(
+        (property) =>
+          !values.has(property.id) && hasConfiguredDefault(property.config),
+      ),
+    )) {
+      values.set(seeded.propertyId, seeded.value as Prisma.InputJsonValue);
     }
     if (values.size > 0) {
       await tx.propertyValue.createMany({
