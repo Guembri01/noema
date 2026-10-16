@@ -7,6 +7,7 @@ import { logActivity } from "@/lib/activity";
 import { pageSearchText } from "@/lib/search";
 import { requireUser } from "@/lib/auth";
 import { dispatchWebhooks } from "@/lib/webhooks";
+import { notifyPageUpdated } from "@/server/actions/notifications";
 import {
   canEditContent,
   getWorkspaceAccess,
@@ -258,9 +259,15 @@ export async function updatePageAction(
   }
   const titleChanged =
     patch.title !== undefined && previous !== null && patch.title !== previous.title;
+  // A save can carry a content doc identical to what is stored (the client
+  // normally suppresses those, but a retry or a re-serialized snapshot can
+  // still arrive); only a real text/title change is "material" enough to
+  // snapshot history or to notify followers (R82.12).
+  const beforeText = previous ? prosemirrorToText(previous.content) : "";
+  const afterText = contentChanged ? prosemirrorToText(contentResult.doc) : beforeText;
+  const contentTextChanged = contentChanged && afterText !== beforeText;
+  const materiallyChanged = previous !== null && (titleChanged || contentTextChanged);
   if (previous && (contentChanged || titleChanged)) {
-    const before = prosemirrorToText(previous.content).length;
-    const after = contentChanged ? prosemirrorToText(contentResult.doc).length : before;
     await prisma.pageVersion.create({
       data: {
         pageId,
@@ -272,7 +279,7 @@ export async function updatePageAction(
             ? `Edited content and renamed to “${patch.title}”`
             : `Renamed to “${patch.title}”`
           : "Edited content",
-        charDelta: after - before,
+        charDelta: afterText.length - beforeText.length,
       },
     });
   }
@@ -305,6 +312,11 @@ export async function updatePageAction(
     },
   });
   await dispatchWebhooks(auth.page.workspaceId, "page.updated", { pageId });
+  // R82.12 — a material edit reaches the page's followers. `notifyPageUpdated`
+  // is best-effort and never throws, so the edit's success is unaffected.
+  if (materiallyChanged) {
+    await notifyPageUpdated(pageId);
+  }
   revalidateWorkspace(auth.page.workspaceId);
   return { ok: true };
 }
