@@ -8,6 +8,7 @@ import {
   bulkUpdateTicketsAction,
 } from "@/server/actions/tickets";
 import { ESTIMATE_UNITS, TICKET_PRIORITIES, TICKET_STATUSES } from "@/lib/tickets";
+import { safeAction } from "@/lib/actions-client";
 import { bulkArchiveConfirmLabel, bulkDeleteConfirmLabel } from "@/lib/ticket-delete";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -63,7 +64,11 @@ export function TicketBulkActions({
 
   const applyUpdate = (data: BulkPatch, label: string) =>
     run(label, async () => {
-      const result = await bulkUpdateTicketsAction({ ticketIds: checked, ...data });
+      const outcome = await safeAction(() =>
+        bulkUpdateTicketsAction({ ticketIds: checked, ...data }),
+      );
+      if (!outcome.ok) return { ok: false, message: outcome.error };
+      const result = outcome.value;
       if ("error" in result) return { ok: false, message: result.error };
       setConfirm(null);
       return { ok: true };
@@ -79,7 +84,9 @@ export function TicketBulkActions({
 
   const doArchive = () =>
     run("Tickets archived", async () => {
-      const result = await bulkArchiveTicketsAction({ ticketIds: checked });
+      const outcome = await safeAction(() => bulkArchiveTicketsAction({ ticketIds: checked }));
+      if (!outcome.ok) return { ok: false, message: outcome.error };
+      const result = outcome.value;
       if ("error" in result) return { ok: false, message: result.error };
       setConfirm(null);
       setChecked([]);
@@ -88,7 +95,9 @@ export function TicketBulkActions({
 
   const doDelete = () =>
     run("Tickets deleted", async () => {
-      const result = await bulkDeleteTicketsAction({ ticketIds: checked });
+      const outcome = await safeAction(() => bulkDeleteTicketsAction({ ticketIds: checked }));
+      if (!outcome.ok) return { ok: false, message: outcome.error };
+      const result = outcome.value;
       if ("error" in result) return { ok: false, message: result.error };
       setConfirm(null);
       setChecked([]);
