@@ -3,6 +3,8 @@
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
+import { Z } from "@/lib/design-tokens";
+import { overlayMotionClasses } from "@/components/ui/dropdown-menu";
 
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
@@ -29,9 +31,15 @@ export const DialogClose = DialogPrimitive.Close;
  * opened and restores it itself; consumers keep the usual Radix semantics
  * (their `onCloseAutoFocus` runs first and may `preventDefault()` to take
  * over, their `onOpenAutoFocus` may still prevent the initial focus move).
+ *
+ * Motion: the surface scales in (`animate-scale-in`, `--dur-2`) and mirrors
+ * out (`--dur-1`); the scrim fades between `Z.overlay` and `Z.modal`. The
+ * surface is centred with `inset-x-0 mx-auto` (not a translate) so the enter
+ * transform never fights the layout.
  */
 export function DialogContent({
   className,
+  style,
   children,
   onOpenAutoFocus,
   onCloseAutoFocus,
@@ -41,14 +49,19 @@ export function DialogContent({
 
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40" />
+      <DialogPrimitive.Overlay
+        className={cn("fixed inset-0 bg-overlay", overlayMotionClasses("scrim"))}
+        style={{ zIndex: Z.overlay }}
+      />
       <DialogPrimitive.Content
         role="dialog"
         aria-modal="true"
         className={cn(
-          "fixed left-1/2 top-[15%] z-50 w-full max-w-xl -translate-x-1/2 rounded-xl border border-border bg-bg shadow-2xl",
+          "surface-raised-strong fixed inset-x-0 top-[15%] mx-auto w-full max-w-xl",
+          overlayMotionClasses("dialog"),
           className,
         )}
+        style={{ zIndex: Z.modal, ...style }}
         onOpenAutoFocus={(event) => {
           // FocusScope dispatches this synchronously BEFORE moving focus into
           // the dialog, so activeElement is still the invoking control.
