@@ -171,7 +171,12 @@ async function seedDatabaseStructure(databasePageId: string): Promise<void> {
     ],
   });
 
-  // A couple of starter rows so the views are not empty.
+  // A couple of starter rows so the views are not empty. The owning workspace
+  // and author are shared, so resolve them once for the whole batch.
+  const owner = await prisma.page.findUniqueOrThrow({
+    where: { id: databasePageId },
+    select: { workspaceId: true, createdById: true },
+  });
   const seeded = [
     { name: "Draft the project brief", status: "doing" },
     { name: "Collect requirements", status: "todo" },
@@ -179,18 +184,12 @@ async function seedDatabaseStructure(databasePageId: string): Promise<void> {
   for (const row of seeded) {
     const page = await prisma.page.create({
       data: {
-        workspaceId: (
-          await prisma.page.findUniqueOrThrow({
-            where: { id: databasePageId },
-            select: { workspaceId: true },
-          })
-        ).workspaceId,
+        workspaceId: owner.workspaceId,
         parentId: databasePageId,
         title: row.name,
-        createdById: (await prisma.page.findUniqueOrThrow({
-          where: { id: databasePageId },
-          select: { createdById: true },
-        })).createdById,
+        createdById: owner.createdById,
+        // Starter rows are content too: index them like any other page.
+        searchText: pageSearchText(row.name, null),
       },
       select: { id: true },
     });
