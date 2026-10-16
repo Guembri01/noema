@@ -34,7 +34,8 @@ import { BlockContextMenu } from "@/components/editor/block-context-menu";
 import { EquationEditor, EQUATION_EVENT } from "@/components/editor/equation-editor";
 import { MathAutoDetect } from "@/components/editor/extensions/math-input";
 import { Fragment, Slice, type Node as PMNode } from "@tiptap/pm/model";
-import { Plugin, Selection } from "@tiptap/pm/state";
+import { Plugin, PluginKey, Selection } from "@tiptap/pm/state";
+import { dropCursor } from "@tiptap/pm/dropcursor";
 import type { EditorView } from "@tiptap/pm/view";
 import { normalizePasteHtml, pastePlan } from "@/lib/paste";
 import { analyzeBlockDrop, dropZone } from "@/lib/drag-indent";
@@ -100,12 +101,14 @@ const editEquation = (node: { type: { name: string }; attrs: { latex?: string } 
 import { actionError, safeAction } from "@/lib/actions-client";
 import { updatePageAction } from "@/server/actions/pages";
 import { uploadFile } from "@/lib/upload-client";
+import { DUR, EASE } from "@/lib/design-tokens";
 import {
   Callout,
   Column,
   Columns,
   TableOfContents,
-  Toggle
+  Toggle,
+  animateTaskTick,
 } from "@/components/editor/extensions/custom-blocks";
 import { Mention } from "@/components/editor/extensions/mention";
 import * as Y from "yjs";
@@ -209,6 +212,112 @@ function suggestionLabel(suggestion: Suggestion, locale: string): string {
     return `${t(locale, "deletedPrefix")}: ${before ?? "…"}`;
   }
   return `${t(locale, "suggestionReplaced")}: ${before ?? "…"} → ${after ?? "…"}`;
+}
+
+/* ----------------------------------------------------------- motion (§6/§19) */
+
+/** The two block-lifecycle motions the editor animates. */
+export type BlockMotion = "insert" | "remove";
+
+/**
+ * Height + opacity keyframes for a block entering (`insert`) or leaving
+ * (`remove`). Animating the block's own height is what lets its neighbours
+ * slide instead of jumping (DESIGN_SYSTEM §6, FRONTEND_PLAN 19.7); the opacity
+ * ramp also hides the empty-block placeholder until the block has settled, so
+ * it never flashes mid-insert.
+ */
+export function blockMotionFrames(action: BlockMotion, height: number): Keyframe[] {
+  const measured = Number.isFinite(height) && height > 0 ? `${Math.round(height)}px` : "0px";
+  const hidden: Keyframe = { height: "0px", opacity: 0, overflow: "hidden" };
+  const shown: Keyframe = { height: measured, opacity: 1, overflow: "hidden" };
+  return action === "insert" ? [hidden, shown] : [shown, hidden];
+}
+
+/** Duration + easing for a block lifecycle animation (base token, smooth). */
+export function blockMotionOptions(): { duration: number; easing: string } {
+  return { duration: DUR.base, easing: EASE.smooth };
+}
+
+/** Class marker applied while a block plays its enter/leave motion. */
+export function blockMotionClass(action: BlockMotion): string {
+  return action === "insert" ? "noema-block-insert" : "noema-block-remove";
+}
+
+/**
+ * ProseMirror drop-cursor options: the drag destination is a 2px accent line
+ * (FRONTEND_PLAN 19.8). Fed straight to `dropCursor`, so the indicator needs no
+ * bespoke stylesheet and always uses the accent token.
+ */
+export function dropIndicatorOptions(): { color: string; width: number; class: string } {
+  return { color: "var(--accent)", width: 2, class: "noema-drop-indicator" };
+}
+
+/**
+ * Root class while a drag is live. Dragging must track the cursor 1:1, so the
+ * whole editor drops its transitions (DESIGN_SYSTEM §6 "Dragging is 1:1").
+ */
+export function dragActiveClass(active: boolean): string {
+  return active ? "u-no-transition noema-drag-active" : "";
+}
+
+/** Inline lift for the block under the cursor: shadow-2 + a slight scale. */
+export function dropLiftStyle(): { boxShadow: string; transform: string } {
+  return { boxShadow: "var(--shadow-2)", transform: "scale(1.01)" };
+}
+
+/** Spring-settle keyframes played when a drag ends (popovers/drag settle). */
+export function dropSettleFrames(): Keyframe[] {
+  return [
+    { transform: "scale(1.01)", boxShadow: "var(--shadow-2)", offset: 0 },
+    { transform: "scale(1)", boxShadow: "var(--shadow-1)", offset: 1 },
+  ];
+}
+
+/** Duration + easing for the drag settle (base token, spring ease). */
+export function dropSettleOptions(): { duration: number; easing: string } {
+  return { duration: DUR.base, easing: EASE.spring };
+}
+
+/** Visibility inputs for a block's hover chrome (grip + add). */
+export type RowChromeState = {
+  hovered?: boolean;
+  focused?: boolean;
+  selected?: boolean;
+};
+
+/**
+ * The drag handle + add-button fade in on row hover and stay put while the row
+ * is focused or selected, so the keyboard path gets the same affordances as the
+ * pointer (DESIGN_SYSTEM §8/§9). Colour-only motion via `.u-colors`.
+ */
+export function rowChromeClass(state: RowChromeState = {}): string {
+  const visible = Boolean(state.hovered || state.focused || state.selected);
+  return `noema-row-chrome u-colors ${visible ? "opacity-100" : "opacity-0"}`;
+}
+
+/**
+ * Presentational block chrome: the ⋮⋮ drag affordance and the + affordance.
+ * Pure (no hooks), so it renders identically on the server and in this slice's
+ * `renderToStaticMarkup` proof. The grip is decorative — the surrounding
+ * `DragHandle` owns the actual drag behaviour, and the + stays chrome-only so
+ * this slice never introduces a new command.
+ */
+export function EditorRowChrome({ state = {} }: { state?: RowChromeState }) {
+  const visible = Boolean(state.hovered || state.focused || state.selected);
+  return (
+    <span
+      className={rowChromeClass(state)}
+      data-row-chrome=""
+      data-chrome-visible={visible ? "true" : "false"}
+    >
+      <span className="noema-drag-handle" aria-hidden="true">
+        ⋮⋮
+      </span>
+      <span className="noema-row-add" aria-hidden="true">
+        +
+      </span>
+    </span>
+  );
 }
 
 /* --------------------------------------------------------------- paste engines */
@@ -526,6 +635,96 @@ function deleteBlocksByIds(view: EditorView, ids: readonly string[]): void {
   view.dispatch(tr.scrollIntoView());
 }
 
+/* ---------------------------------------------------------- block motion plugin */
+
+/** Id/offset view of a document's top-level blocks (ids come from BlockIds). */
+function topLevelBlocks(doc: PMNode): Array<{ id: string; pos: number }> {
+  const blocks: Array<{ id: string; pos: number }> = [];
+  doc.forEach((node, offset, index) => {
+    const id =
+      typeof node.attrs?.id === "string" && node.attrs.id !== ""
+        ? node.attrs.id
+        : `#${index}`;
+    blocks.push({ id, pos: offset });
+  });
+  return blocks;
+}
+
+/**
+ * Play the enter/leave motion for the blocks a transaction added or removed.
+ * Presentation only: reads the two documents and the live DOM, never mutates
+ * either. Inserted blocks grow from zero height so their neighbours slide
+ * (DESIGN_SYSTEM §6, FRONTEND_PLAN 19.7); a removed block is already gone from
+ * the DOM, so its gap is settled by fading the block that closed it instead of
+ * snapping. Disabled wholesale under `prefers-reduced-motion`.
+ */
+function animateBlockMotion(view: EditorView, prevDoc: PMNode): void {
+  if (prefersReducedMotion()) return;
+  const before = topLevelBlocks(prevDoc);
+  const after = topLevelBlocks(view.state.doc);
+  const beforeIds = new Set(before.map((block) => block.id));
+  const afterIds = new Set(after.map((block) => block.id));
+  const options = blockMotionOptions();
+
+  for (const block of after) {
+    if (beforeIds.has(block.id)) continue;
+    const el = view.nodeDOM(block.pos);
+    if (!(el instanceof HTMLElement) || typeof el.animate !== "function") continue;
+    const height = el.getBoundingClientRect().height;
+    el.classList.add(blockMotionClass("insert"));
+    const animation = el.animate(blockMotionFrames("insert", height), {
+      ...options,
+      fill: "both",
+    });
+    animation.addEventListener("finish", () => {
+      el.classList.remove(blockMotionClass("insert"));
+      animation.cancel();
+    });
+  }
+
+  const removed = before.filter((block) => !afterIds.has(block.id));
+  if (removed.length === 0) return;
+  const survivor =
+    after.find((block) => block.pos >= removed[0].pos) ?? after[after.length - 1];
+  const el = survivor ? view.nodeDOM(survivor.pos) : null;
+  if (!(el instanceof HTMLElement) || typeof el.animate !== "function") return;
+  el.classList.add(blockMotionClass("remove"));
+  const animation = el.animate([{ opacity: 0.35 }, { opacity: 1 }], options);
+  animation.addEventListener("finish", () => {
+    el.classList.remove(blockMotionClass("remove"));
+    animation.cancel();
+  });
+}
+
+/** Drop indicator: a 2px accent line at the drag destination. */
+const DropIndicator = Extension.create({
+  name: "dropIndicator",
+  addProseMirrorPlugins() {
+    const { color, width, class: className } = dropIndicatorOptions();
+    return [dropCursor({ color, width, class: className })];
+  },
+});
+
+/** Block enter/leave motion (height + opacity) driven by document diffs. */
+const BlockMotion = Extension.create({
+  name: "blockMotion",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey("blockMotion"),
+        view() {
+          return {
+            update(view, prevState) {
+              if (prevState.doc.eq(view.state.doc)) return;
+              animateBlockMotion(view, prevState.doc);
+            },
+          };
+        },
+      }),
+    ];
+  },
+});
+
 /**
  * The math engine's banned-command guard (`restrictCommands`): strips
  * `\input`/`\include`/`\write18` and their arguments, leaving every other
@@ -732,6 +931,16 @@ export function PageEditor({
   const seededEditorRef = useRef<Editor | null>(null);
   /** Pointer X where the drag handle drag started, for indent-by-offset. */
   const dragStartXRef = useRef<number | null>(null);
+  /** Row-chrome visibility (⋮⋮ + add) for the block the DragHandle targets. */
+  const [chromeVisible, setChromeVisible] = useState(false);
+  /** Whether the editor holds focus, so the chrome stays visible for keyboard. */
+  const [editorFocused, setEditorFocused] = useState(false);
+  /** Live HTML5 drag state; drives the 1:1 (no-transition) root class. */
+  const [dragging, setDragging] = useState(false);
+  /** Document position of the block the DragHandle currently targets. */
+  const chromePosRef = useRef<number | null>(null);
+  /** DOM element lifted during a drag, restored (with a spring settle) on drop. */
+  const dragTargetRef = useRef<HTMLElement | null>(null);
   /**
    * The multi-block range selection (block-selection engine), authoritative in
    * a ref so the `editorProps` closures created once by `useEditor` never read
@@ -991,8 +1200,9 @@ export function PageEditor({
       return;
     }
     const root = editor.view.dom;
-    root.querySelectorAll(".noema-block-selected").forEach((el) => {
+    root.querySelectorAll<HTMLElement>(".noema-block-selected").forEach((el) => {
       el.classList.remove("noema-block-selected");
+      el.style.removeProperty("background-color");
     });
     if (!range) {
       setBlockSelected(0);
@@ -1002,9 +1212,48 @@ export function PageEditor({
     const selected = new Set(ids);
     root.querySelectorAll<HTMLElement>("[data-block-id]").forEach((el) => {
       const id = el.getAttribute("data-block-id");
-      if (id && selected.has(id)) el.classList.add("noema-block-selected");
+      if (id && selected.has(id)) {
+        el.classList.add("noema-block-selected");
+        // Block selection tint comes from the `--selection` token; applied
+        // inline so the shared stylesheet stays untouched (DESIGN_SYSTEM §2).
+        el.style.setProperty("background-color", "var(--selection)");
+      }
     });
     setBlockSelected(ids.length);
+  }, []);
+
+  /**
+   * Lift the block under the cursor while it is being dragged: shadow-2 + a
+   * slight scale, and drop transitions so the drag tracks the pointer 1:1
+   * (DESIGN_SYSTEM §6).
+   */
+  const beginBlockDrag = useCallback(() => {
+    setDragging(true);
+    const editor = editorRef.current;
+    const pos = chromePosRef.current;
+    if (!editor || pos === null) return;
+    const el = editor.view.nodeDOM(pos);
+    if (!(el instanceof HTMLElement)) return;
+    dragTargetRef.current = el;
+    el.classList.add("noema-block-dragging", "u-no-transition");
+    const lift = dropLiftStyle();
+    el.style.boxShadow = lift.boxShadow;
+    el.style.transform = lift.transform;
+  }, []);
+
+  /** Drop the lift and let the block spring back into place (spring ease). */
+  const endBlockDrag = useCallback(() => {
+    setDragging(false);
+    const el = dragTargetRef.current;
+    dragTargetRef.current = null;
+    if (!el) return;
+    el.classList.remove("noema-block-dragging");
+    el.style.removeProperty("box-shadow");
+    el.style.removeProperty("transform");
+    el.classList.remove("u-no-transition");
+    if (prefersReducedMotion() || typeof el.animate !== "function") return;
+    const settle = el.animate(dropSettleFrames(), dropSettleOptions());
+    settle.addEventListener("finish", () => settle.cancel());
   }, []);
 
   const [peers, setPeers] = useState(1);
@@ -1091,6 +1340,9 @@ export function PageEditor({
       CodeBlock.configure({ locale }),
       Placeholder.configure({
         placeholder: editorPlaceholder ?? t(locale, "editorPlaceholder"),
+        // The empty-block hint fades in instead of popping (DESIGN_SYSTEM §6):
+        // `animate-fade` rides on the empty paragraph that owns the ::before.
+        emptyEditorClass: "is-editor-empty animate-fade",
       }),
       TaskList,
       TaskItem.configure({ nested: true }),
@@ -1129,6 +1381,9 @@ export function PageEditor({
       InputRules,
       // Math engine guard: strips banned TeX commands from every equation node.
       MathSafety,
+      // Presentation: block enter/leave motion + a 2px accent drop indicator.
+      BlockMotion,
+      DropIndicator,
       ...(collab
         ? [
             Collaboration.configure({ document: collab.ydoc }),
@@ -1172,6 +1427,16 @@ export function PageEditor({
           );
           mouse.preventDefault();
           return true;
+        },
+        // To-do tick: a task checkbox just changed — play the check draw and
+        // the strikethrough fade (DESIGN_SYSTEM §6, FRONTEND_PLAN 19.9).
+        // Presentation only; the document update itself is untouched.
+        change(_view, event) {
+          const target = event.target;
+          if (target instanceof HTMLInputElement && target.type === "checkbox") {
+            animateTaskTick(target);
+          }
+          return false;
         },
       },
       /**
@@ -1367,6 +1632,20 @@ export function PageEditor({
     editorRef.current = editor;
   }, [editor]);
 
+  // Keyboard parity for the row chrome: keep the ⋮⋮ / + affordances visible
+  // while the editor holds focus, not only on pointer hover (DESIGN_SYSTEM §9).
+  useEffect(() => {
+    if (!editor) return;
+    const onFocus = () => setEditorFocused(true);
+    const onBlur = () => setEditorFocused(false);
+    editor.on("focus", onFocus);
+    editor.on("blur", onBlur);
+    return () => {
+      editor.off("focus", onFocus);
+      editor.off("blur", onBlur);
+    };
+  }, [editor]);
+
   // Seed the shadow history with the document's initial state, once per editor
   // instance, so the first user edit yields exactly one undoable step.
   useEffect(() => {
@@ -1427,10 +1706,11 @@ export function PageEditor({
 
   return (
     <div
-      className="noema-editor relative"
+      className={`noema-editor relative ${dragActiveClass(dragging)}`.trim()}
       data-undo-depth={snapshotDepth.undoable}
       data-redo-depth={snapshotDepth.redoable}
       data-block-selected={blockSelected}
+      data-dragging={dragging ? "true" : undefined}
     >
       {editable && (
         <>
@@ -1452,16 +1732,22 @@ export function PageEditor({
           <DragHandle
             editor={editor}
             nested
+            onNodeChange={({ node, pos }) => {
+              chromePosRef.current = node ? pos : null;
+              setChromeVisible(node !== null);
+            }}
             onElementDragStart={(event) => {
               dragStartXRef.current = event.clientX;
+              beginBlockDrag();
             }}
             onElementDragEnd={() => {
               dragStartXRef.current = null;
+              endBlockDrag();
             }}
           >
-            <span className="noema-drag-handle" aria-hidden>
-              ⠿
-            </span>
+            <EditorRowChrome
+              state={{ hovered: chromeVisible, focused: editorFocused }}
+            />
           </DragHandle>
 
           <HistoryControls editor={editor} locale={locale} />
