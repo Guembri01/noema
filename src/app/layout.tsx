@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { OfflineProvider } from "@/components/providers/offline-provider";
+import { OfflineIndicator } from "@/components/offline-indicator";
 import { UndoRedoProvider } from "@/components/providers/undo-redo-provider";
 import { ActionErrorGuard } from "@/components/action-error-guard";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -39,12 +41,15 @@ export default async function RootLayout({
       <body className="min-h-screen bg-bg text-fg antialiased">
         <ThemeProvider>
           <TooltipProvider delayDuration={400}>
-            <a href="#main" className="skip-link">
-              Skip to content
-            </a>
-            <UndoRedoProvider>{children}</UndoRedoProvider>
-            <ActionErrorGuard locale={locale} />
-            <Toaster />
+            <OfflineProvider>
+              <a href="#main" className="skip-link">
+                Skip to content
+              </a>
+              <UndoRedoProvider>{children}</UndoRedoProvider>
+              <OfflineIndicator />
+              <ActionErrorGuard locale={locale} />
+              <Toaster />
+            </OfflineProvider>
           </TooltipProvider>
         </ThemeProvider>
       </body>
