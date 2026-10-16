@@ -598,3 +598,71 @@ describe("page reference catalogue keys", () => {
     }
   });
 });
+
+/**
+ * R22 — catalogue additions: the sidebar "Recent" section, "Copy as Markdown",
+ * the comment resolved-filter chips, the code-block line-number/caption
+ * toggles, the share "Short link", the chart shape/aggregate controls, the
+ * gallery preview property, named-version labels, the one-level reply notice,
+ * board WIP limits and the group-summary aggregation property. Written
+ * red-first: the keys land in `en` first, so the parity assertions below fail
+ * until all four other catalogues carry the same keys, in the same order, with
+ * real translations.
+ */
+const R22_KEYS = [
+  "recent",
+  "copyAsMarkdown",
+  "commentFilterAll",
+  "commentFilterOpen",
+  "commentFilterResolved",
+  "codeLineNumbers",
+  "codeCaption",
+  "shortLink",
+  "chartType",
+  "chartAggregate",
+  "galleryPreview",
+  "versionName",
+  "versionRename",
+  "linkLimitOneLevel",
+  "wipLimits",
+  "aggregationProperty",
+] as const satisfies readonly I18nKey[];
+
+describe("R22 catalogue keys", () => {
+  it("defines every R22 key in every locale, with no empty value", () => {
+    for (const key of R22_KEYS) {
+      expect({ key, present: translationKeys().includes(key) }).toEqual({ key, present: true });
+      for (const { code } of LOCALES) {
+        expect({ key, code, value: t(code, key).trim() }).toEqual({
+          key,
+          code,
+          value: expect.any(String),
+        });
+        expect(t(code, key).trim()).not.toBe("");
+      }
+    }
+  });
+
+  it("translates each R22 key in at least one shipped locale", () => {
+    // Guards against copying the English value into every catalogue: for each
+    // key, at least one non-English shipped locale must differ from English.
+    for (const key of R22_KEYS) {
+      const localised = LOCALES.some(
+        ({ code }) => code !== "en" && t(code, key) !== t("en", key),
+      );
+      expect({ key, localised }).toEqual({ key, localised: true });
+    }
+  });
+
+  it("keeps the R22 additions in an identical order across every locale", () => {
+    // Additive on purpose: the new keys are appended to each block in the same
+    // sequence, so filtering any locale's key list down to the R22 set must
+    // reproduce this suite's order exactly.
+    for (const { code } of LOCALES) {
+      const ordered = translationKeysFor(code).filter((key) =>
+        (R22_KEYS as readonly string[]).includes(key),
+      );
+      expect({ code, keys: ordered }).toEqual({ code, keys: [...R22_KEYS] });
+    }
+  });
+});
