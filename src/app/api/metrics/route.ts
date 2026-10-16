@@ -1,0 +1,139 @@
+import { NextResponse } from "next/server";
+import { WorkspaceRole } from "@prisma/client";
+import { getCurrentUser } from "@/lib/auth";
+import { prisma } from "@/lib/db";
+import { rateLimit } from "@/lib/api-guard";
+import type { LogRecord, MetricsSnapshot as ObservabilitySnapshot } from "@/lib/observability";
+import {
+  effectiveFlags,
+  log,
+  newTraceId,
+  percentileReport,
+  prometheusText,
+  recentLogs,
+  recordCounter,
+  recordHistogram,
+  snapshot,
+  startSpan,
+  withTrace,
+  type LatencyPercentiles,
+} from "@/lib/telemetry";
+import type { FlagResolution } from "@/lib/feature-flag-store";
+
+export const runtime = "nodejs";
+// A scrape must always reflect the live process, never a build-time snapshot.
+export const dynamic = "force-dynamic";
+
+/** How many recent structured log records the payload carries. */
+const RECENT_LOG_LIMIT = 20;
+
+/**
+ * GET /api/metrics — the read side of the observability trio.
+ *
+ * Gated fail-closed by either:
+ * - a valid `x-cron-secret` header equal to `CRON_SECRET`, or
+ * - an authenticated workspace OWNER/ADMIN (a platform-scoped "admin": any
+ *   workspace they own or administer).
+ *
+ * The payload is machine-readable and additive: the canonical `observability`
+ * snapshot (`snapshot()`), per-series `percentiles()` over recorded
+ * observations, the `metrics.ts` Prometheus exposition, the effective feature
+ * flags, and a bounded tail of structured logs. Nothing here mutates state
+ * except its own process-level counters.
+ */
+type MetricsPayload = {
+  status: "ok";
+  via: "cron" | "admin";
+  generatedAt: number;
+  traceId: string;
+  durationMs: number;
+  snapshot: ObservabilitySnapshot;
+  percentiles: readonly LatencyPercentiles[];
+  prometheus: string;
+  flags: readonly FlagResolution[];
+  recentLogs: readonly LogRecord[];
+};
+
+/**
+ * Whether the caller is a workspace OWNER/ADMIN. Metrics are process-wide, so
+ * "admin" is platform-scoped: a member who can administer *any* workspace
+ * qualifies, as does a workspace they own.
+ */
+async function isWorkspaceAdmin(): Promise<boolean> {
+  const user = await getCurrentUser();
+  if (!user) return false;
+
+  const membership = await prisma.workspaceMember.findFirst({
+    where: {
+      userId: user.id,
+      role: { in: [WorkspaceRole.OWNER, WorkspaceRole.ADMIN] },
+    },
+    select: { id: true },
+  });
+  if (membership !== null) return true;
+
+  const owned = await prisma.workspace.findFirst({
+    where: { ownerId: user.id },
+    select: { id: true },
+  });
+  return owned !== null;
+}
+
+/** Resolve the caller's authorization path, or `null` when denied. */
+async function authorize(request: Request): Promise<"cron" | "admin" | null> {
+  const secret = process.env.CRON_SECRET;
+  const provided = request.headers.get("x-cron-secret");
+  if (typeof secret === "string" && secret !== "" && provided === secret) return "cron";
+  if (await isWorkspaceAdmin()) return "admin";
+  return null;
+}
+
+export async function GET(request: Request): Promise<NextResponse> {
+  const limited = rateLimit(request, "metrics", 120, 60_000);
+  if (limited) return limited;
+
+  const via = await authorize(request);
+  if (via === null) {
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401, headers: { "cache-control": "no-store" } },
+    );
+  }
+
+  const traceId = newTraceId();
+  const span = startSpan("metrics.collect", { traceId });
+  const collected = withTrace({ traceId, spanId: span.spanId }, () => ({
+    snapshot: snapshot(),
+    percentiles: percentileReport(),
+    prometheus: prometheusText(),
+    flags: effectiveFlags(),
+  }));
+  const finished = span.end({
+    counters: collected.snapshot.counters.length,
+    histograms: collected.snapshot.histograms.length,
+  });
+
+  recordHistogram("metrics_collect_duration_ms", finished.duration);
+  recordCounter("metrics_scrapes_total", { labels: { via } });
+  log("info", "metrics.scraped", {
+    traceId,
+    via,
+    counters: collected.snapshot.counters.length,
+    histograms: collected.snapshot.histograms.length,
+  });
+
+  const payload: MetricsPayload = {
+    status: "ok",
+    via,
+    generatedAt: Date.now(),
+    traceId,
+    durationMs: finished.duration,
+    snapshot: collected.snapshot,
+    percentiles: collected.percentiles,
+    prometheus: collected.prometheus,
+    flags: collected.flags,
+    recentLogs: recentLogs(RECENT_LOG_LIMIT),
+  };
+
+  return NextResponse.json(payload, { headers: { "cache-control": "no-store" } });
+}

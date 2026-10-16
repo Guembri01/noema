@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { log, recordCounter, recordGauge, recordHistogram } from "@/lib/telemetry";
 
 export const runtime = "nodejs";
 // A probe must always run — never a build-time static snapshot, never cached.
@@ -99,6 +100,24 @@ function reportHeaders(report: HealthReport): Record<string, string> {
   };
 }
 
+/**
+ * Record the probe into the process telemetry registry. Side-effect only: the
+ * frozen JSON body is untouched. This is what makes `observability.ts` a
+ * load-bearing module on a hot path — a probe counter + DB-ping histogram (with
+ * percentiles), an uptime gauge into the `metrics.ts` exposition, and one
+ * structured log line.
+ */
+function recordHealth(db: CheckDetail, report: HealthReport): void {
+  recordCounter("api_health_probe_total", { labels: { status: db.status } });
+  if (db.latencyMs !== null) recordHistogram("api_health_db_ping_ms", db.latencyMs);
+  recordGauge("app_uptime_seconds", report.uptimeSeconds);
+  log(db.status === "up" ? "info" : "warn", "health.probe", {
+    status: report.status,
+    db: db.status,
+    latencyMs: db.latencyMs,
+  });
+}
+
 export async function GET(): Promise<NextResponse<HealthPayload>> {
   const db = await checkDb();
   const payload = composeHealth(db.status === "up");
@@ -108,6 +127,7 @@ export async function GET(): Promise<NextResponse<HealthPayload>> {
     uptimeSeconds: Math.round(process.uptime()),
     checks: { db },
   };
+  recordHealth(db, report);
   return NextResponse.json(payload, {
     status: report.status === "down" ? 503 : 200,
     headers: { "cache-control": "no-store", ...reportHeaders(report) },
