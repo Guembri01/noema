@@ -16,6 +16,14 @@ import { formatUniqueId, isValidPrefix, type UniqueIdConfig } from "@/lib/unique
 import { formatGeo, normalizeGeo, parseGeo } from "@/lib/geo";
 import { formatDateRange, isValidTimeZone, type DateValue } from "@/lib/date-range";
 import {
+  computeReminderTimes,
+  describeOffset,
+  parseReminderOffset,
+  type ReminderDirection,
+  type ReminderOffset,
+  type ReminderUnit,
+} from "@/lib/date-reminder";
+import {
   describeFormat,
   formatNumberValue,
   validateFormatSpec,
@@ -47,6 +55,16 @@ const DEFAULT_SEPARATOR = "-";
 /** Mapbox-style zoom bounds for the Place default-zoom control. */
 const MIN_ZOOM = 0;
 const MAX_ZOOM = 22;
+
+/** Reminder unit/direction choices offered by the DATE reminder editor. */
+const REMINDER_UNITS: readonly ReminderUnit[] = ["minutes", "hours", "days"];
+const REMINDER_DIRECTIONS: readonly ReminderDirection[] = ["before", "after"];
+/** A freshly-added reminder: one day before the due instant. */
+const DEFAULT_REMINDER: ReminderOffset = {
+  amount: 1,
+  unit: "days",
+  direction: "before",
+};
 
 /** Fixed sample bounds so the DATE preview never depends on the wall clock. */
 const PREVIEW_START = "2026-03-03";
@@ -86,6 +104,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function readButton(config: PropertyConfig): unknown {
   if (!config || !("button" in config)) return undefined;
   return (config as { button?: unknown }).button;
+}
+
+/**
+ * Read the optional top-level `reminders` list off a property config. The shared
+ * `PropertyConfig` type is closed, so the key is read defensively (like
+ * `readNumberFormat`); every entry is re-checked by the engine's
+ * `parseReminderOffset`, so an untrusted stored list can only drop an offset,
+ * never poison the editor.
+ */
+function readReminders(config: PropertyConfig): ReminderOffset[] {
+  const container = config as Record<string, unknown> | null;
+  if (!container) return [];
+  const raw = container.reminders;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => parseReminderOffset(entry))
+    .filter((entry): entry is ReminderOffset => entry !== null);
 }
 
 /** Editable draft of a BUTTON property's `config.button`. */
@@ -399,16 +434,25 @@ export function PropertyOptionsEditor({
   const [zoomText, setZoomText] = useState(
     property.config?.place?.zoom !== undefined ? String(property.config.place.zoom) : "",
   );
+  const [labelText, setLabelText] = useState(property.config?.place?.label ?? "");
 
   const placeParse = parseGeo(`${latText},${lngText}`);
   const placeCenter = placeParse.ok ? normalizeGeo(placeParse.value) : null;
-  const placePreview = placeCenter ? formatGeo(placeCenter) : null;
+  const placeLabel = labelText.trim();
+  const placePreview = placeCenter
+    ? `${placeLabel !== "" ? `${placeLabel} · ` : ""}${formatGeo(placeCenter)}`
+    : null;
   const placeError =
     latText.trim() !== "" && lngText.trim() !== "" && !placeParse.ok
       ? placeParse.error
       : null;
 
-  const commitPlace = (patch: { lat?: string; lng?: string; zoom?: string }) => {
+  const commitPlace = (patch: {
+    lat?: string;
+    lng?: string;
+    zoom?: string;
+    label?: string;
+  }) => {
     const lat = patch.lat ?? latText;
     const lng = patch.lng ?? lngText;
     const zoomRaw = patch.zoom ?? zoomText;
@@ -419,11 +463,13 @@ export function PropertyOptionsEditor({
         : undefined;
     const parsed = parseGeo(`${lat},${lng}`);
     const center = parsed.ok ? normalizeGeo(parsed.value) : null;
+    const label = (patch.label ?? labelText).trim();
     persist({
       ...(configRef.current ?? {}),
       place: {
         ...(center ? { lat: center.lat, lng: center.lng } : {}),
         ...(zoom !== undefined ? { zoom } : {}),
+        ...(label !== "" ? { label } : {}),
       },
     });
   };
@@ -433,6 +479,11 @@ export function PropertyOptionsEditor({
   const [allDay, setAllDay] = useState(property.config?.date?.allDay ?? true);
   const [timeZoneText, setTimeZoneText] = useState(
     property.config?.date?.timeZone ?? "",
+  );
+  // Reminder offsets around the due date (`@/lib/date-reminder`); every write is
+  // re-validated by `parseReminderOffset` so only well-formed offsets persist.
+  const [reminders, setReminders] = useState<ReminderOffset[]>(() =>
+    readReminders(property.config),
   );
 
   const timeZoneTrimmed = timeZoneText.trim();
@@ -444,6 +495,13 @@ export function PropertyOptionsEditor({
     ...(isValidTimeZone(timeZoneTrimmed) ? { timeZone: timeZoneTrimmed } : {}),
   };
   const datePreview = formatDateRange(previewRange);
+
+  // Engine-computed reminder instants for a fixed sample due date, so the
+  // preview never depends on the wall clock.
+  const reminderPreview =
+    reminders.length > 0
+      ? computeReminderTimes(PREVIEW_START, reminders).join(", ")
+      : null;
 
   const commitDate = (patch: {
     allowRange?: boolean;
@@ -463,6 +521,31 @@ export function PropertyOptionsEditor({
       },
     });
   };
+
+  /**
+   * Replace the reminder list. Candidates pass through the engine's
+   * `parseReminderOffset`, so a malformed offset is dropped rather than stored.
+   */
+  const commitReminders = (next: ReminderOffset[]) => {
+    const validated = next
+      .map((entry) => parseReminderOffset(entry))
+      .filter((entry): entry is ReminderOffset => entry !== null);
+    setReminders(validated);
+    persist({
+      ...(configRef.current ?? {}),
+      reminders: validated,
+    } as unknown as PropertyConfig);
+  };
+
+  const addReminder = () => commitReminders([...reminders, DEFAULT_REMINDER]);
+
+  const updateReminder = (index: number, patch: Partial<ReminderOffset>) =>
+    commitReminders(
+      reminders.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)),
+    );
+
+  const removeReminder = (index: number) =>
+    commitReminders(reminders.filter((_, i) => i !== index));
 
   // --- NUMBER: display style / decimals / currency -------------------------
   // The spec is normalized on read and every write, so an untrusted stored
@@ -744,6 +827,20 @@ export function PropertyOptionsEditor({
               className={cn(CONTROL_CLASS, "w-24")}
             />
           </label>
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <span className="w-24 shrink-0">Label</span>
+            <input
+              data-testid="place-label"
+              aria-label="Default place label"
+              placeholder="e.g. HQ"
+              value={labelText}
+              onChange={(event) => {
+                setLabelText(event.target.value);
+                commitPlace({ label: event.target.value });
+              }}
+              className={cn(CONTROL_CLASS, "flex-1")}
+            />
+          </label>
           {placeError && (
             <p className="text-xs text-red-500" data-testid="place-error">
               {placeError}
@@ -810,6 +907,100 @@ export function PropertyOptionsEditor({
               {datePreview}
             </span>
           </p>
+          <div className="space-y-2" data-testid="date-reminder-config">
+            <h4 className="text-xs font-medium">Reminders</h4>
+            {reminders.length === 0 && (
+              <p className="text-xs text-muted" data-testid="date-reminder-empty">
+                No reminders. Add one to notify before or after the due date.
+              </p>
+            )}
+            {reminders.map((reminder, index) => (
+              <div
+                key={`${index}-${reminder.amount}-${reminder.unit}-${reminder.direction}`}
+                className="flex items-center gap-1"
+                data-testid="date-reminder-row"
+              >
+                <input
+                  data-testid="date-reminder-amount"
+                  aria-label={`Reminder amount (${describeOffset(reminder)})`}
+                  type="number"
+                  min={0}
+                  value={String(reminder.amount)}
+                  onChange={(event) => {
+                    const amount = Number.parseInt(event.target.value, 10);
+                    if (Number.isInteger(amount) && amount >= 0) {
+                      updateReminder(index, { amount });
+                    }
+                  }}
+                  className={cn(CONTROL_CLASS, "w-16")}
+                />
+                <select
+                  data-testid="date-reminder-unit"
+                  aria-label="Reminder unit"
+                  value={reminder.unit}
+                  onChange={(event) => {
+                    const unit = REMINDER_UNITS.find(
+                      (candidate) => candidate === event.target.value,
+                    );
+                    if (unit) updateReminder(index, { unit });
+                  }}
+                  className={cn(CONTROL_CLASS, "w-24")}
+                >
+                  {REMINDER_UNITS.map((unit) => (
+                    <option key={unit} value={unit}>
+                      {unit}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  data-testid="date-reminder-direction"
+                  aria-label="Reminder direction"
+                  value={reminder.direction}
+                  onChange={(event) => {
+                    const direction = REMINDER_DIRECTIONS.find(
+                      (candidate) => candidate === event.target.value,
+                    );
+                    if (direction) updateReminder(index, { direction });
+                  }}
+                  className={cn(CONTROL_CLASS, "w-20")}
+                >
+                  {REMINDER_DIRECTIONS.map((direction) => (
+                    <option key={direction} value={direction}>
+                      {direction}
+                    </option>
+                  ))}
+                </select>
+                <span className="flex-1 text-xs text-muted" data-testid="date-reminder-label">
+                  {describeOffset(reminder)}
+                </span>
+                <button
+                  type="button"
+                  data-testid="date-reminder-remove"
+                  aria-label={`Remove reminder: ${describeOffset(reminder)}`}
+                  onClick={() => removeReminder(index)}
+                  className="text-muted hover:text-red-500"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              data-testid="date-reminder-add"
+              onClick={addReminder}
+              className="flex items-center gap-1 text-xs text-accent"
+            >
+              + Add reminder
+            </button>
+            {reminders.length > 0 && (
+              <p className="text-xs text-muted">
+                Sample due {PREVIEW_START}:{" "}
+                <span className="font-mono" data-testid="date-reminder-preview">
+                  {reminderPreview ?? "—"}
+                </span>
+              </p>
+            )}
+          </div>
         </section>
       )}
 
