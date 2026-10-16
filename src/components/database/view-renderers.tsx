@@ -7,7 +7,6 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpRight,
-  CalendarDays,
   ExternalLink,
   LayoutTemplate,
   Trash2,
@@ -1256,123 +1255,18 @@ export function GalleryView({
 
 /* ---------------------------------------------------------------------------
    Calendar view
+
+   The month grid now lives in `./timeline-chart-views` as the multi-day
+   `CalendarView`: each dated row is projected to a half-open `[start, end)`
+   span and packed into non-overlapping lanes per week by the pure
+   `@/lib/calendar-multiday` engine, so a multi-day event draws one bar across
+   every day it touches instead of collapsing onto its start day. The prop
+   surface is unchanged, so this renderer keeps its existing callers — it is
+   re-exported here to avoid a duplicate implementation drifting from the one
+   that is actually rendered.
    --------------------------------------------------------------------------- */
 
-export function CalendarView({
-  locale,
-  workspaceSlug,
-  properties,
-  rows,
-  valueFor,
-}: {
-  locale: string;
-  workspaceSlug: string;
-  properties: DBProperty[];
-  rows: DBRow[];
-  valueFor: (row: DBRow, propertyId: string) => unknown;
-}) {
-  const dateProperty = properties.find((p) => p.type === "DATE");
-  const [month, setMonth] = useState(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
-  });
-
-  if (!dateProperty) {
-    return (
-      <p className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted">
-        {t(locale, "calendarNeedsDate")}
-      </p>
-    );
-  }
-
-  const year = month.getFullYear();
-  const monthIndex = month.getMonth();
-  const firstWeekday = new Date(year, monthIndex, 1).getDay();
-  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-  const cells: (Date | null)[] = [];
-  for (let i = 0; i < firstWeekday; i += 1) cells.push(null);
-  for (let day = 1; day <= daysInMonth; day += 1) {
-    cells.push(new Date(year, monthIndex, day));
-  }
-
-  const today = new Date();
-  const eventsFor = (day: Date) =>
-    rows.filter((row) => {
-      const value = valueFor(row, dateProperty.id) as { start?: string } | undefined;
-      if (!value?.start) return false;
-      const date = new Date(value.start);
-      return (
-        date.getFullYear() === day.getFullYear() &&
-        date.getMonth() === day.getMonth() &&
-        date.getDate() === day.getDate()
-      );
-    });
-
-  const shift = (delta: number) => setMonth(new Date(year, monthIndex + delta, 1));
-
-  return (
-    <div>
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <CalendarDays className="h-4 w-4 text-muted" />
-          <button type="button" onClick={() => shift(-1)} aria-label={t(locale, "previousMonth")} className="rounded px-2 py-0.5 text-muted hover:bg-surface-2">
-            ‹
-          </button>
-          <span className="text-sm font-medium">
-            {month.toLocaleString(undefined, { month: "long", year: "numeric" })}
-          </span>
-          <button type="button" onClick={() => shift(1)} aria-label={t(locale, "nextMonth")} className="rounded px-2 py-0.5 text-muted hover:bg-surface-2">
-            ›
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={() => setMonth(new Date(today.getFullYear(), today.getMonth(), 1))}
-          className="text-xs text-muted hover:text-fg"
-        >
-          {t(locale, "todayWord")}
-        </button>
-      </div>
-
-      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-lg border border-border bg-border text-xs">
-        {(["wdSun", "wdMon", "wdTue", "wdWed", "wdThu", "wdFri", "wdSat"] as const).map(
-          (weekday) => (
-            <div key={weekday} className="bg-surface px-2 py-1 font-medium text-muted">
-              {t(locale, weekday)}
-            </div>
-          ),
-        )}
-        {cells.map((day, index) => (
-          <div key={index} className="min-h-24 bg-bg p-1.5">
-            {day && (
-              <>
-                <div
-                  className={cn(
-                    "mb-1 text-xs text-muted",
-                    day.toDateString() === today.toDateString() && "font-bold text-accent",
-                  )}
-                >
-                  {day.getDate()}
-                </div>
-                <div className="space-y-1">
-                  {eventsFor(day).map((row) => (
-                    <Link
-                      key={row.id}
-                      href={`/w/${workspaceSlug}/${row.id}`}
-                      className="block truncate rounded bg-surface-2 px-1.5 py-0.5 text-xs hover:bg-surface"
-                    >
-                      {row.title || t(locale, "untitled")}
-                    </Link>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+export { CalendarView } from "./timeline-chart-views";
 
 /* ---------------------------------------------------------------------------
    Form view
