@@ -61,6 +61,95 @@ import {
   type PullQuoteBlock,
 } from "@/lib/pull-quote";
 import { t } from "@/lib/i18n";
+import { DUR, EASE } from "@/lib/design-tokens";
+import { prefersReducedMotion } from "@/components/editor/extensions/animated-image";
+
+/* ------------------------------------------------------------- motion (§6/§19) */
+
+/**
+ * Toggle / callout expand motion (DESIGN_SYSTEM §6, FRONTEND_PLAN 19.10): the
+ * body animates height + opacity over the base duration while the chevron
+ * rotates a quarter turn. Pure mapping so the view and its test agree.
+ */
+export type ExpandMotion = {
+  className: string;
+  duration: number;
+  easing: string;
+  chevronTransform: string;
+};
+
+export function toggleExpandMotion(open: boolean): ExpandMotion {
+  return {
+    className: open ? "noema-toggle-open" : "noema-toggle-closed",
+    duration: DUR.base,
+    easing: EASE.smooth,
+    chevronTransform: open ? "rotate(90deg)" : "rotate(0deg)",
+  };
+}
+
+/**
+ * To-do tick motion (DESIGN_SYSTEM §6, FRONTEND_PLAN 19.9): a short check draw
+ * followed by a slightly longer strikethrough fade on the text. The brief's
+ * 160 ms / 200 ms land on the shared duration tokens — the design system allows
+ * no ad-hoc millisecond values — while keeping the draw shorter than the fade.
+ */
+export type CheckboxTickMotion = {
+  className: string;
+  draw: number;
+  strike: number;
+  easing: string;
+};
+
+export function checkboxTickMotion(checked: boolean): CheckboxTickMotion {
+  return {
+    className: checked ? "noema-task-checked" : "noema-task-unchecked",
+    draw: DUR.fast,
+    strike: DUR.base,
+    easing: EASE.smooth,
+  };
+}
+
+/**
+ * Play the to-do tick for a checkbox the user just toggled: a short scale/opacity
+ * pop on the check, then the strikethrough colour fading in on the sibling text.
+ * Pure presentation — reads the rendered DOM only, never the document, and
+ * no-ops under reduced motion. `input.checked` already holds the new value when
+ * the DOM `change` event reaches the editor.
+ */
+export function animateTaskTick(input: HTMLInputElement): void {
+  if (prefersReducedMotion()) return;
+  const item = input.closest("li[data-checked]");
+  if (!(item instanceof HTMLElement)) return;
+  const motion = checkboxTickMotion(input.checked);
+  item.classList.add(motion.className);
+  window.setTimeout(() => item.classList.remove(motion.className), motion.strike + 40);
+  if (typeof input.animate === "function") {
+    const animation = input.animate(
+      input.checked
+        ? [
+            { transform: "scale(0.6)", opacity: 0.4 },
+            { transform: "scale(1)", opacity: 1 },
+          ]
+        : [
+            { transform: "scale(1.15)", opacity: 1 },
+            { transform: "scale(1)", opacity: 1 },
+          ],
+      { duration: motion.draw, easing: motion.easing },
+    );
+    animation.addEventListener("finish", () => animation.cancel());
+  }
+  const text = item.querySelector("p");
+  if (text instanceof HTMLElement && typeof text.animate === "function") {
+    const fade = text.animate(
+      [
+        { textDecorationColor: input.checked ? "transparent" : "currentColor" },
+        { textDecorationColor: input.checked ? "currentColor" : "transparent" },
+      ],
+      { duration: motion.strike, easing: motion.easing },
+    );
+    fade.addEventListener("finish", () => fade.cancel());
+  }
+}
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -155,7 +244,7 @@ function CalloutView({ node, updateAttributes, locale }: NodeViewProps & { local
 
   return (
     <NodeViewWrapper
-      className="noema-callout"
+      className="noema-callout animate-fade"
       data-callout=""
       style={{ background: color }}
     >
@@ -262,6 +351,7 @@ export const Toggle = Node.create<{ locale: string }>({
 
 function ToggleView({ node, updateAttributes, locale }: NodeViewProps & { locale: string }) {
   const open = Boolean(node.attrs.open);
+  const motion = toggleExpandMotion(open);
   return (
     <NodeViewWrapper className="noema-toggle" data-toggle="">
       <div className="noema-toggle-header" contentEditable={false}>
@@ -274,7 +364,10 @@ function ToggleView({ node, updateAttributes, locale }: NodeViewProps & { locale
         >
           <ChevronRight
             className="h-3.5 w-3.5"
-            style={{ transform: open ? "rotate(90deg)" : "none" }}
+            style={{
+              transform: motion.chevronTransform,
+              transition: "transform var(--dur-2) var(--ease-smooth)",
+            }}
           />
         </button>
         <input
@@ -284,11 +377,25 @@ function ToggleView({ node, updateAttributes, locale }: NodeViewProps & { locale
           className="noema-toggle-summary"
         />
       </div>
+      {/*
+       * Height animates with the `grid-template-rows: 0fr → 1fr` technique, so
+       * the change is measured-free and never jumps (DESIGN_SYSTEM §6,
+       * FRONTEND_PLAN 19.10); `inert` keeps collapsed content out of the tab
+       * order and hidden from assistive tech, matching the old `display: none`.
+       */}
       <div
         className="noema-toggle-body"
-        style={{ display: open ? undefined : "none" }}
+        aria-hidden={open ? undefined : true}
+        inert={open ? undefined : true}
+        style={{
+          display: "grid",
+          gridTemplateRows: open ? "1fr" : "0fr",
+          opacity: open ? 1 : 0,
+          transition:
+            "grid-template-rows var(--dur-2) var(--ease-smooth), opacity var(--dur-2) var(--ease-smooth)",
+        }}
       >
-        <NodeViewContent />
+        <NodeViewContent style={{ overflow: "hidden", minHeight: 0 }} />
       </div>
     </NodeViewWrapper>
   );
@@ -752,22 +859,43 @@ const COLUMN_MIN_WIDTH_PX = 64;
 /** How far one Arrow keypress moves a focused divider. */
 const COLUMN_NUDGE_PX = 16;
 
-/** Shared style for the container's add/remove toolbar buttons. */
-const COLUMN_TOOLBAR_BUTTON_STYLE: ReactCSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: "20px",
-  height: "20px",
-  padding: "0",
-  fontSize: "14px",
-  lineHeight: "1",
-  color: "var(--muted)",
-  background: "var(--surface-2)",
-  border: "1px solid var(--border)",
-  borderRadius: "4px",
-  cursor: "pointer",
-};
+/**
+ * Style for the container's add/remove toolbar buttons: the accent token marks
+ * the controls as actions, with the disabled state falling back to muted
+ * (DESIGN_SYSTEM §2/§8, FRONTEND_PLAN 19.15).
+ */
+export function columnControlStyle(disabled: boolean): ReactCSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "20px",
+    height: "20px",
+    padding: "0",
+    fontSize: "14px",
+    lineHeight: "1",
+    color: disabled ? "var(--muted)" : "var(--accent)",
+    background: disabled ? "var(--surface-2)" : "var(--accent-soft)",
+    border: `1px solid ${disabled ? "var(--border)" : "var(--accent)"}`,
+    borderRadius: "4px",
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.5 : 1,
+  };
+}
+
+/**
+ * The columns toolbar fades in on container hover (and while a control inside
+ * it holds focus, for keyboard parity), mirroring the block row chrome.
+ */
+export function columnsToolbarClass(): string {
+  return [
+    "noema-columns-toolbar",
+    "u-colors",
+    "pointer-events-none opacity-0",
+    "group-hover:pointer-events-auto group-hover:opacity-100",
+    "focus-within:pointer-events-auto focus-within:opacity-100",
+  ].join(" ");
+}
 
 /** A column's stored weight when it is a usable positive number, else `null`. */
 function columnWidthAttr(value: unknown): number | null {
@@ -946,12 +1074,12 @@ function ColumnsView({ node, editor, getPos, locale }: NodeViewProps & { locale:
   };
 
   return (
-    <NodeViewWrapper className="noema-columns" style={{ position: "relative" }}>
+    <NodeViewWrapper className="noema-columns group" style={{ position: "relative" }}>
       {/* The content element doubles as the flex row the CSS targets. */}
       <NodeViewContent className="noema-columns-content" data-columns="" />
       {editable && (
         <div
-          className="noema-columns-toolbar"
+          className={columnsToolbarClass()}
           contentEditable={false}
           style={{
             position: "absolute",
@@ -968,7 +1096,7 @@ function ColumnsView({ node, editor, getPos, locale }: NodeViewProps & { locale:
             title={t(locale, "add")}
             disabled={!canAdd}
             onClick={append}
-            style={COLUMN_TOOLBAR_BUTTON_STYLE}
+            style={columnControlStyle(!canAdd)}
           >
             +
           </button>
@@ -978,7 +1106,7 @@ function ColumnsView({ node, editor, getPos, locale }: NodeViewProps & { locale:
             title={t(locale, "remove")}
             disabled={!canRemove}
             onClick={removeLast}
-            style={COLUMN_TOOLBAR_BUTTON_STYLE}
+            style={columnControlStyle(!canRemove)}
           >
             −
           </button>
