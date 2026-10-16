@@ -1,10 +1,19 @@
 "use client";
 
-import { useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Archive,
+  ArrowDown,
+  ArrowUp,
   ArrowUpDown,
   Bookmark,
   CalendarDays,
@@ -17,6 +26,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,7 +35,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Input } from "@/components/ui/input";
+import { Kbd } from "@/components/ui/kbd";
+import { Segmented, type SegmentedOption } from "@/components/ui/segmented";
+import { Select, type SelectOption } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Tooltip } from "@/components/ui/tooltip";
 import { deleteTicketViewAction } from "@/server/actions/ticket-views";
 import { TicketBulkActions } from "./ticket-bulk-actions";
 import {
@@ -37,9 +53,9 @@ import {
 } from "@/lib/saved-views";
 import { TICKET_PRIORITIES, TICKET_STATUSES, formatEstimate } from "@/lib/tickets";
 import { t } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
-import type { LabelRow } from "./ticket-types";
+import type { LabelRow, TicketRow } from "./ticket-types";
 import type { TicketSortField, TicketSortSpec } from "./ticket-view-renderers";
+import { TicketComposerDialog } from "./ticket-composer";
 
 /** The three ticket layouts the toolbar switches between. */
 type TicketView = "list" | "board" | "timeline";
@@ -54,6 +70,14 @@ type TicketFilterState = {
   projectId: string;
   hideClosed: boolean;
 };
+
+/** The five filter fields that surface as `Select` controls. */
+export type TicketFilterKey = "status" | "priority" | "label" | "assignee" | "project";
+
+/** Per-option counts, one map per filter field. */
+export type TicketFilterCounts = Partial<
+  Record<TicketFilterKey, Readonly<Record<string, number>>>
+>;
 
 /**
  * Ticket presets bridge the toolbar to `@/lib/saved-views`, whose `SavedView` is
@@ -83,7 +107,7 @@ const TICKET_FILTER_FIELDS = [
  * Typed as a complete record, so adding a field to `TicketSortField` fails the
  * build until it is mapped here too.
  */
-const TICKET_SORT_SPECS: Record<TicketSortField, Omit<TicketSortSpec, "dir">> = {
+export const TICKET_SORT_SPECS: Record<TicketSortField, Omit<TicketSortSpec, "dir">> = {
   estimate: { propertyId: "estimate", type: "number" },
   priority: {
     propertyId: "priority",
@@ -100,7 +124,7 @@ const TICKET_SORT_SPECS: Record<TicketSortField, Omit<TicketSortSpec, "dir">> = 
 };
 
 /** Field labels, one per sortable field (same exhaustiveness guarantee). */
-const TICKET_SORT_LABELS: Record<TicketSortField, string> = {
+export const TICKET_SORT_LABELS: Record<TicketSortField, string> = {
   estimate: "Estimate",
   priority: "Priority",
   status: "Status",
@@ -109,11 +133,121 @@ const TICKET_SORT_LABELS: Record<TicketSortField, string> = {
 };
 
 /** The sortable fields in the order the control offers them. */
-const TICKET_SORT_FIELDS = Object.keys(TICKET_SORT_SPECS) as TicketSortField[];
+export const TICKET_SORT_FIELDS = Object.keys(TICKET_SORT_SPECS) as TicketSortField[];
 
-/** Narrow a `<select>` value back to a sortable field. */
-function isTicketSortField(value: string): value is TicketSortField {
+/** Narrow a string back to a sortable field. */
+export function isTicketSortField(value: string): value is TicketSortField {
   return value in TICKET_SORT_SPECS;
+}
+
+/** The view switcher's options. */
+const TICKET_VIEW_OPTIONS: readonly SegmentedOption<TicketView>[] = [
+  { value: "list", label: "List", icon: <List className="h-3.5 w-3.5" /> },
+  { value: "board", label: "Board", icon: <Rows3 className="h-3.5 w-3.5" /> },
+  { value: "timeline", label: "Timeline", icon: <CalendarDays className="h-3.5 w-3.5" /> },
+];
+
+/* -------------------------------------------------------------------------- *
+ * Pure mappings — option building, sort state, saved-view chips
+ * -------------------------------------------------------------------------- */
+
+/** A filter option before counts are folded in. */
+export type FilterChoice = { value: string; label: string; icon?: string | null };
+
+/**
+ * Fold a count into an option label. A missing count leaves the label alone;
+ * a present one (including `0`) renders as `"Label · 3"` so the count travels
+ * with the option through search and the trigger alike.
+ */
+export function countedLabel(label: string, count: number | undefined): string {
+  return count === undefined ? label : `${label} · ${count}`;
+}
+
+/** Build the `SelectOption[]` for one filter, folding per-option counts in. */
+export function buildFilterOptions(
+  choices: readonly FilterChoice[],
+  counts?: Readonly<Record<string, number>>,
+): SelectOption[] {
+  return choices.map((choice) => ({
+    value: choice.value,
+    label: countedLabel(choice.label, counts?.[choice.value]),
+    ...(choice.icon ? { icon: <span aria-hidden>{choice.icon}</span> } : {}),
+  }));
+}
+
+/**
+ * Count tickets per option for one filter field. Status/priority count the
+ * scalar; a label counts every ticket that carries it (a ticket may carry
+ * several); assignee/project skip unset values so a blank relation never grows
+ * an "empty" bucket. Pure, so the counts are pinned without a DOM.
+ */
+export function ticketFilterCounts(
+  tickets: readonly TicketRow[],
+  field: TicketFilterKey,
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  const bump = (key: string | null) => {
+    if (!key) return;
+    counts[key] = (counts[key] ?? 0) + 1;
+  };
+  for (const ticket of tickets) {
+    if (field === "status") bump(ticket.status);
+    else if (field === "priority") bump(ticket.priority);
+    else if (field === "assignee") bump(ticket.assigneeId);
+    else if (field === "project") bump(ticket.projectId);
+    else for (const labelId of ticket.labelIds) bump(labelId);
+  }
+  return counts;
+}
+
+/** The toolbar's sort control state. An empty `field` means "unsorted". */
+export type TicketSortState = {
+  field: TicketSortField | "";
+  direction: TicketSortSpec["dir"];
+};
+
+/** Default sort state: unsorted, ascending. */
+export const TICKET_SORT_DEFAULT: TicketSortState = { field: "", direction: "asc" };
+
+/** Flip a sort direction. */
+export function nextSortDirection(direction: TicketSortSpec["dir"]): TicketSortSpec["dir"] {
+  return direction === "asc" ? "desc" : "asc";
+}
+
+/** Toggle the current direction, keeping the field. Pure — pinned by the test. */
+export function toggleSortDirection(state: TicketSortState): TicketSortState {
+  return { ...state, direction: nextSortDirection(state.direction) };
+}
+
+/**
+ * Resolve a sort state to the engine's `TicketSortSpec`, or `null` when no
+ * field is chosen (the caller clears the view's sort).
+ */
+export function ticketSortSpec(state: TicketSortState): TicketSortSpec | null {
+  if (state.field === "") return null;
+  return { ...TICKET_SORT_SPECS[state.field], dir: state.direction };
+}
+
+/** One saved-view chip: its identity, label, and whether it is the active one. */
+export type SavedViewChip = { id: string; name: string; active: boolean };
+
+/** Map saved views to chips, flagging the active one. Pure. */
+export function buildSavedViewChips(
+  views: readonly { id: string; name: string }[],
+  activeId?: string | null,
+): SavedViewChip[] {
+  return views.map((view) => ({
+    id: view.id,
+    name: view.name,
+    active: activeId !== undefined && activeId !== null && view.id === activeId,
+  }));
+}
+
+/** Per-label counts, taken straight off the `LabelRow[]` the toolbar already holds. */
+function countsFromLabels(labels: readonly LabelRow[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const label of labels) counts[label.id] = label.count;
+  return counts;
 }
 
 /** One `FilterNode` per active toolbar filter; inactive filters are omitted. */
@@ -179,6 +313,17 @@ export type RunAction = (
   task: () => Promise<{ ok: boolean; message?: string }>,
 ) => void;
 
+/**
+ * The optional dialog-mounted composer. When the caller wires this up the
+ * toolbar's primary action opens the design-system dialog instead of toggling
+ * the inline composer row; omitting it keeps the original inline behaviour.
+ */
+export type TicketComposerDialogConfig = {
+  onSubmit: (form: FormData) => void;
+  pending?: boolean;
+  labels?: LabelRow[];
+};
+
 /** Toolbar: view switcher, search, filters, saved views, plus the rollup bar. */
 export function TicketsToolbar({
   view,
@@ -213,6 +358,9 @@ export function TicketsToolbar({
   checked,
   setChecked,
   onSortChange,
+  counts,
+  tickets,
+  composerDialog,
 }: {
   view: "list" | "board" | "timeline";
   setView: Dispatch<SetStateAction<"list" | "board" | "timeline">>;
@@ -253,6 +401,15 @@ export function TicketsToolbar({
    * purely additive and the existing filters/presets are untouched.
    */
   onSortChange?: (spec: TicketSortSpec | null) => void;
+  /** Per-option counts; omitted fields simply render without a count. */
+  counts?: TicketFilterCounts;
+  /**
+   * Optional ticket set used to derive per-option counts when `counts` is not
+   * supplied. Label counts always come from `labels[].count`.
+   */
+  tickets?: readonly TicketRow[];
+  /** Optional dialog composer; see {@link TicketComposerDialogConfig}. */
+  composerDialog?: TicketComposerDialogConfig;
 }) {
   // The archive view lives one segment under the board. Derive it from the
   // current pathname so the toolbar stays self-contained (no extra prop) — the
@@ -267,14 +424,35 @@ export function TicketsToolbar({
 
   // Sort field + direction. Kept locally so the control renders, and mirrored
   // into the parent's view state through the optional `onSortChange` writer.
-  const [sortField, setSortField] = useState<TicketSortField | "">("");
-  const [sortDirection, setSortDirection] = useState<TicketSortSpec["dir"]>("asc");
+  const [sort, setSort] = useState<TicketSortState>(TICKET_SORT_DEFAULT);
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  // `/` focuses the search field, the way the hint promises (and only when the
+  // user is not already typing somewhere).
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      searchRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   /** Set the toolbar's sort and write it (or `null`) to the view state. */
-  const changeSort = (field: TicketSortField | "", direction: TicketSortSpec["dir"]) => {
-    setSortField(field);
-    setSortDirection(direction);
-    onSortChange?.(field === "" ? null : { ...TICKET_SORT_SPECS[field], dir: direction });
+  const applySort = (next: TicketSortState) => {
+    setSort(next);
+    onSortChange?.(ticketSortSpec(next));
   };
 
   const liveFilters: TicketFilterState = {
@@ -327,193 +505,243 @@ export function TicketsToolbar({
   const removePreset = (id: string) =>
     setPresets((previous) => previous.filter((candidate) => candidate.id !== id));
 
+  const filterCounts = useMemo((): TicketFilterCounts => {
+    const fromTickets = (field: TicketFilterKey): Record<string, number> | undefined =>
+      tickets ? ticketFilterCounts(tickets, field) : undefined;
+    return {
+      status: counts?.status ?? fromTickets("status"),
+      priority: counts?.priority ?? fromTickets("priority"),
+      label: counts?.label ?? countsFromLabels(labels),
+      assignee: counts?.assignee ?? fromTickets("assignee"),
+      project: counts?.project ?? fromTickets("project"),
+    };
+  }, [counts, labels, tickets]);
+
+  const statusOptions = useMemo(
+    () =>
+      buildFilterOptions(
+        TICKET_STATUSES.map((status) => ({ value: status.id, label: status.label })),
+        filterCounts.status,
+      ),
+    [filterCounts.status],
+  );
+  const priorityOptions = useMemo(
+    () =>
+      buildFilterOptions(
+        TICKET_PRIORITIES.map((priority) => ({ value: priority.id, label: priority.label })),
+        filterCounts.priority,
+      ),
+    [filterCounts.priority],
+  );
+  const labelOptions = useMemo(
+    () =>
+      buildFilterOptions(
+        labels.map((label) => ({ value: label.id, label: label.name })),
+        filterCounts.label,
+      ),
+    [filterCounts.label, labels],
+  );
+  const assigneeOptions = useMemo(
+    () =>
+      buildFilterOptions(
+        members.map((member) => ({ value: member.id, label: member.name })),
+        filterCounts.assignee,
+      ),
+    [filterCounts.assignee, members],
+  );
+  const projectOptions = useMemo(
+    () =>
+      buildFilterOptions(
+        projects.map((project) => ({
+          value: project.id,
+          label: project.name,
+          icon: project.icon,
+        })),
+        filterCounts.project,
+      ),
+    [filterCounts.project, projects],
+  );
+  const sortOptions = useMemo(
+    (): SelectOption[] =>
+      TICKET_SORT_FIELDS.map((field) => ({ value: field, label: TICKET_SORT_LABELS[field] })),
+    [],
+  );
+
+  const savedViewChips = useMemo(() => buildSavedViewChips(views), [views]);
+  const presetChips = useMemo(() => buildSavedViewChips(presets), [presets]);
+  const closedPercent = filteredCount > 0 ? Math.round((closed / filteredCount) * 100) : 0;
+
+  const openComposer = () => {
+    if (composerDialog) setDialogOpen(true);
+    else setComposerOpen((value) => !value);
+  };
+
   return (
     <>
       {/* Toolbar */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
-          {[
-            { id: "list" as const, label: "List", icon: List },
-            { id: "board" as const, label: "Board", icon: Rows3 },
-            { id: "timeline" as const, label: "Timeline", icon: CalendarDays },
-          ].map((option) => {
-            const Icon = option.icon;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                aria-pressed={view === option.id}
-                onClick={() => setView(option.id)}
-                className={cn(
-                  "flex h-8 items-center gap-1 rounded px-2 text-sm",
-                  view === option.id ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2",
-                )}
-              >
-                <Icon className="h-3.5 w-3.5" /> {option.label}
-              </button>
-            );
-          })}
-        </div>
+      <div className="mb-4 flex flex-wrap items-center gap-2" data-testid="tickets-toolbar">
+        <Segmented<TicketView>
+          ariaLabel="Ticket layout"
+          options={TICKET_VIEW_OPTIONS}
+          value={view}
+          onValueChange={(next) => setView(next)}
+          size="sm"
+        />
 
         {/* Entry point for the archive view — the flip side of the board's
             archive action, sitting beside the list/board/timeline switcher. */}
-        <Link
-          href={archiveHref}
-          aria-label="Archived tickets"
-          data-testid="tickets-archive-link"
-          className="flex h-8 items-center gap-1 rounded border border-border px-2 text-sm text-muted hover:bg-surface-2"
-        >
-          <Archive className="h-3.5 w-3.5" /> Archive
-        </Link>
+        <Button asChild variant="secondary" size="sm" leftIcon={<Archive className="h-3.5 w-3.5" />}>
+          <Link href={archiveHref} aria-label="Archived tickets" data-testid="tickets-archive-link">
+            Archive
+          </Link>
+        </Button>
 
-        <span className="relative">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
-          <input
+        {/* Search: the primitive field with a clear affordance and a `/` hint. */}
+        <span className="w-48">
+          <Input
+            ref={searchRef}
             value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            clearable
+            onClear={() => setQuery("")}
+            size="sm"
             aria-label={t(locale, "searchTickets")}
             placeholder={t(locale, "searchTickets")}
-            onChange={(event) => setQuery(event.target.value)}
-            className="h-8 w-48 rounded border border-border bg-bg pl-7 pr-2 text-sm outline-none focus:border-accent"
+            leading={<Search className="h-3.5 w-3.5" aria-hidden />}
+            trailing={
+              <span aria-hidden>
+                <Kbd size="xs">/</Kbd>
+              </span>
+            }
+            data-testid="ticket-search-input"
           />
         </span>
 
-        <select
-          value={statusFilter}
-          aria-label="Filter by status"
-          onChange={(event) => setStatusFilter(event.target.value)}
-          className="h-8 rounded border border-border bg-bg px-2 text-sm outline-none"
-        >
-          <option value="">Any status</option>
-          {TICKET_STATUSES.map((status) => (
-            <option key={status.id} value={status.id}>
-              {status.label}
-            </option>
-          ))}
-        </select>
-
-        <select
-          value={priorityFilter}
-          aria-label="Filter by priority"
-          onChange={(event) => setPriorityFilter(event.target.value)}
-          className="h-8 rounded border border-border bg-bg px-2 text-sm outline-none"
-        >
-          <option value="">Any priority</option>
-          {TICKET_PRIORITIES.map((priority) => (
-            <option key={priority.id} value={priority.id}>
-              {priority.label}
-            </option>
-          ))}
-        </select>
-
-        <select
-          value={labelFilter}
-          aria-label="Filter by label"
-          onChange={(event) => setLabelFilter(event.target.value)}
-          className="h-8 rounded border border-border bg-bg px-2 text-sm outline-none"
-        >
-          <option value="">Any label</option>
-          {labels.map((label) => (
-            <option key={label.id} value={label.id}>
-              {label.name}
-            </option>
-          ))}
-        </select>
-
-        <select
-          value={assigneeFilter}
-          aria-label="Filter by assignee"
-          onChange={(event) => setAssigneeFilter(event.target.value)}
-          className="h-8 rounded border border-border bg-bg px-2 text-sm outline-none"
-        >
-          <option value="">Anyone</option>
-          {members.map((member) => (
-            <option key={member.id} value={member.id}>
-              {member.name}
-            </option>
-          ))}
-        </select>
-
-        <select
-          value={projectFilter}
-          aria-label="Filter by project"
-          onChange={(event) => setProjectFilter(event.target.value)}
-          className="h-8 rounded border border-border bg-bg px-2 text-sm outline-none"
-        >
-          <option value="">Any project</option>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.icon ?? "🚀"} {project.name}
-            </option>
-          ))}
-        </select>
-
-        <label className="flex items-center gap-1.5 text-sm text-muted">
-          <input
-            type="checkbox"
-            checked={hideDone}
-            aria-label="Hide closed tickets"
-            onChange={(event) => setHideDone(event.target.checked)}
+        {/* Filters: one searchable, clearable Select per field, with counts. */}
+        <span className="w-36">
+          <Select
+            size="sm"
+            value={statusFilter}
+            onChange={(value) => setStatusFilter(value)}
+            options={statusOptions}
+            placeholder="Any status"
+            aria-label="Filter by status"
           />
-          {t(locale, "hideClosed")}
-        </label>
+        </span>
+        <span className="w-36">
+          <Select
+            size="sm"
+            value={priorityFilter}
+            onChange={(value) => setPriorityFilter(value)}
+            options={priorityOptions}
+            placeholder="Any priority"
+            aria-label="Filter by priority"
+          />
+        </span>
+        <span className="w-40">
+          <Select
+            size="sm"
+            value={labelFilter}
+            onChange={(value) => setLabelFilter(value)}
+            options={labelOptions}
+            placeholder="Any label"
+            aria-label="Filter by label"
+            disabled={labels.length === 0}
+          />
+        </span>
+        <span className="w-40">
+          <Select
+            size="sm"
+            value={assigneeFilter}
+            onChange={(value) => setAssigneeFilter(value)}
+            options={assigneeOptions}
+            placeholder="Anyone"
+            aria-label="Filter by assignee"
+            disabled={members.length === 0}
+          />
+        </span>
+        <span className="w-40">
+          <Select
+            size="sm"
+            value={projectFilter}
+            onChange={(value) => setProjectFilter(value)}
+            options={projectOptions}
+            placeholder="Any project"
+            aria-label="Filter by project"
+            disabled={projects.length === 0}
+          />
+        </span>
 
-        {/* Sort: field + direction, written to the view via `onSortChange`. */}
+        <Switch
+          size="sm"
+          checked={hideDone}
+          onCheckedChange={setHideDone}
+          label={t(locale, "hideClosed")}
+          aria-label="Hide closed tickets"
+        />
+
+        {/* Sort: field + an asc/desc toggle, written to the view via `onSortChange`. */}
         <span className="flex items-center gap-1" data-testid="ticket-sort">
           <ArrowUpDown className="h-3.5 w-3.5 text-muted" aria-hidden />
-          <select
-            value={sortField}
-            aria-label="Sort tickets by"
-            data-testid="ticket-sort-field"
-            onChange={(event) =>
-              changeSort(
-                isTicketSortField(event.target.value) ? event.target.value : "",
-                sortDirection,
-              )
-            }
-            className="h-8 rounded border border-border bg-bg px-2 text-sm outline-none"
-          >
-            <option value="">Sort</option>
-            {TICKET_SORT_FIELDS.map((field) => (
-              <option key={field} value={field}>
-                {TICKET_SORT_LABELS[field]}
-              </option>
-            ))}
-          </select>
-          <select
-            value={sortDirection}
-            aria-label="Sort direction"
-            data-testid="ticket-sort-direction"
-            disabled={sortField === ""}
-            onChange={(event) =>
-              changeSort(sortField, event.target.value === "desc" ? "desc" : "asc")
-            }
-            className="h-8 rounded border border-border bg-bg px-2 text-sm outline-none disabled:opacity-50"
-          >
-            <option value="asc">Ascending</option>
-            <option value="desc">Descending</option>
-          </select>
+          <span className="w-32">
+            <Select
+              size="sm"
+              value={sort.field}
+              onChange={(value) =>
+                applySort({
+                  field: isTicketSortField(value) ? value : "",
+                  direction: sort.direction,
+                })
+              }
+              options={sortOptions}
+              placeholder="Sort"
+              aria-label="Sort tickets by"
+              menuClassName="w-40"
+            />
+          </span>
+          <Tooltip label={sort.direction === "asc" ? "Ascending" : "Descending"}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              data-testid="ticket-sort-direction"
+              aria-label="Sort direction"
+              disabled={sort.field === ""}
+              onClick={() => applySort(toggleSortDirection(sort))}
+            >
+              {sort.direction === "asc" ? (
+                <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <ArrowDown className="h-3.5 w-3.5" aria-hidden />
+              )}
+            </Button>
+          </Tooltip>
         </span>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               aria-label="Saved views"
-              className="flex h-8 items-center gap-1 rounded border border-border px-2 text-sm text-muted hover:bg-surface-2"
+              leftIcon={<Bookmark className="h-3.5 w-3.5" />}
             >
-              <Bookmark className="h-3.5 w-3.5" /> {t(locale, "savedViews")}
-            </button>
+              {t(locale, "savedViews")}
+              <Badge size="sm" tone="neutral" count={views.length} className="ms-1" />
+            </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-56">
             {views.length === 0 && (
               <p className="px-2 py-1.5 text-xs text-muted">No saved views yet.</p>
             )}
-            {views.map((view) => (
-              <div key={view.id} className="flex items-center gap-1 pr-1">
+            {savedViewChips.map((chip, index) => (
+              <div key={chip.id} className="flex items-center gap-1 pr-1">
                 <DropdownMenuItem
                   className="flex-1"
+                  data-active={chip.active ? "true" : undefined}
                   onSelect={() => {
-                    const config = view.config as Record<string, unknown>;
+                    const config = views[index]?.config as Record<string, unknown> | undefined;
+                    if (!config) return;
                     setQuery(String(config.query ?? ""));
                     setStatusFilter(String(config.status ?? ""));
                     setPriorityFilter(String(config.priority ?? ""));
@@ -521,27 +749,31 @@ export function TicketsToolbar({
                     setAssigneeFilter(String(config.assigneeId ?? ""));
                     setProjectFilter(String(config.projectId ?? ""));
                     setHideDone(Boolean(config.hideClosed));
-                    if (config.view === "list" || config.view === "board" || config.view === "timeline") {
+                    if (
+                      config.view === "list" ||
+                      config.view === "board" ||
+                      config.view === "timeline"
+                    ) {
                       setView(config.view);
                     }
                   }}
                 >
-                  {view.name}
+                  {chip.name}
                 </DropdownMenuItem>
-                <button
+                <Button
                   type="button"
-                  aria-label={`Delete view ${view.name}`}
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Delete view ${chip.name}`}
                   onClick={() =>
                     run("View deleted", async () => {
-                      const result = await deleteTicketViewAction(view.id);
-
+                      const result = await deleteTicketViewAction(chip.id);
                       return "error" in result ? { ok: false, message: result.error } : { ok: true };
                     })
                   }
-                  className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-red-500"
                 >
-                  <X className="h-3.5 w-3.5" />
-                </button>
+                  <X className="h-3.5 w-3.5" aria-hidden />
+                </Button>
               </div>
             ))}
             <DropdownMenuSeparator />
@@ -553,98 +785,113 @@ export function TicketsToolbar({
 
         {/* In-session presets — named filter/sort/group saved views for tickets,
             applied locally through `applySavedView` (nothing hits the server). */}
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="secondary"
+              size="sm"
               aria-label="View presets"
               data-testid="ticket-presets-trigger"
-              className={cn(
-                "flex h-8 items-center gap-1 rounded border border-border px-2 text-sm hover:bg-surface-2",
-                presets.length > 0 ? "text-fg" : "text-muted",
-              )}
+              leftIcon={<Star className="h-3.5 w-3.5" />}
             >
-              <Star className="h-3.5 w-3.5" /> Presets
-              {presets.length > 0 ? ` (${presets.length})` : ""}
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-72" data-testid="ticket-presets-popover">
-            <div className="space-y-2">
-              {presets.length === 0 && (
-                <p className="text-xs text-muted">No presets yet. Capture the current filters below.</p>
-              )}
-              {presets.map((preset) => (
-                <div key={preset.id} className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    data-testid={`apply-ticket-preset-${preset.id}`}
-                    onClick={() => applyPreset(preset)}
-                    className="flex-1 truncate rounded px-1 py-0.5 text-left text-sm hover:bg-surface-2"
+              Presets
+              <Badge size="sm" tone="accent" count={presets.length} className="ms-1" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-72" data-testid="ticket-presets-popover">
+            {presets.length === 0 && (
+              <p className="px-2 py-1.5 text-xs text-muted">
+                No presets yet. Capture the current filters below.
+              </p>
+            )}
+            {presetChips.map((chip) => {
+              const preset = presets.find((candidate) => candidate.id === chip.id);
+              return (
+                <div key={chip.id} className="flex items-center gap-1 pr-1">
+                  <DropdownMenuItem
+                    className="flex-1"
+                    data-testid={`apply-ticket-preset-${chip.id}`}
+                    onSelect={() => preset && applyPreset(preset)}
                   >
-                    {preset.name}
-                  </button>
-                  <button
+                    {chip.name}
+                  </DropdownMenuItem>
+                  <Button
                     type="button"
-                    aria-label={`${t(locale, "delete")} ${preset.name}`}
-                    onClick={() => removePreset(preset.id)}
-                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-red-500"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`${t(locale, "delete")} ${chip.name}`}
+                    onClick={() => removePreset(chip.id)}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
                 </div>
-              ))}
-              <div className="flex items-center gap-1 border-t border-border pt-2">
-                <input
-                  value={presetName}
-                  data-testid="ticket-preset-name"
-                  aria-label={t(locale, "viewName")}
-                  placeholder={t(locale, "viewNamePlaceholder")}
-                  onChange={(event) => setPresetName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") savePreset();
-                  }}
-                  className="h-8 min-w-0 flex-1 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
-                />
-                <button
-                  type="button"
-                  data-testid="save-ticket-preset"
-                  disabled={presetName.trim().length === 0}
-                  onClick={savePreset}
-                  className="flex items-center gap-1 text-xs text-accent disabled:opacity-50"
-                >
-                  <Plus className="h-3 w-3" /> {t(locale, "save")}
-                </button>
-              </div>
+              );
+            })}
+            <DropdownMenuSeparator />
+            <div className="flex items-center gap-1 p-1">
+              <Input
+                value={presetName}
+                data-testid="ticket-preset-name"
+                aria-label={t(locale, "viewName")}
+                placeholder={t(locale, "viewNamePlaceholder")}
+                size="sm"
+                onChange={(event) => setPresetName(event.target.value)}
+                onKeyDown={(event) => {
+                  // Keep the menu's type-ahead from swallowing the name.
+                  event.stopPropagation();
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    savePreset();
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="save-ticket-preset"
+                disabled={presetName.trim().length === 0}
+                onClick={savePreset}
+                leftIcon={<Plus className="h-3 w-3" />}
+              >
+                {t(locale, "save")}
+              </Button>
             </div>
-          </PopoverContent>
-        </Popover>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
-        <button
+        <Button
           type="button"
-          onClick={() => setComposerOpen((value) => !value)}
-          className="ml-auto flex h-8 items-center gap-1 rounded bg-accent px-3 text-sm text-accent-fg"
+          variant="primary"
+          size="sm"
+          className="ml-auto"
+          leftIcon={<Plus className="h-4 w-4" />}
+          onClick={openComposer}
         >
-          <Plus className="h-4 w-4" /> {t(locale, "newTicket")}
-        </button>
+          {t(locale, "newTicket")}
+        </Button>
       </div>
 
-      {/* Rollups */}
-      <p className="mb-4 flex flex-wrap items-center gap-3 text-xs text-muted">
-        <span className="flex items-center gap-1">
-          <Filter className="h-3 w-3" /> {filteredCount} of {rowsCount} tickets
-        </span>
-        <span>
-          {t(locale, "estimateTotal")}: <strong className="text-fg">{formatEstimate(totals.total, totals.unit)}</strong>
-        </span>
-        <span>
-          {t(locale, "remaining")}: <strong className="text-fg">{formatEstimate(remaining.total, remaining.unit)}</strong>
+      {/* Rollups — one Badge per stat, separated by a hairline rail. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted">
+        <Badge tone="neutral" size="sm" icon={<Filter className="h-3 w-3" />}>
+          {`${filteredCount} of ${rowsCount} tickets`}
+        </Badge>
+        <span aria-hidden className="h-4 w-px bg-border" />
+        <Badge tone="neutral" size="sm">
+          {`${t(locale, "estimateTotal")}: ${formatEstimate(totals.total, totals.unit)}`}
+        </Badge>
+        <span aria-hidden className="h-4 w-px bg-border" />
+        <Badge tone="neutral" size="sm">
+          {`${t(locale, "remaining")}: ${formatEstimate(remaining.total, remaining.unit)}`}
           {remaining.count > 0 ? ` across ${remaining.count} open` : ""}
-        </span>
-        <span>
-          Closed: {closed}/{filteredCount}
-          {filteredCount > 0 ? ` (${Math.round((closed / filteredCount) * 100)}%)` : ""}
-        </span>
-      </p>
+        </Badge>
+        <span aria-hidden className="h-4 w-px bg-border" />
+        <Badge tone="neutral" size="sm">
+          {`Closed: ${closed}/${filteredCount}`}
+          {filteredCount > 0 ? ` (${closedPercent}%)` : ""}
+        </Badge>
+      </div>
 
       {checked.length > 0 && (
         <TicketBulkActions
@@ -654,6 +901,19 @@ export function TicketsToolbar({
           members={members}
           projects={projects}
           run={run}
+          locale={locale}
+        />
+      )}
+
+      {composerDialog && (
+        <TicketComposerDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          onSubmit={composerDialog.onSubmit}
+          pending={composerDialog.pending ?? false}
+          labels={composerDialog.labels}
+          projects={projects}
+          members={members}
           locale={locale}
         />
       )}
