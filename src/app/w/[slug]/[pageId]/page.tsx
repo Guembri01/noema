@@ -8,6 +8,7 @@ import { t } from "@/lib/i18n";
 import { groupReactions } from "@/lib/comments";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { pageScopeFor } from "@/lib/guest-access";
+import { buildVersionRecord } from "@/lib/version-history";
 import {
   getAncestorTrail,
   getDatabase,
@@ -52,7 +53,7 @@ export default async function PageRoute({
     notFound();
   }
 
-  const [database, references, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces] = await Promise.all([
+  const [database, references, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces, versionLabels] = await Promise.all([
     page.type === "DATABASE" ? getDatabase(page.id) : Promise.resolve(null),
     getPageReferences(workspace.id, page.id, page.title, visiblePageIds),
     getAncestorTrail(workspace.id, page.id),
@@ -73,7 +74,26 @@ export default async function PageRoute({
       take: 1,
     }),
     getTeamspaces(workspace.id),
+    // `PageVersion.label` (R30.10 named versions) is not part of
+    // `getPageDetail`'s snapshot select, so read it here (same newest-first
+    // window) and join it back onto the rows below by id.
+    prisma.pageVersion.findMany({
+      where: { pageId: page.id },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+      select: { id: true, label: true },
+    }),
   ]);
+
+  /**
+   * Stored snapshot labels by version id (blank/`null` = an ordinary auto
+   * snapshot). The history panel renders each row's `summary`, so a named
+   * snapshot surfaces through `buildVersionRecord` - the pure R30.10 helper
+   * folds the label and the snapshot's own date into that line.
+   */
+  const versionLabelById = new Map(
+    versionLabels.map((version) => [version.id, version.label]),
+  );
 
   /**
    * Stored ProseMirror doc → plain-text preview for the inline diff (F7 reads
@@ -220,15 +240,28 @@ export default async function PageRoute({
             updatedAt: page.updatedAt.toISOString(),
             content: previewText(page.content),
           }}
-          versions={page.versions.map((version) => ({
-            id: version.id,
-            title: version.title,
-            content: previewText(version.content),
-            summary: version.summary,
-            charDelta: version.charDelta,
-            createdAt: version.createdAt.toISOString(),
-            author: resolveVersionAuthor(version.createdById),
-          }))}
+          versions={page.versions.map((version) => {
+            const label = versionLabelById.get(version.id) ?? null;
+            return {
+              id: version.id,
+              title: version.title,
+              content: previewText(version.content),
+              // A named snapshot (R30.10) names its row via the shared
+              // `buildVersionRecord` summary; an unnamed one keeps the existing
+              // stored summary, so the change stays additive.
+              summary:
+                label !== null
+                  ? buildVersionRecord({
+                      id: version.id,
+                      createdAt: version.createdAt,
+                      label,
+                    }).summary
+                  : version.summary,
+              charDelta: version.charDelta,
+              createdAt: version.createdAt.toISOString(),
+              author: resolveVersionAuthor(version.createdById),
+            };
+          })}
         />
       </section>
 
