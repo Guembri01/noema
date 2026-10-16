@@ -110,3 +110,118 @@ describe("html export", () => {
     expect(doc).toContain("<title>My page</title>");
   });
 });
+
+/**
+ * Optional block variants (MISSING_FEATURES §1 "Code block line numbers" /
+ * "Code block caption" / "Pull quote / large quote"). The editor stores these
+ * on the node and reads them back through `data-line-numbers` / `data-caption`
+ * on `<pre>` (code-block.tsx addAttributes) and `data-size` on `<blockquote>`
+ * (custom-blocks.tsx PullQuote global attr). serialize must carry the same
+ * attrs from stored JSON to HTML, and read the canonical markdown forms
+ * (fence `{lineNumbers caption="…"}`, leading `> [!large]`) back into stored
+ * JSON, so the two ends round-trip. Conventions reuse `code-block.ts`'s
+ * `formatCaption` and `pull-quote.ts`'s `isPullQuoteSize` rather than forking.
+ */
+describe("code block + pull quote variant round-trip", () => {
+  it("imports fence {lineNumbers caption} options into codeBlock attrs", () => {
+    const doc = markdownToDoc('```ts {lineNumbers caption="Run it"}\nconst a = 1;\n```');
+    expect(doc.content[0]).toMatchObject({
+      type: "codeBlock",
+      attrs: { language: "ts", lineNumbers: true, caption: "Run it" },
+    });
+    expect(doc.content[0].content?.[0].text).toBe("const a = 1;");
+  });
+
+  it("imports a leading [!large] marker into a blockquote size attr", () => {
+    const doc = markdownToDoc("> [!large]\n> Stay hungry.");
+    expect(doc.content[0]).toMatchObject({ type: "blockquote", attrs: { size: "large" } });
+    expect(doc.content[0].content?.[0].content?.[0].text).toBe("Stay hungry.");
+  });
+
+  it("leaves plain fences and quotes byte-for-byte unchanged", () => {
+    const doc = markdownToDoc("```ts\nplain\n```\n\n> ordinary");
+    expect(doc.content[0].attrs).toEqual({ language: "ts" });
+    expect(doc.content[0].content?.[0].text).toBe("plain");
+    expect(doc.content[1].type).toBe("blockquote");
+    expect(doc.content[1].attrs).toBeUndefined();
+    expect(doc.content[1].content?.[0].content?.[0].text).toBe("ordinary");
+  });
+
+  it("renders code-block lineNumbers and caption into HTML", () => {
+    const html = docToHtml({
+      type: "doc",
+      content: [
+        {
+          type: "codeBlock",
+          attrs: { language: "ts", lineNumbers: true, caption: "Run it" },
+          content: [{ type: "text", text: "const a = 1;" }],
+        },
+      ],
+    });
+    expect(html).toBe(
+      '<pre data-line-numbers="true" data-caption="Run it"><code>const a = 1;</code></pre>',
+    );
+  });
+
+  it("normalises the caption and escapes it as an attribute value", () => {
+    const html = docToHtml({
+      type: "doc",
+      content: [
+        {
+          type: "codeBlock",
+          attrs: { caption: 'He said "hi"   twice' },
+          content: [{ type: "text", text: "x" }],
+        },
+      ],
+    });
+    expect(html).toBe('<pre data-caption="He said &quot;hi&quot; twice"><code>x</code></pre>');
+  });
+
+  it("keeps a bare code block unchanged and drops an empty caption", () => {
+    const html = docToHtml({
+      type: "doc",
+      content: [
+        { type: "codeBlock", attrs: { language: "ts" }, content: [{ type: "text", text: "x" }] },
+        { type: "codeBlock", attrs: { caption: "   " }, content: [{ type: "text", text: "y" }] },
+      ],
+    });
+    expect(html).toBe("<pre><code>x</code></pre>\n<pre><code>y</code></pre>");
+  });
+
+  it("renders only a large quote with data-size, never the default", () => {
+    const large = docToHtml({
+      type: "doc",
+      content: [
+        {
+          type: "blockquote",
+          attrs: { size: "large" },
+          content: [{ type: "paragraph", content: [{ type: "text", text: "Big" }] }],
+        },
+      ],
+    });
+    expect(large).toBe('<blockquote data-size="large"><p>Big</p></blockquote>');
+
+    const plain = docToHtml({
+      type: "doc",
+      content: [
+        {
+          type: "blockquote",
+          attrs: { size: "default" },
+          content: [{ type: "paragraph", content: [{ type: "text", text: "Small" }] }],
+        },
+      ],
+    });
+    expect(plain).toBe("<blockquote><p>Small</p></blockquote>");
+  });
+
+  it("carries both variants from markdown through stored JSON into HTML", () => {
+    const doc = markdownToDoc(
+      '```ts {lineNumbers caption="Run it"}\nconst a = 1;\n```\n\n> [!large]\n> Stay hungry.',
+    );
+    const html = docToHtml(doc);
+    expect(html).toContain(
+      '<pre data-line-numbers="true" data-caption="Run it"><code>const a = 1;</code></pre>',
+    );
+    expect(html).toContain('<blockquote data-size="large"><p>Stay hungry.</p></blockquote>');
+  });
+});
