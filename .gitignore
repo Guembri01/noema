@@ -57,4 +57,4 @@ next-env.d.ts
 /.data/
 # generated audit data
 docs/_audit-raw.json
-backups/
+/backups/
