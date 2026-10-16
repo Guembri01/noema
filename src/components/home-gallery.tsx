@@ -1,13 +1,16 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { FileText, LayoutGrid, Sparkles, Table2, Users } from "lucide-react";
 import { toast } from "sonner";
 import {
   createBlockTemplateAction,
   createGalleryTemplateAction,
   createQuickStartAction,
+  instantiateWorkspaceTemplateAction,
+  listWorkspaceTemplatesAction,
 } from "@/server/actions/home-templates";
 import {
   GALLERY_TEMPLATES,
@@ -15,6 +18,7 @@ import {
   type GalleryAccent,
   type GalleryTemplate,
 } from "@/lib/workflow-templates";
+import { describeTemplate, type PageTemplate } from "@/lib/template-gallery";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 
@@ -84,8 +88,26 @@ export function HomeGallery({
   locale: string;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [pending, startTransition] = useTransition();
   const [showOther, setShowOther] = useState(false);
+  const [workspaceTemplates, setWorkspaceTemplates] = useState<PageTemplate[]>([]);
+
+  // The workspace's saved templates (row templates projected onto the gallery
+  // model). Loaded client-side so the home page keeps its lighter server tree.
+  useEffect(() => {
+    let active = true;
+    listWorkspaceTemplatesAction({ workspaceId, sort: "name" })
+      .then((result) => {
+        if (active && "ok" in result) setWorkspaceTemplates(result.templates);
+      })
+      .catch(() => {
+        /* a failed lookup just leaves the built-in gallery in place */
+      });
+    return () => {
+      active = false;
+    };
+  }, [workspaceId]);
 
   const run = (action: () => Promise<{ ok: true; id: string; slug: string } | { error: string }>) =>
     startTransition(async () => {
@@ -129,6 +151,27 @@ export function HomeGallery({
     );
   };
 
+  const workspaceCard = (template: PageTemplate) => (
+    <button
+      key={template.id}
+      type="button"
+      disabled={pending}
+      aria-label={template.name}
+      onClick={() =>
+        run(() =>
+          instantiateWorkspaceTemplateAction({ workspaceId, templateId: template.id }),
+        )
+      }
+      className="rounded-xl border border-border px-4 py-3 text-left transition hover:bg-surface-2 disabled:opacity-60"
+    >
+      <p className="truncate text-sm font-medium">
+        <span aria-hidden>{template.icon ?? "📄"} </span>
+        {template.name}
+      </p>
+      <p className="mt-0.5 truncate text-xs text-muted">{describeTemplate(template)}</p>
+    </button>
+  );
+
   return (
     <div className="w-full max-w-2xl self-center">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -154,13 +197,22 @@ export function HomeGallery({
         </button>
       </div>
 
-      <div className="mt-6 flex items-center gap-2 text-muted">
-        <LayoutGrid className="h-4 w-4" />
-        <span className="text-sm font-medium">{t(locale, "templates")}</span>
+      <div className="mt-6 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-muted">
+          <LayoutGrid className="h-4 w-4" />
+          <span className="text-sm font-medium">{t(locale, "templates")}</span>
+        </div>
+        <Link
+          href={`${pathname}/templates`}
+          className="text-sm font-medium text-muted hover:text-fg"
+        >
+          {t(locale, "library")}
+        </Link>
       </div>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {GALLERY_TEMPLATES.map(card)}
+        {workspaceTemplates.map(workspaceCard)}
       </div>
 
       <button
