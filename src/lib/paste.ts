@@ -19,6 +19,8 @@
  */
 
 import type { Mark, RichNode } from "@/lib/blocks";
+import { sanitizeHtml } from "@/lib/html-sanitize";
+import { looksLikeMatrix, matrixToTableBlocks, parseClipboardMatrix } from "@/lib/paste-matrix";
 
 export type NormalizedPaste = {
   /** Top-level block nodes, ready for a closed slice (openStart 0). */
@@ -696,4 +698,93 @@ export function pastePlan(normalized: NormalizedPaste, target: PasteTarget): "bl
     if (partial && type && INLINE_FRIENDLY.has(type)) return "inline";
   }
   return "blocks";
+}
+
+/* --------------------------------------------------------- paste planning */
+
+/**
+ * The two clipboard flavours the editor's paste handler can read; either may be
+ * absent. `richPastePlan` prefers HTML and falls back to plain text, while
+ * `plainTextPastePlan` prefers plain text and derives it from HTML otherwise.
+ */
+export type PasteClipboard = {
+  html?: string;
+  text?: string;
+};
+
+/** A decided insertion: the nodes to place and how the editor should place them. */
+export type PlannedPaste = {
+  /** `blocks` inserts a closed slice; `inline` merges into the text context. */
+  mode: "blocks" | "inline";
+  /** The nodes to insert (block nodes in `blocks` mode, inline nodes otherwise). */
+  nodes: RichNode[];
+  /** The full parse behind the decision (blocks, flattened inline, partial flag). */
+  parsed: NormalizedPaste;
+};
+
+/**
+ * Attributes the rich-paste sanitizer allowlists. `sanitizeHtml` replaces its
+ * defaults when given a list, so this is every attribute the normaliser reads
+ * (block/colour/data markers plus the small inline `style` allowlist); the
+ * `on*` refusal and URL validation still apply on top.
+ */
+const RICH_PASTE_ATTRS: readonly string[] = [
+  "href", "src", "alt", "title", "colspan", "rowspan", "lang", "class",
+  "style", "type", "checked", "open", "color", "emoji", "summary",
+  "data-block-color", "data-pm-slice", "data-type", "data-checked",
+  "data-language", "data-callout", "data-toggle", "data-columns",
+  "data-column", "data-toc", "data-caption", "data-summary",
+  "data-collapsed", "aria-expanded",
+];
+
+/** Wrap a parse + target into the insertion the editor should perform. */
+function plannedPaste(parsed: NormalizedPaste, target: PasteTarget): PlannedPaste {
+  const mode = pastePlan(parsed, target);
+  return { mode, nodes: mode === "blocks" ? parsed.blocks : parsed.inline, parsed };
+}
+
+/** Split plain text into one paragraph per line (a trailing newline is dropped). */
+function plainTextBlocks(text: string): RichNode[] {
+  const normalized = text.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+  if (!normalized) return [];
+  return normalized.split("\n").map((line) => ({
+    type: "paragraph",
+    ...(line ? { content: [{ type: "text", text: line }] } : {}),
+  }));
+}
+
+/**
+ * Plan a "paste with formatting": harden the clipboard HTML through
+ * `sanitizeHtml` (script / `on*` / unsafe URLs stripped), normalise the
+ * survivors to TipTap blocks + marks, and turn spreadsheet / CSV *text* into a
+ * table via the clipboard-matrix engine. Multi-block sources insert as blocks;
+ * a single paragraph merges inline.
+ */
+export function richPastePlan(clipboard: PasteClipboard, target: PasteTarget): PlannedPaste {
+  const html = clipboard.html ?? "";
+  if (html.trim() !== "") {
+    const safe = sanitizeHtml(html, { allowedAttrs: RICH_PASTE_ATTRS });
+    return plannedPaste(normalizePasteHtml(safe), target);
+  }
+  const text = clipboard.text ?? "";
+  const blocks = looksLikeMatrix(text)
+    ? matrixToTableBlocks(parseClipboardMatrix(text))
+    : plainTextBlocks(text);
+  return plannedPaste({ blocks, inline: flattenInline(blocks), partial: false }, target);
+}
+
+/**
+ * Plan a "paste without formatting": every tag, mark and block type is stripped
+ * down to plain paragraphs (one per line), with no marks or attrs. The
+ * plain-text flavour wins when present; otherwise the HTML is flattened via
+ * `stripToPlainText`. Multi-line input inserts as blocks; a single line merges
+ * inline.
+ */
+export function plainTextPastePlan(clipboard: PasteClipboard, target: PasteTarget): PlannedPaste {
+  const text =
+    clipboard.text && clipboard.text.trim() !== ""
+      ? clipboard.text
+      : stripToPlainText(clipboard.html ?? "");
+  const blocks = plainTextBlocks(text);
+  return plannedPaste({ blocks, inline: flattenInline(blocks), partial: false }, target);
 }
