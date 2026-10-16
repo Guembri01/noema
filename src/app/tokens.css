@@ -1,0 +1,245 @@
+/* ============================================================================
+   Noema design tokens — see docs/DESIGN_SYSTEM.md
+   ----------------------------------------------------------------------------
+   Imported by globals.css. Rules:
+   1. Colours come from `--color-*` (Tailwind utilities) — never raw hex in a
+      component.
+   2. Motion comes from `--dur-*` + `--ease-*` — never an ad-hoc duration.
+   3. Layering comes from `--z-*` — never a magic z-index.
+   4. Radius/shadow come from the scale — never a one-off value.
+   Every token must exist in light (`:root`), dark (`.dark`) and high contrast
+   (`[data-contrast="more"]` + `.dark [data-contrast="more"]`).
+   ============================================================================ */
+
+:root {
+  /* Surfaces beyond bg/sidebar/surface (third elevation step). */
+  --surface-3: #e7e7e4;
+  --border-strong: #d3d3cf;
+  --fg-subtle: #8a8a84;
+  --accent-soft: rgba(26, 117, 210, 0.1);
+  --danger: #d44c47;
+  --danger-fg: #ffffff;
+  --danger-soft: rgba(212, 76, 71, 0.1);
+  --success: #448361;
+  --success-soft: rgba(68, 131, 97, 0.12);
+  --warning: #cb912f;
+  --warning-soft: rgba(203, 145, 47, 0.14);
+  --overlay: rgba(15, 15, 15, 0.4);
+  --ring: rgba(35, 131, 226, 0.45);
+
+  /* Tag palette (10 hues): text / background / border per hue. */
+  --tag-gray-fg: #5a5a55;   --tag-gray-bg: #f1f1ef;   --tag-gray-bd: #e3e3e0;
+  --tag-brown-fg: #8a5a3b;  --tag-brown-bg: #f4eeee;  --tag-brown-bd: #ecdcd3;
+  --tag-orange-fg: #b5602a; --tag-orange-bg: #faebdd; --tag-orange-bd: #f2d5bd;
+  --tag-yellow-fg: #9a7621; --tag-yellow-bg: #fbf3db; --tag-yellow-bd: #f0e2b6;
+  --tag-green-fg: #3f7d54;  --tag-green-bg: #edf3ec;  --tag-green-bd: #d7e6d8;
+  --tag-blue-fg: #2a6bb0;   --tag-blue-bg: #e7f0fb;   --tag-blue-bd: #c9ddf5;
+  --tag-purple-fg: #6b4fa8; --tag-purple-bg: #f0ecf9; --tag-purple-bd: #ddd4f0;
+  --tag-pink-fg: #ad4a76;   --tag-pink-bg: #f9eef4;   --tag-pink-bd: #f0d6e3;
+  --tag-red-fg: #b03a38;    --tag-red-bg: #fbeceb;    --tag-red-bd: #f3d3d1;
+  --tag-teal-fg: #2c7a72;   --tag-teal-bg: #e8f2f1;   --tag-teal-bd: #cfe4e2;
+
+  /* Motion durations (one vocabulary for the whole app). */
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 240ms;
+  --dur-4: 320ms;
+
+  /* Layering. */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-sidebar: 30;
+  --z-overlay: 40;
+  --z-popover: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+  --z-tooltip: 80;
+  --z-drag: 90;
+
+  /* 4px spacing grid, for custom CSS only (Tailwind utilities already use it). */
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+}
+
+.dark {
+  --surface-3: #343434;
+  --border-strong: #454545;
+  --fg-subtle: rgba(255, 255, 255, 0.38);
+  --accent-soft: rgba(76, 155, 234, 0.16);
+  --danger-soft: rgba(212, 76, 71, 0.18);
+  --success-soft: rgba(68, 131, 97, 0.22);
+  --warning-soft: rgba(203, 145, 47, 0.22);
+  --overlay: rgba(0, 0, 0, 0.55);
+  --ring: rgba(76, 155, 234, 0.55);
+
+  --tag-gray-fg: #c7c7c2;   --tag-gray-bg: #2f2f2f;   --tag-gray-bd: #3b3b3b;
+  --tag-brown-fg: #d3a88b;  --tag-brown-bg: #33291f;  --tag-brown-bd: #443528;
+  --tag-orange-fg: #e0a173; --tag-orange-bg: #362619; --tag-orange-bd: #4a3321;
+  --tag-yellow-fg: #d8bb6a; --tag-yellow-bg: #322b17; --tag-yellow-bd: #463c20;
+  --tag-green-fg: #93c9a4;  --tag-green-bg: #1e2a22;  --tag-green-bd: #2b3d30;
+  --tag-blue-fg: #8fbdee;   --tag-blue-bg: #1e2836;   --tag-blue-bd: #2a3a4f;
+  --tag-purple-fg: #b6a2e0; --tag-purple-bg: #282338; --tag-purple-bd: #382f4d;
+  --tag-pink-fg: #e2a0c0;   --tag-pink-bg: #33222b;   --tag-pink-bd: #472e3b;
+  --tag-red-fg: #e8938f;    --tag-red-bg: #34211f;    --tag-red-bd: #472c2a;
+  --tag-teal-fg: #7fc7bf;   --tag-teal-bg: #1c2b29;   --tag-teal-bd: #283d3a;
+}
+
+[data-contrast="more"] {
+  --surface-3: #e2e2de;
+  --border-strong: #4a4a4a;
+  --fg-subtle: #4a4a4a;
+  --ring: #0b57d0;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.22);
+  --shadow-2: 0 6px 16px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.24);
+  --shadow-3: 0 16px 40px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.26);
+}
+
+.dark [data-contrast="more"] {
+  --surface-3: #3f3f3f;
+  --border-strong: #9a9a9a;
+  --fg-subtle: rgba(255, 255, 255, 0.72);
+  --ring: #8fc2ff;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.18);
+  --shadow-2: 0 6px 16px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.2);
+  --shadow-3: 0 16px 40px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+/* --- Keyframes (paired with the --animate-* theme tokens) ---------------- */
+@keyframes shimmer {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* --- Utilities ----------------------------------------------------------- */
+
+/* One focus ring, everywhere. */
+.focus-ring {
+  outline: none;
+}
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-color: var(--ring);
+}
+
+/* Standard transitions (never animate layout on scroll). */
+.u-colors {
+  transition: background-color var(--dur-1) var(--ease-smooth),
+    border-color var(--dur-1) var(--ease-smooth),
+    color var(--dur-1) var(--ease-smooth);
+}
+.u-transform {
+  transition: transform var(--dur-1) var(--ease-smooth), opacity var(--dur-1) var(--ease-smooth);
+}
+.u-surface {
+  transition: background-color var(--dur-1) var(--ease-smooth),
+    box-shadow var(--dur-2) var(--ease-smooth);
+}
+
+/* Interactive surfaces: hover + press without layout shift. */
+.u-interactive {
+  transition: background-color var(--dur-1) var(--ease-smooth),
+    border-color var(--dur-1) var(--ease-smooth), color var(--dur-1) var(--ease-smooth),
+    transform var(--dur-1) var(--ease-smooth);
+}
+.u-interactive:active {
+  transform: scale(0.985);
+}
+
+/* Raised surfaces (popovers, menus, modals). */
+.surface-raised {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-2);
+  border-radius: var(--radius-lg);
+}
+.surface-raised-strong {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-3);
+  border-radius: var(--radius-xl);
+}
+
+/* Tag / chip. */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  border: 1px solid var(--tag-gray-bd);
+  background: var(--tag-gray-bg);
+  color: var(--tag-gray-fg);
+}
+
+/* Thin, non-intrusive scrollbars (Notion-like). */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted);
+  background-clip: content-box;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Edge fade for scrolled lists. */
+.edge-fade-b {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+}
+
+/* Never animate while the user is dragging a resizer. */
+.u-no-transition,
+.u-no-transition * {
+  transition: none !important;
+}

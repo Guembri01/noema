@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./tokens.css";
 
 /* Class-based dark mode (next-themes sets `.dark` on <html>). */
 @custom-variant dark (&:where(.dark, .dark *));
@@ -8,14 +9,51 @@
   --color-sidebar: var(--sidebar);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-fg: var(--fg);
+  --color-fg-subtle: var(--fg-subtle);
   --color-muted: var(--muted);
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
   --color-selection: var(--selection);
+  --color-danger: var(--danger);
+  --color-danger-fg: var(--danger-fg);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-overlay: var(--overlay);
+  --color-ring: var(--ring);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
+
+  /* Radius scale — small and deliberate (Notion-like), never pill-shaped. */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  /* Elevation — soft, low-opacity, never pure black. */
+  --shadow-1: 0 1px 2px rgba(15, 15, 15, 0.06), 0 0 0 1px rgba(15, 15, 15, 0.04);
+  --shadow-2: 0 4px 12px rgba(15, 15, 15, 0.1), 0 0 0 1px rgba(15, 15, 15, 0.05);
+  --shadow-3: 0 12px 32px rgba(15, 15, 15, 0.16), 0 0 0 1px rgba(15, 15, 15, 0.06);
+  --shadow-focus: 0 0 0 3px var(--ring);
+
+  /* Motion — one vocabulary for the whole app. */
+  --ease-smooth: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in-out-soft: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.32, 0.64, 1);
+  --animate-shimmer: shimmer 1.4s ease-in-out infinite;
+  --animate-rise: rise 0.12s var(--ease-smooth) both;
+  --animate-fade: fade 0.16s var(--ease-smooth) both;
+  --animate-scale-in: scale-in 0.16s var(--ease-smooth) both;
+  --animate-slide-in-right: slide-in-right 0.24s var(--ease-smooth) both;
+  --animate-pulse-soft: pulse-soft 1.6s ease-in-out infinite;
 }
 
 :root {
