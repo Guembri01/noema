@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { History, RotateCcw, Tag, X } from "lucide-react";
 import { toast } from "sonner";
@@ -10,6 +10,14 @@ import { t } from "@/lib/i18n";
 import { cn, initials, avatarColor } from "@/lib/utils";
 import { diffStats, diffText, type DiffSegment } from "@/lib/text-diff";
 import { MAX_VERSION_LABEL_LENGTH, normalizeVersionLabel } from "@/lib/version-history";
+import { applyDirAttr } from "@/lib/bidi";
+import {
+  focusableSelector,
+  resolveReturnTarget,
+  trapPlan,
+  type Focusable,
+  type FocusPlan,
+} from "@/lib/focus-trap";
 
 export type VersionRow = {
   id: string;
@@ -73,6 +81,50 @@ const INLINE_DIFF_CLASS: Record<DiffSegment["op"], string> = {
   delete: "rounded bg-red-500/15 text-red-600",
 };
 
+/* ------------------------------------------------------------------------- *
+ * Focus management (shared kernel: @/lib/focus-trap)
+ *
+ * The history panel is a hand-rolled slide-over — it bypasses `ui/dialog` — so
+ * it owns its own Tab trap: the header close button, the per-row controls and
+ * the diff-panel buttons are mapped to `Focusable` descriptors, `trapPlan`
+ * decides the next stop (wrapping at the ends), and `resolveReturnTarget`
+ * restores focus to the invoking control when the panel closes. Escape is left
+ * alone: this panel never closed on Escape.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Tab / Shift+Tab plan for the history panel, delegated to the shared
+ * `@/lib/focus-trap` kernel. `activeId` is the focused stop's id (`null` when
+ * focus is outside the ring, which enters at the first stop — last on
+ * Shift+Tab). `null` means "nothing to trap".
+ */
+export function planVersionHistoryTab(
+  stops: readonly Focusable[],
+  { activeId = null, shift = false }: { activeId?: string | null; shift?: boolean } = {},
+): FocusPlan | null {
+  return trapPlan(stops, {
+    initial: activeId === null ? null : { id: activeId },
+    shift,
+  });
+}
+
+/** The panel's real tabbable elements, tagged with their index as the id. */
+function historyStops(root: HTMLElement): {
+  stops: Focusable[];
+  nodes: HTMLElement[];
+} {
+  const nodes = Array.from(root.querySelectorAll<HTMLElement>(focusableSelector));
+  const stops = nodes.map((element, index) => ({
+    id: String(index),
+    disabled:
+      element.hasAttribute("disabled") ||
+      element.getAttribute("aria-disabled") === "true",
+    hidden: element.hidden || element.getAttribute("aria-hidden") === "true",
+    tabIndex: element.tabIndex,
+  }));
+  return { stops, nodes };
+}
+
 /**
  * Which baseline the inline diff is read against: the live page (`current`,
  * the pre-existing behaviour) or the next-older snapshot in the list
@@ -102,16 +154,32 @@ function InlineDiff({ before, after }: { before: string; after: string }) {
     () => (before.length + after.length > MAX_INLINE_DIFF_LENGTH ? null : diffText(before, after)),
     [before, after],
   );
+  // Per-block direction from the shared bidi engine: a Latin snapshot that
+  // quotes Arabic (or vice versa) is laid out with its own `dir`/`dir-*`.
+  const direction = applyDirAttr(after);
 
   if (diff === null) {
-    return <p className="whitespace-pre-wrap break-words text-sm">{after}</p>;
+    return (
+      <p
+        dir={direction.dir}
+        className={cn("whitespace-pre-wrap break-words text-sm", direction.className)}
+      >
+        {after}
+      </p>
+    );
   }
 
   const stats = diffStats(diff);
 
   return (
     <div className="space-y-1">
-      <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+      <p
+        dir={direction.dir}
+        className={cn(
+          "whitespace-pre-wrap break-words text-sm leading-relaxed",
+          direction.className,
+        )}
+      >
         {diff.map((segment, index) =>
           segment.op === "insert" ? (
             <ins key={index} data-op="insert" className={INLINE_DIFF_CLASS.insert}>
@@ -166,6 +234,45 @@ export function VersionHistory({
    * null. Keyed by the row so collapsing or switching rows drops the prompt.
    */
   const [confirmingRestore, setConfirmingRestore] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const invokerRef = useRef<HTMLElement | null>(null);
+
+  // Record the invoking control, move focus into the panel, and restore the
+  // invoker when it closes (only while it is still connected).
+  useEffect(() => {
+    if (!open) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body) {
+      invokerRef.current = active;
+    }
+    dialogRef.current?.focus();
+    return () => {
+      const invoker = invokerRef.current;
+      invokerRef.current = null;
+      const target = resolveReturnTarget({
+        invoker: invoker
+          ? { id: "history-invoker", connected: invoker.isConnected }
+          : null,
+      });
+      if (target) invoker?.focus();
+    };
+  }, [open]);
+
+  const onDialogKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Tab") return;
+    const { stops, nodes } = historyStops(event.currentTarget);
+    const active = document.activeElement;
+    const activeIndex = active instanceof HTMLElement ? nodes.indexOf(active) : -1;
+    const plan = planVersionHistoryTab(stops, {
+      activeId: activeIndex >= 0 ? String(activeIndex) : null,
+      shift: event.shiftKey,
+    });
+    if (!plan) return;
+    const target = nodes[Number(plan.target.id)];
+    if (!target) return;
+    event.preventDefault();
+    target.focus();
+  };
 
   /**
    * Single restore path shared by the per-row control and the diff-panel
@@ -213,9 +320,13 @@ export function VersionHistory({
             className="absolute inset-0 bg-black/30"
           />
           <aside
+            ref={dialogRef}
             role="dialog"
+            aria-modal="true"
             aria-label={t(locale, "history")}
-            className="relative z-10 flex h-full w-full max-w-sm flex-col border-l border-border bg-bg shadow-2xl"
+            tabIndex={-1}
+            onKeyDown={onDialogKeyDown}
+            className="relative z-10 flex h-full w-full max-w-sm flex-col border-l border-border bg-bg shadow-2xl outline-none"
           >
             <header className="flex items-center gap-2 border-b border-border px-4 py-3">
               <History className="h-4 w-4 text-muted" />

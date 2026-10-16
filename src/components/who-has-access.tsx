@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Users } from "lucide-react";
 import {
   listPagePermissionsAction,
@@ -8,6 +8,13 @@ import {
 } from "@/server/actions/page-permissions";
 import { useAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
+import {
+  focusableSelector,
+  resolveReturnTarget,
+  trapPlan,
+  type Focusable,
+  type FocusPlan,
+} from "@/lib/focus-trap";
 
 type Row = { userId: string; name: string; email: string; level: string | null };
 
@@ -19,6 +26,50 @@ const LEVEL_KEYS: Record<string, "inheritRole" | "canView" | "canComment" | "can
   FULL: "fullAccess",
 };
 const LEVELS = ["NONE", "READ", "COMMENT", "EDIT", "FULL"];
+
+/* ------------------------------------------------------------------------- *
+ * Focus management (shared kernel: @/lib/focus-trap)
+ *
+ * The "Who has access" modal is hand-rolled — it bypasses `ui/dialog` — so it
+ * owns its own Tab trap: the roster's level `<select>`s plus the footer button
+ * are mapped to `Focusable` descriptors, `trapPlan` decides the next stop
+ * (wrapping at the ends), and `resolveReturnTarget` restores focus to the
+ * invoking control when the modal unmounts. Escape is intentionally untouched:
+ * this overlay never closed on Escape, so adding it would change behaviour.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Tab / Shift+Tab plan for the access modal, delegated to the shared
+ * `@/lib/focus-trap` kernel. `activeId` is the focused stop's id (`null` when
+ * focus is outside the ring, which enters at the first stop — last on
+ * Shift+Tab). `null` means "nothing to trap".
+ */
+export function planWhoHasAccessTab(
+  stops: readonly Focusable[],
+  { activeId = null, shift = false }: { activeId?: string | null; shift?: boolean } = {},
+): FocusPlan | null {
+  return trapPlan(stops, {
+    initial: activeId === null ? null : { id: activeId },
+    shift,
+  });
+}
+
+/** The modal's real tabbable elements, tagged with their index as the id. */
+function accessStops(root: HTMLElement): {
+  stops: Focusable[];
+  nodes: HTMLElement[];
+} {
+  const nodes = Array.from(root.querySelectorAll<HTMLElement>(focusableSelector));
+  const stops = nodes.map((element, index) => ({
+    id: String(index),
+    disabled:
+      element.hasAttribute("disabled") ||
+      element.getAttribute("aria-disabled") === "true",
+    hidden: element.hidden || element.getAttribute("aria-hidden") === "true",
+    tabIndex: element.tabIndex,
+  }));
+  return { stops, nodes };
+}
 
 /**
  * The member roster with per-person access levels — the shared body of both
@@ -121,14 +172,56 @@ export function WhoHasAccess({
   onClose: () => void;
   locale?: string;
 }) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const invokerRef = useRef<HTMLElement | null>(null);
+
+  // Record the invoking control, move focus into the modal, and restore the
+  // invoker on unmount (only while it is still connected).
+  useEffect(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body) {
+      invokerRef.current = active;
+    }
+    dialogRef.current?.focus();
+    return () => {
+      const invoker = invokerRef.current;
+      invokerRef.current = null;
+      const target = resolveReturnTarget({
+        invoker: invoker
+          ? { id: "access-invoker", connected: invoker.isConnected }
+          : null,
+      });
+      if (target) invoker?.focus();
+    };
+  }, []);
+
+  const onDialogKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") return;
+    const { stops, nodes } = accessStops(event.currentTarget);
+    const active = document.activeElement;
+    const activeIndex = active instanceof HTMLElement ? nodes.indexOf(active) : -1;
+    const plan = planWhoHasAccessTab(stops, {
+      activeId: activeIndex >= 0 ? String(activeIndex) : null,
+      shift: event.shiftKey,
+    });
+    if (!plan) return;
+    const target = nodes[Number(plan.target.id)];
+    if (!target) return;
+    event.preventDefault();
+    target.focus();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <button type="button" aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/30" />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-label={t(locale, "whoHasAccess")}
         aria-modal="true"
-        className="relative z-10 w-full max-w-lg rounded-xl border border-border bg-bg p-4 shadow-2xl"
+        tabIndex={-1}
+        onKeyDown={onDialogKeyDown}
+        className="relative z-10 w-full max-w-lg rounded-xl border border-border bg-bg p-4 shadow-2xl outline-none"
       >
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <Users className="h-4 w-4 text-muted" aria-hidden /> {t(locale, "whoHasAccess")}

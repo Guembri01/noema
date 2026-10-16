@@ -29,6 +29,14 @@ import {
   typeMeta,
 } from "@/lib/tickets";
 import { cn } from "@/lib/utils";
+import { applyDirAttr } from "@/lib/bidi";
+import {
+  focusableSelector,
+  resolveReturnTarget,
+  trapPlan,
+  type Focusable,
+  type FocusPlan,
+} from "@/lib/focus-trap";
 import { StatusPill } from "./ticket-bits";
 import { LABEL_TONES, type LabelRow, type TicketRow } from "./ticket-types";
 
@@ -103,6 +111,49 @@ function activityIso(value: string | number | Date): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
+/* ------------------------------------------------------------------------- *
+ * Focus management (shared kernel: @/lib/focus-trap)
+ *
+ * The ticket drawer is a hand-rolled slide-over — it bypasses `ui/dialog` — so
+ * it owns its own Tab trap: every tabbable field, control and link is mapped to
+ * a `Focusable` descriptor, `trapPlan` decides the next stop (wrapping at the
+ * ends), and `resolveReturnTarget` restores focus to the invoking control when
+ * the drawer closes. Escape is left alone: the drawer never closed on Escape.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Tab / Shift+Tab plan for the ticket drawer, delegated to the shared
+ * `@/lib/focus-trap` kernel. `activeId` is the focused stop's id (`null` when
+ * focus is outside the ring, which enters at the first stop — last on
+ * Shift+Tab). `null` means "nothing to trap".
+ */
+export function planTicketDrawerTab(
+  stops: readonly Focusable[],
+  { activeId = null, shift = false }: { activeId?: string | null; shift?: boolean } = {},
+): FocusPlan | null {
+  return trapPlan(stops, {
+    initial: activeId === null ? null : { id: activeId },
+    shift,
+  });
+}
+
+/** The drawer's real tabbable elements, tagged with their index as the id. */
+function drawerStops(root: HTMLElement): {
+  stops: Focusable[];
+  nodes: HTMLElement[];
+} {
+  const nodes = Array.from(root.querySelectorAll<HTMLElement>(focusableSelector));
+  const stops = nodes.map((element, index) => ({
+    id: String(index),
+    disabled:
+      element.hasAttribute("disabled") ||
+      element.getAttribute("aria-disabled") === "true",
+    hidden: element.hidden || element.getAttribute("aria-hidden") === "true",
+    tabIndex: element.tabIndex,
+  }));
+  return { stops, nodes };
+}
+
 /** Right-hand drawer with every ticket field, relations, comments, activity. */
 export function TicketDrawer({
   ticket,
@@ -141,6 +192,44 @@ export function TicketDrawer({
   const [comment, setComment] = useState("");
   const [relationQuery, setRelationQuery] = useState("");
   const [relationType, setRelationType] = useState("relates");
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const invokerRef = useRef<HTMLElement | null>(null);
+
+  // Record the invoking control, move focus into the drawer, and restore the
+  // invoker on unmount (only while it is still connected).
+  useEffect(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body) {
+      invokerRef.current = active;
+    }
+    dialogRef.current?.focus();
+    return () => {
+      const invoker = invokerRef.current;
+      invokerRef.current = null;
+      const target = resolveReturnTarget({
+        invoker: invoker
+          ? { id: "ticket-invoker", connected: invoker.isConnected }
+          : null,
+      });
+      if (target) invoker?.focus();
+    };
+  }, []);
+
+  const onDialogKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Tab") return;
+    const { stops, nodes } = drawerStops(event.currentTarget);
+    const active = document.activeElement;
+    const activeIndex = active instanceof HTMLElement ? nodes.indexOf(active) : -1;
+    const plan = planTicketDrawerTab(stops, {
+      activeId: activeIndex >= 0 ? String(activeIndex) : null,
+      shift: event.shiftKey,
+    });
+    if (!plan) return;
+    const target = nodes[Number(plan.target.id)];
+    if (!target) return;
+    event.preventDefault();
+    target.focus();
+  };
 
   // Debounced description autosave: local state while typing, one save per
   // quiet period (or on blur). Reset only when another ticket is opened.
@@ -149,6 +238,10 @@ export function TicketDrawer({
   const savedDescription = useRef(ticket.description ?? "");
   const descriptionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasDescription = description.trim().length > 0;
+  // Per-block direction (shared bidi engine): a Latin title/summary that
+  // embeds Arabic (or the reverse) gets its own `dir` + `dir-*` class.
+  const titleDirection = applyDirAttr(ticket.title);
+  const descriptionDirection = applyDirAttr(description);
 
   useEffect(() => {
     setDescription(ticket.description ?? "");
@@ -231,9 +324,13 @@ export function TicketDrawer({
         className="absolute inset-0 bg-black/30"
       />
       <aside
+        ref={dialogRef}
         role="dialog"
+        aria-modal="true"
         aria-label={`${t(locale, "ticketWord")} ${ticket.key}`}
-        className="relative z-10 flex h-full w-full max-w-lg flex-col border-l border-border bg-bg shadow-2xl"
+        tabIndex={-1}
+        onKeyDown={onDialogKeyDown}
+        className="relative z-10 flex h-full w-full max-w-lg flex-col border-l border-border bg-bg shadow-2xl outline-none"
       >
         <header className="flex items-center gap-2 border-b border-border px-4 py-3">
           <span aria-hidden>{typeMeta(ticket.type).icon}</span>
@@ -271,13 +368,17 @@ export function TicketDrawer({
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
           <textarea
             defaultValue={ticket.title}
+            dir={titleDirection.dir}
             aria-label={t(locale, "ticketTitle")}
             rows={2}
             onBlur={(event) =>
               event.target.value !== ticket.title &&
               patch(ticket.id, { title: event.target.value }, t(locale, "renamed"))
             }
-            className="w-full resize-none rounded-lg border border-border bg-bg px-3 py-2 text-lg font-medium outline-none focus:border-accent"
+            className={cn(
+              "w-full resize-none rounded-lg border border-border bg-bg px-3 py-2 text-lg font-medium outline-none focus:border-accent",
+              titleDirection.className,
+            )}
           />
 
           {/* Notion-style description: a bare placeholder line while empty
@@ -286,6 +387,7 @@ export function TicketDrawer({
           <textarea
             data-testid={hasDescription ? "ticket-description-box" : undefined}
             value={description}
+            dir={descriptionDirection.dir}
             aria-label={t(locale, "ticketDescriptionAria")}
             rows={Math.min(12, description.split("\n").length + 1)}
             placeholder={t(locale, "addDescription")}
@@ -297,6 +399,7 @@ export function TicketDrawer({
             }}
             className={cn(
               "w-full resize-none px-3 py-2 text-sm text-fg outline-none placeholder:text-muted",
+              descriptionDirection.className,
               hasDescription || descriptionFocused
                 ? "rounded-lg border border-border bg-bg"
                 : "border border-transparent bg-transparent",

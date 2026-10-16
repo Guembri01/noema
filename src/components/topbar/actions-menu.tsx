@@ -57,6 +57,18 @@ import {
   type AuditCode,
 } from "@/lib/a11y-audit";
 import type { PageMenuData } from "@/server/actions/page-menu";
+import {
+  focusableSelector,
+  resolveReturnTarget,
+  trapPlan,
+  type Focusable,
+  type FocusPlan,
+} from "@/lib/focus-trap";
+import {
+  HIGH_CONTRAST_TOKENS,
+  contrastRatio,
+  type ContrastTheme,
+} from "@/lib/high-contrast";
 
 /**
  * Icon and cover catalogs are owned by `page-icon.ts` / `page-cover.ts`; the
@@ -242,6 +254,59 @@ function toAuditBlocks(
 
 const LIST_ID = "actions-menu-list";
 
+/**
+ * localStorage key for the persisted high-contrast preference. The value is
+ * `"1"` (on) / `"0"` (off); the class it toggles on the document root, and the
+ * token set that class activates, are the ones mirrored by
+ * `src/lib/high-contrast.ts` (`HIGH_CONTRAST_TOKENS`).
+ */
+export const HIGH_CONTRAST_KEY = "noema:high-contrast";
+
+/* ------------------------------------------------------------------------- *
+ * Focus management (shared kernel: @/lib/focus-trap)
+ *
+ * The Actions dialog is hand-rolled — it bypasses `ui/dialog` — so it owns its
+ * own Tab trap: every browser-tabbable control inside the dialog is mapped to a
+ * `Focusable` descriptor, `trapPlan` decides the next stop (wrapping at the
+ * ends), and `resolveReturnTarget` restores focus to the invoking control when
+ * the dialog closes. Escape keeps its existing handling (see the keydown
+ * effect below).
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Tab / Shift+Tab plan for the Actions dialog, delegated to the shared
+ * `@/lib/focus-trap` kernel. `activeId` is the id of the currently focused
+ * stop (`null` when focus is outside the ring, which enters at the first stop —
+ * the last on Shift+Tab). A `null` result means "nothing to trap"; the browser
+ * keeps the default Tab move.
+ */
+export function planActionsMenuTab(
+  stops: readonly Focusable[],
+  { activeId = null, shift = false }: { activeId?: string | null; shift?: boolean } = {},
+): FocusPlan | null {
+  return trapPlan(stops, {
+    initial: activeId === null ? null : { id: activeId },
+    shift,
+  });
+}
+
+/** The dialog's real tabbable elements, tagged with their index as the id. */
+function actionsMenuStops(root: HTMLElement): {
+  stops: Focusable[];
+  nodes: HTMLElement[];
+} {
+  const nodes = Array.from(root.querySelectorAll<HTMLElement>(focusableSelector));
+  const stops = nodes.map((element, index) => ({
+    id: String(index),
+    disabled:
+      element.hasAttribute("disabled") ||
+      element.getAttribute("aria-disabled") === "true",
+    hidden: element.hidden || element.getAttribute("aria-hidden") === "true",
+    tabIndex: element.tabIndex,
+  }));
+  return { stops, nodes };
+}
+
 export type NotifyLevel = "all" | "mentions" | "none";
 export type ActionsMenuToggleKey = "smallText" | "fullWidth" | "locked";
 
@@ -353,10 +418,12 @@ export function ActionsMenu(props: ActionsMenuProps) {
   const [coverPosition, setCoverPosition] = useState<CoverPosition>(
     () => readCover(cover)?.position ?? { ...DEFAULT_COVER_POSITION },
   );
-  const { setTheme, theme } = useTheme();
+  const { setTheme, theme, resolvedTheme } = useTheme();
+  const [highContrast, setHighContrast] = useState(false);
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const invokerRef = useRef<HTMLElement | null>(null);
   const liRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const subRefs = useRef<Record<string, HTMLElement | null>>({});
   const specRef = useRef<SubmenuSpec | null>(null);
@@ -462,6 +529,14 @@ export function ActionsMenu(props: ActionsMenuProps) {
   // the toggle as on; the sr-only "(on)"/"(off)" text carries the same state
   // for assistive tech.
   const LockIcon = locked ? LockOpen : Lock;
+
+  // Live contrast readout for the high-contrast toggle, straight from the
+  // engine so the control reports the ratio the theme actually ships.
+  const contrastTheme: ContrastTheme = resolvedTheme === "dark" ? "dark" : "light";
+  const contrastLabel = `${contrastRatio(
+    HIGH_CONTRAST_TOKENS[contrastTheme].fg,
+    HIGH_CONTRAST_TOKENS[contrastTheme].bg,
+  ).toFixed(1)}:1 body text`;
 
   // ---- submenu spec -------------------------------------------------------
   const closeAll = () => {
@@ -689,6 +764,64 @@ export function ActionsMenu(props: ActionsMenuProps) {
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
+
+  // High-contrast preference: seeded from localStorage, then mirrored back onto
+  // the document root's `.high-contrast` class (the token set `globals.css`
+  // ships and `@/lib/high-contrast` documents).
+  useEffect(() => {
+    try {
+      setHighContrast(window.localStorage.getItem(HIGH_CONTRAST_KEY) === "1");
+    } catch {
+      // Storage unavailable (private mode): keep the in-memory default.
+    }
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("high-contrast", highContrast);
+    try {
+      window.localStorage.setItem(HIGH_CONTRAST_KEY, highContrast ? "1" : "0");
+    } catch {
+      // Ignore a storage write failure; the class above already applied.
+    }
+  }, [highContrast]);
+
+  // Record the invoking control on open and restore focus to it on close
+  // (`resolveReturnTarget` returns it only while still connected).
+  useEffect(() => {
+    if (!open) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body) {
+      invokerRef.current = active;
+    }
+    return () => {
+      const invoker = invokerRef.current;
+      invokerRef.current = null;
+      const target = resolveReturnTarget({
+        invoker: invoker
+          ? { id: "actions-invoker", connected: invoker.isConnected }
+          : null,
+      });
+      if (target) invoker?.focus();
+    };
+  }, [open]);
+
+  // Tab / Shift+Tab cycles inside the dialog; Escape keeps its handling in the
+  // dedicated effect below.
+  const onDialogKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") return;
+    const { stops, nodes } = actionsMenuStops(event.currentTarget);
+    const active = document.activeElement;
+    const activeIndex = active instanceof HTMLElement ? nodes.indexOf(active) : -1;
+    const plan = planActionsMenuTab(stops, {
+      activeId: activeIndex >= 0 ? String(activeIndex) : null,
+      shift: event.shiftKey,
+    });
+    if (!plan) return;
+    const target = nodes[Number(plan.target.id)];
+    if (!target) return;
+    event.preventDefault();
+    target.focus();
+  };
 
   // Re-seed the focal point whenever the persisted cover changes (a pick here
   // or a parent refresh), so the position grid reflects stored state.
@@ -923,7 +1056,12 @@ export function ActionsMenu(props: ActionsMenuProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Page actions"
-        className="absolute end-0 top-full z-50 mt-1 w-64 rounded-lg border border-border bg-bg shadow-2xl"
+        data-contrast={highContrast ? "more" : "normal"}
+        onKeyDown={onDialogKeyDown}
+        className={cn(
+          "absolute end-0 top-full z-50 mt-1 w-64 rounded-lg border border-border bg-bg shadow-2xl",
+          highContrast && "high-contrast",
+        )}
       >
         {view === "main" ? (
           <>
@@ -1262,6 +1400,25 @@ export function ActionsMenu(props: ActionsMenuProps) {
                     {mode}
                   </button>
                 ))}
+              </div>
+              <p className="mb-1 mt-3 text-xs font-medium text-muted">
+                Contrast
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={highContrast}
+                  aria-label={`High contrast (${contrastLabel})`}
+                  onClick={() => setHighContrast((value) => !value)}
+                  className={cn(
+                    "rounded px-2 py-1 text-xs text-muted hover:bg-surface-2",
+                    highContrast && "bg-surface-2 text-fg",
+                  )}
+                >
+                  High contrast
+                </button>
+                <span className="text-[11px] text-muted">{contrastLabel}</span>
               </div>
             </div>
           </>
