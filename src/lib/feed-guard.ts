@@ -85,9 +85,31 @@ export function isBlockedFeedHost(hostname: string): boolean {
 }
 
 /**
+ * Loopback-only host test (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`).
+ * Gates the development-only feed exemption below, so allowing a local mock
+ * feed never opens the wider private/metadata ranges.
+ */
+function isLoopbackHost(hostname: string): boolean {
+  const host = normalizeHost(hostname);
+  if (!host) return false;
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  const version = isIP(host);
+  if (version === 4) return host.split(".")[0] === "127";
+  if (version === 6) return host === "::1" || host === "0:0:0:0:0:0:0:1";
+  return false;
+}
+
+/**
  * Full target check: scheme, hostname ranges, then DNS - every answer must be
  * public. Returns true when the target must NOT be fetched. Fail closed on
  * unparseable URLs, non-http(s) schemes and resolver errors.
+ *
+ * `next dev` (NODE_ENV `development`) is the one exception: the end-to-end
+ * check subscribes to a hermetic mock calendar served on loopback (`:4323`,
+ * see docs/TEST_PLAN.md), which the shipped guard would otherwise refuse. Only
+ * loopback hosts are exempt, and only in development - vitest runs as `test`
+ * and deployments as `production`, so the security suite and the shipped guard
+ * still fail closed on every private range.
  */
 export async function isBlockedFeedTarget(
   rawUrl: string,
@@ -101,7 +123,12 @@ export async function isBlockedFeedTarget(
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return true;
   const hostname = normalizeHost(url.hostname);
-  if (isBlockedFeedHost(hostname)) return true;
+  if (isBlockedFeedHost(hostname)) {
+    if (process.env.NODE_ENV === "development" && isLoopbackHost(hostname)) {
+      return false;
+    }
+    return true;
+  }
   if (isIP(hostname)) return false; // a public literal - nothing to resolve
   let addresses: string[];
   try {
