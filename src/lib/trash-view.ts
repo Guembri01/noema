@@ -1,9 +1,23 @@
 import { UNTITLED_LABEL } from "@/lib/breadcrumb";
-import { daysUntilPurge, describeTrashAge, isPurgeable } from "@/lib/soft-delete";
 import {
-  DEFAULT_TRASH_RETENTION_DAYS,
-  type TrashRetentionPolicy,
-} from "@/lib/trash";
+  TRASH_RETENTION_DAYS,
+  daysUntilPurge,
+  describeTrashAge,
+  isPurgeable,
+} from "@/lib/soft-delete";
+
+/**
+ * Retention policy shape, declared here (not imported from `@/lib/trash`) so
+ * this module stays free of the server-only `@/lib/storage` (node:fs) chain:
+ * it is consumed by client components (`trash-list.tsx`).
+ */
+export type TrashRetentionPolicy = { retentionDays: number };
+
+export const DEFAULT_TRASH_RETENTION_DAYS = TRASH_RETENTION_DAYS;
+
+export const defaultTrashRetentionPolicy: TrashRetentionPolicy = {
+  retentionDays: TRASH_RETENTION_DAYS,
+};
 
 /**
  * Trash view model — the pure rules behind the "Trash / recently deleted"

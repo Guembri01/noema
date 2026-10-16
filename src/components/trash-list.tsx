@@ -9,12 +9,12 @@ import { safeAction } from "@/lib/actions-client";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import { stableTime } from "@/lib/time";
-import { defaultTrashRetentionPolicy } from "@/lib/trash";
 import { truncateMiddle } from "@/lib/truncate";
 import { offsetForIndex, totalHeight, visibleRange } from "@/lib/virtual-list";
 import {
   buildTrashView,
   describeDeleteImpact,
+  defaultTrashRetentionPolicy,
   emptyTrash,
   planPermanentDelete,
   planRestore,
