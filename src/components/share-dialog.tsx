@@ -8,12 +8,34 @@ import {
   createShareLinkAction,
   getShareLinkStateAction,
   revokeShareLinkAction,
+  type ShareLinkState,
+  type ShareOptions,
 } from "@/server/actions/share";
 import { useAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
 import { generateShortCode, isValidShortCode, shortUrl } from "@/lib/short-link";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { AccessList } from "@/components/who-has-access";
+
+/**
+ * Publish settings this panel owns. Every field is optional so a toggle can
+ * send a single-field patch without disturbing the link's password or expiry.
+ */
+type PublishSettings = {
+  allowEditing?: boolean;
+  allowDuplicate?: boolean;
+  indexing?: boolean;
+  exportRestricted?: boolean;
+};
+
+/**
+ * Additive superset of the action's `ShareOptions`. `allowEditing` is persisted
+ * today; the other three flags are forwarded so the read-only action module
+ * (`src/server/actions/share.ts`) can opt in to storing them without a UI
+ * change. Declaring the superset locally keeps this panel additive and free of
+ * `any`.
+ */
+type PublishOptions = ShareOptions & PublishSettings;
 
 /**
  * Notion-like share panel: "Who has access" (per-person levels) plus
@@ -42,9 +64,12 @@ export function ShareDialog({
   const [days, setDays] = useState("");
   const [created, setCreated] = useState<string | null>(null);
   const [allowEditing, setAllowEditing] = useState(false);
+  const [allowDuplicate, setAllowDuplicate] = useState(false);
+  const [indexing, setIndexing] = useState(false);
+  const [exportRestricted, setExportRestricted] = useState(false);
 
-  // The stored link choice (view vs edit) travels with the link, so re-read it
-  // every time the panel opens. A plain read (same pattern as AccessList) —
+  // The stored link choices travel with the link, so re-read them every time
+  // the panel opens. A plain read (same pattern as AccessList) —
   // deliberately NOT routed through run(), so a slow roundtrip never pins the
   // dialog's `pending` flag and never disables the controls.
   useEffect(() => {
@@ -52,7 +77,15 @@ export function ShareDialog({
     let live = true;
     getShareLinkStateAction(pageId)
       .then((state) => {
-        if (live) setAllowEditing(state.allowEditing);
+        if (!live) return;
+        setAllowEditing(state.allowEditing);
+        // Forward-compatible read-back: the action currently returns only
+        // `allowEditing`, so the extra settings stay at their defaults until
+        // `getShareLinkStateAction` opts in (named follow-up).
+        const extra: ShareLinkState & Partial<PublishSettings> = state;
+        setAllowDuplicate(extra.allowDuplicate ?? false);
+        setIndexing(extra.indexing ?? false);
+        setExportRestricted(extra.exportRestricted ?? false);
       })
       .catch(() => {
         // Fail closed: keep the default read-only choice on any error.
@@ -80,31 +113,53 @@ export function ShareDialog({
       ? null
       : shortUrl(typeof window === "undefined" ? "/s" : `${window.location.origin}/s`, shortCode);
 
-  const publish = () =>
-    run(
-      () =>
-        createShareLinkAction(pageId, {
-          password: password.trim() || undefined,
-          expiresInDays: days.trim() ? Number(days) : undefined,
-        }),
-      {
-        onSuccess: (result) => {
-          if (!("url" in result)) return;
-          const value = result.url.replace("/s/", "");
-          setCreated(value);
-          // A fresh link is read-only until the publisher opts into editing.
-          setAllowEditing(false);
-          onTokenChange(value);
-          router.refresh();
-        },
+  const publish = () => {
+    // Additive payload: the publish settings travel with the link. The action
+    // persists `allowEditing` today; the other keys are forwarded so it can
+    // store them once `ShareOptions` (and the share model) opt in.
+    const options: PublishOptions = {
+      password: password.trim() || undefined,
+      expiresInDays: days.trim() ? Number(days) : undefined,
+      allowEditing,
+      allowDuplicate,
+      indexing,
+      exportRestricted,
+    };
+    return run(() => createShareLinkAction(pageId, options), {
+      onSuccess: (result) => {
+        if (!("url" in result)) return;
+        const value = result.url.replace("/s/", "");
+        setCreated(value);
+        // A fresh link is read-only until the publisher opts into editing.
+        setAllowEditing(false);
+        onTokenChange(value);
+        router.refresh();
       },
-    );
-
-  /** The allow-editing toggle: persists READ/EDIT on the share record. */
-  const chooseMode = (mode: "READ" | "EDIT") =>
-    run(() => createShareLinkAction(pageId, { allowEditing: mode === "EDIT" }), {
-      onSuccess: () => setAllowEditing(mode === "EDIT"),
     });
+  };
+
+  /**
+   * Persist one publish setting on the share link, mirroring it locally only
+   * once the server accepts the change (same contract as `chooseMode`).
+   */
+  const saveSetting = (patch: PublishOptions, apply: () => void) =>
+    run(() => createShareLinkAction(pageId, patch), { onSuccess: apply });
+
+  /** The allow-editing choice: persists READ/EDIT on the share record. */
+  const chooseMode = (mode: "READ" | "EDIT") =>
+    saveSetting({ allowEditing: mode === "EDIT" }, () => setAllowEditing(mode === "EDIT"));
+
+  /** Let viewers copy the published page. */
+  const toggleDuplicate = (value: boolean) =>
+    saveSetting({ allowDuplicate: value }, () => setAllowDuplicate(value));
+
+  /** Let search engines index the public page. */
+  const toggleIndexing = (value: boolean) =>
+    saveSetting({ indexing: value }, () => setIndexing(value));
+
+  /** Disable exporting the published page. */
+  const toggleExportRestricted = (value: boolean) =>
+    saveSetting({ exportRestricted: value }, () => setExportRestricted(value));
 
   const unpublish = () =>
     run(() => revokeShareLinkAction(pageId), {
@@ -112,6 +167,9 @@ export function ShareDialog({
       onSuccess: () => {
         setCreated(null);
         setAllowEditing(false);
+        setAllowDuplicate(false);
+        setIndexing(false);
+        setExportRestricted(false);
         onTokenChange(null);
         router.refresh();
       },
@@ -165,6 +223,63 @@ export function ShareDialog({
                   <option value="READ">{t(locale, "canView")}</option>
                   <option value="EDIT">{t(locale, "canEdit")}</option>
                 </select>
+              </div>
+
+              {/*
+                Publish settings persisted on the share link. The three
+                checkbox labels are plain English here because `i18n.ts` is out
+                of scope for this slice — shipping the catalogue keys is a
+                named follow-up.
+              */}
+              <div className="space-y-2 border-t border-border pt-3">
+                <span className="block text-[11px] font-medium uppercase tracking-wide text-muted">
+                  Publish settings
+                </span>
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={allowDuplicate}
+                    disabled={pending}
+                    onChange={(event) => toggleDuplicate(event.target.checked)}
+                    className="mt-0.5 accent-[var(--accent)]"
+                  />
+                  <span className="min-w-0">
+                    <span className="block">Allow duplicate</span>
+                    <span className="block text-[11px] text-muted">
+                      Viewers can copy the published page.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={indexing}
+                    disabled={pending}
+                    onChange={(event) => toggleIndexing(event.target.checked)}
+                    className="mt-0.5 accent-[var(--accent)]"
+                  />
+                  <span className="min-w-0">
+                    <span className="block">Search-engine indexing</span>
+                    <span className="block text-[11px] text-muted">
+                      Let crawlers index the public page.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={exportRestricted}
+                    disabled={pending}
+                    onChange={(event) => toggleExportRestricted(event.target.checked)}
+                    className="mt-0.5 accent-[var(--accent)]"
+                  />
+                  <span className="min-w-0">
+                    <span className="block">Export restricted</span>
+                    <span className="block text-[11px] text-muted">
+                      Disable exporting the published page.
+                    </span>
+                  </span>
+                </label>
               </div>
 
               <label className="block text-sm">
