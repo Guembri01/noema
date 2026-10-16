@@ -484,6 +484,8 @@ export async function searchPages(
   }
 
   // 1. Ranked full-text match (GIN index on to_tsvector(searchText)).
+  //    `ts_rank_cd` (cover density) is term-frequency aware, so a page that
+  //    mentions the query terms many times outranks one that mentions them once.
   const ranked = await prisma.$queryRaw<{ id: string; snippet: string }[]>`
     WITH q AS (SELECT websearch_to_tsquery('english', ${q}) AS query)
     SELECT p.id,
@@ -493,7 +495,7 @@ export async function searchPages(
     WHERE p."workspaceId" = ${workspaceId}
       AND p."deletedAt" IS NULL
       AND to_tsvector('english', coalesce(p."searchText", p."title")) @@ q.query
-    ORDER BY ts_rank(to_tsvector('english', coalesce(p."searchText", p."title")), q.query) DESC,
+    ORDER BY ts_rank_cd(to_tsvector('english', coalesce(p."searchText", p."title")), q.query) DESC,
              p."updatedAt" DESC,
              p."id" ASC
     LIMIT ${take + 1} OFFSET ${offset}
@@ -516,7 +518,7 @@ export async function searchPages(
           WHERE p."workspaceId" = ${workspaceId}
             AND p."deletedAt" IS NULL
             AND to_tsvector('english', coalesce(p."searchText", p."title")) @@ q.query
-          ORDER BY ts_rank(to_tsvector('english', coalesce(p."searchText", p."title")), q.query) DESC,
+          ORDER BY ts_rank_cd(to_tsvector('english', coalesce(p."searchText", p."title")), q.query) DESC,
                    p."id" ASC
           LIMIT ${take + 1} OFFSET ${offset}
         `

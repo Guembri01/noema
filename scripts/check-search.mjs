@@ -52,10 +52,14 @@ const index = await prisma.$queryRawUnsafe(
 check("GIN index for full-text search exists", index.length === 1);
 
 // 2. Ranked results: one term matches both pages, and the dense page ranks first.
+//    Mirrors the production ordering (`ts_rank_cd` cover density, see
+//    `src/server/queries.ts`): ties fall back to newest-then-id so the result is
+//    deterministic even when an equal-ranked page from another run exists.
 const ranked = await prisma.$queryRawUnsafe(
   `SELECT id FROM "Page" WHERE "workspaceId" = $1 AND "deletedAt" IS NULL
      AND to_tsvector('english', coalesce("searchText", "title")) @@ websearch_to_tsquery('english', $2)
-   ORDER BY ts_rank(to_tsvector('english', coalesce("searchText", "title")), websearch_to_tsquery('english', $2)) DESC`,
+   ORDER BY ts_rank_cd(to_tsvector('english', coalesce("searchText", "title")), websearch_to_tsquery('english', $2)) DESC,
+            "updatedAt" DESC, "id" ASC`,
   workspace.id,
   `quixotic`,
 );
