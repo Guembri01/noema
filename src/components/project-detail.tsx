@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Check, Play, Plus, Trash2 } from "lucide-react";
@@ -12,6 +12,12 @@ import {
   updateMilestoneAction,
   updateProjectAction,
 } from "@/server/actions/projects";
+import {
+  listProjectRolesAction,
+  removeProjectRoleAction,
+  setProjectRoleAction,
+} from "@/server/actions/workspaces";
+import type { ProjectMemberSummary, ProjectRole } from "@/lib/project-roles";
 import {safeAction } from "@/lib/actions-client";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
@@ -334,6 +340,106 @@ export function ProjectDetail({
           </ul>
         )}
       </section>
+
+      <ProjectRoleEditor projectId={project.id} locale={locale} />
     </div>
+  );
+}
+
+/**
+ * Per-project role editor. Loads the workspace roster projected onto the
+ * `@/lib/project-roles` decision table (via `listProjectRolesAction`) and lets a
+ * member who may `manageMembers` re-role or remove project members. Every change
+ * is re-checked server-side (ceiling + last-owner guard); the component only
+ * renders what the engine says is allowed.
+ */
+function ProjectRoleEditor({ projectId, locale }: { projectId: string; locale: string }) {
+  const router = useRouter();
+  const [members, setMembers] = useState<ProjectMemberSummary[]>([]);
+  const [roles, setRoles] = useState<{ id: ProjectRole; description: string }[]>([]);
+  const [canManage, setCanManage] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const outcome = await safeAction(() => listProjectRolesAction(projectId), { locale });
+    if (!outcome.ok) {
+      toast.error(outcome.error);
+    } else if ("error" in outcome.value) {
+      toast.error(outcome.value.error);
+    } else {
+      setMembers(outcome.value.members);
+      setRoles(outcome.value.roles);
+      setCanManage(outcome.value.canManage);
+    }
+    setLoading(false);
+  }, [projectId, locale]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const mutate = async (userId: string, task: () => Promise<{ ok: true } | { error: string }>) => {
+    setBusy(userId);
+    const outcome = await safeAction(task, { locale });
+    setBusy(null);
+    const value = outcome.ok ? outcome.value : { error: outcome.error };
+    if ("error" in value) {
+      toast.error(value.error);
+      return;
+    }
+    await load();
+    router.refresh();
+  };
+
+  return (
+    <section className="mt-8">
+      <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
+        {t(locale, "members")}
+      </h2>
+      {loading ? (
+        <p className="text-sm text-muted">{t(locale, "loading")}</p>
+      ) : members.length === 0 ? (
+        <p className="text-sm text-muted">No project members yet.</p>
+      ) : (
+        <ul className="divide-y divide-border rounded-xl border border-border">
+          {members.map((member) => (
+            <li key={member.userId} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+              <span className="min-w-0 flex-1 truncate">{member.name ?? member.userId}</span>
+              <span className="text-[11px] uppercase text-muted">{member.source}</span>
+              <select
+                value={member.role ?? ""}
+                aria-label={`Role for ${member.name ?? member.userId}`}
+                disabled={!canManage || busy === member.userId}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  if (next) void mutate(member.userId, () => setProjectRoleAction(projectId, member.userId, next));
+                }}
+                className="h-8 rounded border border-border bg-bg px-2 text-xs outline-none disabled:opacity-50"
+              >
+                {member.role === null && <option value="">No access</option>}
+                {roles.map((role) => (
+                  <option key={role.id} value={role.id} title={role.description}>
+                    {role.id}
+                  </option>
+                ))}
+              </select>
+              {canManage && (
+                <button
+                  type="button"
+                  disabled={busy === member.userId}
+                  aria-label={`Remove ${member.name ?? member.userId} from project`}
+                  onClick={() => void mutate(member.userId, () => removeProjectRoleAction(projectId, member.userId))}
+                  className="shrink-0 text-muted hover:text-red-500 disabled:opacity-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
