@@ -45,6 +45,7 @@ import {
   type ButtonNotifyLevel,
 } from "@/lib/row-buttons";
 import { DialogContent } from "@/components/ui/dialog";
+import { FormulaEditor } from "@/components/editor/formula-editor";
 
 type OptionDraft = { id: string; name: string; color: string; group?: string };
 
@@ -104,6 +105,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function readButton(config: PropertyConfig): unknown {
   if (!config || !("button" in config)) return undefined;
   return (config as { button?: unknown }).button;
+}
+
+/**
+ * Read the optional FORMULA `expression` off a property config. The shared
+ * `PropertyConfig` type is closed, so the key is read defensively (like
+ * `readNumberFormat`); only a string is accepted, and anything else reads as an
+ * empty formula.
+ */
+function readExpression(config: PropertyConfig): string {
+  if (!config || !("expression" in config)) return "";
+  const value = (config as { expression?: unknown }).expression;
+  return typeof value === "string" ? value : "";
 }
 
 /**
@@ -337,6 +350,7 @@ export function PropertyOptionsEditor({
   const isDate = typeCode === "DATE";
   const isNumber = typeCode === "NUMBER";
   const isButton = typeCode === "BUTTON";
+  const isFormula = typeCode === "FORMULA";
 
   // --- Default value (config.default) --------------------------------------
   // Live option list (SELECT/MULTI_SELECT/STATUS edits are already reflected in
@@ -587,6 +601,16 @@ export function PropertyOptionsEditor({
       ...(configRef.current ?? {}),
       button: candidate,
     } as PropertyConfig);
+  };
+
+  // --- FORMULA: expression (`@/lib/formula` + `@/lib/formula-editor`) ------
+  // The editor keeps a live draft so autocomplete/diagnostics run on every
+  // keystroke; only blur/Format persists, so storage is not written per char.
+  const [expression, setExpression] = useState(() => readExpression(property.config));
+
+  const commitFormula = (next: string) => {
+    setExpression(next);
+    persist({ ...(configRef.current ?? {}), expression: next } as PropertyConfig);
   };
 
   // --- Default value: validated through `defaultValueFor` ------------------
@@ -1245,6 +1269,24 @@ export function PropertyOptionsEditor({
                 ? "—"
                 : `${buttonDraft.icon.trim() !== "" ? `${buttonDraft.icon.trim()} ` : ""}${buttonDraft.label}`}
             </span>
+          </p>
+        </section>
+      )}
+
+      {isFormula && (
+        <section className="mt-4 space-y-3" data-testid="formula-config">
+          <h3 className="text-sm font-medium">Formula</h3>
+          <FormulaEditor
+            value={expression}
+            onChange={setExpression}
+            onCommit={commitFormula}
+            locale={locale}
+            placeholder='concat(prop("Name"), " — done")'
+            dataTestId="formula-editor"
+          />
+          <p className="text-xs text-muted">
+            Reference other columns with prop(&quot;Name&quot;); functions,
+            signature help and diagnostics appear as you type.
           </p>
         </section>
       )}
