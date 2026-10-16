@@ -46,6 +46,8 @@ import {
   type ViewConfig } from "@/lib/database-query";
 import { evaluateFormula } from "@/lib/formula";
 import { aggregate, type RollupFunction } from "@/lib/rollup";
+import { AGGREGATION_FUNCTIONS, type AggregationFn } from "@/lib/aggregations";
+import type { ChartType } from "@/lib/charts";
 import type { RowColorRule } from "@/lib/row-color-rules";
 import { mergeLayout, type ColumnLayout } from "@/lib/column-layout";
 import { CARD_SIZES, type CardSizeName } from "@/lib/view-presets";
@@ -179,6 +181,33 @@ function normalizeCardSize(value: unknown): CardSizeName | undefined {
   if (typeof value !== "string") return undefined;
   return Object.prototype.hasOwnProperty.call(CARD_SIZES, value)
     ? (value as CardSizeName)
+    : undefined;
+}
+
+/** The chart shapes `ChartView` renders (mirrors the `ChartType` union). */
+const CHART_TYPE_NAMES = ["bar", "line", "pie", "donut"] as const;
+
+/**
+ * A view's forced CHART shape, or `undefined` when the stored value is absent /
+ * not one of the shapes `@/lib/charts` understands. Returning `undefined` keeps
+ * `ChartView`'s own "bar" default, exactly as the view rendered before.
+ */
+function normalizeChartType(value: unknown): ChartType | undefined {
+  return typeof value === "string" &&
+    (CHART_TYPE_NAMES as readonly string[]).includes(value)
+    ? (value as ChartType)
+    : undefined;
+}
+
+/**
+ * A view's CHART aggregation, or `undefined` when the stored value is not one
+ * of the aggregations the chart engine knows. `undefined` keeps `ChartView`'s
+ * own row-count default, so an unstyled view is unchanged.
+ */
+function normalizeChartAggregate(value: unknown): AggregationFn | undefined {
+  return typeof value === "string" &&
+    AGGREGATION_FUNCTIONS.some((fn) => fn.id === value)
+    ? (value as AggregationFn)
     : undefined;
 }
 
@@ -340,6 +369,25 @@ export function DatabaseView({
   const galleryCardSize = normalizeCardSize(
     (activeView?.config as { cardSize?: unknown } | null | undefined)?.cardSize,
   );
+
+  // CHART + BOARD options: the parsed `viewConfig` carries `chartType` /
+  // `chartAggregate`, but the two id-shaped keys (`previewPropertyId` for the
+  // GALLERY card cover, `aggregationPropertyId` for the BOARD column summary)
+  // are not part of the general schema. Like `laneBy`/`cardSize` above, every
+  // value is read off the raw view config and normalised: an absent or malformed
+  // value resolves to `undefined`, so `ChartView` keeps its own bar/count
+  // defaults and `BoardView` keeps summarising the first NUMBER column — exactly
+  // how the view rendered before these options existed.
+  const chartType = normalizeChartType(
+    (activeView?.config as { chartType?: unknown } | null | undefined)?.chartType,
+  );
+  const chartAggregate = normalizeChartAggregate(
+    (activeView?.config as { chartAggregate?: unknown } | null | undefined)
+      ?.chartAggregate,
+  );
+  const boardAggregationPropertyId = (
+    activeView?.config as { aggregationPropertyId?: string | null } | null | undefined
+  )?.aggregationPropertyId;
 
   // DATABASE DESCRIPTION (R89.21): the intro text shown between the toolbar and
   // the active view. Like `defaultTemplateId`/`form` above, the key is not part
@@ -1315,6 +1363,7 @@ export function DatabaseView({
           laneBy={boardLaneBy}
           wipLimits={boardWipLimits}
           visibleGroups={boardVisibleGroups}
+          aggregationPropertyId={boardAggregationPropertyId}
         />
       ) : activeView.type === "LIST" ? (
         <ListView
@@ -1359,6 +1408,8 @@ export function DatabaseView({
           properties={properties}
           rows={viewRows}
           groupByPropertyId={viewConfig.groupByPropertyId}
+          chartType={chartType}
+          aggregateFn={chartAggregate}
         />
       ) : activeView.type === "FORM" ? (
         <FormView
@@ -1389,7 +1440,7 @@ export function DatabaseView({
           peopleOptions={members ?? []}
           headerConfig={headerConfig}
           onRunButton={onRunButton}
-          onConfigureButton={(property) => setPromptState({ kind: "button", property })}
+          onConfigureButton={(property) => setOptionsEditor(property)}
           onOpenPeek={setPeek}
           onRunAi={onRunAi}
           colorOf={colorOf}
