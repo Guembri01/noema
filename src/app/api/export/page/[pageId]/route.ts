@@ -4,31 +4,33 @@ import { rateLimit } from "@/lib/api-guard";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { PAGE_EXPORT_FORMATS, parseExportFormat } from "@/lib/export-format";
-import { pageToMarkdown } from "@/lib/serialize";
 import { documentToHtml } from "@/lib/html-export";
-import type { RichBlock } from "@/lib/markdown";
 import { docToPdf } from "@/lib/pdf";
+import {
+  buildMarkdownExport,
+  buildPrintExport,
+  contentDisposition,
+  docBlocks,
+  exportEngineHeaders,
+  representationFor,
+} from "@/lib/page-export";
 
 export const runtime = "nodejs";
 
 /**
- * Pull the block array out of a stored page document, tolerating junk: a
- * missing/!object root or a non-array `content` yields `[]` rather than a
- * throw. Elements are filtered to objects so the pure exporter only ever sees
- * `RichBlock`-shaped nodes.
- */
-function docBlocks(content: unknown): RichBlock[] {
-  if (!content || typeof content !== "object") return [];
-  const inner = (content as { content?: unknown }).content;
-  if (!Array.isArray(inner)) return [];
-  return inner.filter(
-    (node): node is RichBlock => Boolean(node) && typeof node === "object",
-  );
-}
-
-/**
- * Export a page as Markdown (`?format=md`, default), JSON, HTML or PDF.
- * Unknown formats → 400 (R23.16); 30 exports/min (R23.22).
+ * Export a page. `?format=` selects the engine (docs/MISSING_FEATURES §12):
+ *
+ *   • `md` (default) — the round-trip-secure `docToMarkdownFidelity`
+ *     serializer, with `frontMatter`/`imageBase`; the `fidelityReport` losses
+ *     ride along in `x-export-fidelity*` headers.
+ *   • `json` — the raw stored document.
+ *   • `html` — `documentToHtml`, or the print-plan HTML with `?print=1`.
+ *   • `pdf` — the `buildPrintPlan` + `printStyles` print-plan engine; the
+ *     response is the planned PDF (or the print-ready HTML with `?print=1`).
+ *
+ * Unknown formats → 400 (R23.16); 30 exports/min (R23.22). The plan's page and
+ * block counts and the engines' fidelity findings are exposed as `x-export-*`
+ * headers, so the work a `?format=` request performed is inspectable.
  */
 export async function GET(
   request: Request,
@@ -50,8 +52,9 @@ export async function GET(
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+  const url = new URL(request.url);
   const parsedFormat = parseExportFormat(
-    new URL(request.url).searchParams.get("format"),
+    url.searchParams.get("format"),
     PAGE_EXPORT_FORMATS,
     "md",
   );
@@ -62,6 +65,7 @@ export async function GET(
     );
   }
   const format = parsedFormat.format;
+  const representation = representationFor(url.searchParams);
   const safeName =
     (page.title || "untitled").replace(/[^\w.-]+/g, "-").slice(0, 60) || "untitled";
 
@@ -79,6 +83,40 @@ export async function GET(
     });
   }
 
+  // The print-plan engine backs both `?format=pdf` and `?format=html&print=1`.
+  if (format === "pdf" || (format === "html" && representation === "print-html")) {
+    const print = buildPrintExport(page.title, page.content, {
+      includePageNumbers: url.searchParams.get("pageNumbers") !== "0",
+      includeToc: url.searchParams.get("toc") === "1",
+    });
+    const filename = representation === "print-html" ? print.htmlFilename : print.filename;
+    const headers = exportEngineHeaders({
+      engine: print.engine,
+      filename,
+      plan: print.plan,
+      planFidelity: print.fidelity,
+    });
+
+    if (representation === "print-html") {
+      return new NextResponse(print.html, {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "content-disposition": contentDisposition(print.htmlFilename),
+          ...headers,
+        },
+      });
+    }
+
+    const pdf = await docToPdf(page.title, page.content);
+    return new NextResponse(new Uint8Array(pdf), {
+      headers: {
+        "content-type": "application/pdf",
+        "content-disposition": contentDisposition(print.filename),
+        ...headers,
+      },
+    });
+  }
+
   if (format === "html") {
     return new NextResponse(documentToHtml(docBlocks(page.content), { title: page.title }), {
       headers: {
@@ -88,20 +126,16 @@ export async function GET(
     });
   }
 
-  if (format === "pdf") {
-    const pdf = await docToPdf(page.title, page.content);
-    return new NextResponse(new Uint8Array(pdf), {
-      headers: {
-        "content-type": "application/pdf",
-        "content-disposition": `attachment; filename="${safeName}.pdf"`,
-      },
-    });
-  }
-
-  return new NextResponse(pageToMarkdown(page.title, page.content), {
+  // Markdown (default) — the fidelity serializer plus its loss report.
+  const markdown = buildMarkdownExport(page.title, page.content, {
+    frontMatter: { title: page.title, exportedAt: new Date().toISOString() },
+    imageBase: url.searchParams.get("imageBase") ?? url.origin,
+  });
+  return new NextResponse(markdown.body, {
     headers: {
       "content-type": "text/markdown; charset=utf-8",
       "content-disposition": `attachment; filename="${safeName}.md"`,
+      ...exportEngineHeaders({ engine: markdown.engine, fidelity: markdown.fidelity }),
     },
   });
 }
