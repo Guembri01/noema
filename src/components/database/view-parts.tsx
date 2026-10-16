@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { createPropertyAction } from "@/server/actions/database";
 import { useAction } from "@/lib/actions-client";
-import { cn } from "@/lib/utils";
+import { cn, initials } from "@/lib/utils";
+import { TAG_HUES, isTagHue, tagClass, tagStyle, type TagHue } from "@/lib/design-tokens";
 import { PropertyType } from "@prisma/client";
 import { formatCell, normalizeOptionIds } from "@/lib/database-query";
 import { formatNumberValue, type NumberFormatSpec } from "@/lib/number-format";
@@ -54,7 +55,7 @@ import {
   type LegacyVerificationCell,
 } from "@/lib/verification-cell";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
+import { type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
 
 export const PROPERTY_TYPES: PropertyType[] = [
   "TEXT",
@@ -88,6 +89,144 @@ export const TABLE_FONT_PX = 14;
 export const TABLE_CELL_PADDING_PX = 32;
 /** Headers auto-fit against the label only; cap them well under the 800px max. */
 const HEADER_AUTO_FIT_MAX = 360;
+
+/* ---------------------------------------------------------------------------
+   Cell states, tag palette and keyboard contract (design system, P4)
+   --------------------------------------------------------------------------- */
+
+/**
+ * Cell types whose value is derived and therefore read-only: they render text,
+ * never an editor, so the "editing" visual state never applies to them.
+ */
+const READ_ONLY_CELL_TYPES: ReadonlySet<string> = new Set([
+  "FORMULA",
+  "ROLLUP",
+  "CREATED_TIME",
+  "LAST_EDITED_TIME",
+  "CREATED_BY",
+  "LAST_EDITED_BY",
+  "UNIQUE_ID",
+]);
+
+/** True when a cell type can enter the editing state. */
+export function isEditableCellType(type: string): boolean {
+  return !READ_ONLY_CELL_TYPES.has(type);
+}
+
+/** The independent visual states a cell shell can be in. */
+export type CellVisualState = {
+  hover?: boolean;
+  focus?: boolean;
+  editing?: boolean;
+  invalid?: boolean;
+  selected?: boolean;
+};
+
+/** The one state a cell shell resolves to once precedence is applied. */
+export type CellVisualStateName =
+  | "idle"
+  | "hover"
+  | "focus"
+  | "editing"
+  | "selected"
+  | "invalid";
+
+/**
+ * Collapse the independent cell flags into a single state name. Precedence is
+ * `invalid` → `editing` → `selected` → `focus` → `hover` → `idle`, so a cell can
+ * never carry two competing rings and the most urgent signal always wins.
+ * `editing` is ignored for read-only types (they have no editor).
+ */
+export function cellVisualState(
+  type: string,
+  state: CellVisualState = {},
+): CellVisualStateName {
+  if (state.invalid) return "invalid";
+  if (isEditableCellType(type) && state.editing) return "editing";
+  if (state.selected) return "selected";
+  if (state.focus) return "focus";
+  if (state.hover) return "hover";
+  return "idle";
+}
+
+/** The single ring (if any) for a resolved state, always a token colour. */
+function cellRingClass(name: CellVisualStateName): string {
+  switch (name) {
+    case "invalid":
+      return "ring-2 ring-danger";
+    case "editing":
+      return "bg-surface ring-2 ring-accent";
+    case "selected":
+      return "ring-2 ring-accent";
+    case "focus":
+      return "ring-2 ring-ring/60";
+    default:
+      return "";
+  }
+}
+
+/**
+ * State → class mapping for a cell shell.
+ *
+ * Hover tint and the focus-visible ring are CSS variants, so *every* cell type
+ * gets them; the editing/selected/invalid states resolve to exactly one ring
+ * through {@link cellVisualState} so specificity can never pick the wrong one.
+ * Read-only types ignore the editing state and are not marked `cursor-text`.
+ */
+export function cellStateClass(type: string, state: CellVisualState = {}): string {
+  const name = cellVisualState(type, state);
+  const editable = isEditableCellType(type);
+  return cn(
+    "group/cell relative flex min-w-0 max-w-full items-center rounded-sm u-colors",
+    "hover:bg-surface-2/60 focus-within:ring-2 focus-within:ring-ring/60",
+    editable && "cursor-text",
+    cellRingClass(name),
+  );
+}
+
+/** What a keydown should do inside a cell editor. */
+export type CellKeyOutcome = "commit" | "cancel" | "move" | "none";
+
+/**
+ * The cell editor keyboard contract: `Enter` commits (blur), `Escape` cancels
+ * the edit, `Tab` commits and lets focus move on, everything else (including the
+ * native arrow handling of `<select>`/`<input type=number>`) is left to the
+ * control. Pure so the entry/exit rules are provable without a DOM.
+ */
+export function cellKeyOutcome(key: string): CellKeyOutcome {
+  switch (key) {
+    case "Enter":
+      return "commit";
+    case "Escape":
+      return "cancel";
+    case "Tab":
+      return "move";
+    default:
+      return "none";
+  }
+}
+
+/**
+ * Map a stored option colour onto the shared tag palette. The option colours
+ * (`OPTION_COLORS`) are the hue names, so this is the one place a select/status
+ * chip resolves its token hue; an unknown colour degrades to `gray` rather than
+ * rendering unstyled.
+ */
+export function optionTagHue(color: string | null | undefined): TagHue {
+  return isTagHue(color) ? color : "gray";
+}
+
+/**
+ * Stable tag hue for a person's mini avatar, derived from their name so the
+ * same person always gets the same colour across cells, board cards and peeks.
+ */
+export function avatarHue(name: string): TagHue {
+  let hash = 0;
+  for (let index = 0; index < name.length; index += 1) {
+    hash = (hash * 31 + name.charCodeAt(index)) >>> 0;
+  }
+  return TAG_HUES[hash % TAG_HUES.length];
+}
 
 /**
  * Auto-fit a column width from real text metrics (`@/lib/text-measure`) instead
@@ -227,7 +366,7 @@ export function PropertyHeader({
             <button
               type="button"
               aria-label={t(locale, "propertyOptionsAria")}
-              className="opacity-0 group-hover/head:opacity-100"
+              className="focus-ring u-colors rounded opacity-0 group-hover/head:opacity-100"
             >
               <span className="text-muted">⌄</span>
             </button>
@@ -728,6 +867,7 @@ export function Cell({
   properties,
   actingUserId,
   actingRole,
+  selected,
 }: {
   property: DBProperty;
   value: unknown;
@@ -762,6 +902,12 @@ export function Cell({
    * from `editable` when omitted, so existing callers stay valid.
    */
   actingRole?: ButtonRole;
+  /**
+   * Table selection: paints the accent outline on the selected cell. Optional so
+   * existing callers (board cards, peeks) are unchanged; focus-within still
+   * draws the accent-adjacent ring when a cell's control is focused.
+   */
+  selected?: boolean;
 }) {
   const v = (value ?? {}) as Record<string, unknown>;
   // Formatted cells (percent/currency/friendly date) render as text and swap
@@ -781,8 +927,13 @@ export function Cell({
   // filtering/matching rules.
   const [relationQuery, setRelationQuery] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const readOnly = (node: React.ReactNode) => (
-    <span className="text-muted">{node}</span>
+  const readOnly = (node: React.ReactNode, title?: string) => (
+    <span
+      className="min-w-0 max-w-full truncate text-muted"
+      title={title ?? (typeof node === "string" ? node : undefined)}
+    >
+      {node}
+    </span>
   );
   const numberFormat = property.config?.format;
   // Optional richer NUMBER spec (`@/lib/number-format`). Present → it supersedes
@@ -799,6 +950,41 @@ export function Cell({
   // Widened once so the switch can reach types the generated enum may not list
   // yet (PLACE) without a cast on every case.
   const typeCode: string = property.type;
+  // NUMBER renders as a formatted text/button (with a click-to-edit swap) only
+  // when it carries a format; otherwise it is an always-on numeric input.
+  const numberFormatted =
+    numberFormatSpec !== undefined ||
+    numberFormat === "percent" ||
+    numberFormat === "currency";
+  // Whether the cell is currently showing an editor (input) rather than its
+  // display node — drives the shell's editing state. Kept beside the state it
+  // mirrors so the shell and the switch can never disagree.
+  const editingCell = (() => {
+    if (!editable) return false;
+    switch (typeCode) {
+      case "NUMBER":
+        return numberFormatted ? editingNumber : true;
+      case "DATE":
+        return dateFormatted || property.config?.date ? editingDate : true;
+      case "PLACE":
+        return editingPlace;
+      case "SELECT":
+      case "STATUS":
+      case "MULTI_SELECT":
+      case "CHECKBOX":
+      case "PEOPLE":
+      case "RELATION":
+      case "FILES":
+      case "ICON":
+      case "VERIFICATION":
+      case "BUTTON":
+      case "AI_AUTOFILL":
+        return false;
+      default:
+        // TEXT / URL / EMAIL / PHONE render an always-on input.
+        return true;
+    }
+  })();
 
   // Inline, non-blocking validation: any failure shows a red ring plus the
   // engine's message (as `title`), never a blocking dialog or a prevented edit.
@@ -830,8 +1016,9 @@ export function Cell({
       properties ?? [property],
     );
     if (!resolved.backgroundColor) return undefined;
-    const hex = OPTION_COLORS[resolved.backgroundColor] ?? "#8a8a85";
-    return `${hex}22`;
+    // The rule names a palette tint; paint it from the same tag tokens the
+    // chips use rather than a raw hex + alpha (design system rule 1).
+    return `var(--tag-${optionTagHue(resolved.backgroundColor)}-bg)`;
   })();
 
   const commitNumber = (raw: string) => {
@@ -907,11 +1094,7 @@ export function Cell({
   switch (typeCode) {
     case "NUMBER": {
       const raw = typeof v.number === "number" ? v.number : null;
-      const formatted =
-        numberFormatSpec !== undefined ||
-        numberFormat === "percent" ||
-        numberFormat === "currency";
-      if (formatted) {
+      if (numberFormatted) {
         const text =
           numberFormatSpec !== undefined
             ? raw === null
@@ -920,7 +1103,11 @@ export function Cell({
             : formatCell(value, property);
         if (!editable) {
           return (
-            <span aria-label={property.name} className="text-muted">
+            <span
+              aria-label={property.name}
+              title={text || undefined}
+              className="min-w-0 max-w-full truncate text-muted"
+            >
               {text || "—"}
             </span>
           );
@@ -932,6 +1119,7 @@ export function Cell({
               type="number"
               step="any"
               aria-label={property.name}
+              aria-invalid={errorMessage !== "" || undefined}
               // Percent shows the percentage (7.5), not the stored fraction.
               defaultValue={
                 raw === null
@@ -947,10 +1135,11 @@ export function Cell({
                 setEditingNumber(false);
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                if (e.key === "Escape") setEditingNumber(false);
+                const outcome = cellKeyOutcome(e.key);
+                if (outcome === "commit") (e.target as HTMLInputElement).blur();
+                if (outcome === "cancel") setEditingNumber(false);
               }}
-              className="w-24 bg-transparent outline-none"
+              className="focus-ring w-full bg-transparent outline-none tabular-nums"
             />
           );
         }
@@ -958,8 +1147,9 @@ export function Cell({
           <button
             type="button"
             aria-label={property.name}
+            title={text || undefined}
             onClick={() => setEditingNumber(true)}
-            className="w-full rounded px-1 py-0.5 text-left hover:bg-surface-2"
+            className="focus-ring w-full min-w-0 truncate rounded px-1 py-0.5 text-left tabular-nums hover:bg-surface-2"
           >
             {text || <span className="text-muted">—</span>}
           </button>
@@ -969,6 +1159,7 @@ export function Cell({
         <input
           type="number"
           aria-label={property.name}
+          aria-invalid={errorMessage !== "" || undefined}
           defaultValue={(v.number as number) ?? ""}
           readOnly={!editable}
           onBlur={(e) =>
@@ -976,20 +1167,51 @@ export function Cell({
               e.target.value === "" ? null : { number: Number(e.target.value) },
             )
           }
-          className="w-24 bg-transparent outline-none"
+          onKeyDown={(e) => {
+            if (cellKeyOutcome(e.key) === "commit")
+              (e.target as HTMLInputElement).blur();
+          }}
+          className="focus-ring w-full bg-transparent outline-none tabular-nums"
         />
       );
     }
     case "CHECKBOX":
       return (
-        <input
-          type="checkbox"
-          aria-label={property.name}
-          checked={Boolean(v.checked)}
-          disabled={!editable}
-          onChange={(e) => onChange({ checked: e.target.checked })}
-          className="accent-[var(--accent)]"
-        />
+        <label className="focus-ring inline-flex cursor-pointer items-center">
+          <input
+            type="checkbox"
+            aria-label={property.name}
+            checked={Boolean(v.checked)}
+            disabled={!editable}
+            onChange={(e) => onChange({ checked: e.target.checked })}
+            className="peer sr-only"
+          />
+          <span
+            aria-hidden
+            className={cn(
+              "u-colors flex h-4 w-4 items-center justify-center rounded-xs border border-border-strong bg-bg",
+              "peer-focus-visible:ring-2 peer-focus-visible:ring-ring",
+              Boolean(v.checked) && "border-accent bg-accent text-accent-fg",
+              !editable && "opacity-50",
+            )}
+          >
+            {Boolean(v.checked) ? (
+              // The 160 ms tick: the shared `animate-scale-in` token is exactly
+              // `scale-in 0.16s var(--ease-smooth)`.
+              <svg
+                viewBox="0 0 12 12"
+                className="animate-scale-in h-3 w-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M2 6.2 4.6 8.8 10 3.2" />
+              </svg>
+            ) : null}
+          </span>
+        </label>
       );
     case "DATE": {
       const dateConfig = property.config?.date;
@@ -1000,7 +1222,11 @@ export function Cell({
           const text = formatCell(value, property);
           if (!editable) {
             return (
-              <span aria-label={property.name} className="text-muted">
+              <span
+                aria-label={property.name}
+                title={text || undefined}
+                className="min-w-0 max-w-full truncate text-muted"
+              >
                 {text || "—"}
               </span>
             );
@@ -1011,12 +1237,16 @@ export function Cell({
                 autoFocus
                 type="date"
                 aria-label={property.name}
+                aria-invalid={errorMessage !== "" || undefined}
                 defaultValue={typeof v.start === "string" ? v.start.slice(0, 10) : ""}
                 onChange={(e) => {
                   if (e.target.value) onChange({ start: e.target.value });
                 }}
                 onBlur={() => setEditingDate(false)}
-                className="bg-transparent outline-none"
+                onKeyDown={(e) => {
+                  if (cellKeyOutcome(e.key) === "cancel") setEditingDate(false);
+                }}
+                className="focus-ring w-full bg-transparent outline-none"
               />
             );
           }
@@ -1024,8 +1254,9 @@ export function Cell({
             <button
               type="button"
               aria-label={property.name}
+              title={text || undefined}
               onClick={() => setEditingDate(true)}
-              className="w-full rounded px-1 py-0.5 text-left hover:bg-surface-2"
+              className="focus-ring w-full min-w-0 truncate rounded px-1 py-0.5 text-left hover:bg-surface-2"
             >
               {text || <span className="text-muted">—</span>}
             </button>
@@ -1035,10 +1266,11 @@ export function Cell({
           <input
             type="date"
             aria-label={property.name}
+            aria-invalid={errorMessage !== "" || undefined}
             defaultValue={typeof v.start === "string" ? v.start.slice(0, 10) : ""}
             readOnly={!editable}
             onChange={(e) => onChange({ start: e.target.value })}
-            className="bg-transparent outline-none"
+            className="focus-ring w-full bg-transparent outline-none"
           />
         );
       }
@@ -1077,7 +1309,11 @@ export function Cell({
       };
       if (!editable) {
         return (
-          <span aria-label={property.name} className="text-muted">
+          <span
+            aria-label={property.name}
+            title={label || undefined}
+            className="min-w-0 max-w-full truncate text-muted"
+          >
             {label || "—"}
           </span>
         );
@@ -1092,7 +1328,7 @@ export function Cell({
                 aria-label={property.name}
                 defaultValue={startText.slice(0, 10)}
                 onChange={(e) => commitDate({ start: e.target.value })}
-                className="bg-transparent outline-none"
+                className="focus-ring min-w-0 bg-transparent outline-none"
               />
               {dateConfig.allowRange && (
                 <>
@@ -1102,7 +1338,7 @@ export function Cell({
                     aria-label={`${property.name} end`}
                     defaultValue={endText.slice(0, 10)}
                     onChange={(e) => commitDate({ end: e.target.value })}
-                    className="bg-transparent outline-none"
+                    className="focus-ring min-w-0 bg-transparent outline-none"
                   />
                 </>
               )}
@@ -1113,14 +1349,14 @@ export function Cell({
                 aria-label={t(locale, "allDayWord")}
                 checked={allDayValue}
                 onChange={(e) => commitDate({ allDay: e.target.checked })}
-                className="accent-[var(--accent)]"
+                className="focus-ring accent-[var(--accent)]"
               />
               {t(locale, "allDayWord")}
             </label>
             <button
               type="button"
               onClick={() => setEditingDate(false)}
-              className="self-start text-xs text-accent hover:underline"
+              className="focus-ring self-start text-xs text-accent hover:underline"
             >
               {t(locale, "close")}
             </button>
@@ -1131,8 +1367,9 @@ export function Cell({
         <button
           type="button"
           aria-label={property.name}
+          title={label || undefined}
           onClick={() => setEditingDate(true)}
-          className="w-full rounded px-1 py-0.5 text-left hover:bg-surface-2"
+          className="focus-ring w-full min-w-0 truncate rounded px-1 py-0.5 text-left hover:bg-surface-2"
         >
           {label || <span className="text-muted">—</span>}
         </button>
@@ -1142,16 +1379,18 @@ export function Cell({
     case "STATUS": {
       const options = property.config?.options ?? [];
       const current = options.find((o) => o.id === v.optionId);
+      const currentHue = optionTagHue(current?.color);
       return (
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 items-center gap-1">
           {current && (
             <span
               data-testid="option-chip"
-              className="rounded px-1.5 py-0.5 text-xs"
-              style={{
-                backgroundColor: `${OPTION_COLORS[current.color] ?? "#8a8a85"}22`,
-                color: OPTION_COLORS[current.color] ?? "#8a8a85",
-              }}
+              data-color={currentHue}
+              // Hover preview of the colour name (the chip's own label is the
+              // option name, so the hue is what a title should disclose).
+              title={currentHue}
+              className={cn(tagClass(currentHue), "min-w-0 max-w-full truncate")}
+              style={tagStyle(currentHue)}
             >
               {current.name}
             </span>
@@ -1163,7 +1402,7 @@ export function Cell({
               onChange={(e) =>
                 onChange(e.target.value ? { optionId: e.target.value } : null)
               }
-              className="max-w-[110px] bg-transparent text-xs text-muted outline-none"
+              className="focus-ring max-w-[110px] bg-transparent text-xs text-muted outline-none"
             >
               <option value="">—</option>
               {options.map((o) => (
@@ -1180,33 +1419,33 @@ export function Cell({
       const options = property.config?.options ?? [];
       // Normalised read (dedup, unknown ids dropped): a stored value can never
       // render twice or out of order, and the next toggle re-saves it clean.
-      const selected = normalizeOptionIds(v.optionIds, options);
+      const selectedIds = normalizeOptionIds(v.optionIds, options);
       return (
-        <div className="flex flex-wrap gap-1">
+        <div className="flex min-w-0 flex-wrap gap-1">
           {options.map((o) => {
-            const active = selected.includes(o.id);
+            const active = selectedIds.includes(o.id);
+            const hue = optionTagHue(o.color);
             return (
               <button
                 key={o.id}
                 type="button"
                 disabled={!editable}
+                aria-pressed={active}
+                data-color={hue}
+                title={hue}
                 onClick={() =>
                   onChange({
                     optionIds: active
-                      ? selected.filter((id) => id !== o.id)
-                      : [...selected, o.id],
+                      ? selectedIds.filter((id) => id !== o.id)
+                      : [...selectedIds, o.id],
                   })
                 }
                 className={cn(
-                  "rounded px-1.5 py-0.5 text-xs",
-                  active ? "text-white" : "text-muted",
+                  tagClass(hue),
+                  "focus-ring min-w-0 max-w-full truncate disabled:opacity-50",
+                  !active && "opacity-60",
                 )}
-                style={{
-                  backgroundColor: active
-                    ? OPTION_COLORS[o.color] ?? "#8a8a85"
-                    : "transparent",
-                  border: "1px solid var(--border)",
-                }}
+                style={tagStyle(hue)}
               >
                 {o.name}
               </button>
@@ -1234,22 +1473,33 @@ export function Cell({
       const members = peopleOptions ?? [];
       return (
         <div
-          className="flex flex-wrap items-center gap-1"
+          className="flex min-w-0 flex-wrap items-center gap-1"
           role="group"
           aria-label={property.name}
         >
           {names.map((name) => (
             <span
               key={name}
-              className="flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-xs"
+              className="flex min-w-0 max-w-full items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-xs"
             >
-              {name}
+              {/* Mini avatar: initials on the same tag palette, so a person
+                  keeps one colour everywhere (deterministic from their name). */}
+              <span
+                aria-hidden
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-medium"
+                style={tagStyle(avatarHue(name))}
+              >
+                {initials(name)}
+              </span>
+              <span className="min-w-0 truncate" title={name}>
+                {name}
+              </span>
               {editable && (
                 <button
                   type="button"
                   aria-label={`${t(locale, "remove")}: ${name}`}
                   onClick={() => emit(names.filter((n) => n !== name))}
-                  className="text-muted hover:text-fg"
+                  className="focus-ring shrink-0 text-muted hover:text-fg"
                 >
                   ×
                 </button>
@@ -1262,7 +1512,7 @@ export function Cell({
                 <button
                   type="button"
                   aria-label={t(locale, "addPersonAria")}
-                  className="rounded px-1 text-xs text-muted hover:bg-surface-2"
+                  className="focus-ring rounded px-1 text-xs text-muted hover:bg-surface-2"
                 >
                   +
                 </button>
@@ -1304,7 +1554,11 @@ export function Cell({
       // like the other derived cells. An unconfigured rollup has no computed
       // value and stays blank, so no cell changes for a pre-config property.
       return (
-        <span aria-label={property.name} className="text-muted">
+        <span
+          aria-label={property.name}
+          title={computed && computed.length > 0 ? computed : "—"}
+          className="min-w-0 max-w-full truncate text-muted"
+        >
           {computed && computed.length > 0 ? computed : "—"}
         </span>
       );
@@ -1315,7 +1569,11 @@ export function Cell({
       // Read-only, but addressable: the row UI must be assertable for
       // created/last-edited surfacing (and screen readers get the name too).
       return (
-        <span aria-label={property.name} className="text-muted">
+        <span
+          aria-label={property.name}
+          title={computed && computed.length > 0 ? computed : "—"}
+          className="min-w-0 max-w-full truncate text-muted"
+        >
           {computed && computed.length > 0 ? computed : "—"}
         </span>
       );
@@ -1334,8 +1592,8 @@ export function Cell({
       return (
         <span
           aria-label={property.name}
-          title={resolved?.description}
-          className="text-muted"
+          title={resolved?.description ?? (text || undefined)}
+          className="min-w-0 max-w-full truncate text-muted"
         >
           {text || "—"}
         </span>
@@ -1351,19 +1609,22 @@ export function Cell({
       // actor, so without it verifying is refused (and a foreign stamp kept).
       const display = verificationCellView(value);
       const note = cellToValue(value).note;
-      const chipClass =
+      // Tone → shared tag palette (no bespoke colour pairs): verified wins
+      // green, a stale stamp reads yellow, an unverified cell stays neutral.
+      const hue: TagHue =
         display.tone === "verified"
-          ? "border-green-600/40 bg-green-600/10 text-green-700"
+          ? "green"
           : display.tone === "stale"
-            ? "border-amber-600/40 bg-amber-600/10 text-amber-700"
-            : "border-border text-muted hover:bg-surface-2";
+            ? "yellow"
+            : "gray";
       if (!editable) {
         return (
           <span
             aria-label={`${property.name}: ${display.label}`}
             title={note}
             data-tone={display.tone}
-            className="text-muted"
+            className={cn(tagClass(hue), "min-w-0 max-w-full truncate")}
+            style={tagStyle(hue)}
           >
             {display.label}
           </span>
@@ -1380,7 +1641,8 @@ export function Cell({
           onClick={() =>
             onChange(nextVerificationCell(value, { actingUserId, now: Date.now() }))
           }
-          className={cn("rounded border px-2 py-0.5 text-xs", chipClass)}
+          className={cn(tagClass(hue), "focus-ring min-w-0 max-w-full truncate")}
+          style={tagStyle(hue)}
         >
           {display.label}
         </button>
@@ -1397,7 +1659,11 @@ export function Cell({
         : "";
       if (!editable) {
         return (
-          <span aria-label={property.name} className="text-muted">
+          <span
+            aria-label={property.name}
+            title={display || undefined}
+            className="min-w-0 max-w-full truncate text-muted"
+          >
             {display || "—"}
           </span>
         );
@@ -1407,6 +1673,14 @@ export function Cell({
         const update = (patch: Partial<PlaceDraft>) =>
           setPlaceDraft((prev) => (prev ? { ...prev, ...patch } : prev));
         const blurCommit = () => commitPlace(draft);
+        const placeKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+          const outcome = cellKeyOutcome(e.key);
+          if (outcome === "commit") e.currentTarget.blur();
+          if (outcome === "cancel") {
+            setEditingPlace(false);
+            setPlaceDraft(null);
+          }
+        };
         return (
           <div className="flex flex-col gap-1" role="group" aria-label={property.name}>
             <div className="flex items-center gap-1">
@@ -1418,10 +1692,8 @@ export function Cell({
                 value={draft.lat}
                 onChange={(e) => update({ lat: e.target.value })}
                 onBlur={blurCommit}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                }}
-                className="w-20 bg-transparent outline-none"
+                onKeyDown={placeKeyDown}
+                className="focus-ring w-20 bg-transparent outline-none tabular-nums"
               />
               <span className="text-muted">,</span>
               <input
@@ -1431,10 +1703,8 @@ export function Cell({
                 value={draft.lng}
                 onChange={(e) => update({ lng: e.target.value })}
                 onBlur={blurCommit}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                }}
-                className="w-20 bg-transparent outline-none"
+                onKeyDown={placeKeyDown}
+                className="focus-ring w-20 bg-transparent outline-none tabular-nums"
               />
             </div>
             <input
@@ -1443,10 +1713,8 @@ export function Cell({
               value={draft.label}
               onChange={(e) => update({ label: e.target.value })}
               onBlur={blurCommit}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-              }}
-              className="bg-transparent outline-none"
+              onKeyDown={placeKeyDown}
+              className="focus-ring w-full bg-transparent outline-none"
             />
             <button
               type="button"
@@ -1454,7 +1722,7 @@ export function Cell({
                 commitPlace(draft);
                 setEditingPlace(false);
               }}
-              className="self-start text-xs text-accent hover:underline"
+              className="focus-ring self-start text-xs text-accent hover:underline"
             >
               {t(locale, "close")}
             </button>
@@ -1465,6 +1733,7 @@ export function Cell({
         <button
           type="button"
           aria-label={property.name}
+          title={display || undefined}
           onClick={() => {
             setPlaceDraft({
               lat: place ? String(place.lat) : "",
@@ -1473,7 +1742,7 @@ export function Cell({
             });
             setEditingPlace(true);
           }}
-          className="w-full rounded px-1 py-0.5 text-left hover:bg-surface-2"
+          className="focus-ring w-full min-w-0 truncate rounded px-1 py-0.5 text-left hover:bg-surface-2"
         >
           {display || <span className="text-muted">—</span>}
         </button>
@@ -1494,14 +1763,18 @@ export function Cell({
             : "";
       if (!editable) {
         return (
-          <span aria-label={property.name} className="text-muted">
+          <span
+            aria-label={property.name}
+            title={glyph || undefined}
+            className="min-w-0 max-w-full truncate text-muted"
+          >
             {glyph || "—"}
           </span>
         );
       }
       return (
         <span
-          className="inline-flex items-center gap-1"
+          className="inline-flex min-w-0 items-center gap-1"
           role="group"
           aria-label={property.name}
         >
@@ -1517,7 +1790,7 @@ export function Cell({
               type="button"
               aria-label={`${t(locale, "remove")} ${property.name}`}
               onClick={() => onChange(null)}
-              className="text-muted hover:text-fg"
+              className="focus-ring text-muted hover:text-fg"
             >
               ×
             </button>
@@ -1527,7 +1800,7 @@ export function Cell({
     }
     case "RELATION": {
       const options = relationOptions ?? [];
-      const selected = (v.pageIds as string[]) ?? [];
+      const selectedIds = (v.pageIds as string[]) ?? [];
       // The picker's pure brain (`@/lib/relation-picker`): filter by title,
       // keep already-linked rows visible in multi mode so they can be
       // unchecked, never offer the row itself, de-duplicate and cap the list.
@@ -1541,31 +1814,34 @@ export function Cell({
         options.map((option) => ({ id: option.id, title: option.title })),
         {
           query: relationQuery,
-          excludeIds: selected,
+          excludeIds: selectedIds,
           allowMultiple: true,
           selfId: row?.id,
         },
       );
       // e.g. "2 related pages: Alpha, Beta" — read by screen readers.
-      const selectionLabel = relationSummary(selected, byId);
+      const selectionLabel = relationSummary(selectedIds, byId);
       const pick = (id: string) =>
         onChange({
-          pageIds: toggleRelation(selected, id, { allowMultiple: true }),
+          pageIds: toggleRelation(selectedIds, id, { allowMultiple: true }),
         });
       return (
         <div
-          className="flex flex-wrap items-center gap-1"
+          className="flex min-w-0 flex-wrap items-center gap-1"
           role="group"
           aria-label={selectionLabel}
         >
-          {selected.map((id) => {
+          {selectedIds.map((id) => {
             const option = options.find((candidate) => candidate.id === id);
+            const title = option?.title || t(locale, "untitled");
             return option ? (
               <span
                 key={id}
-                className="rounded bg-surface-2 px-1.5 py-0.5 text-xs"
+                title={title}
+                className="flex min-w-0 max-w-full items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-xs"
               >
-                {option.icon ?? "📄"} {option.title || t(locale, "untitled")}
+                <span aria-hidden>{option.icon ?? "📄"}</span>
+                <span className="min-w-0 truncate">{title}</span>
               </span>
             ) : null;
           })}
@@ -1575,7 +1851,7 @@ export function Cell({
                 <button
                   type="button"
                   aria-label={t(locale, "addRelationAria")}
-                  className="rounded px-1 text-xs text-muted hover:bg-surface-2"
+                  className="focus-ring rounded px-1 text-xs text-muted hover:bg-surface-2"
                 >
                   +
                 </button>
@@ -1591,7 +1867,7 @@ export function Cell({
                     // Keep the menu's roving focus/typeahead from swallowing the
                     // keystrokes meant for the filter box.
                     onKeyDown={(e) => e.stopPropagation()}
-                    className="w-full rounded border border-border bg-bg px-1.5 py-0.5 text-xs outline-none"
+                    className="focus-ring w-full rounded border border-border bg-bg px-1.5 py-0.5 text-xs outline-none"
                   />
                 </div>
                 {candidates.length === 0 ? (
@@ -1611,7 +1887,7 @@ export function Cell({
                           setRelationQuery("");
                         }}
                       >
-                        {selected.includes(option.id) ? "✓ " : ""}
+                        {selectedIds.includes(option.id) ? "✓ " : ""}
                         {meta?.icon ?? "📄"}{" "}
                         {option.title || t(locale, "untitled")}
                       </DropdownMenuItem>
@@ -1621,7 +1897,7 @@ export function Cell({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {selected.length === 0 && !editable && readOnly("—")}
+          {selectedIds.length === 0 && !editable && readOnly("—")}
         </div>
       );
     }
@@ -1710,7 +1986,7 @@ export function Cell({
             onClick={(event) => {
               if (!confirmRun(event.currentTarget)) event.preventDefault();
             }}
-            className="inline-block rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
+            className="focus-ring inline-block max-w-full truncate rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
           >
             {label}
           </a>
@@ -1730,7 +2006,7 @@ export function Cell({
             onClick={(event) => {
               if (confirmRun(event.currentTarget)) onRunButton();
             }}
-            className="rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
+            className="focus-ring max-w-full truncate rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
           >
             {label}
           </button>
@@ -1747,7 +2023,7 @@ export function Cell({
           title={reason}
           aria-label={`${label}: ${reason}`}
           data-testid="button-cell-disabled"
-          className="rounded border border-border px-2 py-0.5 text-xs opacity-60"
+          className="max-w-full truncate rounded border border-border px-2 py-0.5 text-xs opacity-60"
         >
           {label}
         </button>
@@ -1758,7 +2034,7 @@ export function Cell({
         <button
           type="button"
           onClick={onRunAi}
-          className="rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
+          className="focus-ring max-w-full truncate rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
         >
           {t(locale, "autofillWord")}
         </button>
@@ -1772,7 +2048,7 @@ export function Cell({
       );
       return (
         <div
-          className="flex flex-wrap items-center gap-1"
+          className="flex min-w-0 flex-wrap items-center gap-1"
           role="group"
           aria-label={property.name}
         >
@@ -1782,7 +2058,8 @@ export function Cell({
               href={entry.url}
               target="_blank"
               rel="noreferrer"
-              className="max-w-[10rem] truncate rounded bg-surface-2 px-1.5 py-0.5 text-xs underline-offset-2 hover:underline"
+              title={entry.name}
+              className="focus-ring max-w-[10rem] truncate rounded bg-surface-2 px-1.5 py-0.5 text-xs underline-offset-2 hover:underline"
             >
               {entry.name}
             </a>
@@ -1793,7 +2070,7 @@ export function Cell({
                 type="button"
                 aria-label={t(locale, "attachFile")}
                 onClick={() => fileInputRef.current?.click()}
-                className="rounded px-1 text-xs text-muted hover:bg-surface-2"
+                className="focus-ring rounded px-1 text-xs text-muted hover:bg-surface-2"
               >
                 +
               </button>
@@ -1819,24 +2096,34 @@ export function Cell({
       return (
         <input
           aria-label={property.name}
+          aria-invalid={errorMessage !== "" || undefined}
           defaultValue={(v.text as string) ?? ""}
           readOnly={!editable}
           placeholder="—"
           onBlur={(e) => onChange(commitText(e.target.value))}
-          className="w-full bg-transparent outline-none placeholder:text-muted"
+          onKeyDown={(e) => {
+            if (cellKeyOutcome(e.key) === "commit")
+              (e.target as HTMLInputElement).blur();
+          }}
+          className="focus-ring w-full min-w-0 truncate bg-transparent outline-none placeholder:text-muted"
         />
       );
   }
   })();
-  // Valid + uncoloured → the exact node each case always returned. Any error or
-  // resolved colour wraps it so the common path is byte-for-byte unchanged.
-  if (errorMessage === "" && cellBackground === undefined) return content;
+  // The cell shell carries the shared states (hover tint, focus-visible ring,
+  // selected accent outline, danger ring + aria-invalid) for every type; the
+  // content node itself is unchanged so each case renders exactly what it did.
+  const invalid = errorMessage !== "";
+  const state: CellVisualState = { editing: editingCell, invalid, selected };
   return (
     <div
-      data-invalid={errorMessage !== "" ? "true" : undefined}
-      title={errorMessage !== "" ? errorMessage : undefined}
+      data-cell-type={typeCode}
+      data-state={cellVisualState(typeCode, state)}
+      data-invalid={invalid ? "true" : undefined}
+      aria-invalid={invalid || undefined}
+      title={invalid ? errorMessage : undefined}
       style={cellBackground ? { backgroundColor: cellBackground } : undefined}
-      className={cn("rounded", errorMessage !== "" && "ring-1 ring-red-500/70")}
+      className={cellStateClass(typeCode, state)}
     >
       {content}
     </div>
