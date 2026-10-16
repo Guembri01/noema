@@ -1,9 +1,10 @@
 /**
  * A small, dependency-free formula language for database FORMULA properties.
- * Supports property references via `prop("Name")`, workspace-level named
- * constants by bare name, arithmetic, comparisons, boolean logic, string
- * concatenation with `+`, array literals, and a set of functions (math, text,
- * logic, date, regex, list). Pure and unit-tested.
+ * Supports property references via `prop("Name")`, rollup references via
+ * `rollup("Name")` (typed results supplied through `FormulaOptions.rollups`),
+ * workspace-level named constants by bare name, arithmetic, comparisons,
+ * boolean logic, string concatenation with `+`, array literals, and a set of
+ * functions (math, text, logic, date, regex, list). Pure and unit-tested.
  *
  * Errors are values, not exceptions: bad syntax, unknown functions, division
  * by zero, type mismatches and sandbox violations all surface as friendly
@@ -26,6 +27,13 @@ export type FormulaErrorValue = {
 export type FormulaOptions = {
   /** Workspace-level named constants, resolved by bare identifier. */
   constants?: Record<string, unknown>;
+  /**
+   * Typed rollup results, resolved by the `rollup("Name")` reference form
+   * (case-insensitive). A missing or nullish rollup reads as an empty string,
+   * mirroring how `prop()` treats an absent property, so `empty()` stays a
+   * meaningful check.
+   */
+  rollups?: Record<string, FormulaValue | null | undefined>;
 };
 
 export type FormulaResult =
@@ -192,14 +200,97 @@ function regexMatch(text: string, pattern: string): boolean | FormulaErrorValue 
   return regex.test(text);
 }
 
-/** Capture groups of every match; falls back to full matches when there are none. */
-function regexExtract(text: string, pattern: string): FormulaValue | FormulaErrorValue {
+/** Capture-group metadata for a pattern: how many groups exist and their names. */
+type CaptureGroupInfo = { count: number; names: string[] };
+
+/**
+ * Scans `pattern` for capturing groups without compiling it: counts plain `(…)`
+ * groups and collects `(?<name>…)` names, skipping escapes and character
+ * classes. Used to reject an unknown `group` argument with a clear message
+ * instead of silently returning an empty value.
+ */
+function scanCaptureGroups(pattern: string): CaptureGroupInfo {
+  const names: string[] = [];
+  let count = 0;
+  let inClass = false;
+  let i = 0;
+  while (i < pattern.length) {
+    const char = pattern[i];
+    if (char === "\\") {
+      i += 2;
+      continue;
+    }
+    if (inClass) {
+      if (char === "]") inClass = false;
+      i += 1;
+      continue;
+    }
+    if (char === "[") {
+      inClass = true;
+      i += 1;
+      continue;
+    }
+    if (char === "(") {
+      if (pattern[i + 1] === "?") {
+        // `(?<name>` is a named capture; `(?<=`/`(?<!` are lookbehind.
+        if (
+          pattern[i + 2] === "<" &&
+          pattern[i + 3] !== "=" &&
+          pattern[i + 3] !== "!"
+        ) {
+          count += 1;
+          let j = i + 3;
+          let name = "";
+          while (j < pattern.length && pattern[j] !== ">") {
+            name += pattern[j];
+            j += 1;
+          }
+          if (name.length > 0) names.push(name);
+        }
+      } else {
+        count += 1;
+      }
+    }
+    i += 1;
+  }
+  return { count, names };
+}
+
+/**
+ * Capture groups of every match; falls back to full matches when there are
+ * none.
+ *
+ * With `group` given, only that capture is returned from the first match: a
+ * numeric index (`0` is the whole match, `1` the first group) or a
+ * `(?<name>…)` label. A group that exists but did not participate in the match
+ * reads as an empty string; an unknown group, an invalid pattern or a violated
+ * sandbox bound is a friendly error value. Never throws.
+ */
+function regexExtract(
+  text: string,
+  pattern: string,
+  group?: number | string,
+): FormulaValue | FormulaErrorValue {
   const regex = compileBoundedRegex(text, pattern, "g");
   if (isError(regex)) return regex;
+  if (group !== undefined) {
+    const info = scanCaptureGroups(pattern);
+    if (typeof group === "number") {
+      if (!Number.isInteger(group) || group < 0) return errorValue("type mismatch");
+      if (group > info.count) return errorValue(`unknown capture group ${group}`);
+    } else if (!info.names.includes(group)) {
+      return errorValue(`unknown capture group '${group}'`);
+    }
+    const found = regex.exec(text);
+    if (found === null) return "";
+    const selected =
+      typeof group === "number" ? found[group] : found.groups?.[group];
+    return selected ?? "";
+  }
   const groups: string[] = [];
   let found: RegExpExecArray | null = regex.exec(text);
   while (found !== null) {
-    const match = found.slice(1).filter((group) => group !== undefined);
+    const match = found.slice(1).filter((value) => value !== undefined);
     groups.push(...(match.length > 0 ? match : [found[0]]));
     if (found[0] === "") regex.lastIndex += 1; // zero-width matches stay bounded
     found = regex.exec(text);
@@ -438,7 +529,7 @@ function tokenize(input: string): Token[] {
         value += input[j];
         j += 1;
       }
-      if (j >= input.length) throw new Error("unterminated string literal");
+      if (j >= input.length) throw new Error(`unterminated string literal (missing closing ${quote})`);
       tokens.push({ kind: "string", value });
       i = j + 1;
       continue;
@@ -461,7 +552,7 @@ function tokenize(input: string): Token[] {
       i += 1;
       continue;
     }
-    throw new Error(`unexpected character "${char}"`);
+    throw new Error(`unexpected character "${char}" (position ${i + 1})`);
   }
   tokens.push({ kind: "eof" });
   return tokens;
@@ -494,6 +585,7 @@ class Parser {
     private readonly tokens: Token[],
     private readonly scope: FormulaScope,
     private readonly constants: Record<string, unknown>,
+    private readonly rollups: Record<string, FormulaValue | null | undefined>,
     private readonly evalDepth: number,
   ) {}
 
@@ -653,7 +745,7 @@ class Parser {
     if (token.kind === "op" && token.value === "(") {
       this.pos += 1;
       const value = this.or();
-      if (!this.eat(")")) throw new Error("missing closing parenthesis");
+      if (!this.eat(")")) throw new Error("missing closing parenthesis ')'");
       return value;
     }
     if (token.kind === "op" && token.value === "[") {
@@ -662,7 +754,7 @@ class Parser {
       if (!this.eat("]")) {
         items.push(this.or());
         while (this.eat(",")) items.push(this.or());
-        if (!this.eat("]")) throw new Error("missing closing bracket");
+        if (!this.eat("]")) throw new Error("missing closing bracket ']'");
       }
       return makeList(items);
     }
@@ -678,7 +770,7 @@ class Parser {
         if (!this.eat(")")) {
           args.push(this.or());
           while (this.eat(",")) args.push(this.or());
-          if (!this.eat(")")) throw new Error("missing closing parenthesis");
+          if (!this.eat(")")) throw new Error("missing closing parenthesis ')'");
         }
         return this.call(name, args, token.value);
       }
@@ -690,7 +782,7 @@ class Parser {
       if (name === "today") return new Date().toISOString().slice(0, 10);
       return errorValue(`unknown identifier '${token.value}'`);
     }
-    throw new Error("unexpected end of expression");
+    throw new Error("unexpected end of expression: expected a value");
   }
 
   private scopeValue(name: string): FormulaValue | undefined {
@@ -706,6 +798,16 @@ class Parser {
     );
     if (key === undefined) return undefined;
     return coerceConstant(this.constants[key], 0);
+  }
+
+  /** Typed rollup value for `name` (case-insensitive); nullish reads as empty. */
+  private rollupValue(name: string): FormulaValue | undefined {
+    const key = Object.keys(this.rollups).find(
+      (candidate) => candidate.toLowerCase() === name.toLowerCase(),
+    );
+    if (key === undefined) return undefined;
+    const value = this.rollups[key];
+    return value === null || value === undefined ? "" : value;
   }
 
   private call(name: string, args: ExprValue[], displayName: string): ExprValue {
@@ -732,7 +834,7 @@ class Parser {
     const result = runFormula(
       expr,
       { ...this.scope, item, index },
-      { constants: this.constants },
+      { constants: this.constants, rollups: this.rollups },
       this.evalDepth + 1,
     );
     return result.ok ? result.value : errorValue(result.error);
@@ -746,6 +848,12 @@ class Parser {
           (candidate) => candidate.toLowerCase() === key.toLowerCase(),
         );
         return found ? this.scope[found] : "";
+      }
+      case "rollup": {
+        // Rollup-aware reference form: typed rollup results win, then the row
+        // scope (rollups already projected there resolve too).
+        const key = String(args[0] ?? "");
+        return this.rollupValue(key) ?? this.scopeValue(key) ?? "";
       }
       case "if":
         return Boolean(args[0]) ? args[1] : args[2];
@@ -839,7 +947,14 @@ class Parser {
       case "extract": {
         const pattern = args[1];
         if (pattern === undefined) return errorValue("type mismatch");
-        return regexExtract(String(args[0] ?? ""), String(pattern));
+        const group = args[2];
+        if (group === undefined) {
+          return regexExtract(String(args[0] ?? ""), String(pattern));
+        }
+        if (typeof group !== "number" && typeof group !== "string") {
+          return errorValue("type mismatch");
+        }
+        return regexExtract(String(args[0] ?? ""), String(pattern), group);
       }
       case "sort": {
         const list = asList(args[0]);
@@ -898,7 +1013,13 @@ function runFormula(
     return { ok: false, error: errorValue("expression nested too deeply").message };
   }
   try {
-    const value = new Parser(tokenize(source), scope, options.constants ?? {}, evalDepth).parse();
+    const value = new Parser(
+      tokenize(source),
+      scope,
+      options.constants ?? {},
+      options.rollups ?? {},
+      evalDepth,
+    ).parse();
     if (isError(value)) return { ok: false, error: value.message };
     return { ok: true, value };
   } catch (error) {
@@ -910,8 +1031,9 @@ function runFormula(
 }
 
 /**
- * Evaluates `expression` against row values (`scope`, read via `prop()`) and
- * optional workspace `constants` (read by bare name). Never throws: bad
+ * Evaluates `expression` against row values (`scope`, read via `prop()`),
+ * optional workspace `constants` (read by bare name) and typed rollup results
+ * (`options.rollups`, read via `rollup("Name")`). Never throws: bad
  * syntax, unknown functions, division by zero, type mismatches and sandbox
  * violations all come back as `ok: false` with a friendly `#ERROR: …` message.
  */

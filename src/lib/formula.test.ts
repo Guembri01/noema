@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateFormula, type FormulaScope } from "@/lib/formula";
+import { evaluateFormula, type FormulaOptions, type FormulaScope } from "@/lib/formula";
 
 const run = (expression: string, scope: FormulaScope = {}, constants?: Record<string, unknown>) =>
   evaluateFormula(expression, scope, constants ? { constants } : {});
@@ -16,6 +16,15 @@ const errorOf = (
 ) => {
   const result = run(expression, scope, constants);
   return result.ok ? `OK:${JSON.stringify(result.value)}` : result.error;
+};
+
+const valueWith = (
+  expression: string,
+  scope: FormulaScope = {},
+  options: FormulaOptions = {},
+) => {
+  const result = evaluateFormula(expression, scope, options);
+  return result.ok ? result.value : `ERR:${result.error}`;
 };
 
 describe("formula engine", () => {
@@ -250,6 +259,54 @@ describe("regex functions", () => {
   });
 });
 
+describe("regex extraction with a group selector", () => {
+  it("selects the first match's group by capture index", () => {
+    expect(value('extract("2024-01-15", "(\\\\d+)-(\\\\d+)-(\\\\d+)", 2)')).toBe("01");
+    expect(value('extract("user@example.com", "@([^@]+)$", 1)')).toBe("example.com");
+    // Group 0 is the whole match.
+    expect(value('extract("abc123", "\\\\d+", 0)')).toBe("123");
+  });
+
+  it("selects a named capture group", () => {
+    expect(
+      value(
+        'extract("2024-01-15", "(?<year>\\\\d{4})-(?<month>\\\\d{2})-(?<day>\\\\d{2})", "month")',
+      ),
+    ).toBe("01");
+    expect(value('extract("id-42", "id-(?<n>\\\\d+)", "n")')).toBe("42");
+  });
+
+  it("returns only the first match when a group is selected", () => {
+    expect(value('extract("a1 b2", "(\\\\w)(\\\\d)", 1)')).toBe("a");
+  });
+
+  it("reads a non-participating or unmatched group as empty", () => {
+    expect(value('extract("abc", "(x)?(a)", 1)')).toBe("");
+    expect(value('extract("abc", "(\\\\d+)", 1)')).toBe("");
+  });
+
+  it("rejects unknown or invalid group selectors", () => {
+    expect(errorOf('extract("abc", "(a)", 3)')).toBe("#ERROR: unknown capture group 3");
+    expect(errorOf('extract("abc", "(a)", "nope")')).toBe(
+      "#ERROR: unknown capture group 'nope'",
+    );
+    expect(errorOf('extract("abc", "(a)", -1)')).toBe("#ERROR: type mismatch");
+    expect(errorOf('extract("abc", "(a)", 1.5)')).toBe("#ERROR: type mismatch");
+  });
+
+  it("keeps the no-group list behavior and the sandbox guarantees", () => {
+    expect(value('extract("2024-01-15", "(\\\\d+)-(\\\\d+)-(\\\\d+)")')).toEqual([
+      "2024",
+      "01",
+      "15",
+    ]);
+    expect(errorOf('extract("abc", "[")')).toContain("#ERROR: invalid pattern");
+    expect(errorOf('extract("aaaaaaaaaaaaaaaaaaaa!", "(a+)+$", 1)')).toContain(
+      "catastrophic backtracking",
+    );
+  });
+});
+
 describe("list functions", () => {
   it("joins lists with a separator", () => {
     expect(value('join([1, 2, 3], "-")')).toBe("1-2-3");
@@ -345,6 +402,35 @@ describe("named constants", () => {
 
   it("keeps language keywords ahead of constants", () => {
     expect(value("true", {}, { true: "shadowed" })).toBe(true);
+  });
+});
+
+describe("rollup-aware references", () => {
+  it("resolves a typed rollup by name", () => {
+    expect(valueWith('rollup("Total") * 2', {}, { rollups: { Total: 21 } })).toBe(42);
+    expect(valueWith('rollup("Rate")', {}, { rollups: { Rate: "83%" } })).toBe("83%");
+    expect(valueWith('rollup("Done")', {}, { rollups: { Done: true } })).toBe(true);
+  });
+
+  it("matches rollup names case-insensitively", () => {
+    expect(valueWith('rollup("total")', {}, { rollups: { Total: 21 } })).toBe(21);
+  });
+
+  it("reads missing or nullish rollups as empty", () => {
+    expect(valueWith('rollup("Ghost")', {}, { rollups: { Total: 1 } })).toBe("");
+    expect(valueWith('rollup("Total")', {}, { rollups: { Total: null } })).toBe("");
+    expect(valueWith('empty(rollup("Total"))', {}, { rollups: { Total: null } })).toBe(true);
+  });
+
+  it("falls back to the row scope when no typed rollup is provided", () => {
+    expect(value('rollup("Total") + 1', { Total: 4 })).toBe(5);
+  });
+
+  it("composes with arithmetic and list results", () => {
+    expect(valueWith('round(rollup("Total") * 100)', {}, { rollups: { Total: 0.83 } })).toBe(83);
+    expect(
+      valueWith('join(rollup("Tags"), "-")', {}, { rollups: { Tags: ["a", "b"] } }),
+    ).toBe("a-b");
   });
 });
 
@@ -625,5 +711,24 @@ describe("date functions", () => {
     expect(errorOf('formatDate("2024-01-01")')).toBe("#ERROR: type mismatch");
     expect(errorOf('formatDate("2024-01-01", 5)')).toBe("#ERROR: type mismatch");
     expect(errorOf('formatDate(true, "YYYY")')).toBe("#ERROR: type mismatch");
+  });
+});
+
+describe("formula-editor error messages", () => {
+  it("locates an unexpected character", () => {
+    expect(errorOf("1 @ 2")).toBe('#ERROR: unexpected character "@" (position 3)');
+  });
+
+  it("names the unclosed delimiter so the editor can point at it", () => {
+    expect(errorOf("(1 + 2")).toBe("#ERROR: missing closing parenthesis ')'");
+    expect(errorOf("[1, 2")).toBe("#ERROR: missing closing bracket ']'");
+    expect(errorOf('"abc')).toBe(
+      '#ERROR: unterminated string literal (missing closing ")',
+    );
+  });
+
+  it("explains what a dangling operator is missing", () => {
+    expect(errorOf("1 +")).toBe("#ERROR: unexpected end of expression: expected a value");
+    expect(errorOf("concat(1,")).toBe("#ERROR: unexpected end of expression: expected a value");
   });
 });
