@@ -20,10 +20,16 @@ export type CycleLike = {
 export type Cycle = {
   id: string;
   name: string;
-  /** ISO instant the cycle starts (interpreted in UTC). */
-  start: string;
-  /** ISO instant the cycle ends (inclusive, UTC). */
-  end: string;
+  /** Inclusive scheduling window start (ISO date or `Date`). Canonical shape. */
+  startDate?: string | Date | null;
+  /** Inclusive scheduling window end (ISO date or `Date`). Canonical shape. */
+  endDate?: string | Date | null;
+  /** Legacy stored instant the cycle starts (interpreted in UTC). */
+  start?: string;
+  /** Legacy stored instant the cycle ends (inclusive, UTC). */
+  end?: string;
+  /** Optional project/scope this cycle belongs to. */
+  scopeId?: string | null;
 };
 
 export type CycleTicket = TicketLike & {
@@ -36,7 +42,8 @@ export type CycleTicket = TicketLike & {
 
 const DAY = 24 * 60 * 60 * 1000;
 
-const at = (value: string | Date) => (value instanceof Date ? value : new Date(value));
+const at = (value: string | Date | null | undefined) =>
+  value instanceof Date ? value : new Date(value ?? "");
 
 /** Anything date-ish -> UTC-midnight epoch (ms), or null when unparseable. */
 function utcDay(value: unknown): number | null {
@@ -92,7 +99,7 @@ export function activeCycle<T extends CycleLike>(cycles: T[], now = new Date()):
  * Committed vs completed effort, the completion percentage, and a burndown
  * series: per day, the remaining points against the ideal straight line.
  */
-export function cycleProgress(
+function legacyCycleProgress(
   tickets: CycleTicket[],
   cycle: Cycle | CycleLike,
   now = new Date(),
@@ -152,7 +159,7 @@ export function cycleProgress(
 }
 
 /** Average completed points per finished cycle, most recent first. */
-export function velocity(
+function legacyVelocity(
   cycles: (CycleLike & { tickets: CycleTicket[] })[],
   now = new Date(),
 ): { name: string; completed: number; committed: number }[] {
@@ -316,4 +323,304 @@ export function scopeChange<T extends CycleTicket>(
     addedEstimate: sumEstimates(added).total,
     ratio: scope === 0 ? 0 : Math.round((added.length / scope) * 100) / 100,
   };
+}
+
+/* ------------------------------------------------------------------------ *
+ * Cycles & sprints engine (MISSING_FEATURES #3 — "Cycles & sprints"). This is
+ * an additive surface: the legacy `cycleProgress`/`velocity` bodies above are
+ * preserved and re-exposed through overloads. Everything here is UTC-safe and
+ * every clock is injectable, so results never depend on the machine's
+ * timezone.
+ * ------------------------------------------------------------------------ */
+
+/** Which row field carries an estimate and which marks a row done. */
+export type CycleFieldOptions = {
+  /** Row field holding the estimate. Default `"estimate"`. */
+  estimateKey?: string;
+  /** Row field holding the done flag/status. Default `"done"`. */
+  doneKey?: string;
+};
+
+/** Elapsed fraction and days left for a cycle at an injected clock. */
+export type CycleTiming = {
+  status: "upcoming" | "running" | "ended";
+  /** `YYYY-MM-DD` (UTC) inclusive window start. */
+  start: string;
+  /** `YYYY-MM-DD` (UTC) inclusive window end. */
+  end: string;
+  days: number;
+  daysElapsed: number;
+  daysLeft: number;
+  /** Whole-day elapsed fraction, 0..100. */
+  elapsedPercent: number;
+};
+
+/** One day of a cycle's burndown. */
+export type CycleBurndownPoint = {
+  /** `YYYY-MM-DD` (UTC). */
+  date: string;
+  /** Open estimate at the end of that day, or null for days not yet measured. */
+  remaining: number | null;
+  /** Straight line from the scope at the cycle's start down to zero. */
+  idealRemaining: number;
+  /** Running total of estimates completed on or before that day. */
+  completed: number;
+};
+
+/** A finished cycle's points plus its trailing average. */
+export type CycleVelocity = {
+  cycleId: string;
+  name: string;
+  committed: number;
+  completed: number;
+  /** Mean completed points over this cycle and the two before it. */
+  rollingAverage: number;
+};
+
+const DONE_WORDS = new Set(["done", "complete", "completed", "closed", "resolved"]);
+
+/** A done key holds a boolean, a status word, or any truthy marker. */
+function isDoneValue(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return DONE_WORDS.has(value.trim().toLowerCase());
+  if (typeof value === "number") return value > 0;
+  return Boolean(value);
+}
+
+function asRecord(row: object): Record<string, unknown> {
+  return row as Record<string, unknown>;
+}
+
+function readNumber(row: object, key: string): number {
+  const value = asRecord(row)[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+const round2 = (value: number) => Math.round(value * 100) / 100;
+
+/** Inclusive UTC window of a cycle, tolerating both stored shapes. */
+function cycleWindow(cycle: Cycle): { start: number; end: number; days: number } {
+  const rawStart = utcDay(cycle.startDate ?? cycle.start ?? null);
+  const rawEnd = utcDay(cycle.endDate ?? cycle.end ?? null);
+  const start = rawStart ?? rawEnd ?? 0;
+  const end = Math.max(start, rawEnd ?? start);
+  return { start, end, days: Math.max(1, Math.round((end - start) / DAY) + 1) };
+}
+
+/** The cycle whose inclusive window contains `now`, or null in a gap. */
+export function currentCycle<T extends Cycle>(cycles: T[], now: Date = new Date()): T | null {
+  const time = now.getTime();
+  const running = cycles.filter((cycle) => {
+    const { start, end } = cycleWindow(cycle);
+    return start <= time && time <= end;
+  });
+  if (running.length === 0) return null;
+  return running.reduce((latest, cycle) =>
+    cycleWindow(cycle).start >= cycleWindow(latest).start ? cycle : latest,
+  );
+}
+
+/** Elapsed whole days, days left and status for a cycle at `now`. */
+function cycleTiming(cycle: Cycle, now: Date): CycleTiming {
+  const { start, end, days } = cycleWindow(cycle);
+  const time = now.getTime();
+  const status: CycleTiming["status"] =
+    time < start ? "upcoming" : time > end ? "ended" : "running";
+  const elapsed = Math.floor((time - start) / DAY) + 1;
+  const daysElapsed = status === "upcoming" ? 0 : Math.min(days, Math.max(0, elapsed));
+  return {
+    status,
+    start: isoDay(start),
+    end: isoDay(end),
+    days,
+    daysElapsed,
+    daysLeft: Math.max(0, days - daysElapsed),
+    elapsedPercent: Math.round((daysElapsed / days) * 100),
+  };
+}
+
+/**
+ * The next cycle's start (`YYYY-MM-DD`): `cadenceDays` after the most recent
+ * cycle that started on or before `fromDate` (or after `fromDate` when no
+ * cycle precedes it), stepped forward until it lands in the future.
+ */
+export function nextCycleStart(
+  cycles: Cycle[],
+  options: { cadenceDays: number; fromDate: string | Date },
+): string {
+  const cadence = Math.max(1, Math.round(options.cadenceDays)) * DAY;
+  const from = utcDay(options.fromDate) ?? 0;
+  const starts = cycles
+    .map((cycle) => utcDay(cycle.startDate ?? cycle.start ?? null))
+    .filter((value): value is number => value !== null)
+    .sort((a, b) => a - b);
+  const prior = starts.filter((value) => value <= from).at(-1);
+  let candidate = (prior ?? from) + cadence;
+  while (candidate <= from) candidate += cadence;
+  return isoDay(candidate);
+}
+
+/** Rows assigned to a cycle, in their original order. */
+export function cycleScope<T extends { cycleId?: string | null }>(
+  rows: T[],
+  cycleId: string,
+): T[] {
+  return rows.filter((row) => row.cycleId === cycleId);
+}
+
+/**
+ * Copy of `rows` with every unfinished row moved from `fromCycleId` to
+ * `toCycleId`; finished rows and rows in other cycles are returned unchanged.
+ * The input array is never mutated.
+ */
+export function rollOverIncomplete<T extends { cycleId?: string | null }>(
+  rows: T[],
+  options: { fromCycleId: string; toCycleId: string; doneKey: string },
+): T[] {
+  return rows.map((row) => {
+    if (row.cycleId !== options.fromCycleId) return row;
+    if (isDoneValue(asRecord(row)[options.doneKey])) return row;
+    return { ...row, cycleId: options.toCycleId } as T;
+  });
+}
+
+/**
+ * Ordered per-day burndown for a cycle: the estimate still open at the end of
+ * each UTC day, the running `completed` total, and the straight ideal line
+ * from the scope measured at the cycle's start down to zero. Days after
+ * `now`'s UTC day are `null` — nothing has been measured yet.
+ */
+export function burndown(
+  cycle: Cycle,
+  rows: object[],
+  options: CycleFieldOptions & { now?: Date } = {},
+): CycleBurndownPoint[] {
+  const { start, days } = cycleWindow(cycle);
+  const estimateKey = options.estimateKey ?? "estimate";
+  const doneKey = options.doneKey ?? "done";
+  const clockIndex = Math.floor(((utcDay(options.now ?? new Date()) ?? start) - start) / DAY);
+  const scope = rows.reduce((sum, row) => sum + readNumber(row, estimateKey), 0);
+
+  // The day each done row burned, clamped into the window.
+  const burnDay = new Map<object, number>();
+  for (const row of rows) {
+    if (!isDoneValue(asRecord(row)[doneKey])) continue;
+    const finished =
+      utcDay(asRecord(row).completedAt) ??
+      utcDay(asRecord(row).updatedAt) ??
+      start + clockIndex * DAY;
+    burnDay.set(row, Math.min(days - 1, Math.max(0, Math.floor((finished - start) / DAY))));
+  }
+
+  const series: CycleBurndownPoint[] = [];
+  for (let day = 0; day < days; day += 1) {
+    let completed = 0;
+    for (const row of rows) {
+      const doneOn = burnDay.get(row);
+      if (doneOn !== undefined && doneOn <= day) completed += readNumber(row, estimateKey);
+    }
+    series.push({
+      date: isoDay(start + day * DAY),
+      remaining: day <= clockIndex ? round2(Math.max(0, scope - completed)) : null,
+      idealRemaining: round2(scope - (scope * day) / Math.max(1, days - 1)),
+      completed: round2(completed),
+    });
+  }
+  return series;
+}
+
+/** Per-cycle committed/completed points plus a trailing 3-cycle average. */
+function velocityFromRows(
+  cycles: Cycle[],
+  rows: { cycleId?: string | null }[],
+  options: CycleFieldOptions,
+): CycleVelocity[] {
+  const estimateKey = options.estimateKey ?? "estimate";
+  const doneKey = options.doneKey ?? "done";
+  const ordered = cycles
+    .map((cycle) => ({ cycle, start: cycleWindow(cycle).start }))
+    .sort((a, b) => a.start - b.start)
+    .map((entry) => entry.cycle);
+  const completedByCycle = ordered.map((cycle) =>
+    cycleScope(rows, cycle.id).reduce(
+      (sum, row) => sum + (isDoneValue(asRecord(row)[doneKey]) ? readNumber(row, estimateKey) : 0),
+      0,
+    ),
+  );
+  return ordered.map((cycle, index) => {
+    const scope = cycleScope(rows, cycle.id);
+    const committed = scope.reduce((sum, row) => sum + readNumber(row, estimateKey), 0);
+    const window = completedByCycle.slice(Math.max(0, index - 2), index + 1);
+    return {
+      cycleId: cycle.id,
+      name: cycle.name,
+      committed: round2(committed),
+      completed: round2(completedByCycle[index]),
+      rollingAverage: round2(window.reduce((sum, value) => sum + value, 0) / window.length),
+    };
+  });
+}
+
+/** Human label: the cycle's name plus its running/upcoming/ended state. */
+export function describeCycle(cycle: Cycle, now: Date = new Date()): string {
+  const timing = cycleTiming(cycle, now);
+  if (timing.status === "upcoming") return `${cycle.name} · starts ${timing.start}`;
+  if (timing.status === "ended") return `${cycle.name} · ended ${timing.end}`;
+  return `${cycle.name} · running · ${timing.daysLeft} of ${timing.days} days left`;
+}
+
+/**
+ * Elapsed fraction and days left for a cycle. New shape:
+ * `cycleProgress(cycle, now)`. The legacy `cycleProgress(tickets, cycle, now)`
+ * summary (committed/completed/percent) is preserved through an overload.
+ */
+export function cycleProgress(cycle: Cycle, now?: Date): CycleTiming;
+export function cycleProgress(
+  tickets: CycleTicket[],
+  cycle: Cycle | CycleLike,
+  now?: Date,
+): ReturnType<typeof legacyCycleProgress>;
+export function cycleProgress(
+  first: Cycle | CycleTicket[],
+  second?: Cycle | CycleLike | Date,
+  third?: Date,
+): CycleTiming | ReturnType<typeof legacyCycleProgress> {
+  if (Array.isArray(first)) {
+    return legacyCycleProgress(first, second as Cycle | CycleLike, third ?? new Date());
+  }
+  return cycleTiming(first, second instanceof Date ? second : new Date());
+}
+
+/**
+ * Completed points per cycle with a trailing average. New shape:
+ * `velocity(cycles, rows, options)`. The legacy `velocity(cycles, now)`
+ * shape (cycles carrying their own `tickets`) is preserved through an
+ * overload.
+ */
+export function velocity(cycles: Cycle[], rows: object[], options?: CycleFieldOptions): CycleVelocity[];
+export function velocity(
+  cycles: (CycleLike & { tickets: CycleTicket[] })[],
+  now?: Date,
+): ReturnType<typeof legacyVelocity>;
+export function velocity(
+  first: Cycle[] | (CycleLike & { tickets: CycleTicket[] })[],
+  second?: object[] | Date,
+  third?: CycleFieldOptions,
+): CycleVelocity[] | ReturnType<typeof legacyVelocity> {
+  if (Array.isArray(second)) {
+    return velocityFromRows(
+      first as Cycle[],
+      second as { cycleId?: string | null }[],
+      third ?? {},
+    );
+  }
+  return legacyVelocity(
+    first as (CycleLike & { tickets: CycleTicket[] })[],
+    second instanceof Date ? second : new Date(),
+  );
 }
