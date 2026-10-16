@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   isBlockedFeedHost,
   isBlockedFeedTarget,
@@ -217,5 +217,39 @@ describe("safeFetchFeed - guarded fetch with redirect re-validation", () => {
     const fetchFn = vi.fn();
     fetchFn.mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:9200"));
     await expect(safeFetchFeed("http://93.184.216.34/c", undefined, { fetchFn })).resolves.toBeNull();
+  });
+});
+
+/**
+ * The end-to-end check (`scripts/check-workspace-ui.mjs`) subscribes to a mock
+ * ICS feed on loopback while the app runs under `next dev`. That is the only
+ * place the guard relaxes, and only for loopback hosts; every deployment
+ * (production) and every unit run (`test`) keeps failing closed.
+ */
+describe("isBlockedFeedTarget - development-only loopback exemption", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("allows a loopback mock feed in development without touching DNS", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    await expect(isBlockedFeedTarget("http://localhost:4323/cal.ics")).resolves.toBe(false);
+    await expect(isBlockedFeedTarget("http://127.0.0.1:4323/cal.ics")).resolves.toBe(false);
+    await expect(isBlockedFeedTarget("http://[::1]:4323/cal.ics")).resolves.toBe(false);
+    expect(dns.lookup).not.toHaveBeenCalled();
+  });
+
+  it("still blocks non-loopback private targets in development", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    await expect(isBlockedFeedTarget("http://169.254.169.254/latest/meta-data/")).resolves.toBe(true);
+    await expect(isBlockedFeedTarget("http://10.0.0.1/admin")).resolves.toBe(true);
+    await expect(isBlockedFeedTarget("http://metadata.google.internal/latest/meta-data/")).resolves.toBe(true);
+  });
+
+  it("blocks loopback outside development (test/production)", async () => {
+    vi.stubEnv("NODE_ENV", "test");
+    await expect(isBlockedFeedTarget("http://localhost:4323/cal.ics")).resolves.toBe(true);
+    vi.stubEnv("NODE_ENV", "production");
+    await expect(isBlockedFeedTarget("http://127.0.0.1:4323/cal.ics")).resolves.toBe(true);
   });
 });
