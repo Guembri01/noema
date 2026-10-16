@@ -18,6 +18,25 @@ import {
 } from "@/lib/map-embed";
 import type { GeoValue } from "@/lib/geo";
 import { classifyLink, normalizeLink } from "@/lib/link-check";
+import {
+  OEMBED_ALLOWED_HOSTS,
+  discoverEndpoint,
+  parseOEmbed,
+  parseOpenGraph,
+  resolveMetadata,
+  sanitizeEmbedHtml,
+  type OEmbedData,
+  type OpenGraphData,
+  type ResolvedMetadata,
+} from "@/lib/oembed";
+import {
+  linkify,
+  parseGithubRefs,
+  parseSlackRefs,
+  unfurlPayload,
+  type GithubRef,
+  type SlackRef,
+} from "@/lib/integration-links";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -56,6 +75,7 @@ export const Bookmark = Node.create({
       image: { default: null },
       icon: { default: null },
       host: { default: null },
+      embed: { default: null },
     };
   },
 
@@ -81,24 +101,184 @@ export const Bookmark = Node.create({
   },
 });
 
+/** A pasted GitHub/Slack reference that resolves to a canonical URL. */
+type DetectedRef = GithubRef | SlackRef;
+
+/** Resolve a pasted GitHub/Slack token (`owner/repo#1`, `#channel`, …) to a URL. */
+function detectRef(raw: string): { ref: DetectedRef; url: string } | null {
+  const text = raw.trim();
+  if (text === "") return null;
+  const github = parseGithubRefs(text).find((ref) => ref.raw === text);
+  if (github && isHttpUrl(github.url)) return { ref: github, url: github.url };
+  const slack = parseSlackRefs(text).find((ref) => ref.raw === text);
+  if (slack && isHttpUrl(slack.url)) return { ref: slack, url: slack.url };
+  return null;
+}
+
 /** Why a typed bookmark target was refused, or the URLs worth using. */
 type BookmarkTarget =
-  | { ok: true; url: string; requestUrl: string }
+  | { ok: true; url: string; requestUrl: string; ref?: DetectedRef }
   | { ok: false; message: string };
 
 const UNSAFE_LINK_MESSAGE = "That link uses a scheme that isn't allowed.";
 const INVALID_LINK_MESSAGE = "Enter a valid web address.";
 
+/** Narrow an unknown value to a plain object. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Hostname of a URL without a leading `www.`, falling back to `hostOf`. */
+function hostLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return hostOf(url);
+  }
+}
+
+/** Decode the handful of entities `sanitizeEmbedHtml` can emit in an attribute. */
+function decodeAttr(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"');
+}
+
+/** The sanitised iframe `src`, or `null` when the embed is not a frame. */
+function embedSrc(html: string | null): string | null {
+  if (html === null) return null;
+  const match = /<iframe\b[^>]*\bsrc="([^"]+)"/i.exec(html);
+  return match ? decodeAttr(match[1]) : null;
+}
+
+/** The preview fields a resolved bookmark persists onto its node attributes. */
+type BookmarkCard = {
+  title: string | null;
+  description: string | null;
+  image: string | null;
+  icon: string | null;
+  host: string;
+  embed: string | null;
+};
+
+/**
+ * Resolve preview metadata through the oEmbed engine: discovered provider
+ * endpoints first, same-origin OpenGraph markup next, and the server
+ * `/api/link-preview` card as the always-available fallback. The layers merge
+ * through `resolveMetadata` and any embed markup passes through
+ * `sanitizeEmbedHtml` before it can be rendered.
+ */
+async function fetchBookmarkCard(target: {
+  requestUrl: string;
+  url: string;
+  ref?: DetectedRef;
+}): Promise<BookmarkCard> {
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  let oembed: OEmbedData | null = null;
+  let og: OpenGraphData | null = null;
+  let rawMeta: unknown = null;
+
+  for (const endpoint of discoverEndpoint(target.requestUrl)) {
+    try {
+      const response = await fetch(endpoint.endpoint, {
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) continue;
+      const parsed = parseOEmbed(await response.json());
+      if (parsed) {
+        oembed = parsed;
+        break;
+      }
+    } catch {
+      // CORS/network failures fall through to the server preview.
+    }
+  }
+
+  if (origin !== "" && target.requestUrl.startsWith(origin)) {
+    try {
+      const response = await fetch(target.requestUrl, { headers: { accept: "text/html" } });
+      if (response.ok) {
+        og = parseOpenGraph(await response.text(), { baseUrl: target.requestUrl });
+      }
+    } catch {
+      // Ignore; the server preview still resolves metadata.
+    }
+  }
+
+  try {
+    const response = await fetch(
+      `/api/link-preview?url=${encodeURIComponent(target.requestUrl)}`,
+    );
+    if (response.ok) {
+      rawMeta = (await response.json()) as unknown;
+      if (og === null && isRecord(rawMeta)) {
+        const fallback: OpenGraphData = {};
+        if (typeof rawMeta.title === "string") fallback.title = rawMeta.title;
+        if (typeof rawMeta.description === "string") fallback.description = rawMeta.description;
+        if (typeof rawMeta.image === "string") fallback.image = rawMeta.image;
+        if (typeof rawMeta.icon === "string") fallback.favicon = rawMeta.icon;
+        og = fallback;
+      }
+    }
+  } catch {
+    // Keep whatever the earlier layers produced.
+  }
+
+  const resolved: ResolvedMetadata = resolveMetadata({ oembed, og, url: target.url });
+  const title =
+    resolved.title ?? (target.ref ? unfurlPayload(target.ref, rawMeta).title : null);
+  const embed = resolved.html
+    ? sanitizeEmbedHtml(resolved.html, { allowedHosts: OEMBED_ALLOWED_HOSTS })
+    : null;
+
+  return {
+    title,
+    description: resolved.description ?? null,
+    image: resolved.image ?? null,
+    icon: resolved.favicon ?? null,
+    host: hostLabel(target.requestUrl),
+    embed: embed !== null && /^<iframe/i.test(embed) ? embed : null,
+  };
+}
+
+/** Split linkified text into literal strings and safe anchors (no raw HTML). */
+function renderLinkified(text: string, keyPrefix: string): ReactNode[] {
+  const linked = linkify(text, { providers: { github: {}, slack: {} } });
+  const nodes: ReactNode[] = [];
+  const pattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  let last = 0;
+  let index = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(linked)) !== null) {
+    if (match.index > last) nodes.push(linked.slice(last, match.index));
+    nodes.push(
+      <a key={`${keyPrefix}-${index}`} href={match[2]} target="_blank" rel="noreferrer noopener">
+        {match[1]}
+      </a>,
+    );
+    last = match.index + match[0].length;
+    index += 1;
+  }
+  if (last < linked.length) nodes.push(linked.slice(last));
+  return nodes;
+}
+
 /**
  * Classify and canonicalise a bookmarked URL through the shared `link-check`
- * kernel. Unsafe targets (`javascript:`, `data:`, protocol-relative, `%3A`
- * smuggling) and unparseable values are refused with an inline message;
- * external links are canonicalised through the URL parser and same-origin
- * links collapse to their in-app path (`/w/<slug>/<pageId>`). Only `http(s)`
- * targets the preview API can fetch survive, so `mailto:`/`tel:`/anchors are
- * refused too.
+ * kernel, or expand a bare GitHub/Slack reference (`owner/repo#123`, `#channel`,
+ * `@user`, a commit SHA) through the linkifier's detectors. Unsafe targets
+ * (`javascript:`, `data:`, protocol-relative, `%3A` smuggling) and unparseable
+ * values are refused with an inline message; external links are canonicalised
+ * through the URL parser and same-origin links collapse to their in-app path
+ * (`/w/<slug>/<pageId>`). Only `http(s)` targets the preview API can fetch
+ * survive, so `mailto:`/`tel:`/anchors are refused too.
  */
 function resolveBookmarkTarget(raw: string, origin: string): BookmarkTarget {
+  const ref = detectRef(raw);
+  if (ref) return { ok: true, url: ref.url, requestUrl: ref.url, ref: ref.ref };
+
   const candidate = normalizeUrl(raw);
   const context = origin ? { origin } : {};
   const kind = classifyLink(candidate, context);
@@ -130,6 +310,7 @@ function BookmarkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const host = (node.attrs.host as string) || (url ? hostOf(url) : "");
+  const embedUrl = embedSrc((node.attrs.embed as string | null) ?? null);
 
   const submit = async () => {
     const origin = typeof window === "undefined" ? "" : window.location.origin;
@@ -141,17 +322,15 @@ function BookmarkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
     setError(null);
     setLoading(true);
     try {
-      const response = await fetch(
-        `/api/link-preview?url=${encodeURIComponent(target.requestUrl)}`,
-      );
-      const meta = (await response.json()) as Record<string, unknown>;
+      const card = await fetchBookmarkCard(target);
       updateAttributes({
         url: target.url,
-        title: (meta.title as string) ?? null,
-        description: (meta.description as string) ?? null,
-        image: (meta.image as string) ?? null,
-        icon: (meta.icon as string) ?? null,
-        host: (meta.host as string) ?? hostOf(target.requestUrl),
+        title: card.title,
+        description: card.description,
+        image: card.image,
+        icon: card.icon,
+        host: card.host,
+        embed: card.embed,
       });
       setEditing(false);
     } finally {
@@ -213,7 +392,9 @@ function BookmarkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
                 {String(node.attrs.title ?? host ?? url)}
               </span>
               {node.attrs.description ? (
-                <span className="noema-bookmark-desc">{String(node.attrs.description)}</span>
+                <span className="noema-bookmark-desc">
+                  {renderLinkified(String(node.attrs.description), "bm-desc")}
+                </span>
               ) : null}
               <span className="noema-bookmark-host">
                 <ExternalLink className="h-3 w-3" /> {host}
@@ -224,6 +405,14 @@ function BookmarkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
               <img src={String(node.attrs.image)} alt="" className="noema-bookmark-image" />
             ) : null}
           </a>
+          {embedUrl ? (
+            <SandboxedFrame
+              className="noema-bookmark-embed"
+              src={embedUrl}
+              title={`${host || "Link"} preview`}
+              sandbox={SANDBOX_PREVIEW}
+            />
+          ) : null}
           <div className="noema-bookmark-actions">
             <button type="button" aria-label="Edit link" onClick={() => setEditing(true)}>
               <Pencil className="h-3.5 w-3.5" />
