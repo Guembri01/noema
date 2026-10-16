@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Copy, Globe, Link2, Lock } from "lucide-react";
+import { AlertTriangle, Check, Copy, Globe, Link2, Loader2, Lock } from "lucide-react";
 import { toast } from "sonner";
 import {
   createShareLinkAction,
@@ -12,8 +12,16 @@ import {
   type ShareOptions,
 } from "@/server/actions/share";
 import { useAction } from "@/lib/actions-client";
+import {
+  DEFAULT_COVER_POSITION,
+  formatObjectPosition,
+  parseCoverPosition,
+  type CoverPosition,
+} from "@/lib/cover-position";
+import { GRADIENTS, coverCss, type GradientId } from "@/lib/page-cover";
 import { t } from "@/lib/i18n";
 import { generateShortCode, isValidShortCode, shortUrl } from "@/lib/short-link";
+import { cn } from "@/lib/utils";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { AccessList } from "@/components/who-has-access";
 
@@ -37,11 +45,425 @@ type PublishSettings = {
  */
 type PublishOptions = ShareOptions & PublishSettings;
 
+/* ------------------------------------------------------------------------- *
+ * Pure publish-settings model
+ *
+ * The panel renders three switches; each one's state has to become exactly one
+ * patch key on the wire. That mapping is the only logic here, so it lives as a
+ * pure function the node test can pin.
+ * ------------------------------------------------------------------------- */
+
+/** The three publish settings the switches own, in render order. */
+export type PublishToggleId = "allowDuplicate" | "indexing" | "exportRestricted";
+
+/** The live switch state (what the three toggles show). */
+export type PublishSettingsState = Record<PublishToggleId, boolean>;
+
+/** Label + explanatory hint per switch. Plain English until i18n catches up. */
+export const PUBLISH_TOGGLES: readonly {
+  id: PublishToggleId;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    id: "allowDuplicate",
+    label: "Allow duplicate",
+    hint: "Viewers can copy the published page into their own workspace.",
+  },
+  {
+    id: "indexing",
+    label: "Search-engine indexing",
+    hint: "Let crawlers index this public page in search results.",
+  },
+  {
+    id: "exportRestricted",
+    label: "Export restricted",
+    hint: "Disable exporting the published page to PDF, HTML or Markdown.",
+  },
+];
+
 /**
- * Notion-like share panel: "Who has access" (per-person levels) plus
- * "General access" (the public link with password, expiry and the
- * view/edit choice). Replaces the two `window.prompt` calls that used to
- * ask for the password and expiry.
+ * One toggle's state as a single-key `ShareOptions` patch — never touching the
+ * link's password, expiry or edit mode. Unknown ids yield `{}` so a bad caller
+ * cannot smuggle an unrelated field onto the wire.
+ */
+export function publishTogglePatch(id: PublishToggleId, value: boolean): PublishOptions {
+  switch (id) {
+    case "allowDuplicate":
+      return { allowDuplicate: value };
+    case "indexing":
+      return { indexing: value };
+    case "exportRestricted":
+      return { exportRestricted: value };
+    default:
+      return {};
+  }
+}
+
+/** How long the copy button shows its success (checkmark) state, in ms. */
+export const COPY_FEEDBACK_MS = 1500;
+
+/* ------------------------------------------------------------------------- *
+ * Public share-page model
+ *
+ * The public page (`src/app/s/[token]/page.tsx`) is a server component and may
+ * only export route symbols, so the pure decisions it makes live here and are
+ * imported. They are all DOM-free and DB-free: whether a link is still
+ * available, whether the document embeds a database (and so wants the wide
+ * reading measure) and how a stored cover becomes a banner.
+ * ------------------------------------------------------------------------- */
+
+/** Reading measure for a prose page (§3: comfortable measure). */
+export const PROSE_MEASURE = "max-w-[720px]";
+/** Reading measure for a page containing databases — wide enough for tables. */
+export const WIDE_MEASURE = "max-w-[1100px]";
+
+/** The wrapper width for a page, widened when it embeds a database. */
+export function readingMeasure(hasDatabase: boolean): string {
+  return hasDatabase ? WIDE_MEASURE : PROSE_MEASURE;
+}
+
+/** Doc node types that make a page "contain a database". */
+const DATABASE_NODE_TYPES: ReadonlySet<string> = new Set([
+  "linkedDatabase",
+  "database",
+  "inlineDatabase",
+  "inline_database",
+  "databaseView",
+]);
+
+/**
+ * Whether a stored document embeds a database block. Walks the ProseMirror tree
+ * generically (unknown shapes are ignored) and is cycle-safe, so malformed or
+ * hostile content reads as "no database" rather than hanging.
+ */
+export function documentHasDatabase(content: unknown): boolean {
+  const root =
+    content && typeof content === "object" ? (content as { content?: unknown }) : null;
+  const stack: unknown[] = Array.isArray(root?.content) ? [...root.content] : [];
+  const seen = new Set<unknown>();
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node || typeof node !== "object" || seen.has(node)) continue;
+    seen.add(node);
+    const record = node as { type?: unknown; content?: unknown };
+    if (typeof record.type === "string" && DATABASE_NODE_TYPES.has(record.type)) return true;
+    if (Array.isArray(record.content)) {
+      for (const child of record.content) stack.push(child);
+    }
+  }
+  return false;
+}
+
+/** A page wants the wide measure when it is a database or embeds one. */
+export function usesWideMeasure(page: {
+  type?: string | null;
+  content?: unknown;
+}): boolean {
+  return page.type === "DATABASE" || documentHasDatabase(page.content);
+}
+
+/** Coerce a Date or ISO string to epoch millis, or `null` when unusable. */
+function toEpoch(value: Date | string | null | undefined): number | null {
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
+/**
+ * Whether a shared page should show the "no longer available" state: a missing
+ * link, a soft-deleted page, or a link whose expiry has passed. The expiry
+ * instant itself counts as expired (matching the guest-grant engine), and a
+ * corrupt/absent expiry never hides a live page.
+ */
+export function isSharedPageUnavailable(
+  link: { expiresAt?: Date | string | null } | null | undefined,
+  page: { deletedAt?: Date | string | null } | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!link || !page) return true;
+  if (page.deletedAt) return true;
+  const expiresAt = toEpoch(link.expiresAt);
+  return expiresAt !== null && expiresAt <= now.getTime();
+}
+
+/** Renderable banner: the `background-image` plus its focal point. */
+export type CoverBanner = { backgroundImage: string; backgroundPosition: string };
+
+/** Reverse lookup `coverCss` output → gradient preset id (mirrors the editor). */
+const GRADIENT_ID_BY_CSS: ReadonlyMap<string, GradientId> = new Map(
+  (Object.keys(GRADIENTS) as GradientId[]).map((id) => [GRADIENTS[id], id] as const),
+);
+
+/**
+ * Split a stored cover string into its CSS value and the focal point encoded
+ * after it (`"<css> <x>% <y>%"`). A cover without a position decodes centred.
+ */
+function splitStoredCover(raw: string): { css: string; position: CoverPosition } {
+  const match = raw.match(/^(.*\S)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/);
+  if (!match) return { css: raw, position: { ...DEFAULT_COVER_POSITION } };
+  return {
+    css: match[1],
+    position: parseCoverPosition(`${match[2]}% ${match[3]}%`),
+  };
+}
+
+/**
+ * Decode a persisted cover into a safe banner, or `null` for an absent or
+ * unrecognised value. Gradients match the catalog by CSS value; an image URL is
+ * re-validated through `coverCss`, so a hostile string never becomes a banner.
+ * The stored position is threaded into `background-position`.
+ */
+export function coverBannerStyle(raw: string | null | undefined): CoverBanner | null {
+  if (typeof raw !== "string" || raw.trim() === "") return null;
+  const { css, position } = splitStoredCover(raw.trim());
+  const gradientId = GRADIENT_ID_BY_CSS.get(css);
+  if (gradientId) {
+    return {
+      backgroundImage: coverCss({ type: "gradient", gradientId }),
+      backgroundPosition: formatObjectPosition(position),
+    };
+  }
+  // Accept both a bare URL and the `url("…")` form the cover encoder writes,
+  // then re-validate the URL through `coverCss` so nothing unsafe paints.
+  const wrapped = css.match(/^url\(\s*"([^"]*)"\s*\)$/);
+  const backgroundImage = coverCss({ type: "image", url: wrapped ? wrapped[1] : css });
+  if (backgroundImage === "") return null;
+  return {
+    backgroundImage,
+    backgroundPosition: formatObjectPosition(position),
+  };
+}
+
+/* ------------------------------------------------------------------------- *
+ * Presentational pieces (exported so the share sections can be rendered and
+ * asserted without a live dialog — Radix's portal renders nothing on the
+ * server, so the sections must be reachable on their own).
+ * ------------------------------------------------------------------------- */
+
+/** A titled card section — the Card/Section rhythm inside the share panel. */
+export function ShareSection({
+  title,
+  hint,
+  children,
+  className,
+}: {
+  title: string;
+  hint?: string;
+  children?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={cn("rounded-md border border-border bg-surface p-3", className)}>
+      <h3 className="text-xs font-medium uppercase tracking-wide text-muted">{title}</h3>
+      {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
+      <div className="mt-2">{children}</div>
+    </section>
+  );
+}
+
+/** A token-styled switch (`role="switch"`), keyboard reachable and disabled-aware. */
+export function Switch({
+  checked,
+  onCheckedChange,
+  disabled = false,
+  label,
+}: {
+  checked: boolean;
+  onCheckedChange: (value: boolean) => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onCheckedChange(!checked)}
+      className={cn(
+        "focus-ring u-colors relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border",
+        checked ? "border-accent bg-accent" : "border-border-strong bg-surface-3",
+        disabled && "cursor-not-allowed opacity-50",
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "u-transform pointer-events-none block h-3.5 w-3.5 rounded-full bg-bg",
+          checked ? "translate-x-4" : "translate-x-0.5",
+        )}
+      />
+    </button>
+  );
+}
+
+/**
+ * The three publish switches with their explanatory hints. A single-field patch
+ * per toggle is produced by {@link publishTogglePatch}.
+ */
+export function PublishSettingsSection({
+  settings,
+  pending = false,
+  onToggle,
+}: {
+  settings: PublishSettingsState;
+  pending?: boolean;
+  onToggle: (id: PublishToggleId, value: boolean) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      {PUBLISH_TOGGLES.map((toggle) => (
+        <div key={toggle.id} className="flex items-start justify-between gap-3">
+          <span className="min-w-0">
+            <span className="block text-sm">{toggle.label}</span>
+            <span className="block text-xs text-muted">{toggle.hint}</span>
+          </span>
+          <Switch
+            checked={settings[toggle.id]}
+            disabled={pending}
+            label={toggle.label}
+            onCheckedChange={(value) => onToggle(toggle.id, value)}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A read-only link field with a copy button. Copying swaps the icon to a
+ * checkmark for {@link COPY_FEEDBACK_MS} and never changes the control's size
+ * (the label text stays constant, so there is no layout shift).
+ */
+export function CopyLinkButton({
+  value,
+  label,
+  locale = "en",
+  iconOnly = false,
+  className,
+}: {
+  value: string;
+  label?: string;
+  locale?: string;
+  iconOnly?: boolean;
+  className?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  const copy = () => {
+    const absolute =
+      value.startsWith("/") && typeof window !== "undefined"
+        ? `${window.location.origin}${value}`
+        : value;
+    void navigator?.clipboard?.writeText(absolute).catch(() => {});
+    setCopied(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), COPY_FEEDBACK_MS);
+    toast.success(t(locale, "copied"));
+  };
+
+  const announced = copied ? t(locale, "copied") : (label ?? t(locale, "copy"));
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      aria-label={announced}
+      title={announced}
+      className={cn(
+        "focus-ring u-interactive u-colors inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-sm border px-3 text-sm",
+        copied ? "border-success text-success" : "border-border hover:bg-surface-2",
+        iconOnly && "w-9 px-0",
+        className,
+      )}
+    >
+      {copied ? (
+        <Check className="h-3.5 w-3.5" aria-hidden />
+      ) : (
+        <Copy className="h-3.5 w-3.5" aria-hidden />
+      )}
+      {!iconOnly && <span>{t(locale, "copy")}</span>}
+      <span className="sr-only" aria-live="polite">
+        {copied ? t(locale, "copied") : ""}
+      </span>
+    </button>
+  );
+}
+
+/** One labelled read-only link row (public link / short link). */
+function LinkField({
+  label,
+  value,
+  locale,
+}: {
+  label: string;
+  value: string;
+  locale: string;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium uppercase tracking-wide text-muted">{label}</span>
+      <span className="mt-1 flex gap-2">
+        <input
+          readOnly
+          value={value}
+          aria-label={label}
+          onFocus={(event) => event.currentTarget.select()}
+          className="focus-ring h-9 w-full rounded-sm border border-border bg-bg px-2 text-sm"
+        />
+        <CopyLinkButton value={value} locale={locale} />
+      </span>
+    </label>
+  );
+}
+
+/** The published links: the canonical public link plus the session short link. */
+export function LinkSection({
+  url,
+  shortUrl: shortHref,
+  shortCode,
+  locale = "en",
+}: {
+  url: string;
+  shortUrl?: string | null;
+  shortCode?: string | null;
+  locale?: string;
+}) {
+  return (
+    <div className="space-y-3">
+      <LinkField label={t(locale, "publicLink")} value={url} locale={locale} />
+      {shortHref ? (
+        <div>
+          <LinkField label={t(locale, "link")} value={shortHref} locale={locale} />
+          {shortCode ? (
+            <span className="mt-1 block font-mono text-[11px] text-muted">{shortCode}</span>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Notion-like share panel: "Invite" (who has access), "General access" (the
+ * public link's view/edit choice), "Publish settings" (the three switches) and
+ * "Link" (the copyable URLs). Replaces the two `window.prompt` calls that used
+ * to ask for the password and expiry.
  */
 export function ShareDialog({
   open,
@@ -67,6 +489,7 @@ export function ShareDialog({
   const [allowDuplicate, setAllowDuplicate] = useState(false);
   const [indexing, setIndexing] = useState(false);
   const [exportRestricted, setExportRestricted] = useState(false);
+  const [confirmUnpublish, setConfirmUnpublish] = useState(false);
 
   // The stored link choices travel with the link, so re-read them every time
   // the panel opens. A plain read (same pattern as AccessList) —
@@ -108,7 +531,7 @@ export function ShareDialog({
     return isValidShortCode(code) ? code : null;
   }, [pageId]);
 
-  const shortLink =
+  const shortHref =
     shortCode === null
       ? null
       : shortUrl(typeof window === "undefined" ? "/s" : `${window.location.origin}/s`, shortCode);
@@ -121,9 +544,9 @@ export function ShareDialog({
       password: password.trim() || undefined,
       expiresInDays: days.trim() ? Number(days) : undefined,
       allowEditing,
-      allowDuplicate,
-      indexing,
-      exportRestricted,
+      ...publishTogglePatch("allowDuplicate", allowDuplicate),
+      ...publishTogglePatch("indexing", indexing),
+      ...publishTogglePatch("exportRestricted", exportRestricted),
     };
     return run(() => createShareLinkAction(pageId, options), {
       onSuccess: (result) => {
@@ -149,19 +572,18 @@ export function ShareDialog({
   const chooseMode = (mode: "READ" | "EDIT") =>
     saveSetting({ allowEditing: mode === "EDIT" }, () => setAllowEditing(mode === "EDIT"));
 
-  /** Let viewers copy the published page. */
-  const toggleDuplicate = (value: boolean) =>
-    saveSetting({ allowDuplicate: value }, () => setAllowDuplicate(value));
+  /** One switch → one single-field patch, mirrored locally on success. */
+  const toggleSetting = (id: PublishToggleId, value: boolean) => {
+    const apply = () => {
+      if (id === "allowDuplicate") setAllowDuplicate(value);
+      else if (id === "indexing") setIndexing(value);
+      else setExportRestricted(value);
+    };
+    saveSetting(publishTogglePatch(id, value), apply);
+  };
 
-  /** Let search engines index the public page. */
-  const toggleIndexing = (value: boolean) =>
-    saveSetting({ indexing: value }, () => setIndexing(value));
-
-  /** Disable exporting the published page. */
-  const toggleExportRestricted = (value: boolean) =>
-    saveSetting({ exportRestricted: value }, () => setExportRestricted(value));
-
-  const unpublish = () =>
+  const unpublish = () => {
+    setConfirmUnpublish(false);
     run(() => revokeShareLinkAction(pageId), {
       success: "Unpublished",
       onSuccess: () => {
@@ -174,246 +596,183 @@ export function ShareDialog({
         router.refresh();
       },
     });
+  };
 
   const active = created ?? token;
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
-      <DialogContent className="w-full max-w-xl rounded-xl border border-border bg-bg p-4 shadow-2xl">
+      <DialogContent className="animate-scale-in max-h-[85vh] w-full max-w-xl overflow-y-auto scrollbar-thin rounded-xl border border-border bg-bg p-4 shadow-2xl">
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <Globe className="h-4 w-4 text-muted" aria-hidden /> {t(locale, "shareTitle")}
         </h2>
-        <p className="mt-1 text-xs text-muted">
-          {t(locale, "shareIntro")}
-        </p>
+        <p className="mt-1 text-xs text-muted">{t(locale, "shareIntro")}</p>
 
-        <section className="mt-4">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-muted">
-            {t(locale, "whoHasAccess")}
-          </h3>
-          <div className="mt-1">
+        <div className="mt-4 space-y-6">
+          <ShareSection title={t(locale, "invite")} hint={t(locale, "whoHasAccessIntro")}>
             <AccessList pageId={pageId} locale={locale} />
-          </div>
-        </section>
+          </ShareSection>
 
-        <section className="mt-4 border-t border-border pt-3">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-muted">
-            {t(locale, "generalAccess")}
-          </h3>
-
-          {active ? (
-            <div className="mt-2 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="flex min-w-0 items-center gap-2">
-                  <Globe className="h-4 w-4 shrink-0 text-muted" aria-hidden />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm">{t(locale, "anyoneWithLink")}</span>
-                    <span className="block truncate text-[11px] text-muted">
-                      {allowEditing ? t(locale, "canEdit") : t(locale, "canView")}
+          <ShareSection title={t(locale, "generalAccess")}>
+            {active ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Globe className="h-4 w-4 shrink-0 text-muted" aria-hidden />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm">{t(locale, "anyoneWithLink")}</span>
+                      <span className="block truncate text-[11px] text-muted">
+                        {allowEditing ? t(locale, "canEdit") : t(locale, "canView")}
+                      </span>
                     </span>
                   </span>
-                </span>
-                <select
-                  value={allowEditing ? "EDIT" : "READ"}
-                  aria-label={t(locale, "anyoneWithLink")}
-                  disabled={pending}
-                  onChange={(event) => chooseMode(event.target.value as "READ" | "EDIT")}
-                  className="h-8 shrink-0 rounded border border-border bg-bg px-2 text-xs disabled:opacity-50"
-                >
-                  <option value="READ">{t(locale, "canView")}</option>
-                  <option value="EDIT">{t(locale, "canEdit")}</option>
-                </select>
+                  <select
+                    value={allowEditing ? "EDIT" : "READ"}
+                    aria-label={t(locale, "anyoneWithLink")}
+                    disabled={pending}
+                    onChange={(event) => chooseMode(event.target.value as "READ" | "EDIT")}
+                    className="focus-ring h-8 shrink-0 rounded-sm border border-border bg-bg px-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="READ">{t(locale, "canView")}</option>
+                    <option value="EDIT">{t(locale, "canEdit")}</option>
+                  </select>
+                </div>
               </div>
+            ) : (
+              <form
+                className="space-y-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void publish();
+                }}
+              >
+                <p className="text-xs text-muted">{t(locale, "linkRestricted")}</p>
+                <label className="block text-sm">
+                  <span className="flex items-center gap-1.5">
+                    <Lock className="h-3.5 w-3.5 text-muted" aria-hidden />{" "}
+                    {t(locale, "passwordLabel")}
+                    <span className="text-[11px] text-muted">{t(locale, "optional")}</span>
+                  </span>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder={t(locale, "passwordHint")}
+                    className="focus-ring mt-1 h-9 w-full rounded-sm border border-border bg-bg px-2 text-sm"
+                  />
+                </label>
+                <label className="block text-sm">
+                  {t(locale, "expiresLabel")}{" "}
+                  <span className="text-[11px] text-muted">{t(locale, "optional")}</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={days}
+                    onChange={(event) => setDays(event.target.value)}
+                    placeholder={t(locale, "never")}
+                    className="focus-ring mt-1 h-9 w-full rounded-sm border border-border bg-bg px-2 text-sm"
+                  />
+                </label>
 
-              {/*
-                Publish settings persisted on the share link. The three
-                checkbox labels are plain English here because `i18n.ts` is out
-                of scope for this slice — shipping the catalogue keys is a
-                named follow-up.
-              */}
-              <div className="space-y-2 border-t border-border pt-3">
-                <span className="block text-[11px] font-medium uppercase tracking-wide text-muted">
-                  Publish settings
-                </span>
-                <label className="flex items-start gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={allowDuplicate}
-                    disabled={pending}
-                    onChange={(event) => toggleDuplicate(event.target.checked)}
-                    className="mt-0.5 accent-[var(--accent)]"
-                  />
-                  <span className="min-w-0">
-                    <span className="block">Allow duplicate</span>
-                    <span className="block text-[11px] text-muted">
-                      Viewers can copy the published page.
-                    </span>
-                  </span>
-                </label>
-                <label className="flex items-start gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={indexing}
-                    disabled={pending}
-                    onChange={(event) => toggleIndexing(event.target.checked)}
-                    className="mt-0.5 accent-[var(--accent)]"
-                  />
-                  <span className="min-w-0">
-                    <span className="block">Search-engine indexing</span>
-                    <span className="block text-[11px] text-muted">
-                      Let crawlers index the public page.
-                    </span>
-                  </span>
-                </label>
-                <label className="flex items-start gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={exportRestricted}
-                    disabled={pending}
-                    onChange={(event) => toggleExportRestricted(event.target.checked)}
-                    className="mt-0.5 accent-[var(--accent)]"
-                  />
-                  <span className="min-w-0">
-                    <span className="block">Export restricted</span>
-                    <span className="block text-[11px] text-muted">
-                      Disable exporting the published page.
-                    </span>
-                  </span>
-                </label>
-              </div>
-
-              <label className="block text-sm">
-                {t(locale, "publicLink")}
-                <span className="mt-1 flex gap-2">
-                  <input
-                    readOnly
-                    value={link(active)}
-                    aria-label={t(locale, "publicLink")}
-                    onFocus={(event) => event.currentTarget.select()}
-                    className="h-9 w-full rounded border border-border bg-surface px-2 text-sm"
-                  />
+                <div className="flex items-center justify-end gap-2 pt-1">
                   <button
                     type="button"
-                    onClick={() => {
-                      void navigator.clipboard?.writeText(link(active));
-                      toast.success(t(locale, "copied"));
-                    }}
-                    className="flex h-9 shrink-0 items-center gap-1 rounded border border-border px-3 text-sm hover:bg-surface-2"
+                    onClick={onClose}
+                    className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm text-muted hover:bg-surface-2"
                   >
-                    <Copy className="h-3.5 w-3.5" /> {t(locale, "copy")}
+                    {t(locale, "cancel")}
                   </button>
+                  <button
+                    type="submit"
+                    disabled={pending}
+                    className="focus-ring u-interactive u-colors flex h-9 items-center gap-1.5 rounded-sm bg-accent px-3 text-sm text-accent-fg disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {pending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    ) : (
+                      <Link2 className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                    {pending ? t(locale, "publishing") : t(locale, "publish")}
+                  </button>
+                </div>
+              </form>
+            )}
+          </ShareSection>
+
+          {active && (
+            <>
+              <ShareSection title="Publish settings">
+                <PublishSettingsSection
+                  settings={{ allowDuplicate, indexing, exportRestricted }}
+                  pending={pending}
+                  onToggle={toggleSetting}
+                />
+              </ShareSection>
+
+              <ShareSection title={t(locale, "link")}>
+                <LinkSection
+                  url={link(active)}
+                  shortUrl={shortHref}
+                  shortCode={shortCode}
+                  locale={locale}
+                />
+              </ShareSection>
+            </>
+          )}
+        </div>
+
+        {error && (
+          <p role="alert" className="mt-3 text-sm text-danger">
+            {error}
+          </p>
+        )}
+
+        <div className="mt-4 flex items-center justify-between gap-2 border-t border-border pt-3">
+          {active ? (
+            confirmUnpublish ? (
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="flex items-center gap-1.5 text-xs text-danger">
+                  <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
+                  Unpublish this page?
                 </span>
-              </label>
-
-              {shortLink !== null && (
-                <label className="block text-sm">
-                  {t(locale, "link")}
-                  <span className="mt-1 flex gap-2">
-                    <input
-                      readOnly
-                      value={shortLink}
-                      aria-label={t(locale, "link")}
-                      onFocus={(event) => event.currentTarget.select()}
-                      className="h-9 w-full rounded border border-border bg-surface px-2 text-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void navigator.clipboard?.writeText(shortLink);
-                        toast.success(t(locale, "copied"));
-                      }}
-                      className="flex h-9 shrink-0 items-center gap-1 rounded border border-border px-3 text-sm hover:bg-surface-2"
-                    >
-                      <Copy className="h-3.5 w-3.5" /> {t(locale, "copy")}
-                    </button>
-                  </span>
-                  <span className="mt-1 block font-mono text-[11px] text-muted">{shortCode}</span>
-                </label>
-              )}
-
-              <div className="flex items-center justify-between">
                 <button
                   type="button"
                   disabled={pending}
                   onClick={unpublish}
-                  className="h-9 rounded border border-border px-3 text-sm text-red-600 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+                  className="focus-ring u-interactive flex h-9 items-center gap-1.5 rounded-sm bg-danger px-3 text-sm font-medium text-danger-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
+                  {pending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
                   {t(locale, "unpublish")}
                 </button>
                 <button
                   type="button"
-                  onClick={onClose}
-                  className="h-9 rounded border border-border px-3 text-sm hover:bg-surface-2"
-                >
-                  {t(locale, "done")}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <form
-              className="mt-2 space-y-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void publish();
-              }}
-            >
-              <p className="text-xs text-muted">{t(locale, "linkRestricted")}</p>
-              <label className="block text-sm">
-                <span className="flex items-center gap-1.5">
-                  <Lock className="h-3.5 w-3.5 text-muted" aria-hidden /> {t(locale, "passwordLabel")}
-                  <span className="text-[11px] text-muted">{t(locale, "optional")}</span>
-                </span>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder={t(locale, "passwordHint")}
-                  className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
-                />
-              </label>
-              <label className="block text-sm">
-                {t(locale, "expiresLabel")} <span className="text-[11px] text-muted">{t(locale, "optional")}</span>
-                <input
-                  type="number"
-                  min="1"
-                  value={days}
-                  onChange={(event) => setDays(event.target.value)}
-                  placeholder={t(locale, "never")}
-                  className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
-                />
-              </label>
-
-              {error && (
-                <p role="alert" className="text-sm text-red-600 dark:text-red-400">
-                  {error}
-                </p>
-              )}
-
-              <div className="flex items-center justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="h-9 rounded border border-border px-3 text-sm text-muted hover:bg-surface-2"
+                  onClick={() => setConfirmUnpublish(false)}
+                  className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm hover:bg-surface-2"
                 >
                   {t(locale, "cancel")}
                 </button>
-                <button
-                  type="submit"
-                  disabled={pending}
-                  className="flex h-9 items-center gap-1.5 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-40"
-                >
-                  <Link2 className="h-3.5 w-3.5" /> {pending ? t(locale, "publishing") : t(locale, "publish")}
-                </button>
-              </div>
-            </form>
+              </span>
+            ) : (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => setConfirmUnpublish(true)}
+                className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm text-danger hover:bg-danger-soft disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {t(locale, "unpublish")}
+              </button>
+            )
+          ) : (
+            <span />
           )}
-        </section>
-
-        {active && error && (
-          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
-            {error}
-          </p>
-        )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm hover:bg-surface-2"
+          >
+            {t(locale, "done")}
+          </button>
+        </div>
       </DialogContent>
     </Dialog>
   );
