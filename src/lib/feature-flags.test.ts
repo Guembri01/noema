@@ -2,12 +2,18 @@ import { describe, expect, it } from "vitest";
 import {
   FLAG_RULE_OPERATORS,
   bucketFor,
+  bucketOf,
+  describeFlag,
   evaluateFlag,
   isEnabled,
+  overridesFromEnv,
+  parseFlags,
   resolveFlag,
   validateFlag,
   type Flag,
   type FlagContext,
+  type FlagDefinition,
+  type FlagEvaluationContext,
   type FlagRule,
   type FlagRuleOperator,
 } from "@/lib/feature-flags";
@@ -344,5 +350,332 @@ describe("FLAG_RULE_OPERATORS", () => {
       "exists",
       "not_exists",
     ]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * §17 "Plan gates": the plan-aware definition surface
+ * (`FlagDefinition`, `parseFlags`, `bucketOf`, `overridesFromEnv`,
+ * `describeFlag`, and the plan-aware branch of `evaluateFlag`).
+ * ------------------------------------------------------------------ */
+
+const def = (overrides: Partial<FlagDefinition> = {}): FlagDefinition => ({
+  key: "beta",
+  enabled: false,
+  ...overrides,
+});
+
+const planCtx = (context: FlagEvaluationContext = {}): FlagEvaluationContext => context;
+
+describe("bucketOf - deterministic stable bucketing", () => {
+  it("returns an integer in 0..99 for a spread of ids and keys", () => {
+    const samples: Array<[string, string]> = [
+      ["user-1", "beta"],
+      ["user-2", "beta"],
+      ["", "beta"],
+      ["u1", "other"],
+    ];
+    for (const [userId, key] of samples) {
+      const bucket = bucketOf(userId, key);
+      expect(Number.isInteger(bucket)).toBe(true);
+      expect(bucket).toBeGreaterThanOrEqual(0);
+      expect(bucket).toBeLessThan(100);
+    }
+  });
+
+  it("is deterministic regardless of call order", () => {
+    const input: Array<[string, string]> = [
+      ["user-1", "beta"],
+      ["user-2", "beta"],
+      ["user-3", "beta"],
+    ];
+    const forward = input.map(([userId, key]) => bucketOf(userId, key));
+    const reversed = [...input].reverse().map(([userId, key]) => bucketOf(userId, key)).reverse();
+    expect(forward).toEqual(reversed);
+  });
+
+  it("pins the FNV-1a buckets so a user never drifts between requests", () => {
+    expect([
+      bucketOf("user-1", "beta"),
+      bucketOf("user-2", "beta"),
+      bucketOf("user-3", "beta"),
+    ]).toEqual([28, 85, 66]);
+    expect([bucketOf("alpha", "beta"), bucketOf("", "beta")]).toEqual([91, 25]);
+  });
+
+  it("salts by key so one user partitions independently per flag", () => {
+    expect(bucketOf("u1", "beta")).toBe(91);
+    expect(bucketOf("u1", "other")).toBe(81);
+    expect(bucketOf("u1", "beta")).not.toBe(bucketOf("u1", "other"));
+  });
+
+  it("spreads distinct users across different buckets", () => {
+    const buckets = ["user-1", "user-2", "user-3", "alpha", "u1"].map((userId) =>
+      bucketOf(userId, "beta"),
+    );
+    expect(new Set(buckets).size).toBeGreaterThan(1);
+  });
+});
+
+describe("parseFlags - untrusted raw to definitions", () => {
+  it("parses an array with fail-closed defaults", () => {
+    expect(parseFlags([{ key: "a", enabled: true }, { key: "b" }])).toEqual([
+      { key: "a", enabled: true },
+      { key: "b", enabled: false },
+    ]);
+  });
+
+  it("parses a keyed map, using the map key as the fallback", () => {
+    expect(parseFlags({ a: { enabled: true }, b: true })).toEqual([
+      { key: "a", enabled: true },
+      { key: "b", enabled: false },
+    ]);
+  });
+
+  it("clamps rolloutPercent to an integer 0..100", () => {
+    expect(
+      parseFlags([
+        { key: "a", rolloutPercent: 250 },
+        { key: "b", rolloutPercent: -5 },
+        { key: "c", rolloutPercent: 42.9 },
+      ]),
+    ).toEqual([
+      { key: "a", enabled: false, rolloutPercent: 100 },
+      { key: "b", enabled: false, rolloutPercent: 0 },
+      { key: "c", enabled: false, rolloutPercent: 42 },
+    ]);
+  });
+
+  it("drops entries without a usable key and tolerates junk", () => {
+    expect(parseFlags([null, 7, "x", { enabled: true }, { key: "  " }, { key: "ok" }])).toEqual([
+      { key: "ok", enabled: false },
+    ]);
+  });
+
+  it("dedupes by key (first wins) and ignores unknown fields", () => {
+    expect(parseFlags([{ key: "a", enabled: true, extra: 1 }, { key: "a", enabled: false }])).toEqual([
+      { key: "a", enabled: true },
+    ]);
+  });
+
+  it("normalises nested allowlists and plan gates", () => {
+    expect(
+      parseFlags([
+        {
+          key: "a",
+          allowlist: { userIds: ["u1", 2], workspaceIds: ["w1"] },
+          planGate: { plans: ["business", "x", 3] },
+        },
+        { key: "b", allowlist: ["u1", "u2"], planGate: ["business"] },
+      ]),
+    ).toEqual([
+      {
+        key: "a",
+        enabled: false,
+        allowlist: { userIds: ["u1"], workspaceIds: ["w1"] },
+        planGate: { plans: ["business", "x"] },
+      },
+      { key: "b", enabled: false, allowlist: { userIds: ["u1", "u2"] }, planGate: { plans: ["business"] } },
+    ]);
+  });
+
+  it("returns an empty list for non-array, non-object input", () => {
+    expect(parseFlags(null)).toEqual([]);
+    expect(parseFlags(42)).toEqual([]);
+    expect(parseFlags("x")).toEqual([]);
+  });
+});
+
+describe("overridesFromEnv", () => {
+  it("reads the truthy token vocabulary", () => {
+    expect(overridesFromEnv({ FLAG_BETA: "true", FLAG_DARK: "1", FLAG_X: "YES", FLAG_Y: "on" })).toEqual({
+      beta: true,
+      dark: true,
+      x: true,
+      y: true,
+    });
+  });
+
+  it("reads the falsy token vocabulary", () => {
+    expect(overridesFromEnv({ FLAG_A: "false", FLAG_B: "0", FLAG_C: "No", FLAG_D: "OFF" })).toEqual({
+      a: false,
+      b: false,
+      c: false,
+      d: false,
+    });
+  });
+
+  it("ignores non-flag names, an empty suffix and unparseable values", () => {
+    expect(overridesFromEnv({ SMTP_SECURE: "true", FLAG_: "true", FLAG_BAD: "maybe" })).toEqual({});
+  });
+
+  it("lower-cases the key and tolerates junk input", () => {
+    expect(overridesFromEnv({ flag_beta_ui: "on" })).toEqual({ beta_ui: true });
+    expect(overridesFromEnv(null)).toEqual({});
+    expect(overridesFromEnv("FLAG_A=true")).toEqual({});
+  });
+});
+
+describe("describeFlag", () => {
+  it("summarises a bare flag", () => {
+    expect(describeFlag({ key: "beta", enabled: true })).toBe("beta: on");
+    expect(describeFlag({ key: "beta", enabled: false })).toBe("beta: off");
+  });
+
+  it("summarises allowlist, plan gate and rollout", () => {
+    expect(
+      describeFlag({
+        key: "beta",
+        enabled: false,
+        allowlist: { userIds: ["u1", "u2"], workspaceIds: ["w1"] },
+        planGate: { plans: ["business"] },
+        rolloutPercent: 25,
+      }),
+    ).toBe("beta: off (allowlist 2 users, 1 workspace, plans business, rollout 25%)");
+    expect(describeFlag({ key: "a", enabled: true, allowlist: ["u1", "u2"] })).toBe(
+      "a: on (allowlist 2 users)",
+    );
+  });
+
+  it("never throws on a malformed definition", () => {
+    expect(describeFlag(null)).toBe("unknown flag");
+    expect(describeFlag({})).toBe("?: off");
+  });
+});
+
+describe("evaluateFlag - plan-aware precedence", () => {
+  it("falls through to the global tier and reports it", () => {
+    expect(evaluateFlag(def({ enabled: true }), planCtx({ plan: "free" }))).toEqual({
+      enabled: true,
+      reason: "global",
+    });
+    expect(evaluateFlag(def({ enabled: false }), planCtx({ plan: "free" }))).toEqual({
+      enabled: false,
+      reason: "global",
+    });
+  });
+
+  it("allowlist (userIds) beats planGate, rollout and global", () => {
+    const definition = def({
+      enabled: false,
+      allowlist: { userIds: ["u1"] },
+      planGate: { plans: ["business"] },
+      rolloutPercent: 0,
+    });
+    expect(evaluateFlag(definition, planCtx({ userId: "u1", plan: "free" }))).toEqual({
+      enabled: true,
+      reason: "allowlist",
+    });
+  });
+
+  it("allowlist matches a workspace id", () => {
+    const definition = def({
+      enabled: false,
+      allowlist: { workspaceIds: ["w1"] },
+      planGate: { plans: ["business"] },
+    });
+    expect(evaluateFlag(definition, planCtx({ workspaceId: "w1", plan: "free" }))).toEqual({
+      enabled: true,
+      reason: "allowlist",
+    });
+    expect(evaluateFlag(definition, planCtx({ workspaceId: "w2", plan: "free" }))).toEqual({
+      enabled: false,
+      reason: "planGate",
+    });
+  });
+
+  it("a plan gate admits only its plans", () => {
+    const definition = def({ enabled: true, planGate: { plans: ["business", "enterprise"] }, rolloutPercent: 0 });
+    expect(evaluateFlag(definition, planCtx({ plan: "business" }))).toEqual({
+      enabled: true,
+      reason: "planGate",
+    });
+    expect(evaluateFlag(definition, planCtx({ plan: "free" }))).toEqual({
+      enabled: false,
+      reason: "planGate",
+    });
+  });
+
+  it("a plan gate fails closed when the context has no plan", () => {
+    expect(evaluateFlag(def({ enabled: true, planGate: { plans: ["business"] } }), planCtx({}))).toEqual({
+      enabled: false,
+      reason: "planGate",
+    });
+  });
+
+  it("planGate beats rollout and global", () => {
+    const definition = def({ enabled: true, planGate: { plans: ["business"] }, rolloutPercent: 100 });
+    expect(evaluateFlag(definition, planCtx({ plan: "free" })).enabled).toBe(false);
+    expect(evaluateFlag(definition, planCtx({ plan: "business" })).enabled).toBe(true);
+  });
+
+  it("rollout beats the global baseline", () => {
+    expect(evaluateFlag(def({ enabled: true, rolloutPercent: 0 }), planCtx({ userId: "u1" }))).toEqual({
+      enabled: false,
+      reason: "rollout",
+    });
+    expect(evaluateFlag(def({ enabled: false, rolloutPercent: 100 }), planCtx({ userId: "u1" }))).toEqual({
+      enabled: true,
+      reason: "rollout",
+    });
+  });
+
+  it("an empty allowlist never matches", () => {
+    expect(
+      evaluateFlag(def({ enabled: true, allowlist: { userIds: [] } }), planCtx({ userId: "u1", plan: "free" })),
+    ).toEqual({ enabled: true, reason: "global" });
+  });
+});
+
+describe("evaluateFlag - rollout edges and determinism", () => {
+  it("0% turns every user off and 100% turns every user on", () => {
+    for (const userId of ["user-1", "user-2", "user-3", "alpha", ""]) {
+      expect(evaluateFlag(def({ enabled: true, rolloutPercent: 0 }), planCtx({ userId }))).toEqual({
+        enabled: false,
+        reason: "rollout",
+      });
+      expect(evaluateFlag(def({ enabled: false, rolloutPercent: 100 }), planCtx({ userId }))).toEqual({
+        enabled: true,
+        reason: "rollout",
+      });
+    }
+  });
+
+  it("includes a user exactly when their bucket is below the percentage", () => {
+    expect(bucketOf("user-1", "beta")).toBe(28);
+    expect(evaluateFlag(def({ key: "beta", rolloutPercent: 28 }), planCtx({ userId: "user-1" })).enabled).toBe(false);
+    expect(evaluateFlag(def({ key: "beta", rolloutPercent: 29 }), planCtx({ userId: "user-1" })).enabled).toBe(true);
+  });
+
+  it("is stable across repeated calls", () => {
+    const definition = def({ key: "beta", enabled: false, rolloutPercent: 50 });
+    const first = evaluateFlag(definition, planCtx({ userId: "user-3" }));
+    for (let i = 0; i < 5; i += 1) {
+      expect(evaluateFlag(definition, planCtx({ userId: "user-3" }))).toEqual(first);
+    }
+  });
+
+  it("keys the rollout so the same user can differ per flag", () => {
+    expect(evaluateFlag(def({ key: "beta", rolloutPercent: 82 }), planCtx({ userId: "u1" })).enabled).toBe(false);
+    expect(evaluateFlag(def({ key: "other", rolloutPercent: 82 }), planCtx({ userId: "u1" })).enabled).toBe(true);
+  });
+
+  it("fails closed on an unknown definition", () => {
+    expect(evaluateFlag(undefined, planCtx({ plan: "free" }))).toEqual({ enabled: false, reason: "invalid" });
+    expect(evaluateFlag(null, planCtx({ plan: "free" }))).toEqual({ enabled: false, reason: "invalid" });
+    expect(evaluateFlag("nope", planCtx({ plan: "free" }))).toEqual({ enabled: false, reason: "invalid" });
+  });
+});
+
+describe("evaluateFlag - the legacy targeting surface is unchanged", () => {
+  it("keeps the shipped engine's decisions intact", () => {
+    expect(evaluateFlag(flag({ enabled: true }), ctx("u1"))).toEqual({ enabled: true, reason: "enabled" });
+    expect(evaluateFlag(flag({ enabled: false }), ctx("u1"))).toEqual({ enabled: false, reason: "disabled" });
+    expect(evaluateFlag(flag({ rollout: 100 }), ctx("u1"))).toEqual({ enabled: true, reason: "rollout" });
+    expect(evaluateFlag(flag({ allowlist: ["u1"] }), ctx("u1"))).toEqual({ enabled: true, reason: "allowlist" });
+    expect(evaluateFlag(flag({ denylist: ["u1"], enabled: true }), ctx("u1"))).toEqual({
+      enabled: false,
+      reason: "denylist",
+    });
   });
 });
