@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, type Dispatch, type SetStateAction } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
+  Archive,
   ArrowUpDown,
   Bookmark,
   CalendarDays,
@@ -251,6 +254,12 @@ export function TicketsToolbar({
    */
   onSortChange?: (spec: TicketSortSpec | null) => void;
 }) {
+  // The archive view lives one segment under the board. Derive it from the
+  // current pathname so the toolbar stays self-contained (no extra prop) — the
+  // board is always mounted at `/w/<slug>/tickets`.
+  const pathname = usePathname();
+  const archiveHref = `${pathname.replace(/\/+$/, "")}/archive`;
+
   // In-session named presets — saved views tagged `scope: "tickets"`. They are
   // never persisted; applying one overlays the live filters and view type.
   const [presets, setPresets] = useState<SavedView[]>([]);
@@ -345,6 +354,17 @@ export function TicketsToolbar({
             );
           })}
         </div>
+
+        {/* Entry point for the archive view — the flip side of the board's
+            archive action, sitting beside the list/board/timeline switcher. */}
+        <Link
+          href={archiveHref}
+          aria-label="Archived tickets"
+          data-testid="tickets-archive-link"
+          className="flex h-8 items-center gap-1 rounded border border-border px-2 text-sm text-muted hover:bg-surface-2"
+        >
+          <Archive className="h-3.5 w-3.5" /> Archive
+        </Link>
 
         <span className="relative">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
