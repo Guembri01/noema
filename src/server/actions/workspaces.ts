@@ -17,6 +17,33 @@ import {
   toPersistedRole,
   validatePersistedRoleChange,
 } from "@/lib/workspace-role-map";
+import {
+  PROJECT_ROLE_HIERARCHY,
+  assignRole,
+  canProjectAction,
+  createRoleOverride,
+  describeRole,
+  effectiveRole,
+  listMembers,
+  removeMember,
+  validateRoleMatrix,
+  type ProjectMemberSummary,
+  type ProjectRole,
+  type RoleOverride,
+} from "@/lib/project-roles";
+import {
+  acceptTransfer,
+  auditEntry,
+  cancelTransfer,
+  declineTransfer,
+  describeTransfer,
+  expireTransfers,
+  isTransferExpired,
+  pendingFor,
+  startTransfer,
+  validateTransfer,
+  type TransferRequest,
+} from "@/lib/ownership-transfer";
 
 export type WorkspaceResult<T = unknown> =
   | ({ ok: true } & T)
@@ -300,4 +327,394 @@ export async function transferOwnershipAction(
   revalidatePath("/", "layout");
   revalidatePath("/w", "layout");
   return { ok: true };
+}
+
+/* ------------------------------------------------------------------------- *
+ * Per-project roles (MISSING_FEATURES §20). Project scope is stored on
+ * `ProjectMember.role` as a plain string; every decision is made by the pure
+ * `@/lib/project-roles` engine (no role logic is re-derived here).
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Bridge the persisted `ProjectMember.role` string onto the engine's project
+ * roles. Legacy `CLIENT` rows (external, view-only) read as `viewer`; anything
+ * unrecognised confers no override at all (fail closed).
+ */
+const PERSISTED_PROJECT_ROLES: Readonly<Record<string, ProjectRole>> = {
+  owner: "owner",
+  admin: "admin",
+  editor: "editor",
+  commenter: "commenter",
+  viewer: "viewer",
+  OWNER: "owner",
+  ADMIN: "admin",
+  EDITOR: "editor",
+  COMMENTER: "commenter",
+  VIEWER: "viewer",
+  client: "viewer",
+  CLIENT: "viewer",
+};
+
+function toProjectRole(role: unknown): ProjectRole | null {
+  if (typeof role !== "string") return null;
+  return PERSISTED_PROJECT_ROLES[role.trim()] ?? null;
+}
+
+/** Project member rows → the engine's override roster, dropping unusable rows. */
+function projectOverrides(members: readonly { userId: string; role: string }[]): RoleOverride[] {
+  const overrides: RoleOverride[] = [];
+  for (const member of members) {
+    const role = toProjectRole(member.role);
+    if (!role) continue;
+    const override = createRoleOverride({ userId: member.userId, role });
+    if (override) overrides.push(override);
+  }
+  return overrides;
+}
+
+/**
+ * The acting user's effective project role and the roster, resolving the
+ * workspace baseline against every project override. A workspace owner/admin
+ * keeps a floor on every project even without an explicit `ProjectMember` row,
+ * so `assignRole` is handed an explicit override for them (it requires the
+ * actor to be a member of the roster it is given).
+ */
+async function loadProjectRoleContext(projectId: string, actorId: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { id: true, workspaceId: true, ownerId: true },
+  });
+  if (!project) return { ok: false as const, error: "Project not found." };
+  const access = await getWorkspaceAccess(actorId, project.workspaceId);
+  if (!access) return { ok: false as const, error: "You do not have access to this project." };
+
+  const roster = await prisma.projectMember.findMany({
+    where: { projectId },
+    select: { userId: true, role: true },
+  });
+  const overrides = projectOverrides(roster);
+  const actorRole = effectiveRole({ id: actorId }, { workspaceRole: access.role, overrides });
+  const withActor: RoleOverride[] =
+    actorRole && !overrides.some((override) => override.userId === actorId)
+      ? [...overrides, { userId: actorId, role: actorRole }]
+      : overrides;
+  return { ok: true as const, project, access, overrides, actorRole, withActor };
+}
+
+/**
+ * The editable project role roster: every workspace member with their effective
+ * project role, plus the project's own overrides. Gated on workspace access; the
+ * editor may render read-only when `canManage` is false.
+ */
+export async function listProjectRolesAction(projectId: string): Promise<
+  WorkspaceResult<{
+    members: ProjectMemberSummary[];
+    roles: { id: ProjectRole; description: string }[];
+    canManage: boolean;
+    actorRole: ProjectRole | null;
+    matrixOk: boolean;
+  }>
+> {
+  const user = await requireUser();
+  const context = await loadProjectRoleContext(projectId, user.id);
+  if (!context.ok) return { error: context.error };
+
+  const workspaceMembers = await prisma.workspaceMember.findMany({
+    where: { workspaceId: context.project.workspaceId },
+    select: { userId: true, role: true, user: { select: { id: true, name: true } } },
+  });
+
+  const members = listMembers(
+    context.overrides,
+    workspaceMembers.map((member) => ({
+      id: member.userId,
+      name: member.user.name,
+      workspaceRole: member.role,
+    })),
+  );
+
+  return {
+    ok: true,
+    members,
+    roles: PROJECT_ROLE_HIERARCHY.map((role) => ({ id: role, description: describeRole(role) })),
+    canManage: canProjectAction(context.actorRole, "manageMembers"),
+    actorRole: context.actorRole,
+    matrixOk: validateRoleMatrix().ok,
+  };
+}
+
+/** Assign a project role, enforcing the engine's ceiling and last-owner guard. */
+export async function setProjectRoleAction(
+  projectId: string,
+  userId: string,
+  role: string,
+): Promise<WorkspaceResult> {
+  const user = await requireUser();
+  const nextRole = toProjectRole(role);
+  if (!nextRole) return { error: "That project role is not recognised." };
+
+  const context = await loadProjectRoleContext(projectId, user.id);
+  if (!context.ok) return { error: context.error };
+  if (!canProjectAction(context.actorRole, "manageMembers")) {
+    return { error: "You cannot manage this project's members." };
+  }
+
+  const decision = assignRole(context.withActor, { userId, role: nextRole, byUserId: user.id });
+  if (!decision.ok) return { error: decision.error };
+
+  await prisma.projectMember.upsert({
+    where: { projectId_userId: { projectId, userId } },
+    create: { projectId, userId, role: nextRole },
+    update: { role: nextRole },
+  });
+  await logActivity({
+    workspaceId: context.project.workspaceId,
+    actorId: user.id,
+    action: "member.role_changed",
+    targetType: "member",
+    targetId: userId,
+    meta: { scope: "project", projectId, role: nextRole },
+  });
+  revalidatePath("/w", "layout");
+  return { ok: true };
+}
+
+/** Remove someone from a project, never orphaning its last owner. */
+export async function removeProjectRoleAction(
+  projectId: string,
+  userId: string,
+): Promise<WorkspaceResult> {
+  const user = await requireUser();
+  const context = await loadProjectRoleContext(projectId, user.id);
+  if (!context.ok) return { error: context.error };
+  if (userId === context.project.ownerId) {
+    return { error: "Transfer project ownership before removing the owner." };
+  }
+  if (!canProjectAction(context.actorRole, "manageMembers")) {
+    return { error: "You cannot manage this project's members." };
+  }
+
+  const decision = removeMember(context.withActor, userId);
+  if (!decision.ok) return { error: decision.error };
+
+  await prisma.projectMember.deleteMany({ where: { projectId, userId } });
+  await logActivity({
+    workspaceId: context.project.workspaceId,
+    actorId: user.id,
+    action: "member.removed",
+    targetType: "member",
+    targetId: userId,
+    meta: { scope: "project", projectId },
+  });
+  revalidatePath("/w", "layout");
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------------- *
+ * Workspace ownership transfer (§8). The two-party state machine lives in
+ * `@/lib/ownership-transfer`; this module owns persistence and the final
+ * atomic swap the accepted request implies.
+ *
+ * There is no `OwnershipTransfer` Prisma model yet, so live (pending) requests
+ * are held in an in-process store — they survive the request/accept window on a
+ * single server instance and are replayed deterministically by the engine. See
+ * the follow-up in the report: a model is required for durable, cross-instance
+ * transfers. The terminal swap itself is durable (it writes the real rows).
+ * ------------------------------------------------------------------------- */
+
+/** Default acceptance window: 7 days. */
+const DEFAULT_TRANSFER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+const transferRequests = new Map<string, TransferRequest>();
+
+/** Every transfer row recorded for a workspace (including resolved ones). */
+function transfersFor(workspaceId: string): TransferRequest[] {
+  return [...transferRequests.values()].filter((request) => request.workspaceId === workspaceId);
+}
+
+/** Lapse every expired pending request in the store, returning the fresh rows. */
+function expireFor(workspaceId: string, now: number): TransferRequest[] {
+  const lapsed = expireTransfers(transfersFor(workspaceId), now);
+  for (const request of lapsed) transferRequests.set(request.id, request);
+  return transfersFor(workspaceId);
+}
+
+/** Open a two-party ownership transfer (owner only). The recipient must accept. */
+export async function startOwnershipTransferAction(input: {
+  workspaceId: string;
+  toUserId: string;
+  ttlMs?: number;
+  requirePassword?: boolean;
+}): Promise<WorkspaceResult<{ id: string }>> {
+  const user = await requireUser();
+  const access = await getWorkspaceAccess(user.id, input.workspaceId);
+  if (!canPerformWorkspaceAction(access?.role ?? null, "transferOwnership")) {
+    return { error: "Only the current owner can start an ownership transfer." };
+  }
+
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: input.workspaceId },
+    select: { id: true, members: { select: { userId: true, role: true } } },
+  });
+  if (!workspace) return { error: "Workspace not found." };
+
+  const now = Date.now();
+  expireFor(input.workspaceId, now);
+
+  const started = startTransfer({
+    workspace: { id: workspace.id, members: workspace.members },
+    fromUserId: user.id,
+    toUserId: input.toUserId,
+    actorRole: access?.role ?? null,
+    now,
+    ttlMs: input.ttlMs && input.ttlMs > 0 ? input.ttlMs : DEFAULT_TRANSFER_TTL_MS,
+    requests: transfersFor(input.workspaceId),
+    requirePassword: input.requirePassword === true,
+    idFactory: () =>
+      `xfer_${workspace.id}_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+  });
+  if (!started.ok) return { error: started.error };
+
+  const validation = validateTransfer(started.request, {
+    members: workspace.members.map((member) => member.userId),
+    now,
+  });
+  if (!validation.ok) return { error: validation.errors[0] ?? "That transfer is not valid." };
+
+  transferRequests.set(started.request.id, started.request);
+  revalidatePath("/w", "layout");
+  return { ok: true, id: started.request.id };
+}
+
+/**
+ * Accept a pending transfer as its recipient. On success the recipient becomes
+ * OWNER and the previous owner is demoted to ADMIN, in one transaction.
+ */
+export async function acceptOwnershipTransferAction(
+  transferId: string,
+  options: { passwordOk?: boolean } = {},
+): Promise<WorkspaceResult> {
+  const user = await requireUser();
+  const request = transferRequests.get(transferId);
+  if (!request) return { error: "That transfer request does not exist." };
+
+  const now = Date.now();
+  if (isTransferExpired(request, now)) {
+    transferRequests.set(request.id, { ...request, status: "expired" });
+    return { error: "This transfer request has expired." };
+  }
+
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: request.workspaceId },
+    select: { ownerId: true },
+  });
+  if (!workspace) return { error: "Workspace not found." };
+  const target = await prisma.workspaceMember.findFirst({
+    where: { workspaceId: request.workspaceId, userId: request.toUserId },
+    select: { id: true, role: true },
+  });
+  if (!target) return { error: "That person is no longer a member of this workspace." };
+
+  const accepted = acceptTransfer(request, {
+    byUserId: user.id,
+    now,
+    passwordOk: options.passwordOk,
+    memberRole: target.role,
+  });
+  if (!accepted.ok) return { error: accepted.error };
+
+  // The terminal swap, mirroring `transferOwnershipAction`: owner → ADMIN,
+  // recipient → OWNER, and the workspace's `ownerId` handed over.
+  await prisma.$transaction([
+    prisma.workspace.update({
+      where: { id: request.workspaceId },
+      data: { ownerId: request.toUserId },
+    }),
+    prisma.workspaceMember.update({ where: { id: target.id }, data: { role: "OWNER" } }),
+    prisma.workspaceMember.updateMany({
+      where: { workspaceId: request.workspaceId, userId: request.fromUserId },
+      data: { role: "ADMIN" },
+    }),
+  ]);
+  transferRequests.set(request.id, accepted.request);
+  await logActivity({
+    workspaceId: request.workspaceId,
+    actorId: user.id,
+    action: "member.ownership_transferred",
+    targetType: "member",
+    targetId: request.toUserId,
+  });
+  revalidatePath("/", "layout");
+  revalidatePath("/w", "layout");
+  return { ok: true };
+}
+
+/** Decline a pending transfer as its recipient. */
+export async function declineOwnershipTransferAction(
+  transferId: string,
+): Promise<WorkspaceResult> {
+  const user = await requireUser();
+  const request = transferRequests.get(transferId);
+  if (!request) return { error: "That transfer request does not exist." };
+  const declined = declineTransfer(request, { byUserId: user.id, now: Date.now() });
+  if (!declined.ok) return { error: declined.error };
+  transferRequests.set(request.id, declined.request);
+  revalidatePath("/w", "layout");
+  return { ok: true };
+}
+
+/** Withdraw a pending transfer as its sender. */
+export async function cancelOwnershipTransferAction(
+  transferId: string,
+): Promise<WorkspaceResult> {
+  const user = await requireUser();
+  const request = transferRequests.get(transferId);
+  if (!request) return { error: "That transfer request does not exist." };
+  const cancelled = cancelTransfer(request, { byUserId: user.id, now: Date.now() });
+  if (!cancelled.ok) return { error: cancelled.error };
+  transferRequests.set(request.id, cancelled.request);
+  revalidatePath("/w", "layout");
+  return { ok: true };
+}
+
+/**
+ * The workspace's transfer history, with lazy expiry applied first so a lapsed
+ * pending request reads as `expired` rather than silently blocking a new one.
+ */
+export async function listOwnershipTransfersAction(workspaceId: string): Promise<
+  WorkspaceResult<{
+    transfers: {
+      id: string;
+      fromUserId: string;
+      toUserId: string;
+      status: TransferRequest["status"];
+      expiresAt: number;
+      acceptedAt: number | null;
+      pending: boolean;
+      summary: string;
+      audit: ReturnType<typeof auditEntry>;
+    }[];
+  }>
+> {
+  const user = await requireUser();
+  const access = await getWorkspaceAccess(user.id, workspaceId);
+  if (!access) return { error: "You do not have access to this workspace." };
+
+  const now = Date.now();
+  const rows = expireFor(workspaceId, now);
+  const live = new Set(pendingFor(rows, workspaceId).map((request) => request.id));
+  return {
+    ok: true,
+    transfers: rows.map((request) => ({
+      id: request.id,
+      fromUserId: request.fromUserId,
+      toUserId: request.toUserId,
+      status: request.status,
+      expiresAt: request.expiresAt,
+      acceptedAt: request.acceptedAt ?? null,
+      pending: live.has(request.id),
+      summary: describeTransfer(request),
+      audit: auditEntry(request, { now }),
+    })),
+  };
 }
