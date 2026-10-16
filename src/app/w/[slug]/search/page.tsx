@@ -87,7 +87,7 @@ export default async function SearchPage({
   });
 
   return (
-    <div className="mx-auto max-w-3xl px-10 py-12">
+    <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <h1 className="mb-5 text-2xl font-semibold tracking-tight">{t(locale, "search")}</h1>
 
       <form method="GET" className="relative">

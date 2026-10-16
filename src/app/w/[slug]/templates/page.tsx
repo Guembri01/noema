@@ -188,7 +188,7 @@ export default async function TemplatesPage({
   };
 
   return (
-    <div className="mx-auto max-w-5xl px-8 py-12">
+    <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <Link
         href={`/w/${workspace.slug}`}
         className="inline-flex items-center gap-1 text-xs text-muted hover:text-fg"

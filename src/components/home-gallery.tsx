@@ -173,7 +173,7 @@ export function HomeGallery({
   );
 
   return (
-    <div className="w-full max-w-2xl self-center">
+    <div className="w-full">
       <div className="grid gap-4 sm:grid-cols-2">
         <button
           type="button"

@@ -280,7 +280,7 @@ export default async function SettingsPage({
   }));
 
   return (
-    <div className="mx-auto max-w-2xl px-10 py-12">
+    <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <h1 className="mb-8 text-2xl font-semibold tracking-tight">
         {t(locale, "workspaceSettings")}
       </h1>

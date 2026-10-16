@@ -81,7 +81,7 @@ export default async function PublicSharedPage({
   const readOnly = link.permission !== "EDIT";
 
   return (
-    <main className="mx-auto max-w-3xl px-8 py-14">
+    <main className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
         {readOnly ? (
           "Shared page · read-only"

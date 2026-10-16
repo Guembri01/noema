@@ -37,7 +37,7 @@ export default async function ProjectsPage({
   // No persisted project-board config exists yet, so `wipLimits` stays unset —
   // the WIP strip and move controls remain hidden until one is added.
   return (
-    <div className="mx-auto max-w-5xl px-8 py-12">
+    <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <p className="text-sm text-muted">Workspace</p>
       <h1 className="mt-1 text-3xl font-bold tracking-tight">{t(locale, "projectsHeading")}</h1>
       <p className="mt-2 mb-8 text-sm text-muted">

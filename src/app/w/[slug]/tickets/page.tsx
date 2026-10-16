@@ -45,7 +45,7 @@ export default async function TicketsPage({
   const locale = user.locale ?? "en";
 
   return (
-    <div className="mx-auto max-w-6xl px-8 py-12">
+    <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <p className="text-sm text-muted">{t(locale, "workspaceEyebrow")}</p>
       <h1 className="mt-1 text-3xl font-bold tracking-tight">{t(locale, "tickets")}</h1>
       <p className="mt-2 mb-6 text-sm text-muted">{t(locale, "ticketsPageIntro")}</p>

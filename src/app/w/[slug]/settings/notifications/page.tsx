@@ -34,7 +34,7 @@ export default async function NotificationSettingsPage({
   const prefs = await getNotificationPrefs();
 
   return (
-    <div className="mx-auto max-w-2xl px-10 py-12">
+    <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <Link href={`/w/${workspace.slug}/settings`} className="text-xs text-muted hover:underline">
         ← {t(locale, "settings")}
       </Link>

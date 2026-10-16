@@ -140,7 +140,9 @@ export default async function PageRoute({
     <div
       className={cn(
         "mx-auto px-12 py-12",
-        page.fullWidth ? "max-w-none" : database ? "max-w-5xl" : "max-w-[720px]",
+        // Full-bleed by default: databases use the whole width, pages get a
+        // generous cap (the per-page "Full width" toggle removes it entirely).
+        page.fullWidth ? "max-w-none" : database ? "max-w-none" : "max-w-[1100px]",
         page.smallText && "noema-page-small",
         page.font === "serif" && "noema-font-serif",
         page.font === "mono" && "noema-font-mono",

@@ -178,7 +178,7 @@ export default async function InboxPage({
   };
 
   return (
-    <div className="mx-auto max-w-2xl px-10 py-12">
+    <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       {resumeAt && (
         <div className="mb-5 rounded-lg border border-border bg-surface-2 px-4 py-3 text-sm text-muted">
           {`Quiet hours: notifications are paused (now ${now.toLocaleString()}) and resume at ${resumeAt.toLocaleString()}.`}

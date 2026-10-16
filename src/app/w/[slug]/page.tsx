@@ -29,8 +29,8 @@ export default async function WorkspaceHome({
         : t(locale, "goodEvening");
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col items-center px-8 py-14">
-      <div className="mb-8 w-full max-w-2xl">
+    <div className="mx-auto flex w-full max-w-[1600px] flex-col px-8 py-12">
+      <div className="mb-8 w-full">
         <p className="text-3xl font-bold tracking-tight">
           {greeting}, {user.name.split(" ")[0]}
         </p>
@@ -43,7 +43,7 @@ export default async function WorkspaceHome({
       <HomeGallery workspaceId={workspace.id} workspaceName={workspace.name} locale={locale} />
 
       {trash.length > 0 && (
-        <section className="mt-14 w-full max-w-2xl">
+        <section className="mt-14 w-full">
           <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
             {t(locale, "recentlyDeleted")}
           </h2>

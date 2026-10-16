@@ -111,7 +111,7 @@ export default function DataControlsPage() {
     : [];
 
   return (
-    <div className="mx-auto max-w-3xl px-10 py-12">
+    <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <Link href={`/w/${slug}/settings`} className="text-xs text-muted hover:underline">
         ← {t(snapshot?.locale ?? "en", "settings")}
       </Link>
