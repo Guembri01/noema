@@ -14,7 +14,11 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
-import { ImageBlock } from "@/components/editor/extensions/image-block";
+import {
+  ImageBlock,
+  mediaKindOf,
+  type MediaKind,
+} from "@/components/editor/extensions/image-block";
 import { BlockColors } from "@/components/editor/extensions/block-colors";
 import { CodeBlock } from "@/components/editor/extensions/code-block";
 import { TextStyle } from "@tiptap/extension-text-style";
@@ -78,7 +82,7 @@ import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
-import { Bookmark, Embed } from "@/components/editor/extensions/bookmark";
+import { Bookmark, Embed, MapBlock, PdfPreview } from "@/components/editor/extensions/bookmark";
 import { Breadcrumb, type BreadcrumbCrumb } from "@/components/editor/extensions/breadcrumb";
 import { PageEmbed } from "@/components/editor/extensions/page-embed";
 import { TemplateButton } from "@/components/editor/extensions/template-button";
@@ -122,6 +126,21 @@ type CollabStatus = "connecting" | "connected" | "disconnected";
 /** True when the browser reports no network — writes must be buffered. */
 function isOffline(): boolean {
   return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
+/**
+ * Pick the media variant an uploaded asset should render as in the image
+ * block. The asset's own MIME type wins (uploads always report one); an
+ * untyped asset falls back to the URL-extension inference of `mediaKindOf`,
+ * and anything still unrecognised becomes a downloadable file block rather
+ * than a broken picture. Images never reach here (the caller keeps the plain
+ * `setImage` path).
+ */
+function uploadedMediaKind(asset: { url: string; mimeType: string }): MediaKind {
+  if (asset.mimeType.startsWith("video/")) return "video";
+  if (asset.mimeType.startsWith("audio/")) return "audio";
+  const inferred = mediaKindOf(asset.url);
+  return inferred === "image" ? "file" : inferred;
 }
 
 /** Resolve a presence palette name (`assignColor`) to its avatar CSS colour. */
@@ -469,17 +488,20 @@ export function PageEditor({
           if (asset.mimeType.startsWith("image/")) {
             editor.chain().focus().setImage({ src: asset.url, alt: asset.name }).run();
           } else {
+            // Non-image uploads render through the image block's media
+            // variants (video/audio/file); the explicit `mediaType` keeps the
+            // element from being inferred wrong off the stored URL.
             editor
               .chain()
               .focus()
-              .insertContent([
-                {
-                  type: "text",
-                  text: asset.name,
-                  marks: [{ type: "link", attrs: { href: asset.url } }],
+              .insertContent({
+                type: "image",
+                attrs: {
+                  src: asset.url,
+                  alt: asset.name,
+                  mediaType: uploadedMediaKind(asset),
                 },
-                { type: "text", text: " " },
-              ])
+              })
               .run();
           }
           toast.success(`${t(locale, "uploadedPrefix")} ${asset.name}`);
@@ -599,6 +621,8 @@ export function PageEditor({
       Mention,
       Bookmark,
       Embed,
+      PdfPreview,
+      MapBlock,
       Breadcrumb.configure({ trail: breadcrumbTrail, workspaceSlug, locale }),
       PageEmbed.configure({ workspaceId, workspaceSlug }),
       TemplateButton.configure({ locale }),
