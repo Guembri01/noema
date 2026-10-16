@@ -440,6 +440,18 @@ const VIEW_CONFIG_KEYS = [
   "chartAggregate",
   "aggregationPropertyId",
   "previewPropertyId",
+  // Toolbar-owned keys added by the wiring waves: without these, a captured
+  // saved view silently drops the footer, format rules, filter tree builder,
+  // property layout and page size.
+  "footer",
+  "formatRules",
+  "filterBuilder",
+  "propertyLayout",
+  "pageSize",
+  "groupOrder",
+  "groupAggregation",
+  "quickFilter",
+  "conditionalFormat",
 ] as const satisfies readonly (keyof ViewConfig)[];
 
 const VIEW_CONFIG_KEY_SET: ReadonlySet<string> = new Set(VIEW_CONFIG_KEYS);

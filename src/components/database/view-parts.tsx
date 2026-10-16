@@ -190,6 +190,7 @@ export function PropertyHeader({
     typeCode === "DATE" ||
     typeCode === "UNIQUE_ID" ||
     typeCode === "PLACE" ||
+    typeCode === "FORMULA" ||
     typeCode === "BUTTON";
   // With an explicit saved width: the single shared clamp so the header agrees
   // with `setColumnWidth`/`autoFitWidths`. Without one: auto-fit the header to
