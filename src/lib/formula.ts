@@ -15,6 +15,17 @@
  * results never depend on the host timezone.
  */
 
+import { DEFAULT_CONSTANTS } from "@/lib/formula-constants";
+import {
+  cacheSize,
+  createFormulaCache,
+  getCached,
+  invalidateAll,
+  invalidateByProperty,
+  setCached,
+  type FormulaCache,
+} from "@/lib/formula-cache";
+
 export type FormulaValue = number | string | boolean | FormulaValue[];
 export type FormulaScope = Record<string, FormulaValue>;
 
@@ -52,6 +63,18 @@ export const MAX_REGEX_TEXT_LENGTH = 5_000;
 
 /** Maximum JSON depth accepted when coercing named constants. */
 const MAX_CONSTANT_DEPTH = 8;
+
+/**
+ * The registry every evaluation starts from: `@/lib/formula-constants` owns the
+ * default named constants (PI, E, TAU), folded here into a name → value map
+ * once. They are read by bare name just like caller-supplied constants, and a
+ * caller constant of the same name shadows the built-in, so the public API
+ * stays backward compatible while those names stop being unknown identifiers.
+ */
+const BUILTIN_CONSTANTS: Readonly<Record<string, unknown>> = Object.fromEntries(
+  DEFAULT_CONSTANTS.map((constant) => [constant.name, constant.value] as const),
+);
+
 
 /** Internal evaluation value: any formula value plus an error. Lists never contain errors. */
 type ExprValue = FormulaValue | FormulaErrorValue;
@@ -1016,7 +1039,7 @@ function runFormula(
     const value = new Parser(
       tokenize(source),
       scope,
-      options.constants ?? {},
+      effectiveConstants(options.constants),
       options.rollups ?? {},
       evalDepth,
     ).parse();
@@ -1031,16 +1054,99 @@ function runFormula(
 }
 
 /**
+ * The constants an evaluation may read: `@/lib/formula-constants`'s defaults
+ * overlaid by the caller's registry (so a caller constant shadows a built-in of
+ * the same name, and vice versa the built-ins are always available).
+ */
+function effectiveConstants(caller: Record<string, unknown> | undefined): Record<string, unknown> {
+  return caller === undefined ? { ...BUILTIN_CONSTANTS } : { ...BUILTIN_CONSTANTS, ...caller };
+}
+
+/**
+ * Bounded memoisation of `(expression, scope)` results. The row-evaluation path
+ * (`database-view`) calls {@link evaluateFormula} with only an expression and a
+ * row scope, so repeated rows recompute nothing; `@/lib/formula-cache` keys each
+ * entry by the *properties the expression actually reads*, so editing an
+ * unrelated cell never misses. Only calls that depend on nothing but their text
+ * and scope values are memoized (see {@link isMemoizable}).
+ */
+export const MAX_FORMULA_CACHE_ENTRIES = 1_000;
+
+let resultCache: FormulaCache<FormulaResult> = createFormulaCache<FormulaResult>();
+let cacheHits = 0;
+let cacheMisses = 0;
+
+/** Wall-clock keywords: an expression using them must never be reused. */
+const VOLATILE_KEYWORDS = /\b(?:now|today)\b/i;
+
+/**
+ * Only an expression whose result depends on nothing but its text and scope
+ * values can be keyed by `(expression, scope)`: `now`/`today` move with the
+ * clock, and `constants`/`rollups` are not part of the cache key.
+ */
+function isMemoizable(expression: string, options: FormulaOptions): boolean {
+  if (VOLATILE_KEYWORDS.test(expression)) return false;
+  if (options.constants !== undefined && Object.keys(options.constants).length > 0) return false;
+  if (options.rollups !== undefined && Object.keys(options.rollups).length > 0) return false;
+  return true;
+}
+
+export type FormulaCacheStats = {
+  readonly hits: number;
+  readonly misses: number;
+  readonly size: number;
+};
+
+/** Cache counters, for diagnostics and tests. */
+export function formulaCacheStats(): FormulaCacheStats {
+  return { hits: cacheHits, misses: cacheMisses, size: cacheSize(resultCache) };
+}
+
+/** Drop every memoised result and reset the counters. */
+export function clearFormulaCache(): void {
+  resultCache = createFormulaCache<FormulaResult>();
+  cacheHits = 0;
+  cacheMisses = 0;
+}
+
+/** Drop the memoised results whose expressions read `property` (case-insensitive). */
+export function invalidateFormulaCacheByProperty(property: string): void {
+  resultCache = invalidateByProperty(resultCache, property);
+}
+
+/**
  * Evaluates `expression` against row values (`scope`, read via `prop()`),
  * optional workspace `constants` (read by bare name) and typed rollup results
  * (`options.rollups`, read via `rollup("Name")`). Never throws: bad
  * syntax, unknown functions, division by zero, type mismatches and sandbox
  * violations all come back as `ok: false` with a friendly `#ERROR: …` message.
+ *
+ * Results with no `constants`/`rollups` and no `now`/`today` are memoized by
+ * `(expression, scope)` in a bounded cache; use {@link clearFormulaCache} and
+ * {@link invalidateFormulaCacheByProperty} to drop entries, and
+ * {@link formulaCacheStats} to observe hit/miss counts. Returned values are
+ * shared with the cache, so callers must treat them as read-only.
  */
 export function evaluateFormula(
   expression: string,
   scope: FormulaScope = {},
   options: FormulaOptions = {},
 ): FormulaResult {
-  return runFormula(expression, scope, options, 0);
+  const memoize = isMemoizable(expression, options);
+  if (memoize) {
+    const cached = getCached(resultCache, expression, scope);
+    if (cached !== undefined) {
+      cacheHits += 1;
+      return cached;
+    }
+    cacheMisses += 1;
+  }
+  const result = runFormula(expression, scope, options, 0);
+  if (memoize) {
+    if (cacheSize(resultCache) >= MAX_FORMULA_CACHE_ENTRIES) {
+      resultCache = invalidateAll(resultCache);
+    }
+    resultCache = setCached(resultCache, expression, scope, result);
+  }
+  return result;
 }
