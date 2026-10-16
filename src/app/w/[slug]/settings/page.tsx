@@ -304,6 +304,27 @@ export default async function SettingsPage({
         </p>
       </section>
 
+      <nav aria-label={t(locale, "settings")} className="mt-8 grid gap-2 sm:grid-cols-2">
+        <Link
+          href={`/w/${workspace.slug}/settings/notifications`}
+          className="rounded-lg border border-border px-4 py-3 text-sm hover:bg-surface-2"
+        >
+          {t(locale, "notifications")}
+          <span className="mt-0.5 block text-xs text-muted">
+            Choose which events reach you and how they are batched.
+          </span>
+        </Link>
+        <Link
+          href={`/w/${workspace.slug}/settings/tokens`}
+          className="rounded-lg border border-border px-4 py-3 text-sm hover:bg-surface-2"
+        >
+          {t(locale, "apiTokens")}
+          <span className="mt-0.5 block text-xs text-muted">
+            Create and revoke scoped REST API tokens.
+          </span>
+        </Link>
+      </nav>
+
       <section className="mt-10">
         {directory && (
           <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
