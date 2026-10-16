@@ -115,9 +115,25 @@ import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { Bookmark, Embed, MapBlock, PdfPreview } from "@/components/editor/extensions/bookmark";
 import { Breadcrumb, type BreadcrumbCrumb } from "@/components/editor/extensions/breadcrumb";
 import { PageEmbed } from "@/components/editor/extensions/page-embed";
-import { TemplateButton } from "@/components/editor/extensions/template-button";
+import { TemplateButton, ButtonBlock } from "@/components/editor/extensions/template-button";
 import { AskAi } from "@/components/editor/extensions/ask-ai";
+import { SyncedBlock } from "@/components/editor/extensions/synced-block";
+import {
+  AnimatedImage,
+  prefersReducedMotion,
+  resolveAnimatedMediaAttrs,
+  looksAnimatedByExtension,
+} from "@/components/editor/extensions/animated-image";
 import { LinkedDatabase } from "@/components/editor/extensions/linked-database";
+import { GIF_MIME } from "@/lib/animated-media";
+import {
+  collectBlocks,
+  copyReference,
+  extractReferences,
+  missingReferences,
+  resolveSynced,
+  type Block as ReferenceBlock,
+} from "@/lib/block-refs";
 // B18: markdown shortcut long tail + emoji shortcodes (one-line registration).
 import { InputRules } from "@/components/editor/extensions/input-rules";
 import { BubbleToolbar } from "@/components/editor/bubble-toolbar";
@@ -382,6 +398,68 @@ function blockIdAt(doc: PMNode, pos: number): string | null {
   });
   return found;
 }
+
+/* ------------------------------------------------- block references (refs) */
+
+/**
+ * Lift a ProseMirror node into the shared `Block` shape `src/lib/block-refs.ts`
+ * reads, preserving a node's `refBlockId`/`refBlockIds` reference fields.
+ */
+function pmNodeToReferenceBlock(node: PMNode): ReferenceBlock {
+  const id = typeof node.attrs?.id === "string" ? node.attrs.id : "";
+  const block: ReferenceBlock = { id, type: node.type.name };
+  const refBlockId = node.attrs?.refBlockId;
+  if (typeof refBlockId === "string" && refBlockId !== "") block.refBlockId = refBlockId;
+  const refBlockIds = node.attrs?.refBlockIds;
+  if (Array.isArray(refBlockIds)) {
+    const ids = refBlockIds.filter((value): value is string => typeof value === "string");
+    if (ids.length > 0) block.refBlockIds = ids;
+  }
+  const children: ReferenceBlock[] = [];
+  node.forEach((child) => {
+    if (child.isText) return;
+    children.push(pmNodeToReferenceBlock(child));
+  });
+  if (children.length > 0) block.children = children;
+  return block;
+}
+
+/**
+ * The document's block-reference view: the same tree `page-editor` uses for
+ * block ids, projected into the `block-refs.ts` engine so its helpers own the
+ * reference bookkeeping. Pure — the ProseMirror document is never mutated.
+ */
+export function pmDocToReferenceBlocks(doc: PMNode): ReferenceBlock[] {
+  const blocks: ReferenceBlock[] = [];
+  doc.forEach((node) => blocks.push(pmNodeToReferenceBlock(node)));
+  return blocks;
+}
+
+/** The canonical id → block index for a document (`collectBlocks`). */
+export function blockReferenceIndex(doc: PMNode): ReturnType<typeof collectBlocks> {
+  return collectBlocks(pmDocToReferenceBlocks(doc));
+}
+
+/** Every block that references another block (`extractReferences`). */
+export function blockReferenceEntries(doc: PMNode): ReturnType<typeof extractReferences> {
+  return extractReferences(pmDocToReferenceBlocks(doc));
+}
+
+/** Referenced block ids the document does not contain (`missingReferences`). */
+export function brokenBlockReferences(doc: PMNode): string[] {
+  return missingReferences(pmDocToReferenceBlocks(doc));
+}
+
+/** Resolve a referenced block's subtree (`resolveSynced`). */
+export function resolveBlockReference(doc: PMNode, blockId: string) {
+  return resolveSynced(pmDocToReferenceBlocks(doc), blockId);
+}
+
+/** The paste pair for a synced block reference (`copyReference`). */
+export function blockReferenceCopy(doc: PMNode, blockId: string) {
+  return copyReference(pmDocToReferenceBlocks(doc), blockId);
+}
+
 
 /**
  * Plan a multi-block drag reorder with `moveBlocks`: given the flat block ids,
@@ -663,6 +741,8 @@ export function PageEditor({
   const blockRangeRef = useRef<SelectionRange | null>(null);
   /** How many top-level blocks the range currently covers (for the wrapper). */
   const [blockSelected, setBlockSelected] = useState(0);
+  /** Referenced block ids whose target block no longer exists (`block-refs`). */
+  const [brokenRefs, setBrokenRefs] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastSavedRef = useRef<string>("");
   /** Latest document payload not yet acknowledged by the server. */
@@ -823,11 +903,33 @@ export function PageEditor({
   const insertFiles = useCallback(    async (files: File[]) => {
       const editor = editorRef.current;
       if (!editor) return;
+      const reducedMotion = prefersReducedMotion();
       for (const file of files) {
         try {
           const asset = await uploadFile(file, workspaceId);
           if (asset.mimeType.startsWith("image/")) {
-            editor.chain().focus().setImage({ src: asset.url, alt: asset.name }).run();
+            if (asset.mimeType === GIF_MIME || looksAnimatedByExtension(asset.url)) {
+              // A GIF is sniffed for real frames (`isAnimatedGif`) and rendered
+              // through the playback policy (`playbackPolicy`), which refuses to
+              // autoplay under `prefers-reduced-motion`.
+              let bytes: Uint8Array | undefined;
+              try {
+                bytes = new Uint8Array(await file.arrayBuffer());
+              } catch {
+                bytes = undefined;
+              }
+              const { attrs } = resolveAnimatedMediaAttrs({
+                src: asset.url,
+                alt: asset.name,
+                mimeType: asset.mimeType,
+                ...(bytes === undefined ? {} : { bytes }),
+                reducedMotion,
+                autoplay: true,
+              });
+              editor.chain().focus().insertContent({ type: "animatedImage", attrs }).run();
+            } else {
+              editor.chain().focus().setImage({ src: asset.url, alt: asset.name }).run();
+            }
           } else {
             // Non-image uploads render through the image block's media
             // variants (video/audio/file); the explicit `mediaType` keeps the
@@ -1018,7 +1120,10 @@ export function PageEditor({
       Breadcrumb.configure({ trail: breadcrumbTrail, workspaceSlug, locale }),
       PageEmbed.configure({ workspaceId, workspaceSlug }),
       TemplateButton.configure({ locale }),
-      AskAi.configure({ workspaceId, locale }),
+      ButtonBlock.configure({ locale }),
+      AskAi.configure({ workspaceId, locale, pageId }),
+      SyncedBlock.configure({ locale }),
+      AnimatedImage.configure({ locale }),
       LinkedDatabase.configure({ workspaceId, workspaceSlug, locale }),
       // B18: `1)` lists, `| a | b |` + Enter tables, `:smile:` emoji.
       InputRules,
@@ -1251,6 +1356,10 @@ export function PageEditor({
       recordSnapshot(json);
       // Any content change invalidates the whole-block range (ids may be gone).
       if (blockRangeRef.current) paintBlockRange(null);
+      // Block-reference integrity: a reference whose target block is gone is
+      // surfaced so a broken transclusion is visible rather than silent.
+      const broken = brokenBlockReferences(e.state.doc).length;
+      setBrokenRefs((prev) => (prev === broken ? prev : broken));
     },
   });
 
@@ -1421,6 +1530,15 @@ export function PageEditor({
               }`}
             />
             {t(locale, "liveWord")} · {peers}
+          </span>
+        )}
+        {brokenRefs > 0 && (
+          <span
+            className="pointer-events-auto flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-red-500"
+            data-broken-refs={brokenRefs}
+            title={t(locale, "somethingWentWrongDot")}
+          >
+            {t(locale, "linkedReferences")} · {brokenRefs}
           </span>
         )}
         {saveState === "saving" && t(locale, "saving")}
