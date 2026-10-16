@@ -309,6 +309,48 @@ export async function updatePageAction(
   return { ok: true };
 }
 
+/**
+ * R89.24 — flip the **database schema lock** (`Page.schemaLocked`) for a
+ * DATABASE page. The lock itself is a *structural* capability (R89.23:
+ * "schema lock toggle ⇒ editSchema"), so the guard is the engine's canonical
+ * `canEditSchema`: a member/admin may lock an unlocked database, while only the
+ * owner keeps the locked-schema override — that is exactly what keeps the lock
+ * releasable once it is on (mirrors `schemaLockDenied` in `database.ts` and the
+ * `lockRoleFor` role shape both actions share).
+ *
+ * Scope: this only writes the boolean. Every existing structural action already
+ * reads `Page.schemaLocked` and refuses while it is set, so flipping the flag is
+ * the whole point of the toggle. A non-DATABASE page has no schema to lock and
+ * is refused here — regular pages use `Page.locked` via `updatePageAction`.
+ */
+export async function toggleSchemaLockAction(
+  pageId: string,
+  locked: boolean,
+): Promise<Result<{ schemaLocked: boolean }>> {
+  const user = await requireUser();
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { id: true, workspaceId: true, type: true, schemaLocked: true },
+  });
+  if (!page || page.type !== "DATABASE") return { error: "Database not found." };
+
+  const access = await getWorkspaceAccess(user.id, page.workspaceId);
+  if (!access || !canEditContent(access.role)) {
+    return { error: "You do not have permission to change this database's lock." };
+  }
+  // Evaluate the policy against the *current* lock state, so unlocking a locked
+  // database is reserved to the owner (the lock stays releasable) while any
+  // editor may apply the lock in the first place.
+  if (!canEditSchema({ locked: page.schemaLocked }, lockRoleFor(access.role))) {
+    return { error: "This database is locked. Only its owner can change the lock." };
+  }
+
+  await prisma.page.update({ where: { id: pageId }, data: { schemaLocked: locked } });
+  await dispatchWebhooks(page.workspaceId, "page.updated", { pageId });
+  revalidateWorkspace(page.workspaceId);
+  return { ok: true, schemaLocked: locked };
+}
+
 /** Move a page under a new parent (or to the workspace root). */
 export async function movePageAction(
   pageId: string,
