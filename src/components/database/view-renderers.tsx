@@ -1,7 +1,7 @@
 "use client";
 
 import { Cell, PropertyHeader } from "./view-parts";
-import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
+import { Fragment, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type RefObject } from "react";
 import Link from "next/link";
 import {
   ArrowDown,
@@ -9,12 +9,16 @@ import {
   ArrowRight,
   ArrowUp,
   ArrowUpRight,
+  ChevronRight,
   ExternalLink,
+  Inbox,
   LayoutTemplate,
+  Plus,
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
+import { DUR, TAG_HUES, Z, tagClass, type TagHue } from "@/lib/design-tokens";
 import {
   formatCell,
   hasStatusGroups,
@@ -105,12 +109,162 @@ import {
 } from "@/lib/form-view";
 import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
 
-/** Approximate rendered height (px) of one table row, for the scroll anchor. */
-const TABLE_ROW_HEIGHT = 37;
+/* ---------------------------------------------------------------------------
+   View class & motion maps (design system §5/§6)
+
+   Every visual decision a view makes that is not itself a token — how tall a
+   table row is, how a board card lifts, how many skeleton rows to draw — is a
+   pure mapping here. Node tests (`view-renderers.classes.test.ts`) pin them and
+   the renderers below consume them, so the markup and the mapping can never
+   disagree.
+   --------------------------------------------------------------------------- */
+
+/** Table row-height modes, densest to roomiest. */
+export const TABLE_ROW_HEIGHTS = ["short", "medium", "tall"] as const;
+export type TableRowHeight = (typeof TABLE_ROW_HEIGHTS)[number];
+
+/**
+ * Per-mode cell padding class and approximate rendered row height (px). The
+ * height feeds the scroll anchor, so a taller table re-pins with the right
+ * measurements; the class keeps every cell in a mode the same height.
+ */
+export const TABLE_ROW_HEIGHT_MODES: Record<
+  TableRowHeight,
+  { px: number; cellClass: string; label: string }
+> = {
+  short: { px: 32, cellClass: "px-3 py-0.5", label: "Short" },
+  medium: { px: 37, cellClass: "px-3 py-1.5", label: "Medium" },
+  tall: { px: 52, cellClass: "px-3 py-3", label: "Tall" },
+};
+
+/** Coerce an untrusted row-height value to a known mode (default `medium`). */
+export function resolveTableRowHeight(value: unknown): TableRowHeight {
+  return value === "short" || value === "medium" || value === "tall"
+    ? value
+    : "medium";
+}
+
+/** Approximate rendered height (px) of a table row in a mode. */
+export function tableRowHeight(value: unknown): number {
+  return TABLE_ROW_HEIGHT_MODES[resolveTableRowHeight(value)].px;
+}
+
+/** The cell padding class for a table row mode (one height per row). */
+export function tableRowCellClass(value: unknown): string {
+  return TABLE_ROW_HEIGHT_MODES[resolveTableRowHeight(value)].cellClass;
+}
 
 /** Approximate rendered height (px) of one list row under a density preset. */
 function listRowHeight(density: ListDensity): number {
   return density === "comfortable" ? 57 : 41;
+}
+
+/**
+ * Board card lift (design system §5/§6): `shadow-1` at rest, `shadow-2` on
+ * hover, pressed with `.u-interactive`. While a card is being dragged it carries
+ * `.u-no-transition` so it tracks the cursor 1:1 without lagging behind, and a
+ * settling card eases back with the spring-ish `animate-scale-in`.
+ */
+export const CARD_LIFT = {
+  base: "shadow-1",
+  hover: "hover:shadow-2",
+  press: "u-interactive",
+  dragging: "u-no-transition opacity-50",
+  settling: "animate-scale-in",
+} as const;
+
+/** The class for a board card in a given interaction state. */
+export function boardCardClass(
+  state: { dragging?: boolean; settling?: boolean } = {},
+): string {
+  return cn(
+    "block rounded-lg border border-border bg-bg p-3 hover:bg-surface-2/40",
+    CARD_LIFT.base,
+    CARD_LIFT.hover,
+    CARD_LIFT.press,
+    state.dragging && CARD_LIFT.dragging,
+    state.settling && CARD_LIFT.settling,
+  );
+}
+
+/**
+ * The cell value a card drop writes to the grouping property. `undefined` means
+ * "no write" (a status-bucket board whose columns are not option ids); `null`
+ * clears the value (the Empty column); otherwise the option id is set.
+ */
+export function boardDropValue(optionId: string | null | undefined): unknown {
+  if (optionId === undefined) return undefined;
+  return optionId === null ? null : { optionId };
+}
+
+/**
+ * Deterministic tag hue for a gallery badge, so two cards with the same
+ * property always draw the same chip colour and the palette — never a raw
+ * colour — is the only source of the chip's look.
+ */
+export function galleryBadgeHue(seed: string): TagHue {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
+  }
+  return TAG_HUES[hash % TAG_HUES.length];
+}
+
+/** How many skeleton rows/cards a view draws while loading. */
+export const SKELETON_COUNTS = {
+  table: 6,
+  boardCards: 3,
+  gallery: 8,
+  list: 6,
+  form: 3,
+  timeline: 4,
+  chart: 5,
+  calendar: 6,
+} as const;
+
+export type ViewKind = keyof typeof SKELETON_COUNTS;
+
+/** Skeleton count for a view. */
+export function skeletonCount(view: ViewKind): number {
+  return SKELETON_COUNTS[view];
+}
+
+/** Gallery skeleton cards track the responsive column count (two rows each). */
+export function gallerySkeletonCards(size: CardSizeName): number {
+  return CARD_SIZES[size].columns * 2;
+}
+
+/**
+ * The left offsets (px) of the 1px `--border-strong` indent guides drawn for a
+ * list row at `level`: one guide per ancestor, empty at the root.
+ */
+export function listIndentGuides(level: number): number[] {
+  const depth = Number.isFinite(level) ? Math.max(0, Math.trunc(level)) : 0;
+  return Array.from({ length: depth }, (_, index) => (index + 1) * 16 - 8);
+}
+
+/**
+ * The row ids hidden because an ancestor is collapsed. `items` is the normalised
+ * outline (`@/lib/list-ops`), so levels never jump more than one step, which is
+ * what lets a single pass track the open ancestors.
+ */
+export function collapsedListIds(
+  items: readonly ListItem[],
+  collapsed: Readonly<Record<string, boolean>>,
+): Set<string> {
+  const hidden = new Set<string>();
+  const collapsedLevels: number[] = [];
+  for (const item of items) {
+    while (
+      collapsedLevels.length > 0 &&
+      collapsedLevels[collapsedLevels.length - 1] >= item.level
+    ) {
+      collapsedLevels.pop();
+    }
+    if (collapsedLevels.length > 0) hidden.add(item.id);
+    else if (collapsed[item.id]) collapsedLevels.push(item.level);
+  }
+  return hidden;
 }
 
 /**
@@ -542,6 +696,9 @@ export function TableView({
   preserveScroll = false,
   rowColorRules = [],
   footer,
+  rowHeight,
+  loading = false,
+  onAddRow,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -596,12 +753,20 @@ export function TableView({
    * and no footer at all otherwise — so an unconfigured table is unchanged.
    */
   footer?: TableFooterCalculation[];
+  /** Row-height mode (`short` / `medium` / `tall`); defaults to `medium`. */
+  rowHeight?: string | null;
+  /** Render the loading skeleton (matching the final layout) instead of rows. */
+  loading?: boolean;
+  /** Empty-state primary action; absent renders the hint without a button. */
+  onAddRow?: () => void;
 }) {
   const columns = visibleColumns(
     properties as unknown as QueryProperty[],
     config,
   ) as unknown as DBProperty[];
   const frozen = config.freezeFirstColumn !== false;
+  const rowMode = resolveTableRowHeight(rowHeight);
+  const cellClass = tableRowCellClass(rowMode);
   // Sorting goes through the shared engine (`@/lib/sort-compare`) driven by the
   // view's saved sort keys; the manual row order, when set, still wins on top.
   const sortSpecs = sortSpecsFor(config.sorts, properties);
@@ -615,8 +780,10 @@ export function TableView({
   useScrollAnchor(
     scrollRef,
     preserveScroll,
-    orderedRows.map((row) => ({ id: row.id, height: TABLE_ROW_HEIGHT })),
+    orderedRows.map((row) => ({ id: row.id, height: tableRowHeight(rowMode) })),
   );
+  // The sticky header drops a shadow only once the body has scrolled under it.
+  const [scrolled, setScrolled] = useState(false);
   // Footer calculations run over the same ordered (filtered + sorted) rows the
   // body shows, so a footer total always agrees with the visible cells. The
   // persisted `footer` config is parsed by `@/lib/footer-calculations`; when the
@@ -655,9 +822,10 @@ export function TableView({
             key={property.id}
             data-testid={testId(property.name)}
             className={cn(
-              "sticky bottom-0 border-t border-border bg-surface px-3 py-1.5 text-muted",
-              frozen && index === 0 && "left-0 z-10",
+              "sticky bottom-0 border-t border-border-strong bg-surface-2 px-3 py-1.5 tabular-nums text-muted",
+              frozen && index === 0 && "left-0",
             )}
+            style={{ zIndex: Z.sticky }}
           >
             {result && (
               <span className="flex flex-wrap items-center gap-x-1">
@@ -671,7 +839,10 @@ export function TableView({
           </td>
         );
       })}
-      <th className="sticky bottom-0 border-t border-border bg-surface" />
+      <th
+        className="sticky bottom-0 border-t border-border-strong bg-surface-2"
+        style={{ zIndex: Z.sticky }}
+      />
     </>
   );
 
@@ -700,7 +871,7 @@ export function TableView({
       <tr
         key={row.id}
         style={rowColors}
-        className="group border-b border-border last:border-0 hover:bg-surface-2/50"
+        className="group u-colors border-b border-border last:border-0 hover:bg-surface-2/60"
       >
         {columns.map((property, index) => {
           const isPrimary = property.id === primary?.id;
@@ -711,10 +882,11 @@ export function TableView({
               // stays visible when that cell is pinned (sticky).
               style={index === 0 ? { borderLeft: rowStripe } : undefined}
               className={cn(
-                "px-3 py-1.5 align-top",
+                cellClass,
+                "align-top",
                 frozen &&
                   index === 0 &&
-                  "sticky left-0 z-10 bg-bg group-hover:bg-surface-2/50",
+                  "sticky left-0 bg-bg group-hover:bg-surface-2/60",
               )}
             >
               {isPrimary ? (
@@ -848,8 +1020,48 @@ export function TableView({
     );
   };
 
+  if (loading) {
+    return (
+      <div
+        data-testid="table-skeleton"
+        aria-busy="true"
+        className="overflow-hidden rounded-lg border border-border"
+      >
+        <table className="w-full min-w-[680px] border-collapse text-sm">
+          <thead>
+            <tr className="bg-surface">
+              {columns.map((property) => (
+                <th key={property.id} className="border-b border-border px-3 py-2">
+                  <span className="notion-skeleton block h-3 w-20 rounded-sm" />
+                </th>
+              ))}
+              <th className="w-16 border-b border-border" />
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: skeletonCount("table") }).map((_, rowIndex) => (
+              <tr key={rowIndex} className="border-b border-border last:border-0">
+                {columns.map((property) => (
+                  <td key={property.id} className={cn(cellClass, "align-top")}>
+                    <span className="notion-skeleton block h-3 w-full max-w-32 rounded-sm" />
+                  </td>
+                ))}
+                <td />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   return (
-    <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
+    <div
+      ref={scrollRef}
+      onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
+      data-scrolled={scrolled ? "true" : "false"}
+      className="scrollbar-thin overflow-x-auto rounded-lg border border-border"
+    >
       <table className="w-full min-w-[680px] border-collapse text-sm">
         <thead>
           <tr className="bg-surface text-left text-xs text-muted">
@@ -892,14 +1104,18 @@ export function TableView({
                   else onReorderProperty(from, property.id);
                 }}
                 className={cn(
-                  "border-b border-border px-3 py-2 font-medium transition-colors",
-                  frozen && index === 0 && "sticky left-0 z-10 bg-surface",
+                  "border-b border-border-strong px-3 py-2 font-medium",
+                  "sticky top-0 u-colors",
+                  frozen && index === 0 && "left-0",
+                  "bg-surface",
+                  scrolled && "shadow-1",
                   editable && "cursor-grab active:cursor-grabbing",
                   overId === property.id &&
                     draggingId !== null &&
                     draggingId !== property.id &&
                     "bg-surface-2",
                 )}
+                style={{ zIndex: Z.sticky }}
               >
                 <PropertyHeader
                   locale={locale}
@@ -918,7 +1134,10 @@ export function TableView({
                 />
               </th>
             ))}
-            <th className="w-16 border-b border-border" />
+            <th
+              className="sticky top-0 w-16 border-b border-border-strong bg-surface"
+              style={{ zIndex: Z.sticky }}
+            />
           </tr>
         </thead>
         {groups && groups.length > 0 ? (
@@ -958,11 +1177,25 @@ export function TableView({
           <tbody>
             {orderedRows.length === 0 && (
               <tr>
-                <td
-                  colSpan={columns.length + 1}
-                  className="px-3 py-8 text-center text-sm text-muted"
-                >
-                  {t(locale, "dbNoRowsClick")}
+                <td colSpan={columns.length + 1} className="px-3 py-10">
+                  <div className="notion-empty" data-testid="table-empty">
+                    <span className="notion-empty-icon" aria-hidden="true">
+                      <Inbox className="h-5 w-5" />
+                    </span>
+                    <p className="text-sm font-medium text-fg">{t(locale, "dbNoRows")}</p>
+                    <p className="text-xs">{t(locale, "dbNoRowsHint")}</p>
+                    {onAddRow && (
+                      <button
+                        type="button"
+                        data-testid="table-add-row"
+                        onClick={onAddRow}
+                        className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        {t(locale, "newRow")}
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             )}
@@ -998,6 +1231,8 @@ export function ListView({
   levels,
   onLevelChange,
   preserveScroll = false,
+  loading = false,
+  onAddRow,
 }: {
   workspaceSlug: string;
   properties: DBProperty[];
@@ -1023,11 +1258,18 @@ export function ListView({
   onLevelChange?: (rowId: string, level: number) => void;
   /** Preserve the scroll position while rows load/sort/filter (scroll anchor). */
   preserveScroll?: boolean;
+  /** Render the loading skeleton (matching the final layout) instead of rows. */
+  loading?: boolean;
+  /** Empty-state primary action; absent renders the hint without a button. */
+  onAddRow?: () => void;
 }) {
   const status = properties.find(
     (p) => p.type === "STATUS" || p.type === "SELECT",
   );
   const [localDensity, setLocalDensity] = useState<ListDensity>("compact");
+  // Collapsed outlines: a parent's chevron hides its descendants (the pure
+  // `collapsedListIds` walk over the normalised outline).
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const density = densityProp ?? localDensity;
   const orderedRows = orderRows(rows, rowOrder);
   // Nesting levels run through `@/lib/list-ops` (`normalizeLevels`): the outline
@@ -1035,6 +1277,16 @@ export function ListView({
   // more than one step deeper can never render a broken tree.
   const outline = outlineItems(orderedRows, levels);
   const levelById = new Map(outline.map((item) => [item.id, item.level]));
+  // A row is a parent when the next outline entry nests one level deeper.
+  const parents = new Set(
+    outline
+      .filter((item, index) => (outline[index + 1]?.level ?? 0) > item.level)
+      .map((item) => item.id),
+  );
+  const hidden = collapsedListIds(outline, collapsed);
+  // Only indent/guide a list that actually nests, so a flat list keeps its
+  // previous row geometry (no chevron column).
+  const outlineEnabled = parents.size > 0;
   // The list re-measures as rows load/sort/filter; the anchor keeps the row
   // under the viewport's top edge pinned instead of the raw offset.
   const listRef = useRef<HTMLUListElement | null>(null);
@@ -1047,6 +1299,23 @@ export function ListView({
     if (onDensityChange) onDensityChange(next);
     else setLocalDensity(next);
   };
+  if (loading) {
+    return (
+      <ul
+        data-testid="list-skeleton"
+        aria-busy="true"
+        className="divide-y divide-border rounded-lg border border-border"
+      >
+        {Array.from({ length: skeletonCount("list") }).map((_, index) => (
+          <li key={index} className="flex items-center gap-3 px-4 py-2">
+            <span className="notion-skeleton h-4 w-4 rounded-sm" />
+            <span className="notion-skeleton h-3 w-1/3 rounded-sm" />
+            <span className="notion-skeleton ms-auto h-3 w-16 rounded-sm" />
+          </li>
+        ))}
+      </ul>
+    );
+  }
   return (
     <div>
       {/* Density toggle: `densityOptions` drives both the choices and labels. */}
@@ -1070,20 +1339,58 @@ export function ListView({
       </div>
       <ul ref={listRef} className="divide-y divide-border rounded-lg border border-border">
         {orderedRows.map((row, rowIndex) => {
+          if (hidden.has(row.id)) return null;
           const model = listRowModel(row, properties, { density });
           const value = status ? (valueFor(row, status.id) as { optionId?: string }) : undefined;
           const option = status?.config?.options?.find((o) => o.id === value?.optionId);
           const level = levelById.get(row.id) ?? 0;
+          const isCollapsed = collapsed[row.id] === true;
+          const hasChildren = parents.has(row.id);
           return (
             <li
               key={row.id}
-              className="flex items-center"
+              className="relative flex items-center"
               style={level > 0 ? { paddingLeft: level * 16 } : undefined}
             >
+              {listIndentGuides(level).map((offset) => (
+                <span
+                  key={offset}
+                  aria-hidden="true"
+                  data-testid={`list-guide-${row.id}-${offset}`}
+                  className="pointer-events-none absolute inset-y-0 w-px"
+                  style={{ left: offset, backgroundColor: "var(--border-strong)" }}
+                />
+              ))}
+              {outlineEnabled &&
+                (hasChildren ? (
+                  <button
+                    type="button"
+                    aria-expanded={!isCollapsed}
+                    aria-label={
+                      isCollapsed ? t(locale, "toggleExpand") : t(locale, "toggleCollapse")
+                    }
+                    onClick={() =>
+                      setCollapsed((current) => ({
+                        ...current,
+                        [row.id]: !(current[row.id] === true),
+                      }))
+                    }
+                    className="focus-ring flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-2"
+                  >
+                    <ChevronRight
+                      className={cn(
+                        "h-3.5 w-3.5 u-transform",
+                        !isCollapsed && "rotate-90",
+                      )}
+                    />
+                  </button>
+                ) : (
+                  <span className="w-6 shrink-0" aria-hidden="true" />
+                ))}
               <Link
                 href={`/w/${workspaceSlug}/${row.id}`}
                 className={cn(
-                  "flex min-w-0 flex-1 items-center gap-3 hover:bg-surface-2",
+                  "u-colors flex min-w-0 flex-1 items-center gap-3 hover:bg-surface-2/60",
                   model.expanded ? "px-4 py-3" : "px-4 py-2",
                 )}
               >
@@ -1092,7 +1399,7 @@ export function ListView({
                   <span className="block truncate text-sm">
                     {model.primary || t(locale, "untitled")}
                   </span>
-                  {model.expanded && model.secondary && (
+                  {model.expanded && !isCollapsed && model.secondary && (
                     <span className="block truncate text-xs text-muted">
                       {model.secondary}
                     </span>
@@ -1180,7 +1487,26 @@ export function ListView({
           );
         })}
         {orderedRows.length === 0 && (
-          <li className="px-4 py-8 text-center text-sm text-muted">{t(locale, "dbNoRows")}</li>
+          <li className="px-4 py-10">
+            <div className="notion-empty" data-testid="list-empty">
+              <span className="notion-empty-icon" aria-hidden="true">
+                <Inbox className="h-5 w-5" />
+              </span>
+              <p className="text-sm font-medium text-fg">{t(locale, "dbNoRows")}</p>
+              <p className="text-xs">{t(locale, "dbNoRowsHint")}</p>
+              {onAddRow && (
+                <button
+                  type="button"
+                  data-testid="list-add-row"
+                  onClick={onAddRow}
+                  className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {t(locale, "newRow")}
+                </button>
+              )}
+            </div>
+          </li>
         )}
       </ul>
     </div>
@@ -1250,11 +1576,11 @@ export function PropertyPanel({
   );
 }
 
-/** WIP badge colours keyed by `checkWip`'s grade. */
+/** WIP badge colours keyed by `checkWip`'s grade (all from the token set). */
 const WIP_STYLES: Record<WipStatus, string> = {
   ok: "bg-surface-2 text-muted",
-  at: "bg-amber-500/15 text-amber-600",
-  over: "bg-red-500/15 text-red-600",
+  at: "bg-warning-soft text-warning",
+  over: "bg-danger-soft text-danger",
 };
 
 /**
@@ -1329,6 +1655,8 @@ export function BoardView({
   laneBy,
   wipLimits,
   aggregationPropertyId,
+  loading = false,
+  onAddRow,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -1363,18 +1691,78 @@ export function BoardView({
    * badge; unset (or a column without a valid limit) renders exactly as before.
    */
   wipLimits?: WipLimits;
+  /** Render the loading skeleton (matching the final layout) instead of columns. */
+  loading?: boolean;
+  /** Empty-state primary action; absent renders the hint without a button. */
+  onAddRow?: () => void;
 }) {
+  // Card drag state: the card in flight, the gap it would drop into, and the
+  // card still animating back to rest after a drop (`animate-scale-in`).
+  const [dragRowId, setDragRowId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ key: string; index: number } | null>(null);
+  const [settlingId, setSettlingId] = useState<string | null>(null);
   const groupProperty = properties.find((p) => p.id === groupBy);
   const statusProperty = properties.find(
     (p) => p.type === "STATUS" || p.type === "SELECT",
   );
   const property = groupProperty ?? statusProperty;
 
+  if (loading) {
+    return (
+      <div
+        data-testid="board-skeleton"
+        aria-busy="true"
+        className="flex gap-4 overflow-x-auto pb-2"
+      >
+        {[0, 1, 2].map((column) => (
+          <div key={column} className="w-64 shrink-0 space-y-2">
+            <span className="notion-skeleton block h-4 w-24 rounded-sm" />
+            {Array.from({ length: skeletonCount("boardCards") }).map((_, card) => (
+              <div
+                key={card}
+                className="rounded-lg border border-border bg-bg p-3 shadow-1"
+              >
+                <span className="notion-skeleton block h-3 w-2/3 rounded-sm" />
+                <span className="notion-skeleton mt-2 block h-3 w-1/2 rounded-sm" />
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   if (!property) {
     return (
-      <p className="text-sm text-muted">
-        {t(locale, "boardNeedsGroup")}
-      </p>
+      <div className="notion-empty rounded-lg border border-dashed border-border" data-testid="board-empty">
+        <span className="notion-empty-icon" aria-hidden="true">
+          <Inbox className="h-5 w-5" />
+        </span>
+        <p className="text-sm font-medium text-fg">{t(locale, "boardNeedsGroup")}</p>
+      </div>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="notion-empty rounded-lg border border-dashed border-border" data-testid="board-empty">
+        <span className="notion-empty-icon" aria-hidden="true">
+          <Inbox className="h-5 w-5" />
+        </span>
+        <p className="text-sm font-medium text-fg">{t(locale, "dbNoRows")}</p>
+        <p className="text-xs">{t(locale, "dbNoRowsHint")}</p>
+        {onAddRow && (
+          <button
+            type="button"
+            data-testid="board-add-row"
+            onClick={onAddRow}
+            className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t(locale, "newRow")}
+          </button>
+        )}
+      </div>
     );
   }
 
@@ -1389,7 +1777,17 @@ export function BoardView({
     doing: t(locale, "statusGroupDoing"),
     done: t(locale, "statusGroupDone"),
   };
-  type BoardColumn = { key: string; label: string; color: string; rows: DBRow[] };
+  type BoardColumn = {
+    key: string;
+    label: string;
+    color: string;
+    rows: DBRow[];
+    /**
+     * The option id a drop writes, `null` for the Empty column, or `undefined`
+     * for a status-bucket column (not an option, so a drop is visual only).
+     */
+    optionId?: string | null;
+  };
   const columns: BoardColumn[] = statusBucketBoard
     ? statusGroupColumns(rows, properties, property.id, t(locale, "noValue"))
         .map((column) => ({
@@ -1407,6 +1805,7 @@ export function BoardView({
         label: group.label,
         color: group.color ?? "gray",
         rows: group.rows,
+        optionId: group.optionId,
       }));
   // A second grouping property turns the single-axis board into a swimlane
   // board: `buildSwimlanes` owns the horizontal lanes (membership, order and
@@ -1453,49 +1852,97 @@ export function BoardView({
     ) ??
     null;
 
-  const renderCard = (row: DBRow) => (
-    <Link
-      key={row.id}
-      href={`/w/${workspaceSlug}/${row.id}`}
-      className="block rounded-lg border border-border bg-bg p-3 hover:bg-surface-2"
-      style={{
-        borderLeft: (() => {
-          const color = colorOf(row);
-          return color
-            ? `3px solid ${OPTION_COLORS[color] ?? color}`
-            : undefined;
-        })(),
-      }}
-    >
-      <p className="text-sm font-medium">
-        {row.icon ? `${row.icon} ` : ""}
-        {row.title || t(locale, "untitled")}
-      </p>
-      <div className="mt-2 flex flex-wrap gap-1">
-        {properties
-          .filter(
-            (p) =>
-              p.id !== property.id &&
-              p.id !== primary?.id &&
-              !p.config?.primary,
-          )
-          .slice(0, 3)
-          .map((p) => (
-            <Cell
-              key={p.id}
-              locale={locale}
-              property={p}
-              value={valueFor(row, p.id)}
-              computed={computedFor?.(row, p)}
-              peopleOptions={peopleOptions}
-              workspaceId={workspaceId}
-              editable={editable}
-              onChange={(v) => setValue(row.id, p.id, v)}
-            />
-          ))}
-      </div>
-    </Link>
+  const renderCard = (row: DBRow, columnKey: string, index: number) => {
+    const dragging = dragRowId === row.id;
+    return (
+      <Link
+        key={row.id}
+        href={`/w/${workspaceSlug}/${row.id}`}
+        draggable={editable}
+        onDragStart={(event) => {
+          if (!editable) return;
+          setDragRowId(row.id);
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", row.id);
+        }}
+        onDragOver={(event) => {
+          if (!editable || dragRowId === null) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          setDropTarget({ key: columnKey, index });
+        }}
+        onDragEnd={() => {
+          setDragRowId(null);
+          setDropTarget(null);
+        }}
+        data-dragging={dragging ? "true" : "false"}
+        className={boardCardClass({ dragging, settling: settlingId === row.id })}
+        style={{
+          borderLeft: (() => {
+            const color = colorOf(row);
+            return color
+              ? `3px solid ${OPTION_COLORS[color] ?? color}`
+              : undefined;
+          })(),
+        }}
+      >
+        <p className="text-sm font-medium">
+          {row.icon ? `${row.icon} ` : ""}
+          {row.title || t(locale, "untitled")}
+        </p>
+        <div className="mt-2 flex flex-wrap gap-1">
+          {properties
+            .filter(
+              (p) =>
+                p.id !== property.id &&
+                p.id !== primary?.id &&
+                !p.config?.primary,
+            )
+            .slice(0, 3)
+            .map((p) => (
+              <Cell
+                key={p.id}
+                locale={locale}
+                property={p}
+                value={valueFor(row, p.id)}
+                computed={computedFor?.(row, p)}
+                peopleOptions={peopleOptions}
+                workspaceId={workspaceId}
+                editable={editable}
+                onChange={(v) => setValue(row.id, p.id, v)}
+              />
+            ))}
+        </div>
+      </Link>
+    );
+  };
+
+  /** The dashed slot a dragged card would drop into (the target gap). */
+  const dropPlaceholder = (columnKey: string, index: number) => (
+    <div
+      key={`drop-${columnKey}-${index}`}
+      aria-hidden="true"
+      data-testid={`board-drop-placeholder-${columnKey}`}
+      className="h-16 rounded-lg border border-dashed border-border-strong bg-surface-2/40"
+    />
   );
+
+  /** Move the dropped card into `column`, animating the settle with the spring. */
+  const dropIntoColumn = (column: BoardColumn, event: ReactDragEvent) => {
+    event.preventDefault();
+    const rowId = event.dataTransfer.getData("text/plain") || dragRowId;
+    setDragRowId(null);
+    setDropTarget(null);
+    if (!editable || !rowId || property.type === "MULTI_SELECT") return;
+    const value = boardDropValue(column.optionId);
+    if (value === undefined) return;
+    setValue(rowId, property.id, value);
+    setSettlingId(rowId);
+    window.setTimeout(
+      () => setSettlingId((current) => (current === rowId ? null : current)),
+      DUR.base,
+    );
+  };
 
   const renderColumn = (column: BoardColumn, groupRows: DBRow[]) => {
     const wip = wipFor(column.key);
@@ -1504,9 +1951,27 @@ export function BoardView({
     const summary = summaryProperty
       ? summarizeGroup(groupRows, summaryProperty, valueFor)
       : [];
+    const target = dropTarget?.key === column.key ? dropTarget.index : null;
     return (
-      <div key={column.key} className="w-64 shrink-0">
-        <div className="mb-2 flex items-center gap-2 text-sm">
+      <div
+        key={column.key}
+        className="w-64 shrink-0"
+        onDragOver={(event) => {
+          if (!editable || dragRowId === null) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          setDropTarget((current) =>
+            current && current.key === column.key
+              ? current
+              : { key: column.key, index: groupRows.length },
+          );
+        }}
+        onDrop={(event) => dropIntoColumn(column, event)}
+      >
+        <div
+          className="u-colors sticky top-0 mb-2 flex items-center gap-2 bg-bg py-1 text-sm"
+          style={{ zIndex: Z.sticky }}
+        >
           <span
             className="inline-block h-2.5 w-2.5 rounded-sm"
             style={{
@@ -1516,14 +1981,19 @@ export function BoardView({
           <span className="font-medium" data-testid={`board-column-${column.key}`}>
             {column.label}
           </span>
-          <span className="text-muted">{groupRows.length}</span>
+          <span
+            data-testid={`board-count-${column.key}`}
+            className="rounded-sm bg-surface-2 px-1.5 text-xs tabular-nums text-muted"
+          >
+            {groupRows.length}
+          </span>
           {wip && wip.limit !== undefined && (
             <span
               data-testid={`board-wip-${column.key}`}
               data-wip-status={wip.status}
               title={`${wip.count}/${wip.limit}`}
               className={cn(
-                "rounded px-1 py-0.5 text-[10px] font-medium",
+                "rounded-sm px-1 py-0.5 text-[10px] font-medium tabular-nums",
                 WIP_STYLES[wip.status],
               )}
             >
@@ -1544,7 +2014,15 @@ export function BoardView({
             ))}
           </p>
         )}
-        <div className="space-y-2">{groupRows.map((row) => renderCard(row))}</div>
+        <div className="space-y-2">
+          {groupRows.map((row, index) => (
+            <Fragment key={row.id}>
+              {target === index && dropPlaceholder(column.key, index)}
+              {renderCard(row, column.key, index)}
+            </Fragment>
+          ))}
+          {target === groupRows.length && dropPlaceholder(column.key, groupRows.length)}
+        </div>
       </div>
     );
   };
@@ -1663,6 +2141,8 @@ export function GalleryView({
   cardSize: cardSizeProp,
   previewPropertyId,
   previewConfig,
+  loading = false,
+  onAddRow,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -1688,6 +2168,10 @@ export function GalleryView({
    * `previewPropertyId` overrides its cover.
    */
   previewConfig?: unknown;
+  /** Render skeleton cards (matching the final grid) instead of rows. */
+  loading?: boolean;
+  /** Empty-state primary action; absent renders the hint without a button. */
+  onAddRow?: () => void;
 }) {
   // The card size tracks the container: `cardSizeFor` maps a measured width to
   // a preset, and `CARD_SIZES` supplies the column count, aspect and whether
@@ -1748,11 +2232,55 @@ export function GalleryView({
     .map((id) => properties.find((property) => property.id === id))
     .filter((property): property is DBProperty => property !== undefined);
 
+  if (loading) {
+    return (
+      <div
+        data-testid="gallery-skeleton"
+        aria-busy="true"
+        className="grid gap-4"
+        style={{ gridTemplateColumns: `repeat(${spec.columns}, minmax(0, 1fr))` }}
+      >
+        {Array.from({ length: gallerySkeletonCards(size) }).map((_, index) => (
+          <div
+            key={index}
+            className="overflow-hidden rounded-lg border border-border bg-bg"
+          >
+            {spec.showPreview && (
+              <div className="notion-skeleton" style={{ aspectRatio: spec.aspect }} />
+            )}
+            <div className="space-y-2 p-3">
+              <span className="notion-skeleton block h-3 w-3/4 rounded-sm" />
+              <span className="notion-skeleton block h-3 w-1/2 rounded-sm" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   if (rows.length === 0) {
     return (
-      <p className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted">
-        {t(locale, "noCardsYet")}
-      </p>
+      <div
+        className="notion-empty rounded-lg border border-dashed border-border"
+        data-testid="gallery-empty"
+      >
+        <span className="notion-empty-icon" aria-hidden="true">
+          <Inbox className="h-5 w-5" />
+        </span>
+        <p className="text-sm font-medium text-fg">{t(locale, "noCardsYet")}</p>
+        <p className="text-xs">{t(locale, "dbNoRowsHint")}</p>
+        {onAddRow && (
+          <button
+            type="button"
+            data-testid="gallery-add-row"
+            onClick={onAddRow}
+            className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t(locale, "newRow")}
+          </button>
+        )}
+      </div>
     );
   }
 
@@ -1776,7 +2304,7 @@ export function GalleryView({
           <Link
             key={row.id}
             href={`/w/${workspaceSlug}/${row.id}`}
-            className="overflow-hidden rounded-lg border border-border bg-bg transition hover:bg-surface-2"
+            className="group overflow-hidden rounded-lg border border-border bg-bg u-surface hover:bg-surface-2"
           >
             {spec.showPreview && (
               <div
@@ -1789,12 +2317,16 @@ export function GalleryView({
                   <img
                     src={card.cover.url}
                     alt={row.title}
-                    className="h-full w-full"
+                    className="u-transform h-full w-full object-cover group-hover:scale-[1.02]"
                     style={{ objectFit: card.cover.fit }}
                   />
                 ) : preview?.kind === "cover" ? (
                   /* eslint-disable-next-line @next/next/no-img-element -- raw attachment URLs are not statically analysable for next/image */
-                  <img src={preview.value} alt={row.title} className="h-full w-full object-cover" />
+                  <img
+                    src={preview.value}
+                    alt={row.title}
+                    className="u-transform h-full w-full object-cover group-hover:scale-[1.02]"
+                  />
                 ) : (
                   preview?.value ?? row.icon ?? "📄"
                 )}
@@ -1819,7 +2351,7 @@ export function GalleryView({
                     <span
                       key={badge.propertyId}
                       data-testid={`gallery-badge-${badge.propertyId}`}
-                      className="rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted"
+                      className={tagClass(galleryBadgeHue(badge.propertyId))}
                     >
                       {badge.value}
                     </span>
@@ -1938,6 +2470,7 @@ export function FormView({
   properties,
   config,
   onSubmit,
+  loading = false,
 }: {
   locale: string;
   properties: DBProperty[];
@@ -1948,6 +2481,8 @@ export function FormView({
    * new row, in field order. Absent → the form renders read-only.
    */
   onSubmit?: (values: { propertyId: string; value: unknown }[]) => void;
+  /** Render the loading skeleton (matching the final layout) instead of fields. */
+  loading?: boolean;
 }) {
   const { schema, fields, meta } = resolveFormPlan(properties, config);
   const propertyById = new Map(properties.map((property) => [property.id, property]));
@@ -1959,6 +2494,38 @@ export function FormView({
   const [issues, setIssues] = useState<FormIssue[]>([]);
   const [submitted, setSubmitted] = useState(false);
   const editable = onSubmit !== undefined;
+
+  if (loading) {
+    return (
+      <div
+        data-testid="form-skeleton"
+        aria-busy="true"
+        className="mx-auto max-w-xl space-y-4 rounded-lg border border-border p-4"
+      >
+        {Array.from({ length: skeletonCount("form") }).map((_, index) => (
+          <div key={index} className="space-y-2">
+            <span className="notion-skeleton block h-3 w-24 rounded-sm" />
+            <span className="notion-skeleton block h-9 w-full rounded-sm" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (fields.length === 0) {
+    return (
+      <div
+        className="notion-empty mx-auto max-w-xl rounded-lg border border-dashed border-border"
+        data-testid="form-empty"
+      >
+        <span className="notion-empty-icon" aria-hidden="true">
+          <Inbox className="h-5 w-5" />
+        </span>
+        <p className="text-sm font-medium text-fg">{t(locale, "dbNoRows")}</p>
+        <p className="text-xs">{t(locale, "dbNoRowsHint")}</p>
+      </div>
+    );
+  }
 
   const setAnswer = (propertyId: string, value: unknown) => {
     setAnswers((current) => {
@@ -2048,7 +2615,7 @@ export function FormView({
                 </span>
               )}
             </div>
-            <div className="rounded border border-border bg-bg px-2 py-1.5">
+            <div className="u-surface focus-within:outline-none rounded-sm border border-border bg-bg px-2 py-1.5 focus-within:border-[var(--ring)] focus-within:shadow-[var(--shadow-focus)]">
               <Cell
                 locale={locale}
                 property={property}
