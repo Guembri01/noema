@@ -26,12 +26,16 @@ export const Mention = Node.create({
 
   renderHTML({ node, HTMLAttributes }) {
     const type = String(node.attrs.type ?? "page");
-    const glyph = type === "user" ? "👤" : type === "date" ? "🗓" : "📄";
+    // Block references share the reference glyph used by the picker so the
+    // inline chip matches its menu row; the `--block` class is an extra CSS
+    // hook layered on the shared `.noema-mention` styles.
+    const glyph =
+      type === "block" ? "🔗" : type === "user" ? "👤" : type === "date" ? "🗓" : "📄";
     return [
       "span",
       mergeAttributes(HTMLAttributes, {
         "data-mention": type,
-        class: "noema-mention",
+        class: type === "block" ? "noema-mention noema-mention--block" : "noema-mention",
       }),
       `${glyph} ${String(node.attrs.label ?? "")}`,
     ];
