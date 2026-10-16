@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Scoreboard:** 563 feature rows — 287 implemented · 174 partial · 88 planned · 14 deliberately out of scope.
+**Scoreboard:** 563 feature rows — 314 implemented · 218 partial · 17 planned · 14 deliberately out of scope.
 
-This file lists the **262** rows that are not finished, area by area, plus 14 intentional divergences.
+This file lists the **235** rows that are not finished, area by area, plus 14 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -248,7 +248,7 @@ This file lists the **262** rows that are not finished, area by area, plus 14 in
 
 ### 12. Import & export
 
-10 done · 6 partial · 6 planned
+12 done · 6 partial · 4 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -258,36 +258,34 @@ This file lists the **262** rows that are not finished, area by area, plus 14 in
 | Import rollback | Undo a failed import. | 🟡 | Planned. Spec: docs/specs/import-export.md. |
 | Export Markdown | Page as `.md`. | 🟡 | Basic export; nested content partial. Spec: docs/specs/import-export.md. |
 | Export PDF | Page as PDF. | 🟡 | Planned; headless render. Spec: docs/specs/import-export.md. |
-| Import CSV | Create databases from CSV. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
 | Import Asana | Tasks into databases. | 🧭 | Planned. |
 | Import Evernote | Notes into pages. | 🧭 | Planned. |
 | Import Google Docs | Docs into pages. | 🧭 | Planned. |
 | Import Confluence | Spaces into pages. | 🧭 | Planned. |
-| Export CSV | Database as CSV. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
 
 ### 13. Integrations & API
 
-9 done · 8 partial · 5 planned
+9 done · 13 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
+| Automation engine | Trigger/condition/action rules. | 🟡 | Planned. |
+| Database automations | Automations over databases. | 🟡 | Planned. |
 | Button actions | Buttons that run actions. | 🟡 | Planned. |
+| Zapier-style connectors | No-code automation bridge. | 🟡 | Planned; via webhooks first. Spec: docs/specs/integrations-api.md. |
 | Slack integration | Unfurl and post links. | 🟡 | Planned. |
+| GitHub integration | Link commits/PRs. | 🟡 | Planned. |
 | Google Calendar sync | Two-way calendar sync. | 🟡 | ICS subscription import (read-only); no two-way OAuth sync yet. |
 | Outlook Calendar sync | Two-way calendar sync. | 🟡 | Works through the published ICS URL; native OAuth pending. |
 | Figma integration | Preview design files. | 🟡 | Planned; embed only. |
 | Google Drive integration | Link/preview Drive files. | 🟡 | Planned. |
+| MCP server | Expose workspace to AI agents. | 🟡 | Planned; read-first, then write. |
 | Inbound webhooks | Accept events from outside. | 🟡 | Planned. |
 | Public embed oEmbed | Resolve third-party link metadata. | 🟡 | Basic title/favicon fetch. |
-| Automation engine | Trigger/condition/action rules. | 🧭 | Planned. |
-| Database automations | Automations over databases. | 🧭 | Planned. |
-| Zapier-style connectors | No-code automation bridge. | 🧭 | Planned; via webhooks first. Spec: docs/specs/integrations-api.md. |
-| GitHub integration | Link commits/PRs. | 🧭 | Planned. |
-| MCP server | Expose workspace to AI agents. | 🧭 | Planned; read-first, then write. |
 
 ### 14. AI
 
-5 done · 8 partial · 3 planned
+5 done · 11 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -298,117 +296,93 @@ This file lists the **262** rows that are not finished, area by area, plus 14 in
 | Transcription | Speech-to-text for audio. | 🟡 | `POST /api/ai/transcribe` with its own provider config (`AI_TRANSCRIBE_API_KEY`); sidebar “Transcribe audio” creates a page. Spec: docs/specs/ai-surface.md. |
 | Continue writing | Extend text from context. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | Explain/Simplify | Rewrite for clarity. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
+| Local model support | Run models without a cloud. | 🟡 | Planned; aligns with self-hosting. Spec: docs/specs/ai-surface.md. |
 | Prompt library | Reusable saved prompts. | 🟡 | Seven built-in AI skills with server-side prompts (`src/lib/ai-skills.ts`); user-defined prompts pending. Spec: docs/specs/ai-surface.md. |
-| Local model support | Run models without a cloud. | 🧭 | Planned; aligns with self-hosting. Spec: docs/specs/ai-surface.md. |
-| AI cost controls | Token budgets per workspace. | 🧭 | Planned. Spec: docs/specs/ai-surface.md. |
-| AI data boundaries | Guarantee no training on your data. | 🧭 | Planned; documented policy. Spec: docs/specs/ai-surface.md. |
+| AI cost controls | Token budgets per workspace. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
+| AI data boundaries | Guarantee no training on your data. | 🟡 | Planned; documented policy. Spec: docs/specs/ai-surface.md. |
 
 ### 15. Media & embeds
 
-9 done · 4 partial · 8 planned
+15 done · 6 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Video upload | Store and play video. | 🟡 | Local playback (a drop inserts a link the browser plays); no transcoding and no video node — docs/specs/editor-deep.md R84.7, honest partial. |
 | Audio upload | Store and play audio. | 🟡 | Local playback (a drop inserts a link); player/waveform UI absent — docs/specs/editor-deep.md R84.7/R84.9, honest partial. |
 | Paste image from clipboard | Insert a copied image. | 🟡 | Works for many sources. |
+| PDF preview | Inline PDF viewing. | 🟡 | Planned. |
 | Iframe embeds | Generic sandboxed iframes. | 🟡 | Provider-only: every iframe passes `isEmbedHostAllowed()` (plus CSP `frame-src`) and carries a provider-specific `allow` list, `referrerPolicy` and title — arbitrary-URL iframes stay refused (bookmark fallback) and no `sandbox` attribute ships yet. |
-| File size limits | Cap uploads per plan. | 🧭 | Planned; per-workspace config. |
-| PDF preview | Inline PDF viewing. | 🧭 | Planned. |
-| Code embed | Embed executable snippets. | 🧭 | Planned. |
-| Maps embed | Show a location map. | 🧭 | Planned. |
-| Tweet embed | Embed a post. | 🧭 | Planned. |
-| Figma embeds | Live design embed. | 🧭 | Planned. |
-| Animated GIF/devices | Play GIFs and device previews. | 🧭 | Planned. |
-| Media garbage collection | Remove orphaned assets. | 🧭 | Planned. |
+| Animated GIF/devices | Play GIFs and device previews. | 🟡 | Planned. |
 
 ### 16. Navigation & UX
 
-26 done · 7 partial · 14 planned · 2 out of scope
+33 done · 14 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Breadcrumbs | Ancestor path in header. | 🟡 | Renders; interactions partial. |
 | Page tree navigation | Expand/collapse tree. | 🟡 | Works; state persistence partial. |
+| Mobile layout | Responsive small-screen UI. | 🟡 | Planned; dedicated shell. |
+| Side peek | Preview in a side drawer. | 🟡 | Planned. Spec: docs/specs/navigation-ux.md. |
+| Back/forward navigation | History within the app. | 🟡 | Planned; router-driven. Spec: docs/specs/navigation-ux.md. |
+| Tabs for pages | Multiple open pages as tabs. | 🟡 | Planned; optional UX. Spec: docs/specs/navigation-ux.md. |
 | Keyboard shortcuts | Global and editor shortcuts. | 🟡 | Core subset implemented. |
+| Custom fonts | Choose font pairing. | 🟡 | Planned. |
 | Focus management | Visible focus and traps. | 🟡 | Global `:focus-visible` ring everywhere; B45 hardened `ui/dialog` — Tab/Shift+Tab cycle inside with wrap, explicit `aria-modal="true"`, initial focus in-dialog, and focus restored to the invoker even for trigger-less controlled dialogs — plus `ui/dropdown-menu` (Escape → focus back to its trigger); both locked by `e2e/focus.spec.ts`. Still partial: hand-rolled feature overlays bypass the primitive entirely — `topbar/actions-menu`, `who-has-access`, `version-history`, `tickets/ticket-drawer`, `editor/equation-editor` have no Tab trap, Escape only works in the actions menu and equation editor, and `version-history` / `ticket-drawer` also lack `aria-modal` → feature-level follow-up (feature components are off-limits to B45). |
 | RTL support | Right-to-left layouts. | 🟡 | Arabic sets `dir="rtl"` and logical CSS; mixed-direction blocks untested. |
 | Notifications / toasts | Transient status messages. | 🟡 | Planned. B82 spec `docs/specs/notifications.md` §9 standardizes the surface (202 `toast.*` sites / 41 files audited): one `<Toaster>`, `toast.info` banned by `check:coherence`, all strings via `t()` (51 literals → 0), shared catalog + `check-toasts.mjs`, durations 4 s/8 s — R82.30-R82.36. |
+| Undo/redo (global) | App-wide undo beyond editor. | 🟡 | Planned. |
+| Offline mode | Work without connectivity. | 🟡 | Planned; core to local-first goal. |
 | Actions menu: Notify me → Comments submenu | Per-page comment notification level (All/Mentions/None). | 🟡 | Radio submenu ships and persists per page — but in localStorage only; no server-side model/enforcement yet (B11 partial). B82 spec `docs/specs/notifications.md` closes it: the level becomes a server `NotificationPreference` row that `notify()` itself enforces (today `comment.reply`/`page.mention` ignore it — D6/D7); `noema:page-notify:*` survives only as a one-time hydration source — R82.15-R82.18. |
-| Mobile layout | Responsive small-screen UI. | 🧭 | Planned; dedicated shell. |
-| Side peek | Preview in a side drawer. | 🧭 | Planned. Spec: docs/specs/navigation-ux.md. |
-| Back/forward navigation | History within the app. | 🧭 | Planned; router-driven. Spec: docs/specs/navigation-ux.md. |
-| Tabs for pages | Multiple open pages as tabs. | 🧭 | Planned; optional UX. Spec: docs/specs/navigation-ux.md. |
-| Shortcut: quick find | Cmd/Ctrl+P. | 🧭 | Planned. |
-| Shortcut: new page | Cmd/Ctrl+N. | 🧭 | Planned. |
-| Shortcut: search | Cmd/Ctrl+K or similar. | 🧭 | Planned. |
-| Shortcut: toggle sidebar | Cmd/Ctrl+\\. | 🧭 | Planned. |
-| Shortcut: duplicate block | Cmd/Ctrl+D. | 🧭 | Planned. |
-| Custom fonts | Choose font pairing. | 🧭 | Planned. |
-| Undo/redo (global) | App-wide undo beyond editor. | 🧭 | Planned. |
-| Offline mode | Work without connectivity. | 🧭 | Planned; core to local-first goal. |
-| Reduced-motion support | Respect motion preferences. | 🧭 | Planned. |
-| High-contrast support | Stronger contrast theme. | 🧭 | Planned. |
 | Actions menu: Turn into wiki | Convert page to a wiki. | ⛔ | Data model lacks wiki type; blocked pending spec. B11 ships the entry as a disabled menu item with tooltip "Wiki coming soon" — not faked. |
 | Open in desktop app | "Open in Windows app" entry. | ⛔ | No desktop app; N/A for web parity. |
 
 ### 17. Data model & platform
 
-7 done · 8 partial · 22 planned
+18 done · 19 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Stable block ids | Every block has a durable id. | 🟡 | Ids exist; not enforced on all operations. Spec: docs/specs/engineering-hardening.md. |
+| Page snapshots | Versioned page state. | 🟡 | Planned; basis for history. |
+| Incremental syncing | Sync only changed blocks. | 🟡 | Planned; op-log approach. |
+| Offline cache | Local store for offline use. | 🟡 | Planned (IndexedDB/SQLite). |
+| Sync conflict handling | Merge concurrent edits. | 🟡 | Planned; CRDT. |
 | Transactions / atomic writes | All-or-nothing updates. | 🟡 | Planned; Prisma transactions. Spec: docs/specs/engineering-hardening.md. |
 | Soft delete | Mark-deleted rather than purge. | 🟡 | `deletedAt` columns used. |
 | Multi-tenancy | Isolate workspaces. | 🟡 | Workspace scoping modeled. |
+| Restore from backup | Recover data. | 🟡 | Planned. |
+| Observability | Logs, metrics, traces. | 🟡 | Planned; OpenTelemetry. |
+| Error tracking | Capture and triage errors. | 🟡 | Planned. |
 | Authentication | Sign-up and sign-in. | 🟡 | Session auth; providers limited. |
 | Session management | Expire and revoke sessions. | 🟡 | Sessions stored; revocation partial. Spec: docs/specs/engineering-hardening.md. |
 | Secret handling | Manage keys safely. | 🟡 | Env-based; vault planned. Spec: docs/specs/engineering-hardening.md. |
 | Self-hosting | Run on your own server. | 🟡 | Local dev works; packaging pending. Spec: docs/specs/engineering-hardening.md. |
-| Page snapshots | Versioned page state. | 🧭 | Planned; basis for history. |
-| Incremental syncing | Sync only changed blocks. | 🧭 | Planned; op-log approach. |
-| Offline cache | Local store for offline use. | 🧭 | Planned (IndexedDB/SQLite). |
-| Sync conflict handling | Merge concurrent edits. | 🧭 | Planned; CRDT. |
-| Trash retention | Auto-purge after a window. | 🧭 | Planned; scheduled job. |
-| Rate limiting | Throttle API/site traffic. | 🧭 | Planned; middleware. |
-| Restore from backup | Recover data. | 🧭 | Planned. |
-| Observability | Logs, metrics, traces. | 🧭 | Planned; OpenTelemetry. |
-| Error tracking | Capture and triage errors. | 🧭 | Planned. |
-| Two-factor auth (2FA) | TOTP second factor. | 🧭 | Planned. |
-| OIDC support | OpenID Connect providers. | 🧭 | Planned. |
-| Encryption at rest | Encrypt stored data. | 🧭 | Planned; DB/disk encryption. |
-| Encryption in transit | TLS everywhere. | 🧭 | Planned; reverse-proxy TLS. |
-| Docker images | Containerized deployment. | 🧭 | Planned; multi-stage build. Spec: docs/specs/engineering-hardening.md. |
-| Docker Compose | One-command stack. | 🧭 | Planned; app + Postgres. Spec: docs/specs/engineering-hardening.md. |
-| Reverse-proxy guidance | nginx/Caddy docs. | 🧭 | Planned. Spec: docs/specs/engineering-hardening.md. |
-| Health checks | Liveness/readiness endpoints. | 🧭 | Planned. |
-| Feature flags | Gate in-progress features. | 🧭 | Planned. |
-| Background jobs | Async task runner. | 🧭 | Planned; queue for imports/AI. |
-| WebSocket/SSE gateway | Realtime transport. | 🧭 | Planned for collaboration. |
-| Data export portability | Take your data out. | 🧭 | Planned; see export. |
-| GDPR data controls | Delete/export personal data. | 🧭 | Planned; admin tooling. |
+| Feature flags | Gate in-progress features. | 🟡 | Planned. |
+| Background jobs | Async task runner. | 🟡 | Planned; queue for imports/AI. |
+| WebSocket/SSE gateway | Realtime transport. | 🟡 | Planned for collaboration. |
+| GDPR data controls | Delete/export personal data. | 🟡 | Planned; admin tooling. |
 
 ### 18. Pricing & plan-gated features
 
-0 done · 0 partial · 14 planned
+0 done · 14 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Free plan | Basic single-user/or small-team tier. | 🧭 | Planned; core features ungated. Spec: docs/specs/plans-licensing.md. |
-| Personal plan | Individual power user. | 🧭 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Team plan | Shared workspace features. | 🧭 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Enterprise plan | SSO, audit, controls. | 🧭 | Planned; SSO/audit gated. Spec: docs/specs/plans-licensing.md. |
-| Plan gates | Restrict features by plan. | 🧭 | Planned; feature-flag driven. Spec: docs/specs/plans-licensing.md. |
-| Guest limits by plan | Cap external guests. | 🧭 | Planned. Spec: docs/specs/plans-licensing.md. |
-| File upload limits by plan | Cap storage per plan. | 🧭 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Version-history retention by plan | Longer history on paid plans. | 🧭 | Planned. Spec: docs/specs/plans-licensing.md. |
-| AI usage limits by plan | Token budget per plan. | 🧭 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Self-hosted license option | Run enterprise features locally. | 🧭 | Planned; open-core consideration. Spec: docs/specs/plans-licensing.md. |
-| Billing integration | Payment provider hooks. | 🧭 | Planned; provider-agnostic. Spec: docs/specs/plans-licensing.md. |
-| Seat management | Add/remove billed seats. | 🧭 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Plan change proration | Upgrade/downgrade billing. | 🧭 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Usage metering | Track consumption per plan. | 🧭 | Planned. Spec: docs/specs/plans-licensing.md. |
+| Free plan | Basic single-user/or small-team tier. | 🟡 | Planned; core features ungated. Spec: docs/specs/plans-licensing.md. |
+| Personal plan | Individual power user. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
+| Team plan | Shared workspace features. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
+| Enterprise plan | SSO, audit, controls. | 🟡 | Planned; SSO/audit gated. Spec: docs/specs/plans-licensing.md. |
+| Plan gates | Restrict features by plan. | 🟡 | Planned; feature-flag driven. Spec: docs/specs/plans-licensing.md. |
+| Guest limits by plan | Cap external guests. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
+| File upload limits by plan | Cap storage per plan. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
+| Version-history retention by plan | Longer history on paid plans. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
+| AI usage limits by plan | Token budget per plan. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
+| Self-hosted license option | Run enterprise features locally. | 🟡 | Planned; open-core consideration. Spec: docs/specs/plans-licensing.md. |
+| Billing integration | Payment provider hooks. | 🟡 | Planned; provider-agnostic. Spec: docs/specs/plans-licensing.md. |
+| Seat management | Add/remove billed seats. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
+| Plan change proration | Upgrade/downgrade billing. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
+| Usage metering | Track consumption per plan. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
 
 ### 19. Known limitations & quirks
 
@@ -434,13 +408,12 @@ This file lists the **262** rows that are not finished, area by area, plus 14 in
 
 ### 20. Projects, tickets & planning
 
-27 done · 1 partial · 4 planned
+28 done · 3 partial · 1 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Roadmap view | Timeline across projects. | 🟡 | Project Gantt exists; a cross-project roadmap view is pending. |
+| Recurring tickets | Repeat on a schedule. | 🟡 | Planned; template recurrence exists for page templates. Spec: docs/specs/automations.md. |
+| Per-project role editor | Fine-grained project roles. | 🟡 | Planned; workspace roles exist today. |
 | Automations | Rules on status/label changes. | 🧭 | Planned. Spec: docs/specs/automations.md. |
-| Recurring tickets | Repeat on a schedule. | 🧭 | Planned; template recurrence exists for page templates. Spec: docs/specs/automations.md. |
-| Workload & capacity | Per-person load planning. | 🧭 | Planned; assignee + estimate data is available. |
-| Per-project role editor | Fine-grained project roles. | 🧭 | Planned; workspace roles exist today. |
 
