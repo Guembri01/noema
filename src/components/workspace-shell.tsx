@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Menu } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Database, FileText, Menu, X } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";
 import { OPEN_CHAT_EVENT } from "@/components/sidebar-chat";
 import { ChatPanel, type PanelThread } from "@/components/chat-panel";
@@ -12,8 +12,51 @@ import { QuickFind } from "@/components/quick-find";
 import { safeAction } from "@/lib/actions-client";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
+import {
+  MAX_RECENT_PAGES,
+  recentPages,
+  recordVisit,
+  removePage,
+  type RecentPage,
+} from "@/lib/recent-pages";
 import { createPageAction } from "@/server/actions/pages";
 import type { PageTreeNode } from "@/server/queries";
+
+/** localStorage key holding one workspace's open page tabs (recent-first). */
+function tabsStorageKey(workspaceId: string): string {
+  return `notion:page-tabs:${workspaceId}`;
+}
+
+/** Narrow one parsed storage entry to a {@link RecentPage} without trusting disk. */
+function isTabEntry(value: unknown): value is RecentPage {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry.pageId === "string" && typeof entry.visitedAt === "number"
+  );
+}
+
+/**
+ * Load a workspace's persisted tab list. Absent, blocked (private mode) or
+ * corrupt storage falls back to an empty strip; {@link recentPages} then
+ * dedupes the survivors and orders them most-recently-opened first.
+ */
+function readTabs(workspaceId: string): RecentPage[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(tabsStorageKey(workspaceId));
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const entries: unknown[] = parsed;
+    return recentPages(entries.filter(isTabEntry), {
+      limit: MAX_RECENT_PAGES,
+      now: 0,
+    });
+  } catch {
+    return [];
+  }
+}
 
 export function WorkspaceShell({
   workspace,
@@ -63,6 +106,81 @@ export function WorkspaceShell({
   const [chatThreadId, setChatThreadId] = useState<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
+
+  // In-session page tabs (most-recently-opened first), hydrated from
+  // localStorage after mount so SSR and the first client paint agree.
+  const [tabs, setTabs] = useState<RecentPage[]>([]);
+  // The workspace whose strip is currently in `tabs`; `null` until hydrated.
+  // Persistence is gated on it so switching workspace never writes the old
+  // strip to the new workspace's key.
+  const [tabsWorkspaceId, setTabsWorkspaceId] = useState<string | null>(null);
+
+  /** id → node, so a tab can show its title/icon and only live pages stay open. */
+  const pagesById = useMemo(
+    () => new Map(tree.map((node) => [node.id, node])),
+    [tree],
+  );
+
+  /** The page open in a bare `/w/<slug>/<pageId>` URL, else null. */
+  const pagePrefix = `/w/${workspace.slug}/`;
+  const activePageId =
+    pathname.startsWith(pagePrefix) &&
+    !pathname.slice(pagePrefix.length).includes("/")
+      ? pathname.slice(pagePrefix.length)
+      : null;
+
+  // Hydrate the strip once per workspace. Declared before the persist and
+  // record effects so a fresh load can never overwrite stored tabs with `[]`.
+  useEffect(() => {
+    setTabs(readTabs(workspace.id));
+    setTabsWorkspaceId(workspace.id);
+  }, [workspace.id]);
+
+  // Persist every change so tabs survive reloads; storage being unavailable
+  // (private mode / quota) leaves the in-memory strip intact.
+  useEffect(() => {
+    if (tabsWorkspaceId !== workspace.id) return;
+    try {
+      window.localStorage.setItem(
+        tabsStorageKey(workspace.id),
+        JSON.stringify(tabs),
+      );
+    } catch {
+      // Ignore — the session keeps rendering from state.
+    }
+  }, [tabsWorkspaceId, workspace.id, tabs]);
+
+  // Opening a page (a link or browser history) moves it to the front of the
+  // strip. Only pages present in the tree become tabs, so reserved routes
+  // (`/search`, `/trash`, …) are never recorded.
+  useEffect(() => {
+    if (!activePageId || !pagesById.has(activePageId)) return;
+    setTabs((prev) => recordVisit(prev, activePageId, Date.now()));
+  }, [activePageId, pagesById]);
+
+  /** Tabs ordered most-recently-opened first, resolved to live pages. */
+  const openTabs = useMemo(
+    () =>
+      recentPages(tabs, { limit: MAX_RECENT_PAGES, now: Date.now() })
+        .map((entry) => ({ entry, node: pagesById.get(entry.pageId) }))
+        .filter(
+          (tab): tab is { entry: RecentPage; node: PageTreeNode } =>
+            tab.node !== undefined,
+        ),
+    [tabs, pagesById],
+  );
+
+  const switchTab = useCallback(
+    (pageId: string) => {
+      router.push(`/w/${workspace.slug}/${pageId}`);
+    },
+    [router, workspace.slug],
+  );
+
+  const closeTab = useCallback((pageId: string) => {
+    setTabs((prev) => removePage(prev, pageId));
+  }, []);
 
   const toggleSidebar = useCallback(() => setSidebarHidden((hidden) => !hidden), []);
 
@@ -180,6 +298,63 @@ export function WorkspaceShell({
 
       <div className="flex min-w-0 flex-1">
         <main id="main" className="min-w-0 flex-1 overflow-y-auto pt-12 md:pt-0">
+          {openTabs.length > 0 && (
+            <nav
+              data-testid="workspace-tabs"
+              aria-label={t(locale, "recent")}
+              className="sticky top-12 z-20 flex items-stretch gap-1 overflow-x-auto border-b border-border bg-bg px-2 md:top-0"
+            >
+              {openTabs.map(({ entry, node }) => {
+                const active = entry.pageId === activePageId;
+                const title = node.title.trim() || t(locale, "untitled");
+                return (
+                  <div
+                    key={entry.pageId}
+                    className={cn(
+                      "flex max-w-[12rem] shrink-0 items-center gap-0.5 rounded-t-md border border-b-0 px-2 py-1.5 text-sm",
+                      active
+                        ? "border-border bg-surface-2 text-fg"
+                        : "border-transparent text-muted hover:bg-surface-2 hover:text-fg",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      data-page-id={entry.pageId}
+                      aria-current={active ? "page" : undefined}
+                      onClick={() => switchTab(entry.pageId)}
+                      title={title}
+                      className="flex min-w-0 items-center gap-1.5"
+                    >
+                      {node.icon ? (
+                        <span aria-hidden className="shrink-0">
+                          {node.icon}
+                        </span>
+                      ) : node.type === "DATABASE" ? (
+                        <Database
+                          aria-hidden
+                          className="h-3.5 w-3.5 shrink-0"
+                        />
+                      ) : (
+                        <FileText
+                          aria-hidden
+                          className="h-3.5 w-3.5 shrink-0"
+                        />
+                      )}
+                      <span className="truncate">{title}</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`${t(locale, "close")} ${title}`}
+                      onClick={() => closeTab(entry.pageId)}
+                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted hover:bg-border hover:text-fg"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </nav>
+          )}
           {children}
         </main>
         {chatOpen && (
