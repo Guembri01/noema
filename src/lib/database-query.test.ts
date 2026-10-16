@@ -535,6 +535,33 @@ describe("view config serialization", () => {
       "visibleGroups",
     );
   });
+
+  it("round-trips the optional aggregation and preview property ids", () => {
+    const config: ViewConfig = {
+      aggregationPropertyId: "estimate",
+      previewPropertyId: "cover",
+    };
+    const stored = JSON.parse(JSON.stringify(normalizeViewConfig(config)));
+    expect(parseViewConfig(stored)).toEqual(config);
+  });
+
+  it("keeps the aggregation/preview ids but drops malformed values", () => {
+    const out = normalizeViewConfig({
+      aggregationPropertyId: 7,
+      previewPropertyId: { id: "cover" },
+    } as never);
+
+    expect(out).not.toHaveProperty("aggregationPropertyId");
+    expect(out).not.toHaveProperty("previewPropertyId");
+  });
+
+  it("tolerates a null preview id by normalising it away", () => {
+    // The gallery producer writes `null` for "Automatic"; it is treated like any
+    // other malformed value (dropped), so the gallery falls back to its own
+    // first-cover-eligible pick — the same result as an absent key.
+    expect(parseViewConfig({ previewPropertyId: null }).previewPropertyId).toBeUndefined();
+    expect(parseViewConfig({ aggregationPropertyId: null }).aggregationPropertyId).toBeUndefined();
+  });
 });
 
 /* ---------------------------------------------------------------------------

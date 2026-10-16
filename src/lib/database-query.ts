@@ -138,6 +138,22 @@ export type ViewConfig = {
   chartType?: string;
   /** CHART: the per-group aggregation (see `@/lib/aggregations`). */
   chartAggregate?: string;
+  /**
+   * TABLE / CHART: the property id whose values feed the view's aggregate (the
+   * table footer's aggregate picker, chart group summaries). Owned by the
+   * aggregation feature; an unset value — or one naming an unknown property —
+   * leaves the engine on its own default (first NUMBER column / row count).
+   */
+  aggregationPropertyId?: string;
+  /**
+   * GALLERY: the property whose value each card shows as its preview image
+   * (`resolveCardPreview`'s cover). Owned by the gallery feature; an absent key
+   * means "automatic", so the gallery picks the first cover-eligible property
+   * itself. `null` is accepted because that is the producer's explicit
+   * "Automatic" choice (`feat/q02`); `normalizeViewConfig` drops it, so only a
+   * real property id ever round-trips.
+   */
+  previewPropertyId?: string | null;
 };
 
 type OperatorSpec = { value: FilterOperator; label: string };
@@ -908,6 +924,16 @@ export function normalizeViewConfig(input: unknown): ViewConfig {
   if (typeof record.chartType === "string") out.chartType = record.chartType;
   if (typeof record.chartAggregate === "string") {
     out.chartAggregate = record.chartAggregate;
+  }
+  // Property-id keys owned by the aggregation and gallery features. Like the
+  // scalar keys above they round-trip rather than being dropped, so a save from
+  // a newer client is not silently erased; a malformed (non-string) value is
+  // ignored, leaving the engine on its own default.
+  if (typeof record.aggregationPropertyId === "string") {
+    out.aggregationPropertyId = record.aggregationPropertyId;
+  }
+  if (typeof record.previewPropertyId === "string") {
+    out.previewPropertyId = record.previewPropertyId;
   }
   return out;
 }
