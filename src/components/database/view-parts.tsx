@@ -18,6 +18,11 @@ import { validateCell } from "@/lib/cell-validation";
 import { cellColorFor, type RowColorRule } from "@/lib/row-color-rules";
 import { formatUniqueId } from "@/lib/unique-id";
 import { formatDateRange, parseDateValue } from "@/lib/date-range";
+import {
+  queryRelationCandidates,
+  relationSummary,
+  toggleRelation,
+} from "@/lib/relation-picker";
 import { formatGeo, normalizeGeo, parseGeo } from "@/lib/geo";
 import { isValidEmail } from "@/lib/email-validation";
 import { isValidPhone, normalizePhone } from "@/lib/phone-format";
@@ -491,6 +496,10 @@ export function Cell({
   // PEOPLE keeps a local draft so two quick picks can't overwrite each other
   // from stale server props (the echo from the server lands after both clicks).
   const [peopleDraft, setPeopleDraft] = useState<string[] | null>(null);
+  // RELATION: the searchable picker's typeahead text. Local-only so opening the
+  // picker never touches the stored `pageIds`; `@/lib/relation-picker` owns the
+  // filtering/matching rules.
+  const [relationQuery, setRelationQuery] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const readOnly = (node: React.ReactNode) => (
     <span className="text-muted">{node}</span>
@@ -1011,7 +1020,14 @@ export function Cell({
     case "FORMULA":
       return readOnly(computed && computed.length > 0 ? computed : "—");
     case "ROLLUP":
-      return readOnly("—");
+      // Aggregate (`@/lib/rollup`, via `computed`): read-only and addressable,
+      // like the other derived cells. An unconfigured rollup has no computed
+      // value and stays blank, so no cell changes for a pre-config property.
+      return (
+        <span aria-label={property.name} className="text-muted">
+          {computed && computed.length > 0 ? computed : "—"}
+        </span>
+      );
     case "CREATED_TIME":
     case "LAST_EDITED_TIME":
     case "CREATED_BY":
@@ -1047,6 +1063,65 @@ export function Cell({
         <span aria-label={property.name} className="text-muted">
           {computed && computed.length > 0 ? computed : "—"}
         </span>
+      );
+    }
+    case "VERIFICATION": {
+      // Spec R89.28: the stored value is `{ verifiedById, verifiedAt, note? }`.
+      // The flag is read from that shape (or the boolean aliases a pre-engine
+      // value may carry) so both render the same chip. Toggling is the only
+      // client write: the acting user/date stamp is owned by the server session
+      // (never client-supplied), so this view flips the flag and clears the
+      // stamp pair on un-verify instead of fabricating an actor.
+      const verifiedByName =
+        typeof v.verifiedByName === "string" && v.verifiedByName !== ""
+          ? v.verifiedByName
+          : null;
+      const verifiedAt =
+        typeof v.verifiedAt === "string" && v.verifiedAt !== ""
+          ? v.verifiedAt
+          : null;
+      const verified =
+        v.verified === true ||
+        v.checked === true ||
+        v.verifiedById != null ||
+        verifiedAt !== null;
+      const detail = [verifiedByName, verifiedAt ? verifiedAt.slice(0, 10) : null]
+        .filter((part): part is string => part !== null)
+        .join(" · ");
+      const chip = verified
+        ? detail
+          ? `Verified ✓ · ${detail}`
+          : "Verified ✓"
+        : "Not verified";
+      if (!editable) {
+        return (
+          <span aria-label={`${property.name}: ${chip}`} className="text-muted">
+            {chip}
+          </span>
+        );
+      }
+      return (
+        <button
+          type="button"
+          aria-label={property.name}
+          aria-pressed={verified}
+          data-testid="verification-cell"
+          onClick={() =>
+            onChange(
+              verified
+                ? { ...v, verified: false, verifiedById: null, verifiedAt: null }
+                : { ...v, verified: true },
+            )
+          }
+          className={cn(
+            "rounded border px-2 py-0.5 text-xs",
+            verified
+              ? "border-green-600/40 bg-green-600/10 text-green-700"
+              : "border-border text-muted hover:bg-surface-2",
+          )}
+        >
+          {chip}
+        </button>
       );
     }
     case "PLACE": {
@@ -1145,8 +1220,36 @@ export function Cell({
     case "RELATION": {
       const options = relationOptions ?? [];
       const selected = (v.pageIds as string[]) ?? [];
+      // The picker's pure brain (`@/lib/relation-picker`): filter by title,
+      // keep already-linked rows visible in multi mode so they can be
+      // unchecked, never offer the row itself, de-duplicate and cap the list.
+      const byId = new Map(
+        options.map((option): [string, { title: string }] => [
+          option.id,
+          { title: option.title },
+        ]),
+      );
+      const candidates = queryRelationCandidates(
+        options.map((option) => ({ id: option.id, title: option.title })),
+        {
+          query: relationQuery,
+          excludeIds: selected,
+          allowMultiple: true,
+          selfId: row?.id,
+        },
+      );
+      // e.g. "2 related pages: Alpha, Beta" — read by screen readers.
+      const selectionLabel = relationSummary(selected, byId);
+      const pick = (id: string) =>
+        onChange({
+          pageIds: toggleRelation(selected, id, { allowMultiple: true }),
+        });
       return (
-        <div className="flex flex-wrap items-center gap-1">
+        <div
+          className="flex flex-wrap items-center gap-1"
+          role="group"
+          aria-label={selectionLabel}
+        >
           {selected.map((id) => {
             const option = options.find((candidate) => candidate.id === id);
             return option ? (
@@ -1170,24 +1273,42 @@ export function Cell({
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
-                {options.length === 0 ? (
-                  <DropdownMenuItem disabled>{t(locale, "noRelatedRows")}</DropdownMenuItem>
+                <div className="p-1">
+                  <input
+                    autoFocus
+                    value={relationQuery}
+                    aria-label={t(locale, "search")}
+                    placeholder={t(locale, "search")}
+                    onChange={(e) => setRelationQuery(e.target.value)}
+                    // Keep the menu's roving focus/typeahead from swallowing the
+                    // keystrokes meant for the filter box.
+                    onKeyDown={(e) => e.stopPropagation()}
+                    className="w-full rounded border border-border bg-bg px-1.5 py-0.5 text-xs outline-none"
+                  />
+                </div>
+                {candidates.length === 0 ? (
+                  <DropdownMenuItem disabled>
+                    {t(locale, "noRelatedRows")}
+                  </DropdownMenuItem>
                 ) : (
-                  options.map((option) => (
-                    <DropdownMenuItem
-                      key={option.id}
-                      onSelect={() =>
-                        onChange({
-                          pageIds: selected.includes(option.id)
-                            ? selected.filter((id) => id !== option.id)
-                            : [...selected, option.id],
-                        })
-                      }
-                    >
-                      {selected.includes(option.id) ? "✓ " : ""}
-                      {option.icon ?? "📄"} {option.title || t(locale, "untitled")}
-                    </DropdownMenuItem>
-                  ))
+                  candidates.map((option) => {
+                    const meta = options.find(
+                      (candidate) => candidate.id === option.id,
+                    );
+                    return (
+                      <DropdownMenuItem
+                        key={option.id}
+                        onSelect={() => {
+                          pick(option.id);
+                          setRelationQuery("");
+                        }}
+                      >
+                        {selected.includes(option.id) ? "✓ " : ""}
+                        {meta?.icon ?? "📄"}{" "}
+                        {option.title || t(locale, "untitled")}
+                      </DropdownMenuItem>
+                    );
+                  })
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
