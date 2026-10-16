@@ -1,0 +1,119 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * Wiring lock (spec R78.8 / Dec5): `searchPages` must run its full-text path
+ * through the pure builder in `src/lib/fts.ts` — `buildSearchSql` for the exact
+ * pass, the same SQL with an all-prefix tsquery for the type-ahead pass blended
+ * by `mergeRanked`, and `trigramFallback` for the typo tier when both passes are
+ * empty. These assertions pin the exact SQL shape and bound parameters so the
+ * builder cannot silently drift back to inline `ts_rank_cd` SQL.
+ *
+ * Red-first: written against `queries.ts` before the builder was adopted there.
+ */
+
+const db = vi.hoisted(() => ({
+  queryRaw: vi.fn(),
+  queryRawUnsafe: vi.fn(),
+  pageFindMany: vi.fn(),
+  pageCount: vi.fn(),
+}));
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    $queryRaw: db.queryRaw,
+    $queryRawUnsafe: db.queryRawUnsafe,
+    page: { findMany: db.pageFindMany, count: db.pageCount },
+  },
+}));
+
+import { searchPages } from "./queries";
+
+/** A `Page` row shaped like the final `findMany` projection. */
+function page(over: Record<string, unknown> = {}) {
+  return {
+    id: "p1",
+    title: "Roadmap",
+    icon: null,
+    type: "PAGE",
+    updatedAt: new Date("2025-01-01T00:00:00.000Z"),
+    ...over,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // The GIN index probe resolves to "present" so the plan stays on the FTS tier.
+  db.queryRaw.mockResolvedValue([{ indexname: "Page_searchText_idx" }]);
+  db.pageCount.mockResolvedValue(0);
+});
+
+describe("searchPages — FTS builder adoption (R78.8)", () => {
+  it("composes both passes with buildSearchSql and blends via mergeRanked", async () => {
+    db.queryRawUnsafe.mockImplementation(async (text: string, ...params: unknown[]) => {
+      if (text.includes("similarity(")) return [];
+      // The type-ahead pass widens every lexeme to a prefix (`roadmap:* & …`).
+      if (String(params[0]).startsWith("roadmap:*")) {
+        return [
+          { id: "p2", snippet: "<b>roadmaps</b> ship", rank: 3 },
+          { id: "p1", snippet: "hit <b>roadmap</b> here", rank: 4 },
+        ];
+      }
+      return [{ id: "p1", snippet: "hit <b>roadmap</b> here", rank: 4 }];
+    });
+    db.pageFindMany.mockResolvedValue([
+      page({ id: "p1", title: "Roadmap" }),
+      page({ id: "p2", title: "Roadmaps" }),
+    ]);
+
+    const results = await searchPages("ws1", "Roadmap Release", null, { take: 10 });
+
+    expect(db.queryRawUnsafe).toHaveBeenCalledTimes(2);
+
+    const [exactText, ...exactParams] = db.queryRawUnsafe.mock.calls[0];
+    expect(exactText).toContain(
+      `to_tsvector('english', coalesce(p."searchText", p."title")) @@ to_tsquery('english', $1)`,
+    );
+    expect(exactText).toContain("ts_rank_cd(");
+    expect(exactText).toContain("ts_headline(");
+    expect(exactText).toContain(`ORDER BY "rank" DESC, p."updatedAt" DESC, p."id" ASC`);
+    expect(exactText).toContain("LIMIT $3");
+    // The builder's sanitised tsquery (final term prefixed) + workspace + window.
+    expect(exactParams).toEqual(["roadmap & release:*", "ws1", 11]);
+
+    const [, ...prefixParams] = db.queryRawUnsafe.mock.calls[1];
+    expect(prefixParams).toEqual(["roadmap:* & release:*", "ws1", 11]);
+
+    // Exact hit first, prefix-only next, and the `<b>` markers are stripped.
+    expect(results.map((row) => row.id)).toEqual(["p1", "p2"]);
+    expect(results[0].snippet).toBe("hit roadmap here");
+  });
+
+  it("binds the guest scope as an ANY() predicate before LIMIT", async () => {
+    db.queryRawUnsafe.mockResolvedValue([{ id: "p1", snippet: "s", rank: 1 }]);
+    db.pageFindMany.mockResolvedValue([page({ id: "p1" })]);
+
+    await searchPages("ws1", "roadmap", new Set(["p1", "p2"]), { take: 4 });
+
+    const [text, ...params] = db.queryRawUnsafe.mock.calls[0];
+    expect(text).toContain(`AND p."id" = ANY($3)`);
+    expect(text).toContain("LIMIT $4");
+    expect(params).toEqual(["roadmap:*", "ws1", ["p1", "p2"], 5]);
+  });
+
+  it("runs the pg_trgm tier only after both FTS passes come back empty", async () => {
+    db.queryRawUnsafe.mockImplementation(async (text: string) =>
+      text.includes("similarity(coalesce(")
+        ? [{ id: "p9", snippet: "notebook", rank: 0.62 }]
+        : [],
+    );
+    db.pageFindMany.mockResolvedValue([page({ id: "p9", title: "Notebook" })]);
+
+    const results = await searchPages("ws1", "noetbook", null, { take: 5 });
+
+    expect(db.queryRawUnsafe).toHaveBeenCalledTimes(3);
+    const [text, ...params] = db.queryRawUnsafe.mock.calls[2];
+    expect(text).toContain(`similarity(coalesce(p."searchText", p."title"), $1) >= 0.3`);
+    expect(params).toEqual(["noetbook", "ws1", 6]);
+    expect(results.map((row) => row.id)).toEqual(["p9"]);
+  });
+});

@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { makeSnippet, searchTerms } from "@/lib/search";
+import { makeSnippet } from "@/lib/search";
 import { prosemirrorToText } from "@/lib/blocks";
 import { docMentionsPage } from "@/lib/mentions";
 import { promptTerms, scorePage, snippetAround } from "@/lib/retrieval";
@@ -12,6 +12,15 @@ import {
   type AuditEvent,
 } from "@/lib/audit-log";
 import type { SummaryBlock } from "@/lib/page-summary";
+import {
+  buildSearchSql,
+  mergeRanked,
+  parseHeadline,
+  planSearch,
+  trigramFallback,
+  type RankedInput,
+  type SqlFragment,
+} from "@/lib/fts";
 
 export type PageTreeNode = {
   id: string;
@@ -436,6 +445,223 @@ function toSearchHit(
   return hit;
 }
 
+// ---------------------------------------------------------------------------
+// Search engine — the pure Postgres FTS builder (`src/lib/fts.ts`) is the real
+// path: `planSearch` picks the tier, `buildSearchSql` composes the ranked
+// `to_tsquery`/`ts_rank_cd`/`ts_headline` SQL, `mergeRanked` blends the exact
+// and type-ahead passes and `trigramFallback` supplies the `pg_trgm` typo tier.
+// ---------------------------------------------------------------------------
+
+/** The row shape a `buildSearchSql` pass returns (its `SELECT` list). */
+type RankedSearchRow = { id: string; snippet: string; rank: number };
+
+/** A window over the ranked set, in `searchPages`' offset/take dialect. */
+type SearchWindow = { offset: number; take: number };
+
+/**
+ * Whether the FTS GIN index (`Page_searchText_idx`) exists, probed once per
+ * process. `setup:search` creates it; when missing, `planSearch` routes the
+ * search to the bounded ILIKE/trigram tiers instead of an unindexed
+ * `to_tsvector` scan. A probe failure is not cached, so a transient error can
+ * never permanently disable the fast path.
+ */
+let fullTextIndexProbe: Promise<boolean> | null = null;
+
+function hasFullTextIndex(): Promise<boolean> {
+  fullTextIndexProbe ??= prisma
+    .$queryRaw<{ indexname: string }[]>`
+      SELECT indexname FROM pg_indexes
+      WHERE tablename = 'Page' AND indexname = 'Page_searchText_idx'
+    `
+    .then((rows) => rows.length > 0)
+    .catch(() => {
+      fullTextIndexProbe = null;
+      return false;
+    });
+  return fullTextIndexProbe;
+}
+
+/**
+ * Resolve the tier `planSearch` recommends. The planner's row estimate is only
+ * consulted on the un-indexed path, so a count is avoided on every normal
+ * (indexed) search.
+ */
+async function planFor(query: string, workspaceId: string) {
+  const hasIndex = await hasFullTextIndex();
+  const estimatedRows = hasIndex
+    ? 0
+    : await prisma.page.count({ where: { workspaceId, deletedAt: null } });
+  return planSearch({ query, hasIndex, estimatedRows });
+}
+
+/**
+ * Widen every lexeme of a builder tsquery to a prefix match, e.g.
+ * `quarterly & roadmap:*` → `quarterly:* & roadmap:*`. The builder's tsquery
+ * only prefixes its final term; this wider form powers the type-ahead pass that
+ * `mergeRanked` blends beneath the exact hits (spec R78.8 / Dec5). Safe because
+ * the tsquery is already sanitised to lexemes plus `&`/`<->`/`:*`.
+ */
+function prefixEveryTerm(tsquery: string): string {
+  return tsquery
+    .replace(/:\*/g, "")
+    .replace(/[\p{L}\p{N}_]+/gu, (lexeme) => `${lexeme}:*`);
+}
+
+/**
+ * Override the trailing `LIMIT` value of a `buildSearchSql` fragment.
+ * `buildSearchSql` clamps its own limit to `200`; the windows here are already
+ * bounded by the callers and may be larger (`SEARCH_PAGE_SCAN`), so the composed
+ * SQL is kept and only the bound limit parameter is replaced.
+ */
+function withLimit(fragment: SqlFragment, limit: number): SqlFragment {
+  const params = [...fragment.params];
+  params[params.length - 1] = limit;
+  return { text: fragment.text, params };
+}
+
+/**
+ * Run a parameterised ranked SQL fragment, returning `[]` on any error. A
+ * malformed/empty tsquery, a missing `pg_trgm` or a dropped index must not throw
+ * out of search — the caller falls through to the next tier.
+ */
+async function runRankedSearch(fragment: SqlFragment): Promise<RankedSearchRow[]> {
+  if (!fragment.text) return [];
+  try {
+    return await prisma.$queryRawUnsafe<RankedSearchRow[]>(fragment.text, ...fragment.params);
+  } catch {
+    return [];
+  }
+}
+
+/** Project the builder's rows onto `mergeRanked`'s input shape. */
+function toRankedInput(rows: readonly RankedSearchRow[]): RankedInput[] {
+  return rows.map((row) => ({ id: row.id, rank: row.rank }));
+}
+
+/**
+ * The adopted FTS path (spec R78.8 / Dec5). `buildSearchSql` composes the
+ * parameterised `to_tsquery`/`ts_rank_cd`/`ts_headline` SQL for the exact pass;
+ * the same SQL is reused with an all-prefix tsquery for the type-ahead pass, and
+ * the two are blended by `mergeRanked` (prefix-only hits at the builder's fixed
+ * discount) so exact matches always outrank prefix-only ones.
+ *
+ * The builder's `<b>`/`</b>` headline markers are parsed away with
+ * `parseHeadline`, keeping every caller on plain-text snippets (the UI applies
+ * its own highlighting) exactly as the previous empty-`StartSel` SQL did.
+ */
+async function fullTextHits(
+  query: string,
+  workspaceId: string,
+  visiblePageIds: Set<string> | null,
+  window: SearchWindow,
+): Promise<{ id: string; snippet: string }[]> {
+  const limit = window.offset + window.take + 1;
+  const exact = withLimit(
+    buildSearchSql({
+      query,
+      scope: {
+        workspaceId,
+        visiblePageIds: visiblePageIds ? [...visiblePageIds] : null,
+      },
+      limit,
+    }),
+    limit,
+  );
+  if (!exact.text) return [];
+
+  const prefix: SqlFragment = {
+    text: exact.text,
+    params: [prefixEveryTerm(String(exact.params[0])), ...exact.params.slice(1)],
+  };
+
+  const [exactRows, prefixRows] = await Promise.all([
+    runRankedSearch(exact),
+    runRankedSearch(prefix),
+  ]);
+  const merged = mergeRanked(toRankedInput(exactRows), toRankedInput(prefixRows));
+
+  const snippetById = new Map<string, string>();
+  for (const row of prefixRows) snippetById.set(row.id, parseHeadline(row.snippet).text);
+  for (const row of exactRows) snippetById.set(row.id, parseHeadline(row.snippet).text);
+
+  return merged
+    .slice(window.offset, window.offset + window.take + 1)
+    .map((hit) => ({ id: hit.id, snippet: snippetById.get(hit.id) ?? "" }));
+}
+
+/**
+ * The `pg_trgm` typo tier (spec R78.8 / Dec5): runs only when the FTS passes come
+ * back empty, ranking by similarity above the builder's fixed threshold. The
+ * `similarity(…) >= …` predicate comes from {@link trigramFallback}; the query
+ * is parameterised and the guest scope is applied in SQL.
+ */
+async function trigramHits(
+  query: string,
+  workspaceId: string,
+  visiblePageIds: Set<string> | null,
+  window: SearchWindow,
+): Promise<{ id: string; snippet: string }[]> {
+  const clause = trigramFallback(query);
+  if (!clause.text) return [];
+  const params: unknown[] = [...clause.params, workspaceId];
+  const where: string[] = [
+    `WHERE p."workspaceId" = $${params.length}`,
+    `  AND p."deletedAt" IS NULL`,
+    `  AND ${clause.text}`,
+  ];
+  if (visiblePageIds) {
+    params.push([...visiblePageIds]);
+    where.push(`  AND p."id" = ANY($${params.length})`);
+  }
+  const limit = window.offset + window.take + 1;
+  params.push(limit);
+  const text = [
+    `SELECT p."id",`,
+    `       coalesce(p."searchText", p."title") AS "snippet",`,
+    `       similarity(coalesce(p."searchText", p."title"), $1) AS "rank"`,
+    `FROM "Page" p`,
+    ...where,
+    `ORDER BY "rank" DESC, p."updatedAt" DESC, p."id" ASC`,
+    `LIMIT $${params.length}`,
+  ].join("\n");
+  const rows = await runRankedSearch({ text, params });
+  return rows
+    .slice(window.offset, window.offset + window.take + 1)
+    .map((row) => ({ id: row.id, snippet: row.snippet }));
+}
+
+/**
+ * Un-backfilled safety net (spec pass 3): a case-insensitive substring scan over
+ * the mirror/title, run only when the FTS and typo tiers are both empty so pages
+ * whose `searchText` predates the index stay findable.
+ */
+async function substringHits(
+  query: string,
+  workspaceId: string,
+  visiblePageIds: Set<string> | null,
+  window: SearchWindow,
+): Promise<{ id: string; snippet: string }[]> {
+  const fallback = await prisma.page.findMany({
+    where: {
+      workspaceId,
+      deletedAt: null,
+      ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+      OR: [
+        { title: { contains: query, mode: "insensitive" } },
+        { searchText: { contains: query, mode: "insensitive" } },
+      ],
+    },
+    orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+    take: window.take + 1,
+    skip: window.offset,
+    select: { id: true, title: true, searchText: true },
+  });
+  return fallback.map((page) => ({
+    id: page.id,
+    snippet: makeSnippet(page.searchText ?? page.title, query),
+  }));
+}
+
 /**
  * Workspace search across page titles and body text. Bodies are scanned from
  * stored documents because Postgres cannot full-text index JSON portably; the
@@ -483,63 +709,28 @@ export async function searchPages(
     return pages.map((page) => toSearchHit(page, "", includeBlocks));
   }
 
-  // 1. Ranked full-text match (GIN index on to_tsvector(searchText)).
-  //    `ts_rank_cd` (cover density) is term-frequency aware, so a page that
-  //    mentions the query terms many times outranks one that mentions them once.
-  const ranked = await prisma.$queryRaw<{ id: string; snippet: string }[]>`
-    WITH q AS (SELECT websearch_to_tsquery('english', ${q}) AS query)
-    SELECT p.id,
-           ts_headline('english', coalesce(p."searchText", p."title"), q.query,
-             'StartSel=, StopSel=, MaxWords=18, MinWords=6, ShortWord=3') AS snippet
-    FROM "Page" p, q
-    WHERE p."workspaceId" = ${workspaceId}
-      AND p."deletedAt" IS NULL
-      AND to_tsvector('english', coalesce(p."searchText", p."title")) @@ q.query
-    ORDER BY ts_rank_cd(to_tsvector('english', coalesce(p."searchText", p."title")), q.query) DESC,
-             p."updatedAt" DESC,
-             p."id" ASC
-    LIMIT ${take + 1} OFFSET ${offset}
-  `.catch(() => []);
+  const plan = await planFor(q, workspaceId);
+  const window: SearchWindow = { offset, take };
+  let hits: { id: string; snippet: string }[] = [];
 
-  let hits = ranked;
-
-  // 2. Prefix pass so typing "road" finds "roadmap".
-  if (hits.length === 0) {
-    const terms = searchTerms(q);
-    if (terms.length > 0) {
-      const tsquery = terms.map((term) => `${term}:*`).join(" & ");
-      hits = await prisma
-        .$queryRaw<{ id: string; snippet: string }[]>`
-          WITH q AS (SELECT to_tsquery('english', ${tsquery}) AS query)
-          SELECT p.id,
-                 ts_headline('english', coalesce(p."searchText", p."title"), q.query,
-                   'StartSel=, StopSel=, MaxWords=18, MinWords=6, ShortWord=3') AS snippet
-          FROM "Page" p, q
-          WHERE p."workspaceId" = ${workspaceId}
-            AND p."deletedAt" IS NULL
-            AND to_tsvector('english', coalesce(p."searchText", p."title")) @@ q.query
-          ORDER BY ts_rank_cd(to_tsvector('english', coalesce(p."searchText", p."title")), q.query) DESC,
-                   p."id" ASC
-          LIMIT ${take + 1} OFFSET ${offset}
-        `
-        .catch(() => []);
+  if (plan.strategy === "fts") {
+    // 1+2. Exact and type-ahead passes, blended by `mergeRanked` (Dec5).
+    hits = await fullTextHits(q, workspaceId, visiblePageIds, window);
+    if (hits.length === 0) {
+      // 3a. Both FTS passes empty: the `pg_trgm` typo tier (Dec5).
+      hits = await trigramHits(q, workspaceId, visiblePageIds, window);
     }
+  } else if (plan.strategy === "trigram") {
+    // Large, un-indexed table: the trigram tier is cheaper than a full ILIKE.
+    hits = await trigramHits(q, workspaceId, visiblePageIds, window);
+  } else if (plan.strategy === "ilike") {
+    // Small, un-indexed table: a bounded substring scan.
+    hits = await substringHits(q, workspaceId, visiblePageIds, window);
   }
 
-  // 3. Mirror not backfilled yet? Fall back to a title/substring match.
-  if (hits.length === 0) {
-    const fallback = await prisma.page.findMany({
-      where: {
-        workspaceId,
-        deletedAt: null,
-        OR: [{ title: { contains: q, mode: "insensitive" } }, { searchText: { contains: q, mode: "insensitive" } }],
-      },
-      orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
-      take,
-      skip: offset,
-      select: { ...base, searchText: true },
-    });
-    hits = fallback.map((page) => ({ id: page.id, snippet: makeSnippet(page.searchText ?? page.title, q) }));
+  // 3b. Mirror not backfilled yet? The substring scan is the last resort.
+  if (hits.length === 0 && plan.strategy !== "ilike") {
+    hits = await substringHits(q, workspaceId, visiblePageIds, window);
   }
 
   if (visiblePageIds) hits = hits.filter((hit) => visiblePageIds.has(hit.id));
