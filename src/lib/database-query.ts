@@ -8,6 +8,30 @@
 
 import { formatGeo, parseGeo } from "@/lib/geo";
 import { formatNumberValue, type NumberFormatSpec } from "@/lib/number-format";
+// The AND/OR builder tree (`@/lib/filter-tree-ui`) is the persisted shape this
+// engine lowers to a nested query through `toQueryExpr` (see `applyFilterBuilder`).
+// `filter-tree-ui` imports this module's operator catalogue at runtime; the two
+// modules only reference each other inside functions, so the cycle is inert.
+import {
+  toQueryExpr,
+  type FilterGroup as FilterBuilderTree,
+  type FilterNode as FilterBuilderNode,
+} from "@/lib/filter-tree-ui";
+// Bounded list loading: the numbered pager/window model lives in its own pure
+// module; `paginateRows` below is the query-layer entry point to it.
+import {
+  clampPage,
+  hasNext,
+  hasPrev,
+  pageCount,
+  paginationWindow,
+  rangeForPage,
+  type PageRange,
+  type PaginationSlot,
+} from "@/lib/pagination-window";
+import type { PropertyLayout } from "@/lib/property-layout-engine";
+import type { FooterSpec } from "@/lib/footer-calculations";
+import type { FormatRule } from "@/lib/conditional-format";
 
 export type PropertyOption = {
   id: string;
@@ -154,6 +178,40 @@ export type ViewConfig = {
    * real property id ever round-trips.
    */
   previewPropertyId?: string | null;
+  /**
+   * The nested AND/OR builder tree owned by `@/lib/filter-tree-ui`. Stored as a
+   * serialized `FilterGroup` root (stable node ids + `and`/`or` groups), this is
+   * the richer sibling of `filterTree`: when present it takes precedence and the
+   * engine lowers it through `toQueryExpr` (see `applyFilterBuilder`).
+   */
+  filterBuilder?: FilterBuilderTree;
+  /** PAGE: the persisted two-column property layout (`@/lib/property-layout-engine`). */
+  propertyLayout?: PropertyLayout;
+  /**
+   * TABLE / LIST: rows per page for bounded loading. The query layer's
+   * `paginateRows` slices through `@/lib/pagination-window`; an absent or
+   * non-positive value means "no window".
+   */
+  pageSize?: number;
+  /**
+   * GROUPS: the saved ordering of group buckets (option ids) consumed by the
+   * board/list group engine. Owned by the settings toolbar (`@/lib/board-groups`).
+   */
+  groupOrder?: string[];
+  /** GROUPS: the summary each group shows (`@/lib/aggregations` function id). */
+  groupAggregation?: string;
+  /** TABLE: whether column headers offer a quick filter (R89.6). Unset = on. */
+  quickFilter?: boolean;
+  /** Conditional-formatting authoring entry (R89.5). Unset = on. */
+  conditionalFormat?: boolean;
+  /** TABLE: the per-column calculations footer (`@/lib/footer-calculations`). */
+  footer?: FooterSpec;
+  /**
+   * CONDITIONAL FORMATTING: the same rules as `colorRules`, projected into
+   * `@/lib/conditional-format`'s richer vocabulary. Kept in step with
+   * `colorRules`; parsed by that engine, round-tripped here untouched.
+   */
+  formatRules?: FormatRule[];
 };
 
 type OperatorSpec = { value: FilterOperator; label: string };
@@ -577,6 +635,36 @@ export function applyFilterTree(
   );
 }
 
+/**
+ * Evaluate the AND/OR builder tree from `@/lib/filter-tree-ui` (the view's
+ * `filterBuilder`). The tree is lowered with `toQueryExpr` and then walked
+ * against the row set with the same operator semantics as `applyFilters`, so a
+ * saved builder tree filters rows exactly like the flat/tree paths.
+ *
+ * An empty root is neutral (matches every row), mirroring `applyFilterTree`.
+ */
+export function applyFilterBuilder(
+  rows: QueryRow[],
+  properties: QueryProperty[],
+  tree: FilterBuilderTree | undefined,
+): QueryRow[] {
+  if (!tree || tree.children.length === 0) return rows;
+  const byId = new Map(properties.map((p) => [p.id, p]));
+  const evaluate = (row: QueryRow, expr: ReturnType<typeof toQueryExpr>): boolean => {
+    if ("AND" in expr) return expr.AND.every((child) => evaluate(row, child));
+    if ("OR" in expr) return expr.OR.some((child) => evaluate(row, child));
+    const property = byId.get(expr.propertyId);
+    // An unknown property cannot decide the row, so it stays neutral like the
+    // flat filter path rather than hiding every row.
+    if (!property) return true;
+    const filter: Filter = { propertyId: expr.propertyId, operator: expr.op };
+    if (expr.value !== undefined) filter.value = expr.value;
+    return matches(row, filter, property);
+  };
+  const expr = toQueryExpr(tree);
+  return rows.filter((row) => evaluate(row, expr));
+}
+
 /** Resolve a row's conditional color from a set of rules (first match wins). */
 export function rowColor(
   row: QueryRow,
@@ -728,12 +816,85 @@ export function applyView(
   properties: QueryProperty[],
   config: ViewConfig,
 ): { rows: QueryRow[]; groups: RowGroup[] | null } {
-  const filtered = config.filterTree
-    ? applyFilterTree(rows, properties, config.filterTree, config.filterMode ?? "and")
-    : applyFilters(rows, properties, config.filters, config.filterMode ?? "and");
+  // Precedence: the AND/OR builder tree wins, then the flat `filterTree`, then
+  // the legacy flat `filters` — so a view that saved any of the richer shapes
+  // keeps filtering with it.
+  const filtered = config.filterBuilder
+    ? applyFilterBuilder(rows, properties, config.filterBuilder)
+    : config.filterTree
+      ? applyFilterTree(rows, properties, config.filterTree, config.filterMode ?? "and")
+      : applyFilters(rows, properties, config.filters, config.filterMode ?? "and");
   const sorted = applySorts(filtered, properties, config.sorts);
   const groups = groupRows(sorted, properties, config.groupByPropertyId);
   return { rows: sorted, groups };
+}
+
+/* ---------------------------------------------------------------------------
+   Bounded list loading
+   The numbered pager is a pure window over an already-filtered/sorted row set.
+   `paginateRows` is the query-layer bridge to `@/lib/pagination-window`: it
+   clamps the page, slices the rows for that page, and returns the pager slots
+   (with ellipses) plus previous/next flags, so a renderer never re-derives the
+   arithmetic itself.
+   --------------------------------------------------------------------------- */
+
+export type RowWindow = {
+  /** The rows on the requested page (empty when there is nothing to show). */
+  rows: QueryRow[];
+  /** Total rows before windowing. */
+  total: number;
+  /** Clamped 1-based page number. */
+  page: number;
+  /** Total number of pages (`0` when `perPage` is non-positive). */
+  pageCount: number;
+  /** Effective, sanitised page size (`0` when "no window"). */
+  perPage: number;
+  /** 0-based, end-exclusive slice used (`Array#slice` range). */
+  range: PageRange;
+  hasPrev: boolean;
+  hasNext: boolean;
+  /** The ordered pager run, with `PAGINATION_ELLIPSIS` marking skipped spans. */
+  slots: PaginationSlot[];
+};
+
+/** Coerce a page size to a finite, non-negative integer (0 = no window). */
+function normalizePageSize(value: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : 0;
+}
+
+/**
+ * Window an already-filtered row set to one page. `page` is clamped into range
+ * and a non-positive `perPage` collapses to an empty window (no pagination).
+ */
+export function paginateRows(
+  rows: QueryRow[],
+  page: number,
+  perPage: number,
+  options: { siblings?: number; boundary?: number } = {},
+): RowWindow {
+  const total = Array.isArray(rows) ? rows.length : 0;
+  const size = normalizePageSize(perPage);
+  const pages = pageCount(total, size);
+  const safePage = clampPage(page, pages > 0 ? pages : 1);
+  const range = rangeForPage(safePage, size);
+  return {
+    rows: Array.isArray(rows) ? rows.slice(range.start, range.end) : [],
+    total,
+    page: safePage,
+    pageCount: pages,
+    perPage: size,
+    range,
+    hasPrev: hasPrev(safePage, pages),
+    hasNext: hasNext(safePage, pages),
+    slots: paginationWindow({
+      current: safePage,
+      total: pages,
+      siblings: options.siblings,
+      boundary: options.boundary,
+    }),
+  };
 }
 
 /* ---------------------------------------------------------------------------
@@ -853,6 +1014,101 @@ function normalizeVisibleGroups(input: unknown): Record<string, boolean> | undef
   return Object.keys(visibility).length > 0 ? visibility : undefined;
 }
 
+/**
+ * Canonicalise one `@/lib/filter-tree-ui` builder node. Groups keep their `id`,
+ * `op` and recursively-normalised children; leaves keep a valid property id and
+ * operator. Anything malformed (or a leaf naming an unknown operator) is
+ * dropped, matching this layer's "drop, never mis-evaluate" rule.
+ */
+function normalizeFilterBuilderNode(input: unknown): FilterBuilderNode | null {
+  const record = asRecord(input);
+  if (!record) return null;
+  if (typeof record.id !== "string" || record.id === "") return null;
+  if (Array.isArray(record.children)) {
+    if (record.op !== "and" && record.op !== "or") return null;
+    const children = record.children
+      .map(normalizeFilterBuilderNode)
+      .filter((node): node is FilterBuilderNode => node !== null);
+    return { id: record.id, op: record.op, children };
+  }
+  if (typeof record.propertyId !== "string" || record.propertyId === "") return null;
+  if (!isFilterOperator(record.op)) return null;
+  const leaf: FilterBuilderNode = {
+    id: record.id,
+    propertyId: record.propertyId,
+    op: record.op,
+  };
+  if (typeof record.value === "string") leaf.value = record.value;
+  return leaf;
+}
+
+/** Keep a stored builder tree only when it is a well-formed group root. */
+function normalizeFilterBuilder(input: unknown): FilterBuilderTree | undefined {
+  const node = normalizeFilterBuilderNode(input);
+  return node && "children" in node ? node : undefined;
+}
+
+/** Keep a sane, de-duplicated property order (blank ids dropped). */
+function normalizePropertyLayoutKey(input: unknown): PropertyLayout | undefined {
+  const record = asRecord(input);
+  if (!record) return undefined;
+  const columns: 1 | 2 = record.columns === 2 ? 2 : 1;
+  const order = uniqueStrings(record.order) ?? [];
+  const spans: Record<string, 1 | 2> = {};
+  const spanRecord = asRecord(record.spans);
+  if (spanRecord) {
+    for (const [id, value] of Object.entries(spanRecord)) {
+      if (order.includes(id) && value === 2) spans[id] = 2;
+    }
+  }
+  return {
+    columns,
+    order,
+    spans,
+    dividers: record.dividers === true,
+  };
+}
+
+/** Keep a positive integer page size; anything else means "no window". */
+function normalizeStoredPageSize(input: unknown): number | undefined {
+  if (typeof input !== "number" || !Number.isInteger(input) || input <= 0) {
+    return undefined;
+  }
+  return input;
+}
+
+/**
+ * Keep only well-formed footer entries (`{ propertyId, fn }`) — the shape
+ * `@/lib/footer-calculations`' `parseFooterSpec` accepts downstream. A
+ * non-array or empty list normalises away.
+ */
+function normalizeFooterKey(input: unknown): FooterSpec | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const spec: FooterSpec = [];
+  for (const entry of input) {
+    const record = asRecord(entry);
+    if (!record) continue;
+    if (typeof record.propertyId !== "string" || record.propertyId === "") continue;
+    if (typeof record.fn !== "string" || record.fn === "") continue;
+    spec.push({ propertyId: record.propertyId, fn: record.fn as FooterSpec[number]["fn"] });
+  }
+  return spec.length > 0 ? spec : undefined;
+}
+
+/**
+ * Keep the conditional-format rules as an array of plain records. The owning
+ * engine (`@/lib/conditional-format`) parses each rule at render time, so this
+ * layer only guarantees the list shape and leaves the rule body untouched.
+ */
+function normalizeFormatRulesKey(input: unknown): FormatRule[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const rules = input.filter((rule): rule is FormatRule =>
+    asRecord(rule) !== null,
+  );
+  return rules.length > 0 ? rules : undefined;
+}
+
+
 /** Strip a stored/patched view config down to the keys this build understands. */
 export function normalizeViewConfig(input: unknown): ViewConfig {
   const record = asRecord(input);
@@ -935,6 +1191,30 @@ export function normalizeViewConfig(input: unknown): ViewConfig {
   if (typeof record.previewPropertyId === "string") {
     out.previewPropertyId = record.previewPropertyId;
   }
+  // Depth keys owned by this build's wiring slices: the AND/OR builder tree
+  // (`filter-tree-ui`), the page property layout (`property-layout-engine`),
+  // bounded-loading page size, and the groups/footer/conditional-format keys the
+  // settings toolbar already writes. Persisted so a save round-trips instead of
+  // being dropped by this normaliser.
+  const filterBuilder = normalizeFilterBuilder(record.filterBuilder);
+  if (filterBuilder) out.filterBuilder = filterBuilder;
+  const propertyLayout = normalizePropertyLayoutKey(record.propertyLayout);
+  if (propertyLayout) out.propertyLayout = propertyLayout;
+  const pageSize = normalizeStoredPageSize(record.pageSize);
+  if (pageSize !== undefined) out.pageSize = pageSize;
+  const groupOrder = uniqueStrings(record.groupOrder);
+  if (groupOrder && groupOrder.length > 0) out.groupOrder = groupOrder;
+  if (typeof record.groupAggregation === "string" && record.groupAggregation !== "") {
+    out.groupAggregation = record.groupAggregation;
+  }
+  if (typeof record.quickFilter === "boolean") out.quickFilter = record.quickFilter;
+  if (typeof record.conditionalFormat === "boolean") {
+    out.conditionalFormat = record.conditionalFormat;
+  }
+  const footer = normalizeFooterKey(record.footer);
+  if (footer) out.footer = footer;
+  const formatRules = normalizeFormatRulesKey(record.formatRules);
+  if (formatRules) out.formatRules = formatRules;
   return out;
 }
 

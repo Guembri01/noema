@@ -36,6 +36,7 @@ import {
   type ColorRule,
   type Filter,
   type FilterNode,
+  type QueryProperty,
   type Sort,
   type ViewConfig,
 } from "@/lib/database-query";
@@ -64,6 +65,36 @@ import {
   type FilterTreeLeaf,
   type FilterTreeNode,
 } from "@/lib/filter-tree";
+import {
+  addNode as addBuilderNode,
+  describeTree as describeBuilderTree,
+  findPath as findBuilderPath,
+  isGroup as isBuilderGroup,
+  makeGroup as makeBuilderGroup,
+  makeLeaf as makeBuilderLeaf,
+  moveNode as moveBuilderNode,
+  normalizeTree as normalizeBuilderTree,
+  removeNode as removeBuilderNode,
+  updateNode as updateBuilderNode,
+  validateTree as validateBuilderTree,
+  type FilterGroup as BuilderGroup,
+  type FilterLeaf as BuilderLeaf,
+  type FilterLeafPatch as BuilderLeafPatch,
+  type FilterNode as BuilderNode,
+} from "@/lib/filter-tree-ui";
+import {
+  describeLayout,
+  moveProperty,
+  parsePropertyLayout,
+  resolveLayout,
+  responsivePlan,
+  setSpan,
+  toggleColumns,
+  validateLayout,
+  type LayoutProperty,
+  type PropertyLayout,
+  type PropertySpan,
+} from "@/lib/property-layout-engine";
 import {
   DEFAULT_COLUMN_WIDTH,
   DEFAULT_MAX_WIDTH,
@@ -377,6 +408,276 @@ function FilterGroupRows({
             properties={properties}
             onSetField={onSetLeafField}
             onRemove={onRemoveLeaf}
+          />
+        ),
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   AND/OR builder tree (filter-tree-ui)
+   The richer sibling of the flat/nested `@/lib/filter-tree` editor above: this
+   panel edits a `FilterGroup` from `@/lib/filter-tree-ui`, which addresses
+   nodes by index path, supports moving a node between groups, normalises
+   redundant structure, validates against the property schema and renders a
+   sentence. It persists as `config.filterBuilder`; `applyView` (database-query)
+   lowers the saved tree through `toQueryExpr`, so the tree genuinely filters.
+   --------------------------------------------------------------------------- */
+
+/** Operators that take no target value (the input is hidden for these). */
+const BUILDER_VALUELESS_OPERATORS = ["is_empty", "is_not_empty", "checked", "unchecked"];
+
+/** Every group in the tree as a move destination, labelled by discovery order. */
+export function collectBuilderGroupOptions(
+  tree: BuilderGroup,
+): { id: string; label: string }[] {
+  const options: { id: string; label: string }[] = [];
+  const walk = (node: BuilderNode): void => {
+    if (!isBuilderGroup(node)) return;
+    options.push({
+      id: node.id,
+      label: `Group ${options.length + 1} (${node.op === "or" ? "ANY" : "ALL"})`,
+    });
+    for (const child of node.children) walk(child);
+  };
+  walk(tree);
+  return options;
+}
+
+/** Change a group's conjunction in place (immutably); path `[]` is the root. */
+export function setBuilderGroupOp(
+  tree: BuilderGroup,
+  path: number[],
+  op: "and" | "or",
+): BuilderGroup {
+  if (path.length === 0) return { ...tree, op };
+  const [head, ...rest] = path;
+  return {
+    ...tree,
+    children: tree.children.map((child, index) =>
+      index === head && isBuilderGroup(child)
+        ? setBuilderGroupOp(child, rest, op)
+        : child,
+    ),
+  };
+}
+
+/** One condition (leaf) row inside the builder tree. */
+function BuilderLeafRow({
+  leaf,
+  path,
+  properties,
+  groupOptions,
+  onSetField,
+  onRemove,
+  onMove,
+}: {
+  leaf: BuilderLeaf;
+  path: number[];
+  properties: DBProperty[];
+  groupOptions: { id: string; label: string }[];
+  onSetField: (path: number[], patch: BuilderLeafPatch) => void;
+  onRemove: (path: number[]) => void;
+  onMove: (path: number[], destinationId: string) => void;
+}) {
+  const property = properties.find((p) => p.id === leaf.propertyId);
+  const noValue = BUILDER_VALUELESS_OPERATORS.includes(leaf.op);
+  return (
+    <div className="space-y-1 rounded border border-border p-2">
+      <div className="flex items-center gap-1">
+        <select
+          value={leaf.propertyId}
+          aria-label="Builder condition property"
+          data-testid="builder-property"
+          onChange={(event) => {
+            const next = properties.find((p) => p.id === event.target.value);
+            const ops = operatorsFor(next?.type ?? "TEXT");
+            // Keep the operator valid for the new property type.
+            const op = ops.some((spec) => spec.value === leaf.op)
+              ? leaf.op
+              : ops[0].value;
+            onSetField(path, { propertyId: event.target.value, op });
+          }}
+          className={cn(CONTROL_CLASS, "flex-1")}
+        >
+          {properties.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        {groupOptions.length > 1 && (
+          <select
+            value=""
+            aria-label="Move condition into group"
+            data-testid="builder-move"
+            onChange={(event) => {
+              if (event.target.value) onMove(path, event.target.value);
+            }}
+            className={cn(CONTROL_CLASS, "w-24")}
+          >
+            <option value="">Move…</option>
+            {groupOptions.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+          </select>
+        )}
+        <button
+          type="button"
+          aria-label="Remove condition"
+          onClick={() => onRemove(path)}
+          className="text-muted hover:text-red-500"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <select
+        value={leaf.op}
+        aria-label="Builder condition operator"
+        data-testid="builder-operator"
+        onChange={(event) =>
+          onSetField(path, { op: event.target.value as Filter["operator"] })
+        }
+        className={cn(CONTROL_CLASS, "w-full")}
+      >
+        {operatorsFor(property?.type ?? "TEXT").map((op) => (
+          <option key={op.value} value={op.value}>{op.label}</option>
+        ))}
+      </select>
+      {!noValue && (
+        <input
+          value={leaf.value ?? ""}
+          aria-label="Builder condition value"
+          data-testid="builder-value"
+          onChange={(event) => onSetField(path, { value: event.target.value })}
+          placeholder="Value"
+          className={cn(CONTROL_CLASS, "w-full")}
+        />
+      )}
+    </div>
+  );
+}
+
+/** A group of conditions/subgroups combined with one AND/OR conjunction. */
+function BuilderGroupRows({
+  node,
+  path,
+  depth,
+  properties,
+  groupOptions,
+  onAddCondition,
+  onAddGroup,
+  onRemove,
+  onSetOp,
+  onSetLeafField,
+  onMove,
+}: {
+  node: BuilderGroup;
+  path: number[];
+  depth: number;
+  properties: DBProperty[];
+  groupOptions: { id: string; label: string }[];
+  onAddCondition: (path: number[]) => void;
+  onAddGroup: (path: number[]) => void;
+  onRemove: (path: number[]) => void;
+  onSetOp: (path: number[], op: "and" | "or") => void;
+  onSetLeafField: (path: number[], patch: BuilderLeafPatch) => void;
+  onMove: (path: number[], destinationId: string) => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "space-y-2 rounded border border-border p-2",
+        depth > 0 && "bg-surface-2/40",
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-1">
+        <select
+          value={node.op}
+          aria-label="Builder group match"
+          data-testid={depth === 0 ? "builder-root-op" : undefined}
+          onChange={(event) =>
+            onSetOp(path, event.target.value === "or" ? "or" : "and")
+          }
+          className={cn(CONTROL_CLASS, "h-7")}
+        >
+          <option value="and">all</option>
+          <option value="or">any</option>
+        </select>
+        <span className="text-xs text-muted">of these</span>
+        <div className="ml-auto flex items-center gap-2">
+          {depth > 0 && groupOptions.length > 1 && (
+            <select
+              value=""
+              aria-label="Move group into group"
+              data-testid="builder-group-move"
+              onChange={(event) => {
+                if (event.target.value) onMove(path, event.target.value);
+              }}
+              className={cn(CONTROL_CLASS, "h-7 w-24")}
+            >
+              <option value="">Move…</option>
+              {groupOptions
+                .filter((option) => option.id !== node.id)
+                .map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+            </select>
+          )}
+          <button
+            type="button"
+            onClick={() => onAddCondition(path)}
+            className="flex items-center gap-1 text-xs text-accent"
+          >
+            <Plus className="h-3 w-3" /> Condition
+          </button>
+          <button
+            type="button"
+            onClick={() => onAddGroup(path)}
+            className="flex items-center gap-1 text-xs text-accent"
+          >
+            <Plus className="h-3 w-3" /> Group
+          </button>
+          {depth > 0 && (
+            <button
+              type="button"
+              aria-label="Remove group"
+              onClick={() => onRemove(path)}
+              className="text-muted hover:text-red-500"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+      {node.children.length === 0 && (
+        <p className="text-xs text-muted">Empty group — matches every row.</p>
+      )}
+      {node.children.map((child, index) =>
+        isBuilderGroup(child) ? (
+          <BuilderGroupRows
+            key={child.id}
+            node={child}
+            path={[...path, index]}
+            depth={depth + 1}
+            properties={properties}
+            groupOptions={groupOptions}
+            onAddCondition={onAddCondition}
+            onAddGroup={onAddGroup}
+            onRemove={onRemove}
+            onSetOp={onSetOp}
+            onSetLeafField={onSetLeafField}
+            onMove={onMove}
+          />
+        ) : (
+          <BuilderLeafRow
+            key={child.id}
+            leaf={child}
+            path={[...path, index]}
+            properties={properties}
+            groupOptions={groupOptions}
+            onSetField={onSetLeafField}
+            onRemove={onRemove}
+            onMove={onMove}
           />
         ),
       )}
@@ -1427,6 +1728,156 @@ export function ViewSettings({
     if (isFilterGroup(next)) commitTree(next);
   };
 
+  // --- AND/OR builder tree (filter-tree-ui) --------------------------------
+  // An additive sibling of the filter-tree editor: it edits a `FilterGroup`
+  // (stable ids, index-path edits, move/validate/normalize/describe) persisted
+  // as `config.filterBuilder`. `applyView` gives it precedence and lowers it
+  // through `toQueryExpr`, so a saved builder tree really filters the rows.
+  const builderTree = config.filterBuilder ?? null;
+  const builderProperties = properties as unknown as QueryProperty[];
+  const builderGroupOptions = builderTree ? collectBuilderGroupOptions(builderTree) : [];
+  const builderIssues = builderTree
+    ? validateBuilderTree(builderTree, { properties: builderProperties })
+    : [];
+  const builderDescription = builderTree
+    ? describeBuilderTree(builderTree, {
+        propertyName: (id) => properties.find((p) => p.id === id)?.name ?? id,
+      })
+    : "";
+  const builderDefaultProperty = defaultProperty ?? properties[0];
+
+  const commitBuilder = (next: BuilderGroup) => onChange({ filterBuilder: next });
+
+  const createBuilderTree = () => {
+    if (!builderDefaultProperty) return;
+    const op = config.filterMode === "or" ? "or" : "and";
+    const children: BuilderNode[] =
+      filters.length > 0
+        ? filters.map((filter) =>
+            makeBuilderLeaf({
+              propertyId: filter.propertyId,
+              op: filter.operator,
+              value: filter.value,
+            }),
+          )
+        : [
+            makeBuilderLeaf({
+              propertyId: builderDefaultProperty.id,
+              op: "contains",
+              value: "",
+            }),
+          ];
+    commitBuilder(makeBuilderGroup(op, children));
+  };
+
+  const addBuilderConditionAt = (path: number[]) => {
+    if (!builderTree || !builderDefaultProperty) return;
+    commitBuilder(
+      addBuilderNode(
+        builderTree,
+        path,
+        makeBuilderLeaf({
+          propertyId: builderDefaultProperty.id,
+          op: "contains",
+          value: "",
+        }),
+      ),
+    );
+  };
+
+  const addBuilderGroupAt = (path: number[]) => {
+    if (!builderTree || !builderDefaultProperty) return;
+    const child = makeBuilderLeaf({
+      propertyId: builderDefaultProperty.id,
+      op: "contains",
+      value: "",
+    });
+    commitBuilder(addBuilderNode(builderTree, path, makeBuilderGroup("and", [child])));
+  };
+
+  const removeBuilderAt = (path: number[]) => {
+    if (!builderTree) return;
+    commitBuilder(removeBuilderNode(builderTree, path));
+  };
+
+  const setBuilderOpAt = (path: number[], op: "and" | "or") => {
+    if (!builderTree) return;
+    commitBuilder(setBuilderGroupOp(builderTree, path, op));
+  };
+
+  const setBuilderLeafAt = (path: number[], patch: BuilderLeafPatch) => {
+    if (!builderTree) return;
+    commitBuilder(updateBuilderNode(builderTree, path, patch));
+  };
+
+  const moveBuilderAt = (path: number[], destinationId: string) => {
+    if (!builderTree) return;
+    const destination = findBuilderPath(builderTree, destinationId);
+    if (!destination) return;
+    commitBuilder(moveBuilderNode(builderTree, path, destination));
+  };
+
+  const normalizeBuilder = () => {
+    if (!builderTree) return;
+    commitBuilder(normalizeBuilderTree(builderTree));
+  };
+
+  const clearBuilder = () => onChange({ filterBuilder: undefined });
+
+  // --- Two-column page property layout (property-layout-engine) -------------
+  // The persisted layout's order is merged with the live schema (saved ids
+  // first, new properties appended), then resolved into per-property grid
+  // placements and collapsed for a narrow viewport by `responsivePlan`. The
+  // resolved placements are previewed here; the page property panel consumes
+  // `propertyLayout` outside this file.
+  const layoutSchema: LayoutProperty[] = properties.map((property) => ({
+    id: property.id,
+    name: property.name,
+  }));
+  const persistedPropertyLayout = parsePropertyLayout(config.propertyLayout);
+  const schemaPropertyIds = properties.map((property) => property.id);
+  const propertyLayout: PropertyLayout = {
+    ...persistedPropertyLayout,
+    order: [
+      ...persistedPropertyLayout.order.filter((id) => schemaPropertyIds.includes(id)),
+      ...schemaPropertyIds.filter((id) => !persistedPropertyLayout.order.includes(id)),
+    ],
+  };
+  const layoutPlacements = resolveLayout(propertyLayout, { properties: layoutSchema });
+  const layoutIssues = validateLayout(propertyLayout, { properties: layoutSchema });
+  const narrowLayoutPlan = responsivePlan(propertyLayout, { widthBucket: "narrow" });
+  const propertyLayoutSummary = describeLayout(propertyLayout, {
+    propertyName: (id) => properties.find((p) => p.id === id)?.name ?? id,
+  });
+  const fullWidthPlacements = layoutPlacements.filter(
+    (placement) => placement.span === 2,
+  ).length;
+
+  const commitPropertyLayout = (next: PropertyLayout) =>
+    onChange({ propertyLayout: next });
+
+  const togglePropertyLayoutColumns = () =>
+    commitPropertyLayout(toggleColumns(propertyLayout));
+
+  const togglePropertyLayoutDividers = () =>
+    commitPropertyLayout({ ...propertyLayout, dividers: !propertyLayout.dividers });
+
+  const movePropertyLayout = (propertyId: string, delta: number) => {
+    const index = propertyLayout.order.indexOf(propertyId);
+    if (index === -1) return;
+    commitPropertyLayout(moveProperty(propertyLayout, propertyId, index + delta));
+  };
+
+  const togglePropertyLayoutSpan = (propertyId: string) => {
+    const current: PropertySpan = propertyLayout.spans?.[propertyId] === 2 ? 2 : 1;
+    commitPropertyLayout(setSpan(propertyLayout, propertyId, current === 2 ? 1 : 2));
+  };
+
+  // --- Bounded list loading (pageSize) -------------------------------------
+  const pageSize = config.pageSize ?? 0;
+  const setPageSize = (value: string) =>
+    onChange({ pageSize: Number(value) > 0 ? Number(value) : undefined });
+
   // --- Templates (default toggle + reorder) --------------------------------
   // The popover only renders when the caller passes both a template list and the
   // database page, so the two actions below are only ever invoked with a real
@@ -1640,6 +2091,92 @@ export function ViewSettings({
               />
               Quick filter from column headers
             </label>
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      {/* AND/OR builder tree — the richer sibling of the filter-tree editor.
+          Persisted as `config.filterBuilder` (filter-tree-ui) and lowered by
+          `applyView` through `toQueryExpr`, so a saved tree really filters. */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-testid="builder-trigger"
+            className={cn(
+              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
+              builderTree && "bg-surface-2 text-fg",
+            )}
+          >
+            <FilterIcon className="h-3.5 w-3.5" />
+            Builder
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-96" data-testid="db-builder-popover">
+          <div className="space-y-2">
+            {builderTree ? (
+              <>
+                <BuilderGroupRows
+                  node={builderTree}
+                  path={[]}
+                  depth={0}
+                  properties={properties}
+                  groupOptions={builderGroupOptions}
+                  onAddCondition={addBuilderConditionAt}
+                  onAddGroup={addBuilderGroupAt}
+                  onRemove={removeBuilderAt}
+                  onSetOp={setBuilderOpAt}
+                  onSetLeafField={setBuilderLeafAt}
+                  onMove={moveBuilderAt}
+                />
+                <p className="text-xs text-muted" data-testid="builder-description">
+                  {builderDescription || "Empty builder — matches every row."}
+                </p>
+                {builderIssues.length > 0 && (
+                  <ul className="space-y-0.5 text-xs text-amber-500" data-testid="builder-issues">
+                    {builderIssues.map((issue) => (
+                      <li key={`${issue.path.join("-")}-${issue.code}`}>
+                        {issue.message}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="flex items-center gap-3 border-t border-border pt-2">
+                  <button
+                    type="button"
+                    data-testid="builder-normalize"
+                    onClick={normalizeBuilder}
+                    className="flex items-center gap-1 text-xs text-accent"
+                  >
+                    <RotateCcw className="h-3 w-3" /> Normalize
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="builder-clear"
+                    onClick={clearBuilder}
+                    className="text-xs text-muted hover:text-fg"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-muted">
+                  Build an AND/OR tree of conditions to any depth. It takes
+                  precedence over the simple filters while saved.
+                </p>
+                <button
+                  type="button"
+                  data-testid="builder-create"
+                  disabled={!builderDefaultProperty}
+                  onClick={createBuilderTree}
+                  className="flex items-center gap-1 text-xs text-accent disabled:opacity-50"
+                >
+                  <Plus className="h-3 w-3" /> Create filter group
+                </button>
+              </>
+            )}
           </div>
         </PopoverContent>
       </Popover>
@@ -2478,6 +3015,126 @@ export function ViewSettings({
           </label>
         </PopoverContent>
       </Popover>
+
+      {/* Two-column page property layout — persisted as `config.propertyLayout`
+          and resolved through the property-layout-engine. The resolved grid
+          placements and the narrow-viewport collapse are summarised here; the
+          page property panel renders them outside this file. */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-testid="layout-trigger"
+            className={cn(
+              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
+              propertyLayout.columns === 2 && "bg-surface-2 text-fg",
+            )}
+          >
+            <LayoutTemplate className="h-3.5 w-3.5" />
+            Layout
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-72" data-testid="db-layout-popover">
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                data-testid="layout-two-columns"
+                checked={propertyLayout.columns === 2}
+                aria-label="Two-column property layout"
+                onChange={togglePropertyLayoutColumns}
+                className="accent-[var(--accent)]"
+              />
+              Two columns
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                data-testid="layout-dividers"
+                checked={propertyLayout.dividers === true}
+                aria-label="Column divider"
+                onChange={togglePropertyLayoutDividers}
+                className="accent-[var(--accent)]"
+              />
+              Column divider
+            </label>
+            <ul className="space-y-1 border-t border-border pt-2">
+              {propertyLayout.order.map((id, index) => {
+                const fullWidth = propertyLayout.spans?.[id] === 2;
+                const name = properties.find((p) => p.id === id)?.name ?? id;
+                return (
+                  <li key={id} className="flex items-center gap-1 text-sm">
+                    <span className="min-w-0 flex-1 truncate">{name}</span>
+                    <label className="flex items-center gap-1 text-xs text-muted">
+                      <input
+                        type="checkbox"
+                        data-testid={`layout-span-${id}`}
+                        checked={fullWidth}
+                        disabled={propertyLayout.columns === 1}
+                        aria-label={`${name} full width`}
+                        onChange={() => togglePropertyLayoutSpan(id)}
+                        className="accent-[var(--accent)] disabled:opacity-40"
+                      />
+                      full
+                    </label>
+                    <button
+                      type="button"
+                      aria-label={`Move ${name} up`}
+                      data-testid={`layout-up-${id}`}
+                      disabled={index === 0}
+                      onClick={() => movePropertyLayout(id, -1)}
+                      className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
+                    >
+                      <span aria-hidden>↑</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Move ${name} down`}
+                      data-testid={`layout-down-${id}`}
+                      disabled={index === propertyLayout.order.length - 1}
+                      onClick={() => movePropertyLayout(id, 1)}
+                      className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
+                    >
+                      <span aria-hidden>↓</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="border-t border-border pt-2 text-xs text-muted" data-testid="layout-summary">
+              {propertyLayoutSummary}
+            </p>
+            <p className="text-xs text-muted" data-testid="layout-placement">
+              {layoutPlacements.length} properties · {fullWidthPlacements} full-width
+              {narrowLayoutPlan.collapsed ? " · collapses on narrow screens" : ""}
+            </p>
+            {layoutIssues.issues.length > 0 && (
+              <p className="text-xs text-amber-500" data-testid="layout-issues">
+                {layoutIssues.issues.length} layout warning
+                {layoutIssues.issues.length === 1 ? "" : "s"}
+              </p>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      {/* Bounded list loading: rows per page, consumed by `paginateRows`
+          (`@/lib/pagination-window`) so a large view loads a window at a time. */}
+      <label className="flex items-center gap-1 text-xs text-muted">
+        Rows
+        <select
+          data-testid="page-size"
+          aria-label="Rows per page"
+          value={pageSize === 0 ? "0" : String(pageSize)}
+          onChange={(event) => setPageSize(event.target.value)}
+          className={cn(CONTROL_CLASS, "h-7")}
+        >
+          <option value="0">All</option>
+          <option value="25">25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
 
       {/* Saved views — named filter/sort/group presets for this database.
           In-session only: each preset overlays the current config through
