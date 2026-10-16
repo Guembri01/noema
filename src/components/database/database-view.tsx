@@ -23,6 +23,7 @@ import {
   Plus,
   RotateCcw,
   Trash2,
+  Unlock,
   Upload,
   X } from "lucide-react";
 import {
@@ -43,7 +44,10 @@ import {
   setTemplateRecurrenceAction,
   updatePropertyAction,
   updateViewAction } from "@/server/actions/database";
-import { restorePageAction, updatePageAction } from "@/server/actions/pages";
+import {
+  restorePageAction,
+  toggleSchemaLockAction,
+  updatePageAction } from "@/server/actions/pages";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -66,7 +70,12 @@ import {
   dependentsOf,
   type DependencyEdge,
 } from "@/lib/dependencies";
-import { describeLock, type LockState } from "@/lib/database-lock";
+import {
+  canEditSchema,
+  describeLock,
+  toggleLock,
+  type LockRole,
+  type LockState } from "@/lib/database-lock";
 import {
   childrenOf as subItemChildrenOf,
   visibleRows as visibleSubItemRows,
@@ -268,6 +277,40 @@ function normalizeFooterCalculations(
 type EditableViewConfig = ViewConfig & { description?: string };
 
 /**
+ * The viewer's lock role as the *client* can know it. `DatabaseView` is not yet
+ * handed the workspace role — the route (`page.tsx`) passes only `editable` —
+ * so the strongest role the client can justify is "an editor is owner-capable".
+ * That mirrors the page actions menu's own rule ("the Lock toggle must stay
+ * reachable on a locked page, or it could never be unlocked") and keeps the
+ * database's unlock path reachable from the toolbar; `canEditSchema` still fails
+ * closed for a viewer without edit access. The server action re-derives the real
+ * role and owns the owner-only unlock, so this only decides whether the toolbar
+ * *offers* the control, never whether the write is allowed (R89.24: "hiding
+ * buttons is cosmetic").
+ */
+export function clientLockRole(editable: boolean): LockRole {
+  return { isOwner: editable, isMember: editable };
+}
+
+/**
+ * The pure decision behind the database schema-lock toolbar control (R89.24).
+ * `canEditSchema` gates the interactive toggle — an `editSchema` holder gets it,
+ * everyone else keeps the read-only lock chip — and `toggleLock` derives the
+ * value a click persists, so the control is unit-testable without a DOM. The
+ * component routes the action through this function; the server re-checks the
+ * same policy before writing.
+ */
+export function schemaLockToggle(
+  lockState: LockState,
+  role: LockRole,
+): { canToggle: boolean; nextLocked: boolean } {
+  return {
+    canToggle: canEditSchema(lockState, role),
+    nextLocked: toggleLock(lockState).locked,
+  };
+}
+
+/**
  * The virtual table column that surfaces a row's dependency indicator
  * (`@/lib/dependencies`, spec R89.31). It is not a stored property: it is
  * appended to the table's schema only while the caller supplies blocking
@@ -326,6 +369,14 @@ export function DatabaseView({
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
+  /**
+   * R89.24 — the schema lock is optimistic while the server write is in
+   * flight: the toolbar flips immediately, and a refused write (e.g. a member
+   * trying to unlock a locked database, which only the owner may do) reverts the
+   * chip and surfaces the action's error. Seeded from the `schemaLocked` prop and
+   * re-synced whenever the server echoes a new value.
+   */
+  const [schemaLockedState, setSchemaLockedState] = useState(schemaLocked);
   const [activeViewId, setActiveViewId] = useState(views[0]?.id ?? "");
   const [addingProperty, setAddingProperty] = useState(false);
   const [editingProperty, setEditingProperty] = useState<string | null>(null);
@@ -343,6 +394,13 @@ export function DatabaseView({
    * `visiblePropertyIds`, so the settings popover and the table agree.
    */
   const [layoutByView, setLayoutByView] = useState<Record<string, ColumnLayout>>({});
+
+  // A server refresh (after a successful lock write, or a concurrent change)
+  // re-delivers `schemaLocked`; adopt it so the optimistic buffer never drifts
+  // from the persisted value.
+  useEffect(() => {
+    setSchemaLockedState(schemaLocked);
+  }, [schemaLocked]);
 
   // The open tab is part of the view state: remember it per database so a
   // reload lands on the same tab instead of always resetting to the first one.
@@ -518,11 +576,15 @@ export function DatabaseView({
     [viewRows, dependencyGraph],
   );
   const lockState: LockState = {
-    locked: schemaLocked,
+    locked: schemaLockedState,
     ...(lockedPropertyIds && lockedPropertyIds.length > 0
       ? { lockedPropertyIds }
       : {}),
   };
+  // R89.24 — the toolbar control the viewer may see: `canEditSchema` gates the
+  // interactive toggle (via `schemaLockToggle`), so a non-editor keeps the
+  // read-only chip. `clientLockRole` explains how the role is derived today.
+  const lockControl = schemaLockToggle(lockState, clientLockRole(editable));
 
   // The virtual dependency column, plus the table schema/config that show it.
   // Both are the plain values when there are no edges, so the table is
@@ -1232,6 +1294,29 @@ export function DatabaseView({
       router.refresh();
     });
 
+  /**
+   * R89.24 — flip the database schema lock through `toggleSchemaLockAction`.
+   * Optimistic: the toolbar flips before the round-trip; a refused write (a
+   * member unlocking a locked database is owner-only server-side) reverts to the
+   * previous value and surfaces the action's error. The server is the authority
+   * — this handler only decides what the control *shows*.
+   */
+  const toggleSchemaLock = () =>
+    startTransition(async () => {
+      const previous = schemaLockedState;
+      const next = !previous;
+      setSchemaLockedState(next);
+      const result = await toggleSchemaLockAction(databasePageId, next);
+      if ("error" in result) {
+        setSchemaLockedState(previous);
+        toast.error(result.error);
+        return;
+      }
+      setSchemaLockedState(result.schemaLocked);
+      toast.success(describeLock({ locked: result.schemaLocked }));
+      router.refresh();
+    });
+
   /** Soft-deleted rows of this database, for the restore panel. */
   const loadDeletedRows = () =>
     startTransition(async () => {
@@ -1392,20 +1477,41 @@ export function DatabaseView({
               {blockedRowCount} {t(locale, "relationBlockedBy")}
             </span>
           )}
-          {/* R89.24 — database lock. Read-only for now: the engine's canonical
-              summary, shown while the structure is frozen or while individual
-              properties are pinned by the per-property lock (`describeLock`
-              covers both). The interactive toggle needs a schema-lock server
-              action (follow-up). */}
-          {(schemaLocked || (lockedPropertyIds?.length ?? 0) > 0) && (
-            <span
-              className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted"
-              title={describeLock(lockState)}
+          {/* R89.24 — database lock. An `editSchema` holder gets the interactive
+              toggle wired to `toggleSchemaLockAction` (unlock stays reachable
+              because it is the same control); everyone else keeps the engine's
+              canonical read-only summary, which also covers the per-property
+              lock (`describeLock` renders both). */}
+          {lockControl.canToggle ? (
+            <button
+              type="button"
+              aria-pressed={schemaLockedState}
               aria-label={describeLock(lockState)}
+              title={describeLock(lockState)}
+              onClick={toggleSchemaLock}
+              className={cn(
+                "flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
+                schemaLockedState && "bg-surface-2 text-fg",
+              )}
             >
-              <Lock className="h-4 w-4" />
+              {schemaLockedState ? (
+                <Unlock className="h-4 w-4" />
+              ) : (
+                <Lock className="h-4 w-4" />
+              )}
               {describeLock(lockState)}
-            </span>
+            </button>
+          ) : (
+            (schemaLockedState || (lockedPropertyIds?.length ?? 0) > 0) && (
+              <span
+                className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted"
+                title={describeLock(lockState)}
+                aria-label={describeLock(lockState)}
+              >
+                <Lock className="h-4 w-4" />
+                {describeLock(lockState)}
+              </span>
+            )
           )}
           {editable && (
             <button
