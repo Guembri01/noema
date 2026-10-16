@@ -332,6 +332,15 @@ export default async function SettingsPage({
             Export or erase your personal data (GDPR).
           </span>
         </Link>
+        <Link
+          href={`/w/${workspace.slug}/settings/move`}
+          className="rounded-lg border border-border px-4 py-3 text-sm hover:bg-surface-2"
+        >
+          Move pages
+          <span className="mt-0.5 block text-xs text-muted">
+            Move a page subtree into another workspace.
+          </span>
+        </Link>
       </nav>
 
       <section className="mt-10">
