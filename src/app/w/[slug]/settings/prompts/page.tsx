@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { Copy, FileText, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   PromptRenderError,
@@ -10,7 +11,6 @@ import {
   createPrompt,
   createPromptLibrary,
   deletePrompt,
-  describePrompt,
   extractVariables,
   listPrompts,
   renderPrompt,
@@ -19,6 +19,15 @@ import {
   type PromptScope,
   type PromptTemplate,
 } from "@/lib/ai-prompt-library";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Field, Input, Textarea } from "@/components/ui/input";
+import { Section } from "@/components/ui/section";
+import { Select, type SelectOption } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tag } from "@/components/ui/tag";
+import { PromptCard } from "@/components/ai-settings-providers";
 
 /** Empty draft used when nothing is selected. */
 type Draft = {
@@ -48,6 +57,17 @@ function draftFrom(template: PromptTemplate): Draft {
   };
 }
 
+const SCOPE_OPTIONS: SelectOption[] = [
+  { value: "all", label: "All scopes" },
+  { value: "workspace", label: "Workspace" },
+  { value: "personal", label: "Personal" },
+];
+
+const EDITOR_SCOPE_OPTIONS: SelectOption[] = [
+  { value: "workspace", label: "Workspace" },
+  { value: "personal", label: "Personal" },
+];
+
 /**
  * Workspace prompt library (settings → Prompt library).
  *
@@ -56,7 +76,8 @@ function draftFrom(template: PromptTemplate): Draft {
  * `updatePrompt`, `deletePrompt`, `listPrompts`, `clonePrompt`, `renderPrompt`),
  * so the library page, the chat picker and any future server row all behave
  * identically. The library is held in local state — persistence is a follow-up
- * once a `WorkspacePrompt` table ships.
+ * once a `WorkspacePrompt` table ships, so the first paint shows a `Skeleton`
+ * sized to the card list while that store is still being read.
  */
 export default function PromptLibraryPage() {
   const params = useParams<{ slug: string }>();
@@ -69,15 +90,38 @@ export default function PromptLibraryPage() {
   const [rendered, setRendered] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scopeFilter, setScopeFilter] = useState<PromptScope | "all">("all");
+  const [tagFilter, setTagFilter] = useState("");
   const [query, setQuery] = useState("");
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // The library is read from local state today; flip off the first-paint
+  // skeleton once the page has mounted.
+  useEffect(() => {
+    setLoading(false);
+  }, []);
 
   const visible = useMemo(
     () =>
       listPrompts(library, {
         scope: scopeFilter === "all" ? undefined : scopeFilter,
+        tag: tagFilter.trim().length > 0 ? tagFilter : undefined,
         query: query.trim().length > 0 ? query : undefined,
       }),
-    [library, scopeFilter, query],
+    [library, scopeFilter, tagFilter, query],
+  );
+
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const prompt of library.prompts) {
+      for (const tag of prompt.tags ?? []) set.add(tag);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [library.prompts]);
+
+  const tagOptions: SelectOption[] = useMemo(
+    () => allTags.map((tag) => ({ value: tag, label: tag })),
+    [allTags],
   );
 
   const selected = useMemo(
@@ -132,10 +176,10 @@ export default function PromptLibraryPage() {
     setError(null);
   };
 
-  const remove = () => {
-    if (!selected) return;
-    setLibrary((state) => deletePrompt(state, selected.id));
-    startNew();
+  const remove = (id: string) => {
+    setLibrary((state) => deletePrompt(state, id));
+    setDeleteId(null);
+    if (selectedId === id) startNew();
     toast.success("Prompt deleted");
   };
 
@@ -158,184 +202,256 @@ export default function PromptLibraryPage() {
     }
   };
 
+  const hasAnyPrompt = library.prompts.length > 0;
+
   return (
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <Link href={`/w/${slug}/settings`} className="text-xs text-muted hover:underline">
         ← Settings
       </Link>
-      <h1 className="mb-2 mt-3 text-2xl font-semibold tracking-tight">Prompt library</h1>
-      <p className="mb-6 text-sm text-muted">
+      <h1 className="mb-2 mt-3 text-[28px] font-semibold tracking-[-0.02em]">Prompt library</h1>
+      <p className="mb-8 text-sm text-muted">
         Save reusable prompts with <code>{"{{variable}}"}</code> placeholders and insert them from
         the editor or the chat composer. Workspace prompts are shared; personal prompts are private.
       </p>
 
       <div className="grid gap-8 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-        <section aria-label="Saved prompts">
-          <div className="mb-3 flex items-center gap-2">
-            <input
+        <Section
+          level={2}
+          title="Saved prompts"
+          description="Search, filter and manage the prompts available in this workspace."
+        >
+          <div className="flex flex-col gap-3">
+            <Input
               value={query}
+              clearable
+              onClear={() => setQuery("")}
               aria-label="Search prompts"
               placeholder="Search…"
+              leading={<Search className="h-4 w-4" aria-hidden />}
               onChange={(event) => setQuery(event.target.value)}
-              className="h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
             />
-            <select
-              value={scopeFilter}
-              aria-label="Filter by scope"
-              onChange={(event) => setScopeFilter(event.target.value as PromptScope | "all")}
-              className="h-9 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
-            >
-              <option value="all">All</option>
-              <option value="workspace">Workspace</option>
-              <option value="personal">Personal</option>
-            </select>
-          </div>
 
-          <button
-            type="button"
-            onClick={startNew}
-            className="mb-3 h-9 rounded bg-accent px-3 text-sm text-accent-fg"
-          >
-            New prompt
-          </button>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field id="prompt-tag-filter" label="Tag">
+                <Select
+                  id="prompt-tag-filter"
+                  aria-label="Filter by tag"
+                  options={tagOptions}
+                  value={tagFilter}
+                  onChange={setTagFilter}
+                  allowClear
+                  placeholder="All tags"
+                  noResultsLabel="No tags"
+                />
+              </Field>
+              <Field id="prompt-scope-filter" label="Scope">
+                <Select
+                  id="prompt-scope-filter"
+                  aria-label="Filter by scope"
+                  options={SCOPE_OPTIONS}
+                  value={scopeFilter}
+                  onChange={(value) => setScopeFilter(value as PromptScope | "all")}
+                  allowClear={false}
+                  searchable={false}
+                />
+              </Field>
+            </div>
 
-          <ul className="divide-y divide-border rounded-lg border border-border">
-            {visible.length === 0 && (
-              <li className="px-4 py-3 text-sm text-muted">No prompts yet.</li>
+            <Button onClick={startNew} leftIcon={<Plus className="h-4 w-4" aria-hidden />}>
+              New prompt
+            </Button>
+
+            {loading ? (
+              <div className="flex flex-col gap-3" aria-busy="true" aria-live="polite">
+                <span className="sr-only">Loading prompts…</span>
+                <Skeleton variant="card" />
+                <Skeleton variant="card" />
+              </div>
+            ) : visible.length === 0 ? (
+              <EmptyState
+                variant="compact"
+                icon={<FileText className="h-4 w-4" aria-hidden />}
+                title={hasAnyPrompt ? "No matching prompts" : "No prompts yet"}
+                description={
+                  hasAnyPrompt
+                    ? "No prompt matches the current search, tag or scope."
+                    : "Save your first reusable prompt to insert it from the editor or chat."
+                }
+                primaryAction={<Button onClick={startNew}>New prompt</Button>}
+                secondaryAction={
+                  hasAnyPrompt ? (
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setQuery("");
+                        setTagFilter("");
+                        setScopeFilter("all");
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  ) : null
+                }
+              />
+            ) : (
+              <ul className="flex flex-col gap-3">
+                {visible.map((template) => (
+                  <li key={template.id}>
+                    <PromptCard
+                      prompt={{
+                        id: template.id,
+                        name: template.name,
+                        body: template.body,
+                        scope: template.scope,
+                        variables: template.variables ?? [],
+                        tags: template.tags,
+                      }}
+                      selected={template.id === selectedId}
+                      deleteOpen={deleteId === template.id}
+                      onDeleteOpenChange={(open) => setDeleteId(open ? template.id : null)}
+                      onUse={() => select(template)}
+                      onEdit={() => select(template)}
+                      onDelete={() => remove(template.id)}
+                    />
+                  </li>
+                ))}
+              </ul>
             )}
-            {visible.map((template) => (
-              <li key={template.id}>
-                <button
-                  type="button"
-                  onClick={() => select(template)}
-                  aria-current={template.id === selectedId}
-                  className={`block w-full px-4 py-3 text-left text-sm hover:bg-surface-2 ${
-                    template.id === selectedId ? "bg-surface-2" : ""
-                  }`}
-                >
-                  <span className="font-medium text-fg">{template.name}</span>
-                  <span className="mt-0.5 block text-xs text-muted">{describePrompt(template)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
+          </div>
+        </Section>
 
-        <section aria-label="Prompt editor" className="text-sm">
-          <label className="block text-xs font-medium uppercase tracking-wide text-muted">
-            Name
-            <input
+        <Section
+          level={2}
+          title="Prompt editor"
+          description="Name the prompt, write its body and declare the {{variable}} placeholders the body references."
+        >
+          <Field id="prompt-name" label="Name">
+            <Input
+              id="prompt-name"
               value={draft.name}
               aria-label="Prompt name"
               onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-              className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
             />
-          </label>
+          </Field>
 
-          <label className="mt-3 block text-xs font-medium uppercase tracking-wide text-muted">
-            Body
-            <textarea
+          <Field id="prompt-body" label="Body" hint="Use {{variable}} placeholders for values filled at run time.">
+            <Textarea
+              id="prompt-body"
               value={draft.body}
               rows={7}
               aria-label="Prompt body"
               placeholder="Summarize {{transcript}} for {{audience}}."
               onChange={(event) => setDraft({ ...draft, body: event.target.value })}
-              className="mt-1 w-full resize-y rounded border border-border bg-bg px-2 py-1 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
             />
-          </label>
+          </Field>
 
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <label className="text-xs font-medium uppercase tracking-wide text-muted">
-              Scope
-              <select
-                value={draft.scope}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field id="prompt-scope" label="Scope">
+              <Select
+                id="prompt-scope"
                 aria-label="Prompt scope"
-                onChange={(event) => setDraft({ ...draft, scope: event.target.value as PromptScope })}
-                className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
-              >
-                <option value="workspace">Workspace</option>
-                <option value="personal">Personal</option>
-              </select>
-            </label>
-            <label className="text-xs font-medium uppercase tracking-wide text-muted">
-              Tags
-              <input
+                options={EDITOR_SCOPE_OPTIONS}
+                value={draft.scope}
+                onChange={(value) => setDraft({ ...draft, scope: value as PromptScope })}
+                allowClear={false}
+                searchable={false}
+              />
+            </Field>
+            <Field id="prompt-tags" label="Tags" hint="Comma-separated.">
+              <Input
+                id="prompt-tags"
                 value={draft.tags}
                 aria-label="Prompt tags"
                 placeholder="meeting, weekly"
                 onChange={(event) => setDraft({ ...draft, tags: event.target.value })}
-                className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
               />
-            </label>
+            </Field>
           </div>
 
-          <p className="mt-2 text-xs text-muted">
-            Variables: {draftVariables.length > 0 ? draftVariables.join(", ") : "none"}
-          </p>
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted">
+            <span>Variables:</span>
+            {draftVariables.length > 0 ? (
+              draftVariables.map((variable) => (
+                <Tag key={variable} hue="blue" size="sm">
+                  {`{{${variable}}}`}
+                </Tag>
+              ))
+            ) : (
+              <span>none</span>
+            )}
+          </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={save}
-              className="h-9 rounded bg-accent px-3 text-sm text-accent-fg"
-            >
-              {selected ? "Save changes" : "Create prompt"}
-            </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={save}>{selected ? "Save changes" : "Create prompt"}</Button>
             {selected && (
               <>
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
                   onClick={duplicate}
-                  className="h-9 rounded border border-border px-3 text-sm hover:bg-surface-2"
+                  leftIcon={<Copy className="h-4 w-4" aria-hidden />}
                 >
                   Clone
-                </button>
-                <button
-                  type="button"
-                  onClick={remove}
-                  className="h-9 rounded border border-border px-3 text-sm text-muted hover:text-red-500"
+                </Button>
+                <Button
+                  variant="danger"
+                  tone="soft"
+                  onClick={() => setDeleteId(selected.id)}
+                  leftIcon={<Trash2 className="h-4 w-4" aria-hidden />}
                 >
                   Delete
-                </button>
+                </Button>
               </>
             )}
           </div>
 
-          {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+          {error && (
+            <p role="alert" className="text-xs text-danger">
+              {error}
+            </p>
+          )}
+
+          <ConfirmDialog
+            open={selected !== null && deleteId === selected.id}
+            onOpenChange={(open) => setDeleteId(open ? selected?.id ?? null : null)}
+            tone="danger"
+            title={`Delete “${selected?.name ?? ""}”?`}
+            description="This removes the prompt from the library. This cannot be undone."
+            confirmLabel="Delete prompt"
+            cancelLabel="Cancel"
+            onConfirm={() => {
+              if (selected) remove(selected.id);
+            }}
+          />
 
           {selected && (
-            <div className="mt-8 border-t border-border pt-6">
-              <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">
-                Render preview
-              </h2>
+            <div className="flex flex-col gap-3 border-t border-border pt-6">
+              <h3 className="text-sm font-medium text-muted">Render preview</h3>
               {(selected.variables ?? []).map((variable) => (
-                <label key={variable} className="mt-2 block text-xs text-muted">
-                  {variable}
-                  <input
+                <Field key={variable} id={`prompt-value-${variable}`} label={variable}>
+                  <Input
+                    id={`prompt-value-${variable}`}
                     value={values[variable] ?? ""}
                     aria-label={`Value for ${variable}`}
                     onChange={(event) =>
                       setValues((current) => ({ ...current, [variable]: event.target.value }))
                     }
-                    className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm text-fg outline-none focus:border-accent"
                   />
-                </label>
+                </Field>
               ))}
-              <button
-                type="button"
-                onClick={preview}
-                className="mt-3 h-9 rounded border border-border px-3 text-sm hover:bg-surface-2"
-              >
-                Render
-              </button>
+              <div>
+                <Button variant="secondary" onClick={preview}>
+                  Render
+                </Button>
+              </div>
               {rendered !== null && (
-                <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-border bg-surface-2 p-2 text-xs text-fg">
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-2 text-xs text-fg scrollbar-thin">
                   {rendered}
                 </pre>
               )}
             </div>
           )}
-        </section>
+        </Section>
       </div>
     </div>
   );

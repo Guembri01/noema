@@ -3,7 +3,12 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { CheckCircle2, Gauge, Loader2, Plug, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
+import {
+  CheckCircle2,
+  Plug,
+  RefreshCw,
+  TriangleAlert,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   clearAiProviderAction,
@@ -27,6 +32,23 @@ import {
 import { safeAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
 import { assembleContext, estimateTokens, fitToBudget, truncateToTokens } from "@/lib/ai-context";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Field, Input, Textarea } from "@/components/ui/input";
+import { Section } from "@/components/ui/section";
+import { Select, type SelectOption } from "@/components/ui/select";
+import { Stepper } from "@/components/ui/stepper";
+import { Switch } from "@/components/ui/switch";
+import { Tag } from "@/components/ui/tag";
+import {
+  BudgetUsageBar,
+  ProviderCard,
+  providerRowStatus,
+  providerStatusTone,
+  type ProviderCardData,
+  type ProviderStatus,
+  type ProviderTestState,
+} from "@/components/ai-settings-providers";
 
 /** Self-hosted runtimes a workspace can point at without a cloud key. */
 const LOCAL_PROVIDERS = PROVIDERS.filter((provider) => isLocal(provider));
@@ -58,11 +80,24 @@ const CONTEXT_PREVIEW_SAMPLE =
 /** Default token budget shown in the context-budget preview. */
 const DEFAULT_CONTEXT_BUDGET = 2048;
 
+/** Upper bound for the context-budget stepper. */
+const MAX_CONTEXT_BUDGET = 200_000;
+
+/** Which async action is in flight, so only its control shows a spinner. */
+type BusyAction = "models" | "test" | "save" | "clear" | "local" | "autofill" | null;
+
+/** The result of the last action, tagged with the action that produced it. */
+type ActionStatus = { ok: boolean; message: string; action: Exclude<BusyAction, null> };
 
 /**
- * Workspace AI provider settings: pick OpenAI / DeepSeek / Gemini / a custom
- * OpenAI-compatible endpoint, fetch the live model list, store the key
- * encrypted, and test the connection before saving.
+ * Workspace AI provider settings.
+ *
+ * One `Section` per concern — Provider, Models, Budget, Prompt library, Data
+ * boundaries (plus the AI autofill tool) — built from the design-system
+ * primitives: the provider picker is a `Select`, each provider row is a
+ * `ProviderCard` with a status `Badge`, the local-model toggle is a `Switch`,
+ * the budget is a `Stepper` + usage `Progress`, and clearing a stored key goes
+ * through a danger `ConfirmDialog`.
  */
 export function AiSettings({
   workspaceId,
@@ -76,7 +111,7 @@ export function AiSettings({
   const router = useRouter();
   const params = useParams<{ slug: string }>();
   const slug = typeof params?.slug === "string" ? params.slug : "";
-  const [pending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [provider, setProvider] = useState(summary.provider);
   const [baseUrl, setBaseUrl] = useState(summary.baseUrl);
   const [model, setModel] = useState(summary.model);
@@ -85,7 +120,10 @@ export function AiSettings({
   const [models, setModels] = useState<string[]>(
     AI_PROVIDERS.find((entry) => entry.id === summary.provider)?.models.map((m) => m.id) ?? [],
   );
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<ActionStatus | null>(null);
+  const [busy, setBusy] = useState<BusyAction>(null);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [useLocal, setUseLocal] = useState(false);
   const [contextBudget, setContextBudget] = useState(DEFAULT_CONTEXT_BUDGET);
   const [samplePrompt, setSamplePrompt] = useState(CONTEXT_PREVIEW_SAMPLE);
   const [localProviderId, setLocalProviderId] = useState(LOCAL_PROVIDERS[0]?.id ?? "ollama");
@@ -178,17 +216,24 @@ export function AiSettings({
     setStatus(null);
   }, [provider]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const run = (label: string, task: () => Promise<{ ok: boolean; message: string }>) =>
+  const run = (
+    action: Exclude<BusyAction, null>,
+    label: string,
+    task: () => Promise<{ ok: boolean; message: string }>,
+  ) => {
+    setBusy(action);
     startTransition(async () => {
       const outcome = await safeAction(task);
       const value = outcome.ok ? outcome.value : { ok: false, message: outcome.error };
-      setStatus(value.message);
+      setStatus({ ok: value.ok, message: value.message, action });
       if (value.ok) toast.success(label);
       else toast.error(value.message);
+      setBusy(null);
     });
+  };
 
   const fetchModels = () =>
-    run(t(locale, "modelListRefreshed"), async () => {
+    run("models", t(locale, "modelListRefreshed"), async () => {
       const result = await listAiModelsAction({ workspaceId, provider, baseUrl, apiKey });
       if ("error" in result) return { ok: false, message: result.error };
       if (!result.ok) return { ok: false, message: t(locale, "somethingWentWrong") };
@@ -200,19 +245,35 @@ export function AiSettings({
       }
       setModels(merged);
       if (!merged.includes(model) && merged[0]) setModel(merged[0]);
-      return { ok: true, message: `${result.models.length} ${t(locale, "modelsCount")} (${result.source})` };
+      return {
+        ok: true,
+        message: `${result.models.length} ${t(locale, "modelsCount")} (${result.source})`,
+      };
     });
 
   const test = () =>
-    run(t(locale, "connectionOk"), async () => {
-      const result = await testAiProviderAction({ workspaceId, provider, baseUrl, model, apiKey });
+    run("test", t(locale, "connectionOk"), async () => {
+      const result = await testAiProviderAction(
+        useLocal
+          ? {
+              workspaceId,
+              provider: "custom",
+              baseUrl: localBaseUrl,
+              model: localModel,
+              apiKey: localApiKey || "local",
+            }
+          : { workspaceId, provider, baseUrl, model, apiKey },
+      );
       if ("error" in result) return { ok: false, message: result.error };
       if (!result.ok) return { ok: false, message: t(locale, "somethingWentWrong") };
-      return { ok: true, message: `${result.provider} · ${result.model} · ${result.ms} ms · "${result.sample}"` };
+      return {
+        ok: true,
+        message: `${result.provider} · ${result.model} · ${result.ms} ms · "${result.sample}"`,
+      };
     });
 
   const save = () =>
-    run(t(locale, "aiProviderSaved"), async () => {
+    run("save", t(locale, "aiProviderSaved"), async () => {
       const result = await saveAiProviderAction({
         workspaceId,
         provider,
@@ -229,7 +290,7 @@ export function AiSettings({
     });
 
   const clear = () =>
-    run(t(locale, "providerRemoved"), async () => {
+    run("clear", t(locale, "providerRemoved"), async () => {
       const result = await clearAiProviderAction(workspaceId);
       if ("error" in result) return { ok: false, message: result.error };
       if (!result.ok) return { ok: false, message: t(locale, "somethingWentWrong") };
@@ -253,7 +314,7 @@ export function AiSettings({
   // a key when enabled, so keyless runtimes send the conventional `local`
   // placeholder that OpenAI-compatible and Ollama servers ignore.
   const saveLocal = () =>
-    run(t(locale, "aiProviderSaved"), async () => {
+    run("local", t(locale, "aiProviderSaved"), async () => {
       const result = await saveAiProviderAction({
         workspaceId,
         provider: "custom",
@@ -271,6 +332,7 @@ export function AiSettings({
   // Run one AI-autofill column for a row (`@/server/actions/ai-autofill`).
   const runAutofill = () => {
     if (!autofillPropertyId.trim() || !autofillRowId.trim()) return;
+    setBusy("autofill");
     startTransition(async () => {
       const outcome = await safeAction(() =>
         runAiAutofillAction({
@@ -281,204 +343,291 @@ export function AiSettings({
       );
       const value = outcome.ok ? outcome.value : { ok: false as const, error: outcome.error };
       if (value.ok) {
-        setStatus(`AI autofill wrote "${value.value}" to ${value.propertyId}.`);
+        setStatus({
+          ok: true,
+          action: "autofill",
+          message: `AI autofill wrote "${value.value}" to ${value.propertyId}.`,
+        });
         toast.success(t(locale, "autofilled"));
         router.refresh();
       } else {
-        setStatus(value.error);
+        setStatus({ ok: false, action: "autofill", message: value.error });
         toast.error(value.error);
       }
+      setBusy(null);
     });
   };
 
+  const providerOptions: SelectOption[] = useMemo(
+    () =>
+      AI_PROVIDERS.map((entry) => ({
+        value: entry.id,
+        label: entry.label,
+        description: entry.defaultBaseUrl || "Any OpenAI-compatible endpoint",
+      })),
+    [],
+  );
+
+  const modelOptions: SelectOption[] = useMemo(
+    () => models.map((id) => ({ value: id, label: id })),
+    [models],
+  );
+
+  const localOptions: SelectOption[] = useMemo(
+    () => LOCAL_PROVIDERS.map((entry) => ({ value: entry.id, label: entry.label })),
+    [],
+  );
+
+  // One card per provider: the cloud catalogue plus the self-hosted runtimes.
+  const providerRows: ProviderCardData[] = useMemo(() => {
+    const cloud = AI_PROVIDERS.map((entry) => {
+      const active = !useLocal && entry.id === provider;
+      return {
+        id: entry.id,
+        label: entry.label,
+        description: entry.defaultBaseUrl || "Any OpenAI-compatible endpoint",
+        local: false,
+        selected: active,
+        status: providerRowStatus({
+          local: false,
+          active,
+          enabled,
+          hasKey: active && summary.hasKey,
+          source: summary.source,
+        }),
+        baseUrl: active ? baseUrl : entry.defaultBaseUrl || undefined,
+        model: active ? model : entry.models[0]?.id,
+      } satisfies ProviderCardData;
+    });
+    const local = LOCAL_PROVIDERS.map((entry) => {
+      const active = useLocal && entry.id === localProviderId;
+      return {
+        id: entry.id,
+        label: entry.label,
+        description: entry.baseUrl,
+        local: true,
+        selected: active,
+        status: providerRowStatus({
+          local: true,
+          active,
+          enabled: true,
+          hasKey: false,
+          source: "none",
+        }),
+        baseUrl: active ? localBaseUrl : entry.baseUrl,
+        model: active ? localModel : entry.defaultModel,
+      } satisfies ProviderCardData;
+    });
+    return [...cloud, ...local];
+  }, [useLocal, provider, enabled, summary.hasKey, summary.source, baseUrl, model, localProviderId, localBaseUrl, localModel]);
+
+  const testStatus = status?.action === "test" ? status : null;
+  const testState: ProviderTestState =
+    testStatus === null ? "idle" : testStatus.ok ? "success" : "error";
+  const sourceStatus: ProviderStatus =
+    summary.source === "workspace" || summary.source === "env" ? "configured" : "unconfigured";
+
   return (
-    <section className="mt-10">
-      <h2 className="mb-2 flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-muted">
-        <Plug className="h-4 w-4" /> {t(locale, "aiProvider")}
-      </h2>
-      <p className="mb-4 text-sm text-muted">
-        {t(locale, "aiSettingsIntro")}
-      </p>
+    <div className="mt-10 flex flex-col gap-12">
+      {/* Provider — picker, status cards, test connection, clear key. */}
+      <Section
+        level={2}
+        title={t(locale, "aiProvider")}
+        description={t(locale, "aiSettingsIntro")}
+        action={
+          <div className="flex items-center gap-2">
+            <Plug className="h-4 w-4 text-muted" aria-hidden />
+            <Switch
+              size="sm"
+              checked={useLocal}
+              onCheckedChange={setUseLocal}
+              label="Use local model"
+              aria-label="Use local model"
+            />
+          </div>
+        }
+      >
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+          <span>{t(locale, "activeSource")}</span>
+          <Badge tone={providerStatusTone(sourceStatus)}>
+            {summary.source === "workspace"
+              ? `${t(locale, "sourceWorkspace")} · ${summary.providerLabel}`
+              : summary.source === "env"
+                ? t(locale, "sourceEnv")
+                : t(locale, "notConfigured")}
+          </Badge>
+          {summary.hasKey && summary.keyMask ? (
+            <span>{t(locale, "keyStored")}</span>
+          ) : null}
+        </div>
 
-      <p className="mb-4 text-xs text-muted">
-        {t(locale, "activeSource")}{" "}
-        <strong className="text-fg">
-          {summary.source === "workspace"
-            ? `${t(locale, "sourceWorkspace")} · ${summary.providerLabel}`
-            : summary.source === "env"
-              ? t(locale, "sourceEnv")
-              : t(locale, "notConfigured")}
-        </strong>
-        {summary.hasKey && summary.keyMask ? ` · ${t(locale, "keyStored")}` : ""}
-      </p>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="text-xs font-medium uppercase tracking-wide text-muted">
-          {t(locale, "providerLabel")}
-          <select
-            value={provider}
-            aria-label={t(locale, "aiProvider")}
-            onChange={(event) => setProvider(event.target.value)}
-            className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm text-fg outline-none focus:border-accent"
-          >
-            {AI_PROVIDERS.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="text-xs font-medium uppercase tracking-wide text-muted">
-          {t(locale, "modelLabel")}
-          <span className="mt-1 flex gap-1">
-            <select
-              value={model}
-              aria-label={t(locale, "aiModel")}
-              onChange={(event) => setModel(event.target.value)}
-              className="h-9 w-full rounded border border-border bg-bg px-2 text-sm text-fg outline-none focus:border-accent"
-            >
-              {models.length === 0 && <option value="">{t(locale, "typeModelBelow")}</option>}
-              {models.map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </select>
-          </span>
-          <input
-            value={model}
-            aria-label={t(locale, "modelIdLabel")}
-            placeholder={t(locale, "modelIdPlaceholder")}
-            onChange={(event) => setModel(event.target.value)}
-            className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
-          />
-        </label>
-
-        <label className="text-xs font-medium uppercase tracking-wide text-muted">
-          {t(locale, "baseUrlLabel")}
-          <input
-            value={baseUrl}
-            aria-label={t(locale, "aiBaseUrl")}
-            placeholder={definition?.defaultBaseUrl ?? "https://…/v1"}
-            onChange={(event) => setBaseUrl(event.target.value)}
-            className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
-          />
-        </label>
-
-        <label className="text-xs font-medium uppercase tracking-wide text-muted">
-          {t(locale, "apiKeyLabel")}
-          <input
-            type="password"
-            value={apiKey}
-            aria-label={t(locale, "aiApiKey")}
-            placeholder={summary.hasKey ? t(locale, "savedKeyHint") : definition?.keyHint ?? t(locale, "apiKeyLabel")}
-            onChange={(event) => setApiKey(event.target.value)}
-            className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
-          />
-        </label>
-      </div>
-
-      <label className="mt-3 flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={enabled}
-          aria-label={t(locale, "enableProviderAria")}
-          onChange={(event) => setEnabled(event.target.checked)}
-          className="accent-[var(--accent)]"
-        />
-        {t(locale, "useProviderForWorkspace")}
-      </label>
-
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          disabled={pending}
-          onClick={fetchModels}
-          className="flex h-9 items-center gap-1 rounded border border-border px-3 text-sm hover:bg-surface-2 disabled:opacity-50"
-        >
-          <RefreshCw className="h-4 w-4" /> {t(locale, "fetchModels")}
-        </button>
-        <button
-          type="button"
-          disabled={pending || !model}
-          onClick={test}
-          className="flex h-9 items-center gap-1 rounded border border-border px-3 text-sm hover:bg-surface-2 disabled:opacity-50"
-        >
-          {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
-          {t(locale, "testConnection")}
-        </button>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={save}
-          className="h-9 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
-        >
-          {t(locale, "save")}
-        </button>
-        {summary.hasKey && (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={clear}
-            className="flex h-9 items-center gap-1 rounded border border-border px-3 text-sm text-muted hover:text-red-500 disabled:opacity-50"
-          >
-            <Trash2 className="h-4 w-4" /> {t(locale, "remove")}
-          </button>
+        {useLocal ? (
+          <p className="text-sm text-muted">
+            Local mode sends every request to the self-hosted runtime configured under Data
+            boundaries. No prompt text leaves your infrastructure.
+          </p>
+        ) : (
+          <Field id="ai-provider" label={t(locale, "providerLabel")}>
+            <Select
+              id="ai-provider"
+              aria-label={t(locale, "aiProvider")}
+              options={providerOptions}
+              value={provider}
+              onChange={setProvider}
+              allowClear={false}
+              searchable={false}
+            />
+          </Field>
         )}
-      </div>
-
-      {status && (
-        <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
-          <CheckCircle2 className="h-3.5 w-3.5" /> {status}
-        </p>
-      )}
-      {!summary.envAvailable && !summary.hasKey && (
-        <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
-          <TriangleAlert className="h-3.5 w-3.5" /> {t(locale, "aiNoProviderHint")}
-        </p>
-      )}
-
-      {/* Context-budget preview. Labels are inline English; add i18n keys in a follow-up. */}
-      <div className="mt-10 border-t border-border pt-6">
-        <h3 className="mb-2 flex items-center gap-2 text-sm font-medium uppercase tracking-wide text-muted">
-          <Gauge className="h-4 w-4" /> Context budget
-        </h3>
-        <p className="mb-4 text-xs text-muted">
-          Preview how a sample prompt is measured and trimmed before it is sent to the model. The
-          limit is a planning aid — it is not stored with the provider.
-        </p>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-xs font-medium uppercase tracking-wide text-muted">
-            Max tokens
-            <input
-              type="number"
-              min={0}
-              step={64}
-              value={contextBudget}
-              aria-label="Maximum context tokens"
-              onChange={(event) => {
-                const next = event.target.valueAsNumber;
-                setContextBudget(Number.isFinite(next) ? Math.max(0, Math.floor(next)) : 0);
-              }}
-              className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm text-fg outline-none focus:border-accent"
-            />
-          </label>
+          {providerRows.map((row) => {
+            const active = row.selected;
+            return (
+              <ProviderCard
+                key={row.id}
+                provider={row}
+                pending={busy === "test" && active}
+                testState={active ? testState : "idle"}
+                testMessage={active ? testStatus?.message ?? null : null}
+                canClearKey={!useLocal && row.id === summary.provider && summary.hasKey}
+                clearOpen={clearOpen}
+                onClearOpenChange={setClearOpen}
+                onTest={active ? test : undefined}
+                onClearKey={() => {
+                  setClearOpen(false);
+                  clear();
+                }}
+              />
+            );
+          })}
+        </div>
 
-          <label className="text-xs font-medium uppercase tracking-wide text-muted">
-            Sample prompt
-            <textarea
+        {!summary.envAvailable && !summary.hasKey && (
+          <p className="flex items-center gap-1.5 text-xs text-muted">
+            <TriangleAlert className="h-3.5 w-3.5" aria-hidden /> {t(locale, "aiNoProviderHint")}
+          </p>
+        )}
+      </Section>
+
+      {/* Models — model id, endpoint, key, enable, save. */}
+      {!useLocal && (
+        <Section
+          level={2}
+          title="Models"
+          description="Choose the model the workspace calls, the endpoint it is reached at and the key that authenticates it."
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field id="ai-model" label={t(locale, "modelLabel")}>
+              <Select
+                id="ai-model"
+                aria-label={t(locale, "aiModel")}
+                options={modelOptions}
+                value={model}
+                onChange={setModel}
+                allowClear={false}
+                searchable={false}
+                placeholder={t(locale, "typeModelBelow")}
+              />
+            </Field>
+
+            <Field id="ai-model-id" label={t(locale, "modelIdLabel")}>
+              <Input
+                id="ai-model-id"
+                value={model}
+                aria-label={t(locale, "modelIdLabel")}
+                placeholder={t(locale, "modelIdPlaceholder")}
+                onChange={(event) => setModel(event.target.value)}
+              />
+            </Field>
+
+            <Field id="ai-base-url" label={t(locale, "baseUrlLabel")}>
+              <Input
+                id="ai-base-url"
+                value={baseUrl}
+                aria-label={t(locale, "aiBaseUrl")}
+                placeholder={definition?.defaultBaseUrl ?? "https://…/v1"}
+                onChange={(event) => setBaseUrl(event.target.value)}
+              />
+            </Field>
+
+            <Field
+              id="ai-api-key"
+              label={t(locale, "apiKeyLabel")}
+              hint={summary.hasKey ? t(locale, "savedKeyHint") : definition?.keyHint}
+            >
+              <Input
+                id="ai-api-key"
+                type="password"
+                value={apiKey}
+                aria-label={t(locale, "aiApiKey")}
+                placeholder={
+                  summary.hasKey
+                    ? t(locale, "savedKeyHint")
+                    : definition?.keyHint ?? t(locale, "apiKeyLabel")
+                }
+                onChange={(event) => setApiKey(event.target.value)}
+              />
+            </Field>
+          </div>
+
+          <Switch
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            label={t(locale, "useProviderForWorkspace")}
+            aria-label={t(locale, "enableProviderAria")}
+          />
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              loading={busy === "models"}
+              onClick={fetchModels}
+              leftIcon={<RefreshCw className="h-4 w-4" aria-hidden />}
+            >
+              {t(locale, "fetchModels")}
+            </Button>
+            <Button
+              loading={busy === "save"}
+              onClick={save}
+              disabled={busy !== null && busy !== "save"}
+            >
+              {t(locale, "save")}
+            </Button>
+          </div>
+        </Section>
+      )}
+
+      {/* Budget — a Stepper bound to a usage Progress bar. */}
+      <Section
+        level={2}
+        title="Budget"
+        description="Preview how a sample prompt is measured and trimmed before it is sent to the model. The limit is a planning aid — it is not stored with the provider."
+      >
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
+          <Stepper
+            label="Max tokens"
+            value={contextBudget}
+            onValueChange={setContextBudget}
+            min={0}
+            max={MAX_CONTEXT_BUDGET}
+            step={256}
+            unit="tok"
+          />
+          <Field id="sample-prompt" label="Sample prompt">
+            <Textarea
+              id="sample-prompt"
               value={samplePrompt}
               rows={3}
               aria-label="Sample prompt"
               onChange={(event) => setSamplePrompt(event.target.value)}
-              className="mt-1 w-full resize-y rounded border border-border bg-bg px-2 py-1 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
             />
-          </label>
+          </Field>
         </div>
 
-        <dl className="mt-3 grid gap-1 text-xs text-muted sm:grid-cols-3">
+        <BudgetUsageBar used={contextPreview.assembledTokens} budget={contextBudget} />
+
+        <dl className="grid gap-1 text-xs text-muted sm:grid-cols-3">
           <div>
             <dt className="inline">Sample estimate: </dt>
             <dd className="inline text-fg">{contextPreview.sampleTokens} tokens</dd>
@@ -495,166 +644,182 @@ export function AiSettings({
           </div>
         </dl>
 
-        <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
+        <p className="flex items-center gap-1.5 text-xs text-muted">
           {contextPreview.noteDropped || contextPreview.truncated ? (
-            <TriangleAlert className="h-3.5 w-3.5" />
+            <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
           ) : (
-            <CheckCircle2 className="h-3.5 w-3.5" />
+            <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
           )}
           {contextPreview.statusLabel}
         </p>
 
         <pre
           aria-label="Truncated sample preview"
-          className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-border bg-surface-2 p-2 text-xs text-fg"
+          className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-2 text-xs text-fg scrollbar-thin"
         >
           {contextPreview.preview}
         </pre>
-      </div>
+      </Section>
 
-      {/* Local model support (`@/lib/local-models`). */}
-      <div className="mt-10 border-t border-border pt-6">
-        <h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted">Local model</h3>
-        <p className="mb-4 text-xs text-muted">
-          Point the workspace at a self-hosted runtime. Requests stay on your infrastructure and a
-          key is usually unnecessary.
-        </p>
+      {/* Prompt library — the writing-skills catalogue and a link to manage it. */}
+      <Section
+        level={2}
+        title="Prompt library"
+        description="Built-in writing skills run from the editor menus and /api/ai/skills. Save your own reusable prompts with {{variable}} placeholders."
+        action={
+          <Button asChild variant="secondary">
+            <Link href={`/w/${slug}/settings/prompts`}>Manage prompts</Link>
+          </Button>
+        }
+      >
+        <ul className="flex flex-wrap gap-1.5">
+          {SKILLS.map((skill) => (
+            <li key={skill.id}>
+              <Tag hue="gray" size="sm" title={skill.hint}>
+                {skill.label}
+              </Tag>
+            </li>
+          ))}
+        </ul>
+      </Section>
 
+      {/* Data boundaries — where the model runs and what leaves the workspace. */}
+      <Section
+        level={2}
+        title="Data boundaries"
+        description="Point the workspace at a self-hosted runtime. Requests stay on your infrastructure and a key is usually unnecessary."
+      >
         {localDescriptor && (
-          <p className="mb-3 text-xs text-muted">
+          <p className="text-xs text-muted">
             {describeProvider(localDescriptor)} · {isLocal(localDescriptor) ? "local" : "cloud"}
           </p>
         )}
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          <label className="text-xs font-medium uppercase tracking-wide text-muted">
-            Runtime
-            <select
-              value={localProviderId}
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field id="local-runtime" label="Runtime">
+            <Select
+              id="local-runtime"
               aria-label="Local runtime"
-              onChange={(event) => pickLocalProvider(event.target.value)}
-              className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
-            >
-              {LOCAL_PROVIDERS.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs font-medium uppercase tracking-wide text-muted">
-            Base URL
-            <input
+              options={localOptions}
+              value={localProviderId}
+              onChange={pickLocalProvider}
+              allowClear={false}
+              searchable={false}
+            />
+          </Field>
+          <Field id="local-base-url" label="Base URL">
+            <Input
+              id="local-base-url"
               value={localBaseUrl}
               aria-label="Local base URL"
               onChange={(event) => setLocalBaseUrl(event.target.value)}
-              className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
             />
-          </label>
-          <label className="text-xs font-medium uppercase tracking-wide text-muted">
-            Model
-            <input
+          </Field>
+          <Field id="local-model" label="Model">
+            <Input
+              id="local-model"
               value={localModel}
               aria-label="Local model"
               onChange={(event) => setLocalModel(event.target.value)}
-              className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
             />
-          </label>
+          </Field>
         </div>
 
-        <label className="mt-3 block text-xs font-medium uppercase tracking-wide text-muted">
-          Token (optional)
-          <input
+        <Field id="local-token" label="Token (optional)">
+          <Input
+            id="local-token"
             type="password"
             value={localApiKey}
             aria-label="Local API token"
             onChange={(event) => setLocalApiKey(event.target.value)}
-            className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
           />
-        </label>
+        </Field>
 
-        <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
+        <p
+          role="status"
+          aria-live="polite"
+          className={
+            localValidation.ok
+              ? "flex items-center gap-1.5 text-xs text-success"
+              : "flex items-center gap-1.5 text-xs text-danger"
+          }
+        >
           {localValidation.ok ? (
-            <CheckCircle2 className="h-3.5 w-3.5" />
+            <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
           ) : (
-            <TriangleAlert className="h-3.5 w-3.5" />
+            <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
           )}
           {localValidation.ok
             ? "Endpoint looks valid."
             : localValidation.errors.map((entry) => entry.message).join(" ")}
         </p>
 
-        <button
-          type="button"
-          disabled={pending || !localValidation.ok}
-          onClick={saveLocal}
-          className="mt-3 h-9 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
-        >
-          {t(locale, "save")} local provider
-        </button>
-      </div>
+        <div>
+          <Button
+            loading={busy === "local"}
+            disabled={!localValidation.ok}
+            onClick={saveLocal}
+          >
+            {t(locale, "save")} local provider
+          </Button>
+        </div>
+      </Section>
 
-      {/* Skills catalogue (`@/lib/ai-skills` + `@/lib/ai-writing`). */}
-      <div className="mt-10 border-t border-border pt-6">
-        <h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted">
-          Writing skills
-        </h3>
-        <p className="mb-3 text-xs text-muted">
-          Run from the editor menus and <code>/api/ai/skills</code>. The writing skills add{" "}
-          <code>continue</code> and <code>simplify</code> to the editor set.
-        </p>
-        <ul className="grid gap-1 text-xs text-muted sm:grid-cols-2">
-          {SKILLS.map((skill) => (
-            <li key={skill.id}>
-              <span className="text-fg">{skill.label}</span> — {skill.hint}{" "}
-              <code className="text-[10px]">{skill.id}</code>
-            </li>
-          ))}
-        </ul>
-        <Link
-          href={`/w/${slug}/settings/prompts`}
-          className="mt-3 inline-block text-xs text-accent hover:underline"
-        >
-          Manage the prompt library →
-        </Link>
-      </div>
-
-      {/* AI autofill (`@/server/actions/ai-autofill`). */}
-      <div className="mt-10 border-t border-border pt-6">
-        <h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted">AI autofill</h3>
-        <p className="mb-3 text-xs text-muted">
-          Run an AI-autofill column for a single row. Paste the column id and the row id to
-          backfill it.
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-xs font-medium uppercase tracking-wide text-muted">
-            Column id
-            <input
+      {/* AI autofill tool (`@/server/actions/ai-autofill`). */}
+      <Section
+        level={2}
+        title="AI autofill"
+        description="Run an AI-autofill column for a single row. Paste the column id and the row id to backfill it."
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field id="autofill-column" label="Column id">
+            <Input
+              id="autofill-column"
               value={autofillPropertyId}
               aria-label="AI autofill column id"
               onChange={(event) => setAutofillPropertyId(event.target.value)}
-              className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
             />
-          </label>
-          <label className="text-xs font-medium uppercase tracking-wide text-muted">
-            Row id
-            <input
+          </Field>
+          <Field id="autofill-row" label="Row id">
+            <Input
+              id="autofill-row"
               value={autofillRowId}
               aria-label="AI autofill row id"
               onChange={(event) => setAutofillRowId(event.target.value)}
-              className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
             />
-          </label>
+          </Field>
         </div>
-        <button
-          type="button"
-          disabled={pending || !autofillPropertyId.trim() || !autofillRowId.trim()}
-          onClick={runAutofill}
-          className="mt-3 h-9 rounded border border-border px-3 text-sm hover:bg-surface-2 disabled:opacity-50"
+        <div>
+          <Button
+            variant="secondary"
+            loading={busy === "autofill"}
+            disabled={!autofillPropertyId.trim() || !autofillRowId.trim()}
+            onClick={runAutofill}
+          >
+            Run autofill
+          </Button>
+        </div>
+      </Section>
+
+      {/* Async result banner (live region) for the non-test actions. */}
+      {status && status.action !== "test" ? (
+        <p
+          role="status"
+          aria-live="polite"
+          className={
+            status.ok
+              ? "flex items-center gap-1.5 text-xs text-success"
+              : "flex items-center gap-1.5 text-xs text-danger"
+          }
         >
-          Run autofill
-        </button>
-      </div>
-    </section>
+          {status.ok ? (
+            <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+          ) : (
+            <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
+          )}
+          {status.message}
+        </p>
+      ) : null}
+    </div>
   );
 }
