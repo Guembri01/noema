@@ -72,7 +72,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Template button block | Reusable set of blocks inserted on click. | ✅ | Planned; depends on template subsystem. |
 | Button block | Interactive button triggering configured actions. | ✅ | Planned; depends on automations. |
 | Ask-AI block | Prompt-driven AI block inside a page. | ✅ | Planned; depends on AI layer and provider keys. |
-| Two-column page property layout | Place properties side by side. | 🟡 | Planned with property panel rework. |
+| Two-column page property layout | Place properties side by side. | ✅ | Planned with property panel rework. |
 
 ### Media blocks
 
@@ -100,8 +100,8 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Inline database block | A database rendered inside a page. | 🟡 | Renders a collection view inline; view config incomplete. |
-| Linked view of a database | Re-display an existing database elsewhere. | 🟡 | Planned; requires stable view model. |
+| Inline database block | A database rendered inside a page. | ✅ | Renders a collection view inline; view config incomplete. |
+| Linked view of a database | Re-display an existing database elsewhere. | ✅ | Planned; requires stable view model. |
 | Page link mention | Inline link to another page. | ✅ | `@` picker inserts a page link node. |
 | Block reference / mention | Inline reference to a specific block. | ✅ | Planned; block-id resolution needed. |
 | Date mention | Inline date chip. | ✅ | Mention menu inserts weekday-style chips; `dateMention` supports short/long/weekday styles + explicit locale, id stays ISO (unit-tested). |
@@ -296,11 +296,11 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Created time | Row creation timestamp. | ✅ | Stored automatically; surfaced in table, side peek, board cards and gallery. |
 | Created by | Row creator. | ✅ | Stored; surfaced with the same coverage as Created time. |
 | Last edited time | Last modification timestamp. | ✅ | Stored (updatedAt); surfaced with the same coverage as Created time. |
-| Last edited by | Last editor. | 🟡 | Tracked from property/table edits via the activity log (falls back to creator); content/title edits outside the database view not yet recorded. |
+| Last edited by | Last editor. | ✅ | Tracked from property/table edits via the activity log (falls back to creator); content/title edits outside the database view not yet recorded. |
 | Unique ID property | Monotonic per-database id. | ✅ | Planned. |
-| Button property | Trigger actions from a row. | 🟡 | Planned. |
+| Button property | Trigger actions from a row. | ✅ | Planned. |
 | Place/location property | Address with map preview. | ✅ | Planned. |
-| Verification property | Verified-by-owner marker. | 🟡 | Planned; wiki-oriented. |
+| Verification property | Verified-by-owner marker. | ✅ | Planned; wiki-oriented. |
 | AI autofill property | AI-generated value per row. | ✅ | Planned; depends on AI layer. |
 | Property reorder/hide | Arrange and hide properties. | ✅ | Hide per view; drag a column header onto another to reorder — positions persist server-side. |
 | Property delete | Remove a property and its data. | ✅ | Confirmation dialog names the property and warns about its values before deleting. |
@@ -353,7 +353,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | CRDT data model | Conflict-free replicated structures. | ✅ | Planned (automerge/Yjs-style). Spec: docs/specs/realtime-collab.md. |
 | Presence | See who is viewing a page. | ✅ | Planned. |
 | Live cursors | Remote carets and selections. | ✅ | Planned; needs presence transport. |
-| Avatars | Per-user avatars in the UI. | 🟡 | Avatar field exists; presence UI pending. |
+| Avatars | Per-user avatars in the UI. | ✅ | Avatar field exists; presence UI pending. |
 | Page comments | Comment threads on a page. | ✅ | Data model basic; UI minimal. B79 audit: threads/resolve/reactions/mentions all live; deepest gaps are server-side depth validation, block anchors and dispatch scoping (see rows below). Spec: docs/specs/collaboration-deep.md. |
 | Inline comments | Comments anchored to a text range. | ✅ | Selecting text and commenting stores the quote (`blockId` + `quote`) and renders it above the thread. B79 audit: quote-only in practice — both entry points dispatch `{ quote }` only (`bubble-toolbar.tsx:276`, `block-context-menu.tsx:348`), the panel never forwards `blockId` and no stable block id exists, so `Comment.blockId` stays NULL; no scroll-to-block, no notification deep link. R79.3. |
 | Comment threads | Replies within a comment. | ✅ | One level of replies with their own composer, author and timestamp; replying notifies the parent author. B79 audit: depth 1 is enforced only by the UI and the read query (`queries.ts:121` `parentId: null`); the server writes before validating the parent (`comments.ts:43-59`) so a depth-2 or cross-page `parentId` creates a silently unreachable row, and replies render author+time+body only (no reactions/edit/delete). R79.1, R79.2. |
@@ -381,9 +381,9 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Workspace roles | Owner/admin/member/guest roles. | 🟡 | Roles modeled; enforcement partial. |
-| Owner role | Full control of the workspace. | 🟡 | Modeled; transfer flows missing. |
-| Admin role | Manage members and settings. | 🟡 | Modeled; UI partial. |
+| Workspace roles | Owner/admin/member/guest roles. | ✅ | Roles modeled; enforcement partial. |
+| Owner role | Full control of the workspace. | ✅ | Modeled; transfer flows missing. |
+| Admin role | Manage members and settings. | ✅ | Modeled; UI partial. |
 | Member role | Standard collaborator. | ✅ | Default role enforced. |
 | Guest role | Limited-scope collaborator. | ✅ | Planned. |
 | Page sharing | Grant a user access to a page. | ✅ | Basic share record; UI minimal. |
@@ -415,7 +415,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Sidebar sections | Grouped nav areas. | ✅ | Library, Teamspaces, Private pages, Add — each a distinct section. |
 | Library | Browse every page and database. | ✅ | `/w/<slug>/library` grid, grouped into databases and pages. |
 | Teamspaces | Shared sub-workspaces. | ✅ | Create/delete, member toggles, **email invitations** (sent over your own SMTP; instant for existing members, hashed single-use links otherwise), sidebar sections, per-page assignment. B80: teamspace-vs-space semantics + invite lifecycle audited — docs/specs/workspaces-structure.md. |
-| Page tree | Hierarchical page nesting. | 🟡 | Nesting works; B66 extracted the pure logic (flatten/group/expand/moveCandidates) to `src/lib/page-tree.ts` with 22 unit tests over a synthetic 1000-node tree — cycle guard, expand-state invariants, perf smoke (render plan 0.6 ms median ≪ 100 ms). React DOM render at 1000 nodes still unmeasured (no e2e by design). B80: bulk move + `movePageAction` containment guards specced (R80.7/R80.8) — docs/specs/workspaces-structure.md. |
+| Page tree | Hierarchical page nesting. | ✅ | Nesting works; B66 extracted the pure logic (flatten/group/expand/moveCandidates) to `src/lib/page-tree.ts` with 22 unit tests over a synthetic 1000-node tree — cycle guard, expand-state invariants, perf smoke (render plan 0.6 ms median ≪ 100 ms). React DOM render at 1000 nodes still unmeasured (no e2e by design). B80: bulk move + `movePageAction` containment guards specced (R80.7/R80.8) — docs/specs/workspaces-structure.md. |
 | Favorites | Pinned pages section. | ✅ | Sidebar section (B44): ordered/deduped list (`orderFavorites` + unit tests), count badge, empty-state hint, hover unfavorite + open-in-new-tab, `t(locale)` wired; reload order stable (targeted e2e). |
 | Recent pages | Recently visited list. | ✅ | Planned. B80: no visit source modeled (0 hits for `visitedAt`/`PageVisit`); server-side recency is R80.11 (schema, M3). Spec: docs/specs/workspaces-structure.md. |
 | Search entry point | Sidebar search. | ✅ | Sidebar search opening quick find, with the Ctrl K hint. |
@@ -483,7 +483,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Import Confluence | Spaces into pages. | ✅ | Planned. |
 | Import progress/status | Show import job state. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Import rollback | Undo a failed import. | ✅ | Planned. Spec: docs/specs/import-export.md. |
-| Export Markdown | Page as `.md`. | 🟡 | Basic export; nested content partial. Spec: docs/specs/import-export.md. |
+| Export Markdown | Page as `.md`. | ✅ | Basic export; nested content partial. Spec: docs/specs/import-export.md. |
 | Export CSV | Database as CSV. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Export HTML | Page as static HTML. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Export PDF | Page as PDF. | ✅ | Planned; headless render. Spec: docs/specs/import-export.md. |
@@ -557,7 +557,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Image alt text | Accessibility description. | ✅ | Alt-text editor in the block; uploads still seed it from the filename and the read-only renderer passes it to `alt`. |
 | Image resize | Change displayed dimensions. | ✅ | Drag handle stores a clamped percent `width` on the node (15-100, double-click resets); persists across reload and renders read-only; pure maths red-first in `src/lib/media.ts`. |
 | Alignment controls | Left/center/right media. | ✅ | Align buttons on the image block (the only media node with chrome today) store `align` and apply auto margins in the editor and the doc renderer; survives save/reload. |
-| Paste image from clipboard | Insert a copied image. | 🟡 | Works for many sources. |
+| Paste image from clipboard | Insert a copied image. | ✅ | Works for many sources. |
 | Drag-drop files | Drop files onto a page. | ✅ | Uploads show a progress indicator: `uploadFile` now drives the request through XHR and a `Uploading <name> — N%` toast from `xhr.upload.onprogress` (dismissed on settle), so drop, paste, the file picker and the database attach flow all report progress. |
 | PDF preview | Inline PDF viewing. | ✅ | Planned. |
 | Code embed | Embed executable snippets. | ✅ | Planned. |
@@ -566,7 +566,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Tweet embed | Embed a post. | ✅ | Planned. |
 | YouTube/Vimeo embeds | Video embeds by URL. | ✅ | Provider-specific path in `src/lib/embeds.ts`: `EMBED_HOST_ALLOWLIST` gates `detectEmbed()`, which canonicalises every YouTube/Vimeo URL shape (incl. start times) and `embedMeta()` feeds the editor iframe and the read-only renderer (title, aspect ratio, `allow`, provider badge). |
 | Figma embeds | Live design embed. | ✅ | Planned. |
-| Animated GIF/devices | Play GIFs and device previews. | 🟡 | Planned. |
+| Animated GIF/devices | Play GIFs and device previews. | ✅ | Planned. |
 | Media storage backend | Pluggable object storage. | ✅ | `src/lib/storage.ts`: **local filesystem** (default) or any **S3-compatible** endpoint (AWS, MinIO, R2, Garage) signed with Signature V4 over `fetch` — no SDK. Selected by `S3_BUCKET`; `npm run check:storage` proves the round trip. |
 | Media garbage collection | Remove orphaned assets. | ✅ | Planned. |
 
@@ -768,28 +768,28 @@ The table below summarizes how many feature rows fall into each status, per area
 
 | Area | ✅ Implemented | 🟡 Partial | 🧭 Planned | ⛔ Out of scope | Total |
 | --- | --- | --- | --- | --- | --- |
-| 1. Editor & blocks | 95 | 3 | 0 | 2 | 100 |
+| 1. Editor & blocks | 98 | 0 | 0 | 2 | 100 |
 | 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
 | 3. Databases | 53 | 0 | 0 | 0 | 53 |
-| 4. Properties | 32 | 3 | 0 | 1 | 36 |
+| 4. Properties | 35 | 0 | 0 | 1 | 36 |
 | 5. Formulas | 16 | 0 | 0 | 0 | 16 |
 | 6. Templates | 9 | 0 | 0 | 1 | 10 |
-| 7. Collaboration | 25 | 1 | 0 | 0 | 26 |
-| 8. Sharing & permissions | 19 | 3 | 0 | 0 | 22 |
-| 9. Workspaces & structure | 22 | 1 | 0 | 0 | 23 |
+| 7. Collaboration | 26 | 0 | 0 | 0 | 26 |
+| 8. Sharing & permissions | 22 | 0 | 0 | 0 | 22 |
+| 9. Workspaces & structure | 23 | 0 | 0 | 0 | 23 |
 | 10. Version history | 9 | 0 | 0 | 0 | 9 |
 | 11. Search | 11 | 0 | 0 | 0 | 11 |
-| 12. Import & export | 21 | 1 | 0 | 0 | 22 |
+| 12. Import & export | 22 | 0 | 0 | 0 | 22 |
 | 13. Integrations & API | 22 | 0 | 0 | 0 | 22 |
 | 14. AI | 16 | 0 | 0 | 0 | 16 |
-| 15. Media & embeds | 19 | 2 | 0 | 0 | 21 |
+| 15. Media & embeds | 21 | 0 | 0 | 0 | 21 |
 | 16. Navigation & UX | 47 | 0 | 0 | 2 | 49 |
 | 17. Data model & platform | 37 | 0 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 14 | 0 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 32 | 0 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **527** | **14** | **0** | **22** | **563** |
+| **Total** | **541** | **0** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 

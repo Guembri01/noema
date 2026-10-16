@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Scoreboard:** 563 feature rows — 527 implemented · 14 partial · 0 planned · 22 deliberately out of scope.
+**Scoreboard:** 563 feature rows — 541 implemented · 0 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **14** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **0** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -29,13 +29,10 @@ This file lists the **14** rows that are not finished, area by area, plus 22 int
 
 ### 1. Editor & blocks
 
-95 done · 3 partial · 0 planned · 2 out of scope
+98 done · 0 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Two-column page property layout | Place properties side by side. | 🟡 | Planned with property panel rework. |
-| Inline database block | A database rendered inside a page. | 🟡 | Renders a collection view inline; view config incomplete. |
-| Linked view of a database | Re-display an existing database elsewhere. | 🟡 | Planned; requires stable view model. |
 | Comment block (doc annotation) | Pulls comments conceptually into flow. | ⛔ | Superseded by the inline comment model; not a block. |
 | Table merge/split cells | Combine or split cells. | ⛔ | High complexity for low demand; revisit if requested. |
 
@@ -49,13 +46,10 @@ This file lists the **14** rows that are not finished, area by area, plus 22 int
 
 ### 4. Properties
 
-32 done · 3 partial · 0 planned · 1 out of scope
+35 done · 0 partial · 0 planned · 1 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Last edited by | Last editor. | 🟡 | Tracked from property/table edits via the activity log (falls back to creator); content/title edits outside the database view not yet recorded. |
-| Button property | Trigger actions from a row. | 🟡 | Planned. |
-| Verification property | Verified-by-owner marker. | 🟡 | Planned; wiki-oriented. |
 | Property type change | Convert a property's type. | ⛔ | Lossy conversions; only safe transforms planned later. |
 
 ### 6. Templates
@@ -65,49 +59,6 @@ This file lists the **14** rows that are not finished, area by area, plus 22 int
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Template from selection | Turn a block selection into a template. | ⛔ | Uncommon flow; skip initially. B80 blocked-row triage: docs/specs/templates.md:308 + docs/specs/workspaces-structure.md §4 (editor-slot dependency). |
-
-### 7. Collaboration
-
-25 done · 1 partial · 0 planned
-
-| Feature | What it should do | Status | Notes |
-| --- | --- | --- | --- |
-| Avatars | Per-user avatars in the UI. | 🟡 | Avatar field exists; presence UI pending. |
-
-### 8. Sharing & permissions
-
-19 done · 3 partial · 0 planned
-
-| Feature | What it should do | Status | Notes |
-| --- | --- | --- | --- |
-| Workspace roles | Owner/admin/member/guest roles. | 🟡 | Roles modeled; enforcement partial. |
-| Owner role | Full control of the workspace. | 🟡 | Modeled; transfer flows missing. |
-| Admin role | Manage members and settings. | 🟡 | Modeled; UI partial. |
-
-### 9. Workspaces & structure
-
-22 done · 1 partial · 0 planned
-
-| Feature | What it should do | Status | Notes |
-| --- | --- | --- | --- |
-| Page tree | Hierarchical page nesting. | 🟡 | Nesting works; B66 extracted the pure logic (flatten/group/expand/moveCandidates) to `src/lib/page-tree.ts` with 22 unit tests over a synthetic 1000-node tree — cycle guard, expand-state invariants, perf smoke (render plan 0.6 ms median ≪ 100 ms). React DOM render at 1000 nodes still unmeasured (no e2e by design). B80: bulk move + `movePageAction` containment guards specced (R80.7/R80.8) — docs/specs/workspaces-structure.md. |
-
-### 12. Import & export
-
-21 done · 1 partial · 0 planned
-
-| Feature | What it should do | Status | Notes |
-| --- | --- | --- | --- |
-| Export Markdown | Page as `.md`. | 🟡 | Basic export; nested content partial. Spec: docs/specs/import-export.md. |
-
-### 15. Media & embeds
-
-19 done · 2 partial · 0 planned
-
-| Feature | What it should do | Status | Notes |
-| --- | --- | --- | --- |
-| Paste image from clipboard | Insert a copied image. | 🟡 | Works for many sources. |
-| Animated GIF/devices | Play GIFs and device previews. | 🟡 | Planned. |
 
 ### 16. Navigation & UX
 
