@@ -32,6 +32,9 @@ import {
   type ConfluenceImportResult,
   type ConfluencePage,
 } from "@/lib/import-confluence";
+import { assembleDoc, describeImport, type PdfBlock, type PdfDocument } from "@/lib/pdf-import";
+import { extractedTextToPages } from "@/lib/pdf-import-blocks";
+import { importPdfTextAction } from "@/server/actions/import-pdf";
 import type { DBProperty } from "@/components/database/database-types";
 import { fileCategory, iconForFile, isAllowedType, mimeForExt } from "@/lib/file-type";
 import { t } from "@/lib/i18n";
@@ -82,6 +85,9 @@ const IMPORT_ALLOW: Record<string, readonly string[]> = {
   zip: [".zip"],
   docx: [".docx"],
   audio: ["audio/*"],
+  // The PDF importer runs the text-layer engine on extracted text (the
+  // dependency set has no PDF parser), so it accepts a plain-text payload.
+  pdfText: [".txt"],
 };
 
 /** Lower-cased extension of a file name, or "" when it has none. */
@@ -244,12 +250,13 @@ function buildAsanaPayload(parsed: AsanaImportResult): {
 
 /* ------------------------------------------ Format import preview (shared) */
 
-/** A parsed Asana / Evernote / Google Docs / Confluence file awaiting confirm. */
+/** A parsed Asana / Evernote / Google Docs / Confluence / PDF file awaiting confirm. */
 type FormatDraft =
   | { kind: "asana"; fileName: string; parsed: AsanaImportResult }
   | { kind: "enex"; fileName: string; notes: EnexNote[] }
   | { kind: "gdocs"; fileName: string; html: string; parsed: GoogleDocImport }
-  | { kind: "confluence"; fileName: string; html: string; parsed: ConfluenceImportResult };
+  | { kind: "confluence"; fileName: string; html: string; parsed: ConfluenceImportResult }
+  | { kind: "pdf"; fileName: string; text: string; parsed: PdfDocument };
 
 /** Bounds the preview lists so a large export renders a short summary. */
 const PREVIEW_ITEMS = 5;
@@ -275,6 +282,24 @@ function confluenceTitles(pages: readonly ConfluencePage[]): string[] {
     titles.push(...confluenceTitles(page.children));
   }
   return titles;
+}
+
+/** One-line label for a recovered PDF block in the preview list. */
+function pdfBlockLabel(block: PdfBlock): string {
+  switch (block.type) {
+    case "heading":
+      return `H${block.level} · ${block.text}`;
+    case "paragraph":
+      return block.text;
+    case "listItem":
+      return `${block.ordered ? "1." : "•"} ${block.text}`;
+    case "code":
+      return `code · ${block.text.split("\n")[0] ?? ""}`;
+    case "table": {
+      const columns = block.rows[0]?.length ?? 0;
+      return `table · ${block.rows.length}×${columns}`;
+    }
+  }
 }
 
 /** Honest, human-readable preview of what a format draft will create. */
@@ -354,6 +379,27 @@ function formatPreview(draft: FormatDraft): FormatPreview {
           .slice(0, PREVIEW_ITEMS)
           .map((title, index) => ({ id: `page-${index}`, label: title })),
         itemCount: titles.length,
+      };
+    }
+    case "pdf": {
+      const summary = describeImport(draft.parsed);
+      return {
+        title: draft.parsed.title,
+        fileName: draft.fileName,
+        counts:
+          `${summary.headings} headings · ${summary.paragraphs} paragraphs · ` +
+          `${summary.lists} list items · ${summary.tables} tables · ${summary.code} code`,
+        note:
+          "Imported from a PDF's extracted text layer (plain text). " +
+          "Scanned or image-only PDFs must be text-extracted first.",
+        warnings: draft.parsed.warnings.map((warning) => warning.message),
+        chipsHeading: "",
+        chips: [],
+        itemsHeading: "Blocks",
+        items: draft.parsed.blocks
+          .slice(0, PREVIEW_ITEMS)
+          .map((block, index) => ({ id: `pdf-block-${index}`, label: pdfBlockLabel(block) })),
+        itemCount: draft.parsed.blocks.length,
       };
     }
   }
@@ -560,6 +606,7 @@ export function ImportSection({
   const enexInputRef = useRef<HTMLInputElement | null>(null);
   const gdocsInputRef = useRef<HTMLInputElement | null>(null);
   const confluenceInputRef = useRef<HTMLInputElement | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement | null>(null);
   const [formatDraft, setFormatDraft] = useState<FormatDraft | null>(null);
   const [formatPending, startFormatTransition] = useTransition();
 
@@ -615,6 +662,30 @@ export function ImportSection({
         return;
       }
       setFormatDraft({ kind: "gdocs", fileName: file.name, html, parsed });
+    };
+    reader.readAsText(file);
+  };
+
+  /**
+   * PDF text-layer import. The engine has no binary parser and the dependency
+   * set has no PDF library, so this entry takes the text an extractor already
+   * produced (a `.txt` payload): the sidebar runs `assembleDoc` for the
+   * preview and the server re-runs it on confirm.
+   */
+  const onImportPdf = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const pdfText = String(reader.result ?? "");
+      if (!pdfText.trim()) {
+        toast.error("That file is empty — expected a PDF's extracted text.");
+        return;
+      }
+      const parsed = assembleDoc(extractedTextToPages(pdfText));
+      if (parsed.blocks.length === 0) {
+        toast.error("No text-layer content found — expected a PDF's extracted text.");
+        return;
+      }
+      setFormatDraft({ kind: "pdf", fileName: file.name, text: pdfText, parsed });
     };
     reader.readAsText(file);
   };
@@ -687,6 +758,34 @@ export function ImportSection({
           router.refresh();
         } finally {
           setActiveImport(null);
+        }
+        return;
+      }
+
+      if (draft.kind === "pdf") {
+        const outcome = await safeAction(() =>
+          importPdfTextAction({
+            workspaceId: workspace.id,
+            parentId: null,
+            filename: draft.fileName,
+            text: draft.text,
+          }),
+        );
+        if (!outcome.ok) {
+          toast.error(outcome.error);
+          return;
+        }
+        const result = outcome.value;
+        if ("ok" in result) {
+          const { blocks } = result.summary;
+          toast.success(
+            `${iconForFile(draft.fileName)} Imported ${blocks} block${blocks === 1 ? "" : "s"} from the PDF text layer`,
+          );
+          setFormatDraft(null);
+          router.push(`/w/${workspace.slug}/${result.id}`);
+          router.refresh();
+        } else {
+          toast.error(result.error);
         }
         return;
       }
@@ -1068,6 +1167,25 @@ export function ImportSection({
           const file = event.target.files?.[0];
           event.target.value = "";
           if (file && acceptImportFile(file, IMPORT_ALLOW.html)) onImportHtml(file, "confluence");
+        }}
+      />
+      <button
+        type="button"
+        onClick={() => pdfInputRef.current?.click()}
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted transition-colors hover:bg-surface-2"
+      >
+        <Upload className="h-4 w-4" />
+        Import PDF (text layer)
+      </button>
+      <input
+        ref={pdfInputRef}
+        type="file"
+        accept=".txt,text/plain"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file && acceptImportFile(file, IMPORT_ALLOW.pdfText)) onImportPdf(file);
         }}
       />
       <button
