@@ -1,8 +1,17 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, ImagePlus, Link as LinkIcon, Lock, Smile, Star } from "lucide-react";
+import {
+  Bell,
+  ImagePlus,
+  Link as LinkIcon,
+  Lock,
+  Move,
+  Smile,
+  Star,
+  Trash2,
+} from "lucide-react";
 import {
   archivePageAction,
   getPageContentAction,
@@ -38,7 +47,27 @@ import {
   patchAppearance,
   type PageAppearance,
 } from "@/lib/page-appearance";
-import { pageIconToCss, parsePageIcon } from "@/lib/page-icon";
+import { isImageIcon, pageIconToCss, parsePageIcon } from "@/lib/page-icon";
+import {
+  BREADCRUMB_ELLIPSIS_ID,
+  buildBreadcrumb,
+  truncateBreadcrumb,
+  type BreadcrumbItem,
+  type BreadcrumbPage,
+} from "@/lib/breadcrumb";
+import {
+  DEFAULT_COVER_POSITION,
+  formatObjectPosition,
+  nudgePosition,
+  parseCoverPosition,
+  type CoverPosition,
+} from "@/lib/cover-position";
+import {
+  GRADIENTS,
+  coverCss,
+  type CoverValue,
+  type GradientId,
+} from "@/lib/page-cover";
 import { pageToMarkdown } from "@/lib/serialize";
 import type { TextBlock } from "@/lib/text-stats";
 import { cn } from "@/lib/utils";
@@ -76,6 +105,70 @@ function collectTextBlocks(raw: unknown): TextBlock[] {
   return mapTextBlocks(root?.content);
 }
 
+/**
+ * A breadcrumb trail from the route (`getAncestorTrail`): root → … → parent,
+ * the current page excluded. Kept `readonly` and defaulted to one shared empty
+ * array so the memo below is not invalidated on every render.
+ */
+type BreadcrumbTrail = readonly { id: string; title: string }[];
+
+const EMPTY_BREADCRUMB_TRAIL: BreadcrumbTrail = [];
+
+/** Header crumbs beyond this budget collapse their middle into an ellipsis. */
+const HEADER_BREADCRUMB_MAX = 4;
+
+/** A persisted cover decoded into its tagged value plus the focal point. */
+type StoredCover = { value: CoverValue; position: CoverPosition };
+
+/** Reverse lookup `coverCss` output → gradient preset id (mirrors the menu). */
+const GRADIENT_ID_BY_CSS: ReadonlyMap<string, GradientId> = new Map(
+  (Object.keys(GRADIENTS) as GradientId[]).map(
+    (id) => [GRADIENTS[id], id] as const,
+  ),
+);
+
+/**
+ * Split a stored cover string into its CSS value and the focal point encoded
+ * after it (`"<css> <x>% <y>%"`). A cover without a position decodes centred.
+ */
+function splitCoverCss(raw: string): { css: string; position: CoverPosition } {
+  const match = raw.match(/^(.*\S)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/);
+  if (!match) return { css: raw, position: { ...DEFAULT_COVER_POSITION } };
+  return {
+    css: match[1],
+    position: parseCoverPosition(`${match[2]}% ${match[3]}%`),
+  };
+}
+
+/**
+ * Decode a persisted cover string through the page-cover engine, or `null` for
+ * an absent/unrecognised value. Gradients match the catalog by CSS value and
+ * images must pass `isImageIcon`, so a hostile string never reaches the
+ * renderer as a banner.
+ */
+function decodeCover(raw: string | null): StoredCover | null {
+  if (!raw) return null;
+  const { css, position } = splitCoverCss(raw);
+  const gradientId = GRADIENT_ID_BY_CSS.get(css);
+  if (gradientId) return { value: { type: "gradient", gradientId }, position };
+  if (isImageIcon(css)) return { value: { type: "image", url: css }, position };
+  return null;
+}
+
+/**
+ * Encode a validated cover plus focal point back into the single `coverUrl`
+ * column the save path persists. The centred default is omitted so a plain
+ * preset round-trips byte-for-byte.
+ */
+function encodeCover(value: CoverValue, position: CoverPosition): string {
+  const css = coverCss(value);
+  if (css === "") return "";
+  const focal = formatObjectPosition(position);
+  return focal === formatObjectPosition(DEFAULT_COVER_POSITION)
+    ? css
+    : `${css} ${focal}`;
+}
+
 export function PageTitle({
   locale = "en",
   pageId,
@@ -94,6 +187,7 @@ export function PageTitle({
   initialSharedToken,
   initialFollowing,
   initialLocked,
+  breadcrumbTrail = EMPTY_BREADCRUMB_TRAIL,
   workspaces = [],
   teamspaces = [],
   editable,
@@ -116,6 +210,12 @@ export function PageTitle({
   initialSharedToken: string | null;
   initialFollowing: boolean;
   initialLocked: boolean;
+  /**
+   * Ancestor trail from the route (`getAncestorTrail`, root → … → parent).
+   * Optional and additive: when omitted the header keeps the two static
+   * workspace/title crumbs.
+   */
+  breadcrumbTrail?: BreadcrumbTrail;
   workspaces?: { id: string; name: string; slug: string }[];
   /** Accepted for the route; member permissions live in WhoHasAccess. */
   members?: { id: string; name: string }[];
@@ -142,6 +242,22 @@ export function PageTitle({
   const [shareToken, setShareToken] = useState(initialSharedToken);
   const [following, setFollowing] = useState(initialFollowing);
   const [locked, setLocked] = useState(initialLocked);
+  // The stored `coverUrl` is decoded once per value into a validated tagged
+  // cover plus its focal point; the banner renders from the decoded value and a
+  // dragged focal point is re-encoded on release.
+  const storedCover = useMemo(() => decodeCover(cover), [cover]);
+  const [coverPosition, setCoverPosition] = useState<CoverPosition>(
+    () => decodeCover(initialCover)?.position ?? { ...DEFAULT_COVER_POSITION },
+  );
+  const coverDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startPosition: CoverPosition;
+    lastPosition: CoverPosition;
+    width: number;
+    height: number;
+  } | null>(null);
   // A locked page is read-only even for otherwise-editable members; the server
   // already folds `!page.locked` into `editable`, but the lock can also flip at
   // runtime through the actions menu before the route refreshes.
@@ -166,6 +282,26 @@ export function PageTitle({
   // latter, instead of spilling a raw URL into the heading.
   const pageIcon = parsePageIcon(icon);
   const iconStyle = pageIconToCss(pageIcon);
+
+  // Ancestor header trail: only the route-supplied ancestors are chained; with
+  // no trail the render falls back to the workspace/title crumbs. The engine
+  // walk is cycle-safe and fail-closed, and a deep chain collapses its middle.
+  const crumbs = useMemo<BreadcrumbItem[]>(() => {
+    if (breadcrumbTrail.length === 0) return [];
+    const pages: BreadcrumbPage[] = breadcrumbTrail.map((ancestor, index) => ({
+      id: ancestor.id,
+      parentId: index === 0 ? null : breadcrumbTrail[index - 1].id,
+      title: ancestor.title,
+    }));
+    pages.push({
+      id: pageId,
+      parentId: breadcrumbTrail[breadcrumbTrail.length - 1].id,
+      title,
+    });
+    return truncateBreadcrumb(buildBreadcrumb(pages, pageId), {
+      max: HEADER_BREADCRUMB_MAX,
+    });
+  }, [breadcrumbTrail, pageId, title]);
 
   const notifyKey = `noema:page-notify:${pageId}`;
   const [notifyLevel, setNotifyLevel] = useState<NotifyLevel>("all");
@@ -204,6 +340,22 @@ export function PageTitle({
     }
   }, [notifyKey]);
 
+  // The persisted cover carries its focal point, so re-seed the drag state
+  // whenever the stored string changes: a cover swap in the menu (or another
+  // client) is reflected without a remount.
+  useEffect(() => {
+    setCoverPosition(
+      decodeCover(cover)?.position ?? { ...DEFAULT_COVER_POSITION },
+    );
+  }, [cover]);
+
+  // Keep the full-width toggle truthful to the server after a refresh: the
+  // local state flips optimistically for the menu, then reconciles with the
+  // value the route re-rendered from `Page.fullWidth`.
+  useEffect(() => {
+    setFullWidth(initialFullWidth);
+  }, [initialFullWidth]);
+
   // Line spacing is server-backed (`Page.lineSpacing`) and seeded through the
   // appearance state above; no localStorage layer remains. A server
   // `initialAppearance` still wins when present.
@@ -229,6 +381,48 @@ export function PageTitle({
     setCover(value);
     setShowCover(false);
     save({ coverUrl: value });
+  };
+
+  // ---- Cover reposition (drag the banner) --------------------------------
+  const onCoverPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!canEdit || !storedCover || event.button !== 0) return;
+    const surface = event.currentTarget;
+    coverDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startPosition: coverPosition,
+      lastPosition: coverPosition,
+      width: surface.clientWidth || 1,
+      height: surface.clientHeight || 1,
+    };
+    surface.setPointerCapture(event.pointerId);
+  };
+
+  const onCoverPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = coverDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    // Dragging the image under a fixed viewport moves its visible centre the
+    // opposite way, so a rightward pointer reveals the left of the image.
+    const dx = (-(event.clientX - drag.startX) / drag.width) * 100;
+    const dy = (-(event.clientY - drag.startY) / drag.height) * 100;
+    const next = nudgePosition(drag.startPosition, dx, dy);
+    drag.lastPosition = next;
+    setCoverPosition(next);
+  };
+
+  const endCoverDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = coverDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    coverDragRef.current = null;
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      /* pointer already released */
+    }
+    if (storedCover) {
+      save({ coverUrl: encodeCover(storedCover.value, drag.lastPosition) });
+    }
   };
 
   // ---- Actions menu handlers ---------------------------------------------
@@ -418,9 +612,40 @@ export function PageTitle({
         )}
       >
         <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-sm text-muted">
-          <span className="truncate">{workspaceName}</span>
-          <span aria-hidden className="px-0.5">/</span>
-          <span aria-current="page" className="truncate text-fg">{title || "Untitled"}</span>
+          <a
+            href={`/w/${workspaceSlug}`}
+            className="truncate rounded hover:text-fg"
+          >
+            {workspaceName}
+          </a>
+          {crumbs.length > 0 ? (
+            crumbs.map((crumb) => (
+              <span key={crumb.id} className="flex min-w-0 items-center gap-1">
+                <span aria-hidden className="shrink-0 px-0.5">/</span>
+                {crumb.id === BREADCRUMB_ELLIPSIS_ID ? (
+                  <span aria-hidden className="shrink-0">
+                    {crumb.label}
+                  </span>
+                ) : crumb.id === pageId ? (
+                  <span aria-current="page" className="truncate text-fg">
+                    {crumb.label}
+                  </span>
+                ) : (
+                  <a
+                    href={`/w/${workspaceSlug}/${crumb.id}`}
+                    className="truncate rounded hover:text-fg"
+                  >
+                    {crumb.label}
+                  </a>
+                )}
+              </span>
+            ))
+          ) : (
+            <>
+              <span aria-hidden className="px-0.5">/</span>
+              <span aria-current="page" className="truncate text-fg">{title || "Untitled"}</span>
+            </>
+          )}
           {locked && (
             <span
               className="flex shrink-0 items-center rounded px-1 text-muted"
@@ -534,9 +759,44 @@ export function PageTitle({
         </div>
       </div>
 
-      {cover && (
-        <div className="relative -mx-12 mb-4" style={{ background: cover }}>
-          <div className="h-44" />
+      {storedCover && (
+        <div className="group relative -mx-12 mb-4">
+          <div
+            className={cn(
+              "h-44 bg-cover bg-center",
+              canEdit && "cursor-grab touch-none active:cursor-grabbing",
+            )}
+            style={{
+              backgroundImage: coverCss(storedCover.value),
+              backgroundPosition: formatObjectPosition(coverPosition),
+            }}
+            aria-label={canEdit ? "Page cover — drag to reposition" : "Page cover"}
+            onPointerDown={onCoverPointerDown}
+            onPointerMove={onCoverPointerMove}
+            onPointerUp={endCoverDrag}
+            onPointerCancel={endCoverDrag}
+          />
+          {canEdit && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-end gap-1 p-3 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+              <span className="pointer-events-none me-auto flex items-center gap-1 rounded bg-bg/85 px-2 py-1 text-xs text-muted shadow-sm">
+                <Move className="h-3.5 w-3.5" aria-hidden /> Drag to reposition
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowCover(true)}
+                className="pointer-events-auto flex h-7 items-center gap-1 rounded bg-bg/90 px-2 text-xs text-fg shadow hover:bg-bg"
+              >
+                <ImagePlus className="h-3.5 w-3.5" aria-hidden /> Change cover
+              </button>
+              <button
+                type="button"
+                onClick={() => pickCover(null)}
+                className="pointer-events-auto flex h-7 items-center gap-1 rounded bg-bg/90 px-2 text-xs text-fg shadow hover:bg-bg"
+              >
+                <Trash2 className="h-3.5 w-3.5" aria-hidden /> Remove
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -623,7 +883,7 @@ export function PageTitle({
           className="w-full resize-none overflow-hidden bg-transparent text-[40px] font-bold leading-[1.2] tracking-[-0.02em] outline-none placeholder:text-muted/40"
         />
 
-        {canEdit && !cover && (
+        {canEdit && !storedCover && (
           <div className="mt-2">
             <button
               type="button"
