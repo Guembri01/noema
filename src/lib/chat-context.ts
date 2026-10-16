@@ -13,7 +13,7 @@ import { searchPagesForPrompt } from "@/server/queries";
  * calls, so it works with every OpenAI-compatible provider.
  */
 
-export type ChatIntent = "notes" | "members" | "projects" | "tasks" | "note" | "tickets";
+export type ChatIntent = "notes" | "members" | "projects" | "tasks" | "note" | "tickets" | "messages";
 
 export type ChatReference = { id: string; title: string; icon: string | null };
 
@@ -26,6 +26,11 @@ export type ChatIntel = {
 };
 
 const INTENT_RULES: { id: ChatIntent; label: string; test: RegExp }[] = [
+  {
+    id: "messages",
+    label: "Read the conversation",
+    test: /\b(message|messages|comment|comments|thread|threads|discussion|discussions|said|says|replied|reply|conversation|chat|last message|latest)\b/i,
+  },
   {
     id: "members",
     label: "Checked members",
@@ -83,6 +88,125 @@ function collectOpenTasks(doc: unknown, limit = 8): string[] {
   return tasks;
 }
 
+/**
+ * Always-on summary of what the workspace holds. Counts only, plus the few
+ * titles that make an answer concrete, so it stays cheap and small.
+ */
+async function workspaceOverview(workspaceId: string): Promise<string | null> {
+  const [workspace, pageCount, databaseCount, tickets, projects, labelCount, commentCount, chatThreadCount, recentPages] =
+    await Promise.all([
+      prisma.workspace.findUnique({ where: { id: workspaceId }, select: { name: true } }),
+      prisma.page.count({ where: { workspaceId, type: "PAGE", deletedAt: null } }),
+      prisma.page.count({ where: { workspaceId, type: "DATABASE", deletedAt: null } }),
+      prisma.ticket.findMany({
+        where: { workspaceId, archived: false },
+        select: { status: true, dueDate: true, assigneeId: true, estimate: true, estimateUnit: true, title: true, key: true },
+      }),
+      prisma.project.findMany({
+        where: { workspaceId },
+        orderBy: { position: "asc" },
+        take: 5,
+        select: { name: true, status: true, dueDate: true, milestones: { select: { name: true, status: true, dueDate: true } } },
+      }),
+      prisma.label.count({ where: { workspaceId } }),
+      prisma.comment.count({ where: { page: { workspaceId } } }),
+      prisma.chatThread.count({ where: { workspaceId } }),
+      prisma.page.findMany({
+        where: { workspaceId, deletedAt: null, type: "PAGE" },
+        orderBy: { updatedAt: "desc" },
+        take: 3,
+        select: { title: true, updatedAt: true },
+      }),
+    ]);
+  if (!workspace) return null;
+
+  const open = tickets.filter((t) => t.status !== "done" && t.status !== "cancelled");
+  const now = Date.now();
+  const overdue = open.filter((t) => t.dueDate && t.dueDate.getTime() < now);
+  const unassigned = open.filter((t) => !t.assigneeId);
+  const noEstimate = open.filter((t) => t.estimate === null);
+  const unit = open.find((t) => t.estimateUnit)?.estimateUnit ?? "points";
+  const remaining = open.reduce((sum, t) => sum + (t.estimate ?? 0), 0);
+  const byStatus = new Map<string, number>();
+  for (const t of tickets) byStatus.set(t.status, (byStatus.get(t.status) ?? 0) + 1);
+  const milestones = projects.flatMap((p) =>
+    p.milestones.map((m) => ({ ...m, project: p.name })),
+  );
+  const nextMilestone = milestones
+    .filter((m) => m.status !== "done")
+    .sort((a, b) => (a.dueDate?.getTime() ?? Infinity) - (b.dueDate?.getTime() ?? Infinity))[0];
+
+  const lines = [
+    `WORKSPACE OVERVIEW — "${workspace.name}"`,
+    `- Notes: ${pageCount} · Databases: ${databaseCount} · Labels: ${labelCount} · Comments: ${commentCount} · Chat threads: ${chatThreadCount}`,
+    tickets.length === 0
+      ? "- Tickets: none yet"
+      : `- Tickets: ${tickets.length} (${open.length} open, ${remaining} ${unit} remaining)` +
+        [...byStatus.entries()].map(([status, count]) => `${status} ${count}`).join(" / ") +
+        (overdue.length ? ` · ${overdue.length} overdue` : "") +
+        (unassigned.length ? ` · ${unassigned.length} unassigned` : "") +
+        (noEstimate.length ? ` · ${noEstimate.length} without an estimate` : ""),
+    projects.length === 0
+      ? "- Projects: none yet"
+      : `- Projects: ${projects.length}${milestones.length ? ` · ${milestones.filter((m) => m.status === "done").length}/${milestones.length} milestones done` : ""}`,
+    nextMilestone
+      ? `- Next milestone: ${nextMilestone.name} (${nextMilestone.project})${nextMilestone.dueDate ? ` due ${nextMilestone.dueDate.toISOString().slice(0, 10)}` : " with no due date"}`
+      : projects.length > 0
+        ? "- Milestones: none recorded (or all done)"
+        : null,
+    recentPages.length > 0
+      ? `- Recently edited notes: ${recentPages.map((p) => `"${p.title || "Untitled"}"`).join(", ")}`
+      : "- Notes: the workspace has no notes yet",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+/** The newest comments and chat messages, so "my last message" is answerable. */
+async function recentMessages(workspaceId: string, take: number): Promise<string | null> {
+  const [comments, chats] = await Promise.all([
+    prisma.comment.findMany({
+      where: { page: { workspaceId } },
+      orderBy: { createdAt: "desc" },
+      take,
+      select: {
+        body: true,
+        createdAt: true,
+        author: { select: { name: true } },
+        page: { select: { id: true, title: true } },
+      },
+    }),
+    prisma.chatMessage.findMany({
+      where: { thread: { workspaceId } },
+      orderBy: { createdAt: "desc" },
+      take,
+      select: {
+        body: true,
+        createdAt: true,
+        role: true,
+        thread: { select: { title: true } },
+      },
+    }),
+  ]);
+  const rows = [
+    ...comments.map((c) => ({
+      at: c.createdAt,
+      text: `[comment on "${c.page.title || "Untitled"}" by ${c.author.name}] ${c.body}`,
+    })),
+    ...chats.map((m) => ({
+      at: m.createdAt,
+      text: `[${m.role} in chat "${m.thread.title}"] ${m.body}`,
+    })),
+  ]
+    .sort((a, b) => b.at.getTime() - a.at.getTime())
+    .slice(0, take);
+  if (rows.length === 0) {
+    return "RECENT MESSAGES: none (the workspace has no comments or chat messages yet).";
+  }
+  return `RECENT MESSAGES (newest first):\n${rows
+    .map((row) => `- ${row.at.toISOString().slice(0, 16).replace("T", " ")} · ${row.text.slice(0, 300)}`)
+    .join("\n")}`;
+}
+
 export async function gatherChatIntel(input: {
   workspaceId: string;
   pageId?: string | null;
@@ -94,6 +218,25 @@ export async function gatherChatIntel(input: {
   const activity: string[] = [];
   const references: ChatReference[] = [];
   const take = input.limit ?? 5;
+
+  // A compact workspace overview is ALWAYS included. Without it the assistant
+  // could only say "no data" (which is what it did whenever a question did not
+  // match an intent); with it, it can answer with what the workspace actually
+  // holds and be explicit about what is missing.
+  const overview = await workspaceOverview(input.workspaceId);
+  if (overview) {
+    parts.push(overview);
+    activity.push("Read the workspace overview");
+  }
+
+  // Recent comments and chat messages: what "my last message" means.
+  if (isIntentAsked(intents, "messages") || isIntentAsked(intents, "note")) {
+    const recent = await recentMessages(input.workspaceId, take);
+    if (recent) {
+      parts.push(recent);
+      activity.push("Read recent messages");
+    }
+  }
 
   // The note the discussion is pinned to (always the strongest signal).
   if (input.pageId) {
