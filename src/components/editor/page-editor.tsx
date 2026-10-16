@@ -40,6 +40,14 @@ import {
   visibleParticipants,
   type Participant,
 } from "@/lib/presence";
+import {
+  coalesce,
+  enqueue,
+  markDone,
+  markFailed,
+  nextBatch,
+  type QueuedMutation,
+} from "@/lib/offline-queue";
 import { initials } from "@/lib/utils";
 import { OPTION_COLORS } from "@/components/database/database-types";
 
@@ -104,6 +112,17 @@ const SNAPSHOT_COALESCE_MS = 500;
  * slow heartbeat never blinks a collaborator out of the room.
  */
 const PRESENCE_TTL_MS = 45_000;
+
+/** Buffered offline writes are dropped after this many failed replays. */
+const OFFLINE_MAX_ATTEMPTS = 5;
+
+/** The three transport states surfaced by the y-websocket provider. */
+type CollabStatus = "connecting" | "connected" | "disconnected";
+
+/** True when the browser reports no network — writes must be buffered. */
+function isOffline(): boolean {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
 
 /** Resolve a presence palette name (`assignColor`) to its avatar CSS colour. */
 function presenceColor(name: string | undefined): string {
@@ -286,18 +305,112 @@ export function PageEditor({
   const dragStartXRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastSavedRef = useRef<string>("");
+  /** Latest document payload not yet acknowledged by the server. */
+  const pendingPayloadRef = useRef<string | null>(null);
+  /** Local buffer of writes made while offline; replayed once back online. */
+  const offlineRef = useRef<QueuedMutation[]>([]);
+  /** Monotonic counter so each buffered write gets a unique queue id. */
+  const offlineSeqRef = useRef(0);
+
+  const collabUrl = process.env.NEXT_PUBLIC_COLLAB_URL ?? "";
+  const collab = useMemo(() => {
+    if (!collabUrl) return null;
+    const ydoc = new Y.Doc();
+    // `connect: false` keeps the socket closed while the component renders
+    // (and under React StrictMode's double-invoke, which would otherwise leak a
+    // second connection). The mount effect below opens it; the unmount effect
+    // tears it down.
+    const provider = new WebsocketProvider(collabUrl, pageId, ydoc, { connect: false });
+    provider.awareness.setLocalStateField("user", {
+      name: "You",
+      color: "#2383e2",
+    });
+    return { ydoc, provider };
+  }, [collabUrl, pageId]);
+
+  /**
+   * Admit a document snapshot to the local offline buffer. Every entry is a
+   * full snapshot, so `coalesce` collapses a burst of offline keystrokes into
+   * one write that is replayed when connectivity returns.
+   */
+  const bufferSave = useCallback(
+    (payload: string) => {
+      offlineSeqRef.current += 1;
+      offlineRef.current = coalesce(
+        enqueue(offlineRef.current, {
+          id: `${pageId}:${offlineSeqRef.current}`,
+          kind: "update",
+          targetId: pageId,
+          payload: { content: payload },
+          createdAt: Date.now(),
+        }),
+      );
+    },
+    [pageId],
+  );
+
+  /**
+   * Replay the buffered offline writes. Only the newest snapshot needs to reach
+   * the server (the queue coalesces to it); on failure the write is kept for a
+   * later retry and dropped once it has failed too many times.
+   */
+  const flushOffline = useCallback(async () => {
+    const batch = nextBatch(offlineRef.current, { max: Number.POSITIVE_INFINITY });
+    if (batch.length === 0) return;
+    const latest = batch[batch.length - 1];
+    const content = latest.payload.content;
+    if (typeof content !== "string") {
+      offlineRef.current = markDone(
+        offlineRef.current,
+        batch.map((mutation) => mutation.id),
+      );
+      return;
+    }
+    const outcome = await safeAction(() => updatePageAction(pageId, { content }));
+    const failure = outcome.ok ? actionError(outcome.value) : outcome.error;
+    if (!outcome.ok || failure) {
+      offlineRef.current = markFailed(offlineRef.current, latest.id, {
+        maxAttempts: OFFLINE_MAX_ATTEMPTS,
+      });
+      return;
+    }
+    offlineRef.current = markDone(
+      offlineRef.current,
+      batch.map((mutation) => mutation.id),
+    );
+    lastSavedRef.current = content;
+    pendingPayloadRef.current = null;
+    setSaveState("saved");
+  }, [pageId]);
 
   const runSave = useCallback(async () => {
     const editor = editorRef.current;
-    if (!editor) return;
-    // Send the document as JSON text: ProseMirror shares one `attrs` object
-    // across nodes, and React's action encoder converts a shared object graph
-    // into a temporary reference the server cannot persist.
-    const payload = JSON.stringify(editor.getJSON());
+    // Prefer the payload captured at edit time: by the time a deferred save
+    // fires (or teardown flushes), the editor may already be torn down.
+    let payload = pendingPayloadRef.current;
+    if (payload === null && editor) {
+      try {
+        payload = JSON.stringify(editor.getJSON());
+      } catch {
+        payload = null; // editor already destroyed — nothing left to write
+      }
+    }
+    if (payload === null) return;
     if (payload === lastSavedRef.current) {
+      pendingPayloadRef.current = null;
       setSaveState("saved");
       return;
     }
+    // With no network, a collaborative page buffers the snapshot locally
+    // instead of failing the write; it is replayed once back online. A
+    // single-user page keeps its original attempt-and-report behaviour.
+    if (collab && isOffline()) {
+      bufferSave(payload);
+      return;
+    }
+    // Send the document as JSON text: ProseMirror shares one `attrs` object
+    // across nodes, and React's action encoder converts a shared object graph
+    // into a temporary reference the server cannot persist.
     const outcome = await safeAction(() => updatePageAction(pageId, { content: payload }));
     if (!outcome.ok) {
       setSaveState("error");
@@ -311,12 +424,13 @@ export function PageEditor({
       return;
     }
     lastSavedRef.current = payload;
+    pendingPayloadRef.current = null;
     setSaveState("saved");
-  }, [pageId]);
+  }, [pageId, bufferSave, collab]);
 
   const persist = useCallback(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- signature kept for call sites
-    (_editor: Editor) => {
+    (payload: string) => {
+      pendingPayloadRef.current = payload;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       setSaveState("saving");
       saveTimer.current = setTimeout(() => {
@@ -332,8 +446,8 @@ export function PageEditor({
    * here because `undo-stack` is deliberately clock-free. Only the derived
    * depth reaches React state, and only when it actually moves.
    */
-  const recordSnapshot = useCallback((editor: Editor) => {
-    const next = pushSnapshot(snapshotsRef.current, JSON.stringify(editor.getJSON()), {
+  const recordSnapshot = useCallback((json: string) => {
+    const next = pushSnapshot(snapshotsRef.current, json, {
       coalesceKey: "edit",
       coalesceWindowMs: SNAPSHOT_COALESCE_MS,
       at: Date.now(),
@@ -377,18 +491,9 @@ export function PageEditor({
     [workspaceId, locale],
   );
 
-  const collabUrl = process.env.NEXT_PUBLIC_COLLAB_URL ?? "";
-  const collab = useMemo(() => {
-    if (!collabUrl) return null;
-    const ydoc = new Y.Doc();
-    const provider = new WebsocketProvider(collabUrl, pageId, ydoc);
-    provider.awareness.setLocalStateField("user", {
-      name: "You",
-      color: "#2383e2",
-    });
-    return { ydoc, provider };
-  }, [collabUrl, pageId]);
   const [peers, setPeers] = useState(1);
+  /** Transport status, surfaced so a dropped link is visible in the chrome. */
+  const [collabStatus, setCollabStatus] = useState<CollabStatus>("connecting");
   /**
    * Live collaborators for the avatar stack, projected from the collab
    * provider's awareness states. The peer count above is kept as-is; the roster
@@ -425,13 +530,31 @@ export function PageEditor({
     };
   }, [collab]);
 
-  useEffect(
-    () => () => {
-      collab?.provider.destroy();
-      collab?.ydoc.destroy();
-    },
-    [collab],
-  );
+  // Transport lifecycle: open the socket on mount, replay any writes buffered
+  // while the link was down, and tear everything down on unmount (or when the
+  // room changes). `destroy` releases the awareness heartbeat, the update
+  // handler and the broadcast channel, so nothing outlives the editor.
+  useEffect(() => {
+    if (!collab) return;
+    const { provider, ydoc } = collab;
+    const onStatus = (event: { status: CollabStatus }) => setCollabStatus(event.status);
+    const onSync = (state: boolean) => {
+      if (state) void flushOffline();
+    };
+    const onOnline = () => void flushOffline();
+    provider.on("status", onStatus);
+    provider.on("sync", onSync);
+    window.addEventListener("online", onOnline);
+    provider.connect();
+    return () => {
+      window.removeEventListener("online", onOnline);
+      provider.off("status", onStatus);
+      provider.off("sync", onSync);
+      provider.disconnect();
+      provider.destroy();
+      ydoc.destroy();
+    };
+  }, [collab, flushOffline]);
 
   const editor = useEditor({
     editable,
@@ -604,8 +727,12 @@ export function PageEditor({
       },
     },
     onUpdate: ({ editor: e }) => {
-      persist(e);
-      recordSnapshot(e);
+      // Serialise once per change and share it with both consumers: the save
+      // path (which needs the exact payload at edit time) and the shadow
+      // snapshot history.
+      const json = JSON.stringify(e.getJSON());
+      persist(json);
+      recordSnapshot(json);
     },
   });
 
@@ -652,11 +779,19 @@ export function PageEditor({
     else collab.provider.once("sync", seed);
   }, [editor, collab, initialContent]);
 
+  // Persist the last edit when the editor unmounts: cancel the debounce and
+  // flush both the in-flight snapshot and anything buffered offline. Without
+  // this the pending write dies with the timer.
   useEffect(
     () => () => {
-      if (saveTimer.current) clearTimeout(saveTimer.current);
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      void flushOffline();
+      void runSave();
     },
-    [],
+    [flushOffline, runSave],
   );
 
   if (!editor) {
@@ -757,8 +892,15 @@ export function PageEditor({
           </div>
         )}
         {collab && (
-          <span className="flex items-center gap-1 rounded bg-surface px-1.5 py-0.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          <span
+            className="flex items-center gap-1 rounded bg-surface px-1.5 py-0.5"
+            data-collab-status={collabStatus}
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                collabStatus === "connected" ? "bg-emerald-500" : "bg-amber-500"
+              }`}
+            />
             {t(locale, "liveWord")} · {peers}
           </span>
         )}
