@@ -7,8 +7,9 @@
  * (emoji picker, collapse toggle, live heading outline) it uses a React node
  * view; purely structural blocks (columns) render with plain markup + CSS.
  * The toggle-heading chevron is the exception: headings come from StarterKit,
- * so it is added as a decoration-only, view-local plugin (see `ToggleHeading`)
- * rather than a node view.
+ * so it is added as a decoration-only plugin (see `ToggleHeading`) rather than
+ * a node view, and — since this slice — it remembers the collapsed state per
+ * page in `localStorage` instead of only in the live editor view.
  */
 
 import { Extension, Node, mergeAttributes } from "@tiptap/core";
@@ -22,7 +23,14 @@ import {
   type NodeViewProps,
 } from "@tiptap/react";
 import { ChevronRight } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties as ReactCSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   activeHeadingIndex,
   buildTocItems,
@@ -296,9 +304,11 @@ function ToggleView({ node, updateAttributes, locale }: NodeViewProps & { locale
  * extension decorates the owned run away with node decorations instead of
  * wrapping it in a tree node.
  *
- * VIEW-LOCAL STATE: the collapsed ids live only in the ProseMirror plugin
- * state, never in the document. Collapsing is therefore presentation only — not
- * collaborative, not saved, and not undoable. `headingSubtrees` decides which
+ * PERSISTED STATE: the collapsed ids live in the ProseMirror plugin state and
+ * are mirrored to `localStorage`, keyed by the page's route, so a reload
+ * restores the same collapse without writing anything into the document.
+ * Collapsing is therefore presentation only — not collaborative and not
+ * undoable — but it now survives a refresh. `headingSubtrees` decides which
  * headings own a body (and so get a chevron), `visibleBlocks` resolves the ids
  * to hide, and `toggleCollapse` flips one id immutably.
  *
@@ -443,31 +453,114 @@ export function toggleHeadingDecorations(
 }
 
 /**
- * The extension itself: a plugin owning the view-local collapsed set and the
- * chevron/hide decorations. Non-heading blocks are never decorated unless a
- * collapsed heading owns them, and with nothing collapsed the decoration set is
- * empty, so rendering is byte-for-byte unchanged.
+ * `localStorage` namespace for a page's collapsed toggle-heading ids. The
+ * suffix is the page identity (its editor route), so each page keeps its own
+ * collapse state instead of sharing one editor-wide set.
  */
-export const ToggleHeading = Extension.create<{ locale: string }>({
+const TOGGLE_HEADING_STORAGE_PREFIX = "noema:toggle-heading:";
+
+/**
+ * Identity of the page an editor is mounted on, used to scope the persisted
+ * collapse set. The workspace route is `/w/<slug>/<pageId>`, so the pathname is
+ * a stable per-page key. Outside a browser (SSR, the node test env) there is no
+ * location and it degrades to `""`, which makes persistence a no-op.
+ */
+function currentToggleHeadingPageId(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.location?.pathname ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** The `localStorage` key for one page's collapsed set (`""` when unkeyed). */
+function toggleHeadingStorageKey(pageId: string): string {
+  return pageId === "" ? "" : `${TOGGLE_HEADING_STORAGE_PREFIX}${pageId}`;
+}
+
+/**
+ * Read the persisted collapsed ids for `key`. Absent, unparseable, non-array or
+ * non-string entries are dropped rather than thrown, so a corrupted entry can
+ * never break editor start-up; the result is always a fresh `Set`.
+ */
+function readToggleHeadingCollapsed(key: string): Set<string> {
+  if (key === "" || typeof window === "undefined") return new Set<string>();
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return new Set<string>();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set<string>();
+    const ids = new Set<string>();
+    for (const value of parsed) {
+      if (typeof value === "string" && value !== "") ids.add(value);
+    }
+    return ids;
+  } catch {
+    return new Set<string>();
+  }
+}
+
+/**
+ * Persist the collapsed ids for `key`. An empty set clears the entry rather than
+ * storing `[]`, and every failure (quota, disabled storage, SSR) is swallowed:
+ * persistence is best-effort and the in-memory set stays authoritative, so
+ * toggling a heading can never throw because of storage.
+ */
+function writeToggleHeadingCollapsed(
+  key: string,
+  collapsed: ReadonlySet<string>,
+): void {
+  if (key === "" || typeof window === "undefined") return;
+  try {
+    if (collapsed.size === 0) {
+      window.localStorage.removeItem(key);
+      return;
+    }
+    window.localStorage.setItem(key, JSON.stringify([...collapsed]));
+  } catch {
+    // Best-effort: the plugin state already holds the new set.
+  }
+}
+
+/**
+ * The extension itself: a plugin owning the collapsed set (seeded from
+ * `localStorage` and written back on every toggle) and the chevron/hide
+ * decorations. Non-heading blocks are never decorated unless a collapsed
+ * heading owns them, and with nothing collapsed the decoration set is empty, so
+ * rendering is byte-for-byte unchanged.
+ *
+ * `pageId` names the persistence scope; when omitted the page's route is used
+ * (see {@link currentToggleHeadingPageId}), so `Toggle.addExtensions()` can keep
+ * configuring only `locale`.
+ */
+export const ToggleHeading = Extension.create<{ locale: string; pageId: string }>({
   name: "toggleHeading",
 
   addOptions() {
-    return { locale: "en" };
+    return { locale: "en", pageId: "" };
   },
 
   addProseMirrorPlugins() {
     const locale = this.options.locale;
+    const pageId =
+      this.options.pageId.trim() !== ""
+        ? this.options.pageId
+        : currentToggleHeadingPageId();
+    const storageKey = toggleHeadingStorageKey(pageId);
     return [
       new Plugin<ToggleHeadingState>({
         key: toggleHeadingPluginKey,
         state: {
-          init: () => ({ collapsed: new Set<string>() }),
+          init: () => ({ collapsed: readToggleHeadingCollapsed(storageKey) }),
           apply: (transaction, value) => {
             const meta = transaction.getMeta(toggleHeadingPluginKey) as
               | ToggleHeadingMeta
               | undefined;
             if (!meta?.toggle) return value;
-            return { collapsed: toggleCollapse(value.collapsed, meta.toggle) };
+            const collapsed = toggleCollapse(value.collapsed, meta.toggle);
+            writeToggleHeadingCollapsed(storageKey, collapsed);
+            return { collapsed };
           },
         },
         props: {
@@ -632,11 +725,278 @@ export const PullQuote = Extension.create({
 
 /* ------------------------------------------------------------------ columns */
 
-export const Columns = Node.create({
+/**
+ * Columns container (docs/MISSING_FEATURES §1 "Columns (2/3/4/5)" + "Column
+ * resize"; spec docs/specs/editor-deep.md R84.1-R84.3).
+ *
+ * The block is a plain structural node whose HTML contract (`div[data-columns]`
+ * → `div[data-column]`) is unchanged, so paste, the read-only renderer
+ * (`doc-renderer.tsx`) and the export serialiser (`serialize.ts`) keep working.
+ * What this slice adds is editor-only chrome: the count is now allowed to run
+ * 2–5 (was capped at 4), a hover toolbar grows/shrinks the container between
+ * those bounds, and the divider between two adjacent columns is draggable (a
+ * `separator`) to trade flex weight between them.
+ *
+ * Widths live on the `column` node's optional `width` attribute, so a resized
+ * layout round-trips through save/load like any other block attribute; an
+ * untouched column has `width: null` and renders exactly as before.
+ */
+
+/** Columns a container may hold (Notion's 2–5 range). */
+const MIN_COLUMNS = 2;
+const MAX_COLUMNS = 5;
+
+/** A divider drag never narrows a column past this many pixels. */
+const COLUMN_MIN_WIDTH_PX = 64;
+
+/** How far one Arrow keypress moves a focused divider. */
+const COLUMN_NUDGE_PX = 16;
+
+/** Shared style for the container's add/remove toolbar buttons. */
+const COLUMN_TOOLBAR_BUTTON_STYLE: ReactCSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: "20px",
+  height: "20px",
+  padding: "0",
+  fontSize: "14px",
+  lineHeight: "1",
+  color: "var(--muted)",
+  background: "var(--surface-2)",
+  border: "1px solid var(--border)",
+  borderRadius: "4px",
+  cursor: "pointer",
+};
+
+/** A column's stored weight when it is a usable positive number, else `null`. */
+function columnWidthAttr(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** A column's positive flex weight, falling back to 1 (an equal share). */
+function normalizeColumnWeight(value: unknown): number {
+  return columnWidthAttr(value) ?? 1;
+}
+
+/** Clamp `value` into `[min, max]`, tolerating a reversed pair of bounds. */
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, Math.min(min, max)), Math.max(min, max));
+}
+
+/** Round a flex weight to three decimals so stored values stay compact. */
+function roundWeight(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+/** Smallest flex weight that still leaves the sibling at least as wide. */
+function minColumnWeight(total: number, available: number): number {
+  if (!(available > 0)) return 0;
+  return Math.min((COLUMN_MIN_WIDTH_PX * total) / available, total / 2);
+}
+
+/** Geometry of the columns row a `column` node belongs to. */
+interface ColumnsGeometry {
+  /** Document position of the enclosing `columns` node. */
+  columnsPos: number;
+  /** Index of the inspected column within its container. */
+  index: number;
+  /** Number of columns in the container. */
+  count: number;
+  /** Per-column flex weights, left to right. */
+  weights: number[];
+  /** Measured content width available to the columns, in pixels. */
+  available: number;
+}
+
+/** Sum the rendered widths of a columns container's column elements. */
+function measureColumnsWidth(
+  editor: NodeViewProps["editor"],
+  columnPos: number,
+): number {
+  try {
+    const dom = editor.view.nodeDOM(columnPos);
+    if (!(dom instanceof HTMLElement)) return 0;
+    const row = dom.parentElement;
+    if (!row) return 0;
+    let total = 0;
+    for (const element of Array.from(row.children)) {
+      if (element instanceof HTMLElement && element.hasAttribute("data-column")) {
+        total += element.getBoundingClientRect().width;
+      }
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Read the columns row that owns `columnPos`: sibling weights, this column's
+ * index and the measured available width. Pure with respect to the document —
+ * it only resolves positions and reads layout — and returns `null` for a stale
+ * position or a node that is not a `column`.
+ */
+function readColumnsGeometry(
+  editor: NodeViewProps["editor"],
+  columnPos: number | undefined,
+): ColumnsGeometry | null {
+  if (typeof columnPos !== "number") return null;
+  let resolved;
+  try {
+    resolved = editor.state.doc.resolve(columnPos);
+  } catch {
+    return null;
+  }
+  const parent = resolved.parent;
+  if (parent.type.name !== "columns") return null;
+
+  const weights: number[] = [];
+  let index = -1;
+  parent.forEach((child, offset, childIndex) => {
+    if (offset === resolved.parentOffset) index = childIndex;
+    weights.push(normalizeColumnWeight(child.attrs.width));
+  });
+  if (index < 0) return null;
+
+  return {
+    columnsPos: resolved.before(),
+    index,
+    count: weights.length,
+    weights,
+    available: measureColumnsWidth(editor, columnPos),
+  };
+}
+
+/**
+ * Set the `width` of two adjacent columns in one collab-safe transaction. The
+ * offsets are derived from the container's own children, so a stale `columnsPos`
+ * degrades to a no-op (the `columns` type check) rather than corrupting a
+ * neighbour.
+ */
+function applyColumnWeights(
+  editor: NodeViewProps["editor"],
+  columnsPos: number,
+  leftIndex: number,
+  leftWeight: number,
+  rightWeight: number,
+): void {
+  const columnsNode = editor.state.doc.nodeAt(columnsPos);
+  if (!columnsNode || columnsNode.type.name !== "columns") return;
+  const tr = editor.state.tr;
+  let offset = columnsPos + 1;
+  for (let i = 0; i < columnsNode.childCount; i += 1) {
+    const child = columnsNode.child(i);
+    if (i === leftIndex) {
+      tr.setNodeMarkup(offset, undefined, {
+        ...child.attrs,
+        width: roundWeight(leftWeight),
+      });
+    } else if (i === leftIndex + 1) {
+      tr.setNodeMarkup(offset, undefined, {
+        ...child.attrs,
+        width: roundWeight(rightWeight),
+      });
+    }
+    offset += child.nodeSize;
+  }
+  editor.view.dispatch(tr);
+}
+
+/** Append an empty column to the container at `pos` (no-op at `MAX_COLUMNS`). */
+function appendColumn(editor: NodeViewProps["editor"], pos: number): void {
+  const columnsNode = editor.state.doc.nodeAt(pos);
+  if (!columnsNode || columnsNode.type.name !== "columns") return;
+  if (columnsNode.childCount >= MAX_COLUMNS) return;
+  const columnType = editor.state.schema.nodes.column;
+  const paragraphType = editor.state.schema.nodes.paragraph;
+  if (!columnType || !paragraphType) return;
+  const column = columnType.create(null, paragraphType.create());
+  editor.view.dispatch(editor.state.tr.insert(pos + 1 + columnsNode.content.size, column));
+}
+
+/**
+ * Remove the container's last column (no-op at `MIN_COLUMNS`). The container is
+ * never unwrapped here because it can never fall below two columns while
+ * wrapped; reaching a single column by unwrapping is a follow-up.
+ */
+function removeLastColumn(editor: NodeViewProps["editor"], pos: number): void {
+  const columnsNode = editor.state.doc.nodeAt(pos);
+  if (!columnsNode || columnsNode.type.name !== "columns") return;
+  if (columnsNode.childCount <= MIN_COLUMNS) return;
+  const last = columnsNode.child(columnsNode.childCount - 1);
+  const end = pos + 1 + columnsNode.content.size;
+  editor.view.dispatch(editor.state.tr.delete(end - last.nodeSize, end));
+}
+
+/** Hover toolbar: add a column (≤5) or remove the last one (≥2). */
+function ColumnsView({ node, editor, getPos, locale }: NodeViewProps & { locale: string }) {
+  const editable = editor.isEditable;
+  const count = node.childCount;
+  const canAdd = count < MAX_COLUMNS;
+  const canRemove = count > MIN_COLUMNS;
+
+  const append = () => {
+    const pos = getPos();
+    if (typeof pos === "number") appendColumn(editor, pos);
+  };
+  const removeLast = () => {
+    const pos = getPos();
+    if (typeof pos === "number") removeLastColumn(editor, pos);
+  };
+
+  return (
+    <NodeViewWrapper className="noema-columns" style={{ position: "relative" }}>
+      {/* The content element doubles as the flex row the CSS targets. */}
+      <NodeViewContent className="noema-columns-content" data-columns="" />
+      {editable && (
+        <div
+          className="noema-columns-toolbar"
+          contentEditable={false}
+          style={{
+            position: "absolute",
+            top: "2px",
+            right: "2px",
+            display: "flex",
+            gap: "2px",
+            zIndex: 2,
+          }}
+        >
+          <button
+            type="button"
+            aria-label={t(locale, "add")}
+            title={t(locale, "add")}
+            disabled={!canAdd}
+            onClick={append}
+            style={COLUMN_TOOLBAR_BUTTON_STYLE}
+          >
+            +
+          </button>
+          <button
+            type="button"
+            aria-label={t(locale, "remove")}
+            title={t(locale, "remove")}
+            disabled={!canRemove}
+            onClick={removeLast}
+            style={COLUMN_TOOLBAR_BUTTON_STYLE}
+          >
+            −
+          </button>
+        </div>
+      )}
+    </NodeViewWrapper>
+  );
+}
+
+export const Columns = Node.create<{ locale: string }>({
   name: "columns",
   group: "block",
   content: "column+",
   isolating: true,
+
+  addOptions() {
+    return { locale: "en" };
+  },
 
   parseHTML() {
     return [{ tag: "div[data-columns]" }];
@@ -653,7 +1013,7 @@ export const Columns = Node.create({
   addCommands() {
     return {
       setColumns:
-        (count = 2) =>
+        (count = MIN_COLUMNS) =>
         ({ commands }) => {
           const column = {
             type: "column",
@@ -661,17 +1021,159 @@ export const Columns = Node.create({
           };
           return commands.insertContent({
             type: this.name,
-            content: Array.from({ length: Math.max(2, Math.min(count, 4)) }, () => column),
+            content: Array.from(
+              { length: Math.max(MIN_COLUMNS, Math.min(count, MAX_COLUMNS)) },
+              () => column,
+            ),
           });
         },
     };
   },
+
+  addNodeView() {
+    const locale = this.options.locale;
+    return ReactNodeViewRenderer((props: NodeViewProps) => (
+      <ColumnsView {...props} locale={locale} />
+    ));
+  },
 });
 
-export const Column = Node.create({
+/**
+ * One column: the same `<div data-column>` as the plain renderer, plus a
+ * draggable divider on its trailing edge (every column but the last). Dragging —
+ * or focusing the divider and pressing ArrowLeft/ArrowRight — transfers flex
+ * weight to/from the right neighbour, stored as the node's `width` attribute.
+ */
+function ColumnView({ node, editor, getPos, locale }: NodeViewProps & { locale: string }) {
+  const editable = editor.isEditable;
+  const storedWidth = columnWidthAttr(node.attrs.width);
+  const geometry = readColumnsGeometry(editor, getPos());
+  const isLast = geometry === null || geometry.index >= geometry.count - 1;
+
+  const resize = (leftStart: number, total: number, deltaPixels: number, available: number, index: number, columnsPos: number) => {
+    const minWeight = minColumnWeight(total, available);
+    const left = clampNumber(leftStart + (deltaPixels * total) / available, minWeight, total - minWeight);
+    applyColumnWeights(editor, columnsPos, index, left, total - left);
+  };
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
+    const pos = getPos();
+    const current = readColumnsGeometry(editor, pos);
+    if (!current || !(current.available > 0)) return;
+    const index = current.index;
+    if (index + 1 >= current.count) return;
+    event.preventDefault();
+
+    const startX = event.clientX;
+    const total = current.weights[index] + current.weights[index + 1];
+    const leftStart = current.weights[index];
+    const { available, columnsPos } = current;
+
+    const onMove = (move: PointerEvent) => {
+      resize(leftStart, total, move.clientX - startX, available, index, columnsPos);
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  };
+
+  const nudge = (direction: -1 | 1) => {
+    const pos = getPos();
+    const current = readColumnsGeometry(editor, pos);
+    if (!current || !(current.available > 0)) return;
+    const index = current.index;
+    if (index + 1 >= current.count) return;
+    const total = current.weights[index] + current.weights[index + 1];
+    resize(current.weights[index], total, direction * COLUMN_NUDGE_PX, current.available, index, current.columnsPos);
+  };
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      nudge(-1);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      nudge(1);
+    }
+  };
+
+  return (
+    <NodeViewWrapper
+      className="noema-column"
+      data-column=""
+      style={{
+        position: "relative",
+        ...(storedWidth === null ? {} : { flexGrow: storedWidth }),
+      }}
+    >
+      {/* `display: contents` keeps the block children as the wrapper's flow
+          children, so `[data-column] > * + *` and the flex sizing still apply. */}
+      <NodeViewContent style={{ display: "contents" }} />
+      {editable && !isLast && (
+        <span
+          className="noema-column-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t(locale, "blockColumns")}
+          contentEditable={false}
+          tabIndex={0}
+          onPointerDown={onPointerDown}
+          onKeyDown={onKeyDown}
+          style={{
+            position: "absolute",
+            top: "0",
+            bottom: "0",
+            right: "-14px",
+            width: "2px",
+            padding: "0 5px",
+            boxSizing: "content-box",
+            background: "var(--border)",
+            backgroundClip: "content-box",
+            cursor: "col-resize",
+            zIndex: 1,
+          }}
+        />
+      )}
+    </NodeViewWrapper>
+  );
+}
+
+export const Column = Node.create<{ locale: string }>({
   name: "column",
   content: "block+",
   isolating: true,
+
+  addOptions() {
+    return { locale: "en" };
+  },
+
+  addAttributes() {
+    return {
+      /**
+       * Relative flex weight for a divider-resized column. `null` (the default)
+       * means an equal share and renders exactly as before; a drag stores a
+       * positive number that round-trips as `data-width`.
+       */
+      width: {
+        default: null,
+        parseHTML: (element) => {
+          const raw = element.getAttribute("data-width");
+          if (raw === null) return null;
+          const parsed = Number.parseFloat(raw);
+          return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+        },
+        renderHTML: (attributes) => {
+          const weight = columnWidthAttr(attributes.width);
+          return weight === null ? {} : { "data-width": String(weight) };
+        },
+      },
+    };
+  },
 
   parseHTML() {
     return [{ tag: "div[data-column]" }];
@@ -679,6 +1181,13 @@ export const Column = Node.create({
 
   renderHTML({ HTMLAttributes }) {
     return ["div", mergeAttributes(HTMLAttributes, { "data-column": "" }), 0];
+  },
+
+  addNodeView() {
+    const locale = this.options.locale;
+    return ReactNodeViewRenderer((props: NodeViewProps) => (
+      <ColumnView {...props} locale={locale} />
+    ));
   },
 });
 
