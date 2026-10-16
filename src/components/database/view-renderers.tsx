@@ -1,7 +1,7 @@
 "use client";
 
 import { Cell, PropertyHeader } from "./view-parts";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowDown,
@@ -32,7 +32,6 @@ import { reorderRowsAction } from "@/server/actions/database";
 import { evaluateRowColors, type RowColorRule } from "@/lib/row-color-rules";
 import {
   AGGREGATION_FUNCTIONS,
-  aggregate,
   aggregateGroups,
   type AggregateOptions,
   type AggregationFn,
@@ -50,11 +49,30 @@ import {
   type ListDensity,
 } from "@/lib/view-presets";
 import {
-  answersToPropertyValues,
+  computeFooter,
+  forGroup,
+  parseFooterSpec,
+  type FooterColumnResult,
+  type FooterSpec,
+} from "@/lib/footer-calculations";
+import {
+  parsePreviewConfig,
+  resolveCardPreview as resolveGalleryPreview,
+  type GalleryPropertyLike,
+  type PreviewConfig,
+  type ResolvedCardPreview,
+} from "@/lib/gallery-preview";
+import {
   buildFormSchema,
-  resolveFormMeta,
+  defaultAnswers,
+  describeForm,
+  parseFormSchema,
+  toRowValues,
   validateSubmission,
+  type FormDescription,
+  type FormField,
   type FormIssue,
+  type FormSchema,
 } from "@/lib/form-view";
 import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
 
@@ -182,28 +200,26 @@ function sortRowsWith(
 export type TableFooterCalculation = { propertyId: string; fn: AggregationFn };
 
 /**
- * Resolve the table's footer calculations.
+ * Resolve the persisted table footer config into the footer engine's spec.
  *
- * An explicit per-column `footer` list wins, filtered down to the columns that
- * still exist and the functions the aggregator knows. With no explicit list a
- * view that already names an `aggregationPropertyId` (the settings "Summarize
- * by property" picker) shows that one column's aggregate — `sum` for a NUMBER
- * column, a row count otherwise — so the footer works with the settings that
- * exist today. Anything unresolvable yields no footer, leaving the table
- * exactly as it rendered before.
+ * The stored `footer` list (the settings popovers write `{ propertyId, fn }`)
+ * is parsed through `parseFooterSpec` — which validates each function against
+ * `AGGREGATION_FUNCTIONS`, dedupes by property and drops malformed entries — so
+ * a persisted footer actually drives the table. Entries naming a property that
+ * no longer exists are dropped, mirroring the old behaviour. With no usable
+ * list a view that names an `aggregationPropertyId` (the settings "Summarize by
+ * property" picker) still shows that one column's aggregate — `sum` for a
+ * NUMBER column, a row count otherwise — so an unconfigured table is unchanged.
  */
-function resolveFooterCalculations(
+export function tableFooterSpec(
   footer: readonly TableFooterCalculation[] | undefined,
   config: ViewConfig,
   properties: readonly DBProperty[],
-): TableFooterCalculation[] {
-  if (footer && footer.length > 0) {
+): FooterSpec {
+  const parsed = parseFooterSpec(footer);
+  if (parsed.length > 0) {
     const known = new Set(properties.map((property) => property.id));
-    return footer.filter(
-      (entry) =>
-        known.has(entry.propertyId) &&
-        AGGREGATION_FUNCTIONS.some((candidate) => candidate.id === entry.fn),
-    );
+    return parsed.filter((entry) => known.has(entry.propertyId));
   }
   const propertyId = config.aggregationPropertyId;
   if (!propertyId) return [];
@@ -218,6 +234,22 @@ function resolveFooterCalculations(
       fn: requested ?? (property.type === "NUMBER" ? "sum" : "count"),
     },
   ];
+}
+
+/**
+ * Group a table's ordered rows for per-group footers, through the shared
+ * `@/lib/board-groups` engine. `null` when the view has no (resolvable)
+ * `groupByPropertyId`, so an ungrouped table renders exactly as before.
+ */
+export function groupTableRows(
+  rows: readonly DBRow[],
+  properties: readonly DBProperty[],
+  groupByPropertyId: string | null | undefined,
+): ReturnType<typeof groupRowsByProperty<DBRow>> | null {
+  if (!groupByPropertyId) return null;
+  const property = properties.find((candidate) => candidate.id === groupByPropertyId);
+  if (!property) return null;
+  return groupRowsByProperty([...rows], properties, property.id);
 }
 
 export function TableView({
@@ -316,15 +348,235 @@ export function TableView({
     rowOrder,
   );
   // Footer calculations run over the same ordered (filtered + sorted) rows the
-  // body shows, so a footer total always agrees with the visible cells.
-  const footerCalculations = resolveFooterCalculations(footer, config, columns);
-  const footerFnByProperty = new Map(
-    footerCalculations.map((entry) => [entry.propertyId, entry.fn] as const),
+  // body shows, so a footer total always agrees with the visible cells. The
+  // persisted `footer` config is parsed by `@/lib/footer-calculations`; when the
+  // view names a group-by column, the same spec is recomputed per group through
+  // `forGroup`, so a grouped table reports each group's own totals.
+  const footerSpec = tableFooterSpec(footer, config, properties);
+  const footerResults = computeFooter(footerSpec, orderedRows, {
+    valueFor,
+    properties,
+  });
+  const footerByProperty = new Map(
+    footerResults.map((result) => [result.propertyId, result] as const),
+  );
+  const groups = groupTableRows(orderedRows, properties, config.groupByPropertyId);
+  const groupFooters = groups
+    ? forGroup(groups, footerSpec, { valueFor, properties })
+    : null;
+  const globalIndexById = new Map(
+    orderedRows.map((row, index) => [row.id, index] as const),
   );
   // HTML5 drag state for property reorder: the dragged column id and the
   // column currently under the pointer (highlighted as the drop target).
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
+
+  /** The cells of one footer row, for a per-column result lookup. */
+  const renderFooterCells = (
+    resultFor: (propertyId: string) => FooterColumnResult | undefined,
+    testId: (name: string) => string,
+  ) => (
+    <>
+      {columns.map((property, index) => {
+        const result = resultFor(property.id);
+        return (
+          <td
+            key={property.id}
+            data-testid={testId(property.name)}
+            className={cn(
+              "sticky bottom-0 border-t border-border bg-surface px-3 py-1.5 text-muted",
+              frozen && index === 0 && "left-0 z-10",
+            )}
+          >
+            {result && (
+              <span className="flex flex-wrap items-center gap-x-1">
+                <span className="font-medium">
+                  {AGGREGATION_FUNCTIONS.find((entry) => entry.id === result.fn)?.label ??
+                    result.fn}
+                </span>
+                <span>{result.display}</span>
+              </span>
+            )}
+          </td>
+        );
+      })}
+      <th className="sticky bottom-0 border-t border-border bg-surface" />
+    </>
+  );
+
+  /** One body row: the same cells the table always rendered, parameterised so a
+   * grouped and an ungrouped table share one implementation. */
+  const renderRow = (row: DBRow, rowIndex: number) => {
+    const rowStripe = (() => {
+      const color = colorOf(row);
+      return color ? `3px solid ${OPTION_COLORS[color] ?? color}` : undefined;
+    })();
+    // Conditional formatting from the view's colour rules: the engine
+    // picks the first matching "row" rule and returns palette names.
+    const resolved = evaluateRowColors(
+      rowColorRules,
+      row as unknown as QueryRow,
+      properties as unknown as QueryProperty[],
+    );
+    const rowColors: { backgroundColor?: string; color?: string } = {};
+    if (resolved.backgroundColor) {
+      rowColors.backgroundColor = `${OPTION_COLORS[resolved.backgroundColor] ?? "#8a8a85"}22`;
+    }
+    if (resolved.textColor) {
+      rowColors.color = OPTION_COLORS[resolved.textColor];
+    }
+    return (
+      <tr
+        key={row.id}
+        style={rowColors}
+        className="group border-b border-border last:border-0 hover:bg-surface-2/50"
+      >
+        {columns.map((property, index) => {
+          const isPrimary = property.id === primary?.id;
+          return (
+            <td
+              key={property.id}
+              // The row colour stripe lives on the first cell so it
+              // stays visible when that cell is pinned (sticky).
+              style={index === 0 ? { borderLeft: rowStripe } : undefined}
+              className={cn(
+                "px-3 py-1.5 align-top",
+                frozen &&
+                  index === 0 &&
+                  "sticky left-0 z-10 bg-bg group-hover:bg-surface-2/50",
+              )}
+            >
+              {isPrimary ? (
+                <input
+                  defaultValue={row.title}
+                  aria-label={t(locale, "nameLabel")}
+                  readOnly={!editable}
+                  placeholder={t(locale, "untitled")}
+                  onBlur={(e) =>
+                    e.target.value !== row.title &&
+                    setPrimary(row, e.target.value)
+                  }
+                  className="w-full bg-transparent outline-none placeholder:text-muted"
+                />
+              ) : (
+                <Cell
+                  locale={locale}
+                  property={property}
+                  value={valueFor(row, property.id)}
+                  computed={computedFor(row, property)}
+                  relationOptions={relationOptionsFor(property.id)}
+                  peopleOptions={peopleOptions}
+                  workspaceId={workspaceId}
+                  onRunButton={
+                    property.type === "BUTTON"
+                      ? () => onRunButton(row, property)
+                      : undefined
+                  }
+                  onRunAi={
+                    property.type === "AI_AUTOFILL"
+                      ? () => onRunAi(row, property)
+                      : undefined
+                  }
+                  editable={editable}
+                  onChange={(v) => setValue(row.id, property.id, v)}
+                  // Conditional formatting: the same rules that tint the
+                  // row are offered to the cell so `"cell"`-target rules
+                  // (which `evaluateRowColors` ignores) paint their cell;
+                  // the full row + schema let a rule read other cells.
+                  colorRules={rowColorRules}
+                  row={row}
+                  properties={properties}
+                />
+              )}
+            </td>
+          );
+        })}
+        <td className="px-1 align-top">
+          <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100">
+            {editable && onReorderRows && (
+              <>
+                <button
+                  type="button"
+                  title={t(locale, "moveUp")}
+                  aria-label={`${t(locale, "moveUp")}: ${row.title}`}
+                  disabled={rowIndex === 0}
+                  onClick={() =>
+                    persistRowOrder(
+                      reorderRows(
+                        orderedRows.map((entry) => entry.id),
+                        rowIndex,
+                        rowIndex - 1,
+                      ),
+                      onReorderRows,
+                    )
+                  }
+                  className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  title={t(locale, "moveDown")}
+                  aria-label={`${t(locale, "moveDown")}: ${row.title}`}
+                  disabled={rowIndex === orderedRows.length - 1}
+                  onClick={() =>
+                    persistRowOrder(
+                      reorderRows(
+                        orderedRows.map((entry) => entry.id),
+                        rowIndex,
+                        rowIndex + 1,
+                      ),
+                      onReorderRows,
+                    )
+                  }
+                  className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                </button>
+              </>
+            )}
+            <a
+              href={`/w/${workspaceSlug}/${row.id}`}
+              title={t(locale, "openAsPage")}
+              aria-label={`${t(locale, "openAsPage")}: ${row.title}`}
+              className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+            <button
+              type="button"
+              title={t(locale, "openSidePeek")}
+              onClick={() => onOpenPeek(row)}
+              className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
+            >
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </button>
+            {editable && (
+              <button
+                type="button"
+                title={t(locale, "saveAsTemplate")}
+                onClick={() => onSaveTemplate(row)}
+                className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
+              >
+                <LayoutTemplate className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {editable && (
+              <button
+                type="button"
+                title={t(locale, "deleteRow")}
+                onClick={() => removeRow(row.id)}
+                className="flex h-6 w-6 items-center justify-center rounded text-muted hover:text-red-500"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        </td>
+      </tr>
+    );
+  };
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
@@ -389,226 +641,61 @@ export function TableView({
             <th className="w-16 border-b border-border" />
           </tr>
         </thead>
-        <tbody>
-          {orderedRows.length === 0 && (
-            <tr>
-              <td
-                colSpan={columns.length + 1}
-                className="px-3 py-8 text-center text-sm text-muted"
-              >
-                {t(locale, "dbNoRowsClick")}
-              </td>
-            </tr>
-          )}
-          {orderedRows.map((row, rowIndex) => {
-            const rowStripe = (() => {
-              const color = colorOf(row);
-              return color
-                ? `3px solid ${OPTION_COLORS[color] ?? color}`
-                : undefined;
-            })();
-            // Conditional formatting from the view's colour rules: the engine
-            // picks the first matching "row" rule and returns palette names.
-            const resolved = evaluateRowColors(
-              rowColorRules,
-              row as unknown as QueryRow,
-              properties as unknown as QueryProperty[],
+        {groups && groups.length > 0 ? (
+          groups.map((group, groupIndex) => {
+            const groupFooterByProperty = new Map(
+              (groupFooters?.[groupIndex]?.footers ?? []).map(
+                (result) => [result.propertyId, result] as const,
+              ),
             );
-            const rowColors: { backgroundColor?: string; color?: string } = {};
-            if (resolved.backgroundColor) {
-              rowColors.backgroundColor = `${OPTION_COLORS[resolved.backgroundColor] ?? "#8a8a85"}22`;
-            }
-            if (resolved.textColor) {
-              rowColors.color = OPTION_COLORS[resolved.textColor];
-            }
             return (
-            <tr
-              key={row.id}
-              style={rowColors}
-              className="group border-b border-border last:border-0 hover:bg-surface-2/50"
-            >
-              {columns.map((property, index) => {
-                const isPrimary = property.id === primary?.id;
-                return (
+              <tbody key={group.key}>
+                <tr className="bg-surface-2/60 text-xs">
                   <td
-                    key={property.id}
-                    // The row colour stripe lives on the first cell so it
-                    // stays visible when that cell is pinned (sticky).
-                    style={index === 0 ? { borderLeft: rowStripe } : undefined}
-                    className={cn(
-                      "px-3 py-1.5 align-top",
-                      frozen &&
-                        index === 0 &&
-                        "sticky left-0 z-10 bg-bg group-hover:bg-surface-2/50",
-                    )}
+                    colSpan={columns.length + 1}
+                    data-testid={`table-group-${group.key}`}
+                    className="px-3 py-1.5 font-medium"
                   >
-                    {isPrimary ? (
-                      <input
-                        defaultValue={row.title}
-                        aria-label={t(locale, "nameLabel")}
-                        readOnly={!editable}
-                        placeholder={t(locale, "untitled")}
-                        onBlur={(e) =>
-                          e.target.value !== row.title &&
-                          setPrimary(row, e.target.value)
-                        }
-                        className="w-full bg-transparent outline-none placeholder:text-muted"
-                      />
-                    ) : (
-                      <Cell
-                        locale={locale}
-                        property={property}
-                        value={valueFor(row, property.id)}
-                        computed={computedFor(row, property)}
-                        relationOptions={relationOptionsFor(property.id)}
-                        peopleOptions={peopleOptions}
-                        workspaceId={workspaceId}
-                        onRunButton={
-                          property.type === "BUTTON"
-                            ? () => onRunButton(row, property)
-                            : undefined
-                        }
-                        onRunAi={
-                          property.type === "AI_AUTOFILL"
-                            ? () => onRunAi(row, property)
-                            : undefined
-                        }
-                        editable={editable}
-                        onChange={(v) => setValue(row.id, property.id, v)}
-                        // Conditional formatting: the same rules that tint the
-                        // row are offered to the cell so `"cell"`-target rules
-                        // (which `evaluateRowColors` ignores) paint their cell;
-                        // the full row + schema let a rule read other cells.
-                        colorRules={rowColorRules}
-                        row={row}
-                        properties={properties}
-                      />
-                    )}
+                    {group.label}{" "}
+                    <span className="text-muted">{group.rows.length}</span>
                   </td>
-                );
-              })}
-              <td className="px-1 align-top">
-                <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100">
-                  {editable && onReorderRows && (
-                    <>
-                      <button
-                        type="button"
-                        title={t(locale, "moveUp")}
-                        aria-label={`${t(locale, "moveUp")}: ${row.title}`}
-                        disabled={rowIndex === 0}
-                        onClick={() =>
-                          persistRowOrder(
-                            reorderRows(
-                              orderedRows.map((entry) => entry.id),
-                              rowIndex,
-                              rowIndex - 1,
-                            ),
-                            onReorderRows,
-                          )
-                        }
-                        className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
-                      >
-                        <ArrowUp className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        title={t(locale, "moveDown")}
-                        aria-label={`${t(locale, "moveDown")}: ${row.title}`}
-                        disabled={rowIndex === orderedRows.length - 1}
-                        onClick={() =>
-                          persistRowOrder(
-                            reorderRows(
-                              orderedRows.map((entry) => entry.id),
-                              rowIndex,
-                              rowIndex + 1,
-                            ),
-                            onReorderRows,
-                          )
-                        }
-                        className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
-                      >
-                        <ArrowDown className="h-3.5 w-3.5" />
-                      </button>
-                    </>
-                  )}
-                  <a
-                    href={`/w/${workspaceSlug}/${row.id}`}
-                    title={t(locale, "openAsPage")}
-                    aria-label={`${t(locale, "openAsPage")}: ${row.title}`}
-                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </a>
-                  <button
-                    type="button"
-                    title={t(locale, "openSidePeek")}
-                    onClick={() => onOpenPeek(row)}
-                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
-                  >
-                    <ArrowUpRight className="h-3.5 w-3.5" />
-                  </button>
-                  {editable && (
-                    <button
-                      type="button"
-                      title={t(locale, "saveAsTemplate")}
-                      onClick={() => onSaveTemplate(row)}
-                      className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
-                    >
-                      <LayoutTemplate className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                  {editable && (
-                    <button
-                      type="button"
-                      title={t(locale, "deleteRow")}
-                      onClick={() => removeRow(row.id)}
-                      className="flex h-6 w-6 items-center justify-center rounded text-muted hover:text-red-500"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              </td>
-            </tr>
+                </tr>
+                {group.rows.map((row) =>
+                  renderRow(row, globalIndexById.get(row.id) ?? 0),
+                )}
+                {footerSpec.length > 0 && (
+                  <tr className="text-xs">
+                    {renderFooterCells(
+                      (propertyId) => groupFooterByProperty.get(propertyId),
+                      (name) => `table-footer-${group.key}-${name}`,
+                    )}
+                  </tr>
+                )}
+              </tbody>
             );
-          })}
-        </tbody>
-        {footerFnByProperty.size > 0 && (
+          })
+        ) : (
+          <tbody>
+            {orderedRows.length === 0 && (
+              <tr>
+                <td
+                  colSpan={columns.length + 1}
+                  className="px-3 py-8 text-center text-sm text-muted"
+                >
+                  {t(locale, "dbNoRowsClick")}
+                </td>
+              </tr>
+            )}
+            {orderedRows.map((row, rowIndex) => renderRow(row, rowIndex))}
+          </tbody>
+        )}
+        {(!groups || groups.length === 0) && footerByProperty.size > 0 && (
           <tfoot>
             <tr className="text-xs">
-              {columns.map((property, index) => {
-                const fn = footerFnByProperty.get(property.id);
-                // The aggregate reads this column's cells from the visible row
-                // set; NUMBER formats/currency flow through the same options the
-                // board summary and chart use.
-                const result = fn
-                  ? aggregate(
-                      orderedRows.map((row) => valueFor(row, property.id)),
-                      fn,
-                      aggregateOptionsFor(property),
-                    )
-                  : null;
-                return (
-                  <td
-                    key={property.id}
-                    data-testid={`table-footer-${property.name}`}
-                    className={cn(
-                      "sticky bottom-0 border-t border-border bg-surface px-3 py-1.5 text-muted",
-                      frozen && index === 0 && "left-0 z-10",
-                    )}
-                  >
-                    {fn && (
-                      <span className="flex flex-wrap items-center gap-x-1">
-                        <span className="font-medium">
-                          {AGGREGATION_FUNCTIONS.find((entry) => entry.id === fn)?.label ?? fn}
-                        </span>
-                        <span>{result?.display ?? "—"}</span>
-                      </span>
-                    )}
-                  </td>
-                );
-              })}
-              <th className="sticky bottom-0 border-t border-border bg-surface" />
+              {renderFooterCells(
+                (propertyId) => footerByProperty.get(propertyId),
+                (name) => `table-footer-${name}`,
+              )}
             </tr>
           </tfoot>
         )}
@@ -1109,6 +1196,65 @@ export function BoardView({
   );
 }
 
+/** Whether an untrusted config value is a plain object (not an array/null). */
+function isPlainConfig(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A gallery card's resolved preview plus whether the engine path is active. */
+export type GalleryPreviewPlan = {
+  /** True when the view carries a usable preview config. */
+  active: boolean;
+  /** The canonical config handed to `resolveCardPreview`. */
+  config: PreviewConfig;
+};
+
+/**
+ * Map a gallery view's persisted preview config onto `@/lib/gallery-preview`'s
+ * `PreviewConfig`. The persisted `previewPropertyId` (the settings popover's
+ * cover choice) becomes the engine's `coverPropertyId`, and any richer
+ * `previewConfig` object is parsed (`parsePreviewConfig`) so malformed stored
+ * JSON falls back to the engine defaults instead of throwing.
+ *
+ * `active` is false only when the view has no preview config at all, so an
+ * unconfigured gallery keeps rendering through `@/lib/view-presets`.
+ */
+export function galleryPreviewPlan(
+  previewPropertyId: string | null | undefined,
+  previewConfig?: unknown,
+): GalleryPreviewPlan {
+  const base = isPlainConfig(previewConfig) ? previewConfig : {};
+  const withCover = previewPropertyId
+    ? { ...base, coverPropertyId: previewPropertyId }
+    : base;
+  const parsed = parsePreviewConfig(withCover);
+  // A malformed richer config must not lose an otherwise valid cover choice.
+  const config: PreviewConfig = parsed.ok
+    ? parsed.config
+    : {
+        fit: "cover",
+        ...(previewPropertyId ? { coverPropertyId: previewPropertyId } : {}),
+      };
+  const active = Boolean(
+    config.coverPropertyId ||
+      config.contentPropertyId ||
+      (config.showProperties && config.showProperties.length > 0),
+  );
+  return { active, config };
+}
+
+/**
+ * Resolve one card through the gallery-preview engine. Kept as a named helper
+ * so the config ⇄ engine mapping is testable without rendering the component.
+ */
+export function resolveGalleryCard(
+  row: DBRow,
+  plan: GalleryPreviewPlan,
+  properties: readonly GalleryPropertyLike[],
+): ResolvedCardPreview {
+  return resolveGalleryPreview(row, plan.config, { properties });
+}
+
 export function GalleryView({
   locale,
   workspaceSlug,
@@ -1119,6 +1265,7 @@ export function GalleryView({
   computedFor,
   cardSize: cardSizeProp,
   previewPropertyId,
+  previewConfig,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -1131,12 +1278,19 @@ export function GalleryView({
   cardSize?: CardSizeName;
   /**
    * The property each card draws its preview image from (the persisted gallery
-   * setting). Feeds `resolveCardPreview` (as the cover property) and
-   * `cardFieldOrder` (as the field to skip). Unset or blank falls back to the
-   * first cover-eligible (FILES) property, so an unconfigured gallery renders
-   * exactly as it did before.
+   * setting). Mapped onto `@/lib/gallery-preview`'s `coverPropertyId`; the
+   * engine then resolves the cover, the text excerpt and the badge strip. Unset
+   * or blank with no `previewConfig` keeps the previous `@/lib/view-presets`
+   * card, so an unconfigured gallery renders exactly as it did before.
    */
   previewPropertyId?: string | null;
+  /**
+   * The full persisted gallery preview config (`coverPropertyId`,
+   * `contentPropertyId`, `fit`, `aspect`, `showTitle`, `showProperties`) when a
+   * caller carries one. Untrusted JSON; `galleryPreviewPlan` parses it and
+   * `previewPropertyId` overrides its cover.
+   */
+  previewConfig?: unknown;
 }) {
   // The card size tracks the container: `cardSizeFor` maps a measured width to
   // a preset, and `CARD_SIZES` supplies the column count, aspect and whether
@@ -1178,9 +1332,17 @@ export function GalleryView({
       ),
     )?.id ||
     null;
+  // The gallery-preview engine (covers + excerpts + badges). Active only when a
+  // persisted preview config exists; otherwise the legacy card below is used so
+  // an unconfigured gallery is byte-for-byte unchanged. The primary/name
+  // property is the card title, so it is never offered as a badge.
+  const plan = galleryPreviewPlan(previewPropertyId, previewConfig);
+  const previewProperties = presetProperties.filter(
+    (property) => property.id !== primary?.id,
+  );
   const fields = cardFieldOrder(
     // The primary/name property is the card title, so it is never listed twice.
-    presetProperties.filter((property) => property.id !== primary?.id),
+    previewProperties,
     {
       previewPropertyId: coverPropertyId,
       maxFields: spec.showPreview ? 3 : 4,
@@ -1205,7 +1367,14 @@ export function GalleryView({
       data-card-size={size}
     >
       {rows.map((row) => {
-        const preview = resolveCardPreview(row, presetProperties, { coverPropertyId });
+        // Config present → resolve cover/excerpt/badges through the engine;
+        // otherwise keep the legacy preset preview.
+        const card = plan.active
+          ? resolveGalleryCard(row, plan, previewProperties)
+          : null;
+        const preview = card
+          ? null
+          : resolveCardPreview(row, presetProperties, { coverPropertyId });
         return (
           <Link
             key={row.id}
@@ -1215,14 +1384,22 @@ export function GalleryView({
             {spec.showPreview && (
               <div
                 className="grid place-items-center overflow-hidden bg-surface text-3xl"
-                style={{ aspectRatio: spec.aspect }}
+                style={{ aspectRatio: card?.cover?.aspect ?? spec.aspect }}
                 data-testid="gallery-banner"
               >
-                {preview.kind === "cover" ? (
+                {card?.cover ? (
+                  /* eslint-disable-next-line @next/next/no-img-element -- raw attachment URLs are not statically analysable for next/image */
+                  <img
+                    src={card.cover.url}
+                    alt={row.title}
+                    className="h-full w-full"
+                    style={{ objectFit: card.cover.fit }}
+                  />
+                ) : preview?.kind === "cover" ? (
                   /* eslint-disable-next-line @next/next/no-img-element -- raw attachment URLs are not statically analysable for next/image */
                   <img src={preview.value} alt={row.title} className="h-full w-full object-cover" />
                 ) : (
-                  preview.value ?? row.icon ?? "📄"
+                  preview?.value ?? row.icon ?? "📄"
                 )}
               </div>
             )}
@@ -1231,20 +1408,43 @@ export function GalleryView({
                 {!spec.showPreview && <span className="mr-1">{row.icon ?? "📄"}</span>}
                 {row.title || t(locale, "untitled")}
               </p>
-              <dl className="mt-2 space-y-1">
-                {fields.map((property) => (
-                  <div key={property.id} className="flex items-center justify-between gap-2 text-xs text-muted">
-                    <dt className="truncate">{property.name}</dt>
-                    <dd className="truncate">
-                      {(computedFor?.(row, property) ||
-                        formatCell(
-                          valueFor(row, property.id),
-                          property as unknown as QueryProperty,
-                        )) || "—"}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+              {card?.excerpt && (
+                <p
+                  data-testid="gallery-excerpt"
+                  className="mt-1 line-clamp-2 text-xs text-muted"
+                >
+                  {card.excerpt.text}
+                </p>
+              )}
+              {card && card.badges.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1" data-testid="gallery-badges">
+                  {card.badges.map((badge) => (
+                    <span
+                      key={badge.propertyId}
+                      data-testid={`gallery-badge-${badge.propertyId}`}
+                      className="rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted"
+                    >
+                      {badge.value}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {!card && (
+                <dl className="mt-2 space-y-1">
+                  {fields.map((property) => (
+                    <div key={property.id} className="flex items-center justify-between gap-2 text-xs text-muted">
+                      <dt className="truncate">{property.name}</dt>
+                      <dd className="truncate">
+                        {(computedFor?.(row, property) ||
+                          formatCell(
+                            valueFor(row, property.id),
+                            property as unknown as QueryProperty,
+                          )) || "—"}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
             </div>
           </Link>
         );
@@ -1272,17 +1472,64 @@ export { CalendarView } from "./timeline-chart-views";
    Form view
    --------------------------------------------------------------------------- */
 
+/** The resolved form plan the renderer consumes. */
+export type FormPlan = {
+  /** Stored form schema with each field enriched from the live property. */
+  schema: FormSchema;
+  /** The visible (non-hidden) questions, in order. */
+  fields: FormField[];
+  /** Display metadata: title, description, submit label, success message. */
+  meta: FormDescription;
+};
+
+/**
+ * Resolve a form plan from the database's properties plus the stored
+ * `config.form`.
+ *
+ * A stored `FormSchema` (`{ fields: [...] }`) is parsed through
+ * `parseFormSchema`; when it carries no questions (the legacy `fieldIds`
+ * config shape) the schema is built from the live properties through
+ * `buildFormSchema`, so stale/computed ids are still skipped. Every field is
+ * then enriched with its live property's `type`/`config` so
+ * `validateSubmission` enforces the real cell constraints and `toRowValues`
+ * stores exactly what a cell write would. Pure and never throws, so it is
+ * testable without rendering.
+ */
+export function resolveFormPlan(properties: DBProperty[], config: unknown): FormPlan {
+  const parsed = parseFormSchema(config);
+  const propertyById = new Map(properties.map((property) => [property.id, property]));
+  const resolvedFields =
+    parsed.fields.length > 0 ? parsed.fields : buildFormSchema(properties, config);
+  const schema: FormSchema = {
+    ...parsed,
+    fields: resolvedFields.map((field) => {
+      const property = propertyById.get(field.propertyId);
+      if (!property) return field;
+      return {
+        ...field,
+        type: property.type,
+        config: (property.config ?? {}) as Record<string, unknown>,
+      };
+    }),
+  };
+  return {
+    schema,
+    fields: schema.fields.filter((field) => field.hidden !== true),
+    meta: describeForm(schema),
+  };
+}
+
 /**
  * Render a database as a respondent form.
  *
- * `buildFormSchema` resolves the ordered questions from the database's
- * properties plus the stored form config (`config.form`), so computed/system
- * types (formula, relation, rollup, audit, id, button…) are skipped and stale
- * ids are tolerated. Each question is edited with the existing `Cell` editor
- * for its property type, so the form can only offer answers the rest of the app
+ * `resolveFormPlan` resolves the ordered questions from the stored form config
+ * (`config.form`: a `FormSchema`, or the legacy `fieldIds` shape) plus the
+ * live properties, so computed/system types are skipped and stale ids are
+ * tolerated. Each question is edited with the existing `Cell` editor for its
+ * property type, so the form can only offer answers the rest of the app
  * accepts. On submit, `validateSubmission` gates the answers with the same
- * rules a cell write uses and `answersToPropertyValues` maps an accepted
- * submission to the `{ propertyId, value }` cells a new row stores.
+ * rules a cell write uses and `toRowValues` maps an accepted submission to the
+ * `{ propertyId, value }` cells a new row stores.
  *
  * `onSubmit` is the create-row seam: it receives those cells in field order and
  * the parent creates the row (the same `createRowAction` path the table's "+"
@@ -1305,10 +1552,13 @@ export function FormView({
    */
   onSubmit?: (values: { propertyId: string; value: unknown }[]) => void;
 }) {
-  const fields = buildFormSchema(properties, config);
-  const meta = resolveFormMeta(config);
+  const { schema, fields, meta } = resolveFormPlan(properties, config);
   const propertyById = new Map(properties.map((property) => [property.id, property]));
-  const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  // Pre-fill any stored field defaults so a fresh respondent starts where the
+  // form config says; a form with no defaults is exactly as empty as before.
+  const [answers, setAnswers] = useState<Record<string, unknown>>(() =>
+    defaultAnswers(schema),
+  );
   const [issues, setIssues] = useState<FormIssue[]>([]);
   const [submitted, setSubmitted] = useState(false);
   const editable = onSubmit !== undefined;
@@ -1332,7 +1582,9 @@ export function FormView({
 
   const submit = () => {
     if (!onSubmit) return;
-    const validation = validateSubmission(fields, answers);
+    // Client-side validation through the same engine a server action would use,
+    // so only an acceptable submission is handed to the create-row seam.
+    const validation = validateSubmission(schema, answers);
     if (!validation.ok) {
       setIssues(validation.issues);
       return;
@@ -1340,8 +1592,8 @@ export function FormView({
     setIssues([]);
     // Hand the mapped cells to the parent before clearing, so the success
     // state can offer "Add another" without resubmitting the same answers.
-    onSubmit(answersToPropertyValues(fields, answers));
-    setAnswers({});
+    onSubmit(toRowValues(schema, answers));
+    setAnswers(defaultAnswers(schema));
     setSubmitted(true);
   };
 
@@ -1354,11 +1606,14 @@ export function FormView({
         role="status"
         className="mx-auto max-w-xl space-y-3 rounded-lg border border-border p-6 text-center"
       >
-        <p className="text-sm font-medium">{t(locale, "done")}</p>
+        <p className="text-sm font-medium">{meta.successMessage}</p>
         <button
           type="button"
           data-testid="form-add-another"
-          onClick={() => setSubmitted(false)}
+          onClick={() => {
+            setAnswers(defaultAnswers(schema));
+            setSubmitted(false);
+          }}
           className="rounded bg-accent px-4 py-1.5 text-sm text-accent-fg hover:opacity-90"
         >
           {t(locale, "add")}
@@ -1376,6 +1631,11 @@ export function FormView({
       }}
       className="mx-auto max-w-xl space-y-4 rounded-lg border border-border p-4"
     >
+      {meta.title !== "" && (
+        <h2 data-testid="form-title" className="text-base font-medium">
+          {meta.title}
+        </h2>
+      )}
       {meta.description !== "" && <p className="text-sm text-muted">{meta.description}</p>}
       {fields.map((field) => {
         const property = propertyById.get(field.propertyId);
