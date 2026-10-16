@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { PromptDialog } from "@/components/prompt-dialog";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -314,6 +321,75 @@ export function DatabaseView({
     properties as unknown as QueryProperty[],
     viewConfig,
   );
+
+  // Row lookup for the side peek: a click on a row resolves its id back to the
+  // row object the drawer renders.
+  const rowsById = useMemo(
+    () => new Map(viewRows.map((row) => [row.id, row] as const)),
+    [viewRows],
+  );
+
+  /** The row id a `/w/<slug>/<id>` link points at, or `null` for anything else. */
+  const rowIdFromHref = (href: string | null): string | null => {
+    if (!href) return null;
+    const prefix = `/w/${workspaceSlug}/`;
+    if (!href.startsWith(prefix)) return null;
+    const id = href.slice(prefix.length);
+    return id !== "" && !id.includes("/") ? id : null;
+  };
+
+  /**
+   * Open a row in the right-hand "side peek" from a click on the row itself, so
+   * a database can be browsed inline without navigating away. The row markup
+   * belongs to the shared view components, so the click is delegated (capture
+   * phase, so it can stop a `next/link` row from navigating): a table `<tr>`
+   * opens its row, and in the card/list/gallery/calendar views the row's own
+   * link opens the peek in place of the page. Clicks on inline editors and
+   * action controls are left untouched, and a click that does not land on a row
+   * changes nothing — the view renders exactly as before, only drawing a drawer
+   * once a row is actually opened.
+   */
+  const openRowPeekFromClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const target = event.target as Element | null;
+    if (!target) return;
+    const controlSelector =
+      "a, button, input, textarea, select, label, [contenteditable='true'], [role='menu'], [role='listbox']";
+
+    // Table view: the row is a `<tr>`; its id comes from the row's own
+    // "Open as page" link. A click on a control inside the row keeps its
+    // behaviour (editing a cell, the row actions, the explicit page link).
+    const tableRow = target.closest("tr");
+    if (tableRow) {
+      if (target.closest(controlSelector)) return;
+      const id = rowIdFromHref(
+        tableRow
+          .querySelector<HTMLAnchorElement>(`a[href^="/w/${workspaceSlug}/"]`)
+          ?.getAttribute("href") ?? null,
+      );
+      const row = id ? rowsById.get(id) : undefined;
+      if (row) setPeek(row);
+      return;
+    }
+
+    // Card / list / gallery / calendar views: the whole row is a link, so open
+    // the peek in place of the navigation. A nested control (a cell editor,
+    // a reorder button) keeps its own behaviour; a click on a non-row link is
+    // left alone.
+    const link = target.closest<HTMLAnchorElement>(`a[href^="/w/${workspaceSlug}/"]`);
+    if (!link) return;
+    if (
+      target.closest(
+        "button, input, textarea, select, [contenteditable='true'], [role='menu'], [role='listbox']",
+      )
+    ) {
+      return;
+    }
+    const id = rowIdFromHref(link.getAttribute("href"));
+    const row = id ? rowsById.get(id) : undefined;
+    if (!row) return;
+    event.preventDefault();
+    setPeek(row);
+  };
 
   // R31.13 — resolve the database's default template through the pure planner
   // so "New row" and the row-creation helpers below share one source of truth.
@@ -1340,6 +1416,7 @@ export function DatabaseView({
         </div>
       )}
 
+      <div onClickCapture={openRowPeekFromClick}>
       {activeView.type === "BOARD" ? (
         <BoardView
           locale={locale}
@@ -1483,6 +1560,7 @@ export function DatabaseView({
           {t(locale, "dbScaffoldA")} {activeView.name} {t(locale, "dbScaffoldB")}
         </p>
       )}
+      </div>
 
       {addingProperty && (
         <AddPropertyForm
