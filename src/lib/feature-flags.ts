@@ -110,14 +110,69 @@ export type FlagReason =
   | "allowlist"
   | "rules"
   | "rollout"
+  | "planGate"
   | "enabled"
   | "disabled"
+  | "global"
   | "invalid"
   | "not_found";
 
 export type FlagDecision = {
   enabled: boolean;
   reason: FlagReason;
+};
+
+/* ------------------------------------------------------------------ *
+ * Plan-aware definitions (MISSING_FEATURES §17 "Feature flags" and
+ * "Plan gates").
+ *
+ * The `Flag` engine above targets one beta population with targeting rules
+ * and a bare user-id rollout. The definition surface below adds the two
+ * things the licensing spec asks for (`docs/specs/plans-licensing.md`): a
+ * workspace-scoped allowlist and a `planGate`, so one feature can be
+ * restricted to a plan while still being beta-tested with named users.
+ *
+ * Precedence, most specific first:
+ *
+ *   1. `allowlist`      - a named user or workspace is on
+ *   2. `planGate`       - the context's plan is (or is not) admitted
+ *   3. `rolloutPercent` - `bucketOf(userId, key)` decides the percentage
+ *   4. `enabled`        - the baseline, reported as `"global"`
+ *
+ * The same `evaluateFlag` serves both surfaces (see its overloads); a
+ * definition is recognised by its plan-aware fields or by a plan/workspace
+ * in the context. Everything stays pure: no clock, no randomness, no I/O.
+ * ------------------------------------------------------------------ */
+
+/** The plans a `planGate` admits, by plan id (e.g. `business`, `enterprise`). */
+export type FlagPlanGate = {
+  /** Plan ids for which the flag is enabled; an empty list admits nobody. */
+  plans: readonly string[];
+};
+
+/**
+ * A plan-aware feature-flag definition. Every targeting field is optional:
+ * the more a definition sets, the more specific its override.
+ */
+export type FlagDefinition = {
+  key: string;
+  enabled: boolean;
+  /** Percentage of users included (0..100), keyed by `bucketOf(userId, key)`. */
+  rolloutPercent?: number;
+  /** Named users / workspaces always included, regardless of plan or rollout. */
+  allowlist?: {
+    userIds?: readonly string[];
+    workspaceIds?: readonly string[];
+  };
+  /** When set, only the listed plans get the flag (fails closed otherwise). */
+  planGate?: FlagPlanGate;
+};
+
+/** What one plan-aware evaluation reads. Every field is optional. */
+export type FlagEvaluationContext = {
+  userId?: string;
+  workspaceId?: string;
+  plan?: string;
 };
 
 /** Non-null, non-array object — the only shape trusted as a flag/rule. */
@@ -247,43 +302,70 @@ function rolloutPercent(value: unknown): number | null {
 
 /**
  * Decide one flag for one context. See the module header for the precedence;
- * the short version is denylist > allowlist > rules > rollout > `enabled`.
+ * the short version is denylist > allowlist > rules > planGate > rollout >
+ * `enabled` (the plan-aware baseline reports as `"global"`).
  *
- * A flag that is not even an object fails closed to `{ enabled: false, reason:
- * "invalid" }`; malformed sub-fields (a non-array allowlist, a bad rule) are
- * ignored so a corrupt row can only narrow access, never widen it.
+ * The same function serves the classic `Flag` engine and the plan-aware
+ * `FlagDefinition` surface: a definition is recognised by a plan-aware field
+ * (`planGate` / `rolloutPercent` / an object `allowlist`) or by a plan or a
+ * workspace in the context. A flag that is not even an object fails closed to
+ * `{ enabled: false, reason: "invalid" }`; malformed sub-fields (a non-array
+ * allowlist, a bad rule) are ignored so a corrupt row can only narrow access,
+ * never widen it.
  */
-export function evaluateFlag(flag: unknown, context: FlagContext): FlagDecision {
-  if (!isRecord(flag)) return { enabled: false, reason: "invalid" };
-  const ctx: FlagContext = isRecord(context)
-    ? {
-        userId: typeof context.userId === "string" ? context.userId : "",
-        ...(isRecord(context.attributes)
-          ? { attributes: context.attributes as Record<string, FlagAttributeValue> }
-          : {}),
-      }
-    : { userId: "" };
+export function evaluateFlag(
+  definition: FlagDefinition,
+  context?: FlagEvaluationContext,
+): FlagDecision;
+export function evaluateFlag(
+  definition: unknown,
+  context?: FlagContext | FlagEvaluationContext,
+): FlagDecision;
+export function evaluateFlag(
+  definition: unknown,
+  context?: FlagContext | FlagEvaluationContext,
+): FlagDecision {
+  if (!isRecord(definition)) return { enabled: false, reason: "invalid" };
+  const mode = flagMode(definition, context);
+  const record: Record<string, unknown> = isRecord(context)
+    ? (context as Record<string, unknown>)
+    : {};
+  const userId = typeof record.userId === "string" ? record.userId : "";
+  const workspaceId = typeof record.workspaceId === "string" ? record.workspaceId : undefined;
+  const plan = typeof record.plan === "string" ? record.plan : undefined;
+  const targetingContext: FlagContext = isRecord(record.attributes)
+    ? { userId, attributes: record.attributes as Record<string, FlagAttributeValue> }
+    : { userId };
 
-  if (idList(flag.denylist).includes(ctx.userId)) {
+  if (idList(definition.denylist).includes(userId)) {
     return { enabled: false, reason: "denylist" };
   }
-  if (idList(flag.allowlist).includes(ctx.userId)) {
+  if (allowlistMatches(definition.allowlist, userId, workspaceId)) {
     return { enabled: true, reason: "allowlist" };
   }
 
-  const rules = Array.isArray(flag.rules) ? flag.rules : [];
-  if (rules.length > 0 && rules.some((rule) => ruleMatches(rule, ctx))) {
+  const rules = Array.isArray(definition.rules) ? definition.rules : [];
+  if (rules.length > 0 && rules.some((rule) => ruleMatches(rule, targetingContext))) {
     return { enabled: true, reason: "rules" };
   }
 
-  const rollout = rolloutPercent(flag.rollout);
-  if (rollout !== null) {
-    return { enabled: bucketFor(ctx.userId) < rollout, reason: "rollout" };
+  if (definition.planGate !== undefined) {
+    return { enabled: planGateAllows(definition.planGate, plan), reason: "planGate" };
   }
 
-  return flag.enabled === true
-    ? { enabled: true, reason: "enabled" }
-    : { enabled: false, reason: "disabled" };
+  const percent = rolloutPercent(definition.rolloutPercent ?? definition.rollout);
+  if (percent !== null) {
+    const bucket =
+      definition.rolloutPercent !== undefined
+        ? bucketOf(userId, typeof definition.key === "string" ? definition.key : "")
+        : bucketFor(userId);
+    return { enabled: bucket < percent, reason: "rollout" };
+  }
+
+  if (definition.enabled === true) {
+    return { enabled: true, reason: mode === "definition" ? "global" : "enabled" };
+  }
+  return { enabled: false, reason: mode === "definition" ? "global" : "disabled" };
 }
 
 /**
@@ -412,4 +494,233 @@ export function validateFlag(flag: unknown): FlagIssue[] {
     }
   }
   return issues;
+}
+
+/* ------------------------- plan-aware helpers ------------------------- */
+
+/** Which baseline reason vocabulary a call should use. */
+type FlagMode = "definition" | "targeting";
+
+/**
+ * Whether a stored value names the plan-aware definition surface rather than
+ * the classic targeting engine. Keyed off fields only the definition surface
+ * declares, so the two surfaces never collide.
+ */
+function looksLikeDefinition(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.planGate !== undefined) return true;
+  if (value.rolloutPercent !== undefined) return true;
+  return isRecord(value.allowlist);
+}
+
+/** Whether a context names the plan-aware surface (it carries plan/workspace). */
+function looksLikeDefinitionContext(value: unknown): boolean {
+  return isRecord(value) && (value.workspaceId !== undefined || value.plan !== undefined);
+}
+
+/** Which baseline reason vocabulary applies to this call. */
+function flagMode(definition: unknown, context: unknown): FlagMode {
+  return looksLikeDefinition(definition) || looksLikeDefinitionContext(context)
+    ? "definition"
+    : "targeting";
+}
+
+/**
+ * Whether the definition's allowlist admits this user/workspace. Accepts both
+ * the plan-aware object form and the classic user-id array form; an empty or
+ * malformed allowlist never matches.
+ */
+function allowlistMatches(
+  allowlist: unknown,
+  userId: string,
+  workspaceId: string | undefined,
+): boolean {
+  if (Array.isArray(allowlist)) return idList(allowlist).includes(userId);
+  if (!isRecord(allowlist)) return false;
+  if (userId !== "" && idList(allowlist.userIds).includes(userId)) return true;
+  return (
+    workspaceId !== undefined &&
+    workspaceId !== "" &&
+    idList(allowlist.workspaceIds).includes(workspaceId)
+  );
+}
+
+/** Whether a plan gate admits `plan`; a missing/empty plan fails closed. */
+function planGateAllows(gate: unknown, plan: string | undefined): boolean {
+  if (!isRecord(gate)) return false;
+  return plan !== undefined && plan !== "" && idList(gate.plans).includes(plan);
+}
+
+/**
+ * Deterministic 0..99 bucket for a `(userId, key)` pair (FNV-1a, 32-bit,
+ * unsigned). The key salts the hash, so one user partitions independently per
+ * flag; the mapping is a wire format pinned by the unit test — changing it
+ * would move users, so treat it as stable.
+ */
+export function bucketOf(userId: string, key: string): number {
+  const id = typeof userId === "string" ? userId : "";
+  const name = typeof key === "string" ? key : "";
+  const seed = `${name}\u0000${id}`;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) % 100;
+}
+
+/* --------------------------- parsing helpers -------------------------- */
+
+/** A normalised allowlist, or `undefined` when it names nobody. */
+function parseAllowlist(value: unknown): FlagDefinition["allowlist"] {
+  if (Array.isArray(value)) {
+    const userIds = idList(value);
+    return userIds.length > 0 ? { userIds } : undefined;
+  }
+  if (!isRecord(value)) return undefined;
+  const userIds = idList(value.userIds);
+  const workspaceIds = idList(value.workspaceIds);
+  if (userIds.length === 0 && workspaceIds.length === 0) return undefined;
+  const allowlist: { userIds?: string[]; workspaceIds?: string[] } = {};
+  if (userIds.length > 0) allowlist.userIds = userIds;
+  if (workspaceIds.length > 0) allowlist.workspaceIds = workspaceIds;
+  return allowlist;
+}
+
+/** A validated plan gate, or `undefined` when it names no usable plan. */
+function parsePlanGate(value: unknown): FlagPlanGate | undefined {
+  let source: unknown;
+  if (Array.isArray(value)) source = value;
+  else if (isRecord(value)) source = value.plans;
+  else source = undefined;
+  const plans = idList(source);
+  return plans.length > 0 ? { plans } : undefined;
+}
+
+/** Parse one untrusted candidate into a definition, or `null` when unusable. */
+function parseFlagDefinition(value: unknown, fallbackKey?: string): FlagDefinition | null {
+  const record = isRecord(value) ? value : {};
+  const rawKey = typeof record.key === "string" ? record.key : fallbackKey;
+  const key = typeof rawKey === "string" ? rawKey.trim() : "";
+  if (key === "") return null;
+
+  const definition: FlagDefinition = { key, enabled: record.enabled === true };
+  const percent = rolloutPercent(record.rolloutPercent);
+  if (record.rolloutPercent !== undefined && percent !== null) {
+    definition.rolloutPercent = percent;
+  }
+  const allowlist = parseAllowlist(record.allowlist);
+  if (allowlist !== undefined) definition.allowlist = allowlist;
+  const planGate = parsePlanGate(record.planGate);
+  if (planGate !== undefined) definition.planGate = planGate;
+  return definition;
+}
+
+/**
+ * Parse untrusted `raw` into plan-aware definitions. Accepts an array of
+ * candidate objects or a `{ key: candidate }` map (the map key is the
+ * fallback). Entries without a usable key are dropped, duplicate keys keep the
+ * first, unknown fields are ignored, and a bad entry never throws.
+ */
+export function parseFlags(raw: unknown): FlagDefinition[] {
+  const parsed: FlagDefinition[] = [];
+  const seen = new Set<string>();
+  const accept = (value: unknown, fallbackKey?: string) => {
+    const definition = parseFlagDefinition(value, fallbackKey);
+    if (definition === null || seen.has(definition.key)) return;
+    seen.add(definition.key);
+    parsed.push(definition);
+  };
+  if (Array.isArray(raw)) {
+    for (const value of raw) accept(value);
+  } else if (isRecord(raw)) {
+    for (const [key, value] of Object.entries(raw)) accept(value, key);
+  }
+  return parsed;
+}
+
+/* --------------------------- env overrides ---------------------------- */
+
+/** The environment prefix that overrides a flag: `FLAG_<KEY>`. */
+export const FLAG_OVERRIDE_PREFIX = "FLAG_";
+
+const OVERRIDE_TRUE_TOKENS = new Set(["true", "1", "yes", "on"]);
+const OVERRIDE_FALSE_TOKENS = new Set(["false", "0", "no", "off"]);
+
+/** Parse one env value to a boolean, or `null` when it names neither state. */
+function envBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return null;
+  const token = value.trim().toLowerCase();
+  if (OVERRIDE_TRUE_TOKENS.has(token)) return true;
+  if (OVERRIDE_FALSE_TOKENS.has(token)) return false;
+  return null;
+}
+
+/**
+ * Derive `key -> boolean` overrides from environment variables named
+ * `FLAG_<KEY>` (case-insensitive). The key is the lower-cased suffix, so
+ * `FLAG_BETA_UI=on` overrides `beta_ui`. Unknown names and unparseable values
+ * are ignored; junk input yields `{}` rather than throwing.
+ */
+export function overridesFromEnv(env: unknown): Record<string, boolean> {
+  const overrides: Record<string, boolean> = {};
+  if (!isRecord(env)) return overrides;
+  for (const [name, raw] of Object.entries(env)) {
+    if (!name.toUpperCase().startsWith(FLAG_OVERRIDE_PREFIX)) continue;
+    const suffix = name.slice(FLAG_OVERRIDE_PREFIX.length).trim();
+    if (suffix === "") continue;
+    const value = envBoolean(raw);
+    if (value === null) continue;
+    overrides[suffix.toLowerCase()] = value;
+  }
+  return overrides;
+}
+
+/* --------------------------- describing ------------------------------- */
+
+/** `n` with a singular/plural noun, for a human summary. */
+function countLabel(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/** The plan list for a summary label, or `null` when there is no gate. */
+function describePlans(gate: unknown): string | null {
+  if (gate === undefined) return null;
+  const plans = parsePlanGate(gate);
+  return plans === undefined ? "gated" : plans.plans.join("/");
+}
+
+/**
+ * A short, deterministic, human-readable summary of a definition, safe for
+ * logs and admin UIs. Malformed input yields `"unknown flag"` rather than
+ * throwing.
+ */
+export function describeFlag(definition: unknown): string {
+  if (!isRecord(definition)) return "unknown flag";
+  const key =
+    typeof definition.key === "string" && definition.key.trim() !== ""
+      ? definition.key.trim()
+      : "?";
+  const parts: string[] = [];
+
+  const allowlist = definition.allowlist;
+  if (Array.isArray(allowlist)) {
+    const users = idList(allowlist).length;
+    if (users > 0) parts.push(`allowlist ${countLabel(users, "user")}`);
+  } else if (isRecord(allowlist)) {
+    const users = idList(allowlist.userIds).length;
+    const workspaces = idList(allowlist.workspaceIds).length;
+    if (users > 0) parts.push(`allowlist ${countLabel(users, "user")}`);
+    if (workspaces > 0) parts.push(countLabel(workspaces, "workspace"));
+  }
+
+  const plans = describePlans(definition.planGate);
+  if (plans !== null) parts.push(`plans ${plans}`);
+
+  const percent = rolloutPercent(definition.rolloutPercent ?? definition.rollout);
+  if (percent !== null) parts.push(`rollout ${percent}%`);
+
+  const state = definition.enabled === true ? "on" : "off";
+  return parts.length === 0 ? `${key}: ${state}` : `${key}: ${state} (${parts.join(", ")})`;
 }
