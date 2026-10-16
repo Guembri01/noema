@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { Node, mergeAttributes } from "@tiptap/core";
 import {
   NodeViewWrapper,
@@ -260,6 +260,9 @@ function TemplateButtonView({
   const templateId = (node.attrs.templateId as TemplateId) ?? "meeting";
   const definition = TEMPLATES.find((entry) => entry.id === templateId) ?? TEMPLATES[0];
   const issues = templateButtonIssues(node.attrs as Record<string, unknown>);
+  // Non-blocking confirmation for `confirm` buttons: the first activation arms
+  // it and shows the description, the second one runs it (no window.confirm).
+  const confirmArmed = useRef(false);
 
   const insert = () => {
     const pos = getPos();
@@ -359,6 +362,9 @@ function ButtonBlockView({
   const attrs = node.attrs as Record<string, unknown>;
   const block = buttonBlockFromAttrs(attrs);
   const label = block?.label ?? String(attrs.label ?? t(locale, "buttonConfigured"));
+  // Non-blocking confirmation for `confirm` buttons: the first activation arms
+  // it and shows the description, the second one runs it (no window.confirm).
+  const confirmArmed = useRef(false);
 
   const run = useCallback(async () => {
     if (!block) {
@@ -375,9 +381,12 @@ function ButtonBlockView({
       toast.error(executability.reason ?? t(locale, "configureButtonFirst"));
       return;
     }
-    if (block.confirm && typeof window !== "undefined" && !window.confirm(describeButton(block))) {
+    if (block.confirm && typeof window !== "undefined" && !confirmArmed.current) {
+      confirmArmed.current = true;
+      toast(describeButton(block));
       return;
     }
+    confirmArmed.current = false;
     const pos = getPos();
     if (typeof pos !== "number") return;
 
