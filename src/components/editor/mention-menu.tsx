@@ -20,14 +20,18 @@ import { t } from "@/lib/i18n";
 type MentionItem = {
   id: string;
   label: string;
-  type: "page" | "user" | "date";
+  type: "page" | "user" | "date" | "block";
 };
 
 /** Rows the picker keeps before appending the fixed date suggestions. */
 const MENTION_LIMIT = 12;
 
+/** How much of a block's plain text a reference row shows before ellipsis. */
+const BLOCK_LABEL_LIMIT = 80;
+
 /** Glyph shown ahead of a row, keyed by the mention kind. */
 function glyphFor(type: MentionItem["type"]): string {
+  if (type === "block") return "🔗";
   if (type === "user") return "👤";
   if (type === "date") return "🗓";
   return "📄";
@@ -94,6 +98,28 @@ function excludedIds(editor: Editor, pageId?: string): Set<string> {
     return true;
   });
   return ids;
+}
+
+/**
+ * Top-level blocks the current document can reference. `BlockIds` stamps a
+ * stable `id` on every top-level block (`block-ids.ts`), so each id-labelled
+ * block with visible text becomes a `block` reference candidate; its label is
+ * the block's plain text, whitespace-collapsed and truncated. A read-only walk
+ * — the document is never mutated.
+ */
+function referencedBlocks(editor: Editor): Array<{ id: string; label: string }> {
+  const blocks: Array<{ id: string; label: string }> = [];
+  editor.state.doc.forEach((node) => {
+    const id: unknown = node.attrs?.id;
+    if (typeof id !== "string" || id.trim() === "") return;
+    const text = node.textContent.replace(/\s+/g, " ").trim();
+    if (!text) return;
+    blocks.push({
+      id,
+      label: text.length > BLOCK_LABEL_LIMIT ? `${text.slice(0, BLOCK_LABEL_LIMIT - 1)}…` : text,
+    });
+  });
+  return blocks;
 }
 
 export function MentionMenu({
@@ -186,11 +212,28 @@ export function MentionMenu({
       .map((d) => ({ id: d.id, label: d.label, type: "date" as const }));
   }, [query]);
 
-  // Flattened in render order (pages → people → dates) so arrow keys walk the
-  // same sequence the eye reads.
+  // Block references from the live document. The pure candidate helpers only
+  // model the server's page/person kinds, so each block is projected as a
+  // `page`-kind row purely to reuse the shared query filtering — the row is
+  // mapped back to a `block` mention (with its own id/label attrs) on insert.
+  const blocks = useMemo<MentionItem[]>(() => {
+    const excluded = excludedIds(editor, pageId);
+    const candidates: Candidate[] = referencedBlocks(editor)
+      .filter((block) => !excluded.has(block.id))
+      .map((block) => ({ id: block.id, title: block.label, kind: "page" as const }));
+    const ranked = rankCandidates(candidates, query);
+    return filterCandidates(ranked, query, { limit: MENTION_LIMIT }).map((row) => ({
+      id: row.id,
+      label: row.title,
+      type: "block" as const,
+    }));
+  }, [editor, pageId, query]);
+
+  // Flattened in render order (pages → people → blocks → dates) so arrow keys
+  // walk the same sequence the eye reads.
   const items = useMemo<MentionItem[]>(
-    () => [...sections.pages, ...sections.users, ...dates],
-    [sections, dates],
+    () => [...sections.pages, ...sections.users, ...blocks, ...dates],
+    [sections, blocks, dates],
   );
 
   useEffect(() => {
@@ -257,6 +300,8 @@ export function MentionMenu({
   );
 
   const userOffset = sections.pages.length;
+  const blockOffset = userOffset + sections.users.length;
+  const dateOffset = blockOffset + blocks.length;
 
   return (
     <div
@@ -270,7 +315,9 @@ export function MentionMenu({
       {sections.pages.map((item, index) => renderItem(item, index))}
       {sections.users.length > 0 && <SectionHeading label={t(locale, "members")} />}
       {sections.users.map((item, index) => renderItem(item, userOffset + index))}
-      {dates.map((item, index) => renderItem(item, userOffset + sections.users.length + index))}
+      {blocks.length > 0 && <SectionHeading label={t(locale, "linkedReferences")} />}
+      {blocks.map((item, index) => renderItem(item, blockOffset + index))}
+      {dates.map((item, index) => renderItem(item, dateOffset + index))}
     </div>
   );
 }
