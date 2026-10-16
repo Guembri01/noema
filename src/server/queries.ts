@@ -276,10 +276,20 @@ export async function getDatabase(databasePageId: string) {
       orderBy: { createdAt: "asc" },
       // R31.15 — expose the planner inputs so `database-view`'s template engine
       // can read a template's property defaults (`config.values`) and body
-      // (`content`) instead of showing display-only rows. `isDefault`/`locked`/
-      // `position` are spec'd (templates.md §5) but not columns on the current
-      // `Template` model, so they are omitted until that migration lands.
-      select: { id: true, name: true, icon: true, recurrence: true, config: true, content: true },
+      // (`content`) instead of showing display-only rows. `isDefault` (the
+      // planner's default pick, `resolveDefaultTemplate`) and `position` (the
+      // authored order, templates.md §5) are now columns on `Template`, so they
+      // are projected additively for the UI/actions to consume.
+      select: {
+        id: true,
+        name: true,
+        icon: true,
+        recurrence: true,
+        config: true,
+        content: true,
+        isDefault: true,
+        position: true,
+      },
     }),
   ]);
 
