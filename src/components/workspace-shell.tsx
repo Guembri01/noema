@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Database, FileText, Menu, PanelLeftOpen, X } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";
@@ -9,6 +15,7 @@ import { ChatPanel, type PanelThread } from "@/components/chat-panel";
 import type { CalendarFeedView, MeetingEventView } from "@/components/sidebar-meetings";
 import { CommandPalette } from "@/components/command-palette";
 import { QuickFind } from "@/components/quick-find";
+import { RouteProgress } from "@/components/ui/route-progress";
 import { safeAction } from "@/lib/actions-client";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
@@ -107,6 +114,9 @@ export function WorkspaceShell({
   // Desktop collapse for the sidebar (Ctrl/Cmd+\, the sidebar's own button and
   // the palette action). Persisted so the choice survives a reload.
   const [sidebarHidden, setSidebarHidden] = useState(false);
+  // True from the moment the resize handle is grabbed until the pointer is
+  // released, so the sidebar resizes 1:1 with no transition (design system §6).
+  const [sidebarResizing, setSidebarResizing] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatThreadId, setChatThreadId] = useState<string | null>(null);
   const router = useRouter();
@@ -211,6 +221,24 @@ export function WorkspaceShell({
     [],
   );
 
+  // The resize handle owns the drag; we only mirror "a drag is active" onto the
+  // wrapper so `.u-no-transition` freezes every descendant while it moves.
+  const beginSidebarResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const target = event.target as Element | null;
+      if (!target?.closest('[data-testid="sidebar-resize"]')) return;
+      setSidebarResizing(true);
+      const stop = () => {
+        setSidebarResizing(false);
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+      };
+      window.addEventListener("pointerup", stop);
+      window.addEventListener("pointercancel", stop);
+    },
+    [],
+  );
+
   const createNewPage = useCallback(async () => {
     const outcome = await safeAction(() =>
       createPageAction({ workspaceId: workspace.id, parentId: null }),
@@ -271,7 +299,8 @@ export function WorkspaceShell({
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <div className="fixed inset-x-0 top-0 z-30 flex items-center gap-2 border-b border-border bg-bg px-3 py-2 md:hidden">
+      <RouteProgress />
+      <div className="fixed inset-x-0 top-0 z-30 flex items-center gap-2 border-b border-border bg-bg pb-2 pt-[calc(0.5rem_+_env(safe-area-inset-top))] pl-[calc(0.75rem_+_env(safe-area-inset-left))] pr-[calc(0.75rem_+_env(safe-area-inset-right))] md:hidden">
         <button
           type="button"
           aria-label={t(locale, "openNavigation")}
@@ -285,8 +314,11 @@ export function WorkspaceShell({
 
       <div
         data-testid="workspace-sidebar"
+        onPointerDown={beginSidebarResize}
         className={cn(
           "fixed inset-y-0 left-0 z-40 md:static md:z-auto",
+          // Freeze transitions while the resize handle is held (1:1 drag).
+          sidebarResizing && "u-no-transition",
           sidebarOpen
             ? sidebarHidden
               ? "block md:hidden"
@@ -339,12 +371,15 @@ export function WorkspaceShell({
       )}
 
       <div className="flex min-w-0 flex-1">
-        <main id="main" className="min-w-0 flex-1 overflow-y-auto pt-12 md:pt-0">
+        <main
+          id="main"
+          className="min-w-0 flex-1 overflow-y-auto scrollbar-thin pt-[calc(3rem_+_env(safe-area-inset-top))] md:pt-0"
+        >
           {openTabs.length > 0 && (
             <nav
               data-testid="workspace-tabs"
               aria-label={t(locale, "recent")}
-              className="sticky top-12 z-20 flex items-stretch gap-1 overflow-x-auto border-b border-border bg-bg px-2 md:top-0"
+              className="sticky top-[calc(3rem_+_env(safe-area-inset-top))] z-20 flex items-stretch gap-1 overflow-x-auto border-b border-border bg-bg px-2 md:top-0"
             >
               {openTabs.map(({ entry, node }) => {
                 const active = entry.pageId === activePageId;
@@ -397,7 +432,16 @@ export function WorkspaceShell({
               })}
             </nav>
           )}
-          {children}
+          {/* Keyed on the route so the fade replays per navigation; the tab
+              strip above stays mounted, and the sidebar lives outside <main>
+              entirely, so neither re-mounts or flickers. */}
+          <div
+            key={pathname}
+            className="animate-fade"
+            style={{ animationDuration: "var(--dur-1)" }}
+          >
+            {children}
+          </div>
         </main>
         {chatOpen && (
           <ChatPanel
