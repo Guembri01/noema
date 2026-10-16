@@ -1,18 +1,28 @@
 import { createHash, randomBytes } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_MAX_KEY_AGE_SECONDS,
+  MIN_SECRET_LENGTH,
+  SECRET_REGISTRY,
   SecretDecryptError,
+  constantTimeEqual,
   createKeyring,
   decrypt,
   decryptSecret,
   deriveLegacyKey,
+  describeSecretStatus,
   encrypt,
   encryptSecret,
+  generateSecret,
   hashToken,
+  maskConnString,
   maskSecret,
+  missingSecrets,
   needsRotation,
+  parseEnvSecret,
   randomToken,
+  redact,
+  redactObject,
   reencrypt,
   rotateKeyring,
 } from "@/lib/secrets";
@@ -598,5 +608,453 @@ describe("reencrypt — migration pass", () => {
     expect(() =>
       reencrypt(tampered, keyring, rotateKeyring(keyring, ephemeralKey())),
     ).toThrow(SecretDecryptError);
+  });
+});
+
+/**
+ * §17 secret-handling engine — additive to the envelope tests above.
+ *
+ * Covers validation/classification, redaction (value, object, connection
+ * string), constant-time comparison and the env-secret registry diagnostics.
+ * Every diagnostic assertion also checks that a raw *value* never escapes.
+ */
+
+const SECRET_VALUE = "sk-live-9f2c7a4b8e1d6205cafebabe";
+const SHORT_VALUE = "sk-weak";
+
+describe("parseEnvSecret — validation & classification", () => {
+  it("classifies a strong required secret as ok/valid and reports its length", () => {
+    const parsed = parseEnvSecret("AUTH_SECRET", SECRET_VALUE, {
+      required: true,
+    });
+    expect(parsed).toEqual({
+      name: "AUTH_SECRET",
+      required: true,
+      present: true,
+      length: SECRET_VALUE.length,
+      minLength: MIN_SECRET_LENGTH,
+      status: "ok",
+      valid: true,
+    });
+  });
+
+  it("reports a missing required secret as missing/invalid", () => {
+    const parsed = parseEnvSecret("AUTH_SECRET", undefined, {
+      required: true,
+    });
+    expect(parsed.status).toBe("missing");
+    expect(parsed.present).toBe(false);
+    expect(parsed.valid).toBe(false);
+    expect(parsed.length).toBe(0);
+  });
+
+  it("treats a missing optional secret as missing but valid", () => {
+    const parsed = parseEnvSecret("AI_API_KEY", "");
+    expect(parsed.required).toBe(false);
+    expect(parsed.status).toBe("missing");
+    expect(parsed.valid).toBe(true);
+  });
+
+  it("flags a present-but-short value as weak regardless of required", () => {
+    const required = parseEnvSecret("AUTH_SECRET", SHORT_VALUE, {
+      required: true,
+    });
+    const optional = parseEnvSecret("CRON_SECRET", SHORT_VALUE);
+    expect(required.status).toBe("weak");
+    expect(optional.status).toBe("weak");
+    expect(required.valid).toBe(false);
+    expect(optional.valid).toBe(false);
+  });
+
+  it("honours a custom minLength boundary (exactly minLength is ok)", () => {
+    expect(parseEnvSecret("X", "12345", { minLength: 5 }).status).toBe("ok");
+    expect(parseEnvSecret("X", "1234", { minLength: 5 }).status).toBe("weak");
+  });
+
+  it("treats non-string values as missing without throwing", () => {
+    const parsed = parseEnvSecret("X", null, { required: true });
+    expect(parsed.status).toBe("missing");
+    expect(parsed.present).toBe(false);
+  });
+
+  it("never includes the secret value in the result", () => {
+    const parsed = parseEnvSecret("AUTH_SECRET", SECRET_VALUE, {
+      required: true,
+    });
+    expect(JSON.stringify(parsed)).not.toContain(SECRET_VALUE);
+    expect(JSON.stringify(parsed)).not.toContain("sk-live");
+    expect(Object.keys(parsed)).not.toContain("value");
+  });
+});
+
+describe("redact — value masking", () => {
+  it("returns an empty string for null, undefined and empty input", () => {
+    expect(redact(null)).toBe("");
+    expect(redact(undefined)).toBe("");
+    expect(redact("")).toBe("");
+  });
+
+  it("fully masks values too short to keep both ends", () => {
+    expect(redact("sk-1234")).toBe("…");
+    expect(redact("abc")).toBe("…");
+  });
+
+  it("keeps a three-character head and the last `keep` characters", () => {
+    expect(redact("sk-abcdef1234", { keep: 4 })).toBe("sk-…1234");
+    expect(redact(SECRET_VALUE)).toBe("sk-…babe");
+  });
+
+  it("honours a custom keep and never leaks the middle", () => {
+    const masked = redact("abcdefghijklmnop", { keep: 6 });
+    expect(masked).toBe("abc…klmnop");
+    expect(masked).not.toContain("defghij");
+  });
+
+  it("supports keep: 0 (head + ellipsis only)", () => {
+    expect(redact("supersecret", { keep: 0 })).toBe("sup…");
+  });
+
+  it("does not leak a long secret's middle segment", () => {
+    const masked = redact(SECRET_VALUE, { keep: 4 });
+    expect(masked).not.toContain("9f2c7a4b8e1d6205");
+    expect(masked.startsWith("sk-…")).toBe(true);
+  });
+});
+
+describe("redactObject — deep, non-mutating redaction", () => {
+  it("redacts secret-looking keys case- and separator-insensitively", () => {
+    const input = {
+      password: SECRET_VALUE,
+      Client_Secret: SECRET_VALUE,
+      "api-key": SECRET_VALUE,
+      APIKEY: SECRET_VALUE,
+      token: SECRET_VALUE,
+    };
+    const redacted = redactObject(input);
+    for (const value of Object.values(redacted)) {
+      expect(value).not.toContain(SECRET_VALUE);
+      expect(value).toBe(redact(SECRET_VALUE));
+    }
+  });
+
+  it("redacts caller-supplied extra keys", () => {
+    const input = { internalRef: SECRET_VALUE, keep: "not-a-secret" };
+    const redacted = redactObject(input, ["internal_ref"]);
+    expect(redacted.internalRef).toBe(redact(SECRET_VALUE));
+    expect(redacted.internalRef).not.toBe(SECRET_VALUE);
+    expect(redacted.keep).toBe("not-a-secret");
+  });
+
+  it("recurses through nested objects and arrays", () => {
+    const input = {
+      public: { name: "Noema", settings: { theme: "dark" } },
+      rows: [{ password: SECRET_VALUE }, { nested: { token: SECRET_VALUE } }],
+    };
+    const redacted = redactObject(input);
+    expect(redacted).toEqual({
+      public: { name: "Noema", settings: { theme: "dark" } },
+      rows: [
+        { password: redact(SECRET_VALUE) },
+        { nested: { token: redact(SECRET_VALUE) } },
+      ],
+    });
+    expect(JSON.stringify(redacted)).not.toContain(SECRET_VALUE);
+  });
+
+  it("never mutates the input", () => {
+    const input = { password: SECRET_VALUE, nested: { token: SECRET_VALUE } };
+    redactObject(input);
+    expect(input.password).toBe(SECRET_VALUE);
+    expect(input.nested.token).toBe(SECRET_VALUE);
+  });
+
+  it("replaces non-string secret values and preserves null", () => {
+    const input = { password: 12345, token: { raw: SECRET_VALUE }, missing: null };
+    const redacted = redactObject(input);
+    expect(redacted.password).toBe("[redacted]");
+    expect(redacted.token).toBe("[redacted]");
+    expect(redacted.missing).toBeNull();
+  });
+
+  it("breaks cycles without throwing", () => {
+    const input: { name: string; password: string; self?: unknown } = {
+      name: "x",
+      password: SECRET_VALUE,
+    };
+    input.self = input;
+    const redacted = redactObject(input) as { self: unknown };
+    expect(redacted.self).toBe("[Circular]");
+  });
+
+  it("masks connection-string values with maskConnString", () => {
+    const dsn =
+      "postgresql://noema:supersecretpw@localhost:5433/noema?schema=public";
+    const redacted = redactObject({ databaseUrl: dsn });
+    expect(redacted.databaseUrl).toBe(maskConnString(dsn));
+    expect(redacted.databaseUrl).not.toContain("supersecretpw");
+  });
+
+  it("leaves benign keys and non-string leaves intact", () => {
+    const input = { host: "localhost", port: 5432, secure: true, tags: ["a", "b"] };
+    expect(redactObject(input)).toEqual(input);
+  });
+});
+
+describe("generateSecret — entropy from crypto, never Math.random", () => {
+  it("generates 32 base64url bytes by default with no prefix", () => {
+    const generated = generateSecret();
+    expect(generated.bytes).toBe(32);
+    expect(generated.prefix).toBe("");
+    expect(generated.value).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(generated.createdAt).toBeGreaterThan(0);
+  });
+
+  it("applies an optional prefix", () => {
+    const generated = generateSecret({ prefix: "sk-", bytes: 24 });
+    expect(generated.value.startsWith("sk-")).toBe(true);
+    expect(generated.prefix).toBe("sk-");
+    expect(generated.value.slice(3)).toMatch(/^[A-Za-z0-9_-]{32}$/);
+  });
+
+  it("is deterministic when `random` and `now` are injected", () => {
+    const generated = generateSecret({
+      bytes: 16,
+      now: 1_700_000_000_000,
+      random: (size) => new Uint8Array(size),
+    });
+    expect(generated.value).toBe("A".repeat(22));
+    expect(generated.createdAt).toBe(1_700_000_000_000);
+  });
+
+  it("accepts a clock function", () => {
+    const generated = generateSecret({
+      now: () => 42,
+      random: (size) => new Uint8Array(size),
+    });
+    expect(generated.createdAt).toBe(42);
+  });
+
+  it("produces unique secrets by default", () => {
+    const values = new Set(
+      Array.from({ length: 50 }, () => generateSecret().value),
+    );
+    expect(values.size).toBe(50);
+  });
+
+  it("rejects a non-positive or non-integer byte count", () => {
+    expect(() => generateSecret({ bytes: 0 })).toThrow(/positive integer/);
+    expect(() => generateSecret({ bytes: -8 })).toThrow(/positive integer/);
+    expect(() => generateSecret({ bytes: 1.5 })).toThrow(/positive integer/);
+  });
+
+  it("does not touch Math.random", () => {
+    const spy = vi.spyOn(Math, "random");
+    try {
+      generateSecret();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("constantTimeEqual — content comparison", () => {
+  it("returns true for identical strings", () => {
+    expect(constantTimeEqual(SECRET_VALUE, SECRET_VALUE)).toBe(true);
+    expect(constantTimeEqual("", "")).toBe(true);
+  });
+
+  it("returns false for different content of equal length", () => {
+    expect(constantTimeEqual("abcdef", "abcdeg")).toBe(false);
+    expect(constantTimeEqual("secret-token-a", "secret-token-b")).toBe(false);
+  });
+
+  it("returns false for different lengths without throwing", () => {
+    expect(constantTimeEqual("abc", "abcd")).toBe(false);
+    expect(constantTimeEqual("abcd", "abc")).toBe(false);
+  });
+
+  it("compares multibyte unicode by encoded bytes", () => {
+    expect(constantTimeEqual("sécret", "sécret")).toBe(true);
+    expect(constantTimeEqual("sécret", "secret")).toBe(false);
+  });
+
+  it("does not short-circuit on the first differing byte", () => {
+    expect(constantTimeEqual("aaaaaaaaaa", "baaaaaaaaa")).toBe(false);
+    expect(constantTimeEqual("aaaaaaaaaa", "aaaaaaabaa")).toBe(false);
+  });
+});
+
+describe("SECRET_REGISTRY", () => {
+  it("lists DATABASE_URL and AUTH_SECRET as required", () => {
+    const required = SECRET_REGISTRY.filter((entry) => entry.required).map(
+      (entry) => entry.name,
+    );
+    expect(required).toContain("DATABASE_URL");
+    expect(required).toContain("AUTH_SECRET");
+  });
+
+  it("describes every secret with name/required/scope/rotationDays", () => {
+    for (const entry of SECRET_REGISTRY) {
+      expect(entry.name.length).toBeGreaterThan(0);
+      expect(typeof entry.required).toBe("boolean");
+      expect(["auth", "database", "ai", "email", "sso", "cron"]).toContain(
+        entry.scope,
+      );
+      expect(Number.isInteger(entry.rotationDays)).toBe(true);
+      expect(entry.rotationDays).toBeGreaterThan(0);
+    }
+  });
+
+  it("has unique names", () => {
+    const names = SECRET_REGISTRY.map((entry) => entry.name);
+    expect(new Set(names).size).toBe(names.length);
+  });
+});
+
+describe("missingSecrets", () => {
+  const registry = [
+    { name: "AUTH_SECRET", required: true, scope: "auth", rotationDays: 90 },
+    { name: "AI_API_KEY", required: false, scope: "ai", rotationDays: 180 },
+    {
+      name: "DATABASE_URL",
+      required: true,
+      scope: "database",
+      rotationDays: 365,
+    },
+  ] as const;
+
+  it("lists only required secrets that are absent", () => {
+    expect(missingSecrets({}, registry)).toEqual(["AUTH_SECRET", "DATABASE_URL"]);
+    expect(
+      missingSecrets({ AUTH_SECRET: "x".repeat(32) }, registry),
+    ).toEqual(["DATABASE_URL"]);
+  });
+
+  it("ignores optional secrets and empty strings", () => {
+    expect(missingSecrets({ AI_API_KEY: "" }, registry)).toEqual([
+      "AUTH_SECRET",
+      "DATABASE_URL",
+    ]);
+  });
+
+  it("never returns values", () => {
+    const missing = missingSecrets({ AUTH_SECRET: SECRET_VALUE }, registry);
+    expect(JSON.stringify(missing)).not.toContain(SECRET_VALUE);
+    expect(missing).toEqual(["DATABASE_URL"]);
+  });
+});
+
+describe("describeSecretStatus", () => {
+  const registry = [
+    { name: "AUTH_SECRET", required: true, scope: "auth", rotationDays: 90 },
+    { name: "CRON_SECRET", required: false, scope: "cron", rotationDays: 90 },
+    {
+      name: "DATABASE_URL",
+      required: true,
+      scope: "database",
+      rotationDays: 365,
+    },
+  ] as const;
+
+  it("classifies present / weak / missing without values", () => {
+    const statuses = describeSecretStatus(
+      {
+        AUTH_SECRET: "x".repeat(32),
+        CRON_SECRET: "tiny",
+        DATABASE_URL: undefined,
+      },
+      registry,
+    );
+    expect(statuses).toEqual([
+      {
+        name: "AUTH_SECRET",
+        scope: "auth",
+        required: true,
+        status: "ok",
+        rotationDays: 90,
+      },
+      {
+        name: "CRON_SECRET",
+        scope: "cron",
+        required: false,
+        status: "weak",
+        rotationDays: 90,
+      },
+      {
+        name: "DATABASE_URL",
+        scope: "database",
+        required: true,
+        status: "missing",
+        rotationDays: 365,
+      },
+    ]);
+    const serialized = JSON.stringify(statuses);
+    expect(serialized).not.toContain("xxxx");
+    expect(serialized).not.toContain("tiny");
+  });
+
+  it("reports an absent optional secret as missing", () => {
+    const [only] = describeSecretStatus({}, [registry[1]]);
+    expect(only.status).toBe("missing");
+    expect(only.required).toBe(false);
+  });
+
+  it("defaults to the built-in registry and covers every entry", () => {
+    const statuses = describeSecretStatus({});
+    expect(statuses).toHaveLength(SECRET_REGISTRY.length);
+    expect(statuses.every((entry) => entry.status === "missing")).toBe(true);
+  });
+});
+
+describe("maskConnString", () => {
+  const dsn =
+    "postgresql://noema:supersecretpw@localhost:5433/noema?schema=public";
+
+  it("masks the password while keeping user, host, port, db and query", () => {
+    const masked = maskConnString(dsn);
+    expect(masked).not.toContain("supersecretpw");
+    expect(masked).toContain("noema:***@localhost:5433");
+    expect(masked).toContain("schema=public");
+  });
+
+  it("leaves a credential-free connection string unchanged", () => {
+    const plain = "postgresql://localhost:5432/noema?schema=public";
+    expect(maskConnString(plain)).toBe(plain);
+  });
+
+  it("returns an empty string for empty input", () => {
+    expect(maskConnString(null)).toBe("");
+    expect(maskConnString(undefined)).toBe("");
+    expect(maskConnString("")).toBe("");
+  });
+
+  it("masks a password query parameter", () => {
+    const masked = maskConnString(
+      "postgresql://localhost:5432/noema?password=letmein&sslmode=require",
+    );
+    expect(masked).not.toContain("letmein");
+    expect(masked).toContain("password=***");
+    expect(masked).toContain("sslmode=require");
+  });
+
+  it("falls back to regex masking for strings URL cannot parse", () => {
+    const masked = maskConnString("mysql://root:hunter2@db.internal:3306/app");
+    expect(masked).not.toContain("hunter2");
+    expect(masked).toBe("mysql://root:***@db.internal:3306/app");
+  });
+
+  it("never throws and always returns a string", () => {
+    const inputs: Array<string | null | undefined> = [
+      "",
+      null,
+      undefined,
+      "not a url",
+      "://::",
+      "postgres://",
+    ];
+    for (const input of inputs) {
+      expect(typeof maskConnString(input)).toBe("string");
+    }
   });
 });
