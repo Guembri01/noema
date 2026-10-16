@@ -532,13 +532,42 @@ export async function archiveTicketAction(
   return { ok: true };
 }
 
-/** Bulk edits from the board/list (status, priority, assignee, project). */
+/**
+ * Permanently delete one ticket.
+ *
+ * Distinct from {@link archiveTicketAction}, which only flips the soft
+ * `archived` flag (the ticket stays queryable and restorable). This removes the
+ * row for good: labels, relations, comments and activity cascade with it, and
+ * any child tickets survive with their `parentId` cleared (`onDelete: SetNull`).
+ * Gated exactly like every other ticket write (`canEditContent` via
+ * `authorizeTicket`), so a guest is refused.
+ */
+export async function deleteTicketAction(ticketId: string): Promise<TicketResult> {
+  const auth = await authorizeTicket(ticketId);
+  if (!auth.ok) return { error: auth.error };
+  await prisma.ticket.delete({ where: { id: ticketId } });
+  revalidatePath("/w", "layout");
+  return { ok: true };
+}
+
+/**
+ * Bulk edits from the board/list: status, priority, assignee, project,
+ * estimate (+ unit) and adding/removing workspace labels.
+ *
+ * Scalar fields ride one `updateMany`; labels need relation rows, so they are
+ * created/removed separately (deduplicated by the `(ticketId, labelId)` unique
+ * index). `updated` reports how many tickets the operation touched.
+ */
 export async function bulkUpdateTicketsAction(input: {
   ticketIds: string[];
   status?: string;
   priority?: string;
   assigneeId?: string | null;
   projectId?: string | null;
+  estimate?: number | null;
+  estimateUnit?: string;
+  addLabelIds?: string[];
+  removeLabelIds?: string[];
 }): Promise<TicketResult<{ updated: number }>> {
   if (input.ticketIds.length === 0) return { ok: true, updated: 0 };
   const first = await prisma.ticket.findUnique({
@@ -560,17 +589,119 @@ export async function bulkUpdateTicketsAction(input: {
   if (input.priority && PRIORITY_IDS.includes(input.priority)) data.priority = input.priority;
   if (input.assigneeId !== undefined) data.assigneeId = input.assigneeId;
   if (input.projectId !== undefined) data.projectId = input.projectId;
-  if (Object.keys(data).length === 0) return { ok: true, updated: 0 };
+  if (input.estimate !== undefined) {
+    data.estimate =
+      typeof input.estimate === "number" && Number.isFinite(input.estimate) ? input.estimate : null;
+  }
+  if (input.estimateUnit !== undefined) data.estimateUnit = input.estimateUnit.slice(0, 12);
 
+  // Only labels that actually belong to this workspace are applied.
+  const requestedLabels = [
+    ...(input.addLabelIds ?? []),
+    ...(input.removeLabelIds ?? []),
+  ];
+  let addLabelIds: string[] = [];
+  let removeLabelIds: string[] = [];
+  if (requestedLabels.length > 0) {
+    const rows = await prisma.label.findMany({
+      where: { workspaceId: first.workspaceId, id: { in: requestedLabels } },
+      select: { id: true },
+    });
+    const valid = new Set(rows.map((row) => row.id));
+    addLabelIds = (input.addLabelIds ?? []).filter((id) => valid.has(id));
+    removeLabelIds = (input.removeLabelIds ?? []).filter((id) => valid.has(id));
+  }
+
+  const hasScalar = Object.keys(data).length > 0;
+  const hasLabels = addLabelIds.length > 0 || removeLabelIds.length > 0;
+  if (!hasScalar && !hasLabels) return { ok: true, updated: 0 };
+
+  let updated = 0;
+  if (hasScalar) {
+    const result = await prisma.ticket.updateMany({
+      where: { id: { in: input.ticketIds }, workspaceId: first.workspaceId },
+      data,
+    });
+    updated = result.count;
+  }
+  if (addLabelIds.length > 0) {
+    await prisma.ticketLabel.createMany({
+      data: input.ticketIds.flatMap((ticketId) =>
+        addLabelIds.map((labelId) => ({ ticketId, labelId })),
+      ),
+      skipDuplicates: true,
+    });
+    updated = Math.max(updated, input.ticketIds.length);
+  }
+  if (removeLabelIds.length > 0) {
+    await prisma.ticketLabel.deleteMany({
+      where: { ticketId: { in: input.ticketIds }, labelId: { in: removeLabelIds } },
+    });
+    updated = Math.max(updated, input.ticketIds.length);
+  }
+
+  const detail = {
+    ...(data as Record<string, unknown>),
+    ...(addLabelIds.length > 0 ? { labelsAdded: addLabelIds } : {}),
+    ...(removeLabelIds.length > 0 ? { labelsRemoved: removeLabelIds } : {}),
+  };
+  for (const ticketId of input.ticketIds) {
+    await logActivity(ticketId, user.id, "bulk_updated", detail);
+  }
+  revalidatePath("/w", "layout");
+  return { ok: true, updated };
+}
+
+/** Bulk archive (soft delete) or restore the selected tickets. */
+export async function bulkArchiveTicketsAction(input: {
+  ticketIds: string[];
+  archived?: boolean;
+}): Promise<TicketResult<{ updated: number }>> {
+  if (input.ticketIds.length === 0) return { ok: true, updated: 0 };
+  const first = await prisma.ticket.findUnique({
+    where: { id: input.ticketIds[0] },
+    select: { workspaceId: true },
+  });
+  if (!first) return { error: "Ticket not found." };
+  const user = await requireUser();
+  const access = await getWorkspaceAccess(user.id, first.workspaceId);
+  if (!access || !canEditContent(access.role)) {
+    return { error: "You do not have permission to edit tickets." };
+  }
+
+  const archived = input.archived ?? true;
   const result = await prisma.ticket.updateMany({
     where: { id: { in: input.ticketIds }, workspaceId: first.workspaceId },
-    data,
+    data: { archived },
   });
   for (const ticketId of input.ticketIds) {
-    await logActivity(ticketId, user.id, "bulk_updated", data as Record<string, unknown>);
+    await logActivity(ticketId, user.id, archived ? "archived" : "restored");
   }
   revalidatePath("/w", "layout");
   return { ok: true, updated: result.count };
+}
+
+/** Bulk permanent delete for the selection. Same role gate as any write. */
+export async function bulkDeleteTicketsAction(input: {
+  ticketIds: string[];
+}): Promise<TicketResult<{ deleted: number }>> {
+  if (input.ticketIds.length === 0) return { ok: true, deleted: 0 };
+  const first = await prisma.ticket.findUnique({
+    where: { id: input.ticketIds[0] },
+    select: { workspaceId: true },
+  });
+  if (!first) return { error: "Ticket not found." };
+  const user = await requireUser();
+  const access = await getWorkspaceAccess(user.id, first.workspaceId);
+  if (!access || !canEditContent(access.role)) {
+    return { error: "You do not have permission to edit tickets." };
+  }
+
+  const result = await prisma.ticket.deleteMany({
+    where: { id: { in: input.ticketIds }, workspaceId: first.workspaceId },
+  });
+  revalidatePath("/w", "layout");
+  return { ok: true, deleted: result.count };
 }
 
 /** Board drag: move to a status column and reorder. */

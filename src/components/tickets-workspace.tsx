@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
+  createLabelAction,
   createTicketAction,
   getTicketActivityAction,
   loadMoreTicketsAction,
@@ -18,6 +19,7 @@ import { isClosed, sumEstimates } from "@/lib/tickets";
 import { type LabelRow, type TicketRow } from "@/components/tickets/ticket-types";
 import { TicketsToolbar } from "@/components/tickets/tickets-toolbar";
 import { TicketComposer } from "@/components/tickets/ticket-composer";
+import { EmptyTicketsState } from "@/components/tickets/empty-tickets";
 import {
   TicketBoardView,
   TicketListView,
@@ -70,6 +72,7 @@ export function TicketsWorkspace({
   const [composerOpen, setComposerOpen] = useState(false);
   const [checked, setChecked] = useState<string[]>([]);
   const [viewDialog, setViewDialog] = useState(false);
+  const [labelDialog, setLabelDialog] = useState(false);
   // Ordered sort keys for the list view. Empty means "keep the incoming order",
   // which is the default until the toolbar's sort control picks a field.
   const [sortSpecs, setSortSpecs] = useState<TicketSortSpec[]>([]);
@@ -141,6 +144,13 @@ export function TicketsWorkspace({
       if ("error" in result) return { ok: false, message: result.error };
       setComposerOpen(false);
       return { ok: true };
+    });
+
+  const addLabel = (values: Record<string, string>) =>
+    run("Label created", async () => {
+      const result = await createLabelAction({ workspaceId, name: values.name });
+
+      return "error" in result ? { ok: false, message: result.error } : { ok: true };
     });
 
   const patch = (ticketId: string, data: Record<string, unknown>, label?: string) =>
@@ -217,6 +227,16 @@ export function TicketsWorkspace({
         />
       )}
 
+      {/* Empty workspace: offer the first actions instead of blank columns. */}
+      {rows.length === 0 ? (
+        <EmptyTicketsState
+          onCreate={() => setComposerOpen(true)}
+          onAddLabel={() => setLabelDialog(true)}
+          hasLabels={labels.length > 0}
+          locale={locale}
+        />
+      ) : (
+        <>
       {/* Views */}
       {view === "list" && (
         <TicketListView
@@ -262,6 +282,19 @@ export function TicketsWorkspace({
       )}
 
       {view === "timeline" && <TicketTimeline tickets={filtered} onOpen={setSelected} />}
+        </>
+      )}
+
+      <PromptDialog
+        open={labelDialog}
+        locale={locale}
+        title="Add a label"
+        description="Labels are shared across the whole workspace."
+        fields={[{ name: "name", label: "Label name", placeholder: "e.g. bug" }]}
+        confirmLabel="Add label"
+        onSubmit={(values) => addLabel(values)}
+        onClose={() => setLabelDialog(false)}
+      />
 
       <PromptDialog
         open={viewDialog}

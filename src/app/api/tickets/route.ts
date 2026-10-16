@@ -7,10 +7,13 @@ import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pa
 import {
   addTicketCommentAction,
   archiveTicketAction,
+  bulkArchiveTicketsAction,
+  bulkDeleteTicketsAction,
   bulkUpdateTicketsAction,
   createLabelAction,
   createTicketAction,
   deleteLabelAction,
+  deleteTicketAction,
   linkTicketsAction,
   moveTicketAction,
   ticketFromPageAction,
@@ -140,7 +143,8 @@ export async function GET(request: Request) {
 /**
  * Ticket mutations. Body: `{ action, … }`
  *   create · update · label · unlabel · relation · unlink · comment · archive ·
- *   bulk · move · from-page · label-create · label-update · label-delete
+ *   delete · bulk · bulkArchive · bulkDelete · move · from-page · label-create ·
+ *   label-update · label-delete
  * The same server actions back the UI. `create` and `update` also accept an
  * optional `sla` (`{ policy, kind?, workingHours? }`) that derives `dueDate`
  * server-side; omit it and the body/response behaviour is unchanged.
@@ -232,7 +236,23 @@ export async function POST(request: Request) {
         priority: str("priority"),
         assigneeId: str("assigneeId") ?? (body.assigneeId === null ? null : undefined),
         projectId: str("projectId") ?? (body.projectId === null ? null : undefined),
+        estimate: num("estimate") ?? (body.estimate === null ? null : undefined),
+        estimateUnit: str("estimateUnit"),
+        addLabelIds: list("addLabelIds"),
+        removeLabelIds: list("removeLabelIds"),
       });
+      break;
+    case "bulkArchive":
+      result = await bulkArchiveTicketsAction({
+        ticketIds: list("ticketIds") ?? [],
+        archived: body.archived === undefined ? true : Boolean(body.archived),
+      });
+      break;
+    case "bulkDelete":
+      result = await bulkDeleteTicketsAction({ ticketIds: list("ticketIds") ?? [] });
+      break;
+    case "delete":
+      result = await deleteTicketAction(String(body.ticketId ?? ""));
       break;
     case "move":
       result = await moveTicketAction({

@@ -22,8 +22,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { bulkUpdateTicketsAction } from "@/server/actions/tickets";
 import { deleteTicketViewAction } from "@/server/actions/ticket-views";
+import { TicketBulkActions } from "./ticket-bulk-actions";
 import {
   applySavedView,
   deserializeSavedViews,
@@ -624,43 +624,19 @@ export function TicketsToolbar({
           Closed: {closed}/{filteredCount}
           {filteredCount > 0 ? ` (${Math.round((closed / filteredCount) * 100)}%)` : ""}
         </span>
-        {checked.length > 0 && (
-          <span className="flex items-center gap-2">
-            <strong className="text-fg">{checked.length} selected</strong>
-            <button
-              type="button"
-              className="rounded border border-border px-2 py-0.5 hover:bg-surface-2"
-              onClick={() =>
-                run("Bulk update applied", async () => {
-                  const result = await bulkUpdateTicketsAction({
-                    ticketIds: checked,
-                    priority: "high",
-                  });
-
-                  setChecked([]);
-                  return "error" in result ? { ok: false, message: result.error } : { ok: true };
-                })
-              }
-            >
-              Mark high priority
-            </button>
-            <button
-              type="button"
-              className="rounded border border-border px-2 py-0.5 hover:bg-surface-2"
-              onClick={() =>
-                run("Tickets closed", async () => {
-                  const result = await bulkUpdateTicketsAction({ ticketIds: checked, status: "done" });
-
-                  setChecked([]);
-                  return "error" in result ? { ok: false, message: result.error } : { ok: true };
-                })
-              }
-            >
-              Close
-            </button>
-          </span>
-        )}
       </p>
+
+      {checked.length > 0 && (
+        <TicketBulkActions
+          checked={checked}
+          setChecked={setChecked}
+          labels={labels}
+          members={members}
+          projects={projects}
+          run={run}
+          locale={locale}
+        />
+      )}
     </>
   );
 }

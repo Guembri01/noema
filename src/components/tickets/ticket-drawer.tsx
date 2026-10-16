@@ -1,13 +1,15 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useTransition, useState } from "react";
-import { MessageSquare, Trash2, X } from "lucide-react";
+import { Archive, MessageSquare, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   addTicketCommentAction,
   archiveTicketAction,
+  deleteTicketAction,
   linkTicketsAction,
   toggleTicketLabelAction,
 } from "@/server/actions/tickets";
+import { deleteTicketConfirmLabel } from "@/lib/ticket-delete";
 import { assignTicketToCycleAction } from "@/server/actions/cycles";
 import { safeAction } from "@/lib/actions-client";
 import { DESCRIPTION_MAX } from "@/lib/description";
@@ -192,6 +194,7 @@ export function TicketDrawer({
   const [comment, setComment] = useState("");
   const [relationQuery, setRelationQuery] = useState("");
   const [relationType, setRelationType] = useState("relates");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const dialogRef = useRef<HTMLElement | null>(null);
   const invokerRef = useRef<HTMLElement | null>(null);
 
@@ -273,6 +276,22 @@ export function TicketDrawer({
     saveDescription(value);
   };
 
+  const permanentlyDelete = () =>
+    startTransition(async () => {
+      const outcome = await safeAction(() => deleteTicketAction(ticket.id), { locale });
+      if (!outcome.ok) {
+        toast.error(outcome.error);
+        return;
+      }
+      if ("error" in outcome.value) {
+        toast.error(outcome.value.error);
+        return;
+      }
+      toast.success("Ticket deleted");
+      onClose();
+      router.refresh();
+    });
+
   const related = ticket.labelIds;
   const parent = ticket.parentId ? allTickets.find((row) => row.id === ticket.parentId) ?? null : null;
   const children = allTickets.filter((row) => row.parentId === ticket.id);
@@ -351,6 +370,15 @@ export function TicketDrawer({
                 router.refresh();
               })
             }
+            className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
+          >
+            <Archive className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label={t(locale, "delete")}
+            title={t(locale, "delete")}
+            onClick={() => setConfirmingDelete(true)}
             className="flex h-7 w-7 items-center justify-center rounded text-muted hover:text-red-500"
           >
             <Trash2 className="h-4 w-4" />
@@ -366,6 +394,33 @@ export function TicketDrawer({
         </header>
 
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
+          {confirmingDelete && (
+            <div
+              role="alertdialog"
+              aria-label={t(locale, "delete")}
+              data-testid="ticket-delete-confirm"
+              className="flex flex-wrap items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/5 px-3 py-2 text-xs"
+            >
+              <span className="min-w-0 flex-1 text-red-500">
+                {deleteTicketConfirmLabel(ticket.key, ticket.title)}
+              </span>
+              <button
+                type="button"
+                onClick={permanentlyDelete}
+                className="flex items-center gap-1 rounded border border-red-500/40 px-2 py-1 font-medium text-red-500 hover:bg-red-500/10"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete permanently
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(false)}
+                className="rounded border border-border px-2 py-1 text-muted hover:bg-surface-2"
+              >
+                {t(locale, "cancel")}
+              </button>
+            </div>
+          )}
+
           <textarea
             defaultValue={ticket.title}
             dir={titleDirection.dir}
