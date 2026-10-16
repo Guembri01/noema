@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { formatCaption, numberLines } from "@/lib/code-block";
 import { embedMeta, resolveEmbed } from "@/lib/embeds";
 import { t } from "@/lib/i18n";
@@ -10,6 +10,8 @@ import {
   type PullQuote,
   type PullQuoteBlock,
 } from "@/lib/pull-quote";
+import { buildTocItems, tocAnchorId, type TocHeading, type TocItem } from "@/lib/toc";
+import { truncateMiddle } from "@/lib/truncate";
 import { sanitizeHref } from "@/lib/validation";
 
 /**
@@ -98,9 +100,21 @@ function renderInline(nodes: PMNode[] = []): ReactNode {
       );
     }
     if (node.type === "inlineMath") {
+      // LaTeX preview: the authored TeX is shown in place (mono-styled by
+      // `.noema-math-inline`) and mirrored onto `data-latex`/`aria-label` so the
+      // source survives round-trips and assistive tech can read it. Full KaTeX
+      // rasterisation would need a raw-HTML injection sink, which this read path
+      // deliberately does not have — tracked as a follow-up.
+      const latex = String(node.attrs?.latex ?? "");
       return (
-        <span key={key} className="noema-math-inline">
-          {String(node.attrs?.latex ?? "")}
+        <span
+          key={key}
+          className="noema-math-inline"
+          data-latex={latex}
+          role="math"
+          aria-label={latex}
+        >
+          {latex}
         </span>
       );
     }
@@ -113,6 +127,28 @@ function renderInline(nodes: PMNode[] = []): ReactNode {
 function colorProps(node: PMNode): Record<string, string> {
   const color = node.attrs?.blockColor;
   return color ? { "data-block-color": String(color) } : {};
+}
+
+/** A read-side breadcrumb crumb (editor twin: `BreadcrumbCrumb`). */
+export type DocRendererBreadcrumb = { id: string; title: string };
+
+/**
+ * Heading outline for the read-only TOC block. Built once per `DocRenderer`
+ * pass, in document order, so the headings and the outline agree on one set of
+ * view-local anchors — the exact slug strategy `src/lib/toc.ts` pins for the
+ * editor (`TocView`). `slugByNode` is keyed by node identity: the same walk that
+ * collects the outline also records which heading node owns which slug, so no
+ * cursor has to thread through the recursive render.
+ */
+interface HeadingOutline {
+  items: TocItem[];
+  slugByNode: Map<PMNode, string>;
+}
+
+/** Optional per-document view data the block tree alone cannot carry. */
+interface RenderContext {
+  headings: HeadingOutline;
+  breadcrumb: { trail: readonly DocRendererBreadcrumb[]; workspaceSlug?: string };
 }
 
 /* -------------------------------------------------------------------------- *
@@ -204,10 +240,185 @@ function renderPullQuote(quote: PullQuote, node: PMNode, key: string): ReactNode
   );
 }
 
+/* -------------------------------------------------------------------------- *
+ * Table of contents + breadcrumb: the two "chrome" blocks. Both are view-local
+ * projections — the TOC derives its outline from the document's headings (never
+ * persisted ids) and the breadcrumb reads the ancestor trail the caller already
+ * fetched, mirroring `src/components/editor/extensions/{custom-blocks,breadcrumb}`.
+ * -------------------------------------------------------------------------- */
+
+/** Collect every heading, in document order, plus its view-local anchor slug. */
+function collectHeadingOutline(nodes: readonly PMNode[]): HeadingOutline {
+  const headings: TocHeading[] = [];
+  const headingNodes: PMNode[] = [];
+  const visit = (list: readonly PMNode[]): void => {
+    for (const node of list) {
+      if (node.type === "heading") {
+        const text = nodeText(node).trim();
+        if (text) {
+          headingNodes.push(node);
+          headings.push({ level: Number(node.attrs?.level) || 1, text, pos: headings.length });
+        }
+      }
+      if (node.content) visit(node.content);
+    }
+  };
+  visit(nodes);
+  const items = buildTocItems(headings);
+  const slugByNode = new Map<PMNode, string>();
+  headingNodes.forEach((node, index) => {
+    const item = items[index];
+    if (item) slugByNode.set(node, item.slug);
+  });
+  return { items, slugByNode };
+}
+
+function renderToc(items: readonly TocItem[], locale: string, key: string): ReactNode {
+  return (
+    <div key={key} className="noema-toc" data-toc="">
+      <p className="noema-toc-title">{t(locale, "blockTableOfContents")}</p>
+      {items.length === 0 ? (
+        <p className="noema-toc-empty">{t(locale, "tocEmpty")}</p>
+      ) : (
+        <ul>
+          {items.map((item) => (
+            // `#`-anchors (not editor buttons): the read path has no editor to
+            // scroll, so a plain deep link is the honest behaviour.
+            <li key={item.slug} style={{ paddingLeft: (item.level - 1) * 16 }}>
+              <a href={`#${tocAnchorId(item.slug)}`}>{item.text}</a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Longest breadcrumb label rendered, in code points — mirror of the editor's
+ * `breadcrumb.tsx` so read-only and editor trails elide identically.
+ */
+const BREADCRUMB_LABEL_MAX = 40;
+
+/** Parse a trail stored on the block itself (imports/future writers), if any. */
+function crumbsFromAttrs(node: PMNode): DocRendererBreadcrumb[] {
+  const raw = node.attrs?.trail ?? node.attrs?.crumbs;
+  const list: unknown[] = Array.isArray(raw) ? raw : [];
+  const crumbs: DocRendererBreadcrumb[] = [];
+  for (const entry of list) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const id = record.id;
+    if (typeof id === "string" && id !== "") {
+      crumbs.push({ id, title: typeof record.title === "string" ? record.title : "" });
+    }
+  }
+  return crumbs;
+}
+
+function renderBreadcrumb(
+  crumbs: readonly DocRendererBreadcrumb[],
+  workspaceSlug: string | undefined,
+  locale: string,
+  key: string,
+): ReactNode {
+  return (
+    <div key={key} className="noema-breadcrumb" data-breadcrumb="">
+      {crumbs.length === 0 ? (
+        <span className="noema-breadcrumb-empty">{t(locale, "breadcrumbNoParents")}</span>
+      ) : (
+        <span className="noema-breadcrumb-trail">
+          {crumbs.map((crumb, index) => (
+            <span key={crumb.id} className="noema-breadcrumb-item">
+              {workspaceSlug ? (
+                <a href={`/w/${workspaceSlug}/${crumb.id}`}>
+                  {truncateMiddle(crumb.title || t(locale, "untitled"), BREADCRUMB_LABEL_MAX)}
+                </a>
+              ) : (
+                <span>
+                  {truncateMiddle(crumb.title || t(locale, "untitled"), BREADCRUMB_LABEL_MAX)}
+                </span>
+              )}
+              {index < crumbs.length - 1 && <span className="noema-breadcrumb-sep">/</span>}
+            </span>
+          ))}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- *
+ * Tables: read-side twin of the editor's TableKit rendering. Header cells get
+ * the same visual weight as the editor (`var(--surface)`, ≥600) and a real
+ * `scope` (R84.5 — `<th scope="col">` / `<th scope="row">`), and per-cell
+ * background colours ride the same attr the block-colour palette uses.
+ * -------------------------------------------------------------------------- */
+
+/** Conservative CSS-colour shape: hex, rgb/hsl() or a bare keyword. */
+const SAFE_CELL_COLOR =
+  /^(#[0-9a-fA-F]{3,8}|rgba?\([0-9.,%\s]+\)|hsla?\([0-9.,%\s]+\)|[a-zA-Z]+)$/;
+
+function cellColor(cell: PMNode): string | undefined {
+  const raw = cell.attrs?.backgroundColor ?? cell.attrs?.blockColor;
+  if (typeof raw !== "string") return undefined;
+  const value = raw.trim();
+  return value !== "" && SAFE_CELL_COLOR.test(value) ? value : undefined;
+}
+
+function cellSpan(cell: PMNode, name: "colspan" | "rowspan"): number | undefined {
+  const value = cell.attrs?.[name];
+  return typeof value === "number" && Number.isInteger(value) && value > 1 ? value : undefined;
+}
+
+function renderTable(node: PMNode, key: string, locale: string, ctx: RenderContext): ReactNode {
+  const rows = node.content ?? [];
+  return (
+    <table key={key} {...colorProps(node)}>
+      <tbody>
+        {rows.map((row, rowIndex) => (
+          <tr key={`${key}.${rowIndex}`}>
+            {(row.content ?? []).map((cell, colIndex) => {
+              const header = cell.type === "tableHeader";
+              const color = cellColor(cell);
+              const style: CSSProperties | undefined = header
+                ? { background: color ?? "var(--surface)", fontWeight: 600, textAlign: "left" }
+                : color
+                  ? { background: color }
+                  : undefined;
+              const content = (cell.content ?? []).map((child, index) =>
+                renderBlock(child, `${key}.${rowIndex}.${colIndex}.${index}`, locale, ctx),
+              );
+              const shared = {
+                key: `${key}.${rowIndex}.${colIndex}`,
+                colSpan: cellSpan(cell, "colspan"),
+                rowSpan: cellSpan(cell, "rowspan"),
+                "data-cell-color": color,
+                style,
+              };
+              // A header row (`tableHeader` in row 0) reads as columns; any
+              // `tableHeader` further down is a header *column*, so it reads as
+              // a row header.
+              return header ? (
+                <th {...shared} scope={rowIndex === 0 ? "col" : "row"}>
+                  {content}
+                </th>
+              ) : (
+                <td {...shared}>{content}</td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function renderBlock(
   node: PMNode,
   key: string,
-  locale: string = "en",
+  locale: string,
+  ctx: RenderContext,
   quote?: PullQuote,
 ): ReactNode {
   switch (node.type) {
@@ -216,16 +427,23 @@ function renderBlock(
     case "heading": {
       const level = Math.min(Math.max(Number(node.attrs?.level ?? 1), 1), 6);
       const Tag = `h${level}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
-      return <Tag key={key} {...colorProps(node)}>{renderInline(node.content)}</Tag>;
+      // Stamp the view-local anchor so TOC deep links land on the heading; the
+      // id is derived at render time and never written back to the document.
+      const slug = ctx.headings.slugByNode.get(node);
+      return (
+        <Tag key={key} {...colorProps(node)} id={slug ? tocAnchorId(slug) : undefined}>
+          {renderInline(node.content)}
+        </Tag>
+      );
     }
     case "bulletList":
-      return <ul key={key} {...colorProps(node)}>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}</ul>;
+      return <ul key={key} {...colorProps(node)}>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale, ctx))}</ul>;
     case "orderedList":
-      return <ol key={key} {...colorProps(node)}>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}</ol>;
+      return <ol key={key} {...colorProps(node)}>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale, ctx))}</ol>;
     case "taskList":
       return (
         <ul key={key} className="noema-render-tasks" {...colorProps(node)}>
-          {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}
+          {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale, ctx))}
         </ul>
       );
     case "listItem":
@@ -236,7 +454,7 @@ function renderBlock(
           {node.type === "taskItem" && (
             <input type="checkbox" checked={checked} readOnly className="mr-2 align-middle" />
           )}
-          {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}
+          {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale, ctx))}
         </li>
       );
     }
@@ -245,7 +463,7 @@ function renderBlock(
       // paragraph) renders at display scale; everything else is unchanged.
       const pullQuote = quote ?? pullQuoteOf(node);
       if (pullQuote) return renderPullQuote(pullQuote, node, key);
-      return <blockquote key={key} {...colorProps(node)}>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}</blockquote>;
+      return <blockquote key={key} {...colorProps(node)}>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale, ctx))}</blockquote>;
     }
     case "codeBlock": {
       // Parity with the editor's code block: keep the language class so the
@@ -332,7 +550,7 @@ function renderBlock(
         <div key={key} className="noema-callout">
           <span className="noema-callout-emoji">{String(node.attrs?.emoji ?? "💡")}</span>
           <div className="noema-callout-content">
-            {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}
+            {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale, ctx))}
           </div>
         </div>
       );
@@ -340,39 +558,40 @@ function renderBlock(
       return (
         <details key={key} open={Boolean(node.attrs?.open)} className="noema-toggle" {...colorProps(node)}>
           <summary>{String(node.attrs?.summary ?? t(locale, "toggleFallback"))}</summary>
-          {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}
+          {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale, ctx))}
         </details>
       );
     case "columns":
       return (
         <div key={key} data-columns="">
-          {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}
+          {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale, ctx))}
         </div>
       );
     case "column":
       return (
         <div key={key} data-column="">
-          {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}
+          {(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale, ctx))}
         </div>
       );
     case "table":
+      return renderTable(node, key, locale, ctx);
+    case "blockMath": {
+      // LaTeX preview, block form: centred, mono-styled (`.noema-math-block`),
+      // with the source mirrored onto `data-latex`/`aria-label`.
+      const latex = String(node.attrs?.latex ?? "");
       return (
-        <table key={key}>
-          <tbody>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}</tbody>
-        </table>
-      );
-    case "tableRow":
-      return <tr key={key}>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}</tr>;
-    case "tableHeader":
-      return <th key={key}>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}</th>;
-    case "tableCell":
-      return <td key={key}>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}</td>;
-    case "blockMath":
-      return (
-        <div key={key} className="noema-math-block">
-          {String(node.attrs?.latex ?? "")}
+        <div key={key} className="noema-math-block" data-latex={latex} role="math" aria-label={latex}>
+          {latex}
         </div>
       );
+    }
+    case "tableOfContents":
+      return renderToc(ctx.headings.items, locale, key);
+    case "breadcrumb": {
+      const attrsCrumbs = crumbsFromAttrs(node);
+      const crumbs = attrsCrumbs.length > 0 ? attrsCrumbs : ctx.breadcrumb.trail;
+      return renderBreadcrumb(crumbs, ctx.breadcrumb.workspaceSlug, locale, key);
+    }
     case "bookmark": {
       const url = String(node.attrs?.url ?? "");
       const host = String(node.attrs?.host ?? "");
@@ -445,7 +664,7 @@ function renderBlock(
     }
     default:
       return (
-        <div key={key}>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale))}</div>
+        <div key={key}>{(node.content ?? []).map((c, i) => renderBlock(c, `${key}.${i}`, locale, ctx))}</div>
       );
   }
 }
@@ -453,20 +672,30 @@ function renderBlock(
 export function DocRenderer({
   doc,
   locale = "en",
+  breadcrumbTrail,
+  workspaceSlug,
 }: {
   doc: unknown;
   /** Callers without a locale source (public share page, editor) keep en. */
   locale?: string;
+  /** Ancestor trail for the read-side breadcrumb block (from `getAncestorTrail`). */
+  breadcrumbTrail?: readonly DocRendererBreadcrumb[];
+  /** Workspace slug, so rendered breadcrumb crumbs link like the editor's. */
+  workspaceSlug?: string;
 }) {
   const root = doc as PMNode | null;
   if (!root || !Array.isArray(root.content)) return null;
-  const nodes = root.content;
+  const nodes: PMNode[] = root.content;
+  const ctx: RenderContext = {
+    headings: collectHeadingOutline(nodes),
+    breadcrumb: { trail: breadcrumbTrail ?? [], workspaceSlug },
+  };
   const rendered: ReactNode[] = [];
   for (let index = 0; index < nodes.length; index += 1) {
     // A large blockquote may consume the attribution paragraph right after it;
     // every other node (and key) is untouched.
     const { quote, consumed } = resolvePullQuote(nodes[index], nodes[index + 1]);
-    rendered.push(renderBlock(nodes[index], `b${index}`, locale, quote));
+    rendered.push(renderBlock(nodes[index], `b${index}`, locale, ctx, quote));
     if (consumed) index += 1;
   }
   return <div className="noema-doc-renderer">{rendered}</div>;
