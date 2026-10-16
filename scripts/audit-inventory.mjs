@@ -77,8 +77,10 @@ for (const file of clientFiles) {
     if (guardedNames.has(match[1])) return false;
     return true;
   });
-  if (!wraps) {
+  if (!wraps && rawCalls.length > 0) {
     // No helper at all: a rejected action becomes an unhandled rejection.
+    // Files that merely mention Action( without an unhandled await call
+    // (e.g. `void doThingAction().catch(...)` or a try/catch wrapper) are safe.
     unwrappedCallSites.push({ file: rel(file), raw: rawCalls.map((m) => m[1]) });
   } else if (rawCalls.length > 0) {
     // Helpers are adopted but some calls still bypass them (style drift only).

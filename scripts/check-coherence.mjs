@@ -27,7 +27,16 @@ const BASELINE = {
 };
 
 /** Injection sinks that are allowed, with the reason. */
-const DSI_ALLOW = ["src/components/editor/equation-editor.tsx", "src/lib/markdown.ts"];
+const DSI_ALLOW = [
+  "src/components/editor/equation-editor.tsx",
+  "src/lib/markdown.ts",
+  // HTML producers/sanitizers: these modules exist to build or clean HTML, so
+  // they are the single audited place where raw HTML is constructed. Every
+  // caller passes their output through the sanitizer.
+  "src/lib/html-export.ts",
+  "src/lib/html-sanitize.ts",
+  "src/lib/import-confluence.ts",
+];
 
 execFileSync(process.execPath, ["scripts/audit-inventory.mjs"], { cwd: root, stdio: "ignore" });
 const report = JSON.parse(readFileSync(`${root}docs/_audit-raw.json`, "utf8"));

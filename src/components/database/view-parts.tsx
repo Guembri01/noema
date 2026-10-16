@@ -732,7 +732,7 @@ export function Cell({
   const typeCode: string = property.type;
 
   // Inline, non-blocking validation: any failure shows a red ring plus the
-  // engine's message (as `title`), never an alert or a prevented edit.
+  // engine's message (as `title`), never a blocking dialog or a prevented edit.
   const validation = validateCell(property, value);
   const validationMessage = validation.ok
     ? ""
@@ -1553,10 +1553,13 @@ export function Cell({
               ? "This link is not safe to open."
               : buttonStepUnrunnableReason(step);
       // `dryRun` predicts the exact `set_property` before/after changes (and the
-      // destructive flag) without side effects; it backs the confirmation.
-      const confirmRun = (): boolean => {
+      // destructive flag) without side effects. The confirmation is non-blocking
+      // (no window.confirm): the first activation arms the control and surfaces
+      // the predicted changes on its tooltip, the second one runs it.
+      const confirmRun = (element?: HTMLElement | null): boolean => {
         if (source.config.confirmRequired !== true) return true;
         if (typeof window === "undefined") return true;
+        if (element?.dataset.confirmArmed === "1") return true;
         const preview = dryRun(source.config, { row: buttonRow });
         const detail = preview.changes
           .map(
@@ -1565,11 +1568,15 @@ export function Cell({
           )
           .join("; ");
         const message = detail
-          ? `${label}\n${detail}`
+          ? `${label}\n${detail}\nClick again to confirm.`
           : preview.destructive
-            ? `${label}\nThis action cannot be undone.`
-            : label;
-        return window.confirm(message);
+            ? `${label}\nThis action cannot be undone.\nClick again to confirm.`
+            : `${label}\nClick again to confirm.`;
+        if (element) {
+          element.dataset.confirmArmed = "1";
+          element.title = message;
+        }
+        return false;
       };
       // `open_url` is the kind this view can execute: a safe link. The URL is
       // re-checked after interpolation, so a `{{token}}` can never smuggle a
@@ -1586,7 +1593,7 @@ export function Cell({
             target={step.payload.openInNewTab ? "_blank" : undefined}
             rel={step.payload.openInNewTab ? "noreferrer" : undefined}
             onClick={(event) => {
-              if (!confirmRun()) event.preventDefault();
+              if (!confirmRun(event.currentTarget)) event.preventDefault();
             }}
             className="inline-block rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
           >
@@ -1605,8 +1612,8 @@ export function Cell({
         return editable && onRunButton ? (
           <button
             type="button"
-            onClick={() => {
-              if (confirmRun()) onRunButton();
+            onClick={(event) => {
+              if (confirmRun(event.currentTarget)) onRunButton();
             }}
             className="rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
           >
