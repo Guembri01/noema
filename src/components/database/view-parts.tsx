@@ -16,7 +16,12 @@ import { t } from "@/lib/i18n";
 import { clampWidth } from "@/lib/column-layout";
 import { validateCell } from "@/lib/cell-validation";
 import { cellColorFor, type RowColorRule } from "@/lib/row-color-rules";
-import { formatUniqueId } from "@/lib/unique-id";
+import {
+  describeUniqueId,
+  formatUniqueId,
+  parseUniqueId,
+  type UniqueIdConfig,
+} from "@/lib/unique-id";
 import { formatDateRange, parseDateValue } from "@/lib/date-range";
 import {
   queryRelationCandidates,
@@ -28,12 +33,24 @@ import { isValidEmail } from "@/lib/email-validation";
 import { isValidPhone, normalizePhone } from "@/lib/phone-format";
 import { classifyLink } from "@/lib/link-check";
 import {
-  isSafeButtonUrl,
-  resolveButtonAction,
-  validateButton,
-  type ButtonActionPlan,
-  type ButtonRow,
-} from "@/lib/row-buttons";
+  canRun,
+  dryRun,
+  isAllowedActionUrl,
+  planRowButton,
+  validateButtonConfig,
+  type ButtonAction,
+  type ButtonPlanStep,
+  type ButtonPropertyConfig,
+  type ButtonRole,
+} from "@/lib/button-property";
+import { type ButtonRow } from "@/lib/row-buttons";
+import {
+  cellDisplay,
+  cellToValue,
+  toggleCell,
+  type CellTone,
+  type LegacyVerificationCell,
+} from "@/lib/verification-cell";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
 
@@ -311,23 +328,64 @@ export function PropertyHeader({
 }
 
 /**
- * The first positive integer carried by a stored UNIQUE_ID cell value, or
- * `null` when it holds no counter. Accepts a number or a digits-only string so
- * a value written as `{ number: 42 }`, `{ value: 42 }` or `{ text: "42" }`
- * all format the same way.
+ * Resolve a stored UNIQUE_ID property config the same way the allocator does
+ * (`database.ts` `allocateUniqueIdValue`): a real string prefix is kept, a
+ * missing one stays `""` (the engine's `"ID"` default is deliberately not
+ * applied, so display and storage can never disagree), and the optional pad /
+ * start / separator are carried through for the formatter to sanitise.
  */
-function uniqueIdNumber(value: unknown): number | null {
-  const v = (value ?? {}) as Record<string, unknown>;
-  for (const candidate of [v.number, v.value, v.text, v.id]) {
-    if (typeof candidate === "number" && Number.isInteger(candidate) && candidate >= 1) {
-      return candidate;
-    }
-    if (typeof candidate === "string" && /^\d+$/.test(candidate.trim())) {
-      const parsed = Number(candidate.trim());
-      if (Number.isSafeInteger(parsed) && parsed >= 1) return parsed;
+function resolveUniqueIdConfig(
+  uniqueId: Partial<UniqueIdConfig> | undefined,
+): UniqueIdConfig {
+  const config = uniqueId ?? {};
+  return {
+    prefix: typeof config.prefix === "string" ? config.prefix : "",
+    ...(typeof config.padding === "number" ? { padding: config.padding } : {}),
+    ...(typeof config.zeroPad === "number" ? { zeroPad: config.zeroPad } : {}),
+    ...(typeof config.startAt === "number" ? { startAt: config.startAt } : {}),
+    ...(typeof config.separator === "string" ? { separator: config.separator } : {}),
+  };
+}
+
+/**
+ * Render a stored UNIQUE_ID cell through the `@/lib/unique-id` engine. The
+ * stored counter may be a number (`{ number: 42 }`) or the formatted id
+ * (`{ text: "TASK-0042" }`, parsed back with `parseUniqueId`); when neither
+ * yields a counter the cell has nothing the engine can format and this returns
+ * `null` (the caller then falls back to the derived `computed` value).
+ * `describeUniqueId` supplies the human description used as the cell's tooltip,
+ * so the config/example the property editor shows and the cell agree.
+ */
+export function uniqueIdCellText(
+  value: unknown,
+  uniqueId: Partial<UniqueIdConfig> | undefined,
+): { text: string; description: string } | null {
+  const config = resolveUniqueIdConfig(uniqueId);
+  const record = (value ?? {}) as Record<string, unknown>;
+  let number: number | null = null;
+  if (
+    typeof record.number === "number" &&
+    Number.isInteger(record.number) &&
+    record.number >= 1
+  ) {
+    number = record.number;
+  } else {
+    for (const key of ["text", "value", "id"] as const) {
+      const candidate = record[key];
+      if (typeof candidate === "string") {
+        const parsed = parseUniqueId(candidate, config);
+        if (parsed.ok) {
+          number = parsed.number;
+          break;
+        }
+      }
     }
   }
-  return null;
+  if (number === null) return null;
+  return {
+    text: formatUniqueId(number, config),
+    description: describeUniqueId(config),
+  };
 }
 
 /** Editable draft for a PLACE cell: the three raw input strings. */
@@ -378,32 +436,112 @@ function typedValueError(type: string, value: unknown): string {
   }
 }
 
-/** A BUTTON property's action, normalised for the `@/lib/row-buttons` engine. */
-type ButtonSource = {
-  /** A `ButtonConfig`-shaped value; `validateButton` re-checks untrusted JSON. */
-  config: unknown;
+/** A BUTTON property's stored action, adapted for the `@/lib/button-property` engine. */
+export type RowButtonSource = {
+  /** A normalised `ButtonPropertyConfig`; `validateButtonConfig` re-checks it. */
+  config: ButtonPropertyConfig;
+  /** Label to render (the config's own label, else the property name / "Run"). */
+  label: string;
   /** True when reshaped from the legacy `targetPropertyId`/`value` pair. */
   legacy: boolean;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
- * Read a BUTTON property's action as a value the `@/lib/row-buttons` engine can
- * validate and resolve. A button configured through the row-buttons engine
- * stores a `ButtonConfig` under `config.button`; a button configured before the
- * engine carries only the legacy `targetPropertyId`/`value` pair, which is
- * reshaped into the equivalent `set_property` action so every BUTTON cell flows
- * through the same plan. Returns `undefined` for a property with no action — the
- * pre-engine shell keeps rendering exactly as before.
+ * Map one stored row-button action (`kind`-discriminated, `@/lib/row-buttons`)
+ * onto the Button-property engine's `type`-discriminated `ButtonAction`. The
+ * two models share the action ids, so this only renames the discriminant and
+ * passes the fields through. Returns `null` for an unknown kind, letting
+ * `validateButtonConfig` report it.
  */
-function readButtonSource(
+function toPropertyAction(action: unknown): ButtonAction | null {
+  if (!isRecord(action)) return null;
+  switch (action.kind) {
+    case "open_url":
+      return {
+        type: "open_url",
+        url: typeof action.url === "string" ? action.url : "",
+        openInNewTab: action.openInNewTab !== false,
+      };
+    case "set_property":
+      return {
+        type: "set_property",
+        propertyId: typeof action.propertyId === "string" ? action.propertyId : "",
+        value: action.value,
+      };
+    case "insert_template":
+      return {
+        type: "insert_template",
+        templateId: typeof action.templateId === "string" ? action.templateId : "",
+      };
+    case "notify":
+      return {
+        type: "notify",
+        message: typeof action.message === "string" ? action.message : "",
+        ...(typeof action.level === "string"
+          ? { level: action.level as "info" | "success" | "warning" }
+          : {}),
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Read a BUTTON property's stored action and adapt it for the Button-property
+ * engine (`@/lib/button-property`). A button configured through the property
+ * editor stores a row-buttons `ButtonConfig` (single `action`) under
+ * `config.button`; a button configured before either engine carries only the
+ * legacy `targetPropertyId`/`value` pair, reshaped here into the equivalent
+ * `set_property` action. A `config.button` already shaped as a
+ * `ButtonPropertyConfig` (`actions` array) is accepted as-is. Returns
+ * `undefined` when the property has no action, so the pre-engine shell keeps
+ * rendering exactly as before.
+ */
+export function readRowButton(
   property: DBProperty,
   fallbackLabel: string,
-): ButtonSource | undefined {
+): RowButtonSource | undefined {
   const config = property.config;
   if (!config || typeof config !== "object") return undefined;
+
   if ("button" in config && config.button !== undefined) {
-    return { config: config.button, legacy: false };
+    const raw = config.button;
+    if (isRecord(raw) && Array.isArray(raw.actions)) {
+      const label =
+        typeof raw.label === "string" && raw.label.trim() !== ""
+          ? raw.label
+          : fallbackLabel;
+      return { config: raw as ButtonPropertyConfig, label, legacy: false };
+    }
+    if (isRecord(raw)) {
+      const label =
+        typeof raw.label === "string" && raw.label.trim() !== ""
+          ? raw.label
+          : fallbackLabel;
+      const action = isRecord(raw.action) ? raw.action : undefined;
+      const mapped = action ? toPropertyAction(action) : null;
+      return {
+        legacy: false,
+        label,
+        config: {
+          // An unknown/missing kind stays in the list verbatim so the engine
+          // reports it instead of silently dropping the button.
+          actions: [mapped ?? (action as ButtonAction)],
+          ...(typeof raw.showLabelInCell === "boolean"
+            ? { showLabelInCell: raw.showLabelInCell }
+            : {}),
+          ...(typeof raw.confirmRequired === "boolean"
+            ? { confirmRequired: raw.confirmRequired }
+            : {}),
+        },
+      };
+    }
   }
+
   if (
     "targetPropertyId" in config &&
     typeof config.targetPropertyId === "string" &&
@@ -411,14 +549,15 @@ function readButtonSource(
   ) {
     return {
       legacy: true,
+      label: fallbackLabel,
       config: {
-        id: property.id,
-        label: fallbackLabel,
-        action: {
-          kind: "set_property",
-          propertyId: config.targetPropertyId,
-          value: "value" in config ? config.value ?? { checked: true } : { checked: true },
-        },
+        actions: [
+          {
+            type: "set_property",
+            propertyId: config.targetPropertyId,
+            value: "value" in config ? config.value ?? { checked: true } : { checked: true },
+          },
+        ],
       },
     };
   }
@@ -426,22 +565,81 @@ function readButtonSource(
 }
 
 /**
- * Why a resolved BUTTON cell stays disabled here. `open_url` runs as a link and
+ * Why a resolved BUTTON step stays disabled here. `open_url` runs as a link and
  * the legacy `set_property` pair runs through `onRunButton`; the other kinds
- * (`set_property` from the engine, `insert_template`, `notify`) need the
- * automations dispatcher (spec R27.x) this view does not wire yet.
+ * need the automations dispatcher (spec R27.x) this view does not wire yet.
  */
-function buttonUnrunnableReason(plan: ButtonActionPlan): string {
-  switch (plan.kind) {
+export function buttonStepUnrunnableReason(step: ButtonPlanStep | undefined): string {
+  switch (step?.kind) {
     case "set_property":
       return "This property-write button runs from automations.";
     case "insert_template":
       return "Insert-template buttons run from automations.";
     case "notify":
       return "Notification buttons run from automations.";
+    case "duplicate_row":
+      return "Duplicate-row buttons run from automations.";
+    case "delete_row":
+      return "Delete-row buttons run from automations.";
+    case "webhook":
+      return "Webhook buttons run from automations.";
     default:
       return "This button is not runnable in this view.";
   }
+}
+
+/** A short, human-readable rendering of a dry-run before/after value. */
+function buttonPreviewValue(value: unknown): string {
+  if (typeof value === "string") return `"${value}"`;
+  if (value === undefined) return "nothing";
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * The VERIFICATION chip as the engine sees it: the `@/lib/verification-cell`
+ * `cellDisplay` label + tone. A legacy `verifiedByName` alias is only a display
+ * name (the engine's canonical value drops it), so it travels through the
+ * `actorName` option rather than the value itself.
+ */
+export function verificationCellView(
+  value: unknown,
+  actorName?: string,
+): { label: string; tone: CellTone; verified: boolean } {
+  // A legacy `verifiedByName` is only a display name (the canonical value drops
+  // it), so it is lifted here and passed through the engine's `actorName`.
+  const legacyName =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>).verifiedByName
+      : undefined;
+  const name =
+    actorName && actorName.trim() !== ""
+      ? actorName
+      : typeof legacyName === "string" && legacyName !== ""
+        ? legacyName
+        : undefined;
+  return cellDisplay(value, name ? { actorName: name } : {});
+}
+
+/**
+ * Flip a stored VERIFICATION cell through the engine's `toggleCell`. The acting
+ * session user is the only actor the engine ever stamps (R89.28); with no
+ * session id (`actingUserId` absent/blank) verifying is refused and a stamp left
+ * by someone else is kept, exactly as the engine documents — this view never
+ * fabricates an actor.
+ */
+export function nextVerificationCell(
+  value: unknown,
+  options: { actingUserId?: string; now: number },
+): LegacyVerificationCell {
+  const userId =
+    typeof options.actingUserId === "string" && options.actingUserId.trim() !== ""
+      ? options.actingUserId
+      : "";
+  return toggleCell(value, { userId, now: options.now });
 }
 
 export function Cell({
@@ -459,6 +657,8 @@ export function Cell({
   colorRules,
   row,
   properties,
+  actingUserId,
+  actingRole,
 }: {
   property: DBProperty;
   value: unknown;
@@ -482,6 +682,17 @@ export function Cell({
   /** Full row + schema, used to evaluate colour-rule conditions on other cells. */
   row?: DBRow;
   properties?: DBProperty[];
+  /**
+   * VERIFICATION: the acting session user id, stamped by the engine's
+   * `toggleCell`. Optional so existing callers are unchanged; when a caller can
+   * supply the session user, the toggle finally stamps a real actor (R89.28).
+   */
+  actingUserId?: string;
+  /**
+   * BUTTON: the caller's role for the `canRun` destructive-action gate; derived
+   * from `editable` when omitted, so existing callers stay valid.
+   */
+  actingRole?: ButtonRole;
 }) {
   const v = (value ?? {}) as Record<string, unknown>;
   // Formatted cells (percent/currency/friendly date) render as text and swap
@@ -1040,63 +1251,52 @@ export function Cell({
         </span>
       );
     case "UNIQUE_ID": {
-      // Read-only, derived display: format the stored counter with the
-      // property's Unique ID config (`@/lib/unique-id`). With no config (or no
-      // numeric id) it falls back to the caller-computed value, so existing
-      // rows render exactly as before.
-      const number = uniqueIdNumber(value);
-      const uniqueId = property.config?.uniqueId;
-      if (number !== null && uniqueId) {
-        let text = computed ?? "";
-        try {
-          text = formatUniqueId({ prefix: "", ...uniqueId }, number);
-        } catch {
-          text = computed ?? "";
-        }
-        return (
-          <span aria-label={property.name} className="text-muted">
-            {text || "—"}
-          </span>
-        );
-      }
+      // Read-only, derived display through `@/lib/unique-id`: the stored counter
+      // (`{ number }`) or the stored formatted id (`{ text }`, parsed back) is
+      // formatted with the property's config, and `describeUniqueId` supplies
+      // the tooltip. With nothing the engine can format it falls back to the
+      // caller-computed value, so pre-engine rows render exactly as before.
+      const resolved = uniqueIdCellText(value, property.config?.uniqueId);
+      const text = resolved
+        ? resolved.text
+        : computed && computed.length > 0
+          ? computed
+          : "—";
       return (
-        <span aria-label={property.name} className="text-muted">
-          {computed && computed.length > 0 ? computed : "—"}
+        <span
+          aria-label={property.name}
+          title={resolved?.description}
+          className="text-muted"
+        >
+          {text || "—"}
         </span>
       );
     }
     case "VERIFICATION": {
-      // Spec R89.28: the stored value is `{ verifiedById, verifiedAt, note? }`.
-      // The flag is read from that shape (or the boolean aliases a pre-engine
-      // value may carry) so both render the same chip. Toggling is the only
-      // client write: the acting user/date stamp is owned by the server session
-      // (never client-supplied), so this view flips the flag and clears the
-      // stamp pair on un-verify instead of fabricating an actor.
-      const verifiedByName =
-        typeof v.verifiedByName === "string" && v.verifiedByName !== ""
-          ? v.verifiedByName
-          : null;
-      const verifiedAt =
-        typeof v.verifiedAt === "string" && v.verifiedAt !== ""
-          ? v.verifiedAt
-          : null;
-      const verified =
-        v.verified === true ||
-        v.checked === true ||
-        v.verifiedById != null ||
-        verifiedAt !== null;
-      const detail = [verifiedByName, verifiedAt ? verifiedAt.slice(0, 10) : null]
-        .filter((part): part is string => part !== null)
-        .join(" · ");
-      const chip = verified
-        ? detail
-          ? `Verified ✓ · ${detail}`
-          : "Verified ✓"
-        : "Not verified";
+      // Spec R89.28, read through `@/lib/verification-cell`: the stored legacy
+      // cell (`{ verified, verifiedById, verifiedAt, note? }`) becomes the
+      // engine's chip label + tone; a `verifiedByName` alias is only a display
+      // name and is lifted by the helper. Toggling writes the engine's legacy
+      // cell back; the acting session user is stamped only when the caller
+      // supplies one (`actingUserId`) — this view still never fabricates an
+      // actor, so without it verifying is refused (and a foreign stamp kept).
+      const display = verificationCellView(value);
+      const note = cellToValue(value).note;
+      const chipClass =
+        display.tone === "verified"
+          ? "border-green-600/40 bg-green-600/10 text-green-700"
+          : display.tone === "stale"
+            ? "border-amber-600/40 bg-amber-600/10 text-amber-700"
+            : "border-border text-muted hover:bg-surface-2";
       if (!editable) {
         return (
-          <span aria-label={`${property.name}: ${chip}`} className="text-muted">
-            {chip}
+          <span
+            aria-label={`${property.name}: ${display.label}`}
+            title={note}
+            data-tone={display.tone}
+            className="text-muted"
+          >
+            {display.label}
           </span>
         );
       }
@@ -1104,23 +1304,16 @@ export function Cell({
         <button
           type="button"
           aria-label={property.name}
-          aria-pressed={verified}
+          aria-pressed={display.verified}
+          title={note}
           data-testid="verification-cell"
+          data-tone={display.tone}
           onClick={() =>
-            onChange(
-              verified
-                ? { ...v, verified: false, verifiedById: null, verifiedAt: null }
-                : { ...v, verified: true },
-            )
+            onChange(nextVerificationCell(value, { actingUserId, now: Date.now() }))
           }
-          className={cn(
-            "rounded border px-2 py-0.5 text-xs",
-            verified
-              ? "border-green-600/40 bg-green-600/10 text-green-700"
-              : "border-border text-muted hover:bg-surface-2",
-          )}
+          className={cn("rounded border px-2 py-0.5 text-xs", chipClass)}
         >
-          {chip}
+          {display.label}
         </button>
       );
     }
@@ -1319,7 +1512,7 @@ export function Cell({
     }
     case "BUTTON": {
       const buttonLabel = t(locale, "runWord");
-      const source = readButtonSource(property, buttonLabel);
+      const source = readRowButton(property, buttonLabel);
       // No stored action: the pre-engine shell is byte-for-byte unchanged.
       if (source === undefined) {
         return editable && onRunButton ? (
@@ -1342,56 +1535,99 @@ export function Cell({
         for (const entry of row.propertyValues) values[entry.propertyId] = entry.value;
         return { id: row.id, title: row.title, values };
       })();
-      const issues = validateButton(source.config);
-      const plan = resolveButtonAction(source.config, buttonRow);
+      // The Button-property engine owns validation, the ordered plan and the
+      // destructive-action permission gate; `editable` maps onto an editor role
+      // when the caller does not pass one.
+      const issues = validateButtonConfig(source.config);
+      const plan = planRowButton(source.config, { row: buttonRow });
+      const step: ButtonPlanStep | undefined = plan[0];
+      const role: ButtonRole = actingRole ?? (editable ? "editor" : "viewer");
+      const permitted = canRun(source.config, { role });
+      const label = source.label || buttonLabel;
       const reason =
         issues.length > 0
           ? issues[0].message
-          : plan.kind === "open_url"
-            ? "This link is not safe to open."
-            : buttonUnrunnableReason(plan);
-      // `open_url` is the kind this view can execute: a safe link. The href is
+          : !permitted
+            ? "Your role cannot run this button."
+            : step?.kind === "open_url"
+              ? "This link is not safe to open."
+              : buttonStepUnrunnableReason(step);
+      // `dryRun` predicts the exact `set_property` before/after changes (and the
+      // destructive flag) without side effects; it backs the confirmation.
+      const confirmRun = (): boolean => {
+        if (source.config.confirmRequired !== true) return true;
+        if (typeof window === "undefined") return true;
+        const preview = dryRun(source.config, { row: buttonRow });
+        const detail = preview.changes
+          .map(
+            (change) =>
+              `${change.propertyId}: ${buttonPreviewValue(change.before)} → ${buttonPreviewValue(change.after)}`,
+          )
+          .join("; ");
+        const message = detail
+          ? `${label}\n${detail}`
+          : preview.destructive
+            ? `${label}\nThis action cannot be undone.`
+            : label;
+        return window.confirm(message);
+      };
+      // `open_url` is the kind this view can execute: a safe link. The URL is
       // re-checked after interpolation, so a `{{token}}` can never smuggle a
       // `javascript:`/`data:` scheme into the anchor.
-      if (plan.kind === "open_url" && plan.enabled && isSafeButtonUrl(plan.href)) {
+      if (
+        issues.length === 0 &&
+        permitted &&
+        step?.kind === "open_url" &&
+        isAllowedActionUrl(step.payload.url)
+      ) {
         return (
           <a
-            href={plan.href}
-            target={plan.openInNewTab ? "_blank" : undefined}
-            rel={plan.openInNewTab ? "noreferrer" : undefined}
+            href={step.payload.url}
+            target={step.payload.openInNewTab ? "_blank" : undefined}
+            rel={step.payload.openInNewTab ? "noreferrer" : undefined}
+            onClick={(event) => {
+              if (!confirmRun()) event.preventDefault();
+            }}
             className="inline-block rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
           >
-            {plan.label || buttonLabel}
+            {label}
           </a>
         );
       }
       // A legacy target pair keeps its pre-engine behaviour (a property write
       // through `onRunButton`); without an editable runner it stays blank.
-      if (source.legacy && plan.kind === "set_property" && plan.enabled) {
+      if (
+        source.legacy &&
+        issues.length === 0 &&
+        permitted &&
+        step?.kind === "set_property"
+      ) {
         return editable && onRunButton ? (
           <button
             type="button"
-            onClick={onRunButton}
+            onClick={() => {
+              if (confirmRun()) onRunButton();
+            }}
             className="rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
           >
-            {plan.label || buttonLabel}
+            {label}
           </button>
         ) : (
           readOnly("—")
         );
       }
-      // Invalid config or an action kind no dispatcher runs here: the button is
-      // present but disabled, the reason carried on its tooltip.
+      // Invalid config, a disallowed role or an action kind no dispatcher runs
+      // here: the button is present but disabled, the reason on its tooltip.
       return (
         <button
           type="button"
           disabled
           title={reason}
-          aria-label={`${plan.label || property.name}: ${reason}`}
+          aria-label={`${label}: ${reason}`}
           data-testid="button-cell-disabled"
           className="rounded border border-border px-2 py-0.5 text-xs opacity-60"
         >
-          {plan.label || buttonLabel}
+          {label}
         </button>
       );
     }
