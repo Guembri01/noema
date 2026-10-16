@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Scoreboard:** 563 feature rows — 432 implemented · 109 partial · 0 planned · 22 deliberately out of scope.
+**Scoreboard:** 563 feature rows — 454 implemented · 87 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **109** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **87** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -29,7 +29,7 @@ This file lists the **109** rows that are not finished, area by area, plus 22 in
 
 ### 1. Editor & blocks
 
-85 done · 13 partial · 0 planned · 2 out of scope
+86 done · 12 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -45,23 +45,20 @@ This file lists the **109** rows that are not finished, area by area, plus 22 in
 | Inline database block | A database rendered inside a page. | 🟡 | Renders a collection view inline; view config incomplete. |
 | Linked view of a database | Re-display an existing database elsewhere. | 🟡 | Planned; requires stable view model. |
 | Drag to another page | Move a block into a different page. | 🟡 | Planned. |
-| Multi-block selection | Select a range of blocks. | 🟡 | Shift+click works; select-all edge cases. Spec: docs/specs/editor-deep.md (R84.10-R84.12 for the range edges; select-all subset owned by B18). |
 | Comment block (doc annotation) | Pulls comments conceptually into flow. | ⛔ | Superseded by the inline comment model; not a block. |
 | Table merge/split cells | Combine or split cells. | ⛔ | High complexity for low demand; revisit if requested. |
 
 ### 2. Text formatting
 
-19 done · 2 partial · 0 planned · 1 out of scope
+21 done · 0 partial · 0 planned · 1 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Paste with formatting | Preserve rich formatting on paste. | 🟡 | HTML paste works; style cleanup partial. |
-| Paste without formatting | Strip styles on paste. | 🟡 | Shortcut present; some wrappers leak. |
 | Small caps / all caps | Display transforms for text. | ⛔ | Rarely used in prose; not planned. |
 
 ### 3. Databases
 
-42 done · 11 partial · 0 planned
+44 done · 9 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -70,16 +67,14 @@ This file lists the **109** rows that are not finished, area by area, plus 22 in
 | Conditional formatting | Color rows/cells by rule. | 🟡 | Planned. ColorRule already modelled in view config (database-query.ts:68); rule editor + evaluation spec'd: docs/specs/database-deep.md (R89.5). |
 | Row color rules | Two-tone row backgrounds. | 🟡 | Planned subset of conditional formatting. Spec'd: docs/specs/database-deep.md (R89.5). |
 | Linked database | Reuse a database elsewhere. | 🟡 | Planned; requires view identity model. Read-only node exists (linked-database.tsx, attrs = databasePageId only); view identity, per-instance overrides and synced mode spec'd: docs/specs/database-deep.md (R89.14, R89.15). |
-| Calculations/footer | Aggregations under columns. | 🟡 | Planned (count, sum, average, etc.). Spec'd over rollup ROLLUP_FUNCTIONS: docs/specs/database-deep.md (R89.4). |
 | Sub-items / sub-tasks | Parent-child rows inside a database. | 🟡 | Planned; tree ordering needed. Page.subOfId (depth cap 1) spec'd independent of relations: docs/specs/database-deep.md (R89.30). |
 | Dependencies | Blocking/blocked-by between rows. | 🟡 | Planned; mainly for timeline. RowDependency join model with cycle guard spec'd: docs/specs/database-deep.md (R89.31). |
 | Timeline dependencies | Draw dependency arrows on timeline. | 🟡 | Planned. Arrow rendering inside the gantt depth spec: docs/specs/database-deep.md (R89.31 with R89.11). |
-| Gallery previews | Show cover or page content on cards. | 🟡 | Planned. First-image banner landed (B15); cover property + page-content preview spec'd: docs/specs/database-deep.md (R89.9). |
 | Recurring templates | Create rows on a schedule. | 🟡 | Planned; depends on a scheduler. Core (resolver/nextRun/cron driver) owned by docs/specs/templates.md (R31.18-R31.23); database-side surfacing + system-actor materialization spec'd: docs/specs/database-deep.md (R89.17). |
 
 ### 4. Properties
 
-25 done · 10 partial · 0 planned · 1 out of scope
+27 done · 8 partial · 0 planned · 1 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -90,8 +85,6 @@ This file lists the **109** rows that are not finished, area by area, plus 22 in
 | Rollup property | Aggregate across a relation. | 🟡 | Planned; depends on relations. Spec: docs/specs/relations-rollups.md. |
 | Rollup functions | Count, sum, average, min/max, join, etc. | 🟡 | Planned function set. Spec: docs/specs/relations-rollups.md. |
 | Last edited by | Last editor. | 🟡 | Tracked from property/table edits via the activity log (falls back to creator); content/title edits outside the database view not yet recorded. |
-| Button property | Trigger actions from a row. | 🟡 | Planned. |
-| Verification property | Verified-by-owner marker. | 🟡 | Planned; wiki-oriented. |
 | AI autofill property | AI-generated value per row. | 🟡 | Planned; depends on AI layer. |
 | Property type change | Convert a property's type. | ⛔ | Lossy conversions; only safe transforms planned later. |
 
@@ -116,7 +109,7 @@ This file lists the **109** rows that are not finished, area by area, plus 22 in
 
 ### 7. Collaboration
 
-20 done · 6 partial · 0 planned
+21 done · 5 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -124,40 +117,26 @@ This file lists the **109** rows that are not finished, area by area, plus 22 in
 | CRDT data model | Conflict-free replicated structures. | 🟡 | Planned (automerge/Yjs-style). Spec: docs/specs/realtime-collab.md. |
 | Presence | See who is viewing a page. | 🟡 | Planned. |
 | Live cursors | Remote carets and selections. | 🟡 | Planned; needs presence transport. |
-| Avatars | Per-user avatars in the UI. | 🟡 | Avatar field exists; presence UI pending. |
 | Coarse edit locks | Prevent simultaneous structural edits. | 🟡 | Planned fallback before full CRDT. |
 
 ### 8. Sharing & permissions
 
-18 done · 4 partial · 0 planned
+20 done · 2 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Workspace roles | Owner/admin/member/guest roles. | 🟡 | Roles modeled; enforcement partial. |
 | Owner role | Full control of the workspace. | 🟡 | Modeled; transfer flows missing. |
-| Admin role | Manage members and settings. | 🟡 | Modeled; UI partial. |
 | Move pages across workspaces | Relocate content between workspaces. | 🟡 | Planned; id-remap complexity. |
 
 ### 9. Workspaces & structure
 
-19 done · 4 partial · 0 planned
+20 done · 3 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Page tree | Hierarchical page nesting. | 🟡 | Nesting works; B66 extracted the pure logic (flatten/group/expand/moveCandidates) to `src/lib/page-tree.ts` with 22 unit tests over a synthetic 1000-node tree — cycle guard, expand-state invariants, perf smoke (render plan 0.6 ms median ≪ 100 ms). React DOM render at 1000 nodes still unmeasured (no e2e by design). B80: bulk move + `movePageAction` containment guards specced (R80.7/R80.8) — docs/specs/workspaces-structure.md. |
 | Trash / recently deleted | Deleted pages list. | 🟡 | Soft delete exists; trash UI partial. |
 | Restore from trash | Undo a deletion. | 🟡 | Planned. |
 | Permanent delete | Permanently remove an item. | 🟡 | Planned; purge job needed. |
-
-### 12. Import & export
-
-19 done · 3 partial · 0 planned
-
-| Feature | What it should do | Status | Notes |
-| --- | --- | --- | --- |
-| Import PDF | Extract PDF into a page. | 🟡 | Planned; text-layer only first. |
-| Export Markdown | Page as `.md`. | 🟡 | Basic export; nested content partial. Spec: docs/specs/import-export.md. |
-| Export PDF | Page as PDF. | 🟡 | Planned; headless render. Spec: docs/specs/import-export.md. |
 
 ### 13. Integrations & API
 
@@ -233,23 +212,15 @@ This file lists the **109** rows that are not finished, area by area, plus 22 in
 
 ### 18. Pricing & plan-gated features
 
-0 done · 14 partial · 0 planned
+8 done · 6 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Free plan | Basic single-user/or small-team tier. | 🟡 | Planned; core features ungated. Spec: docs/specs/plans-licensing.md. |
-| Personal plan | Individual power user. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Team plan | Shared workspace features. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Enterprise plan | SSO, audit, controls. | 🟡 | Planned; SSO/audit gated. Spec: docs/specs/plans-licensing.md. |
-| Plan gates | Restrict features by plan. | 🟡 | Planned; feature-flag driven. Spec: docs/specs/plans-licensing.md. |
-| Guest limits by plan | Cap external guests. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
 | File upload limits by plan | Cap storage per plan. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
 | Version-history retention by plan | Longer history on paid plans. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
 | AI usage limits by plan | Token budget per plan. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
 | Self-hosted license option | Run enterprise features locally. | 🟡 | Planned; open-core consideration. Spec: docs/specs/plans-licensing.md. |
 | Billing integration | Payment provider hooks. | 🟡 | Planned; provider-agnostic. Spec: docs/specs/plans-licensing.md. |
-| Seat management | Add/remove billed seats. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Plan change proration | Upgrade/downgrade billing. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
 | Usage metering | Track consumption per plan. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
 
 ### 19. Known limitations & quirks
