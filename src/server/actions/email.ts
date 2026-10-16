@@ -9,6 +9,7 @@ import { canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
 import { decryptSecret, encryptSecret, hashToken, randomToken } from "@/lib/secrets";
 import { emailTemplate, escapeHtml, sendMail, verifyMail } from "@/lib/mailer";
 import { normalizeEmail } from "@/lib/email-validation";
+import { evaluateGuestInviteGate, readWorkspacePlan } from "@/lib/workspace-plan";
 
 export type EmailResult<T = unknown> = ({ ok: true } & T) | { error: string };
 
@@ -251,11 +252,36 @@ export async function sendWorkspaceInviteAction(input: {
 
   const workspace = await prisma.workspace.findUnique({
     where: { id: input.workspaceId },
-    select: { name: true, slug: true, ownerId: true, owner: { select: { email: true } } },
+    select: {
+      name: true,
+      slug: true,
+      ownerId: true,
+      owner: { select: { email: true } },
+      // Guest seats in use: existing external guests plus still-pending guest
+      // invites, the population the external-guest cap is measured against.
+      _count: {
+        select: {
+          members: { where: { role: "GUEST" } },
+          invites: { where: { role: "GUEST", acceptedAt: null } },
+        },
+      },
+    },
   });
   if (!workspace) return { error: "Workspace not found." };
   if (workspace.owner.email.toLowerCase() === email) {
     return { error: "That address already owns this workspace." };
+  }
+
+  // Plan gate (the load-bearing use of `@/lib/plans`): new external-guest
+  // invites are capped by the workspace plan. Existing guests are never
+  // revoked; the gate only ever refuses a *new* invite. Members/admins are
+  // not guest seats, so they skip it.
+  if (role === "GUEST") {
+    const currentGuests = (workspace._count?.members ?? 0) + (workspace._count?.invites ?? 0);
+    const gate = evaluateGuestInviteGate(readWorkspacePlan(), currentGuests);
+    if (!gate.allowed) {
+      return { error: gate.reason ?? "This workspace has reached its guest limit." };
+    }
   }
 
   let projectName: string | null = null;
