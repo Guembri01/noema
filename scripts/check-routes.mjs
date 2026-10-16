@@ -59,7 +59,11 @@ for (const [path, headers] of routes) {
 // We deliberately use a NON-EXISTENT action id: the origin gate runs before
 // action resolution, so this tests the security property without executing any
 // real action (no side effects, no Prisma noise in the server log).
+// Next.js rejects a cross-origin Server Action POST with a digest that changes
+// between releases. Match the stable message (and any digest) instead of
+// pinning a version-specific constant, so this stays a behavioural assertion.
 const ORIGIN_REJECTION_DIGEST = "3283235668";
+const ORIGIN_REJECTION_MESSAGE = "Invalid Server Actions request";
 const bogusActionId = "0".repeat(40);
 const pageUrl = `${base}/w/${workspace.slug}/${page.id}`;
 const lanAddress = Object.values(networkInterfaces())
@@ -83,7 +87,10 @@ for (const [label, origin, mustBeRejected] of originCases) {
     body: "[]",
   });
   const body = await res.text();
-  const rejected = body.includes(ORIGIN_REJECTION_DIGEST) || res.status === 403;
+  const rejected =
+    res.status === 403 ||
+    body.includes(ORIGIN_REJECTION_MESSAGE) ||
+    body.includes(ORIGIN_REJECTION_DIGEST);
   const ok = mustBeRejected ? rejected : !rejected;
   if (!ok) failures += 1;
   console.log(
