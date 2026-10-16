@@ -94,7 +94,10 @@ export async function updateNotificationPrefs(
  * throws (R82.8): a dispatch failure is logged and the triggering edit still
  * succeeds, mirroring `dispatchWebhooks`.
  */
-export const PAGE_UPDATED_DEDUPE_MS = 24 * 60 * 60 * 1000;
+// NOTE: this file has "use server" at the top, so it may only export async
+// functions. Keep this constant module-private (a non-function export breaks
+// the whole app with "A \"use server\" file can only export async functions").
+const PAGE_UPDATED_DEDUPE_MS = 24 * 60 * 60 * 1000;
 
 export async function notifyPageUpdated(pageId: string): Promise<void> {
   try {
