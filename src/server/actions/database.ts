@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import type { Prisma, PropertyType } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { pageSearchText } from "@/lib/search";
 import { requireUser, type SessionUser } from "@/lib/auth";
 import {
   getWorkspaceAccess,
@@ -461,13 +462,17 @@ export async function createRowAction(
       orderBy: { position: "desc" },
       select: { position: true },
     });
+    const rowTitle = title || "Untitled";
     const row = await tx.page.create({
       data: {
         workspaceId: auth.page.workspaceId,
         parentId: databasePageId,
-        title: title || "Untitled",
+        title: rowTitle,
         createdById: auth.user.id,
         position: (last?.position ?? 0) + 1000,
+        // Keep the search mirror in step from the first write, so a fresh row
+        // is discoverable without waiting for a later save or `setup:search`.
+        searchText: pageSearchText(rowTitle, null),
       },
       select: { id: true },
     });
@@ -774,6 +779,8 @@ export async function duplicateDatabaseAction(
   });
   if (!source) return { error: "Database not found." };
 
+  const databaseTitle = `${source.title || "Untitled"} copy`.slice(0, 80);
+
   const [properties, views, rows, templates] = await Promise.all([
     prisma.property.findMany({
       where: { databasePageId },
@@ -867,14 +874,18 @@ export async function duplicateDatabaseAction(
 
   const rowPages: Prisma.PageCreateManyInput[] = copy.rows.map((row) => {
     const content = asJson(row.content);
+    const title = typeof row.title === "string" ? row.title : "Untitled";
     return {
       id: row.id,
       workspaceId: auth.page.workspaceId,
       parentId: newPageId,
-      title: typeof row.title === "string" ? row.title : "Untitled",
+      title,
       icon: typeof row.icon === "string" ? row.icon : null,
       createdById: auth.user.id,
       position: typeof row.position === "number" ? row.position : 0,
+      // The clone must be searchable the moment it lands, exactly like the
+      // source it was copied from.
+      searchText: pageSearchText(title, row.content),
       ...(content !== undefined ? { content } : {}),
     };
   });
@@ -924,10 +935,11 @@ export async function duplicateDatabaseAction(
         workspaceId: auth.page.workspaceId,
         parentId: source.parentId,
         type: "DATABASE",
-        title: `${source.title || "Untitled"} copy`.slice(0, 80),
+        title: databaseTitle,
         icon: source.icon,
         createdById: auth.user.id,
         position: (last?.position ?? 0) + 1000,
+        searchText: pageSearchText(databaseTitle, null),
       },
     });
     if (propertyRows.length > 0) await tx.property.createMany({ data: propertyRows });
@@ -1007,6 +1019,9 @@ export async function createRowFromTemplateAction(
       createdById: auth.user.id,
       position: (last?.position ?? 0) + 1000,
       content: (template.content ?? undefined) as Prisma.InputJsonValue | undefined,
+      // A row materialized from a template carries that template's body, so
+      // index title and body together from the first write.
+      searchText: pageSearchText(template.name, template.content),
     },
     select: { id: true },
   });
@@ -1214,13 +1229,15 @@ export async function importCsvAction(
       for (const row of matrix.slice(1)) {
         if (row.every((cell) => cell.trim() === "")) continue;
         const title = (primaryIndex >= 0 ? row[primaryIndex] : row[0]) ?? "";
+        const rowTitle = title.trim() || "Untitled";
         const page = await tx.page.create({
           data: {
             workspaceId: auth.page.workspaceId,
             parentId: databasePageId,
-            title: title.trim() || "Untitled",
+            title: rowTitle,
             createdById: auth.user.id,
             position,
+            searchText: pageSearchText(rowTitle, null),
           },
           select: { id: true },
         });
