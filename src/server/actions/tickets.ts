@@ -35,7 +35,15 @@ async function authorizeTicket(ticketId: string) {
   const user = await requireUser();
   const ticket = await prisma.ticket.findUnique({
     where: { id: ticketId },
-    select: { id: true, workspaceId: true, status: true, title: true, key: true, createdAt: true },
+    select: {
+      id: true,
+      workspaceId: true,
+      status: true,
+      title: true,
+      key: true,
+      archived: true,
+      createdAt: true,
+    },
   });
   if (!ticket) return { ok: false as const, error: "Ticket not found." };
   const access = await getWorkspaceAccess(user.id, ticket.workspaceId);
@@ -519,17 +527,37 @@ export async function addTicketCommentAction(
   return { ok: true, id: comment.id };
 }
 
-/** Archive (soft delete) or restore a ticket. */
+/**
+ * Archive (soft delete) or restore a ticket.
+ *
+ * Idempotent: a ticket already in the target state is left untouched (no write,
+ * no spurious `archived`/`restored` activity row) and still reports success, so
+ * a double-click or a retried request cannot corrupt the archive history.
+ */
 export async function archiveTicketAction(
   ticketId: string,
   archived = true,
 ): Promise<TicketResult> {
   const auth = await authorizeTicket(ticketId);
   if (!auth.ok) return { error: auth.error };
+  if (auth.ticket.archived === archived) return { ok: true };
   await prisma.ticket.update({ where: { id: ticketId }, data: { archived } });
   await logActivity(ticketId, auth.user.id, archived ? "archived" : "restored");
   revalidatePath("/w", "layout");
   return { ok: true };
+}
+
+/**
+ * Bring an archived ticket back to the board.
+ *
+ * The un-archive half of {@link archiveTicketAction}, exposed under its own name
+ * so restore has an explicit server entry point (and a stable symbol for the
+ * archive view). It shares the same permission gate — `authorizeTicket`, i.e.
+ * `canEditContent` — and the same idempotence, so restoring a live ticket is a
+ * harmless no-op.
+ */
+export async function restoreTicketAction(ticketId: string): Promise<TicketResult> {
+  return archiveTicketAction(ticketId, false);
 }
 
 /** Bulk edits from the board/list (status, priority, assignee, project). */
