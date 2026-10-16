@@ -3,16 +3,31 @@ import {
   DEFAULT_COLUMN_WIDTH,
   DEFAULT_MAX_WIDTH,
   DEFAULT_MIN_WIDTH,
+  DEFAULT_WIDTH_BY_TYPE,
   autoFitWidths,
   clampWidth,
+  defaultWidthForType,
   deserializeLayout,
+  describeLayout,
   mergeLayout,
+  moveColumn,
+  parseColumnLayout,
+  pinColumn,
   reorderColumns,
+  resetLayout,
+  resizeColumn,
+  resolveLayout,
+  serializeColumnLayout,
   serializeLayout,
   setColumnWidth,
   toggleColumnVisibility,
+  toggleVisibility,
+  unpinColumn,
+  validateLayout,
   visibleColumns,
   type ColumnLayout,
+  type ColumnProperty,
+  type ViewColumnLayout,
 } from "@/lib/column-layout";
 
 /* A four-column fixture: a is the primary (widest) column, all widths sit
@@ -314,5 +329,374 @@ describe("serializeLayout / deserializeLayout", () => {
     expect(result.widths.b).toBe(DEFAULT_MAX_WIDTH);
     expect(result.widths.c).toBeUndefined();
     expect(result.hidden).toEqual({ b: true });
+  });
+});
+
+/* ======================================================================== *
+ * Per-view column width / order model (R89.13)
+ * ======================================================================== */
+
+/* A four-property fixture spanning several default-width buckets: `name` is the
+   primary TEXT column, and each type gets its own `DEFAULT_WIDTH_BY_TYPE`. */
+const viewProperties: ColumnProperty[] = [
+  { id: "name", name: "Name", type: "TEXT" },
+  { id: "status", name: "Status", type: "STATUS" },
+  { id: "due", name: "Due", type: "DATE" },
+  { id: "done", name: "Done", type: "CHECKBOX" },
+];
+
+const viewPropertyName = (id: string): string => {
+  const map: Record<string, string> = {
+    name: "Name",
+    status: "Status",
+    due: "Due",
+    done: "Done",
+  };
+  return map[id] ?? id;
+};
+
+const emptyViewLayout = (): ViewColumnLayout => ({
+  order: [],
+  widths: {},
+  pinned: [],
+  hidden: [],
+});
+
+/* A saved layout: a custom order, one explicit width, and no pin/hide. */
+const viewLayout = (over: Partial<ViewColumnLayout> = {}): ViewColumnLayout => ({
+  order: ["due", "name", "status", "done"],
+  widths: { due: 150 },
+  pinned: [],
+  hidden: [],
+  ...over,
+});
+
+const resolvedIds = (columns: { propertyId: string }[]): string[] =>
+  columns.map((column) => column.propertyId);
+
+/** Deep snapshot used to prove the per-view mutators never touch their input. */
+const viewSnapshot = (value: ViewColumnLayout): ViewColumnLayout =>
+  JSON.parse(JSON.stringify(value)) as ViewColumnLayout;
+
+describe("DEFAULT_WIDTH_BY_TYPE", () => {
+  it("maps representative property types to their default pixel widths", () => {
+    expect(DEFAULT_WIDTH_BY_TYPE.TEXT).toBe(240);
+    expect(DEFAULT_WIDTH_BY_TYPE.NUMBER).toBe(120);
+    expect(DEFAULT_WIDTH_BY_TYPE.CHECKBOX).toBe(80);
+    expect(DEFAULT_WIDTH_BY_TYPE.DATE).toBe(160);
+  });
+
+  it("resolves a type case-insensitively and trims whitespace", () => {
+    expect(defaultWidthForType(" text ")).toBe(240);
+    expect(defaultWidthForType("checkbox")).toBe(80);
+  });
+
+  it("falls back to the generic width for an unknown or absent type", () => {
+    expect(defaultWidthForType("SOMETHING_NEW")).toBe(DEFAULT_COLUMN_WIDTH);
+    expect(defaultWidthForType(undefined)).toBe(DEFAULT_COLUMN_WIDTH);
+  });
+});
+
+describe("parseColumnLayout", () => {
+  it("returns an empty layout for null and undefined", () => {
+    expect(parseColumnLayout(null)).toEqual(emptyViewLayout());
+    expect(parseColumnLayout(undefined)).toEqual(emptyViewLayout());
+  });
+
+  it("returns an empty layout for unparseable text", () => {
+    expect(parseColumnLayout("not json {{{")).toEqual(emptyViewLayout());
+  });
+
+  it("returns an empty layout for JSON that is not an object", () => {
+    expect(parseColumnLayout("42")).toEqual(emptyViewLayout());
+    expect(parseColumnLayout('["a","b"]')).toEqual(emptyViewLayout());
+  });
+
+  it("parses a serialized layout with pinned and hidden ids", () => {
+    const raw = JSON.stringify({
+      order: ["due", "name"],
+      widths: { due: 150 },
+      pinned: ["name"],
+      hidden: ["status"],
+    });
+    expect(parseColumnLayout(raw)).toEqual({
+      order: ["due", "name"],
+      widths: { due: 150 },
+      pinned: ["name"],
+      hidden: ["status"],
+    });
+  });
+
+  it("accepts an already-parsed object as well as a string", () => {
+    expect(parseColumnLayout({ order: ["a"], widths: {}, pinned: [], hidden: [] })).toEqual({
+      order: ["a"],
+      widths: {},
+      pinned: [],
+      hidden: [],
+    });
+  });
+
+  it("dedupes order/pinned/hidden and drops blanks and non-strings", () => {
+    const raw = JSON.stringify({
+      order: ["a", 5, "a", "", "b"],
+      pinned: ["a", "a"],
+      hidden: ["b", "", "b"],
+    });
+    expect(parseColumnLayout(raw)).toEqual({
+      order: ["a", "b"],
+      widths: {},
+      pinned: ["a"],
+      hidden: ["b"],
+    });
+  });
+
+  it("drops malformed widths and clamps out-of-range ones", () => {
+    const raw = JSON.stringify({ widths: { a: 20, b: 5000, c: "wide", d: null } });
+    expect(parseColumnLayout(raw).widths).toEqual({
+      a: DEFAULT_MIN_WIDTH,
+      b: DEFAULT_MAX_WIDTH,
+    });
+  });
+
+  it("round-trips through serializeColumnLayout", () => {
+    const base = viewLayout({ widths: { name: 210 } });
+    expect(parseColumnLayout(serializeColumnLayout(base))).toEqual(base);
+  });
+});
+
+describe("resolveLayout", () => {
+  it("follows the saved order, then appends missing schema ids in schema order", () => {
+    const resolved = resolveLayout(viewLayout({ order: ["due", "name"] }), {
+      properties: viewProperties,
+    });
+    expect(resolvedIds(resolved)).toEqual(["due", "name", "status", "done"]);
+  });
+
+  it("drops order ids that no longer exist in the schema", () => {
+    const resolved = resolveLayout(viewLayout({ order: ["ghost", "name"] }), {
+      properties: viewProperties,
+    });
+    expect(resolvedIds(resolved)).toEqual(["name", "status", "due", "done"]);
+  });
+
+  it("removes hidden ids while keeping the rest of the order", () => {
+    const resolved = resolveLayout(viewLayout({ hidden: ["status"] }), {
+      properties: viewProperties,
+    });
+    expect(resolvedIds(resolved)).toEqual(["due", "name", "done"]);
+  });
+
+  it("moves pinned ids to the front, preserving their relative order", () => {
+    const resolved = resolveLayout(
+      viewLayout({ order: ["name", "status", "due", "done"], pinned: ["done", "name"] }),
+      { properties: viewProperties },
+    );
+    expect(resolvedIds(resolved)).toEqual(["name", "done", "status", "due"]);
+  });
+
+  it("uses a saved width over the type default", () => {
+    const resolved = resolveLayout(viewLayout({ order: ["name"], widths: { name: 333 } }), {
+      properties: viewProperties,
+    });
+    expect(resolved.find((column) => column.propertyId === "name")?.width).toBe(333);
+  });
+
+  it("falls back to the per-type default width when none is saved", () => {
+    const resolved = resolveLayout(viewLayout({ widths: {} }), { properties: viewProperties });
+    expect(resolved.map((column) => column.width)).toEqual([160, 240, 160, 80]);
+  });
+
+  it("marks pinned columns in the resolved output", () => {
+    const resolved = resolveLayout(viewLayout({ pinned: ["name"] }), {
+      properties: viewProperties,
+    });
+    expect(resolved.find((column) => column.propertyId === "name")?.pinned).toBe(true);
+    expect(resolved.find((column) => column.propertyId === "status")?.pinned).toBe(false);
+  });
+
+  it("dedupes schema ids and ignores blank ids", () => {
+    const resolved = resolveLayout(emptyViewLayout(), {
+      properties: [{ id: "a" }, { id: "a" }, { id: "" }],
+    });
+    expect(resolvedIds(resolved)).toEqual(["a"]);
+  });
+
+  it("never mutates the input layout", () => {
+    const base = viewLayout({ pinned: ["name"], hidden: ["status"] });
+    const before = viewSnapshot(base);
+    resolveLayout(base, { properties: viewProperties });
+    expect(base).toEqual(before);
+  });
+});
+
+describe("resizeColumn", () => {
+  it("clamps a width above the default maximum", () => {
+    expect(resizeColumn(viewLayout(), "name", 9999).widths.name).toBe(DEFAULT_MAX_WIDTH);
+  });
+
+  it("clamps a width below the default minimum", () => {
+    expect(resizeColumn(viewLayout(), "name", 5).widths.name).toBe(DEFAULT_MIN_WIDTH);
+  });
+
+  it("honours custom bounds", () => {
+    const options = { min: 100, max: 300 };
+    expect(resizeColumn(viewLayout(), "name", 50, options).widths.name).toBe(100);
+    expect(resizeColumn(viewLayout(), "name", 500, options).widths.name).toBe(300);
+    expect(resizeColumn(viewLayout(), "name", 250, options).widths.name).toBe(250);
+  });
+
+  it("keeps the other widths intact and is immutable", () => {
+    const base = viewLayout();
+    const before = viewSnapshot(base);
+    const resized = resizeColumn(base, "name", 300);
+    expect(resized.widths).toEqual({ due: 150, name: 300 });
+    expect(base).toEqual(before);
+  });
+
+  it("ignores a blank property id", () => {
+    expect(resizeColumn(viewLayout(), "", 500).widths).toEqual({ due: 150 });
+  });
+});
+
+describe("moveColumn", () => {
+  it("moves a column to the requested index", () => {
+    const order = ["name", "status", "due", "done"];
+    expect(moveColumn(viewLayout({ order }), "done", 0).order).toEqual([
+      "done",
+      "name",
+      "status",
+      "due",
+    ]);
+  });
+
+  it("clamps an out-of-range index to the end", () => {
+    const order = ["name", "status", "due", "done"];
+    expect(moveColumn(viewLayout({ order }), "name", 99).order).toEqual([
+      "status",
+      "due",
+      "done",
+      "name",
+    ]);
+  });
+
+  it("is a no-op for an unknown column id", () => {
+    const order = ["name", "status", "due", "done"];
+    expect(moveColumn(viewLayout({ order }), "ghost", 0).order).toEqual(order);
+  });
+
+  it("never mutates the input layout", () => {
+    const base = viewLayout();
+    const before = viewSnapshot(base);
+    moveColumn(base, "due", 3);
+    expect(base).toEqual(before);
+  });
+});
+
+describe("pinColumn / unpinColumn / toggleVisibility", () => {
+  it("pins a column once and drops blank ids", () => {
+    const once = pinColumn(viewLayout(), "due");
+    expect(once.pinned).toEqual(["due"]);
+    expect(pinColumn(once, "due").pinned).toEqual(["due"]);
+    expect(pinColumn(viewLayout(), "").pinned).toEqual([]);
+  });
+
+  it("unpins a column", () => {
+    expect(unpinColumn(viewLayout({ pinned: ["name", "due"] }), "name").pinned).toEqual(["due"]);
+    expect(unpinColumn(viewLayout(), "ghost").pinned).toEqual([]);
+  });
+
+  it("toggles visibility off and back on", () => {
+    const hidden = toggleVisibility(viewLayout(), "status");
+    expect(hidden.hidden).toEqual(["status"]);
+    expect(toggleVisibility(hidden, "status").hidden).toEqual([]);
+  });
+
+  it("never mutates the input layout", () => {
+    const base = viewLayout({ pinned: ["name"] });
+    const before = viewSnapshot(base);
+    pinColumn(base, "due");
+    unpinColumn(base, "name");
+    toggleVisibility(base, "status");
+    expect(base).toEqual(before);
+  });
+});
+
+describe("resetLayout", () => {
+  it("resets order to the schema order and widths to per-type defaults", () => {
+    const reset = resetLayout(viewLayout({ widths: { due: 999 } }), {
+      properties: viewProperties,
+    });
+    expect(reset.order).toEqual(["name", "status", "due", "done"]);
+    expect(reset.widths).toEqual({ name: 240, status: 160, due: 160, done: 80 });
+  });
+
+  it("keeps pinned/hidden choices for surviving ids and drops stale ones", () => {
+    const reset = resetLayout(viewLayout({ pinned: ["ghost", "name"], hidden: ["due"] }), {
+      properties: viewProperties,
+    });
+    expect(reset.pinned).toEqual(["name"]);
+    expect(reset.hidden).toEqual(["due"]);
+  });
+
+  it("uses the first property's type when schema ids repeat", () => {
+    const reset = resetLayout(emptyViewLayout(), {
+      properties: [
+        { id: "a", type: "TEXT" },
+        { id: "a", type: "NUMBER" },
+      ],
+    });
+    expect(reset.widths).toEqual({ a: 240 });
+  });
+});
+
+describe("validateLayout", () => {
+  it("reports a valid layout when every id exists and order is unique", () => {
+    expect(validateLayout(viewLayout(), { properties: viewProperties })).toEqual({
+      valid: true,
+      unknownIds: [],
+      duplicateIds: [],
+    });
+  });
+
+  it("reports ids that are not in the schema", () => {
+    const result = validateLayout(
+      viewLayout({ order: ["ghost"], widths: { name: 200 }, pinned: ["phantom"] }),
+      { properties: viewProperties },
+    );
+    expect(result.valid).toBe(false);
+    expect(result.unknownIds).toEqual(["ghost", "phantom"]);
+  });
+
+  it("reports duplicate ids in the saved order", () => {
+    const result = validateLayout(
+      { order: ["name", "name", "status"], widths: {}, pinned: [], hidden: [] },
+      { properties: viewProperties },
+    );
+    expect(result.valid).toBe(false);
+    expect(result.duplicateIds).toEqual(["name"]);
+  });
+});
+
+describe("describeLayout", () => {
+  it("lists the visible columns in order using the provided name lookup", () => {
+    expect(
+      describeLayout(viewLayout({ order: ["name", "status"] }), {
+        propertyName: viewPropertyName,
+      }),
+    ).toBe("Name, Status");
+  });
+
+  it("annotates pinned and hidden columns", () => {
+    const description = describeLayout(
+      viewLayout({ order: ["name", "status", "due"], pinned: ["name"], hidden: ["due"] }),
+      { propertyName: viewPropertyName },
+    );
+    expect(description).toBe("Name, Status (pinned: Name; hidden: Due)");
+  });
+
+  it("handles an empty layout", () => {
+    expect(describeLayout(emptyViewLayout(), { propertyName: viewPropertyName })).toBe(
+      "No columns",
+    );
   });
 });
