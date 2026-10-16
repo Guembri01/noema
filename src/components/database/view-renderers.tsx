@@ -33,6 +33,7 @@ import { reorderRowsAction } from "@/server/actions/database";
 import { evaluateRowColors, type RowColorRule } from "@/lib/row-color-rules";
 import {
   AGGREGATION_FUNCTIONS,
+  aggregate,
   aggregateGroups,
   type AggregateOptions,
   type AggregationFn,
@@ -40,6 +41,7 @@ import {
 } from "@/lib/aggregations";
 import {
   CARD_SIZES,
+  COVER_PROPERTY_TYPES,
   cardFieldOrder,
   cardSizeFor,
   densityOptions,
@@ -177,6 +179,48 @@ function sortRowsWith(
   return applySort(wrapped, specs).map((entry) => entry.row);
 }
 
+/** One TABLE footer calculation: a visible column plus the aggregation shown under it. */
+export type TableFooterCalculation = { propertyId: string; fn: AggregationFn };
+
+/**
+ * Resolve the table's footer calculations.
+ *
+ * An explicit per-column `footer` list wins, filtered down to the columns that
+ * still exist and the functions the aggregator knows. With no explicit list a
+ * view that already names an `aggregationPropertyId` (the settings "Summarize
+ * by property" picker) shows that one column's aggregate — `sum` for a NUMBER
+ * column, a row count otherwise — so the footer works with the settings that
+ * exist today. Anything unresolvable yields no footer, leaving the table
+ * exactly as it rendered before.
+ */
+function resolveFooterCalculations(
+  footer: readonly TableFooterCalculation[] | undefined,
+  config: ViewConfig,
+  properties: readonly DBProperty[],
+): TableFooterCalculation[] {
+  if (footer && footer.length > 0) {
+    const known = new Set(properties.map((property) => property.id));
+    return footer.filter(
+      (entry) =>
+        known.has(entry.propertyId) &&
+        AGGREGATION_FUNCTIONS.some((candidate) => candidate.id === entry.fn),
+    );
+  }
+  const propertyId = config.aggregationPropertyId;
+  if (!propertyId) return [];
+  const property = properties.find((candidate) => candidate.id === propertyId);
+  if (!property) return [];
+  const requested = AGGREGATION_FUNCTIONS.find(
+    (candidate) => candidate.id === config.chartAggregate,
+  )?.id;
+  return [
+    {
+      propertyId,
+      fn: requested ?? (property.type === "NUMBER" ? "sum" : "count"),
+    },
+  ];
+}
+
 export function TableView({
   locale,
   workspaceSlug,
@@ -212,6 +256,7 @@ export function TableView({
   rowOrder,
   onReorderRows,
   rowColorRules = [],
+  footer,
 }: {
   locale: string;
   workspaceSlug: string;
@@ -252,6 +297,12 @@ export function TableView({
   onReorderRows?: (orderedIds: string[]) => void;
   /** Conditional-formatting rules: row background/text via the colour engine. */
   rowColorRules?: RowColorRule[];
+  /**
+   * Per-column footer calculations (a visible column id → aggregation fn).
+   * Absent renders the view's `aggregationPropertyId` column when one is set,
+   * and no footer at all otherwise — so an unconfigured table is unchanged.
+   */
+  footer?: TableFooterCalculation[];
 }) {
   const columns = visibleColumns(
     properties as unknown as QueryProperty[],
@@ -264,6 +315,12 @@ export function TableView({
   const orderedRows = orderRows(
     sortRowsWith(rows, sortSpecs, properties, valueFor),
     rowOrder,
+  );
+  // Footer calculations run over the same ordered (filtered + sorted) rows the
+  // body shows, so a footer total always agrees with the visible cells.
+  const footerCalculations = resolveFooterCalculations(footer, config, columns);
+  const footerFnByProperty = new Map(
+    footerCalculations.map((entry) => [entry.propertyId, entry.fn] as const),
   );
   // HTML5 drag state for property reorder: the dragged column id and the
   // column currently under the pointer (highlighted as the drop target).
@@ -517,6 +574,45 @@ export function TableView({
             );
           })}
         </tbody>
+        {footerFnByProperty.size > 0 && (
+          <tfoot>
+            <tr className="text-xs">
+              {columns.map((property, index) => {
+                const fn = footerFnByProperty.get(property.id);
+                // The aggregate reads this column's cells from the visible row
+                // set; NUMBER formats/currency flow through the same options the
+                // board summary and chart use.
+                const result = fn
+                  ? aggregate(
+                      orderedRows.map((row) => valueFor(row, property.id)),
+                      fn,
+                      aggregateOptionsFor(property),
+                    )
+                  : null;
+                return (
+                  <td
+                    key={property.id}
+                    data-testid={`table-footer-${property.name}`}
+                    className={cn(
+                      "sticky bottom-0 border-t border-border bg-surface px-3 py-1.5 text-muted",
+                      frozen && index === 0 && "left-0 z-10",
+                    )}
+                  >
+                    {fn && (
+                      <span className="flex flex-wrap items-center gap-x-1">
+                        <span className="font-medium">
+                          {AGGREGATION_FUNCTIONS.find((entry) => entry.id === fn)?.label ?? fn}
+                        </span>
+                        <span>{result?.display ?? "—"}</span>
+                      </span>
+                    )}
+                  </td>
+                );
+              })}
+              <th className="sticky bottom-0 border-t border-border bg-surface" />
+            </tr>
+          </tfoot>
+        )}
       </table>
     </div>
   );
@@ -1071,12 +1167,17 @@ export function GalleryView({
     type: property.type.toLowerCase(),
   }));
   // The persisted preview choice wins; unset or blank keeps the automatic
-  // cover (the first FILES property), so a gallery with no stored choice is
-  // byte-for-byte its previous self. `coverPropertyId` is the single source for
+  // cover — the first cover-eligible (FILES/MEDIA/URL) property, matching
+  // `resolveCardPreview` — so a gallery without a stored choice only changes
+  // when the schema itself does. `coverPropertyId` is the single source for
   // both the preview and the field that must not be repeated below.
   const coverPropertyId =
     previewPropertyId ||
-    properties.find((property) => property.type === "FILES")?.id ||
+    properties.find((property) =>
+      (COVER_PROPERTY_TYPES as readonly string[]).includes(
+        property.type.toLowerCase(),
+      ),
+    )?.id ||
     null;
   const fields = cardFieldOrder(
     // The primary/name property is the card title, so it is never listed twice.
@@ -1315,6 +1416,7 @@ export function FormView({
   const propertyById = new Map(properties.map((property) => [property.id, property]));
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [issues, setIssues] = useState<FormIssue[]>([]);
+  const [submitted, setSubmitted] = useState(false);
   const editable = onSubmit !== undefined;
 
   const setAnswer = (propertyId: string, value: unknown) => {
@@ -1342,8 +1444,34 @@ export function FormView({
       return;
     }
     setIssues([]);
+    // Hand the mapped cells to the parent before clearing, so the success
+    // state can offer "Add another" without resubmitting the same answers.
     onSubmit(answersToPropertyValues(fields, answers));
+    setAnswers({});
+    setSubmitted(true);
   };
+
+  // After a successful submit the form becomes a small confirmation with an
+  // "Add another" button, so a respondent can log several rows in a row.
+  if (submitted && editable) {
+    return (
+      <div
+        data-testid="form-success"
+        role="status"
+        className="mx-auto max-w-xl space-y-3 rounded-lg border border-border p-6 text-center"
+      >
+        <p className="text-sm font-medium">{t(locale, "done")}</p>
+        <button
+          type="button"
+          data-testid="form-add-another"
+          onClick={() => setSubmitted(false)}
+          className="rounded bg-accent px-4 py-1.5 text-sm text-accent-fg hover:opacity-90"
+        >
+          {t(locale, "add")}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <form
