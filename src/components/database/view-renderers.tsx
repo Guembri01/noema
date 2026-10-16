@@ -1,10 +1,12 @@
 "use client";
 
 import { Cell, PropertyHeader } from "./view-parts";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
 import Link from "next/link";
 import {
   ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   ArrowUp,
   ArrowUpRight,
   ExternalLink,
@@ -49,6 +51,33 @@ import {
   type ListDensity,
 } from "@/lib/view-presets";
 import {
+  flattenLayout,
+  parsePropertyLayout as parseLegacyPropertyLayout,
+} from "@/lib/property-layout";
+import {
+  resolveLayout as resolvePropertyPlacements,
+  type PropertyPlacement,
+} from "@/lib/property-layout-engine";
+import {
+  deleteColumn as deleteTableColumn,
+  deleteRow as deleteTableRow,
+  insertColumn as insertTableColumn,
+  insertRow as insertTableRow,
+  moveColumn as moveTableColumn,
+  moveRow as moveTableRow,
+} from "@/lib/table-ops";
+import {
+  indentItem,
+  normalizeLevels,
+  outdentItem,
+  type ListItem,
+} from "@/lib/list-ops";
+import {
+  captureAnchor,
+  nearestVisibleIndex,
+  restoreScrollTop,
+} from "@/lib/scroll-anchor";
+import {
   computeFooter,
   forGroup,
   parseFooterSpec,
@@ -75,6 +104,14 @@ import {
   type FormSchema,
 } from "@/lib/form-view";
 import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
+
+/** Approximate rendered height (px) of one table row, for the scroll anchor. */
+const TABLE_ROW_HEIGHT = 37;
+
+/** Approximate rendered height (px) of one list row under a density preset. */
+function listRowHeight(density: ListDensity): number {
+  return density === "comfortable" ? 57 : 41;
+}
 
 /**
  * Apply a manual row order (id → order) with the row-order engine. Without a
@@ -104,6 +141,221 @@ function persistRowOrder(
   void reorderRowsAction(orderedIds[0], orderedIds).catch(() => {
     /* keep the in-session order */
   });
+}
+
+/* ---------------------------------------------------------------------------
+   Structural ops adapters
+
+   The table renderer's row/column affordances are the pure `@/lib/table-ops`
+   operations: a list of ids is modelled as a one-cell-per-row (rows) or
+   one-row (columns) matrix and the engine's move/insert/delete helpers return
+   the new id order. They are total and immutable, so a guarded call (a stale
+   index from a keyboard race) returns a fresh unchanged copy instead of
+   throwing.
+   --------------------------------------------------------------------------- */
+
+/** Row ids after moving the row at `fromIndex` to `toIndex`. */
+export function moveTableRowIds(
+  ids: readonly string[],
+  fromIndex: number,
+  toIndex: number,
+): string[] {
+  return moveTableRow(ids.map((id) => [id]), fromIndex, toIndex).map((row) => row[0]);
+}
+
+/** Row ids with a blank (as-yet-unidentified) row inserted at `atIndex`. */
+export function insertTableRowIds(ids: readonly string[], atIndex: number): string[] {
+  return insertTableRow(ids.map((id) => [id]), atIndex).map((row) => row[0]);
+}
+
+/** Row ids after deleting the row at `index`. */
+export function deleteTableRowIds(ids: readonly string[], index: number): string[] {
+  return deleteTableRow(ids.map((id) => [id]), index).map((row) => row[0]);
+}
+
+/** Column ids after moving the column at `fromIndex` to `toIndex`. */
+export function moveTableColumnIds(
+  ids: readonly string[],
+  fromIndex: number,
+  toIndex: number,
+): string[] {
+  return moveTableColumn([[...ids]], fromIndex, toIndex)[0] ?? [];
+}
+
+/** Column ids with a blank column inserted at `atIndex`. */
+export function insertTableColumnIds(ids: readonly string[], atIndex: number): string[] {
+  return insertTableColumn([[...ids]], atIndex)[0] ?? [];
+}
+
+/** Column ids after deleting the column at `index`. */
+export function deleteTableColumnIds(ids: readonly string[], index: number): string[] {
+  return deleteTableColumn([[...ids]], index)[0] ?? [];
+}
+
+/* ---------------------------------------------------------------------------
+   List outline adapter (`@/lib/list-ops`)
+
+   A list view's rows can nest: each row carries a level and the outline rules
+   (first row is the root, no row jumps more than one level deeper) are the
+   pure `@/lib/list-ops` engine's job.
+   --------------------------------------------------------------------------- */
+
+/** Normalise a flat row list into a well-formed outline (level rules). */
+export function outlineItems(
+  rows: readonly { id: string; text?: string | null }[],
+  levels: Record<string, number> | undefined,
+): ListItem[] {
+  return normalizeLevels(
+    rows.map((row) => ({
+      id: row.id,
+      level: levels?.[row.id] ?? 0,
+      text: row.text ?? "",
+    })),
+  );
+}
+
+/** The nesting level `rowId` takes after an indent/outdent request. */
+export function nextOutlineLevel(
+  items: readonly ListItem[],
+  rowId: string,
+  direction: "in" | "out",
+): number {
+  const next = direction === "in" ? indentItem(items, rowId) : outdentItem(items, rowId);
+  return next.find((item) => item.id === rowId)?.level ?? 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Scroll-anchor adapter (`@/lib/scroll-anchor`)
+
+   When a long list loads, sorts or filters, the rows above the viewport change
+   height and a raw `scrollTop` would visibly jump. The anchor remembers the row
+   under the viewport's top edge and re-pins it against the new measurements.
+   --------------------------------------------------------------------------- */
+
+/** One measured row: its stable id and its rendered height in pixels. */
+export type AnchoredRow = { id: string; height: number };
+
+/** Sum of the first `count` finite, non-negative heights. */
+function sumHeights(heights: readonly number[], count: number): number {
+  let total = 0;
+  for (let index = 0; index < count && index < heights.length; index += 1) {
+    const height = heights[index];
+    total += typeof height === "number" && Number.isFinite(height) && height > 0 ? height : 0;
+  }
+  return total;
+}
+
+/** `id:height` signature used to detect that the rendered rows changed. */
+function rowSignature(rows: readonly AnchoredRow[]): string {
+  return rows.map((row) => `${row.id}:${row.height}`).join(",");
+}
+
+/**
+ * The `scrollTop` that keeps a scrolled list pinned to the row under its top
+ * edge after rows above it load, sort or filter. The row is located with
+ * `nearestVisibleIndex`, captured with `captureAnchor` and re-pinned against the
+ * next layout's measured row offsets with `restoreScrollTop`. The anchor is
+ * matched by id, so a row inserted or removed above the viewport shifts the
+ * pinned row instead of jumping to whatever now sits at the old index.
+ */
+export function anchoredScrollTop(
+  scrollTop: number,
+  previous: readonly AnchoredRow[],
+  next: readonly AnchoredRow[],
+): number {
+  const safeScrollTop = Number.isFinite(scrollTop) ? scrollTop : 0;
+  const previousHeights = previous.map((row) => row.height);
+  const index = nearestVisibleIndex(safeScrollTop, previousHeights);
+  if (index < 0) return Math.max(0, Math.floor(safeScrollTop));
+  const anchor = captureAnchor({
+    anchorIndex: index,
+    anchorOffset: safeScrollTop - sumHeights(previousHeights, index),
+    scrollTop: safeScrollTop,
+  });
+  const anchorId = previous[index]?.id;
+  const matched = anchorId ? next.findIndex((row) => row.id === anchorId) : -1;
+  const resolvedIndex = matched >= 0 ? matched : Math.min(index, next.length - 1);
+  if (resolvedIndex < 0) return restoreScrollTop(anchor, { newOffsetOfIndex: 0 });
+  return restoreScrollTop(anchor, {
+    newOffsetOfIndex: sumHeights(next.map((row) => row.height), resolvedIndex),
+  });
+}
+
+/**
+ * Keep a scrolled container pinned across re-renders. A no-op when disabled or
+ * when there is no container (e.g. server rendering), so an unanchored list
+ * renders exactly as before.
+ */
+function useScrollAnchor(
+  containerRef: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  rows: readonly AnchoredRow[],
+): void {
+  const previous = useRef<{ scrollTop: number; rows: readonly AnchoredRow[] } | null>(null);
+  const signature = rowSignature(rows);
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+    const stored = previous.current;
+    if (enabled && stored && rowSignature(stored.rows) !== signature) {
+      node.scrollTop = anchoredScrollTop(stored.scrollTop, stored.rows, rows);
+    }
+    previous.current = { scrollTop: node.scrollTop, rows };
+  }, [containerRef, enabled, signature, rows]);
+}
+
+/* ---------------------------------------------------------------------------
+   Property-layout adapter (`@/lib/property-layout`)
+
+   The older `@/lib/property-layout` array-of-columns model is superseded by the
+   flat `@/lib/property-layout-engine`, but persisted pages still store the old
+   shape. It is wired here as the adapter the panel consumes: it owns the
+   untrusted-JSON parse and hands the engine a flat `order` to place.
+   --------------------------------------------------------------------------- */
+
+/** The cleaned two-column plan `@/lib/property-layout` yields for a page. */
+export type PropertyColumnPlan = {
+  /** Row-major order: left column top-to-bottom, then the right column. */
+  order: string[];
+  /** The persisted columns, normalised: known ids only, no blanks/duplicates. */
+  columns: string[][];
+};
+
+/**
+ * Adapter from the persisted legacy array-of-columns layout to the flat model
+ * the two-column grid renders. `parsePropertyLayout` normalises untrusted JSON
+ * against `knownIds` — dropping ids the page no longer has and any duplicate —
+ * and `flattenLayout` flattens the columns into row-major order.
+ */
+export function legacyPropertyColumns(
+  raw: unknown,
+  knownIds: readonly string[],
+): PropertyColumnPlan {
+  const parsed = parseLegacyPropertyLayout(raw, knownIds);
+  return {
+    order: flattenLayout(parsed),
+    columns: parsed.columns.map((column) => [...column]),
+  };
+}
+
+/**
+ * Resolve a persisted legacy layout into the two-column grid placements the
+ * panel renders, through the newer `@/lib/property-layout-engine`. The legacy
+ * module is the adapter: it normalises the stored JSON; the engine owns the
+ * row-major placement and schema reconciliation (appending properties the
+ * layout never listed).
+ */
+export function propertyPlacements(
+  raw: unknown,
+  properties: readonly DBProperty[],
+): PropertyPlacement[] {
+  const knownIds = properties.map((property) => property.id);
+  const parsed = parseLegacyPropertyLayout(raw, knownIds);
+  const columns: 1 | 2 = parsed.columns.length >= 2 ? 2 : 1;
+  return resolvePropertyPlacements(
+    { columns, order: flattenLayout(parsed), spans: {}, dividers: false },
+    { properties },
+  );
 }
 
 /** A column's `PropertyType` (Prisma, upper-case) → the sort engine's kind. */
@@ -286,6 +538,8 @@ export function TableView({
   onReorderProperty,
   rowOrder,
   onReorderRows,
+  onReorderColumns,
+  preserveScroll = false,
   rowColorRules = [],
   footer,
 }: {
@@ -326,6 +580,14 @@ export function TableView({
   rowOrder?: Record<string, number>;
   /** Persist a new row sequence (ids in display order); enables move up/down. */
   onReorderRows?: (orderedIds: string[]) => void;
+  /**
+   * Persist a new column sequence (ids in display order) after a header drag.
+   * The new order is computed with `@/lib/table-ops`; absent falls back to
+   * `onReorderProperty(fromId, toId)` so a drag behaves exactly as before.
+   */
+  onReorderColumns?: (orderedIds: string[]) => void;
+  /** Preserve the scroll position while rows load/sort/filter (scroll anchor). */
+  preserveScroll?: boolean;
   /** Conditional-formatting rules: row background/text via the colour engine. */
   rowColorRules?: RowColorRule[];
   /**
@@ -346,6 +608,14 @@ export function TableView({
   const orderedRows = orderRows(
     sortRowsWith(rows, sortSpecs, properties, valueFor),
     rowOrder,
+  );
+  // A scrolled table re-measures when its rows load, sort or filter; the scroll
+  // anchor re-pins the row under the viewport's top edge instead of a raw offset.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  useScrollAnchor(
+    scrollRef,
+    preserveScroll,
+    orderedRows.map((row) => ({ id: row.id, height: TABLE_ROW_HEIGHT })),
   );
   // Footer calculations run over the same ordered (filtered + sorted) rows the
   // body shows, so a footer total always agrees with the visible cells. The
@@ -503,7 +773,7 @@ export function TableView({
                   disabled={rowIndex === 0}
                   onClick={() =>
                     persistRowOrder(
-                      reorderRows(
+                      moveTableRowIds(
                         orderedRows.map((entry) => entry.id),
                         rowIndex,
                         rowIndex - 1,
@@ -522,7 +792,7 @@ export function TableView({
                   disabled={rowIndex === orderedRows.length - 1}
                   onClick={() =>
                     persistRowOrder(
-                      reorderRows(
+                      moveTableRowIds(
                         orderedRows.map((entry) => entry.id),
                         rowIndex,
                         rowIndex + 1,
@@ -579,7 +849,7 @@ export function TableView({
   };
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
+    <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full min-w-[680px] border-collapse text-sm">
         <thead>
           <tr className="bg-surface text-left text-xs text-muted">
@@ -609,7 +879,17 @@ export function TableView({
                   const from = event.dataTransfer.getData("text/plain") || draggingId;
                   setDraggingId(null);
                   setOverId(null);
-                  if (from && from !== property.id) onReorderProperty(from, property.id);
+                  if (!from || from === property.id) return;
+                  const ids = columns.map((column) => column.id);
+                  const fromIndex = ids.indexOf(from);
+                  const toIndex = ids.indexOf(property.id);
+                  if (fromIndex === -1 || toIndex === -1) return;
+                  // `@/lib/table-ops` computes the column order the drag implies;
+                  // a caller that only understands (fromId, toId) still gets the
+                  // legacy callback, so a header drag behaves exactly as before.
+                  const orderedIds = moveTableColumnIds(ids, fromIndex, toIndex);
+                  if (onReorderColumns) onReorderColumns(orderedIds);
+                  else onReorderProperty(from, property.id);
                 }}
                 className={cn(
                   "border-b border-border px-3 py-2 font-medium transition-colors",
@@ -715,6 +995,9 @@ export function ListView({
   onDensityChange,
   rowOrder,
   onReorderRows,
+  levels,
+  onLevelChange,
+  preserveScroll = false,
 }: {
   workspaceSlug: string;
   properties: DBProperty[];
@@ -730,6 +1013,16 @@ export function ListView({
   rowOrder?: Record<string, number>;
   /** Persist a new row sequence (ids in display order); enables move up/down. */
   onReorderRows?: (orderedIds: string[]) => void;
+  /**
+   * Per-row nesting depth (row id → level), normalised through `@/lib/list-ops`
+   * so the outline is always well-formed. Absent keeps every row at the top
+   * level, so an un-nested list renders exactly as before.
+   */
+  levels?: Record<string, number>;
+  /** Persist a row's new nesting level; enables the indent/outdent controls. */
+  onLevelChange?: (rowId: string, level: number) => void;
+  /** Preserve the scroll position while rows load/sort/filter (scroll anchor). */
+  preserveScroll?: boolean;
 }) {
   const status = properties.find(
     (p) => p.type === "STATUS" || p.type === "SELECT",
@@ -737,6 +1030,19 @@ export function ListView({
   const [localDensity, setLocalDensity] = useState<ListDensity>("compact");
   const density = densityProp ?? localDensity;
   const orderedRows = orderRows(rows, rowOrder);
+  // Nesting levels run through `@/lib/list-ops` (`normalizeLevels`): the outline
+  // is repaired to the engine's rules before it is drawn, so a level that jumps
+  // more than one step deeper can never render a broken tree.
+  const outline = outlineItems(orderedRows, levels);
+  const levelById = new Map(outline.map((item) => [item.id, item.level]));
+  // The list re-measures as rows load/sort/filter; the anchor keeps the row
+  // under the viewport's top edge pinned instead of the raw offset.
+  const listRef = useRef<HTMLUListElement | null>(null);
+  useScrollAnchor(
+    listRef,
+    preserveScroll,
+    orderedRows.map((row) => ({ id: row.id, height: listRowHeight(density) })),
+  );
   const setDensity = (next: ListDensity) => {
     if (onDensityChange) onDensityChange(next);
     else setLocalDensity(next);
@@ -762,13 +1068,18 @@ export function ListView({
           </button>
         ))}
       </div>
-      <ul className="divide-y divide-border rounded-lg border border-border">
+      <ul ref={listRef} className="divide-y divide-border rounded-lg border border-border">
         {orderedRows.map((row, rowIndex) => {
           const model = listRowModel(row, properties, { density });
           const value = status ? (valueFor(row, status.id) as { optionId?: string }) : undefined;
           const option = status?.config?.options?.find((o) => o.id === value?.optionId);
+          const level = levelById.get(row.id) ?? 0;
           return (
-            <li key={row.id} className="flex items-center">
+            <li
+              key={row.id}
+              className="flex items-center"
+              style={level > 0 ? { paddingLeft: level * 16 } : undefined}
+            >
               <Link
                 href={`/w/${workspaceSlug}/${row.id}`}
                 className={cn(
@@ -842,6 +1153,29 @@ export function ListView({
                   </button>
                 </span>
               )}
+              {editable && onLevelChange && (
+                <span className="flex items-center gap-0.5 pr-2">
+                  <button
+                    type="button"
+                    title="Outdent"
+                    aria-label={`Outdent: ${row.title}`}
+                    disabled={level === 0}
+                    onClick={() => onLevelChange(row.id, nextOutlineLevel(outline, row.id, "out"))}
+                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Indent"
+                    aria-label={`Indent: ${row.title}`}
+                    onClick={() => onLevelChange(row.id, nextOutlineLevel(outline, row.id, "in"))}
+                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                  >
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              )}
             </li>
           );
         })}
@@ -849,6 +1183,69 @@ export function ListView({
           <li className="px-4 py-8 text-center text-sm text-muted">{t(locale, "dbNoRows")}</li>
         )}
       </ul>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Property panel (two-column display)
+
+   A page's properties can be laid out two to a row. The persisted layout is the
+   older `@/lib/property-layout` array-of-columns JSON; the panel consumes that
+   module as the adapter and renders through the flat
+   `@/lib/property-layout-engine` placements.
+   --------------------------------------------------------------------------- */
+
+/**
+ * Render a page's properties in one or two columns from a persisted layout.
+ *
+ * `layout` is the untrusted legacy array-of-columns value (a JSON string or
+ * object). `propertyPlacements` adapts it through `@/lib/property-layout` and
+ * resolves the grid through `@/lib/property-layout-engine`; an absent or
+ * malformed layout renders every property once, in schema order.
+ */
+export function PropertyPanel({
+  properties,
+  layout,
+  values,
+  computedFor,
+}: {
+  properties: DBProperty[];
+  /** Persisted legacy `PropertyLayout` (array-of-columns JSON) — untrusted. */
+  layout?: unknown;
+  /** Resolve a property's stored value. */
+  values: (propertyId: string) => unknown;
+  /** Optional computed display that wins over the stored value. */
+  computedFor?: (property: DBProperty) => string | undefined;
+}) {
+  const placements = propertyPlacements(layout, properties);
+  const hasSecondColumn = placements.some((placement) => placement.column === 1);
+  const byId = new Map(properties.map((property) => [property.id, property]));
+  return (
+    <div
+      data-testid="property-panel"
+      className="grid gap-x-6 gap-y-2"
+      style={{ gridTemplateColumns: `repeat(${hasSecondColumn ? 2 : 1}, minmax(0, 1fr))` }}
+    >
+      {placements.map((placement) => {
+        const property = byId.get(placement.propertyId);
+        if (!property) return null;
+        const displayed =
+          computedFor?.(property) ??
+          formatCell(values(property.id), property as unknown as QueryProperty);
+        return (
+          <div
+            key={placement.propertyId}
+            data-testid={`property-${property.name}`}
+            data-column={placement.column}
+            className="flex items-center justify-between gap-2 text-sm"
+            style={placement.span === 2 ? { gridColumn: "1 / -1" } : undefined}
+          >
+            <span className="truncate text-muted">{property.name}</span>
+            <span className="truncate">{displayed || "—"}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
