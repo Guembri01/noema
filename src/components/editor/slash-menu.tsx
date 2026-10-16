@@ -9,9 +9,12 @@ import {
   Bookmark as BookmarkIcon,
   ChevronRight,
   Columns2,
+  Columns3,
+  Columns4,
   Compass,
   Copy,
   CornerDownLeft,
+  FileText,
   Heading1,
   Heading2,
   Heading3,
@@ -25,6 +28,7 @@ import {
   ListOrdered,
   ListTodo,
   ListTree,
+  Map as MapIcon,
   Minus,
   Pilcrow,
   Quote,
@@ -52,11 +56,22 @@ import {
 type I18nKey = Parameters<typeof t>[1];
 
 type SlashItem = {
-  /** Stable English label — kept for keyword ranking and React keys. */
+  /**
+   * Stable English label — kept for keyword ranking and React keys. Also the
+   * display fallback when {@link SlashItem.labelKey} is absent.
+   */
   label: string;
-  labelKey: I18nKey;
+  /**
+   * Catalogue key for the visible label. The rich-block rows added for the
+   * columns counts, the PDF preview and the map have no catalogue entry yet
+   * (`src/lib/i18n.ts` is owned by the i18n slice), so they omit both keys and
+   * the menu renders the raw English `label`/`hint` — the same English fallback
+   * `t()` itself uses. They pick up `labelKey`/`hintKey` once the keys land.
+   */
+  labelKey?: I18nKey;
+  /** Stable English hint — the display fallback when `hintKey` is absent. */
   hint: string;
-  hintKey: I18nKey;
+  hintKey?: I18nKey;
   icon: React.ReactNode;
   keywords: string;
   run?: (chain: ReturnType<Editor["chain"]>) => void;
@@ -118,13 +133,21 @@ const SLASH_ITEMS: SlashItem[] = [
   blockItem("todoList"),
   blockItem("callout"),
   blockItem("toggle"),
-  { label: "Columns", labelKey: "blockColumns", hint: "Side-by-side layout", hintKey: "columnsHint", icon: <Columns2 className="h-4 w-4" />, keywords: "columns layout grid", run: (c) => c.setColumns(2).run() },
+  // Explicit column counts. 5 is intentionally absent: `setColumns` clamps to
+  // `Math.max(2, Math.min(count, 4))` (custom-blocks.tsx, read-only), so a
+  // "5" row would silently insert 4 — raising the cap is a separate decision
+  // (docs/specs/editor-deep.md R84.1/O84.1).
+  { label: "Columns · 2", hint: "Two side-by-side columns", icon: <Columns2 className="h-4 w-4" />, keywords: "columns layout grid two side by side", run: (c) => c.setColumns(2).run() },
+  { label: "Columns · 3", hint: "Three side-by-side columns", icon: <Columns3 className="h-4 w-4" />, keywords: "columns layout grid three side by side", run: (c) => c.setColumns(3).run() },
+  { label: "Columns · 4", hint: "Four side-by-side columns", icon: <Columns4 className="h-4 w-4" />, keywords: "columns layout grid four side by side", run: (c) => c.setColumns(4).run() },
   blockItem("quote"),
   blockItem("code"),
   { label: "Table", labelKey: "blockTable", hint: "3×3 table", hintKey: "tableHint", icon: <TableIcon className="h-4 w-4" />, keywords: "table grid rows", run: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
   { label: "Image", labelKey: "blockImage", hint: "Upload or embed", hintKey: "imageHint", icon: <ImagePlus className="h-4 w-4" />, keywords: "image picture photo upload file", action: () => {} },
   { label: "Bookmark", labelKey: "blockBookmark", hint: "Link preview card", hintKey: "bookmarkHint", icon: <BookmarkIcon className="h-4 w-4" />, keywords: "bookmark link card url", run: (c) => c.setBookmark().run() },
   { label: "Embed", labelKey: "blockEmbed", hint: "YouTube, Vimeo, Figma…", hintKey: "embedHint", icon: <Video className="h-4 w-4" />, keywords: "embed video iframe youtube vimeo", run: (c) => c.setEmbed().run() },
+  { label: "PDF preview", hint: "Embed an inline PDF viewer", icon: <FileText className="h-4 w-4" />, keywords: "pdf document file preview embed viewer attachment", run: (c) => c.setPdfPreview().run() },
+  { label: "Map", hint: "Embed a map for a place", icon: <MapIcon className="h-4 w-4" />, keywords: "map location place geo coordinates address directions", run: (c) => c.setMapBlock().run() },
   { label: "Breadcrumb", labelKey: "blockBreadcrumb", hint: "Parent page trail", hintKey: "breadcrumbHint", icon: <Compass className="h-4 w-4" />, keywords: "breadcrumb path trail navigation", run: (c) => c.setBreadcrumb().run() },
   { label: "Synced view", labelKey: "blockSyncedView", hint: "Mirror another page", hintKey: "syncedViewHint", icon: <Layers className="h-4 w-4" />, keywords: "synced view transclusion mirror page", run: (c) => c.setPageEmbed().run() },
   { label: "Linked database", labelKey: "blockLinkedDatabase", hint: "Embed a database", hintKey: "linkedDatabaseHint", icon: <Layers className="h-4 w-4" />, keywords: "linked database embed view", run: (c) => c.setLinkedDatabase().run() },
@@ -331,8 +354,12 @@ export function SlashMenu({
               {row.item.icon}
             </span>
             <span className="flex-1">
-              <span className="block font-medium">{t(locale, row.item.labelKey)}</span>
-              <span className="block text-xs text-muted">{t(locale, row.item.hintKey)}</span>
+              <span className="block font-medium">
+                {row.item.labelKey ? t(locale, row.item.labelKey) : row.item.label}
+              </span>
+              <span className="block text-xs text-muted">
+                {row.item.hintKey ? t(locale, row.item.hintKey) : row.item.hint}
+              </span>
             </span>
             {row.index === active && <CornerDownLeft className="h-3.5 w-3.5 text-muted" />}
           </button>
