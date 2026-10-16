@@ -2,13 +2,14 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { History, RotateCcw, X } from "lucide-react";
+import { History, RotateCcw, Tag, X } from "lucide-react";
 import { toast } from "sonner";
 import { restorePageVersionAction } from "@/server/actions/page-versions";
 import { safeAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
 import { cn, initials, avatarColor } from "@/lib/utils";
 import { diffStats, diffText, type DiffSegment } from "@/lib/text-diff";
+import { MAX_VERSION_LABEL_LENGTH, normalizeVersionLabel } from "@/lib/version-history";
 
 export type VersionRow = {
   id: string;
@@ -23,6 +24,13 @@ export type VersionRow = {
   charDelta: number | null;
   createdAt: string;
   author: { id: string; name: string; email: string } | null;
+  /**
+   * Optional human-readable name for this snapshot (R30.10 named versions).
+   * Additive: `PageVersion.label` now exists, so hosts that select it pass it
+   * straight through; rows without one fall back to the relative timestamp.
+   * Blank/whitespace labels are treated as unnamed.
+   */
+  label?: string | null;
 };
 
 function relative(value: string, locale: string) {
@@ -35,6 +43,21 @@ function relative(value: string, locale: string) {
   const days = Math.round(hours / 24);
   if (days < 7) return t(locale, "daysAgo").replace("{n}", String(days));
   return new Date(value).toLocaleDateString();
+}
+
+/**
+ * Resolved display label for a snapshot: trimmed via the shared R30.10 helper,
+ * with an over-cap stored label degraded to a trimmed preview instead of
+ * throwing mid-render. `null` means an ordinary, unnamed auto snapshot, whose
+ * row shows only the relative timestamp.
+ */
+function displayLabel(label: string | null | undefined): string | null {
+  try {
+    return normalizeVersionLabel(label);
+  } catch {
+    const raw = label?.trim() ?? "";
+    return raw.length > 0 ? raw.slice(0, MAX_VERSION_LABEL_LENGTH) : null;
+  }
 }
 
 /**
@@ -235,6 +258,9 @@ export function VersionHistory({
                   // snapshot. The oldest row has none, so "vs previous" is
                   // disabled there and the view falls back to "vs current".
                   const hasPrevious = index + 1 < versions.length;
+                  // Named versions (R30.10): a stored label reads as a badge
+                  // beside the timestamp, which stays as the unnamed fallback.
+                  const label = displayLabel(version.label);
                   const effectiveComparison: DiffComparison =
                     comparison === "previous" && hasPrevious ? "previous" : "current";
                   // Non-null only while comparing against a predecessor, so the
@@ -269,7 +295,21 @@ export function VersionHistory({
                           <p className="truncate text-sm font-medium">
                             {version.author?.name ?? t(locale, "unknown")}
                           </p>
-                          <p className="text-[11px] text-muted" suppressHydrationWarning>
+                          <p
+                            className="flex flex-wrap items-center gap-1 text-[11px] text-muted"
+                            suppressHydrationWarning
+                          >
+                            {label !== null && (
+                              <span
+                                data-testid="version-label"
+                                className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-700"
+                              >
+                                <Tag className="h-2.5 w-2.5" aria-hidden />
+                                {label}
+                              </span>
+                            )}
+                            {/* Timestamp is always kept; it is the fallback when
+                                the snapshot is unnamed. */}
                             {relative(version.createdAt, locale)}
                           </p>
                         </div>
