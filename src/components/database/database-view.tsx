@@ -12,11 +12,14 @@ import { PromptDialog } from "@/components/prompt-dialog";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  Ban,
+  ChevronRight,
   Copy,
   Download,
   Ellipsis,
   History,
   LayoutTemplate,
+  Lock,
   Plus,
   RotateCcw,
   Trash2,
@@ -57,6 +60,17 @@ import { AGGREGATION_FUNCTIONS, type AggregationFn } from "@/lib/aggregations";
 import type { ChartType } from "@/lib/charts";
 import type { RowColorRule } from "@/lib/row-color-rules";
 import { mergeLayout, type ColumnLayout } from "@/lib/column-layout";
+import {
+  blockersOf,
+  buildDependencyGraph,
+  dependentsOf,
+  type DependencyEdge,
+} from "@/lib/dependencies";
+import { describeLock, type LockState } from "@/lib/database-lock";
+import {
+  childrenOf as subItemChildrenOf,
+  visibleRows as visibleSubItemRows,
+} from "@/lib/sub-items";
 import { CARD_SIZES, type CardSizeName } from "@/lib/view-presets";
 import type { RelationData } from "@/server/queries";
 import {
@@ -226,6 +240,25 @@ function normalizeChartAggregate(value: unknown): AggregationFn | undefined {
  */
 type EditableViewConfig = ViewConfig & { description?: string };
 
+/**
+ * The virtual table column that surfaces a row's dependency indicator
+ * (`@/lib/dependencies`, spec R89.31). It is not a stored property: it is
+ * appended to the table's schema only while the caller supplies blocking
+ * edges, its cells are derived (`computedFor`), and its header controls are
+ * made inert below — so it never reads or writes a `PropertyValue` and an
+ * ordinary database renders exactly as before.
+ */
+const DEPENDENCY_COLUMN_ID = "__dependencies__";
+
+/**
+ * The additive fields the sub-items engine (`@/lib/sub-items`) reads off a
+ * row. `DBRow` does not carry them yet, so they are read defensively: an
+ * absent `parentId` keeps a row at the top level and the tree renders exactly
+ * like today's flat list.
+ */
+type SubItemFields = { parentId?: string | null; order?: number };
+type SubItemDisplayRow = QueryRow & SubItemFields;
+
 export function DatabaseView({
   locale,
   databasePageId,
@@ -239,6 +272,9 @@ export function DatabaseView({
   rows,
   members,
   editable,
+  dependencyEdges = [],
+  schemaLocked = false,
+  lockedPropertyIds,
 }: {
   databasePageId: string;
   workspaceId: string;
@@ -252,6 +288,12 @@ export function DatabaseView({
   /** Workspace members offered by PEOPLE cells (multi-user assignment). */
   members?: { id: string; name: string }[];
   editable: boolean;
+  /** Blocking edges (`from` blocks `to`) driving the dependency indicator. */
+  dependencyEdges?: DependencyEdge[];
+  /** `Page.schemaLocked`: whether the database's structure is frozen (R89.24). */
+  schemaLocked?: boolean;
+  /** Property ids frozen by the per-property lock (R89.24 refinement). */
+  lockedPropertyIds?: string[];
   /** UI language (matches the tracker and cycles). */
   locale: string;
 }) {
@@ -389,6 +431,121 @@ export function DatabaseView({
     if (!row) return;
     event.preventDefault();
     setPeek(row);
+  };
+
+  // R89.30 — sub-items tree. Rows carry an optional `parentId`/`order` (read
+  // defensively: today's flat rows have neither). When the "Sub-tickets"
+  // toggle is on the table and list render the forest in depth-first order and
+  // fold the descendants of any collapsed parent; when it is off these rows
+  // are passed through untouched, so an unmigrated database is byte-for-byte
+  // unchanged. Indentation/chevrons inside the renderers are a follow-up.
+  const [nestSubItems, setNestSubItems] = useState(false);
+  const [collapsedSubItems, setCollapsedSubItems] = useState<
+    Record<string, string[]>
+  >({});
+  const subItemRows = useMemo<SubItemDisplayRow[]>(
+    () =>
+      viewRows.map((row) => {
+        const fields = row as QueryRow & SubItemFields;
+        return { ...row, parentId: fields.parentId ?? null, order: fields.order };
+      }),
+    [viewRows],
+  );
+  const collapsedSubItemIds = new Set(
+    activeView ? collapsedSubItems[activeView.id] ?? [] : [],
+  );
+  const displayRows: QueryRow[] = nestSubItems
+    ? visibleSubItemRows(subItemRows, collapsedSubItemIds)
+    : viewRows;
+  const toggleSubItemCollapse = (parentId: string) => {
+    if (!activeView) return;
+    setCollapsedSubItems((previous) => {
+      const current = previous[activeView.id] ?? [];
+      const next = current.includes(parentId)
+        ? current.filter((id) => id !== parentId)
+        : [...current, parentId];
+      return { ...previous, [activeView.id]: next };
+    });
+  };
+
+  // R89.31 — dependency indicator. The blocking graph is built from the
+  // optional edges the caller supplies (`from` blocks `to`); with no edges the
+  // graph is empty, every indicator is blank and no column is added, so an
+  // ordinary database renders exactly as before.
+  const dependencyGraph = useMemo(
+    () => buildDependencyGraph(dependencyEdges),
+    [dependencyEdges],
+  );
+  const dependencySummary = (rowId: string): string => {
+    const blocked = blockersOf(dependencyGraph, rowId).length;
+    const blocking = dependentsOf(dependencyGraph, rowId).length;
+    const parts: string[] = [];
+    if (blocked > 0) parts.push(`${blocked} ${t(locale, "relationBlockedBy")}`);
+    if (blocking > 0) parts.push(`${blocking} ${t(locale, "relationBlocks")}`);
+    return parts.join(" · ");
+  };
+  const blockedRowCount = useMemo(
+    () =>
+      viewRows.filter((row) => blockersOf(dependencyGraph, row.id).length > 0)
+        .length,
+    [viewRows, dependencyGraph],
+  );
+  const lockState: LockState = {
+    locked: schemaLocked,
+    ...(lockedPropertyIds && lockedPropertyIds.length > 0
+      ? { lockedPropertyIds }
+      : {}),
+  };
+
+  // The virtual dependency column, plus the table schema/config that show it.
+  // Both are the plain values when there are no edges, so the table is
+  // untouched until a caller supplies dependencies.
+  const hasDependencyEdges = dependencyEdges.length > 0;
+  const dependencyColumn: DBProperty = {
+    id: DEPENDENCY_COLUMN_ID,
+    name: `${t(locale, "relationBlocks")} / ${t(locale, "relationBlockedBy")}`,
+    type: "FORMULA",
+    config: null,
+  };
+  const isDependencyColumn = (id: string | null) =>
+    id === DEPENDENCY_COLUMN_ID;
+  const tableViewProperties = hasDependencyEdges
+    ? [...properties, dependencyColumn]
+    : properties;
+  const tableViewConfig: ViewConfig = hasDependencyEdges
+    ? {
+        ...viewConfig,
+        visiblePropertyIds: [
+          ...(viewConfig.visiblePropertyIds ?? properties.map((p) => p.id)),
+          DEPENDENCY_COLUMN_ID,
+        ],
+      }
+    : viewConfig;
+
+  // The virtual column is not a stored property, so its header/toolbar
+  // controls would otherwise rename, duplicate or reorder a row that does not
+  // exist. These wrappers make every one of them a no-op for that one id.
+  const setEditableProperty = (id: string | null) => {
+    setEditingProperty(isDependencyColumn(id) ? null : id);
+  };
+  const renameProperty = (id: string, name: string) => {
+    if (isDependencyColumn(id)) return;
+    startTransition(async () => {
+      await updatePropertyAction(id, { name });
+      setEditingProperty(null);
+      router.refresh();
+    });
+  };
+  const duplicateProperty = (property: DBProperty) => {
+    if (isDependencyColumn(property.id)) return;
+    startTransition(async () => {
+      await createPropertyAction(
+        databasePageId,
+        `${property.name} copy`,
+        property.type,
+      );
+      router.refresh();
+    });
   };
 
   // R31.13 — resolve the database's default template through the pure planner
@@ -780,6 +937,9 @@ export function DatabaseView({
 
   /** Computed value for FORMULA, ROLLUP and system properties. */
   const computedFor = (row: DBRow, property: DBProperty): string | undefined => {
+    // The virtual dependency column is derived, never stored: its cell reads
+    // the blocking graph instead of a property value.
+    if (isDependencyColumn(property.id)) return dependencySummary(row.id);
     switch (property.type) {
       case "FORMULA":
         return computeFormula(row, property);
@@ -1162,6 +1322,51 @@ export function DatabaseView({
           onLayoutChange={onLayoutChange}
         />
         <div className="flex flex-wrap items-center gap-1">
+          {/* R89.30 — sub-items nesting toggle. A pure view preference, so it
+              is offered to every viewer, not just editors. */}
+          <button
+            type="button"
+            aria-pressed={nestSubItems}
+            aria-label={t(locale, "subticketsHeading")}
+            title={t(locale, "breadcrumbHint")}
+            onClick={() => setNestSubItems((value) => !value)}
+            className={cn(
+              "flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
+              nestSubItems && "bg-surface-2 text-fg",
+            )}
+          >
+            <ChevronRight
+              className={cn(
+                "h-4 w-4 transition-transform",
+                nestSubItems && "rotate-90",
+              )}
+            />
+            {t(locale, "subticketsHeading")}
+          </button>
+          {/* R89.31 — how many rows this view has blocked. Only shown once the
+              caller supplies dependency edges. */}
+          {blockedRowCount > 0 && (
+            <span
+              className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted"
+              title={t(locale, "relationBlockedBy")}
+            >
+              <Ban className="h-4 w-4" />
+              {blockedRowCount} {t(locale, "relationBlockedBy")}
+            </span>
+          )}
+          {/* R89.24 — database lock. Read-only for now: the engine's canonical
+              summary, shown while the structure is frozen. The interactive
+              toggle needs a schema-lock server action (follow-up). */}
+          {schemaLocked && (
+            <span
+              className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted"
+              title={describeLock(lockState)}
+              aria-label={describeLock(lockState)}
+            >
+              <Lock className="h-4 w-4" />
+              {describeLock(lockState)}
+            </span>
+          )}
           {editable && (
             <button
               type="button"
@@ -1447,7 +1652,7 @@ export function DatabaseView({
             locale={locale}
           workspaceSlug={workspaceSlug}
           properties={properties}
-          rows={viewRows}
+          rows={displayRows}
           valueFor={valueFor}
           editable={editable}
           rowOrder={rowOrder}
@@ -1502,11 +1707,11 @@ export function DatabaseView({
           locale={locale}
           workspaceSlug={workspaceSlug}
           workspaceId={workspaceId}
-          properties={properties}
-          rows={viewRows}
+          properties={tableViewProperties}
+          rows={displayRows}
           primary={primary}
           editable={editable}
-          config={viewConfig}
+          config={tableViewConfig}
           valueFor={valueFor}
           setValue={setValue}
           setPrimary={setPrimary}
@@ -1521,12 +1726,17 @@ export function DatabaseView({
           onOpenPeek={setPeek}
           onRunAi={onRunAi}
           colorOf={colorOf}
-          onEditFormula={(property) => setPromptState({ kind: "formula", property })}
+          onEditFormula={(property) => {
+            if (isDependencyColumn(property.id)) return;
+            setPromptState({ kind: "formula", property });
+          }}
           onSetFormat={onSetFormat}
           onEditOptions={(property) => setOptionsEditor(property)}
           editingProperty={editingProperty}
-          setEditingProperty={setEditingProperty}
+          setEditingProperty={setEditableProperty}
           onDeleteProperty={(id) => {
+            // The virtual dependency column is not a stored property.
+            if (isDependencyColumn(id)) return;
             const target = properties.find((property) => property.id === id);
             if (!target) return;
             // A property delete removes every row's values for it: confirm
@@ -1537,23 +1747,8 @@ export function DatabaseView({
           rowOrder={rowOrder}
           onReorderRows={onReorderRows}
           rowColorRules={rowColorRules}
-          onRenameProperty={(id, name) =>
-            startTransition(async () => {
-              await updatePropertyAction(id, { name });
-              setEditingProperty(null);
-              router.refresh();
-            })
-          }
-          onDuplicateProperty={(p) =>
-            startTransition(async () => {
-              await createPropertyAction(
-                databasePageId,
-                `${p.name} copy`,
-                p.type,
-              );
-              router.refresh();
-            })
-          }
+          onRenameProperty={renameProperty}
+          onDuplicateProperty={duplicateProperty}
         />
       ) : (
         <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted">
@@ -1582,6 +1777,10 @@ export function DatabaseView({
             <div className="flex items-center gap-3">
               <Link
                 href={`/w/${workspaceSlug}/${peek.id}`}
+                title={t(locale, "openAsPage")}
+                // Navigating away should not leave the drawer hanging over the
+                // row's page.
+                onClick={() => setPeek(null)}
                 className="text-xs text-accent hover:underline"
               >
                 {t(locale, "openAsPage")}
@@ -1600,6 +1799,45 @@ export function DatabaseView({
             {peek.icon ? `${peek.icon} ` : ""}
             {peek.title || t(locale, "untitled")}
           </h2>
+          {/* R89.31 — the open row's dependency indicator: what blocks it and
+              what it blocks, resolved to titles where the view has them. Blank
+              (and rendered nothing) until the caller supplies edges. */}
+          {dependencySummary(peek.id) !== "" && (
+            <p className="mb-2 flex items-center gap-1.5 text-xs text-muted">
+              <Ban className="h-3.5 w-3.5" aria-hidden />
+              <span>{dependencySummary(peek.id)}</span>
+            </p>
+          )}
+          {blockersOf(dependencyGraph, peek.id).length > 0 && (
+            <p className="mb-2 text-xs text-muted">
+              {t(locale, "relationBlockedBy")}:{" "}
+              {blockersOf(dependencyGraph, peek.id)
+                .map((id) => rowsById.get(id)?.title ?? id)
+                .join(", ")}
+            </p>
+          )}
+          {/* R89.30 — fold this row's sub-items. No-op until rows carry a
+              `parentId`, at which point the toggle (and the table/list tree)
+              light up together. Only offered while the nesting toggle is on. */}
+          {nestSubItems && subItemChildrenOf(subItemRows, peek.id).length > 0 && (
+            <button
+              type="button"
+              onClick={() => toggleSubItemCollapse(peek.id)}
+              className="mb-2 flex items-center gap-1.5 text-xs text-accent hover:underline"
+            >
+              <ChevronRight
+                className={cn(
+                  "h-3.5 w-3.5 transition-transform",
+                  !collapsedSubItemIds.has(peek.id) && "rotate-90",
+                )}
+              />
+              {collapsedSubItemIds.has(peek.id)
+                ? t(locale, "toggleExpand")
+                : t(locale, "toggleCollapse")}{" "}
+              ({subItemChildrenOf(subItemRows, peek.id).length}{" "}
+              {t(locale, "subTicketMany")})
+            </button>
+          )}
           {/* Properties panel: one labelled row per property, editable in
               place — computed values (formula, rollup, system) stay read-only. */}
           <dl className="divide-y divide-border border-t border-border text-sm">
