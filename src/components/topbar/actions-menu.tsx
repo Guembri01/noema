@@ -28,6 +28,7 @@ import {
   type MenuItem,
 } from "@/lib/actions-menu";
 import {
+  PAGE_FONTS,
   parseAppearance,
   type PageAppearance,
   type PageFont,
@@ -141,11 +142,26 @@ const POSITION_PRESETS: readonly { label: string; position: CoverPosition }[] = 
   { label: "Bottom right", position: { x: 100, y: 100 } },
 ];
 
-const FONT_OPTIONS: { id: PageFont; label: string }[] = [
-  { id: "default", label: "Default" },
-  { id: "serif", label: "Serif" },
-  { id: "mono", label: "Mono" },
-];
+/**
+ * Human labels for every `PAGE_FONTS` preset. Kept next to the picker rather
+ * than in the engine: the catalog is the single source of truth for *which*
+ * presets exist (and their order), while display copy stays a presentation
+ * concern. The picker is derived from `PAGE_FONTS`, so a preset added to the
+ * engine surfaces here without editing this component.
+ */
+const FONT_LABELS: Record<PageFont, string> = {
+  default: "Default",
+  serif: "Serif",
+  sans: "Sans",
+  mono: "Mono",
+  literata: "Literata",
+  newsreader: "Newsreader",
+};
+
+const FONT_OPTIONS: { id: PageFont; label: string }[] = PAGE_FONTS.map((id) => ({
+  id,
+  label: FONT_LABELS[id],
+}));
 
 const LINE_SPACING_OPTIONS: { id: PageLineSpacing; label: string }[] = [
   { id: "tight", label: "Tight" },
@@ -948,7 +964,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
                       else onStyle(option.id);
                     }}
                     className={cn(
-                      "flex-1 rounded px-1 py-1 text-xs text-muted hover:bg-surface-2",
+                      "flex-1 truncate rounded px-1 py-1 text-xs text-muted hover:bg-surface-2",
                       resolvedAppearance.font === option.id && "bg-surface-2 text-fg",
                     )}
                   >
