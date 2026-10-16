@@ -13,15 +13,30 @@ import { t } from "@/lib/i18n";
 import {
   API_SCOPES,
   describeScope,
+  describeScopes,
   expandScopes,
   validateScopes,
 } from "@/lib/api-token-scope";
+
+/**
+ * feat/r15 widens the token-create action to accept the picked scopes as a
+ * second argument. Binding it to that two-argument shape lets this component
+ * forward the picker's selection while staying additive: a server action that
+ * does not read the argument yet simply ignores it, and the call keeps working
+ * unchanged once the widened signature lands.
+ */
+const createTokenWithScopes: (
+  name: string,
+  scopes: string[],
+) => Promise<{ token: string } | { error: string }> = createApiTokenAction;
 
 export type ApiTokenRow = {
   id: string;
   name: string;
   createdAt: string;
   lastUsedAt: string | null;
+  /** Scopes stored on the token; absent callers simply render no summary. */
+  scopes?: readonly string[];
 };
 
 export function ApiTokenManager({ tokens, locale }: { tokens: ApiTokenRow[]; locale: string }) {
@@ -48,7 +63,7 @@ export function ApiTokenManager({ tokens, locale }: { tokens: ApiTokenRow[]; loc
       return;
     }
     startTransition(async () => {
-      const result = await createApiTokenAction(name);
+      const result = await createTokenWithScopes(name, scopes);
       if ("token" in result) {
         setCreated(result.token);
         setName("");
@@ -152,37 +167,50 @@ export function ApiTokenManager({ tokens, locale }: { tokens: ApiTokenRow[]; loc
         <p className="text-sm text-muted">{t(locale, "noApiTokens")}</p>
       ) : (
         <ul className="divide-y divide-border rounded-lg border border-border">
-          {tokens.map((token) => (
-            <li key={token.id} className="flex items-center gap-3 px-4 py-3 text-sm">
-              <span className="flex-1 truncate">{token.name}</span>
-              <span className="text-xs text-muted">
-                {t(locale, "createdPrefix")} <LocalTime value={token.createdAt} mode="date" />
-              </span>
-              <span className="text-xs text-muted">
-                {token.lastUsedAt
-                  ? `${t(locale, "lastUsedPrefix")} ${new Date(token.lastUsedAt).toLocaleDateString()}`
-                  : t(locale, "neverUsed")}
-              </span>
-              <button
-                type="button"
-                aria-label={t(locale, "revokeToken")}
-                onClick={() =>
-                  startTransition(async () => {
-                    const result = await revokeApiTokenAction(token.id);
-                    if ("ok" in result) {
-                      toast.success(t(locale, "tokenRevoked"));
-                      router.refresh();
-                    } else {
-                      toast.error(result.error);
-                    }
-                  })
-                }
-                className="text-muted hover:text-red-500"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </li>
-          ))}
+          {tokens.map((token) => {
+            const scopeSummary = describeScopes(token.scopes ?? []);
+            return (
+              <li key={token.id} className="flex items-center gap-3 px-4 py-3 text-sm">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{token.name}</span>
+                  {scopeSummary && (
+                    <span
+                      className="mt-0.5 block text-xs text-muted"
+                      data-testid="token-scope-summary"
+                    >
+                      {scopeSummary}
+                    </span>
+                  )}
+                </span>
+                <span className="text-xs text-muted">
+                  {t(locale, "createdPrefix")} <LocalTime value={token.createdAt} mode="date" />
+                </span>
+                <span className="text-xs text-muted">
+                  {token.lastUsedAt
+                    ? `${t(locale, "lastUsedPrefix")} ${new Date(token.lastUsedAt).toLocaleDateString()}`
+                    : t(locale, "neverUsed")}
+                </span>
+                <button
+                  type="button"
+                  aria-label={t(locale, "revokeToken")}
+                  onClick={() =>
+                    startTransition(async () => {
+                      const result = await revokeApiTokenAction(token.id);
+                      if ("ok" in result) {
+                        toast.success(t(locale, "tokenRevoked"));
+                        router.refresh();
+                      } else {
+                        toast.error(result.error);
+                      }
+                    })
+                  }
+                  className="text-muted hover:text-red-500"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>
