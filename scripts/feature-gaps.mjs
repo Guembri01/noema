@@ -40,21 +40,20 @@ const total = rows.length;
 
 /** The shortlist a maintainer should read first (kept in sync by hand). */
 const PRIORITY = [
-  ["Sub-tickets & dependency tree", "Parent/child issues already exist in the schema; the nesting UI and roll-up of child estimates do not.", "Projects, tickets & planning"],
-  ["Saved views", "Named filter/sort/group presets for databases and tickets.", "3. Databases"],
-  ["Cycles & sprints", "Time-boxed iterations with a burndown of the estimate remaining.", "20. Projects, tickets & planning"],
-  ["Realtime collaboration", "CRDT + presence + live cursors on the editor (today: opt-in websocket rooms without text CRDT).", "7. Collaboration"],
+  ["Filter tree UI", "The AND/OR filter tree already evaluates; the nested group builder UI is not exposed.", "3. Databases"],
+  ["Conditional formatting", "ColorRule is modelled and evaluated; the rule-authoring and render path are partial.", "3. Databases"],
+  ["Form view", "No ViewType.FORM yet; the builder + public submit path are spec'd but unwired.", "3. Databases"],
+  ["Linked database views", "The read-only node exists; view identity and per-instance overrides are missing.", "3. Databases"],
+  ["Synced blocks", "Mirror one block's content in many places with a canonical source marker.", "1. Editor & blocks"],
   ["Suggestions mode", "Propose edits for approval with a diff overlay.", "7. Collaboration"],
-  ["Comment depth", "Resolve, reactions, mentions and thread replies on pages.", "7. Collaboration"],
-  ["Notification inbox & preferences", "The inbox route exists; per-user delivery preferences and digests are missing.", "7. Collaboration"],
-  ["Full-text search at Postgres level", "Search works through SQL LIKE today; tsvector/trigram indexes and ranking are pending.", "11. Search"],
+  ["Comment depth", "Server-side depth validation, block anchors and dispatch scoping on page threads.", "7. Collaboration"],
+  ["Notification inbox & preferences", "Per-user delivery preferences, digests and PageFollow dispatch are missing.", "7. Collaboration"],
   ["Pagination everywhere", "Databases, tickets and audit lists load bounded sets; cursor pagination is pending.", "17. Data model & platform"],
   ["Audit log UI", "Activity is recorded per ticket/page; a workspace-wide, filterable audit view is missing.", "8. Sharing & permissions"],
   ["Object storage & backups", "Uploads and scheduled backups to S3-compatible storage.", "17. Data model & platform"],
   ["SAML SSO", "OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer.", "8. Sharing & permissions"],
-  ["Guests", "Limited external collaborators with scoped access.", "7. Collaboration"],
-  ["Formula engine depth", "Rollups, relations and formulas exist; broader function coverage and error reporting are partial.", "5. Formulas"],
-  ["i18n string extraction", "Five locales ship; remaining hard-coded English strings need extraction into the message catalogue.", "16. Navigation & UX"],
+  ["Undo/redo (global)", "App-wide undo beyond the editor's local history.", "16. Navigation & UX"],
+  ["Self-hosting & auth", "Packaging, provider-agnostic sign-in and documented deployment remain.", "17. Data model & platform"],
 ];
 
 const pad = (value, width) => String(value).padEnd(width);

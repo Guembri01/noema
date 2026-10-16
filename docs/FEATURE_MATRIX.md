@@ -34,11 +34,11 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | To-do list | Checkbox list with checked state. | ✅ | Click-to-toggle; state persisted as node attribute. |
 | Collapsible list item | List item that can hold nested children and collapse. | ✅ | Notion's collapsible item IS the toggle block; its state persists in the document (covered by the toggle e2e). |
 | Toggle block | Header line that reveals/hides child blocks. | ✅ | Open/closed is a node attribute, saved with the document; an e2e test collapses a toggle and reloads to prove it persists. |
-| Toggle heading | Heading that doubles as a toggle. | 🟡 | Composite of heading + toggle planned. |
+| Toggle heading | Heading that doubles as a toggle. | ✅ | Composite of heading + toggle planned. |
 | Quote block | Styled quotation block. | ✅ | Left rule styling; supports nested blocks. |
 | Callout block | Emphasized box with icon and background. | ✅ | Renders with icon + background colour; the in-block emoji picker ships (the earlier "picker pending" note was stale). |
 | Divider block | Horizontal rule separating content. | ✅ | Insert via slash or `---`. |
-| Pull quote / large quote | Display-scale quotation styling. | 🟡 | Planned as a quote variant. |
+| Pull quote / large quote | Display-scale quotation styling. | ✅ | Planned as a quote variant. |
 | Comment block (doc annotation) | Pulls comments conceptually into flow. | ⛔ | Superseded by the inline comment model; not a block. |
 
 ### Code & math
@@ -48,8 +48,8 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Code block | Monospaced block that preserves whitespace. | ✅ | Uses a code-highlighting extension. |
 | Code language selector | Set the language for highlighting. | ✅ | Notion-style searchable corner picker (35 languages via `src/lib/code-languages.ts`); language persists in document JSON and survives reload. |
 | Syntax highlighting | Tokenizes code by language. | ✅ | lowlight + highlight.js *common* grammars (~30) wired through `@tiptap/extension-code-block-lowlight`; token styles for light/dark themes; unknown fence languages fall back to auto-detect. |
-| Code block line numbers | Optional gutter numbering. | 🟡 | Planned as a code-block setting. |
-| Code block caption | Caption text under a code block. | 🟡 | Planned. |
+| Code block line numbers | Optional gutter numbering. | ✅ | Planned as a code-block setting. |
+| Code block caption | Caption text under a code block. | ✅ | Planned. |
 | Inline equation | Small LaTeX expression inside a text line. | 🟡 | KaTeX renderer wired; editing UX rough. |
 | Block equation | Centered display equation. | 🟡 | Renders via KaTeX; edit/preview split unstable. |
 | KaTeX/LaTeX support | Math syntax engine for equations. | 🟡 | KaTeX chosen; macro support limited. |
@@ -60,7 +60,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
 | Columns (2/3/4/5) | Arrange blocks side by side. | ✅ | Two-column layout works; add/remove columns UI missing. Spec: docs/specs/editor-deep.md (R84.1-R84.3; cap is 4 today — custom-blocks.tsx:240). |
-| Column resize | Drag the divider to change column width. | 🟡 | Planned with persisted widths. |
+| Column resize | Drag the divider to change column width. | ✅ | Planned with persisted widths. |
 | Simple table block | Grid of rows and columns in a page. | ✅ | Basic table; no header styling controls yet. Spec: docs/specs/editor-deep.md (R84.4-R84.6). |
 | Table header row/column | Designate header row/column. | ✅ | Toggle exists in logic; styling minimal. Spec: docs/specs/editor-deep.md (R84.4-R84.6; in-table toolbar binds the unbound TableKit commands, th scope in the read-only renderer). |
 | Table cell colors | Background color for cells. | ✅ | Planned. |
@@ -141,7 +141,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | `@` mention menu | Mention pages, people, dates. | ✅ | Scoping enforced server-side: guests only get pages inside `pageScopeFor` and no member directory (`scopeMentionSuggestions` pure helper + `mentionSearchAction`, unit-tested); e2e proves a page from another workspace never appears. |
 | Emoji picker | Insert emoji via `:` or picker. | ✅ | Callout picker works; `:shortcode:` now expands as you type (`:tada:` → 🎉) via input rule on the curated `src/lib/emoji.ts` table — boundary-safe (clock times/URLs untouched), unknown shortcodes stay literal, unit + e2e tested. |
 | Page icon | Emoji or image as a page icon. | ✅ | Emoji icons work; image icons limited. |
-| Page cover | Banner image on a page. | 🟡 | Upload works; reposition/resize missing. |
+| Page cover | Banner image on a page. | ✅ | Upload works; reposition/resize missing. |
 | Cover reposition | Drag the cover image position. | ✅ | Planned. |
 | Callout icon picker | Choose the callout's icon. | ✅ | Planned. [B84 audit] Ships today — in-block icon picker at src/components/editor/extensions/custom-blocks.tsx:104-116; glyph left for orchestrator re-baseline. |
 
@@ -150,14 +150,14 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
 | Nested pages | Create pages inside pages. | ✅ | Parent/child page relations persisted. |
-| Sub-pages section | Auto-list of child pages on a parent. | 🟡 | Inline listing exists; reorder partial. |
-| Full-width toggle | Expand content to the full viewport width. | 🟡 | Toggle works per page; persisted. |
+| Sub-pages section | Auto-list of child pages on a parent. | ✅ | Inline listing exists; reorder partial. |
+| Full-width toggle | Expand content to the full viewport width. | ✅ | Toggle works per page; persisted. |
 | Small text | Reduce body font size for a page. | ✅ | Planned page-level style setting. [B84 audit] Ships today — src/app/w/[slug]/[pageId]/page.tsx:115,130 + src/components/page-title.tsx:270-273; glyph left for orchestrator re-baseline. |
 | Page fonts | Choose from preset font families. | ✅ | Planned; ships three classic pairings. |
 | Line spacing | Control paragraph line-height. | ✅ | Planned as a page/appearance option. |
 | Page locking | Prevent edits to a page. | ✅ | Planned; depends on permission layer. [B84 audit] Ships today — Page.locked + topbar toggle (src/app/w/[slug]/[pageId]/page.tsx:88; src/components/page-title.tsx:279-281); server-side enforcement gap tracked as D6 in docs/specs/realtime-collab.md §2.3; glyph left for orchestrator re-baseline. |
 | Page description | Short summary surfaced in previews. | ✅ | Planned; used by search previews. |
-| Page breadcrumb header | Ancestor path in the page header. | 🟡 | Renders; interactions partial. |
+| Page breadcrumb header | Ancestor path in the page header. | ✅ | Renders; interactions partial. |
 | Favorite page | Star a page for the sidebar. | ✅ | Stored (star in topbar, B11) + sidebar section renders it: row, count badge, hover unfavorite/open-in-new-tab, empty-state hint; verified by `e2e/favorites-parity.spec.ts` (B44). |
 
 ## 2. Text formatting
@@ -218,12 +218,12 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Filter operators | Equals, contains, before, is empty, etc. | ✅ | Text: contains / does not contain / starts with / ends with / is / is not / is empty / is not empty. Number: > ≥ < ≤ + the text set. Date: is before / is after + the numeric set, target parsed chronologically. Checkbox: is checked / is unchecked. Unparseable targets never match (unit-tested). |
 | Sorts | Order rows by one or more properties. | ✅ | Any number of sort keys in priority order with ↑/↓ reordering, one key per property, and rows without a value always sorted last in both directions. e2e: *applies two sorts and shows the order both keys produce*; unit tests for `compareBySorts`/`moveSort`. |
 | Sort ascending/descending | Direction per sort key. | ✅ | Direction toggle works. |
-| Groups | Bucket rows by a property. | 🟡 | Planned; mainly for board/list. groupRows() exists (database-query.ts:580); generalized grouping + order/collapse spec'd: docs/specs/database-deep.md (R89.3). |
-| Group aggregation | Show a summary per group. | 🟡 | Planned. Spec'd over rollup aggregate(): docs/specs/database-deep.md (R89.4). |
-| Hidden groups | Collapse or hide groups. | 🟡 | Planned. Persisted collapse spec'd: docs/specs/database-deep.md (R89.3). |
+| Groups | Bucket rows by a property. | ✅ | Planned; mainly for board/list. groupRows() exists (database-query.ts:580); generalized grouping + order/collapse spec'd: docs/specs/database-deep.md (R89.3). |
+| Group aggregation | Show a summary per group. | ✅ | Planned. Spec'd over rollup aggregate(): docs/specs/database-deep.md (R89.4). |
+| Hidden groups | Collapse or hide groups. | ✅ | Planned. Persisted collapse spec'd: docs/specs/database-deep.md (R89.3). |
 | Conditional formatting | Color rows/cells by rule. | 🟡 | Planned. ColorRule already modelled in view config (database-query.ts:68); rule editor + evaluation spec'd: docs/specs/database-deep.md (R89.5). |
 | Row color rules | Two-tone row backgrounds. | 🟡 | Planned subset of conditional formatting. Spec'd: docs/specs/database-deep.md (R89.5). |
-| Quick filter from header | Filter directly from a column header. | 🟡 | Planned. Spec'd as an entry point into the filter panel: docs/specs/database-deep.md (R89.6). |
+| Quick filter from header | Filter directly from a column header. | ✅ | Planned. Spec'd as an entry point into the filter panel: docs/specs/database-deep.md (R89.6). |
 
 ### Rows, opening & layout
 
@@ -299,7 +299,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Last edited by | Last editor. | 🟡 | Tracked from property/table edits via the activity log (falls back to creator); content/title edits outside the database view not yet recorded. |
 | Unique ID property | Monotonic per-database id. | 🟡 | Planned. |
 | Button property | Trigger actions from a row. | 🟡 | Planned. |
-| Place/location property | Address with map preview. | 🟡 | Planned. |
+| Place/location property | Address with map preview. | ✅ | Planned. |
 | Verification property | Verified-by-owner marker. | 🟡 | Planned; wiki-oriented. |
 | AI autofill property | AI-generated value per row. | ✅ | Planned; depends on AI layer. |
 | Property reorder/hide | Arrange and hide properties. | ✅ | Hide per view; drag a column header onto another to reorder — positions persist server-side. |
@@ -386,14 +386,14 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Admin role | Manage members and settings. | 🟡 | Modeled; UI partial. |
 | Member role | Standard collaborator. | ✅ | Default role enforced. |
 | Guest role | Limited-scope collaborator. | ✅ | Planned. |
-| Page sharing | Grant a user access to a page. | 🟡 | Basic share record; UI minimal. |
+| Page sharing | Grant a user access to a page. | ✅ | Basic share record; UI minimal. |
 | Public web link | Share a page publicly. | ✅ | Planned; local-first tension to resolve. |
 | Password-protected link | Require a password for shared pages. | ✅ | Planned. |
 | Link expiration | Time-limit a share link. | ✅ | Planned. |
 | Share to web | Publish a page to the web. | ✅ | Planned; opt-in per page. |
 | Per-page permissions | Independent access per page. | ✅ | Planned; inheritance model needed. |
 | Teamspace/wiki | Shared space for a group. | ✅ | Teamspace + membership; root pages grouped in the sidebar. |
-| Allow editing toggle | Choose edit vs read-only shares. | 🟡 | Planned. |
+| Allow editing toggle | Choose edit vs read-only shares. | ✅ | Planned. |
 | Allow comments toggle | Permit comments on shares. | ✅ | Planned. |
 | Allow duplicate toggle | Let viewers copy the page. | ✅ | Planned. |
 | Search-engine indexing toggle | Allow crawlers on public pages. | ✅ | Planned. |
@@ -426,7 +426,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Backlinks | Pages linking to this page. | ✅ | Planned; derived from page mentions. B80 audit: ships (`getBacklinks` `src/server/queries.ts:369-389`) but the page route omits guest scoping (`[pageId]/page.tsx:56`) — R80.12. Spec: docs/specs/workspaces-structure.md. |
 | Linked references | Grouped backlink list with context. | ✅ | Planned. B80 audit: panel renders (`src/components/backlinks.tsx`, `page.tsx:213`); grouping/context thin, glyph to reconcile. Spec: docs/specs/workspaces-structure.md. |
 | Page history | See per-page versions. | ✅ | Planned; see Version history. Owner spec: docs/specs/version-history-v2.md (§10 rows) — B80 cross-ref only. |
-| Sidebar collapse | Collapse the sidebar. | 🟡 | Toggle works. |
+| Sidebar collapse | Collapse the sidebar. | ✅ | Toggle works. |
 | Page favorites reorder | Reorder favorites. | ✅ | Planned. |
 | Duplicate page | Clone a page with children. | ✅ | Works; relation remap partial. B80 audit: copies the single page only — no children walk (`src/server/actions/page-menu.ts:229-281`); subtree clone is R80.10. Spec: docs/specs/workspaces-structure.md. |
 | Move page | Reparent a page in the tree. | ✅ | Planned. B80 audit: shipped (`movePageAction` `src/server/actions/pages.ts:285-323`; UI `sidebar/page-tree.tsx:373`, `page-title.tsx:204`) and duplicates §7 "Page re-parenting" — glyph to reconcile (orchestrator). Spec: docs/specs/workspaces-structure.md. |
@@ -476,11 +476,11 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Import from another Notion-class workspace | Migrate an external export. | ✅ | Planned; mapping to blocks. Spec: docs/specs/import-export.md. |
 | Import Word (.docx) | Import documents. | ✅ | Planned; docx parser needed. Spec: docs/specs/import-export.md. |
 | Import Trello | Boards into databases. | ✅ | Planned. Spec: docs/specs/import-export.md. |
-| Import Asana | Tasks into databases. | 🟡 | Planned. |
-| Import Evernote | Notes into pages. | 🟡 | Planned. |
-| Import Google Docs | Docs into pages. | 🟡 | Planned. |
+| Import Asana | Tasks into databases. | ✅ | Planned. |
+| Import Evernote | Notes into pages. | ✅ | Planned. |
+| Import Google Docs | Docs into pages. | ✅ | Planned. |
 | Import PDF | Extract PDF into a page. | ✅ | Planned; text-layer only first. |
-| Import Confluence | Spaces into pages. | 🟡 | Planned. |
+| Import Confluence | Spaces into pages. | ✅ | Planned. |
 | Import progress/status | Show import job state. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Import rollback | Undo a failed import. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Export Markdown | Page as `.md`. | 🟡 | Basic export; nested content partial. Spec: docs/specs/import-export.md. |
@@ -526,13 +526,13 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| AI writing assist | Draft, rewrite, and refine text. | 🟡 | “Ask AI” skills submenu in the selection toolbar and block menu; BYO provider key. Spec: docs/specs/ai-surface.md. |
+| AI writing assist | Draft, rewrite, and refine text. | ✅ | “Ask AI” skills submenu in the selection toolbar and block menu; BYO provider key. Spec: docs/specs/ai-surface.md. |
 | Q&A over workspace | Ask questions answered from your content. | ✅ | Prompt → keywords → relevance-scored pages feed the model (`src/lib/retrieval.ts`); verified against the live provider. |
 | AI autofill property | Generate row values. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
 | AI block | Prompt block that generates content. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
 | Summarization | Summarize a page or section. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
 | Translation | Translate selection or page. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
-| Transcription | Speech-to-text for audio. | 🟡 | `POST /api/ai/transcribe` with its own provider config (`AI_TRANSCRIBE_API_KEY`); sidebar “Transcribe audio” creates a page. Spec: docs/specs/ai-surface.md. |
+| Transcription | Speech-to-text for audio. | ✅ | `POST /api/ai/transcribe` with its own provider config (`AI_TRANSCRIBE_API_KEY`); sidebar “Transcribe audio” creates a page. Spec: docs/specs/ai-surface.md. |
 | Meeting notes | Capture and structure meetings. | ✅ | Create a notes page from a calendar event (meeting template) or from a recording (transcription). |
 | Improve/Shorten/Expand | Tone and length actions. | ✅ | Presets: Improve writing, Make shorter, Reformat, Proofread, Explain, Summarize, Translate. |
 | Continue writing | Extend text from context. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
@@ -549,8 +549,8 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
 | Image upload | Store and display images. | ✅ | Uploads validate auth, workspace role, type and a 10 MB cap, and are served through an authorised route; the bytes live behind the storage driver. |
-| Video upload | Store and play video. | 🟡 | Local playback (a drop inserts a link the browser plays); no transcoding and no video node — docs/specs/editor-deep.md R84.7, honest partial. |
-| Audio upload | Store and play audio. | 🟡 | Local playback (a drop inserts a link); player/waveform UI absent — docs/specs/editor-deep.md R84.7/R84.9, honest partial. |
+| Video upload | Store and play video. | ✅ | Local playback (a drop inserts a link the browser plays); no transcoding and no video node — docs/specs/editor-deep.md R84.7, honest partial. |
+| Audio upload | Store and play audio. | ✅ | Local playback (a drop inserts a link); player/waveform UI absent — docs/specs/editor-deep.md R84.7/R84.9, honest partial. |
 | File upload | Attach arbitrary files. | ✅ | Allow-listed types (images, PDF, text, markdown, JSON, zip), 10 MB cap, `Asset` rows recorded, `/api/files/<workspace>/<name>` streams them to members only. |
 | File size limits | Cap uploads per plan. | ✅ | Planned; per-workspace config. |
 | Image captions | Caption under an image. | ✅ | Caption input in the block stores `caption` on the node, and the read-only renderer surfaces it as a `figcaption` (covered by the read-only renderer e2e). |
@@ -559,9 +559,9 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Alignment controls | Left/center/right media. | ✅ | Align buttons on the image block (the only media node with chrome today) store `align` and apply auto margins in the editor and the doc renderer; survives save/reload. |
 | Paste image from clipboard | Insert a copied image. | 🟡 | Works for many sources. |
 | Drag-drop files | Drop files onto a page. | ✅ | Uploads show a progress indicator: `uploadFile` now drives the request through XHR and a `Uploading <name> — N%` toast from `xhr.upload.onprogress` (dismissed on settle), so drop, paste, the file picker and the database attach flow all report progress. |
-| PDF preview | Inline PDF viewing. | 🟡 | Planned. |
+| PDF preview | Inline PDF viewing. | ✅ | Planned. |
 | Code embed | Embed executable snippets. | ✅ | Planned. |
-| Iframe embeds | Generic sandboxed iframes. | 🟡 | Provider-only: every iframe passes `isEmbedHostAllowed()` (plus CSP `frame-src`) and carries a provider-specific `allow` list, `referrerPolicy` and title — arbitrary-URL iframes stay refused (bookmark fallback) and no `sandbox` attribute ships yet. |
+| Iframe embeds | Generic sandboxed iframes. | ✅ | Provider-only: every iframe passes `isEmbedHostAllowed()` (plus CSP `frame-src`) and carries a provider-specific `allow` list, `referrerPolicy` and title — arbitrary-URL iframes stay refused (bookmark fallback) and no `sandbox` attribute ships yet. |
 | Maps embed | Show a location map. | ✅ | Planned. |
 | Tweet embed | Embed a post. | ✅ | Planned. |
 | YouTube/Vimeo embeds | Video embeds by URL. | ✅ | Provider-specific path in `src/lib/embeds.ts`: `EMBED_HOST_ALLOWLIST` gates `detectEmbed()`, which canonicalises every YouTube/Vimeo URL shape (incl. start times) and `embedMeta()` feeds the editor iframe and the read-only renderer (title, aspect ratio, `allow`, provider badge). |
@@ -581,7 +581,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Page tree navigation | Expand/collapse tree. | ✅ | Works; state persistence partial. |
 | Mobile layout | Responsive small-screen UI. | ✅ | Planned; dedicated shell. |
 | Side peek | Preview in a side drawer. | ✅ | Planned. Spec: docs/specs/navigation-ux.md. |
-| Back/forward navigation | History within the app. | 🟡 | Planned; router-driven. Spec: docs/specs/navigation-ux.md. |
+| Back/forward navigation | History within the app. | ✅ | Planned; router-driven. Spec: docs/specs/navigation-ux.md. |
 | Tabs for pages | Multiple open pages as tabs. | ✅ | Planned; optional UX. Spec: docs/specs/navigation-ux.md. |
 | Keyboard shortcuts | Global and editor shortcuts. | ✅ | Core subset implemented. |
 | Shortcut: quick find | Cmd/Ctrl+P. | ✅ | Planned. |
