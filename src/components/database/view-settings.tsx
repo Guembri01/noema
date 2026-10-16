@@ -516,6 +516,36 @@ type ViewSettingsConfig = ViewConfig & {
    * and falls back to the first NUMBER column when it is unset or unknown.
    */
   aggregationPropertyId?: string | null;
+  /**
+   * GROUPS: the per-view ordering of the group buckets, given as option ids
+   * (docs/specs/database-deep.md R89.3, "Group ordering"). Like `laneBy`, it is
+   * a view-config key this toolbar owns and rides through `sanitizeViewSettings`
+   * untouched; it is read back as the `optionOrder` argument of
+   * `groupRowsByProperty`, so this editor's order is exactly what the board
+   * engine derives. Listed ids come first in the listed order, unlisted
+   * declared options keep their declared order, and the trailing "No value"
+   * bucket always stays last. An empty list means "use the declared order".
+   */
+  groupOrder?: string[];
+  /**
+   * GROUPS: the summary each group shows, in the `AggregationFn` vocabulary of
+   * `@/lib/aggregations` (docs/specs/database-deep.md R89.4, "Group
+   * aggregation"). Owned here like `chartAggregate`; the group engine falls
+   * back to a plain row count when it is unset, so an empty value mirrors that.
+   */
+  groupAggregation?: string;
+  /**
+   * TABLE: whether every column header offers a quick filter into this panel
+   * (docs/specs/database-deep.md R89.6, "Quick filter from header"). Unset means
+   * enabled, so existing views keep the entry point.
+   */
+  quickFilter?: boolean;
+  /**
+   * Conditional formatting authoring entry: rules are enabled by default, and a
+   * view may switch the entry off (docs/specs/database-deep.md R89.5) without
+   * discarding the rules it already saved. Unset means enabled.
+   */
+  conditionalFormat?: boolean;
 };
 
 /** A JSON object (not an array, not null), or `null` for anything else. */
@@ -606,6 +636,39 @@ function normalizeVisibleGroups(input: unknown): GroupVisibility | undefined {
 }
 
 /**
+ * Keep only non-empty, de-duplicated strings, preserving order; an empty list
+ * normalises away, so "declared order" is the absence of the key rather than
+ * `[]` — the same rule the WIP limits and visibility maps use. This is the read
+ * guard for `groupOrder` (option ids) before it reaches `groupRowsByProperty`.
+ */
+function normalizeStringList(input: unknown): string[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const entry of input) {
+    if (typeof entry !== "string" || entry === "" || seen.has(entry)) continue;
+    seen.add(entry);
+    list.push(entry);
+  }
+  return list.length > 0 ? list : undefined;
+}
+
+/**
+ * Keep a group-aggregation id only when the aggregation catalogue knows it;
+ * anything else normalises away so the engine keeps its plain row-count default
+ * rather than receiving an unknown id.
+ */
+function normalizeAggregationFn(input: unknown): string | undefined {
+  if (typeof input !== "string") return undefined;
+  return AGGREGATION_FUNCTIONS.some((fn) => fn.id === input) ? input : undefined;
+}
+
+/** Keep a boolean flag only when the view set one; absent leaves the default. */
+function normalizeToggle(input: unknown): boolean | undefined {
+  return typeof input === "boolean" ? input : undefined;
+}
+
+/**
  * Read an untrusted config into the shape this toolbar edits: schema-normalised
  * against `properties`, with WIP limits validated. Unknown top-level keys are
  * preserved; only the fields this toolbar owns are rewritten.
@@ -635,6 +698,22 @@ function sanitizeViewSettings(
   const visibleGroups = normalizeVisibleGroups(config.visibleGroups);
   if (visibleGroups) sanitized.visibleGroups = visibleGroups;
   else delete sanitized.visibleGroups;
+
+  const groupOrder = normalizeStringList(config.groupOrder);
+  if (groupOrder) sanitized.groupOrder = groupOrder;
+  else delete sanitized.groupOrder;
+
+  const groupAggregation = normalizeAggregationFn(config.groupAggregation);
+  if (groupAggregation) sanitized.groupAggregation = groupAggregation;
+  else delete sanitized.groupAggregation;
+
+  const quickFilter = normalizeToggle(config.quickFilter);
+  if (quickFilter !== undefined) sanitized.quickFilter = quickFilter;
+  else delete sanitized.quickFilter;
+
+  const conditionalFormat = normalizeToggle(config.conditionalFormat);
+  if (conditionalFormat !== undefined) sanitized.conditionalFormat = conditionalFormat;
+  else delete sanitized.conditionalFormat;
 
   return sanitized;
 }
@@ -806,12 +885,43 @@ export function ViewSettings({
   const hiddenGroupCount =
     groupColumns.length - filterVisibleGroups(groupColumns, groupVisibility).length;
 
+  // --- Group ordering + per-group aggregation (view config) ----------------
+  // The same buckets the WIP editor grades, but ordered through this view's
+  // saved `groupOrder` (option ids; the "No value" bucket always stays last) —
+  // exactly the `optionOrder` the board engine reads back. `groupAggregation`
+  // is the summary each group shows. Both are view-config keys this toolbar
+  // owns and rides through `sanitizeViewSettings` untouched.
+  const groupOrder = config.groupOrder ?? [];
+  const groupAggregation = config.groupAggregation ?? "";
+  const orderedGroupColumns = wipProperty
+    ? groupRowsByProperty(rows ?? [], boardProperties, wipProperty.id, {
+        optionOrder: groupOrder,
+      })
+    : [];
+  const orderableGroups = orderedGroupColumns.filter((group) => group.optionId !== null);
+  const orderableIds = orderableGroups.map((group) => group.key);
+
   /** Show or hide one board column and persist the visibility map. */
   const setGroupVisible = (key: string, visible: boolean) => {
     const next: Record<string, boolean> = { ...groupVisibility };
     if (visible) delete next[key];
     else next[key] = false;
     onChange({ visibleGroups: next });
+  };
+
+  /**
+   * Move the group at `index` by `delta` places and persist the resulting
+   * option-id order. The trailing "No value" bucket never enters `groupOrder`,
+   * so it stays last however the user reorders.
+   */
+  const moveGroupOrder = (index: number, delta: number) => {
+    const target = index + delta;
+    if (target < 0 || target >= orderableIds.length) return;
+    const next = [...orderableIds];
+    const [moved] = next.splice(index, 1);
+    if (moved === undefined) return;
+    next.splice(target, 0, moved);
+    onChange({ groupOrder: next });
   };
 
   /** Set (or clear, on blank) one column's limit and persist the map. */
@@ -1197,6 +1307,21 @@ export function ViewSettings({
                 </button>
               </>
             )}
+            {/* Quick filter from a column header (R89.6): a per-view default so
+                a view can withhold the header entry point. Unset means on. */}
+            <label className="mt-2 flex items-center gap-2 border-t border-border pt-2 text-xs text-muted">
+              <input
+                type="checkbox"
+                data-testid="header-quick-filter"
+                checked={config.quickFilter !== false}
+                aria-label="Quick filter from column headers"
+                onChange={() =>
+                  onChange({ quickFilter: config.quickFilter === false })
+                }
+                className="accent-[var(--accent)]"
+              />
+              Quick filter from column headers
+            </label>
           </div>
         </PopoverContent>
       </Popover>
@@ -1233,6 +1358,22 @@ export function ViewSettings({
         </PopoverTrigger>
         <PopoverContent className="w-80">
           <div className="space-y-2">
+            {/* Conditional-formatting authoring entry (R89.5): rules are on by
+                default; a view can switch the entry off without discarding the
+                rules it saved. Unset means enabled. */}
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <input
+                type="checkbox"
+                data-testid="conditional-format-toggle"
+                checked={config.conditionalFormat !== false}
+                aria-label="Conditional formatting"
+                onChange={() =>
+                  onChange({ conditionalFormat: config.conditionalFormat === false })
+                }
+                className="accent-[var(--accent)]"
+              />
+              Conditional formatting
+            </label>
             {(config.colorRules?.length ?? 0) === 0 && (
               <p className="text-xs text-muted">No color rules — cards stay plain.</p>
             )}
@@ -1337,7 +1478,7 @@ export function ViewSettings({
             ))}
             <button
               type="button"
-              disabled={!defaultProperty}
+              disabled={!defaultProperty || config.conditionalFormat === false}
               onClick={() =>
                 onChange({
                   colorRules: [
@@ -1523,6 +1664,70 @@ export function ViewSettings({
               (swimlanes).
             </p>
           </div>
+          {/* Group aggregation (R89.4): the summary each group shows, in the
+              same aggregation vocabulary as the chart/footer. Owned here and
+              persisted as `groupAggregation`. */}
+          {groupBy && (
+            <div className="mt-3 border-t border-border pt-2">
+              <label className="mb-1 block text-xs text-muted" htmlFor="group-aggregation">
+                Summarize groups
+              </label>
+              <select
+                id="group-aggregation"
+                data-testid="group-aggregation"
+                value={groupAggregation}
+                onChange={(e) =>
+                  onChange({ groupAggregation: e.target.value || undefined })
+                }
+                className={cn(CONTROL_CLASS, "w-full")}
+              >
+                <option value="">None</option>
+                {AGGREGATION_FUNCTIONS.map((fn) => (
+                  <option key={fn.id} value={fn.id}>{fn.label}</option>
+                ))}
+              </select>
+              <p className="mt-2 text-xs text-muted">
+                The summary each group shows. “None” leaves the group a plain
+                count.
+              </p>
+            </div>
+          )}
+          {/* Group ordering (R89.3): reorder the buckets, persisted as the
+              view's `groupOrder` (option ids); "No value" always stays last. */}
+          {groupBy && orderableGroups.length > 0 && (
+            <div className="mt-3 border-t border-border pt-2">
+              <span className="mb-1 block text-xs text-muted">Order groups</span>
+              <ul className="space-y-1">
+                {orderableGroups.map((group, index) => (
+                  <li key={group.key} className="flex items-center gap-1">
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      {group.label}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Move ${group.label} up`}
+                      data-testid={`group-order-up-${group.key}`}
+                      disabled={index === 0}
+                      onClick={() => moveGroupOrder(index, -1)}
+                      className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
+                    >
+                      <span aria-hidden>↑</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Move ${group.label} down`}
+                      data-testid={`group-order-down-${group.key}`}
+                      disabled={index === orderableGroups.length - 1}
+                      onClick={() => moveGroupOrder(index, 1)}
+                      className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
+                    >
+                      <span aria-hidden>↓</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </PopoverContent>
       </Popover>
 
