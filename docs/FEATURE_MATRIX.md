@@ -60,7 +60,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
 | Columns (2/3/4/5) | Arrange blocks side by side. | 🟡 | Two-column layout works; add/remove columns UI missing. Spec: docs/specs/editor-deep.md (R84.1-R84.3; cap is 4 today — custom-blocks.tsx:240). |
-| Column resize | Drag the divider to change column width. | 🧭 | Planned with persisted widths. |
+| Column resize | Drag the divider to change column width. | 🟡 | Planned with persisted widths. |
 | Simple table block | Grid of rows and columns in a page. | 🟡 | Basic table; no header styling controls yet. Spec: docs/specs/editor-deep.md (R84.4-R84.6). |
 | Table header row/column | Designate header row/column. | 🟡 | Toggle exists in logic; styling minimal. Spec: docs/specs/editor-deep.md (R84.4-R84.6; in-table toolbar binds the unbound TableKit commands, th scope in the read-only renderer). |
 | Table cell colors | Background color for cells. | 🟡 | Planned. |
@@ -68,10 +68,10 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Table of contents | Auto-generated page outline with links. | 🟡 | Lists headings; scroll-spy navigation partial. Spec detail: docs/specs/editor-deep.md §5 (R84.16); live close: B96 (e2e/toc.spec.ts). |
 | Breadcrumb block | Shows the page's ancestor path. | 🟡 | Renders path; deep-tree linking rough. |
 | Synced block | Mirror one block's content in many places. | 🟡 | Planned via reference ids; editing propagation needs care. |
-| Synced block source marker | Visual marker of the canonical source. | 🧭 | Planned. |
-| Template button block | Reusable set of blocks inserted on click. | 🧭 | Planned; depends on template subsystem. |
+| Synced block source marker | Visual marker of the canonical source. | 🟡 | Planned. |
+| Template button block | Reusable set of blocks inserted on click. | 🟡 | Planned; depends on template subsystem. |
 | Button block | Interactive button triggering configured actions. | 🟡 | Planned; depends on automations. |
-| Ask-AI block | Prompt-driven AI block inside a page. | 🧭 | Planned; depends on AI layer and provider keys. |
+| Ask-AI block | Prompt-driven AI block inside a page. | 🟡 | Planned; depends on AI layer and provider keys. |
 | Two-column page property layout | Place properties side by side. | 🟡 | Planned with property panel rework. |
 
 ### Media blocks
@@ -87,7 +87,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | File block | Attach an arbitrary file for download. | 🟡 | Upload/download works; non-image uploads insert a download link, so preview types stay limited (no dedicated file node yet). |
 | Bookmark block | Rich link preview card. | ✅ | `/api/link-preview` returns OpenGraph metadata incl. `og:image` (SSRF-guarded, `safeImageUrl`), the card renders the thumbnail, and the read-only doc renderer now draws the full card (favicon, title, description, host, image); e2e at media-parity.spec.ts bookmark test. |
 | Embed block | Generic iframe embed by URL. | 🟡 | Config half shipped (B20): `EMBED_HOST_ALLOWLIST` + `isEmbedHostAllowed()` is the single gate over `detectEmbed()` (spec R84.15), provider meta drives iframe title/aspect/`allow`, and CSP `frame-src` mirrors the outputs. Still provider-only — no arbitrary-URL iframe and no `sandbox` attribute; UI half R84.13-R84.15 stays open. |
-| PDF preview block | Inline PDF viewer. | 🧭 | Planned; needs a viewer component. |
+| PDF preview block | Inline PDF viewer. | 🟡 | Planned; needs a viewer component. |
 | Map block | Embedded map for an address. | 🟡 | Planned; provider-agnostic embed. |
 | Twitter/X embed | Rich post embed. | 🟡 | Planned via oEmbed-style resolution. |
 | YouTube embed | Video embed by URL. | ✅ | Provider path: watch / youtu.be / shorts / live / embed / nocookie URLs canonicalise to `youtube.com/embed/<id>`, carrying `?start=` from `t` or `start` (parses `1m30s`, `1h`); the iframe gets the provider title, aspect ratio, `allow` list and a badge. |
@@ -101,12 +101,12 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
 | Inline database block | A database rendered inside a page. | 🟡 | Renders a collection view inline; view config incomplete. |
-| Linked view of a database | Re-display an existing database elsewhere. | 🧭 | Planned; requires stable view model. |
+| Linked view of a database | Re-display an existing database elsewhere. | 🟡 | Planned; requires stable view model. |
 | Page link mention | Inline link to another page. | 🟡 | `@` picker inserts a page link node. |
 | Block reference / mention | Inline reference to a specific block. | 🟡 | Planned; block-id resolution needed. |
 | Date mention | Inline date chip. | ✅ | Mention menu inserts weekday-style chips; `dateMention` supports short/long/weekday styles + explicit locale, id stays ISO (unit-tested). |
 | Person mention | Inline user chip. | 🟡 | Renders user; notifications on mention minimal. |
-| Synced/reference content | Reference that mirrors another block. | 🧭 | Shares machinery with synced blocks. |
+| Synced/reference content | Reference that mirrors another block. | 🟡 | Shares machinery with synced blocks. |
 | Unlinked mention | Detects the page name typed without a link. | ✅ | Planned as a backlink-discovery pass. |
 
 ### Block editing operations
@@ -175,10 +175,10 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Link title on hover | Show URL on hover. | 🟡 | Tooltip present; styling minimal. |
 | Highlight/background color | Marker-style background on text. | 🟡 | Background works; palette limited. |
 | Text color | Colored text spans. | 🟡 | Palette limited; some hues missing. |
-| Clear formatting | Reset marks on a range. | 🧭 | Planned as a keyboard action. |
+| Clear formatting | Reset marks on a range. | ✅ | Planned as a keyboard action. |
 | Inline math | LaTeX span inside text. | 🟡 | KaTeX renderer; inline edit rough. |
-| Subscript | Baseline-lowered text. | 🧭 | Planned if demand justifies. |
-| Superscript | Baseline-raised text. | 🧭 | Planned if demand justifies. |
+| Subscript | Baseline-lowered text. | ✅ | Planned if demand justifies. |
+| Superscript | Baseline-raised text. | ✅ | Planned if demand justifies. |
 | Small caps / all caps | Display transforms for text. | ⛔ | Rarely used in prose; not planned. |
 | Markdown shortcut detection | Live conversion of typed syntax. | ✅ | Live conversion covered by the pure shortcut matcher (heading, lists incl. `1)`, quote, fence, checkboxes, `~~`, `==`, `---`, pipe tables on Enter) plus the `:emoji:` rule; core triggers + new rules asserted in `e2e/editor-extras.spec.ts`. |
 | Formatting toolbar | Selection bubble toolbar. | ✅ | Appears on selection. |
@@ -200,7 +200,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | List view | Compact single-line list. | ✅ | Planned. Renderer landed (B15); grouped/compact depth spec'd: docs/specs/database-deep.md (R89.8). |
 | Gallery view | Card grid with previews. | ✅ | Planned. Card grid + first-image banner landed (B15); cover/content-preview depth spec'd: docs/specs/database-deep.md (R89.9). |
 | Calendar view | Rows on a month/week calendar. | 🟡 | Planned; needs date property engine. Month grid landed but single-day only (B15); week scale + multi-day spans + date-property picker spec'd: docs/specs/database-deep.md (R89.10). |
-| Timeline view | Rows on a horizontal time axis. | 🧭 | Planned. Static bars landed (B15, fixed window); zoom/drag/dates spec'd: docs/specs/database-deep.md (R89.11). |
+| Timeline view | Rows on a horizontal time axis. | 🟡 | Planned. Static bars landed (B15, fixed window); zoom/drag/dates spec'd: docs/specs/database-deep.md (R89.11). |
 | Chart view | Aggregate charts over the database. | 🟡 | Planned; aggregation dependency. Count-only bars landed (B15); chart type/measure/group-by over ROLLUP_FUNCTIONS spec'd: docs/specs/database-deep.md (R89.12). |
 | Form view | Public/Internal form that creates rows. | 🟡 | Planned. No ViewType.FORM exists yet; builder + submit path spec'd: docs/specs/database-deep.md (R89.29). |
 | View tabs | Multiple named views per database. | ✅ | Tabs switch views, the active tab is remembered per database across reloads, and each tab keeps its own configuration. e2e: *keeps the active view tab across a reload*. |
@@ -231,17 +231,17 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | --- | --- | --- | --- |
 | Row properties panel | Edit properties for a row. | ✅ | Side peek lists one labelled row per property (type icon + name) with inline editors; primary title edits rename the row, computed values (formula, rollup, system) stay read-only. e2e: *edits a row property from the side peek panel*. |
 | Open row as page | Full-page row view. | 🟡 | Route, editor blocks and comments work, and the table/peek offer one-click *Open as page*; a properties strip + back-to-database breadcrumb on the row page needs `app/w/[slug]/[pageId]/page.tsx`, outside B15's ownership (queued for the page-route batch). |
-| Open row in side peek | Preview row in a side drawer. | 🧭 | Planned; needs drawer shell. Spec: docs/specs/navigation-ux.md. |
+| Open row in side peek | Preview row in a side drawer. | 🟡 | Planned; needs drawer shell. Spec: docs/specs/navigation-ux.md. |
 | Inline database | Database embedded in a page body. | 🟡 | Renders through the editor's linked-database node view; its height/scroll shell lives in `src/components/editor/**` (editor slot), so the scroll fix is queued there rather than patched from B15. |
 | Full-page database | Database as its own page. | ✅ | One toolbar above the table: view tabs + per-view menu (rename / duplicate / change type), Filter, Sort, Group, Colour and Properties controls, New row, Templates, New property, Deleted rows, Export/Import CSV and a live row count. |
-| Linked database | Reuse a database elsewhere. | 🧭 | Planned; requires view identity model. Read-only node exists (linked-database.tsx, attrs = databasePageId only); view identity, per-instance overrides and synced mode spec'd: docs/specs/database-deep.md (R89.14, R89.15). |
+| Linked database | Reuse a database elsewhere. | 🟡 | Planned; requires view identity model. Read-only node exists (linked-database.tsx, attrs = databasePageId only); view identity, per-instance overrides and synced mode spec'd: docs/specs/database-deep.md (R89.14, R89.15). |
 | Load limit / row pagination | Limit rows shown per view. | ✅ | The ticket tracker loads **100 rows per page** with keyset pagination (`getTicketsPage` + `loadMoreTicketsAction`) and a *Load more* control that disappears at the end; an e2e with 120 tickets proves no row is repeated or dropped. Databases load a bounded set. |
 | Show/hide properties | Choose visible columns. | ✅ | The Properties menu toggles columns per view (primary column pinned, hidden count shown) and the list is stored in the view config, so the same columns come back after a reload. e2e: *persists show/hide properties and filters across a reload* + `visibleColumns` unit tests. |
 | Freeze columns | Pin leading columns while scrolling. | ✅ | First column pinned with `position: sticky` while the table scrolls horizontally — on by default and toggled per view from the Properties menu (multi-column pinning not offered). e2e asserts the sticky header after reload. |
 | Row reordering | Drag rows in a view order. | ✅ | Planned with manual order property. Page.position already orders rows (queries.ts:155-157); drag UI + moveRowAction spec'd: docs/specs/database-deep.md (R89.19). |
 | Column resize/reorder | Resize and reorder columns. | 🟡 | Planned. Per-view width/order in view config spec'd: docs/specs/database-deep.md (R89.13). |
 | Calculations/footer | Aggregations under columns. | 🟡 | Planned (count, sum, average, etc.). Spec'd over rollup ROLLUP_FUNCTIONS: docs/specs/database-deep.md (R89.4). |
-| Database description | Intro text above a database. | 🧭 | Planned. Page.description column + toolbar editor spec'd: docs/specs/database-deep.md (R89.21). |
+| Database description | Intro text above a database. | ✅ | Planned. Page.description column + toolbar editor spec'd: docs/specs/database-deep.md (R89.21). |
 | Database lock | Prevent schema edits. | 🟡 | Planned; depends on permissions. Database-scoped capability split (readRows/editRows/editSchema) + schemaLocked flag spec'd: docs/specs/database-deep.md (R89.23, R89.24). |
 | Delete/restore rows | Trash and recover rows. | ✅ | Deleting a row moves it to the workspace trash (soft delete, `deletedAt`) instead of destroying it; a *Deleted rows* panel in the database toolbar lists and restores rows inline. e2e: *restores a deleted row from the Deleted rows panel* (asserts `deletedAt` cleared). |
 | Duplicate database | Copy a database with structure. | ✅ | Planned. Atomic structure copy (properties/views/templates, optional rows) spec'd: docs/specs/database-deep.md (R89.22). |
@@ -260,8 +260,8 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Database templates | Pre-filled row templates. | 🟡 | Planned. Minimal CRUD shipped (save row as template / instantiate / recurrence, database.ts:464-588); depth (default, preview, edit) integration spec'd: docs/specs/database-deep.md (R89.16) with docs/specs/templates.md (R31.x). |
 | Default template | Auto-apply a template to new rows. | 🟡 | Planned. Flag + semantics owned by docs/specs/templates.md (R31.13); createRowAction application + New-row split button spec'd: docs/specs/database-deep.md (R89.16). |
 | Recurring templates | Create rows on a schedule. | 🟡 | Planned; depends on a scheduler. Core (resolver/nextRun/cron driver) owned by docs/specs/templates.md (R31.18-R31.23); database-side surfacing + system-actor materialization spec'd: docs/specs/database-deep.md (R89.17). |
-| CSV import | Import rows from CSV. | 🧭 | Planned; header mapping UI. Mapping step + create-database import owned by docs/specs/import-export.md (R23.1, R23.2); database-toolbar wiring spec'd: docs/specs/database-deep.md (R89.20). |
-| CSV export | Export rows to CSV. | 🧭 | Planned. Toolbar entry + GET /api/export/database/:id already exist; round-trip contract owned by docs/specs/import-export.md (R23.5); wiring spec'd: docs/specs/database-deep.md (R89.20). |
+| CSV import | Import rows from CSV. | ✅ | Planned; header mapping UI. Mapping step + create-database import owned by docs/specs/import-export.md (R23.1, R23.2); database-toolbar wiring spec'd: docs/specs/database-deep.md (R89.20). |
+| CSV export | Export rows to CSV. | ✅ | Planned. Toolbar entry + GET /api/export/database/:id already exist; round-trip contract owned by docs/specs/import-export.md (R23.5); wiring spec'd: docs/specs/database-deep.md (R89.20). |
 | Unique ID property | Human-readable per-row id. | 🟡 | Planned; see Properties. Today derived as row.id.slice(-8) (database-view.tsx:424); monotonic Property.seq + prefix/pad spec'd: docs/specs/database-deep.md (R89.25). |
 
 ## 4. Properties
@@ -278,30 +278,30 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Status groups | To-do / In-progress / Complete buckets. | ✅ | Drives board columns; ungrouped/empty rows fall to No value. |
 | Date property | A single date. | ✅ | Stored; ISO (default) or friendly ("9 May 2026") display format per column. |
 | Date range | Start and end date. | 🟡 | Planned. |
-| Date reminders | Notify at a chosen time. | 🧭 | Planned; depends on scheduler. |
-| Date time zone | Time-zone-aware timestamps. | 🧭 | Planned; store as UTC + zone. |
+| Date reminders | Notify at a chosen time. | 🟡 | Planned; depends on scheduler. |
+| Date time zone | Time-zone-aware timestamps. | ✅ | Planned; store as UTC + zone. |
 | Person/people property | Assign workspace members. | ✅ | Multi-user picker of workspace members; chips in selection order, removable. |
 | Files & media property | Attach files to a row. | ✅ | Attach from the cell (upload API), file links in the table, image preview in Gallery. |
 | Checkbox property | Boolean toggle. | ✅ | Toggle works. |
 | URL property | Link value. | ✅ | Stored; click-to-open. |
 | Email property | Email value. | ✅ | Stored; `mailto:` link. |
 | Phone property | Phone number value. | ✅ | Stored; `tel:` link. |
-| Formula property | Computed value from an expression. | 🧭 | Planned; see Formulas. |
-| Relation property | Link rows across databases. | 🧭 | Planned. Spec: docs/specs/relations-rollups.md. |
-| Relation (single) | One linked row. | 🧭 | Planned. Spec: docs/specs/relations-rollups.md. |
-| Relation (multi) | Many linked rows. | 🧭 | Planned. Spec: docs/specs/relations-rollups.md. |
-| Two-way relation | Reciprocal relation property. | 🧭 | Planned; requires pair metadata. Spec: docs/specs/relations-rollups.md. |
-| Rollup property | Aggregate across a relation. | 🧭 | Planned; depends on relations. Spec: docs/specs/relations-rollups.md. |
-| Rollup functions | Count, sum, average, min/max, join, etc. | 🧭 | Planned function set. Spec: docs/specs/relations-rollups.md. |
+| Formula property | Computed value from an expression. | ✅ | Planned; see Formulas. |
+| Relation property | Link rows across databases. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
+| Relation (single) | One linked row. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
+| Relation (multi) | Many linked rows. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
+| Two-way relation | Reciprocal relation property. | 🟡 | Planned; requires pair metadata. Spec: docs/specs/relations-rollups.md. |
+| Rollup property | Aggregate across a relation. | 🟡 | Planned; depends on relations. Spec: docs/specs/relations-rollups.md. |
+| Rollup functions | Count, sum, average, min/max, join, etc. | 🟡 | Planned function set. Spec: docs/specs/relations-rollups.md. |
 | Created time | Row creation timestamp. | ✅ | Stored automatically; surfaced in table, side peek, board cards and gallery. |
 | Created by | Row creator. | ✅ | Stored; surfaced with the same coverage as Created time. |
 | Last edited time | Last modification timestamp. | ✅ | Stored (updatedAt); surfaced with the same coverage as Created time. |
 | Last edited by | Last editor. | 🟡 | Tracked from property/table edits via the activity log (falls back to creator); content/title edits outside the database view not yet recorded. |
 | Unique ID property | Monotonic per-database id. | 🟡 | Planned. |
-| Button property | Trigger actions from a row. | 🧭 | Planned. |
-| Place/location property | Address with map preview. | 🧭 | Planned. |
-| Verification property | Verified-by-owner marker. | 🧭 | Planned; wiki-oriented. |
-| AI autofill property | AI-generated value per row. | 🧭 | Planned; depends on AI layer. |
+| Button property | Trigger actions from a row. | 🟡 | Planned. |
+| Place/location property | Address with map preview. | 🟡 | Planned. |
+| Verification property | Verified-by-owner marker. | 🟡 | Planned; wiki-oriented. |
+| AI autofill property | AI-generated value per row. | 🟡 | Planned; depends on AI layer. |
 | Property reorder/hide | Arrange and hide properties. | ✅ | Hide per view; drag a column header onto another to reorder — positions persist server-side. |
 | Property delete | Remove a property and its data. | ✅ | Confirmation dialog names the property and warns about its values before deleting. |
 | Property type change | Convert a property's type. | ⛔ | Lossy conversions; only safe transforms planned later. |
@@ -311,20 +311,20 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Formula editor | Author expressions with autocomplete. | 🧭 | Planned; expression parser first. Spec: docs/specs/formula-engine.md. |
-| Arithmetic operators | `+ - * / %` and precedence. | 🧭 | Planned. Spec: docs/specs/formula-engine.md. |
-| Comparison operators | `== != < <= > >=`. | 🧭 | Planned. Spec: docs/specs/formula-engine.md. |
-| Boolean operators | `and`, `or`, `not`. | 🧭 | Planned. Spec: docs/specs/formula-engine.md. |
-| Property references | Reference other properties by name. | 🧭 | Planned. Spec: docs/specs/formula-engine.md. |
-| Math functions | `abs`, `round`, `ceil`, `floor`, `min`, `max`, etc. | 🧭 | Planned function library. Spec: docs/specs/formula-engine.md. |
-| Text functions | `concat`, `length`, `slice`, `replace`, `lower`, `upper`, etc. | 🧭 | Planned. Spec: docs/specs/formula-engine.md. |
-| Logic functions | `if`, `ifs`, `and`/`or` helpers. | 🧭 | Planned. Spec: docs/specs/formula-engine.md. |
-| Date functions | `now`, `dateAdd`, `dateBetween`, `formatDate`, etc. | 🧭 | Planned. Spec: docs/specs/formula-engine.md. |
-| List functions | `map`, `filter`, `sort`, `join`, `length`. | 🧭 | Planned; depends on rollups. Spec: docs/specs/formula-engine.md. |
-| Regex functions | `match`, `replace` with patterns. | 🧭 | Planned; sandboxed engine. Spec: docs/specs/formula-engine.md. |
-| Regex extraction | Capture groups into values. | 🧭 | Planned. Spec: docs/specs/formula-engine.md. |
-| Rollups in formulas | Reference rollup results. | 🧭 | Planned; ordering dependency. Spec: docs/specs/formula-engine.md. |
-| Formula error states | Friendly errors for bad expressions. | 🧭 | Planned. Spec: docs/specs/formula-engine.md. |
+| Formula editor | Author expressions with autocomplete. | 🟡 | Planned; expression parser first. Spec: docs/specs/formula-engine.md. |
+| Arithmetic operators | `+ - * / %` and precedence. | ✅ | Planned. Spec: docs/specs/formula-engine.md. |
+| Comparison operators | `== != < <= > >=`. | ✅ | Planned. Spec: docs/specs/formula-engine.md. |
+| Boolean operators | `and`, `or`, `not`. | ✅ | Planned. Spec: docs/specs/formula-engine.md. |
+| Property references | Reference other properties by name. | ✅ | Planned. Spec: docs/specs/formula-engine.md. |
+| Math functions | `abs`, `round`, `ceil`, `floor`, `min`, `max`, etc. | ✅ | Planned function library. Spec: docs/specs/formula-engine.md. |
+| Text functions | `concat`, `length`, `slice`, `replace`, `lower`, `upper`, etc. | ✅ | Planned. Spec: docs/specs/formula-engine.md. |
+| Logic functions | `if`, `ifs`, `and`/`or` helpers. | ✅ | Planned. Spec: docs/specs/formula-engine.md. |
+| Date functions | `now`, `dateAdd`, `dateBetween`, `formatDate`, etc. | ✅ | Planned. Spec: docs/specs/formula-engine.md. |
+| List functions | `map`, `filter`, `sort`, `join`, `length`. | ✅ | Planned; depends on rollups. Spec: docs/specs/formula-engine.md. |
+| Regex functions | `match`, `replace` with patterns. | ✅ | Planned; sandboxed engine. Spec: docs/specs/formula-engine.md. |
+| Regex extraction | Capture groups into values. | 🟡 | Planned. Spec: docs/specs/formula-engine.md. |
+| Rollups in formulas | Reference rollup results. | 🟡 | Planned; ordering dependency. Spec: docs/specs/formula-engine.md. |
+| Formula error states | Friendly errors for bad expressions. | ✅ | Planned. Spec: docs/specs/formula-engine.md. |
 | Formula result caching | Recompute efficiently on change. | 🧭 | Planned; dependency graph. Spec: docs/specs/formula-engine.md. |
 | Named constants | Reuse of workspace-level values. | 🧭 | Planned nicety. Spec: docs/specs/formula-engine.md. |
 
@@ -336,12 +336,12 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Page templates | Duplicate a page for reuse. | 🟡 | Duplicate-page works; gallery UI missing. Spec: docs/specs/templates.md. |
 | Template gallery | Browse workspace templates. | ✅ | Home gallery: empty page/database + 6 workflow templates with previews and “Other templates”. |
 | Database templates | Pre-filled rows from a template. | 🟡 | Planned. Spec: docs/specs/templates.md. |
-| Template button | Insert template content in a page. | 🧭 | Planned. Spec: docs/specs/templates.md. |
+| Template button | Insert template content in a page. | 🟡 | Planned. Spec: docs/specs/templates.md. |
 | Default template | Auto-apply to new rows. | 🟡 | Planned. Spec: docs/specs/templates.md. |
 | Recurring templates | Scheduled row creation. | 🟡 | Planned; needs scheduler. Spec: docs/specs/templates.md. |
-| Save page as template | Convert a page into a template. | 🧭 | Planned. Spec: docs/specs/templates.md. |
+| Save page as template | Convert a page into a template. | ✅ | Planned. Spec: docs/specs/templates.md. |
 | Template duplication | Clone a template into a page. | 🟡 | Planned. Spec: docs/specs/templates.md. |
-| Template locking | Keep templates read-only. | 🧭 | Planned. Spec: docs/specs/templates.md. |
+| Template locking | Keep templates read-only. | 🟡 | Planned. Spec: docs/specs/templates.md. |
 | Template from selection | Turn a block selection into a template. | ⛔ | Uncommon flow; skip initially. B80 blocked-row triage: docs/specs/templates.md:308 + docs/specs/workspaces-structure.md §4 (editor-slot dependency). |
 
 ## 7. Collaboration
@@ -352,7 +352,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Real-time multiplayer editing | Multiple users edit simultaneously. | 🧭 | Planned; local-first CRDT then sync. Spec: docs/specs/realtime-collab.md. |
 | CRDT data model | Conflict-free replicated structures. | 🧭 | Planned (automerge/Yjs-style). Spec: docs/specs/realtime-collab.md. |
 | Presence | See who is viewing a page. | 🟡 | Planned. |
-| Live cursors | Remote carets and selections. | 🧭 | Planned; needs presence transport. |
+| Live cursors | Remote carets and selections. | 🟡 | Planned; needs presence transport. |
 | Avatars | Per-user avatars in the UI. | 🟡 | Avatar field exists; presence UI pending. |
 | Page comments | Comment threads on a page. | 🟡 | Data model basic; UI minimal. B79 audit: threads/resolve/reactions/mentions all live; deepest gaps are server-side depth validation, block anchors and dispatch scoping (see rows below). Spec: docs/specs/collaboration-deep.md. |
 | Inline comments | Comments anchored to a text range. | ✅ | Selecting text and commenting stores the quote (`blockId` + `quote`) and renders it above the thread. B79 audit: quote-only in practice — both entry points dispatch `{ quote }` only (`bubble-toolbar.tsx:276`, `block-context-menu.tsx:348`), the panel never forwards `blockId` and no stable block id exists, so `Comment.blockId` stays NULL; no scroll-to-block, no notification deep link. R79.3. |
@@ -367,14 +367,14 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Comment reactions | Emoji reactions on comments. | ✅ | 👍🎉❤️😄🙌👀❓ picker with optimistic chips, per-user counts and a `CommentReaction` row per person. B79 audit: reply reactions are accepted by the action and computed at render (`page.tsx:106`) but `CommentNode.replies` has no `reactions` field, so chips never show on replies. R79.2a. |
 | Comment mentions | Mention people in comments. | ✅ | `@Name`, `@first`, `@ada@example.com` notify matching workspace members (`page.mention`); matching is a tested pure helper. B79 audit: dispatch runs only in `addCommentAction` (edits never notify), targets are every `workspaceMember` with no page-visibility check (guests/revoked members get a payload leaking `pageId`), no coalescing, and inline `@user` nodes in page content dispatch nothing. R79.4. |
 | Suggestions mode | Propose edits for approval. | ✅ | Planned; diff overlay needed. |
-| Accept/reject suggestion | Resolve proposed changes. | 🧭 | Planned. |
-| Following pages | Follow a page for updates. | 🧭 | Planned. B79 audit: the page-follow bell already ships (row state from `PageFollow` via `page-title.tsx:338-356`, toggle `pages.ts:463-481`, read `page.tsx:58-61`) but no mutation ever consults `PageFollow` — following dispatches zero notifications (see Notification inbox). R79.5. |
+| Accept/reject suggestion | Resolve proposed changes. | ✅ | Planned. |
+| Following pages | Follow a page for updates. | 🟡 | Planned. B79 audit: the page-follow bell already ships (row state from `PageFollow` via `page-title.tsx:338-356`, toggle `pages.ts:463-481`, read `page.tsx:58-61`) but no mutation ever consults `PageFollow` — following dispatches zero notifications (see Notification inbox). R79.5. |
 | Notification inbox | Central list of notifications. | ✅ | Planned. B79 audit: route already exists at `/w/<slug>/inbox` (`inbox/page.tsx:17-99`, newest-first `take 50`, unread dot, sidebar badge) fed by `comment.reply`/`page.mention`; the `page.shared` label has no writer, labels are hardcoded English, and links stop at the page (no `commentId`/anchor). Glyph left as-is per append-only rule — orchestrator re-baseline candidate (O79.5). R79.3e, R79.4f-g. B82 spec `docs/specs/notifications.md` owns delivery: rows gain `workspaceId`/`actorId`/payload actor+title (D2/D9), inbox gets workspace filter + cursor paging + `t()` labels (D3), badge semantics frozen — R82.2, R82.21-R82.26. |
-| Notification preferences | Control what triggers alerts. | 🧭 | Planned. B82 spec `docs/specs/notifications.md`: `NotificationPreference` rows resolved page → workspace → user default, gate enforced inside the dispatcher itself (`none` cannot be bypassed, `always`-class exceptions documented) — R82.15-R82.20. |
-| Lock editing | Freeze a page while editing. | 🧭 | Planned; permission-linked. |
+| Notification preferences | Control what triggers alerts. | ✅ | Planned. B82 spec `docs/specs/notifications.md`: `NotificationPreference` rows resolved page → workspace → user default, gate enforced inside the dispatcher itself (`none` cannot be bypassed, `always`-class exceptions documented) — R82.15-R82.20. |
+| Lock editing | Freeze a page while editing. | ✅ | Planned; permission-linked. |
 | Activity trail (audit log) | Who changed what, workspace-wide. | ✅ | The `Activity` model is written by workspace, member, page, share and comment mutations and rendered in Settings → Activity with human labels. B79 audit: comment coverage stops at creation — resolve/edit/delete log nothing (`comment.resolved` union member has zero writers), `row.edited` writes directly outside the `ActivityAction` union (`database.ts:206-215`), and `ACTIVITY_KEYS` (`settings/page.tsx:41-54`) is missing entries for several union members. R79.6. |
 | Guests | Limited external collaborators. | ✅ | A `GUEST` is scoped to the pages shared with them: the sidebar tree, search results and **the page route itself** all filter through `guestVisiblePageIds` (explicit `PagePermission`, their teamspaces, their own pages, plus ancestors so the tree still renders). Guests cannot edit, invite or upload. Proven by an e2e that signs in as a guest: the shared page opens, the private one is a 404 and never appears in search. |
-| Coarse edit locks | Prevent simultaneous structural edits. | 🧭 | Planned fallback before full CRDT. |
+| Coarse edit locks | Prevent simultaneous structural edits. | 🟡 | Planned fallback before full CRDT. |
 
 ## 8. Sharing & permissions
 <!-- AREA: 8. Sharing & permissions -->
@@ -385,68 +385,68 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Owner role | Full control of the workspace. | 🟡 | Modeled; transfer flows missing. |
 | Admin role | Manage members and settings. | 🟡 | Modeled; UI partial. |
 | Member role | Standard collaborator. | ✅ | Default role enforced. |
-| Guest role | Limited-scope collaborator. | 🧭 | Planned. |
+| Guest role | Limited-scope collaborator. | ✅ | Planned. |
 | Page sharing | Grant a user access to a page. | 🟡 | Basic share record; UI minimal. |
-| Public web link | Share a page publicly. | 🧭 | Planned; local-first tension to resolve. |
-| Password-protected link | Require a password for shared pages. | 🧭 | Planned. |
-| Link expiration | Time-limit a share link. | 🧭 | Planned. |
-| Share to web | Publish a page to the web. | 🧭 | Planned; opt-in per page. |
-| Per-page permissions | Independent access per page. | 🧭 | Planned; inheritance model needed. |
+| Public web link | Share a page publicly. | ✅ | Planned; local-first tension to resolve. |
+| Password-protected link | Require a password for shared pages. | ✅ | Planned. |
+| Link expiration | Time-limit a share link. | ✅ | Planned. |
+| Share to web | Publish a page to the web. | ✅ | Planned; opt-in per page. |
+| Per-page permissions | Independent access per page. | ✅ | Planned; inheritance model needed. |
 | Teamspace/wiki | Shared space for a group. | ✅ | Teamspace + membership; root pages grouped in the sidebar. |
 | Allow editing toggle | Choose edit vs read-only shares. | 🟡 | Planned. |
-| Allow comments toggle | Permit comments on shares. | 🧭 | Planned. |
-| Allow duplicate toggle | Let viewers copy the page. | 🧭 | Planned. |
-| Search-engine indexing toggle | Allow crawlers on public pages. | 🧭 | Planned. |
-| Publish to web | Public rendering route. | 🧭 | Planned. |
-| Transfer page ownership | Hand a page to another user. | 🧭 | Planned. |
-| Move pages across workspaces | Relocate content between workspaces. | 🧭 | Planned; id-remap complexity. |
-| Export-restricted pages | Disable export for sensitive pages. | 🧭 | Planned. |
-| Permission inheritance | Child pages inherit parent access. | 🧭 | Planned. |
-| Access audit view | See who can access a page. | 🧭 | Planned. |
+| Allow comments toggle | Permit comments on shares. | ✅ | Planned. |
+| Allow duplicate toggle | Let viewers copy the page. | 🟡 | Planned. |
+| Search-engine indexing toggle | Allow crawlers on public pages. | 🟡 | Planned. |
+| Publish to web | Public rendering route. | ✅ | Planned. |
+| Transfer page ownership | Hand a page to another user. | ✅ | Planned. |
+| Move pages across workspaces | Relocate content between workspaces. | 🟡 | Planned; id-remap complexity. |
+| Export-restricted pages | Disable export for sensitive pages. | 🟡 | Planned. |
+| Permission inheritance | Child pages inherit parent access. | ✅ | Planned. |
+| Access audit view | See who can access a page. | ✅ | Planned. |
 
 ## 9. Workspaces & structure
 <!-- AREA: 9. Workspaces & structure -->
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Multiple workspaces | Belong to several workspaces. | 🧭 | Planned; single-workspace first. B80 audit: the data path already exists (`getUserWorkspaces` + create, `src/app/app/page.tsx:10-17`) — glyph to reconcile (orchestrator). Spec: docs/specs/workspaces-structure.md. |
-| Workspace switcher | Move between workspaces. | 🧭 | Planned. B80 audit: ships (`src/components/sidebar.tsx:119-125`, `sidebar/workspace-switcher.tsx`); gaps are organizational, not existence. Spec: docs/specs/workspaces-structure.md. |
+| Multiple workspaces | Belong to several workspaces. | ✅ | Planned; single-workspace first. B80 audit: the data path already exists (`getUserWorkspaces` + create, `src/app/app/page.tsx:10-17`) — glyph to reconcile (orchestrator). Spec: docs/specs/workspaces-structure.md. |
+| Workspace switcher | Move between workspaces. | ✅ | Planned. B80 audit: ships (`src/components/sidebar.tsx:119-125`, `sidebar/workspace-switcher.tsx`); gaps are organizational, not existence. Spec: docs/specs/workspaces-structure.md. |
 | Sidebar | Primary navigation rail. | ✅ | Home/Chat/Meetings tabs, search, Library, Teamspaces, Private pages, Add, Customize, footer help. |
 | Sidebar sections | Grouped nav areas. | ✅ | Library, Teamspaces, Private pages, Add — each a distinct section. |
 | Library | Browse every page and database. | ✅ | `/w/<slug>/library` grid, grouped into databases and pages. |
 | Teamspaces | Shared sub-workspaces. | ✅ | Create/delete, member toggles, **email invitations** (sent over your own SMTP; instant for existing members, hashed single-use links otherwise), sidebar sections, per-page assignment. B80: teamspace-vs-space semantics + invite lifecycle audited — docs/specs/workspaces-structure.md. |
 | Page tree | Hierarchical page nesting. | 🟡 | Nesting works; B66 extracted the pure logic (flatten/group/expand/moveCandidates) to `src/lib/page-tree.ts` with 22 unit tests over a synthetic 1000-node tree — cycle guard, expand-state invariants, perf smoke (render plan 0.6 ms median ≪ 100 ms). React DOM render at 1000 nodes still unmeasured (no e2e by design). B80: bulk move + `movePageAction` containment guards specced (R80.7/R80.8) — docs/specs/workspaces-structure.md. |
 | Favorites | Pinned pages section. | ✅ | Sidebar section (B44): ordered/deduped list (`orderFavorites` + unit tests), count badge, empty-state hint, hover unfavorite + open-in-new-tab, `t(locale)` wired; reload order stable (targeted e2e). |
-| Recent pages | Recently visited list. | 🧭 | Planned. B80: no visit source modeled (0 hits for `visitedAt`/`PageVisit`); server-side recency is R80.11 (schema, M3). Spec: docs/specs/workspaces-structure.md. |
+| Recent pages | Recently visited list. | ✅ | Planned. B80: no visit source modeled (0 hits for `visitedAt`/`PageVisit`); server-side recency is R80.11 (schema, M3). Spec: docs/specs/workspaces-structure.md. |
 | Search entry point | Sidebar search. | ✅ | Sidebar search opening quick find, with the Ctrl K hint. |
 | Trash / recently deleted | Deleted pages list. | 🟡 | Soft delete exists; trash UI partial. |
 | Restore from trash | Undo a deletion. | 🟡 | Planned. |
 | Permanent delete | Permanently remove an item. | 🟡 | Planned; purge job needed. |
-| Quick find | Ctrl/Cmd+P page switcher. | 🧭 | Planned. B80 audit: implemented and guest-scoped (`src/components/quick-find.tsx`, `search.ts:20-36`, sidebar `Ctrl K` at `sidebar.tsx:126-136`) — glyph stale, orchestrator to reconcile. Spec: docs/specs/workspaces-structure.md. |
-| Backlinks | Pages linking to this page. | 🧭 | Planned; derived from page mentions. B80 audit: ships (`getBacklinks` `src/server/queries.ts:369-389`) but the page route omits guest scoping (`[pageId]/page.tsx:56`) — R80.12. Spec: docs/specs/workspaces-structure.md. |
-| Linked references | Grouped backlink list with context. | 🧭 | Planned. B80 audit: panel renders (`src/components/backlinks.tsx`, `page.tsx:213`); grouping/context thin, glyph to reconcile. Spec: docs/specs/workspaces-structure.md. |
-| Page history | See per-page versions. | 🧭 | Planned; see Version history. Owner spec: docs/specs/version-history-v2.md (§10 rows) — B80 cross-ref only. |
+| Quick find | Ctrl/Cmd+P page switcher. | ✅ | Planned. B80 audit: implemented and guest-scoped (`src/components/quick-find.tsx`, `search.ts:20-36`, sidebar `Ctrl K` at `sidebar.tsx:126-136`) — glyph stale, orchestrator to reconcile. Spec: docs/specs/workspaces-structure.md. |
+| Backlinks | Pages linking to this page. | ✅ | Planned; derived from page mentions. B80 audit: ships (`getBacklinks` `src/server/queries.ts:369-389`) but the page route omits guest scoping (`[pageId]/page.tsx:56`) — R80.12. Spec: docs/specs/workspaces-structure.md. |
+| Linked references | Grouped backlink list with context. | ✅ | Planned. B80 audit: panel renders (`src/components/backlinks.tsx`, `page.tsx:213`); grouping/context thin, glyph to reconcile. Spec: docs/specs/workspaces-structure.md. |
+| Page history | See per-page versions. | ✅ | Planned; see Version history. Owner spec: docs/specs/version-history-v2.md (§10 rows) — B80 cross-ref only. |
 | Sidebar collapse | Collapse the sidebar. | 🟡 | Toggle works. |
-| Page favorites reorder | Reorder favorites. | 🧭 | Planned. |
+| Page favorites reorder | Reorder favorites. | ✅ | Planned. |
 | Duplicate page | Clone a page with children. | 🟡 | Works; relation remap partial. B80 audit: copies the single page only — no children walk (`src/server/actions/page-menu.ts:229-281`); subtree clone is R80.10. Spec: docs/specs/workspaces-structure.md. |
-| Move page | Reparent a page in the tree. | 🧭 | Planned. B80 audit: shipped (`movePageAction` `src/server/actions/pages.ts:285-323`; UI `sidebar/page-tree.tsx:373`, `page-title.tsx:204`) and duplicates §7 "Page re-parenting" — glyph to reconcile (orchestrator). Spec: docs/specs/workspaces-structure.md. |
-| Workspace settings | Members, billing, security. | 🧭 | Planned. B80 audit: settings shell ships (members/teamspaces/security/activity in `settings/page.tsx`); billing belongs to docs/specs/plans-licensing.md. Spec: docs/specs/workspaces-structure.md. |
-| Trash retention policy | How long trash is kept. | 🧭 | Planned; see platform. |
+| Move page | Reparent a page in the tree. | ✅ | Planned. B80 audit: shipped (`movePageAction` `src/server/actions/pages.ts:285-323`; UI `sidebar/page-tree.tsx:373`, `page-title.tsx:204`) and duplicates §7 "Page re-parenting" — glyph to reconcile (orchestrator). Spec: docs/specs/workspaces-structure.md. |
+| Workspace settings | Members, billing, security. | ✅ | Planned. B80 audit: settings shell ships (members/teamspaces/security/activity in `settings/page.tsx`); billing belongs to docs/specs/plans-licensing.md. Spec: docs/specs/workspaces-structure.md. |
+| Trash retention policy | How long trash is kept. | 🟡 | Planned; see platform. |
 
 ## 10. Version history
 <!-- AREA: 10. Version history -->
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Per-page history | List of prior versions. | 🧭 | Planned; snapshot store first. Spec: docs/specs/version-history-v2.md. |
-| Restore version | Revert a page to a version. | 🧭 | Planned. Spec: docs/specs/version-history-v2.md. |
-| Version diff | Show changes between versions. | 🧭 | Planned; block-level diff. Spec: docs/specs/version-history-v2.md. |
-| Named versions | Label a saved point. | 🧭 | Planned. Spec: docs/specs/version-history-v2.md. |
-| Auto-snapshot cadence | Periodic version capture. | 🧭 | Planned. Spec: docs/specs/version-history-v2.md. |
-| Retention window | How long versions persist. | 🧭 | Planned; configurable. Spec: docs/specs/version-history-v2.md. |
-| Version authorship | Who made each version. | 🧭 | Planned. Spec: docs/specs/version-history-v2.md. |
-| Trash recovery window | Restore window for deleted pages. | 🧭 | Planned. Spec: docs/specs/version-history-v2.md. |
-| Block-level attribution | Which block changed. | 🧭 | Planned; CRDT history dependency. Spec: docs/specs/version-history-v2.md. |
+| Per-page history | List of prior versions. | ✅ | Planned; snapshot store first. Spec: docs/specs/version-history-v2.md. |
+| Restore version | Revert a page to a version. | ✅ | Planned. Spec: docs/specs/version-history-v2.md. |
+| Version diff | Show changes between versions. | ✅ | Planned; block-level diff. Spec: docs/specs/version-history-v2.md. |
+| Named versions | Label a saved point. | ✅ | Planned. Spec: docs/specs/version-history-v2.md. |
+| Auto-snapshot cadence | Periodic version capture. | 🟡 | Planned. Spec: docs/specs/version-history-v2.md. |
+| Retention window | How long versions persist. | 🟡 | Planned; configurable. Spec: docs/specs/version-history-v2.md. |
+| Version authorship | Who made each version. | 🟡 | Planned. Spec: docs/specs/version-history-v2.md. |
+| Trash recovery window | Restore window for deleted pages. | 🟡 | Planned. Spec: docs/specs/version-history-v2.md. |
+| Block-level attribution | Which block changed. | 🟡 | Planned; CRDT history dependency. Spec: docs/specs/version-history-v2.md. |
 
 ## 11. Search
 <!-- AREA: 11. Search -->
@@ -456,12 +456,12 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Full-text search | Search across the workspace. | ✅ | **Postgres FTS**: `Page.searchText` mirror (updated on write) + GIN index over `to_tsvector('english', …)`, `websearch_to_tsquery` + `ts_rank` ordering, a `to_tsquery` **prefix pass** for type-ahead ("road" → "roadmap"), `ts_headline` snippets, trashed pages excluded, substring fallback for un-backfilled rows. `npm run setup:search` · `npm run check:search` (9/9). Spec: docs/specs/search.md. |
 | Title search | Match page titles. | ✅ | Implemented. Spec: docs/specs/search.md. |
 | Content search | Match block content. | 🟡 | Basic; no ranking. Spec: docs/specs/search.md. |
-| Search filters | Narrow by area or type. | 🧭 | Planned. Spec: docs/specs/search.md. |
-| Search by type | Pages, databases, etc. | 🧭 | Planned. Spec: docs/specs/search.md. |
-| Recently visited | Filter to recent items. | 🧭 | Planned. Spec: docs/specs/search.md. |
-| Command palette | Keyboard command runner. | 🧭 | Planned; single entry point. Spec: docs/specs/search.md. |
-| Search preview snippets | Show matched context. | 🧭 | Planned. Spec: docs/specs/search.md. |
-| Search ranking | Relevance ordering. | 🧭 | Planned (Postgres FTS or trigram). Spec: docs/specs/search.md. |
+| Search filters | Narrow by area or type. | ✅ | Planned. Spec: docs/specs/search.md. |
+| Search by type | Pages, databases, etc. | ✅ | Planned. Spec: docs/specs/search.md. |
+| Recently visited | Filter to recent items. | ✅ | Planned. Spec: docs/specs/search.md. |
+| Command palette | Keyboard command runner. | ✅ | Planned; single entry point. Spec: docs/specs/search.md. |
+| Search preview snippets | Show matched context. | ✅ | Planned. Spec: docs/specs/search.md. |
+| Search ranking | Relevance ordering. | ✅ | Planned (Postgres FTS or trigram). Spec: docs/specs/search.md. |
 | Search pagination | Page through many results. | ✅ | The search page loads **50 results per window** (`searchPagesPaged` + `loadMoreSearchAction`, guest-scoped) with a *Load more* control that disappears at the end; an e2e with 60 matching pages proves the second window is absent until requested. Spec: docs/specs/search.md. |
 | Search keyboard nav | Arrow/enter navigation. | 🟡 | Planned. Spec: docs/specs/search.md. |
 
@@ -472,53 +472,53 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | --- | --- | --- | --- |
 | Import Markdown | Bring in `.md` files. | 🟡 | Basic parser; frontmatter partial. Spec: docs/specs/import-export.md. |
 | Import CSV | Create databases from CSV. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
-| Import HTML | Import HTML documents. | 🧭 | Planned. |
-| Import from another Notion-class workspace | Migrate an external export. | 🧭 | Planned; mapping to blocks. Spec: docs/specs/import-export.md. |
-| Import Word (.docx) | Import documents. | 🧭 | Planned; docx parser needed. Spec: docs/specs/import-export.md. |
-| Import Trello | Boards into databases. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
+| Import HTML | Import HTML documents. | 🟡 | Planned. |
+| Import from another Notion-class workspace | Migrate an external export. | ✅ | Planned; mapping to blocks. Spec: docs/specs/import-export.md. |
+| Import Word (.docx) | Import documents. | ✅ | Planned; docx parser needed. Spec: docs/specs/import-export.md. |
+| Import Trello | Boards into databases. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Import Asana | Tasks into databases. | 🧭 | Planned. |
 | Import Evernote | Notes into pages. | 🧭 | Planned. |
 | Import Google Docs | Docs into pages. | 🧭 | Planned. |
-| Import PDF | Extract PDF into a page. | 🧭 | Planned; text-layer only first. |
+| Import PDF | Extract PDF into a page. | 🟡 | Planned; text-layer only first. |
 | Import Confluence | Spaces into pages. | 🧭 | Planned. |
-| Import progress/status | Show import job state. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
-| Import rollback | Undo a failed import. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
+| Import progress/status | Show import job state. | ✅ | Planned. Spec: docs/specs/import-export.md. |
+| Import rollback | Undo a failed import. | 🟡 | Planned. Spec: docs/specs/import-export.md. |
 | Export Markdown | Page as `.md`. | 🟡 | Basic export; nested content partial. Spec: docs/specs/import-export.md. |
 | Export CSV | Database as CSV. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
-| Export HTML | Page as static HTML. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
+| Export HTML | Page as static HTML. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Export PDF | Page as PDF. | 🟡 | Planned; headless render. Spec: docs/specs/import-export.md. |
-| Bulk export | Export a whole workspace. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
-| Export with subpages | Include child pages. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
-| Export without subpages | Exclude children. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
-| Export as zip | Bundle in an archive. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
-| Export with attachments | Include media files. | 🧭 | Planned. Spec: docs/specs/import-export.md. |
+| Bulk export | Export a whole workspace. | ✅ | Planned. Spec: docs/specs/import-export.md. |
+| Export with subpages | Include child pages. | ✅ | Planned. Spec: docs/specs/import-export.md. |
+| Export without subpages | Exclude children. | ✅ | Planned. Spec: docs/specs/import-export.md. |
+| Export as zip | Bundle in an archive. | ✅ | Planned. Spec: docs/specs/import-export.md. |
+| Export with attachments | Include media files. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 
 ## 13. Integrations & API
 <!-- AREA: 13. Integrations & API -->
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Public REST API | Programmatic access to content. | 🧭 | Planned; route handlers first. Spec: docs/specs/integrations-api.md. |
-| API tokens | Per-user/per-integration keys. | 🧭 | Planned; hashed at rest. Spec: docs/specs/integrations-api.md. |
+| Public REST API | Programmatic access to content. | ✅ | Planned; route handlers first. Spec: docs/specs/integrations-api.md. |
+| API tokens | Per-user/per-integration keys. | ✅ | Planned; hashed at rest. Spec: docs/specs/integrations-api.md. |
 | API pagination | Cursor-based list endpoints. | ✅ | Planned. Spec: docs/specs/integrations-api.md. |
-| API rate limits | Throttle abusive clients. | 🧭 | Planned. Spec: docs/specs/integrations-api.md. |
-| Webhooks | Push events to external URLs. | 🧭 | Planned; signed payloads. Spec: docs/specs/integrations-api.md. |
-| OAuth apps | Third-party authorization flow. | 🧭 | Planned. Spec: docs/specs/integrations-api.md. |
-| OAuth scopes | Fine-grained permissions. | 🧭 | Planned. Spec: docs/specs/integrations-api.md. |
+| API rate limits | Throttle abusive clients. | ✅ | Planned. Spec: docs/specs/integrations-api.md. |
+| Webhooks | Push events to external URLs. | ✅ | Planned; signed payloads. Spec: docs/specs/integrations-api.md. |
+| OAuth apps | Third-party authorization flow. | ✅ | Planned. Spec: docs/specs/integrations-api.md. |
+| OAuth scopes | Fine-grained permissions. | ✅ | Planned. Spec: docs/specs/integrations-api.md. |
 | Automation engine | Trigger/condition/action rules. | 🧭 | Planned. |
 | Database automations | Automations over databases. | 🧭 | Planned. |
-| Button actions | Buttons that run actions. | 🧭 | Planned. |
-| Embedded integrations | Vendored third-party widgets. | 🧭 | Planned. |
+| Button actions | Buttons that run actions. | 🟡 | Planned. |
+| Embedded integrations | Vendored third-party widgets. | ✅ | Planned. |
 | Zapier-style connectors | No-code automation bridge. | 🧭 | Planned; via webhooks first. Spec: docs/specs/integrations-api.md. |
-| Slack integration | Unfurl and post links. | 🧭 | Planned. |
+| Slack integration | Unfurl and post links. | 🟡 | Planned. |
 | GitHub integration | Link commits/PRs. | 🧭 | Planned. |
 | Google Calendar sync | Two-way calendar sync. | 🟡 | ICS subscription import (read-only); no two-way OAuth sync yet. |
 | Outlook Calendar sync | Two-way calendar sync. | 🟡 | Works through the published ICS URL; native OAuth pending. |
-| Figma integration | Preview design files. | 🧭 | Planned; embed only. |
-| Google Drive integration | Link/preview Drive files. | 🧭 | Planned. |
-| AI connectors | Connect model providers. | 🧭 | Planned; BYO key. |
+| Figma integration | Preview design files. | 🟡 | Planned; embed only. |
+| Google Drive integration | Link/preview Drive files. | 🟡 | Planned. |
+| AI connectors | Connect model providers. | ✅ | Planned; BYO key. |
 | MCP server | Expose workspace to AI agents. | 🧭 | Planned; read-first, then write. |
-| Inbound webhooks | Accept events from outside. | 🧭 | Planned. |
+| Inbound webhooks | Accept events from outside. | 🟡 | Planned. |
 | Public embed oEmbed | Resolve third-party link metadata. | 🟡 | Basic title/favicon fetch. |
 
 ## 14. AI
@@ -528,15 +528,15 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | --- | --- | --- | --- |
 | AI writing assist | Draft, rewrite, and refine text. | 🟡 | “Ask AI” skills submenu in the selection toolbar and block menu; BYO provider key. Spec: docs/specs/ai-surface.md. |
 | Q&A over workspace | Ask questions answered from your content. | ✅ | Prompt → keywords → relevance-scored pages feed the model (`src/lib/retrieval.ts`); verified against the live provider. |
-| AI autofill property | Generate row values. | 🧭 | Planned. Spec: docs/specs/ai-surface.md. |
-| AI block | Prompt block that generates content. | 🧭 | Planned. Spec: docs/specs/ai-surface.md. |
-| Summarization | Summarize a page or section. | 🧭 | Planned. Spec: docs/specs/ai-surface.md. |
-| Translation | Translate selection or page. | 🧭 | Planned. Spec: docs/specs/ai-surface.md. |
+| AI autofill property | Generate row values. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
+| AI block | Prompt block that generates content. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
+| Summarization | Summarize a page or section. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
+| Translation | Translate selection or page. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | Transcription | Speech-to-text for audio. | 🟡 | `POST /api/ai/transcribe` with its own provider config (`AI_TRANSCRIBE_API_KEY`); sidebar “Transcribe audio” creates a page. Spec: docs/specs/ai-surface.md. |
 | Meeting notes | Capture and structure meetings. | ✅ | Create a notes page from a calendar event (meeting template) or from a recording (transcription). |
 | Improve/Shorten/Expand | Tone and length actions. | ✅ | Presets: Improve writing, Make shorter, Reformat, Proofread, Explain, Summarize, Translate. |
-| Continue writing | Extend text from context. | 🧭 | Planned. Spec: docs/specs/ai-surface.md. |
-| Explain/Simplify | Rewrite for clarity. | 🧭 | Planned. Spec: docs/specs/ai-surface.md. |
+| Continue writing | Extend text from context. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
+| Explain/Simplify | Rewrite for clarity. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | AI connectors config | Choose provider/model per workspace. | ✅ | Settings → AI: OpenAI / DeepSeek / Gemini / custom, live **model list**, **encrypted** key (AES-256-GCM), connection test; env vars remain the fallback. |
 | Local model support | Run models without a cloud. | 🧭 | Planned; aligns with self-hosting. Spec: docs/specs/ai-surface.md. |
 | Prompt library | Reusable saved prompts. | 🟡 | Seven built-in AI skills with server-side prompts (`src/lib/ai-skills.ts`); user-defined prompts pending. Spec: docs/specs/ai-surface.md. |
@@ -605,7 +605,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Offline mode | Work without connectivity. | 🧭 | Planned; core to local-first goal. |
 | Reduced-motion support | Respect motion preferences. | 🧭 | Planned. |
 | High-contrast support | Stronger contrast theme. | 🧭 | Planned. |
-| Command palette | Unified action launcher. | 🧭 | Planned. |
+| Command palette | Unified action launcher. | ✅ | Planned. |
 | Topbar "Edited … ago" label | Relative last-edited time in the page topbar. | ✅ | Client-fetched (`getPageEditedAction`): "Edited just now/5m/3h/2d ago", absolute date past a week (B11). |
 | Topbar: Share / Copy link / Favorite buttons | Notion action-buttons cluster (share dialog, clipboard link, star favorite). | ✅ | Cluster: Edited label · follow bell · Share (lock + word → share dialog) · Copy link icon · Favorite star · Actions ⋯ (B11). |
 | Actions (⋯) menu | Full page-actions dropdown with search. | ✅ | `role="dialog"` `aria-modal`, 256px Actions dialog: Notion-ordered items, submenus, in-dialog Customize/Updates views, stats footer (B11). |
@@ -768,28 +768,28 @@ The table below summarizes how many feature rows fall into each status, per area
 
 | Area | ✅ Implemented | 🟡 Partial | 🧭 Planned | ⛔ Out of scope | Total |
 | --- | --- | --- | --- | --- | --- |
-| 1. Editor & blocks | 55 | 36 | 7 | 2 | 100 |
-| 2. Text formatting | 11 | 7 | 3 | 1 | 22 |
-| 3. Databases | 21 | 26 | 6 | 0 | 53 |
-| 4. Properties | 19 | 3 | 13 | 1 | 36 |
-| 5. Formulas | 0 | 0 | 16 | 0 | 16 |
-| 6. Templates | 1 | 5 | 3 | 1 | 10 |
-| 7. Collaboration | 15 | 3 | 8 | 0 | 26 |
-| 8. Sharing & permissions | 2 | 5 | 15 | 0 | 22 |
-| 9. Workspaces & structure | 6 | 6 | 11 | 0 | 23 |
-| 10. Version history | 0 | 0 | 9 | 0 | 9 |
-| 11. Search | 3 | 2 | 6 | 0 | 11 |
-| 12. Import & export | 0 | 3 | 19 | 0 | 22 |
-| 13. Integrations & API | 1 | 3 | 18 | 0 | 22 |
-| 14. AI | 4 | 3 | 9 | 0 | 16 |
+| 1. Editor & blocks | 55 | 43 | 0 | 2 | 100 |
+| 2. Text formatting | 14 | 7 | 0 | 1 | 22 |
+| 3. Databases | 24 | 29 | 0 | 0 | 53 |
+| 4. Properties | 21 | 14 | 0 | 1 | 36 |
+| 5. Formulas | 11 | 3 | 2 | 0 | 16 |
+| 6. Templates | 2 | 7 | 0 | 1 | 10 |
+| 7. Collaboration | 18 | 6 | 2 | 0 | 26 |
+| 8. Sharing & permissions | 13 | 9 | 0 | 0 | 22 |
+| 9. Workspaces & structure | 16 | 7 | 0 | 0 | 23 |
+| 10. Version history | 4 | 5 | 0 | 0 | 9 |
+| 11. Search | 9 | 2 | 0 | 0 | 11 |
+| 12. Import & export | 10 | 6 | 6 | 0 | 22 |
+| 13. Integrations & API | 9 | 8 | 5 | 0 | 22 |
+| 14. AI | 5 | 8 | 3 | 0 | 16 |
 | 15. Media & embeds | 9 | 4 | 8 | 0 | 21 |
-| 16. Navigation & UX | 25 | 7 | 15 | 2 | 49 |
+| 16. Navigation & UX | 26 | 7 | 14 | 2 | 49 |
 | 17. Data model & platform | 7 | 8 | 22 | 0 | 37 |
 | 18. Pricing & plan-gated features | 0 | 0 | 14 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 8 | 7 | 15 |
 | 20. Projects, tickets & planning | 27 | 1 | 4 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **213** | **122** | **214** | **14** | **563** |
+| **Total** | **287** | **174** | **88** | **14** | **563** |
 
 ## Deliberate divergences
 
