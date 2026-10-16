@@ -28,6 +28,7 @@
     "docs:counts": "node scripts/feature-matrix-counts.mjs --write",
     "audit": "node scripts/audit-inventory.mjs",
     "check:coherence": "node scripts/check-coherence.mjs",
+    "check:use-server": "node scripts/check-use-server.mjs",
     "check:storage": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env scripts/check-storage.mjs",
     "backup": "node --env-file=.env scripts/backup.mjs",
     "check:search": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env scripts/check-search.mjs",
