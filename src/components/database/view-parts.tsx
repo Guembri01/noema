@@ -14,6 +14,8 @@ import { toast } from "sonner";
 import { ROLLUP_FUNCTIONS } from "@/lib/rollup";
 import { t } from "@/lib/i18n";
 import { clampWidth } from "@/lib/column-layout";
+import { maxLineWidth, type CharWidths } from "@/lib/text-measure";
+import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { validateCell } from "@/lib/cell-validation";
 import { cellColorFor, type RowColorRule } from "@/lib/row-color-rules";
 import {
@@ -80,6 +82,65 @@ export const PROPERTY_TYPES: PropertyType[] = [
   "AI_AUTOFILL",
 ];
 
+/** Table type size (`text-sm`) used to turn em widths into pixels. */
+export const TABLE_FONT_PX = 14;
+/** Cell horizontal padding (`px-3` both sides) plus slack for the sort caret. */
+export const TABLE_CELL_PADDING_PX = 32;
+/** Headers auto-fit against the label only; cap them well under the 800px max. */
+const HEADER_AUTO_FIT_MAX = 360;
+
+/**
+ * Auto-fit a column width from real text metrics (`@/lib/text-measure`) instead
+ * of a guessed average.
+ *
+ * The widest visible line across `samples` (a header label plus any cell texts)
+ * is summed in em by the estimator, scaled by `fontPx`, padded for the cell
+ * chrome, then clamped to the shared `@/lib/column-layout` bounds — so an
+ * auto-fit column can never disagree with `setColumnWidth` / `autoFitWidths`.
+ * Pure and deterministic: `fontPx`/`charWidths` let a caller feed a synthetic
+ * font (the node test does) so the measurement → width mapping is provable.
+ */
+export function autoFitColumnWidth(
+  samples: readonly string[],
+  options: {
+    /** Pixels per em; defaults to {@link TABLE_FONT_PX}. */
+    fontPx?: number;
+    /** Fixed chrome added to every column; defaults to {@link TABLE_CELL_PADDING_PX}. */
+    paddingPx?: number;
+    /** Clamp bounds, forwarded to `clampWidth`. */
+    min?: number;
+    max?: number;
+    /** Per-class em overrides, forwarded to the estimator. */
+    charWidths?: Partial<CharWidths>;
+  } = {},
+): number {
+  const fontPx =
+    typeof options.fontPx === "number" &&
+    Number.isFinite(options.fontPx) &&
+    options.fontPx > 0
+      ? options.fontPx
+      : TABLE_FONT_PX;
+  const paddingPx =
+    typeof options.paddingPx === "number" &&
+    Number.isFinite(options.paddingPx) &&
+    options.paddingPx >= 0
+      ? options.paddingPx
+      : TABLE_CELL_PADDING_PX;
+  const measureOptions = options.charWidths
+    ? { charWidths: options.charWidths }
+    : {};
+
+  let widest = 0;
+  for (const sample of samples) {
+    const width = maxLineWidth(sample, measureOptions);
+    if (width > widest) widest = width;
+  }
+  return clampWidth(widest * fontPx + paddingPx, {
+    min: options.min,
+    max: options.max,
+  });
+}
+
 export function PropertyHeader({
   property,
   editable,
@@ -130,8 +191,15 @@ export function PropertyHeader({
     typeCode === "UNIQUE_ID" ||
     typeCode === "PLACE" ||
     typeCode === "BUTTON";
-  // Single shared clamp so the header agrees with `setColumnWidth`/`autoFitWidths`.
-  const widthStyle = width === undefined ? undefined : { width: clampWidth(width) };
+  // With an explicit saved width: the single shared clamp so the header agrees
+  // with `setColumnWidth`/`autoFitWidths`. Without one: auto-fit the header to
+  // its measured label (`@/lib/text-measure`) rather than leaving it to chance.
+  const widthStyle =
+    width === undefined
+      ? {
+          minWidth: autoFitColumnWidth([property.name], { max: HEADER_AUTO_FIT_MAX }),
+        }
+      : { width: clampWidth(width) };
   if (editing) {
     return (
       <input
@@ -1408,6 +1476,52 @@ export function Cell({
         >
           {display || <span className="text-muted">—</span>}
         </button>
+      );
+    }
+    case "ICON": {
+      // An emoji-valued cell (like the VERIFICATION cell, a type the generated
+      // enum may not list yet). Editable cells open the real picker
+      // (`@/components/ui/emoji-picker`, backed by `@/lib/emoji-frecency`) whose
+      // "frequently used" strip ranks per user; read-only cells render the
+      // stored glyph. The value is `{ emoji }`, falling back to a legacy
+      // `{ text }` so an icon stored as text still shows.
+      const glyph =
+        typeof v.emoji === "string"
+          ? v.emoji
+          : typeof v.text === "string"
+            ? v.text
+            : "";
+      if (!editable) {
+        return (
+          <span aria-label={property.name} className="text-muted">
+            {glyph || "—"}
+          </span>
+        );
+      }
+      return (
+        <span
+          className="inline-flex items-center gap-1"
+          role="group"
+          aria-label={property.name}
+        >
+          {glyph ? <span className="text-base leading-none">{glyph}</span> : null}
+          <EmojiPicker
+            locale={locale}
+            userId={actingUserId}
+            storageKey="noema:emoji-frecency:icon"
+            onSelect={(emoji) => onChange({ emoji })}
+          />
+          {glyph ? (
+            <button
+              type="button"
+              aria-label={`${t(locale, "remove")} ${property.name}`}
+              onClick={() => onChange(null)}
+              className="text-muted hover:text-fg"
+            >
+              ×
+            </button>
+          ) : null}
+        </span>
       );
     }
     case "RELATION": {

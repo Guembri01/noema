@@ -1,0 +1,315 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { EMOJI_SHORTCODES, emojiCandidates } from "@/lib/emoji";
+import {
+  DEFAULT_TOP_LIMIT,
+  mergeUsages,
+  recordUse,
+  topRecent,
+  type EmojiUsage,
+} from "@/lib/emoji-frecency";
+import { t } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
+
+/**
+ * Emoji picker with a per-user "frequently used" strip.
+ *
+ * `@/lib/emoji-frecency` is the pure ranking core: this component is the UI
+ * that finally reaches for it. Every pick is recorded once
+ * (`recordUse(..., now)`), the strip is the module's `topRecent` ranking, and
+ * the list is persisted per user in `localStorage` (the same store
+ * `command-palette.tsx` uses for its recents — the codebase has no per-user
+ * preference row for a client-only strip, so the browser store is the one the
+ * codebase already uses for this shape). A missing/corrupt/blocked store just
+ * degrades to a session-only strip.
+ *
+ * The component is intentionally generic: `onSelect` + a `storageKey`
+ * namespace mean the database's icon/emoji cell and a comment-reaction picker
+ * share one implementation without sharing a history. The pure helpers below
+ * are exported so the node test can prove the ranking/decay and persistence
+ * without a DOM.
+ */
+
+/** Default number of recently-used glyphs shown above the full grid. */
+export const EMOJI_RECENT_LIMIT = DEFAULT_TOP_LIMIT;
+
+/** localStorage namespace for the frecency list. */
+export const EMOJI_FRECENCY_NAMESPACE = "noema:emoji-frecency";
+
+/** The minimal storage surface the picker needs (satisfied by `localStorage`). */
+export type EmojiStorage = Pick<Storage, "getItem" | "setItem">;
+
+/**
+ * The per-user storage key. A blank/absent user id shares the `anon` bucket so
+ * a signed-out picker still remembers what was used in the session.
+ */
+export function emojiFrecencyKey(namespace: string, userId?: string): string {
+  const id =
+    typeof userId === "string" && userId.trim() !== "" ? userId.trim() : "anon";
+  return `${namespace}:${id}`;
+}
+
+/**
+ * Parse a persisted usage list, dropping anything malformed. Duplicate rows are
+ * folded through `mergeUsages`, so a hand-edited/older payload can never yield
+ * two entries for one glyph.
+ */
+export function parseEmojiUsages(raw: string | null | undefined): EmojiUsage[] {
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const entries: EmojiUsage[] = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as {
+      emoji?: unknown;
+      count?: unknown;
+      lastUsedAt?: unknown;
+    };
+    if (typeof record.emoji !== "string" || record.emoji === "") continue;
+    if (
+      typeof record.count !== "number" ||
+      !Number.isFinite(record.count) ||
+      record.count <= 0
+    ) {
+      continue;
+    }
+    if (
+      typeof record.lastUsedAt !== "number" ||
+      !Number.isFinite(record.lastUsedAt)
+    ) {
+      continue;
+    }
+    entries.push({
+      emoji: record.emoji,
+      count: record.count,
+      lastUsedAt: record.lastUsedAt,
+    });
+  }
+  return mergeUsages([], entries);
+}
+
+/** The browser store, or `null` when unavailable (SSR / private mode). */
+function defaultEmojiStorage(): EmojiStorage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** Read + normalise the persisted list; tolerates a blocked/corrupt store. */
+export function loadEmojiUsages(
+  storageKey: string,
+  storage: EmojiStorage | null = defaultEmojiStorage(),
+): EmojiUsage[] {
+  if (!storage) return [];
+  try {
+    return parseEmojiUsages(storage.getItem(storageKey));
+  } catch {
+    return [];
+  }
+}
+
+/** Persist the list; a blocked store is ignored (session ranking still works). */
+export function saveEmojiUsages(
+  storageKey: string,
+  list: readonly EmojiUsage[],
+  storage: EmojiStorage | null = defaultEmojiStorage(),
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(storageKey, JSON.stringify(list));
+  } catch {
+    // No storage — the in-memory list still ranks this session.
+  }
+}
+
+/**
+ * The unique glyphs of the curated `@/lib/emoji` shortcode table, in insertion
+ * order. Aliases (`thumbsup`/`"+1"`) collapse to one glyph.
+ */
+export function emojiCatalog(): string[] {
+  const seen = new Set<string>();
+  const glyphs: string[] = [];
+  for (const glyph of Object.values(EMOJI_SHORTCODES)) {
+    if (!seen.has(glyph)) {
+      seen.add(glyph);
+      glyphs.push(glyph);
+    }
+  }
+  return glyphs;
+}
+
+/**
+ * The glyphs matching `query` by shortcode or keyword (`emojiCandidates`),
+ * de-duplicated. A blank query returns the full curated catalogue.
+ */
+export function filterEmojiCatalog(query: string, limit = 48): string[] {
+  if ((query ?? "").trim() === "") return emojiCatalog();
+  const seen = new Set<string>();
+  const glyphs: string[] = [];
+  for (const candidate of emojiCandidates(query, limit)) {
+    if (!seen.has(candidate.emoji)) {
+      seen.add(candidate.emoji);
+      glyphs.push(candidate.emoji);
+    }
+  }
+  return glyphs;
+}
+
+/**
+ * The live frecency state behind a picker: the loaded usages, the ranked
+ * `recent` glyphs (`topRecent`) and a `record` that stamps a pick, persists it
+ * and refreshes `recent`. Shared by the icon cell and any reactions picker so
+ * they rank through the same module.
+ */
+export function useEmojiFrecency({
+  storageKey,
+  userId,
+  limit = EMOJI_RECENT_LIMIT,
+}: {
+  storageKey: string;
+  userId?: string;
+  limit?: number;
+}): {
+  usages: EmojiUsage[];
+  recent: string[];
+  record: (emoji: string) => void;
+} {
+  const key = emojiFrecencyKey(storageKey, userId);
+  const [usages, setUsages] = useState<EmojiUsage[]>([]);
+
+  useEffect(() => {
+    setUsages(loadEmojiUsages(key));
+  }, [key]);
+
+  const record = useCallback(
+    (emoji: string) => {
+      if (!emoji) return;
+      setUsages((current) => {
+        const next = recordUse(current, emoji, Date.now());
+        saveEmojiUsages(key, next);
+        return next;
+      });
+    },
+    [key],
+  );
+
+  // Decay is measured at render time; ranking only changes when the usages do.
+  const recent = useMemo(
+    () => topRecent(usages, { now: Date.now(), limit }).map((entry) => entry.emoji),
+    [usages, limit],
+  );
+
+  return { usages, recent, record };
+}
+
+export function EmojiPicker({
+  onSelect,
+  locale,
+  userId,
+  storageKey = EMOJI_FRECENCY_NAMESPACE,
+  triggerLabel,
+  className,
+}: {
+  /** Called with the chosen glyph; the picker records the use first. */
+  onSelect: (emoji: string) => void;
+  locale: string;
+  /** Per-user persistence bucket (the session user id). */
+  userId?: string;
+  /**
+   * Namespace so two pickers keep separate histories, e.g.
+   * `"noema:emoji-frecency:icon"` vs a reactions bucket.
+   */
+  storageKey?: string;
+  /** Accessible name for the trigger; defaults to `t(locale, "useEmoji")`. */
+  triggerLabel?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const { recent, record } = useEmojiFrecency({ storageKey, userId });
+  const catalog = useMemo(() => filterEmojiCatalog(query), [query]);
+  const label = triggerLabel ?? t(locale, "useEmoji");
+
+  const choose = (emoji: string) => {
+    record(emoji);
+    onSelect(emoji);
+    setOpen(false);
+    setQuery("");
+  };
+
+  return (
+    <span className={cn("relative inline-flex", className)}>
+      <button
+        type="button"
+        aria-label={label}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        data-testid="emoji-picker-trigger"
+        onClick={() => setOpen((value) => !value)}
+        className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2"
+      >
+        <span aria-hidden>🙂</span>
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label={label}
+          data-testid="emoji-picker"
+          className="absolute left-0 top-7 z-30 w-64 rounded-lg border border-border bg-bg p-2 shadow-xl"
+        >
+          <input
+            autoFocus
+            value={query}
+            aria-label={t(locale, "search")}
+            placeholder={t(locale, "search")}
+            onChange={(event) => setQuery(event.target.value)}
+            className="mb-2 w-full rounded border border-border bg-bg px-2 py-1 text-xs outline-none"
+          />
+          {recent.length > 0 && (
+            <div className="mb-2" role="group" aria-label="Frequently used">
+              <div className="mb-1 text-[10px] uppercase tracking-wide text-muted">
+                Frequently used
+              </div>
+              <div className="flex flex-wrap gap-0.5">
+                {recent.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    aria-label={`${label} ${emoji}`}
+                    data-testid={`emoji-recent-${emoji}`}
+                    onClick={() => choose(emoji)}
+                    className="grid h-7 w-7 place-items-center rounded text-base hover:bg-surface-2"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="flex max-h-40 flex-wrap gap-0.5 overflow-y-auto">
+            {catalog.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                aria-label={`${label} ${emoji}`}
+                onClick={() => choose(emoji)}
+                className="grid h-7 w-7 place-items-center rounded text-base hover:bg-surface-2"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
