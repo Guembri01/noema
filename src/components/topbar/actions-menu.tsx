@@ -17,6 +17,12 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import { ArrowLeft, Check, ChevronRight, Lock, LockOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Z } from "@/lib/design-tokens";
+import { Switch } from "@/components/ui/switch";
+import { Radio, RadioGroup } from "@/components/ui/radio";
+import { Select, type SelectOption } from "@/components/ui/select";
+import { Section } from "@/components/ui/section";
+import { Separator } from "@/components/ui/separator";
 import { LOCALES } from "@/lib/i18n";
 import { localTime } from "@/lib/time";
 import {
@@ -95,15 +101,46 @@ const GRADIENT_ID_BY_CSS: ReadonlyMap<string, GradientId> = new Map(
   GRADIENT_IDS.map((id) => [GRADIENTS[id], id] as const),
 );
 
+/**
+ * Presentation-only gradient previews built from the tag token palette
+ * (`--tag-<hue>-*`), so the swatches emit token vars instead of the catalog's
+ * raw hex. The *persisted* value still comes from `coverCss`/{@link writeCover}
+ * (so it round-trips with `page-title.tsx`); only this menu's preview is
+ * re-coloured, and each hue is the closest tag token to the preset it replaces.
+ */
+export const COVER_GRADIENT_TOKENS: Record<GradientId, string> = {
+  ocean:
+    "linear-gradient(120deg, var(--tag-blue-bg) 0%, var(--tag-teal-bd) 100%)",
+  sunset:
+    "linear-gradient(120deg, var(--tag-yellow-bg) 0%, var(--tag-orange-bd) 100%)",
+  sky: "linear-gradient(120deg, var(--tag-blue-bg) 0%, var(--tag-teal-bg) 100%)",
+  lime: "linear-gradient(120deg, var(--tag-green-bg) 0%, var(--tag-teal-bd) 100%)",
+  candy:
+    "linear-gradient(120deg, var(--tag-pink-bg) 0%, var(--tag-purple-bd) 100%)",
+  blush:
+    "linear-gradient(120deg, var(--tag-red-bg) 0%, var(--tag-pink-bd) 100%)",
+  mint: "linear-gradient(120deg, var(--tag-green-bg) 0%, var(--tag-teal-bg) 100%)",
+  lavender:
+    "linear-gradient(120deg, var(--tag-purple-bg) 0%, var(--tag-blue-bd) 100%)",
+};
+
+/** Token-only preview for a gradient preset (see {@link COVER_GRADIENT_TOKENS}). */
+export function coverPreviewCss(gradientId: GradientId): string {
+  return COVER_GRADIENT_TOKENS[gradientId];
+}
+
 /** A persisted cover decoded through the page-cover engine. */
-type ResolvedCover = { value: CoverValue; position: CoverPosition };
+export type ResolvedCover = { value: CoverValue; position: CoverPosition };
 
 /**
  * Split a stored cover string into its CSS value and the focal point the menu
  * encodes after it (`"<css> <x>% <y>%"`). A cover without a position decodes to
  * the centred default.
  */
-function splitCoverCss(raw: string): { css: string; position: CoverPosition } {
+export function splitCoverCss(raw: string): {
+  css: string;
+  position: CoverPosition;
+} {
   const match = raw.match(/^(.*\S)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/);
   if (!match) return { css: raw, position: { ...DEFAULT_COVER_POSITION } };
   return {
@@ -113,26 +150,40 @@ function splitCoverCss(raw: string): { css: string; position: CoverPosition } {
 }
 
 /**
+ * `url("…")` / `url(…)` wrapper emitted by `coverCss` for an image cover. Kept
+ * byte-identical to the matcher in `page-title.tsx` so the two codecs agree.
+ */
+const COVER_URL_CSS = /^url\(\s*["']?([^"')]+)["']?\s*\)$/i;
+
+/**
  * Decode a persisted cover string into a tagged {@link CoverValue} plus its
  * focal point, or `null` when it is absent or unrecognised. Gradients are
  * matched by catalog value and images must pass {@link isImageIcon}, so a
  * hostile string never reaches the renderer as a cover.
+ *
+ * An image cover is stored as the `url("…")` form `coverCss` (and therefore
+ * `page-title.tsx`) writes, so that wrapper is unwrapped before the URL is
+ * validated: without it every image cover written by the page header failed to
+ * decode here (the codec bug this fixes).
  */
-function readCover(raw: string | null): ResolvedCover | null {
+export function readCover(raw: string | null): ResolvedCover | null {
   if (!raw) return null;
   const { css, position } = splitCoverCss(raw);
   const gradientId = GRADIENT_ID_BY_CSS.get(css);
   if (gradientId) return { value: { type: "gradient", gradientId }, position };
-  if (isImageIcon(css)) return { value: { type: "image", url: css }, position };
+  const imageMatch = COVER_URL_CSS.exec(css);
+  const href = imageMatch ? imageMatch[1] : css;
+  if (isImageIcon(href)) return { value: { type: "image", url: href }, position };
   return null;
 }
 
 /**
  * Encode a validated cover + focal point back into the single `coverUrl`
  * string the existing save path persists. The default focal point is omitted
- * so a plain preset round-trips byte-for-byte.
+ * so a plain preset round-trips byte-for-byte. Mirrors `page-title.tsx`'s
+ * `encodeCover`, so a cover written here decodes there and vice-versa.
  */
-function writeCover(value: CoverValue, position: CoverPosition): string {
+export function writeCover(value: CoverValue, position: CoverPosition): string {
   const css = coverCss(value);
   if (css === "") return "";
   const focal = formatObjectPosition(position);
@@ -142,7 +193,10 @@ function writeCover(value: CoverValue, position: CoverPosition): string {
 }
 
 /** Preset focal points offered by the position grid. */
-const POSITION_PRESETS: readonly { label: string; position: CoverPosition }[] = [
+export const POSITION_PRESETS: readonly {
+  label: string;
+  position: CoverPosition;
+}[] = [
   { label: "Top left", position: { x: 0, y: 0 } },
   { label: "Top", position: { x: 50, y: 0 } },
   { label: "Top right", position: { x: 100, y: 0 } },
@@ -161,7 +215,7 @@ const POSITION_PRESETS: readonly { label: string; position: CoverPosition }[] = 
  * concern. The picker is derived from `PAGE_FONTS`, so a preset added to the
  * engine surfaces here without editing this component.
  */
-const FONT_LABELS: Record<PageFont, string> = {
+export const FONT_LABELS: Record<PageFont, string> = {
   default: "Default",
   serif: "Serif",
   sans: "Sans",
@@ -170,12 +224,20 @@ const FONT_LABELS: Record<PageFont, string> = {
   newsreader: "Newsreader",
 };
 
-const FONT_OPTIONS: { id: PageFont; label: string }[] = PAGE_FONTS.map((id) => ({
-  id,
-  label: FONT_LABELS[id],
+export const FONT_OPTIONS: { id: PageFont; label: string }[] = PAGE_FONTS.map(
+  (id) => ({
+    id,
+    label: FONT_LABELS[id],
+  }),
+);
+
+/** `<Select>` rows for the font picker, derived from {@link FONT_OPTIONS}. */
+export const FONT_SELECT_OPTIONS: SelectOption[] = FONT_OPTIONS.map((option) => ({
+  value: option.id,
+  label: option.label,
 }));
 
-const LINE_SPACING_OPTIONS: { id: PageLineSpacing; label: string }[] = [
+export const LINE_SPACING_OPTIONS: { id: PageLineSpacing; label: string }[] = [
   { id: "tight", label: "Tight" },
   { id: "normal", label: "Normal" },
   { id: "loose", label: "Loose" },
@@ -309,6 +371,42 @@ function actionsMenuStops(root: HTMLElement): {
 
 export type NotifyLevel = "all" | "mentions" | "none";
 export type ActionsMenuToggleKey = "smallText" | "fullWidth" | "locked";
+
+/**
+ * The payload a toggled row hands back: either the page-appearance patch (when
+ * the engine is wired) or the legacy `onToggle` key. Both shapes are exactly
+ * what the component already called — this just makes the mapping pure.
+ */
+export type ToggleAction =
+  | { kind: "appearance"; patch: Partial<PageAppearance> }
+  | { kind: "toggle"; key: ActionsMenuToggleKey };
+
+/**
+ * Map a toggle row id (`small-text` / `full-width` / `lock`) to its payload.
+ * `smallText` is the resolved *current* state: the page-appearance path flips
+ * it (the new patch is the opposite size), the legacy path reports the key and
+ * lets `onToggle` do the flip. Returns `null` for a non-toggle id.
+ */
+export function resolveToggleAction(
+  id: string,
+  { smallText, hasAppearance }: { smallText: boolean; hasAppearance: boolean },
+): ToggleAction | null {
+  switch (id) {
+    case "small-text":
+      return hasAppearance
+        ? {
+            kind: "appearance",
+            patch: { fontSize: smallText ? "default" : "small" },
+          }
+        : { kind: "toggle", key: "smallText" };
+    case "full-width":
+      return { kind: "toggle", key: "fullWidth" };
+    case "lock":
+      return { kind: "toggle", key: "locked" };
+    default:
+      return null;
+  }
+}
 
 type SubEntry = {
   key: string;
@@ -878,17 +976,16 @@ export function ActionsMenu(props: ActionsMenuProps) {
       return;
     }
     if (item.kind === "toggle") {
-      if (item.id === "small-text") {
-        if (onAppearance) {
-          onAppearance({
-            fontSize:
-              resolvedAppearance.fontSize === "small" ? "default" : "small",
-          });
-        } else {
-          onToggle("smallText");
-        }
-      } else if (item.id === "full-width") onToggle("fullWidth");
-      else if (item.id === "lock") onToggle("locked");
+      const action = resolveToggleAction(item.id, {
+        smallText: resolvedAppearance.fontSize === "small",
+        hasAppearance: Boolean(onAppearance),
+      });
+      if (!action) return;
+      if (action.kind === "appearance") {
+        onAppearance?.(action.patch);
+      } else {
+        onToggle(action.key);
+      }
       return;
     }
     switch (item.id) {
@@ -1058,8 +1155,9 @@ export function ActionsMenu(props: ActionsMenuProps) {
         aria-label="Page actions"
         data-contrast={highContrast ? "more" : "normal"}
         onKeyDown={onDialogKeyDown}
+        style={{ zIndex: Z.popover }}
         className={cn(
-          "absolute end-0 top-full z-50 mt-1 w-64 rounded-lg border border-border bg-bg shadow-2xl",
+          "surface-raised absolute end-0 top-full mt-1 w-64 animate-rise",
           highContrast && "high-contrast",
         )}
       >
@@ -1083,56 +1181,40 @@ export function ActionsMenu(props: ActionsMenuProps) {
                 setSubmenu(null);
               }}
               onKeyDown={onInputKeyDown}
-              className="w-full border-b border-border bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted"
+              className="focus-ring w-full border-b border-border bg-transparent px-3 py-2 text-sm placeholder:text-muted"
             />
             {query.trim() === "" && (
-              <div
-                role="radiogroup"
-                aria-label="Font style"
-                className="flex gap-1 border-b border-border px-2 py-1.5"
-              >
-                {FONT_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={resolvedAppearance.font === option.id}
-                    onClick={() => {
-                      if (onAppearance) onAppearance({ font: option.id });
-                      else onStyle(option.id);
-                    }}
-                    className={cn(
-                      "flex-1 truncate rounded px-1 py-1 text-xs text-muted hover:bg-surface-2",
-                      resolvedAppearance.font === option.id && "bg-surface-2 text-fg",
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+              <div className="border-b border-border px-2 py-1.5">
+                <Select
+                  aria-label="Font style"
+                  options={FONT_SELECT_OPTIONS}
+                  value={resolvedAppearance.font}
+                  allowClear={false}
+                  searchable={false}
+                  size="sm"
+                  placeholder="Font"
+                  onChange={(font) => {
+                    if (font === "") return;
+                    if (onAppearance) onAppearance({ font: font as PageFont });
+                    else onStyle(font);
+                  }}
+                />
               </div>
             )}
             {query.trim() === "" && onAppearance && (
-              <div
-                role="radiogroup"
-                aria-label="Line spacing"
-                className="flex gap-1 border-b border-border px-2 py-1.5"
-              >
-                {LINE_SPACING_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={resolvedAppearance.lineSpacing === option.id}
-                    onClick={() => onAppearance({ lineSpacing: option.id })}
-                    className={cn(
-                      "flex-1 rounded px-1 py-1 text-xs text-muted hover:bg-surface-2",
-                      resolvedAppearance.lineSpacing === option.id &&
-                        "bg-surface-2 text-fg",
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+              <div className="border-b border-border px-2 py-1.5">
+                <RadioGroup
+                  aria-label="Line spacing"
+                  orientation="horizontal"
+                  value={resolvedAppearance.lineSpacing}
+                  onValueChange={(value) =>
+                    onAppearance({ lineSpacing: value as PageLineSpacing })
+                  }
+                >
+                  {LINE_SPACING_OPTIONS.map((option) => (
+                    <Radio key={option.id} value={option.id} label={option.label} />
+                  ))}
+                </RadioGroup>
               </div>
             )}
             <ul
@@ -1170,12 +1252,12 @@ export function ActionsMenu(props: ActionsMenuProps) {
                       }}
                       onClick={() => activateItem(item)}
                       className={cn(
-                        "mx-1 flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-sm text-fg",
+                        "u-colors focus-ring mx-1 flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-fg",
                         groupIndex > 0 &&
                           indexOf.get(group.items[0].id) === index &&
                           "mt-1 border-t border-border pt-2.5",
                         isActive && "bg-surface-2",
-                        item.kind === "disabled" && "opacity-50",
+                        item.kind === "disabled" && "cursor-not-allowed opacity-50",
                       )}
                     >
                       {item.id === "lock" && (
@@ -1218,8 +1300,8 @@ export function ActionsMenu(props: ActionsMenuProps) {
                 aria-label={subSpec.label}
                 tabIndex={-1}
                 onKeyDown={onSubmenuKeyDown}
-                style={{ top: submenu.top }}
-                className="absolute start-full z-50 min-w-48 max-w-64 overflow-y-auto rounded-lg border border-border bg-bg py-1 shadow-2xl outline-none"
+                style={{ top: submenu.top, zIndex: Z.popover }}
+                className="surface-raised scrollbar-thin absolute start-full min-w-48 max-w-64 animate-rise overflow-y-auto py-1 outline-none"
               >
                 {(() => {
                   let cursor = 0;
@@ -1246,9 +1328,9 @@ export function ActionsMenu(props: ActionsMenuProps) {
                           entry.onSelect?.();
                         }}
                         className={cn(
-                          "mx-1 flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-sm",
+                          "u-colors focus-ring mx-1 flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
                           index === subIndex && "bg-surface-2",
-                          entry.disabled && "opacity-60",
+                          entry.disabled && "cursor-not-allowed opacity-50",
                         )}
                       >
                         <span className="flex-1 truncate" title={entry.label}>
@@ -1298,129 +1380,18 @@ export function ActionsMenu(props: ActionsMenuProps) {
         ) : view === "customize" ? (
           <>
             <PanelHeader title="Customize page" onBack={backToMain} />
-            <div className="max-h-80 overflow-y-auto p-2">
-              <p className="mb-1 text-xs font-medium text-muted">Icon</p>
-              <div className="grid grid-cols-8 gap-1">
-                {EMOJIS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    aria-label={`Set icon ${emoji}`}
-                    onClick={() => pickIcon(emoji)}
-                    className="grid h-7 w-7 place-items-center rounded text-lg hover:bg-surface-2"
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-              <p className="mb-1 mt-3 text-xs font-medium text-muted">Cover</p>
-              <div className="grid grid-cols-4 gap-1">
-                {GRADIENT_IDS.map((id) => {
-                  const selected =
-                    storedCover?.value.type === "gradient" &&
-                    storedCover.value.gradientId === id;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      aria-label={`Set cover ${id}`}
-                      aria-pressed={selected}
-                      onClick={() =>
-                        pickCoverValue({ type: "gradient", gradientId: id })
-                      }
-                      className={cn(
-                        "h-10 rounded bg-cover bg-center",
-                        selected && "ring-2 ring-accent",
-                      )}
-                      style={{
-                        backgroundImage: coverCss({
-                          type: "gradient",
-                          gradientId: id,
-                        }),
-                        backgroundPosition: formatObjectPosition(coverPosition),
-                      }}
-                    />
-                  );
-                })}
-              </div>
-              {storedCover && (
-                <>
-                  <p className="mb-1 mt-3 text-xs font-medium text-muted">
-                    Position
-                  </p>
-                  <div
-                    role="group"
-                    aria-label="Cover position"
-                    className="grid w-24 grid-cols-3 gap-1"
-                  >
-                    {POSITION_PRESETS.map((preset) => {
-                      const selected =
-                        formatObjectPosition(coverPosition) ===
-                        formatObjectPosition(preset.position);
-                      return (
-                        <button
-                          key={preset.label}
-                          type="button"
-                          aria-label={`Cover position ${preset.label}`}
-                          aria-pressed={selected}
-                          onClick={() => pickCoverPosition(preset.position)}
-                          className={cn(
-                            "h-7 w-7 rounded border border-border",
-                            selected && "bg-surface-2 ring-1 ring-accent",
-                          )}
-                        />
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-              {storedCover && (
-                <button
-                  type="button"
-                  onClick={() => pickCoverValue(null)}
-                  className="mt-2 rounded px-1 py-0.5 text-xs text-muted hover:bg-surface-2"
-                >
-                  Remove cover
-                </button>
-              )}
-              <p className="mb-1 mt-3 text-xs font-medium text-muted">Theme</p>
-              <div role="radiogroup" aria-label="Theme" className="flex gap-1">
-                {["light", "dark", "system"].map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    role="radio"
-                    aria-checked={theme === mode}
-                    onClick={() => setTheme(mode)}
-                    className={cn(
-                      "flex-1 rounded px-2 py-1 text-xs capitalize text-muted hover:bg-surface-2",
-                      theme === mode && "bg-surface-2 text-fg",
-                    )}
-                  >
-                    {mode}
-                  </button>
-                ))}
-              </div>
-              <p className="mb-1 mt-3 text-xs font-medium text-muted">
-                Contrast
-              </p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={highContrast}
-                  aria-label={`High contrast (${contrastLabel})`}
-                  onClick={() => setHighContrast((value) => !value)}
-                  className={cn(
-                    "rounded px-2 py-1 text-xs text-muted hover:bg-surface-2",
-                    highContrast && "bg-surface-2 text-fg",
-                  )}
-                >
-                  High contrast
-                </button>
-                <span className="text-[11px] text-muted">{contrastLabel}</span>
-              </div>
-            </div>
+            <CustomizePanel
+              theme={theme}
+              onThemeChange={setTheme}
+              highContrast={highContrast}
+              onHighContrastChange={setHighContrast}
+              contrastLabel={contrastLabel}
+              cover={storedCover}
+              position={coverPosition}
+              onPickIcon={pickIcon}
+              onPickCover={pickCoverValue}
+              onPickPosition={pickCoverPosition}
+            />
           </>
         ) : view === "accessibility" ? (
           <>
@@ -1500,6 +1471,162 @@ export function ActionsMenu(props: ActionsMenuProps) {
   );
 }
 
+export type CustomizePanelProps = {
+  /** Resolved theme name (`light` / `dark` / `system`) or `undefined`. */
+  theme?: string;
+  onThemeChange: (theme: string) => void;
+  highContrast: boolean;
+  onHighContrastChange: (value: boolean) => void;
+  /** Live contrast readout shown under the switch. */
+  contrastLabel: string;
+  /** Decoded stored cover, or `null` when the page has none. */
+  cover: ResolvedCover | null;
+  position: CoverPosition;
+  onPickIcon: (candidate: string) => void;
+  onPickCover: (value: CoverValue | null) => void;
+  onPickPosition: (position: CoverPosition) => void;
+};
+
+/**
+ * Customize tab body — the icon, cover and theme groups. Each group is a
+ * `Section` (shared settings rhythm) divided by a `Separator`; the toggles and
+ * radios are the shared `Switch` / `RadioGroup` primitives, and every custom
+ * button carries the `.focus-ring` / `.u-colors` / `.u-interactive` contract.
+ *
+ * Extracted from `ActionsMenu` so the panel renders (and is pinned by tests)
+ * without the dialog's open/submenu state machine.
+ */
+export function CustomizePanel({
+  theme,
+  onThemeChange,
+  highContrast,
+  onHighContrastChange,
+  contrastLabel,
+  cover,
+  position,
+  onPickIcon,
+  onPickCover,
+  onPickPosition,
+}: CustomizePanelProps) {
+  const themeValue = theme ?? "system";
+
+  return (
+    <div className="flex max-h-80 flex-col gap-3 overflow-y-auto p-2">
+      <Section title="Icon" level={3} className="gap-2">
+        <div className="grid grid-cols-8 gap-1">
+          {EMOJIS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              aria-label={`Set icon ${emoji}`}
+              onClick={() => onPickIcon(emoji)}
+              className="focus-ring u-interactive u-colors grid h-7 w-7 place-items-center rounded-sm text-lg text-fg hover:bg-surface-2"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      </Section>
+
+      <Separator />
+
+      <Section title="Cover" level={3} className="gap-2">
+        <div className="grid grid-cols-4 gap-1">
+          {GRADIENT_IDS.map((id) => {
+            const selected =
+              cover?.value.type === "gradient" &&
+              cover.value.gradientId === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                aria-label={`Set cover ${id}`}
+                aria-pressed={selected}
+                onClick={() => onPickCover({ type: "gradient", gradientId: id })}
+                className={cn(
+                  "focus-ring u-interactive u-colors h-10 rounded-sm bg-cover bg-center",
+                  selected && "ring-2 ring-accent",
+                )}
+                style={{
+                  backgroundImage: coverPreviewCss(id),
+                  backgroundPosition: formatObjectPosition(position),
+                }}
+              />
+            );
+          })}
+        </div>
+        {cover && (
+          <>
+            <p className="mt-2 text-xs font-medium text-muted">Position</p>
+            <div
+              role="group"
+              aria-label="Cover position"
+              className="grid w-24 grid-cols-3 gap-1"
+            >
+              {POSITION_PRESETS.map((preset) => {
+                const selected =
+                  formatObjectPosition(position) ===
+                  formatObjectPosition(preset.position);
+                return (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    aria-label={`Cover position ${preset.label}`}
+                    aria-pressed={selected}
+                    onClick={() => onPickPosition(preset.position)}
+                    className={cn(
+                      "focus-ring u-interactive u-colors h-7 w-7 rounded-sm border border-border",
+                      selected && "bg-surface-2 ring-1 ring-accent",
+                    )}
+                  />
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              onClick={() => onPickCover(null)}
+              className="focus-ring u-interactive u-colors mt-1 self-start rounded-sm px-1 py-0.5 text-xs text-muted hover:bg-surface-2"
+            >
+              Remove cover
+            </button>
+          </>
+        )}
+      </Section>
+
+      <Separator />
+
+      <Section title="Theme" level={3} className="gap-2">
+        <RadioGroup
+          aria-label="Theme"
+          orientation="horizontal"
+          value={themeValue}
+          onValueChange={onThemeChange}
+        >
+          {(["light", "dark", "system"] as const).map((mode) => (
+            <Radio
+              key={mode}
+              value={mode}
+              label={<span className="capitalize">{mode}</span>}
+            />
+          ))}
+        </RadioGroup>
+      </Section>
+
+      <Separator />
+
+      <Section title="Contrast" level={3} className="gap-2">
+        <Switch
+          checked={highContrast}
+          onCheckedChange={onHighContrastChange}
+          label="High contrast"
+          description={contrastLabel}
+          aria-label={`High contrast (${contrastLabel})`}
+        />
+      </Section>
+    </div>
+  );
+}
+
 function TriggerButton({
   open,
   onToggleOpen,
@@ -1514,7 +1641,7 @@ function TriggerButton({
       aria-haspopup="dialog"
       aria-expanded={open}
       onClick={onToggleOpen}
-      className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
+      className="focus-ring u-interactive u-colors flex h-7 w-7 items-center justify-center rounded-sm text-muted hover:bg-surface-2"
     >
       <span aria-hidden className="text-lg leading-none">
         ⋯
@@ -1530,7 +1657,7 @@ function PanelHeader({ title, onBack }: { title: string; onBack: () => void }) {
         type="button"
         aria-label="Back to actions"
         onClick={onBack}
-        className="rounded p-1 text-muted hover:bg-surface-2"
+        className="focus-ring u-interactive u-colors rounded-sm p-1 text-muted hover:bg-surface-2"
       >
         <ArrowLeft className="h-4 w-4" aria-hidden />
       </button>
