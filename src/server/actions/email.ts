@@ -6,7 +6,12 @@ import type { WorkspaceRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
-import { decryptSecret, encryptSecret, hashToken, randomToken } from "@/lib/secrets";
+import { decryptSecret, encryptSecret, hashToken } from "@/lib/secrets";
+import {
+  canRedeem,
+  generateInviteToken,
+  isWellFormedToken,
+} from "@/lib/invite-token";
 import { emailTemplate, escapeHtml, sendMail, verifyMail } from "@/lib/mailer";
 import { normalizeEmail } from "@/lib/email-validation";
 import { evaluateGuestInviteGate, readWorkspacePlan } from "@/lib/workspace-plan";
@@ -296,7 +301,11 @@ export async function sendWorkspaceInviteAction(input: {
     projectName = project.name;
   }
 
-  const token = randomToken(24);
+  // Mint through the pure invite-token module: 256 bits of base64url entropy,
+  // persisted only as its domain-separated SHA-256 digest (`hashToken`, the
+  // existing on-disk format, so already-issued invites keep validating).
+  // `randomToken(24)` gave fewer bits and duplicated the minting logic.
+  const token = generateInviteToken();
   await prisma.invite.deleteMany({
     where: { workspaceId: input.workspaceId, email, acceptedAt: null },
   });
@@ -369,6 +378,12 @@ export async function acceptWorkspaceInviteAction(
   token: string,
 ): Promise<EmailResult<{ slug: string; workspaceName: string; role: string }>> {
   const user = await requireUser();
+  // Verification goes through the invite-token module: a token that is not a
+  // well-formed minted value can never match a stored digest, so reject it
+  // before the lookup rather than relying on a miss.
+  if (!isWellFormedToken(token)) {
+    return { error: "That invitation link is not valid." };
+  }
   const invite = await prisma.invite.findUnique({
     where: { token: hashToken(token) },
     select: {
@@ -382,8 +397,22 @@ export async function acceptWorkspaceInviteAction(
     },
   });
   if (!invite) return { error: "That invitation link is not valid." };
-  if (invite.acceptedAt) return { error: "That invitation has already been used." };
-  if (invite.expiresAt.getTime() < Date.now()) return { error: "That invitation has expired." };
+  // Expiry + already-used are decided by the invite-token module (`canRedeem`),
+  // so the precedence and boundary semantics stay in one place.
+  const decision = canRedeem({
+    expiresAt: invite.expiresAt,
+    usedAt: invite.acceptedAt,
+    maxUses: 1,
+    usedCount: 0,
+  });
+  if (!decision.ok) {
+    return {
+      error:
+        decision.reason === "expired"
+          ? "That invitation has expired."
+          : "That invitation has already been used.",
+    };
+  }
   if (invite.email.toLowerCase() !== user.email.toLowerCase()) {
     return { error: `This invitation is for ${invite.email}. Sign in with that address.` };
   }
