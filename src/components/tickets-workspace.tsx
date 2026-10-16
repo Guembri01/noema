@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   createTicketAction,
+  getTicketActivityAction,
   loadMoreTicketsAction,
   moveTicketAction,
   updateTicketAction,
@@ -23,7 +24,7 @@ import {
   TicketTimeline,
   type TicketSortSpec,
 } from "@/components/tickets/ticket-view-renderers";
-import { TicketDrawer } from "@/components/tickets/ticket-drawer";
+import { TicketDrawer, type TicketActivityRow } from "@/components/tickets/ticket-drawer";
 
 export type { LabelRow, TicketRow } from "@/components/tickets/ticket-types";
 
@@ -75,6 +76,11 @@ export function TicketsWorkspace({
   // Extra pages fetched with "Load more".
   const [moreRows, setMoreRows] = useState<TicketRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(nextCursor);
+  // Drawer history, fetched on demand when a ticket is opened and cached per
+  // ticket so reopening is instant and never shows another ticket's trail.
+  const [activityByTicket, setActivityByTicket] = useState<
+    Record<string, TicketActivityRow[]>
+  >({});
 
   const rows = useMemo(() => [...tickets, ...moreRows], [tickets, moreRows]);
 
@@ -143,6 +149,25 @@ export function TicketsWorkspace({
 
       return "error" in result ? { ok: false, message: result.error } : { ok: true };
     });
+
+  // Load the opened ticket's activity once, via the existing detail query. A
+  // transport failure is swallowed into an empty trail (`safeAction`) so the
+  // drawer still renders; the cache guard keeps this effect from looping.
+  useEffect(() => {
+    if (!selected || selected in activityByTicket) return;
+    const ticketId = selected;
+    let cancelled = false;
+    void (async () => {
+      const outcome = await safeAction(() => getTicketActivityAction(ticketId), { locale });
+      const rows =
+        outcome.ok && "activity" in outcome.value ? outcome.value.activity : [];
+      if (cancelled) return;
+      setActivityByTicket((current) => ({ ...current, [ticketId]: rows }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, activityByTicket, locale]);
 
   return (
     <div>
@@ -301,6 +326,7 @@ export function TicketsWorkspace({
           }
           cycles={cycles}
           patch={patch}
+          activity={activityByTicket[active.id] ?? []}
         />
       )}
     </div>

@@ -7,7 +7,8 @@ import { requireUser } from "@/lib/auth";
 import { canEditContent, canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
 import { parsePageContent } from "@/lib/validation";
 import { DESCRIPTION_MAX, descriptionDoc, sanitizeDescription } from "@/lib/description";
-import { getTicketsPage } from "@/server/queries";
+import { getTicketDetail, getTicketsPage } from "@/server/queries";
+import type { TicketActivityRow } from "@/components/tickets/ticket-drawer";
 import { addBusinessHours, type WorkingHours } from "@/lib/business-hours";
 import { computeSlaDue, type SlaKind, type SlaPolicy } from "@/lib/sla-timer";
 import {
@@ -391,6 +392,38 @@ export async function loadMoreTicketsAction(input: {
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Could not load more tickets." };
   }
+}
+
+/**
+ * One ticket's activity trail for the drawer's history section.
+ *
+ * The drawer opens on the client, so the selected ticket's history is fetched
+ * on demand rather than shipped with every list page. Reuses the existing
+ * `getTicketDetail` selection — `activity` is already newest-first and capped —
+ * and returns exactly the shape the drawer's optional `activity` prop expects,
+ * after checking the caller can read the ticket's workspace.
+ */
+export async function getTicketActivityAction(
+  ticketId: string,
+): Promise<TicketResult<{ activity: TicketActivityRow[] }>> {
+  const user = await requireUser();
+  const ticket = await prisma.ticket.findUnique({
+    where: { id: ticketId },
+    select: { workspaceId: true },
+  });
+  if (!ticket) return { error: "Ticket not found." };
+  const access = await getWorkspaceAccess(user.id, ticket.workspaceId);
+  if (!access) return { error: "You do not have access to this ticket." };
+
+  const detail = await getTicketDetail(ticketId);
+  const activity: TicketActivityRow[] = (detail?.activity ?? []).map((entry) => ({
+    id: entry.id,
+    kind: entry.kind,
+    detail: entry.detail,
+    createdAt: entry.createdAt,
+    actor: entry.actor,
+  }));
+  return { ok: true, activity };
 }
 
 /** Attach or detach a workspace label. */
