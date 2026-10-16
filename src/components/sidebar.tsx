@@ -384,10 +384,11 @@ export function Sidebar({
         onDoubleClick={() => commitWidth(SIDEBAR_DEFAULT_WIDTH)}
         title="Drag to resize · double-click to reset"
         className={cn(
-          "absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none select-none",
+          "absolute inset-y-0 -right-1 z-[var(--z-sidebar)] w-2 cursor-col-resize touch-none select-none",
           "after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent",
           "hover:after:bg-accent/50 focus-visible:after:bg-accent focus-visible:outline-none",
-          resizing && "after:w-0.5 after:bg-accent",
+          // Dragging is 1:1: never let a transition lag the cursor while active.
+          resizing && "u-no-transition after:w-0.5 after:bg-accent",
         )}
       />
     </aside>

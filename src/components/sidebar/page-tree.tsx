@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  forwardRef,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type Dispatch,
   type DragEvent,
   type KeyboardEvent,
@@ -69,6 +71,7 @@ import {
   type DropRect,
 } from "@/lib/drag-drop-targets";
 import { truncateEnd } from "@/lib/truncate";
+import { DUR } from "@/lib/design-tokens";
 import {
   MAX_RECENT_PAGES,
   recentPages,
@@ -206,6 +209,148 @@ const SIDEBAR_OVERSCAN = 4;
  * replaces it with the measured height.
  */
 const SIDEBAR_VIEWPORT_FALLBACK = 600;
+
+// ---------------------------------------------------------------------------
+// Row motion — the pure class/state mapping (see docs/DESIGN_SYSTEM.md §6, §8).
+//
+// Every row state maps to token-only classes so the "hand-made" feel is provable
+// in a node test without a DOM (`.test.ts`, node environment). Hover is a CSS
+// pseudo-class that is always part of the row list; `selected`, `dragging` and
+// `settling` are forwarded from component state. Nothing here invents a colour,
+// duration, radius or z-index — it composes the design tokens.
+// ---------------------------------------------------------------------------
+
+/**
+ * Interaction state of one tree row.
+ *
+ * - `selected` — the route's open page: accent-soft tint + accent left rail.
+ * - `dragging` — the row under the pointer: 1:1 tracking (`.u-no-transition`),
+ *   lifted above its siblings (shadow-2 + a slight scale).
+ * - `settling` — the row just landed: plays the spring settle back to rest.
+ */
+export type PageRowState = {
+  selected?: boolean;
+  dragging?: boolean;
+  settling?: boolean;
+};
+
+/**
+ * Chevron rotation: 90° when open, at `--dur-2` / `--ease-smooth` (the design
+ * system's "toggles" duration). Never an ad-hoc millisecond value.
+ */
+export function pageChevronClass(open: boolean): string {
+  return cn(
+    "h-3.5 w-3.5 transition-transform duration-[var(--dur-2)] ease-[var(--ease-smooth)]",
+    open && "rotate-90",
+  );
+}
+
+/**
+ * The chevron button: a 20×20 hit area (`h-5 w-5` inner target) inside a 24 px
+ * minimum row (`h-6 w-5`), so the control clears the 24 px touch baseline while
+ * keeping the glyph small. `invisible` (not `hidden`) keeps the row's text
+ * aligned for leaf pages.
+ */
+export function pageChevronButtonClass(hasChildren: boolean): string {
+  return cn(
+    "flex h-6 w-5 shrink-0 items-center justify-center rounded-sm text-muted",
+    "u-colors hover:text-fg",
+    !hasChildren && "invisible",
+  );
+}
+
+/**
+ * The row chrome class list, keyed by interaction state.
+ *
+ * - Hover/press ride on the shared `u-colors` + `u-interactive` tokens, so hover
+ *   is a background tint only (never size) and press is the shared `scale(0.985)`.
+ * - The selected rail is a `before:` pseudo-element (no extra DOM).
+ * - `dragging` carries `.u-no-transition` (dragging is 1:1 — a transition would
+ *   make the row lag the cursor).
+ *
+ * Pure: same state in, same string out.
+ */
+export function pageRowClass({
+  selected = false,
+  dragging = false,
+}: PageRowState = {}): string {
+  return cn(
+    "group relative flex items-center rounded-md pr-0.5",
+    "u-colors u-interactive hover:bg-surface-2",
+    selected &&
+      "bg-accent-soft before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-full before:bg-accent before:content-['']",
+    dragging && "u-no-transition z-[var(--z-drag)] scale-[1.02] opacity-60 shadow-2",
+  );
+}
+
+/**
+ * The focusable title link. `focus-ring` is the single shared focus treatment
+ * (docs §8) — keyboard focus shows a ring, never the hover tint.
+ */
+export function pageRowLinkClass(renaming = false): string {
+  return cn(
+    "focus-ring flex min-w-0 flex-1 items-center gap-2 rounded-sm py-1 text-sm",
+    renaming && "hidden",
+  );
+}
+
+/**
+ * The inline spring settle for a row that just landed from a drag: transform,
+ * shadow and opacity ease back with `--ease-spring`. Applied as an inline style
+ * because `.u-no-transition` (unlayered, `!important`) must still win *while*
+ * dragging — inline styles are the only layer that composes cleanly with it.
+ */
+export function pageRowSettleStyle(settling: boolean): CSSProperties {
+  if (!settling) return {};
+  return {
+    transition:
+      "transform var(--dur-3) var(--ease-spring), box-shadow var(--dur-3) var(--ease-spring), opacity var(--dur-3) var(--ease-spring)",
+  };
+}
+
+/**
+ * An expanding/collapsing child list animates its height (`grid-template-rows`
+ * 0fr→1fr) and opacity over `--dur-2` — a soft unfold, never a jarring pop. The
+ * inner wrapper carries `min-h-0 overflow-hidden` so the grid row can actually
+ * shrink to nothing (`PAGE_TREE_CHILDREN_INNER`).
+ */
+export function pageTreeChildrenClass(open: boolean): string {
+  return cn(
+    "grid overflow-hidden transition-[grid-template-rows,opacity] duration-[var(--dur-2)] ease-[var(--ease-smooth)]",
+    open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+  );
+}
+
+/** Inner box of {@link pageTreeChildrenClass}; `min-h-0` lets the row collapse. */
+export const PAGE_TREE_CHILDREN_INNER = "min-h-0 overflow-hidden";
+
+// ---------------------------------------------------------------------------
+// Drag auto-scroll — pure geometry, so the edge gesture is provable without a DOM.
+// ---------------------------------------------------------------------------
+
+/** Distance (px) from a scrollport edge that starts auto-scroll while dragging. */
+export const EDGE_SCROLL_ZONE = 28;
+
+/** Pixels scrolled per drag-over tick while the pointer is in an edge zone. */
+export const EDGE_SCROLL_STEP = 14;
+
+/**
+ * How far a drag near the top/bottom edge should scroll the sidebar. Negative
+ * scrolls up, positive down, `0` in the safe middle band. A non-positive `zone`
+ * disables auto-scroll (returns `0`).
+ */
+export function edgeScrollDelta(
+  clientY: number,
+  top: number,
+  bottom: number,
+  zone: number = EDGE_SCROLL_ZONE,
+  step: number = EDGE_SCROLL_STEP,
+): number {
+  if (zone <= 0) return 0;
+  if (clientY < top + zone) return -step;
+  if (clientY > bottom - zone) return step;
+  return 0;
+}
 
 /**
  * Synthetic id prefix for a section-header row in the plan tree. Page ids are
@@ -377,6 +522,140 @@ export function buildSidebarRenderPlan(
   };
 }
 
+/**
+ * Presentational shell for one tree row: the accent/selection chrome, the
+ * chevron toggle and the title link. Everything stateful (menus, rename,
+ * server actions) is injected as `children`, so this shell can be rendered in
+ * isolation in a `renderToStaticMarkup` test for each row state. It forwards
+ * its ref because Radix's `ContextMenuTrigger asChild` clones it.
+ */
+export type PageTreeRowProps = {
+  id: string;
+  title: string;
+  icon: string | null;
+  type: "PAGE" | "DATABASE";
+  href: string;
+  depth: number;
+  hasChildren: boolean;
+  expanded: boolean;
+  state?: PageRowState;
+  renaming?: boolean;
+  /** Inline drop indicator from `dropIndicatorStyle`, when this row is a target. */
+  indicator?: CSSProperties | null;
+  onToggle: () => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
+  draggable?: boolean;
+  onDragStart?: (event: DragEvent<HTMLDivElement>) => void;
+  onDragEnd?: () => void;
+  className?: string;
+  style?: CSSProperties;
+  children?: ReactNode;
+};
+
+export const PageTreeRow = forwardRef<HTMLDivElement, PageTreeRowProps>(
+  function PageTreeRow(
+    {
+      id,
+      title,
+      icon,
+      type,
+      href,
+      depth,
+      hasChildren,
+      expanded,
+      state,
+      renaming = false,
+      indicator,
+      onToggle,
+      onKeyDown,
+      draggable,
+      onDragStart,
+      onDragEnd,
+      className,
+      style,
+      children,
+      ...rest
+    },
+    ref,
+  ) {
+    return (
+      <div
+        {...rest}
+        ref={ref}
+        data-page-row
+        data-page-id={id}
+        data-selected={state?.selected ? "" : undefined}
+        data-dragging={state?.dragging ? "" : undefined}
+        tabIndex={-1}
+        draggable={draggable}
+        onKeyDown={onKeyDown}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        className={cn(pageRowClass(state), className)}
+        style={{
+          paddingLeft: depth * 14,
+          ...pageRowSettleStyle(Boolean(state?.settling)),
+          ...(indicator ?? null),
+          ...style,
+        }}
+      >
+        <button
+          type="button"
+          aria-label={expanded ? "Collapse" : "Expand"}
+          aria-expanded={hasChildren ? expanded : undefined}
+          onClick={onToggle}
+          className={pageChevronButtonClass(hasChildren)}
+        >
+          <span aria-hidden className="flex h-5 w-5 items-center justify-center">
+            <ChevronRight className={pageChevronClass(expanded)} />
+          </span>
+        </button>
+        <Link href={href} className={pageRowLinkClass(renaming)}>
+          <span className="w-4 shrink-0 text-center text-sm">
+            {icon ?? (type === "DATABASE" ? "🗂️" : "📄")}
+          </span>
+          <span className="truncate">
+            {truncateEnd(title || "Untitled", SIDEBAR_TITLE_MAX)}
+          </span>
+        </Link>
+        {children}
+      </div>
+    );
+  },
+);
+
+/**
+ * The animated child list. Children stay mounted while the branch collapses so
+ * the `0fr` grid transition has something to shrink (a jarring pop otherwise);
+ * once the transition ends they unmount, keeping a collapsed subtree out of the
+ * DOM (and out of the tab order — `inert` while closed). Server rendering mounts
+ * only what an open branch needs, so SSR output matches the old markup.
+ */
+function TreeBranch({ open, children }: { open: boolean; children: ReactNode }) {
+  // Derived state, adjusted during render: on open, content is present in the
+  // same commit the wrapper grows, so the transition has a from/to to animate.
+  const [branch, setBranch] = useState(() => ({ open, present: open }));
+  if (branch.open !== open) {
+    setBranch({ open, present: branch.present || open });
+  }
+  return (
+    <div
+      className={pageTreeChildrenClass(open)}
+      aria-hidden={!open}
+      inert={!open}
+      onTransitionEnd={(event) => {
+        if (!open && event.target === event.currentTarget) {
+          setBranch({ open, present: false });
+        }
+      }}
+    >
+      <div className={PAGE_TREE_CHILDREN_INNER}>
+        {branch.present ? children : null}
+      </div>
+    </div>
+  );
+}
+
 export function PageTree({
   tree,
   teamspaces,
@@ -534,6 +813,16 @@ export function PageTree({
   const dragStartX = useRef(0);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; mode: DropMode } | null>(null);
+  // The row that just landed: it plays the spring settle back to rest for
+  // `DUR.slow`, then the class is dropped so the inline transition clears.
+  const [settlingId, setSettlingId] = useState<string | null>(null);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (settleTimer.current) clearTimeout(settleTimer.current);
+    },
+    [],
+  );
 
   // Keep the plan's viewport in sync with the real nav height. A layout effect
   // runs before paint, so the window is sized correctly with no visible flash;
@@ -605,6 +894,13 @@ export function PageTree({
 
   const parentOf = (id: string) => byId.get(id)?.parentId ?? null;
 
+  /** Start the post-drop spring settle for a row, replacing any in flight. */
+  const beginSettle = (id: string) => {
+    setSettlingId(id);
+    if (settleTimer.current) clearTimeout(settleTimer.current);
+    settleTimer.current = setTimeout(() => setSettlingId(null), DUR.slow);
+  };
+
   const handleDragStart = (event: DragEvent<HTMLDivElement>, id: string) => {
     setDraggingId(id);
     setDropTarget(null);
@@ -620,6 +916,14 @@ export function PageTree({
 
   const handleDragOver = (event: DragEvent<HTMLElement>) => {
     if (!draggingId) return;
+    // Auto-scroll near either edge so a row can be dragged to an off-screen
+    // target: pure `edgeScrollDelta` over the nav's client box.
+    const container = navRef.current;
+    if (container) {
+      const box = container.getBoundingClientRect();
+      const delta = edgeScrollDelta(event.clientY, box.top, box.bottom);
+      if (delta !== 0) container.scrollTop += delta;
+    }
     const rects = dropRects();
     if (rects.length === 0) return;
     // Rightward travel promotes the hover to `inside` (re-parent) — the
@@ -651,6 +955,8 @@ export function PageTree({
     setDraggingId(null);
     setDropTarget(null);
     if (!draggedId || !target) return;
+    // The row has stopped tracking the cursor: let it spring back to rest.
+    beginSettle(draggedId);
     const draggedNode = byId.get(draggedId);
     const targetNode = byId.get(target.id);
     if (!draggedNode || !targetNode) return;
@@ -769,52 +1075,28 @@ export function PageTree({
     return (
               <ContextMenu>
                 <ContextMenuTrigger asChild>
-              <div
-                className={cn(
-                  "group flex items-center rounded-md pr-0.5 hover:bg-surface-2 focus-within:bg-surface-2",
-                  active && "bg-surface-2",
-                  draggingId === node.id && "opacity-50",
-                )}
-                data-page-row
-                data-page-id={node.id}
-                tabIndex={-1}
+              <PageTreeRow
+                id={node.id}
+                title={node.title}
+                icon={node.icon}
+                type={node.type}
+                href={href}
+                depth={depth}
+                hasChildren={children.length > 0}
+                expanded={isOpen}
+                state={{
+                  selected: active,
+                  dragging: draggingId === node.id,
+                  settling: settlingId === node.id,
+                }}
+                renaming={renamingId === node.id}
+                indicator={indicator}
+                onToggle={() => toggle(node.id)}
                 onKeyDown={(event) => handleTreeKeyDown(event, node.id)}
                 draggable
                 onDragStart={(event) => handleDragStart(event, node.id)}
                 onDragEnd={handleDragEnd}
-                style={{ paddingLeft: depth * 14, ...(indicator ?? {}) }}
               >
-                <button
-                  type="button"
-                  aria-label={isOpen ? "Collapse" : "Expand"}
-                  aria-expanded={children.length > 0 ? isOpen : undefined}
-                  onClick={() => toggle(node.id)}
-                  className={cn(
-                    "flex h-7 w-5 shrink-0 items-center justify-center text-muted",
-                    children.length === 0 && "invisible",
-                  )}
-                >
-                  <ChevronRight
-                    className={cn(
-                      "h-3.5 w-3.5 transition-transform",
-                      isOpen && "rotate-90",
-                    )}
-                  />
-                </button>
-                <Link
-                  href={href}
-                  className={cn(
-                    "flex min-w-0 flex-1 items-center gap-2 py-1 text-sm",
-                    renamingId === node.id && "hidden",
-                  )}
-                >
-                  <span className="w-4 shrink-0 text-center text-sm">
-                    {node.icon ?? (node.type === "DATABASE" ? "🗂️" : "📄")}
-                  </span>
-                  <span className="truncate">
-                    {truncateEnd(node.title || "Untitled", SIDEBAR_TITLE_MAX)}
-                  </span>
-                </Link>
                 {renamingId === node.id && (
                   <input
                     autoFocus
@@ -839,7 +1121,7 @@ export function PageTree({
                     className="min-w-0 flex-1 rounded border border-border bg-bg px-1 py-0.5 text-sm outline-none focus:border-accent"
                   />
                 )}
-                <div className="flex items-center opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+                <div className="flex items-center opacity-0 u-transform group-hover:opacity-100 focus-within:opacity-100">
                   <Tooltip label="Add a sub-page">
                     <button
                       type="button"
@@ -899,7 +1181,7 @@ export function PageTree({
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
-              </div>
+              </PageTreeRow>
                 </ContextMenuTrigger>
                 <ContextMenuContent>
                   <ContextMenuItem onSelect={() => router.push(href)}>
@@ -1073,7 +1355,11 @@ export function PageTree({
         {nodes.map((node) => (
           <li key={node.id}>
             {renderRow(node, depth)}
-            {expanded.has(node.id) && renderNodes(node.id, depth + 1)}
+            {(byParent.get(node.id)?.length ?? 0) > 0 && (
+              <TreeBranch open={expanded.has(node.id)}>
+                {renderNodes(node.id, depth + 1)}
+              </TreeBranch>
+            )}
           </li>
         ))}
       </ul>
