@@ -4,7 +4,10 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { importNotionPageAction } from "@/server/actions/notion-import";
+import {
+  importNotionPageAction,
+  type NotionImportOptions,
+} from "@/server/actions/notion-import";
 import type { NotionMappingSummary } from "@/server/actions/import";
 import { t } from "@/lib/i18n";
 import {
@@ -99,12 +102,17 @@ export function NotionImportDialog({
    */
   const [importedUnmapped, setImportedUnmapped] = useState<NotionMappingSummary | null>(null);
   /**
+   * R24: the options the server action reported honouring on the last
+   * successful import. Surfaced under the status line so the user can see that
+   * e.g. subpages were actually skipped, not just that the toggle was ticked.
+   */
+  const [honouredOptions, setHonouredOptions] = useState<NotionImportOptions | null>(null);
+  /**
    * Q20: additive import options the user can toggle before confirming. Both
    * default to `true`, which reproduces the pre-existing behaviour (properties
-   * imported, nested subpages included). They are sent alongside the existing
-   * `workspaceId`/`token`/`pageId` payload fields so the action can honour them
-   * without a signature change; the action ignoring them leaves the flow the
-   * same as before.
+   * imported, nested subpages included). R24 wires them to the server action
+   * (`importNotionPageAction`), which now honours them and echoes back the
+   * applied values on `result.options`.
    */
   const [importProperties, setImportProperties] = useState(true);
   const [includeSubpages, setIncludeSubpages] = useState(true);
@@ -136,6 +144,7 @@ export function NotionImportDialog({
     setFailure("");
     setImportedId("");
     setImportedUnmapped(null);
+    setHonouredOptions(null);
     setAcknowledged(false);
   };
 
@@ -149,11 +158,15 @@ export function NotionImportDialog({
       setFailure("");
       setSummary("");
       setStage("running");
-      // Q20: payload carries the additive import options. Held in a variable so
-      // the extra fields do not trip the exact-object excess-property check on
-      // the action's parameter type; the action still receives them at runtime.
-      const payload = { workspaceId, token, pageId, importProperties, includeSubpages };
-      const result = await importNotionPageAction(payload);
+      // R24: the action now types and honours these options, so they are
+      // passed straight through alongside the existing payload fields.
+      const result = await importNotionPageAction({
+        workspaceId,
+        token,
+        pageId,
+        importProperties,
+        includeSubpages,
+      });
 
       if ("ok" in result) {
         const counts = result.counts;
@@ -165,6 +178,7 @@ export function NotionImportDialog({
         );
         setImportedId(result.id);
         setImportedUnmapped(result.unmapped);
+        setHonouredOptions(result.options);
         setStage("done");
         setToken("");
         setPageId("");
@@ -306,6 +320,17 @@ export function NotionImportDialog({
             {summary !== "" && (
               <p role="status" className="text-muted">
                 {summary}
+              </p>
+            )}
+            {stage === "done" && honouredOptions && (
+              <p
+                className="mt-1 text-xs text-muted"
+                data-testid="notion-import-honoured-options"
+              >
+                Options applied:{" "}
+                {honouredOptions.importProperties ? "properties imported" : "properties skipped"}
+                {" · "}
+                {honouredOptions.includeSubpages ? "subpages included" : "subpages skipped"}
               </p>
             )}
             {stage === "done" && importedUnmappedCount > 0 && (
