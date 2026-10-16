@@ -8,6 +8,7 @@ import {
   useState
 } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
+import { Extension } from "@tiptap/core";
 import { BubbleMenu } from "@tiptap/react/menus";
 import DragHandle from "@tiptap/extension-drag-handle-react";
 import StarterKit from "@tiptap/starter-kit";
@@ -32,10 +33,39 @@ import { toast } from "sonner";
 import { BlockContextMenu } from "@/components/editor/block-context-menu";
 import { EquationEditor, EQUATION_EVENT } from "@/components/editor/equation-editor";
 import { MathAutoDetect } from "@/components/editor/extensions/math-input";
-import { Fragment, Slice } from "@tiptap/pm/model";
-import { Selection } from "@tiptap/pm/state";
+import { Fragment, Slice, type Node as PMNode } from "@tiptap/pm/model";
+import { Plugin, Selection } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
 import { normalizePasteHtml, pastePlan } from "@/lib/paste";
 import { analyzeBlockDrop, dropZone } from "@/lib/drag-indent";
+import {
+  DEFAULT_ALLOWED_TAGS,
+  detectSource,
+  normalizeNestedMarks,
+  sanitizePaste,
+  sourceCleanups,
+  stripInlineStyles,
+  type PasteCleanupStep,
+  type PasteSource,
+} from "@/lib/paste-cleanup";
+import {
+  extractDataUrl,
+  inspectClipboardItem,
+  planPaste,
+  type ClipboardItem,
+  type PasteSkip,
+  type PasteUpload,
+} from "@/lib/clipboard-image";
+import {
+  extendSelection,
+  resolveRange,
+  shiftSelect,
+  deletePlan,
+  type BlockRange as SelectionRange,
+  type MaybeRange,
+} from "@/lib/block-selection";
+import { moveBlocks, type BlockPage } from "@/lib/block-move";
+import { restrictCommands } from "@/lib/math-render";
 import { createStack, push as pushSnapshot, type UndoStack } from "@/lib/undo-stack";
 import {
   assignColor,
@@ -163,6 +193,308 @@ function suggestionLabel(suggestion: Suggestion, locale: string): string {
     return `${t(locale, "deletedPrefix")}: ${before ?? "…"}`;
   }
   return `${t(locale, "suggestionReplaced")}: ${before ?? "…"} → ${after ?? "…"}`;
+}
+
+/* --------------------------------------------------------------- paste engines */
+
+/**
+ * Attributes the Noema paste normaliser understands, mirroring the rich list
+ * `paste.ts` feeds its own sanitizer. `sanitizePaste` (paste-cleanup) has no
+ * per-tag wildcard, so the same list is attached to every structural tag; the
+ * allowlist then keeps exactly what `normalizePasteHtml` reads while still
+ * dropping `on*` handlers and unsafe URL schemes on top.
+ */
+const NOEMA_PASTE_ATTRS: readonly string[] = [
+  "href", "src", "alt", "title", "colspan", "rowspan", "lang", "class",
+  "style", "type", "checked", "open", "color", "emoji", "summary",
+  "data-block-color", "data-pm-slice", "data-type", "data-checked",
+  "data-language", "data-callout", "data-toggle", "data-columns",
+  "data-column", "data-toc", "data-caption", "data-summary",
+  "data-collapsed", "aria-expanded", "data-color",
+];
+
+/**
+ * Structural tags the Noema paste normaliser maps to block nodes: the
+ * sanitizer's defaults plus the wrappers/atoms `normalizePasteHtml` reads
+ * (callout/toggle/columns `div`s, task-list `input`s, inline `span`/`mark`).
+ */
+const NOEMA_PASTE_TAGS: readonly string[] = [
+  ...DEFAULT_ALLOWED_TAGS,
+  "div", "span", "ins", "mark", "font", "sub", "sup", "img", "input",
+];
+
+const NOEMA_PASTE_ATTR_MAP: Readonly<Record<string, readonly string[]>> =
+  Object.fromEntries(
+    NOEMA_PASTE_TAGS.map((tag): [string, readonly string[]] => [tag, NOEMA_PASTE_ATTRS]),
+  );
+
+/** The sanitized clipboard HTML plus the source fingerprint behind it. */
+export type CleanedClipboardHtml = {
+  /** Allowlist-sanitised HTML, safe to hand to `normalizePasteHtml`. */
+  html: string;
+  /** The clipboard source `detectSource` recognised. */
+  source: PasteSource;
+  /** The extra cleanup steps that source declares (`sourceCleanups`). */
+  cleanups: readonly PasteCleanupStep[];
+};
+
+/**
+ * Route clipboard HTML through the paste-cleanup engine before it ever reaches
+ * the document model: fingerprint the source (`detectSource`), read the
+ * source-specific cleanup catalogue (`sourceCleanups`), collapse redundant mark
+ * nesting, strip Word's `mso-*` inline noise, then harden everything through
+ * `sanitizePaste`'s tag/attribute/URL allowlist.
+ *
+ * Only Word's clipboard triggers the inline-style strip: it is the one source
+ * whose noise is both heavy and unambiguous. Noema's *own* copies carry
+ * `data-block-id`, which `detectSource` fingerprints as Notion — stripping
+ * every non-generic source would therefore erase real text colour on an
+ * internal copy/paste, so GDocs/Notion keep their (now class/attr-limited)
+ * markup.
+ */
+export function cleanClipboardHtml(html: string): CleanedClipboardHtml {
+  const source = detectSource(html);
+  const cleanups = sourceCleanups(source);
+  const wantsStyleStrip = cleanups.some((step) => step.id === "word:mso-styles");
+  const deNoised = wantsStyleStrip
+    ? normalizeNestedMarks(stripInlineStyles(html))
+    : normalizeNestedMarks(html);
+  return {
+    html: sanitizePaste(deNoised, {
+      mode: "rich",
+      allowedTags: NOEMA_PASTE_TAGS,
+      allowedAttrs: NOEMA_PASTE_ATTR_MAP,
+    }),
+    source,
+    cleanups,
+  };
+}
+
+/** One clipboard file the editor can upload, described without the blob. */
+export type ClipboardFileDescriptor = {
+  name: string;
+  mimeType: string;
+  size: number;
+};
+
+/** A gated upload, tied back to the file or HTML data URL it came from. */
+export type ClipboardImageUpload = PasteUpload & {
+  /** Whether the bytes came from a real `File` or an HTML `data:` image. */
+  source: "file" | "data-url";
+  /** Index into the input `files` array (present for `source: "file"`). */
+  fileIndex?: number;
+  /** Base64 payload (present for `source: "data-url"`). */
+  data?: string;
+};
+
+/** What the clipboard-image pipeline will upload, and what it refused. */
+export type ClipboardImagePlan = {
+  uploads: ClipboardImageUpload[];
+  skipped: PasteSkip[];
+};
+
+/**
+ * Run the clipboard-image engine over a paste: prefer real `File`s, otherwise
+ * pull the first `data:image/*` out of the HTML flavour with `extractDataUrl`.
+ * Every candidate is gated by `inspectClipboardItem` (allow-list, SVG safety,
+ * size) and named/skipped by `planPaste` before any upload is attempted.
+ * Pure: takes descriptors, returns a plan, never touches the network.
+ */
+export function planClipboardImages(options: {
+  files: readonly ClipboardFileDescriptor[];
+  html?: string;
+  maxBytes?: number;
+  existingNames?: Iterable<string>;
+  now?: Date | number | string;
+}): ClipboardImagePlan {
+  type Candidate = ClipboardItem & { source: "file" | "data-url"; fileIndex?: number };
+  const candidates: Candidate[] = options.files.map((file, fileIndex) => ({
+    mimeType: file.mimeType,
+    size: file.size,
+    name: file.name,
+    source: "file",
+    fileIndex,
+  }));
+
+  if (candidates.length === 0) {
+    const extracted = extractDataUrl(options.html ?? "");
+    // A percent-encoded SVG carries no base64 payload, so its safety cannot be
+    // re-checked here; skip it rather than reject it as `unsafe-svg`.
+    if (extracted && !(extracted.mimeType === "image/svg+xml" && extracted.base64 === "")) {
+      candidates.push({
+        mimeType: extracted.mimeType,
+        size: extracted.size,
+        name: "",
+        source: "data-url",
+        ...(extracted.base64 !== "" ? { data: extracted.base64 } : {}),
+      });
+    }
+  }
+
+  const plan = planPaste({
+    items: candidates,
+    maxBytes: options.maxBytes,
+    existingNames: options.existingNames,
+    now: options.now,
+  });
+
+  // `planPaste` reports only counts, so re-run the same verdict per candidate to
+  // line each accepted upload back up with the bytes it should upload.
+  const uploads: ClipboardImageUpload[] = [];
+  let cursor = 0;
+  for (const candidate of candidates) {
+    const verdict = inspectClipboardItem(candidate, { maxBytes: options.maxBytes });
+    if (!verdict.accept) continue;
+    const upload = plan.uploads[cursor];
+    cursor += 1;
+    if (!upload) break;
+    uploads.push({
+      ...upload,
+      source: candidate.source,
+      ...(candidate.fileIndex !== undefined ? { fileIndex: candidate.fileIndex } : {}),
+      ...(candidate.data !== undefined ? { data: candidate.data } : {}),
+    });
+  }
+  return { uploads, skipped: plan.skipped };
+}
+
+/* --------------------------------------------------------- block selection/move */
+
+/** The top-level block ids of a document, in document order. */
+export function topLevelBlockIds(doc: PMNode): string[] {
+  const ids: string[] = [];
+  doc.forEach((node) => {
+    const id = node.attrs?.id;
+    ids.push(typeof id === "string" ? id : "");
+  });
+  return ids;
+}
+
+/** The id of the top-level block containing `pos`, or `null`. */
+function blockIdAt(doc: PMNode, pos: number): string | null {
+  let found: string | null = null;
+  doc.forEach((node, offset) => {
+    if (found !== null) return;
+    if (pos >= offset && pos <= offset + node.nodeSize) {
+      const id = node.attrs?.id;
+      found = typeof id === "string" && id !== "" ? id : null;
+    }
+  });
+  return found;
+}
+
+/**
+ * Plan a multi-block drag reorder with `moveBlocks`: given the flat block ids,
+ * the selected range and the destination index, return the new id order, or
+ * `null` when fewer than two whole blocks are selected (the single-block
+ * indent path keeps handling that case).
+ */
+export function planBlockReorder(
+  blockIds: readonly string[],
+  range: MaybeRange,
+  targetIndex: number,
+): string[] | null {
+  const selected = resolveRange(blockIds, range);
+  if (selected.length < 2) return null;
+  const indices = selected.map((id) => blockIds.indexOf(id)).filter((index) => index >= 0);
+  if (indices.length < 2) return null;
+  const page: BlockPage = {
+    id: "page",
+    blocks: blockIds.map((id) => ({ id, type: "block" })),
+  };
+  const result = moveBlocks({ from: page, to: page }, { indices, targetIndex });
+  return result.toDoc.blocks.map((block) => block.id);
+}
+
+/** Reorder the document's top-level blocks to match `order` in one transaction. */
+function reorderTopLevelBlocks(view: EditorView, order: readonly string[]): void {
+  const doc = view.state.doc;
+  const byId = new Map<string, PMNode>();
+  doc.forEach((node) => {
+    const id = node.attrs?.id;
+    if (typeof id === "string") byId.set(id, node);
+  });
+  const nodes = order
+    .map((id) => byId.get(id))
+    .filter((node): node is PMNode => node !== undefined);
+  if (nodes.length !== doc.childCount) return;
+  view.dispatch(
+    view.state.tr.replaceWith(0, doc.content.size, Fragment.fromArray(nodes)),
+  );
+}
+
+/** Delete every top-level block whose id is in `ids` as one transaction. */
+function deleteBlocksByIds(view: EditorView, ids: readonly string[]): void {
+  const doc = view.state.doc;
+  const targets = new Set(ids);
+  let from = -1;
+  let to = -1;
+  doc.forEach((node, offset) => {
+    const id = node.attrs?.id;
+    if (typeof id === "string" && targets.has(id)) {
+      if (from === -1) from = offset;
+      to = offset + node.nodeSize;
+    }
+  });
+  if (from === -1 || to === -1) return;
+  const tr = view.state.tr;
+  // A document is `block+`: replacing the whole body with one empty paragraph
+  // keeps the schema valid when the range was the entire page.
+  if (from === 0 && to === doc.content.size) {
+    tr.replaceWith(0, doc.content.size, view.state.schema.nodes.paragraph.create());
+  } else {
+    tr.delete(from, to);
+  }
+  view.dispatch(tr.scrollIntoView());
+}
+
+/**
+ * The math engine's banned-command guard (`restrictCommands`): strips
+ * `\input`/`\include`/`\write18` and their arguments, leaving every other
+ * equation byte-for-byte intact. Idempotent, so it settles in one pass.
+ */
+export function restrictMathLatex(latex: string): string {
+  return restrictCommands(latex);
+}
+
+/** Document guard: no equation node may retain a banned command. */
+const MathSafety = Extension.create({
+  name: "mathSafety",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        appendTransaction: (transactions, _oldState, newState) => {
+          if (!transactions.some((transaction) => transaction.docChanged)) return null;
+          const tr = newState.tr;
+          let changed = false;
+          newState.doc.descendants((node, pos) => {
+            if (node.type.name !== "inlineMath" && node.type.name !== "blockMath") return true;
+            const latex = typeof node.attrs.latex === "string" ? node.attrs.latex : "";
+            const next = restrictMathLatex(latex);
+            if (next !== latex) {
+              tr.setNodeMarkup(pos, undefined, { ...node.attrs, latex: next });
+              changed = true;
+            }
+            return false;
+          });
+          return changed ? tr : null;
+        },
+      }),
+    ];
+  },
+});
+
+/** Build a browser `File` from a planned `data:` image upload. */
+function dataUrlUploadFile(upload: ClipboardImageUpload): File | null {
+  if (!upload.data) return null;
+  try {
+    const binary = atob(upload.data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return new File([bytes], upload.name, { type: upload.mimeType });
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -322,6 +654,15 @@ export function PageEditor({
   const seededEditorRef = useRef<Editor | null>(null);
   /** Pointer X where the drag handle drag started, for indent-by-offset. */
   const dragStartXRef = useRef<number | null>(null);
+  /**
+   * The multi-block range selection (block-selection engine), authoritative in
+   * a ref so the `editorProps` closures created once by `useEditor` never read
+   * a stale value. Shift-click / Shift-Arrow extend it, Escape clears it, and
+   * `handleDrop`/`handleKeyDown` act on it.
+   */
+  const blockRangeRef = useRef<SelectionRange | null>(null);
+  /** How many top-level blocks the range currently covers (for the wrapper). */
+  const [blockSelected, setBlockSelected] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastSavedRef = useRef<string>("");
   /** Latest document payload not yet acknowledged by the server. */
@@ -513,6 +854,57 @@ export function PageEditor({
     [workspaceId, locale],
   );
 
+  /**
+   * Upload the images a paste plan accepted (real files first, otherwise the
+   * HTML data URL `extractDataUrl` recovered) through the normal attachment
+   * pipeline, and report anything `inspectClipboardItem` refused.
+   */
+  const uploadClipboardImages = useCallback(
+    async (plan: ClipboardImagePlan, files: File[]) => {
+      for (const upload of plan.uploads) {
+        const file =
+          upload.source === "data-url"
+            ? dataUrlUploadFile(upload)
+            : files[upload.fileIndex ?? -1] ?? null;
+        if (!file) continue;
+        await insertFiles([file]);
+      }
+      if (plan.skipped.length > 0) {
+        toast.error(`${plan.skipped.length} clipboard image(s) skipped`);
+      }
+    },
+    [insertFiles],
+  );
+
+  /**
+   * Paint (or clear) the active block range on the top-level DOM nodes and
+   * mirror its size onto `blockSelected`. The ids come from the editor's global
+   * `id` attribute (the `BlockIds` extension), rendered as `data-block-id`.
+   */
+  const paintBlockRange = useCallback((range: SelectionRange | null) => {
+    blockRangeRef.current = range;
+    const editor = editorRef.current;
+    if (!editor || !editor.view) {
+      setBlockSelected(range ? 1 : 0);
+      return;
+    }
+    const root = editor.view.dom;
+    root.querySelectorAll(".noema-block-selected").forEach((el) => {
+      el.classList.remove("noema-block-selected");
+    });
+    if (!range) {
+      setBlockSelected(0);
+      return;
+    }
+    const ids = resolveRange(topLevelBlockIds(editor.state.doc), range);
+    const selected = new Set(ids);
+    root.querySelectorAll<HTMLElement>("[data-block-id]").forEach((el) => {
+      const id = el.getAttribute("data-block-id");
+      if (id && selected.has(id)) el.classList.add("noema-block-selected");
+    });
+    setBlockSelected(ids.length);
+  }, []);
+
   const [peers, setPeers] = useState(1);
   /** Transport status, surfaced so a dropped link is visible in the chrome. */
   const [collabStatus, setCollabStatus] = useState<CollabStatus>("connecting");
@@ -630,6 +1022,8 @@ export function PageEditor({
       LinkedDatabase.configure({ workspaceId, workspaceSlug, locale }),
       // B18: `1)` lists, `| a | b |` + Enter tables, `:smile:` emoji.
       InputRules,
+      // Math engine guard: strips banned TeX commands from every equation node.
+      MathSafety,
       ...(collab
         ? [
             Collaboration.configure({ document: collab.ydoc }),
@@ -646,19 +1040,97 @@ export function PageEditor({
     },
     editorProps: {
       attributes: { class: "focus:outline-none" },
-      handlePaste(view, event) {
-        const files = Array.from(event.clipboardData?.files ?? []);
-        if (files.length > 0) {
-          void insertFiles(files);
+      /**
+       * Multi-block range selection (block-selection engine). Shift-click starts
+       * or extends a whole-block range; a modifier-click on an active range
+       * toggles an endpoint; a plain click clears it and falls through to the
+       * stock text selection.
+       */
+      handleDOMEvents: {
+        mousedown(view, event) {
+          const mouse = event as MouseEvent;
+          const active = blockRangeRef.current;
+          const toggling = active !== null && (mouse.metaKey || mouse.ctrlKey);
+          if (!mouse.shiftKey && !toggling) {
+            if (active) paintBlockRange(null);
+            return false;
+          }
+          const found = view.posAtCoords({ left: mouse.clientX, top: mouse.clientY });
+          const targetId = found ? blockIdAt(view.state.doc, found.pos) : null;
+          if (targetId === null) return false;
+          paintBlockRange(
+            shiftSelect(active, {
+              focusId: targetId,
+              shift: mouse.shiftKey,
+              meta: mouse.metaKey || mouse.ctrlKey,
+            }),
+          );
+          mouse.preventDefault();
+          return true;
+        },
+      },
+      /**
+       * Keyboard path for the same range (R84.10 a11y): only once a range is
+       * active, Shift-ArrowUp/Down moves its head block by block, Escape clears
+       * it and Backspace/Delete removes every selected block in one transaction.
+       * Without an active range every key falls through to normal editing.
+       */
+      handleKeyDown(view, event) {
+        const range = blockRangeRef.current;
+        if (!range) return false;
+        if (event.key === "Escape") {
+          paintBlockRange(null);
           return true;
         }
-        // HTML paste: normalise through the pure helper and insert a closed
-        // block slice, so blocks copied from another page keep their type.
-        // ProseMirror's stock path applies the copy's open depths
-        // (`data-pm-slice`) and flattens the first block on partial copies.
-        const html = event.clipboardData?.getData("text/html");
+        if (event.shiftKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+          const ids = topLevelBlockIds(view.state.doc);
+          if (ids.length === 0) return false;
+          const headIndex = ids.indexOf(range.headId);
+          const step = event.key === "ArrowDown" ? 1 : -1;
+          const nextIndex = Math.max(
+            0,
+            Math.min(ids.length - 1, (headIndex < 0 ? 0 : headIndex) + step),
+          );
+          paintBlockRange(extendSelection(ids, range, { extendId: ids[nextIndex] }));
+          event.preventDefault();
+          return true;
+        }
+        if (event.key === "Backspace" || event.key === "Delete") {
+          const plan = deletePlan(range, topLevelBlockIds(view.state.doc));
+          if (plan.removed.length > 1) {
+            deleteBlocksByIds(view, plan.removed);
+            paintBlockRange(null);
+            event.preventDefault();
+            return true;
+          }
+        }
+        return false;
+      },
+      handlePaste(view, event) {
+        const clipboard = event.clipboardData;
+        if (!clipboard) return false;
+
+        // Clipboard images: gate every real file and any `data:` image embedded
+        // in the HTML flavour through the clipboard-image engine before upload.
+        const files = Array.from(clipboard.files ?? []);
+        const html = clipboard.getData("text/html");
+        const imagePlan = planClipboardImages({
+          files: files.map((file) => ({
+            name: file.name,
+            mimeType: file.type,
+            size: file.size,
+          })),
+          html,
+        });
+        if (files.length > 0 || imagePlan.uploads.length > 0) {
+          void uploadClipboardImages(imagePlan, files);
+          return true;
+        }
+
         if (!html) return false;
-        const normalized = normalizePasteHtml(html);
+        // Route the HTML through the paste-cleanup engine (source fingerprint +
+        // allowlist sanitiser) before the block normaliser sees it.
+        const normalized = normalizePasteHtml(cleanClipboardHtml(html).html);
         if (normalized.blocks.length === 0) return false;
         const { state } = view;
         const $from = state.selection.$from;
@@ -700,6 +1172,31 @@ export function PageEditor({
           void insertFiles(files);
           return true;
         }
+        const dragging = view.dragging as {
+          slice: Slice;
+          move: boolean;
+          node?: { from: number };
+        } | null;
+        // A multi-block range (selected with shift-click) moves as a whole
+        // through the block-move engine, before the single-block indent path.
+        const range = blockRangeRef.current;
+        const draggedId = dragging?.node ? blockIdAt(view.state.doc, dragging.node.from) : null;
+        if (moved && range && draggedId !== null) {
+          const ids = topLevelBlockIds(view.state.doc);
+          const selected = resolveRange(ids, range);
+          if (selected.includes(draggedId) && selected.length > 1) {
+            const target = view.posAtCoords({ left: event.clientX, top: event.clientY });
+            const targetId = target ? blockIdAt(view.state.doc, target.pos) : null;
+            const targetIndex = targetId === null ? ids.length : ids.indexOf(targetId);
+            const order = planBlockReorder(ids, range, targetIndex);
+            if (order) {
+              reorderTopLevelBlocks(view, order);
+              paintBlockRange(null);
+              event.preventDefault();
+              return true;
+            }
+          }
+        }
         // Horizontal drag from the handle nests/unnests; a purely vertical
         // drag keeps ProseMirror's stock reorder.
         const startX = dragStartXRef.current;
@@ -709,11 +1206,6 @@ export function PageEditor({
             top: event.clientY,
           });
           const zone = found ? dropZone(event.clientX, startX) : "align";
-          const dragging = view.dragging as {
-            slice: Slice;
-            move: boolean;
-            node?: { from: number };
-          } | null;
           const plan =
             found && zone !== "align"
               ? analyzeBlockDrop(view.state, {
@@ -757,6 +1249,8 @@ export function PageEditor({
       const json = JSON.stringify(e.getJSON());
       persist(json);
       recordSnapshot(json);
+      // Any content change invalidates the whole-block range (ids may be gone).
+      if (blockRangeRef.current) paintBlockRange(null);
     },
   });
 
@@ -827,6 +1321,7 @@ export function PageEditor({
       className="noema-editor relative"
       data-undo-depth={snapshotDepth.undoable}
       data-redo-depth={snapshotDepth.redoable}
+      data-block-selected={blockSelected}
     >
       {editable && (
         <>
