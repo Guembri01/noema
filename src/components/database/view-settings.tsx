@@ -5,21 +5,23 @@ import {
   ArrowUpDown,
   BarChart3,
   Bookmark,
+  Calculator,
   Columns3,
   Eye,
   Filter as FilterIcon,
   Gauge,
   Image as ImageIcon,
   Layers,
+  LayoutTemplate,
   Maximize2,
   Palette,
   Plus,
   RotateCcw,
   Sigma,
+  Star,
   Trash2,
   X } from "lucide-react";
 import {
-  COLOR_CHOICES,
   CONTROL_CLASS,
   type DBProperty,
   type DBRow,
@@ -83,6 +85,23 @@ import {
   type SavedView,
   type ViewConfigLike,
 } from "@/lib/saved-views";
+import {
+  COLOR_TOKENS,
+  isSafeColor,
+  isConditionOp,
+  parseFormatRule,
+  type FormatRule,
+} from "@/lib/conditional-format";
+import {
+  footerFunctionsForType,
+  parseFooterSpec,
+  type FooterSpec,
+} from "@/lib/footer-calculations";
+import { useAction } from "@/lib/actions-client";
+import {
+  reorderTemplatesAction,
+  setDefaultTemplateAction,
+} from "@/server/actions/database";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import {
@@ -546,6 +565,36 @@ type ViewSettingsConfig = ViewConfig & {
    * discarding the rules it already saved. Unset means enabled.
    */
   conditionalFormat?: boolean;
+  /**
+   * TABLE: the per-column calculations footer, in exactly the shape
+   * `@/lib/footer-calculations` parses — `{ propertyId, fn }[]`, one entry per
+   * calculated column. This toolbar owns the key; `TableView` resolves it
+   * through `parseFooterSpec`/`resolveFooterCalculations` and renders each
+   * value, falling back to the `aggregationPropertyId` column when it is unset.
+   */
+  footer?: FooterSpec;
+  /**
+   * CONDITIONAL FORMATTING: the same rules as `colorRules`, projected into the
+   * richer vocabulary `@/lib/conditional-format` parses (`FormatRule` — a
+   * `condition.op` plus a `style`, with an ascending `priority`). Kept in step
+   * with `colorRules` on every edit so the conditional-format engine always has
+   * a rule list it understands.
+   */
+  formatRules?: FormatRule[];
+};
+
+/**
+ * The template rows the "Templates" popover edits. A structural subset of the
+ * server's `Template` record — just the fields the default toggle and the
+ * up/down reorder need, so the caller can pass its own template list without
+ * this toolbar importing the query layer.
+ */
+export type ViewTemplateOption = {
+  id: string;
+  name: string;
+  icon?: string | null;
+  /** The database's single default template, when one is set. */
+  isDefault?: boolean;
 };
 
 /** A JSON object (not an array, not null), or `null` for anything else. */
@@ -668,6 +717,143 @@ function normalizeToggle(input: unknown): boolean | undefined {
   return typeof input === "boolean" ? input : undefined;
 }
 
+/* ---------------------------------------------------------------------------
+   Wiring maps for the footer + conditional-format engines
+   Both engines own a vocabulary this toolbar does not: `@/lib/footer-calculations`
+   parses `{ propertyId, fn }[]` and `@/lib/conditional-format` parses
+   `FormatRule`. The helpers below are the pure, node-testable bridges between
+   what the editors hold and exactly what those engines read.
+   --------------------------------------------------------------------------- */
+
+/**
+ * Move the colour rule at `index` by `delta` places, returning a new list. The
+ * array order is the precedence the row-colour engine reads (first match wins),
+ * so this is what the up/down buttons persist. An out-of-range move returns a
+ * copy unchanged.
+ */
+export function moveColorRule(
+  rules: readonly ColorRule[],
+  index: number,
+  delta: number,
+): ColorRule[] {
+  const target = index + delta;
+  if (index < 0 || index >= rules.length || target < 0 || target >= rules.length) {
+    return rules.slice();
+  }
+  const next = rules.slice();
+  const [moved] = next.splice(index, 1);
+  if (moved === undefined) return next;
+  next.splice(target, 0, moved);
+  return next;
+}
+
+/**
+ * An app colour rule → one rule in the conditional-format engine's vocabulary.
+ * `null` when the rule's operator is outside `CONDITION_OPS` (the engine cannot
+ * evaluate `before`/`after`/`checked`/`unchecked`), so the caller drops it.
+ * `priority` is assigned by the caller from the surviving order.
+ */
+export function colorRuleToFormatRule(
+  rule: ColorRule,
+  priority: number,
+): FormatRule | null {
+  if (!isConditionOp(rule.operator)) return null;
+  const format: FormatRule = {
+    id: `view-color-${priority}`,
+    target: rule.target === "cell" ? "cell" : "row",
+    propertyId: rule.propertyId,
+    condition: { op: rule.operator },
+    style: { background: rule.color },
+    priority,
+  };
+  if (rule.value !== undefined) format.condition.value = rule.value;
+  return format;
+}
+
+/**
+ * The whole colour-rule list projected into `FormatRule[]`, dropping the rules
+ * the engine cannot evaluate and re-indexing priorities densely.
+ */
+export function colorRulesToFormatRules(rules: readonly ColorRule[]): FormatRule[] {
+  const formats: FormatRule[] = [];
+  for (const rule of rules) {
+    const format = colorRuleToFormatRule(rule, formats.length);
+    if (format) formats.push(format);
+  }
+  return formats;
+}
+
+/**
+ * A conditional-format engine rule → an app colour rule, or `null` when it
+ * paints nothing (no safe background, no property). The inverse of
+ * `colorRulesToFormatRules` for the operators both vocabularies share.
+ */
+export function formatRuleToColorRule(rule: FormatRule): ColorRule | null {
+  const color = rule.style?.background;
+  if (!isSafeColor(color)) return null;
+  const propertyId = rule.propertyId;
+  if (typeof propertyId !== "string" || propertyId === "") return null;
+  const converted: ColorRule = {
+    propertyId,
+    operator: rule.condition.op,
+    color,
+  };
+  if (rule.condition.value !== undefined) converted.value = rule.condition.value;
+  if (rule.target === "cell") converted.target = "cell";
+  return converted;
+}
+
+/** The whole `FormatRule[]` projected back into the app's `ColorRule[]`. */
+export function formatRulesToColorRules(rules: readonly FormatRule[]): ColorRule[] {
+  return rules
+    .map(formatRuleToColorRule)
+    .filter((rule): rule is ColorRule => rule !== null);
+}
+
+/**
+ * Upsert one column's footer function into a `@/lib/footer-calculations` spec,
+ * preserving first-appearance order (a replaced entry keeps its position, a new
+ * one appends).
+ */
+export function setFooterFunction(
+  spec: FooterSpec,
+  propertyId: string,
+  fn: AggregationFn,
+): FooterSpec {
+  const byProperty = new Map(spec.map((entry) => [entry.propertyId, entry.fn] as const));
+  byProperty.set(propertyId, fn);
+  return [...byProperty].map(([id, value]) => ({ propertyId: id, fn: value }));
+}
+
+/** Drop one column's footer function from a spec (no-op when it is absent). */
+export function removeFooterFunction(
+  spec: FooterSpec,
+  propertyId: string,
+): FooterSpec {
+  return spec.filter((entry) => entry.propertyId !== propertyId);
+}
+
+/**
+ * Move the template id at `index` by `delta` places, returning a new list; the
+ * order is exactly what `reorderTemplatesAction` persists. An out-of-range move
+ * returns a copy unchanged.
+ */
+export function moveTemplate(
+  ids: readonly string[],
+  index: number,
+  delta: number,
+): string[] {
+  const target = index + delta;
+  if (index < 0 || index >= ids.length || target < 0 || target >= ids.length) {
+    return ids.slice();
+  }
+  const next = ids.slice();
+  const [moved] = next.splice(index, 1);
+  if (moved === undefined) return next;
+  next.splice(target, 0, moved);
+  return next;
+}
+
 /**
  * Read an untrusted config into the shape this toolbar edits: schema-normalised
  * against `properties`, with WIP limits validated. Unknown top-level keys are
@@ -715,6 +901,23 @@ function sanitizeViewSettings(
   if (conditionalFormat !== undefined) sanitized.conditionalFormat = conditionalFormat;
   else delete sanitized.conditionalFormat;
 
+  // Footer spec: read through the engine's parser so a hand-edited or stale
+  // entry (unknown fn, missing property id) never reaches the editor or the
+  // table. An empty spec normalises away, matching the other optional keys.
+  const footer = parseFooterSpec(config.footer);
+  if (footer.length > 0) sanitized.footer = footer;
+  else delete sanitized.footer;
+
+  // Conditional-format rules: parsed through the engine's own reader so a rule
+  // it could not consume is dropped before the editor reads it.
+  const formatRules = Array.isArray(config.formatRules)
+    ? config.formatRules
+        .map(parseFormatRule)
+        .filter((rule): rule is FormatRule => rule !== null)
+    : [];
+  if (formatRules.length > 0) sanitized.formatRules = formatRules;
+  else delete sanitized.formatRules;
+
   return sanitized;
 }
 
@@ -760,6 +963,8 @@ export function ViewSettings({
   layout,
   onLayoutChange,
   rows,
+  templates,
+  databasePageId,
 }: {
   properties: DBProperty[];
   /** The view's untrusted config; sanitised against `properties` below. */
@@ -785,6 +990,17 @@ export function ViewSettings({
    * rows, so only the limits themselves are editable.
    */
   rows?: DBRow[];
+  /**
+   * The database's saved templates. Optional: the "Templates" popover (default
+   * toggle + reorder, backed by `setDefaultTemplateAction` /
+   * `reorderTemplatesAction`) only renders once the caller supplies them.
+   */
+  templates?: ViewTemplateOption[];
+  /**
+   * The database page the template actions operate on. Optional for the same
+   * reason as `templates`; without both the popover stays hidden.
+   */
+  databasePageId?: string;
 }) {
   // Sanitise the untrusted config against the live property schema before the
   // toolbar reads it, so stale keys and references to deleted properties are
@@ -813,6 +1029,45 @@ export function ViewSettings({
     setWipLimits(persistedWipLimits);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [persistedWipKey]);
+
+  const persistedFooter = config.footer ?? [];
+  // Templates: the default slot and the dense order are edited locally so the
+  // popover stays responsive while the server round-trips the template actions;
+  // each change still goes through `setDefaultTemplateAction` /
+  // `reorderTemplatesAction` in the handlers below.
+  const templateIds = (templates ?? []).map((template) => template.id);
+  const persistedDefaultTemplateId =
+    templates?.find((template) => template.isDefault)?.id ?? null;
+  const [templateOrder, setTemplateOrder] = useState<string[]>(templateIds);
+  const [defaultTemplateId, setDefaultTemplateId] = useState<string | null>(
+    persistedDefaultTemplateId,
+  );
+  const templateKey = templateIds.join("|");
+  useEffect(() => {
+    setTemplateOrder((previous) => {
+      const known = templateIds;
+      const kept = previous.filter((id) => known.includes(id));
+      const appended = known.filter((id) => !previous.includes(id));
+      return [...kept, ...appended];
+    });
+    setDefaultTemplateId(persistedDefaultTemplateId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templateKey, persistedDefaultTemplateId]);
+
+  // Footer calculations: edited locally for the same reason as the WIP limits;
+  // the resulting `{ propertyId, fn }[]` is written through `onChange` and read
+  // back by the table footer engine.
+  const [footerSpec, setFooterSpec] = useState<FooterSpec>(persistedFooter);
+  const persistedFooterKey = JSON.stringify(persistedFooter);
+  useEffect(() => {
+    setFooterSpec(persistedFooter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistedFooterKey]);
+
+  // One toast + pending flag for every template action, like every other action
+  // call site (`@/lib/actions-client`). `run` ignores a rejected transport and
+  // surfaces it as an error toast instead of an unhandled rejection.
+  const { run: runAction } = useAction(locale);
 
   if (!editable) return null;
 
@@ -1172,6 +1427,69 @@ export function ViewSettings({
     if (isFilterGroup(next)) commitTree(next);
   };
 
+  // --- Templates (default toggle + reorder) --------------------------------
+  // The popover only renders when the caller passes both a template list and the
+  // database page, so the two actions below are only ever invoked with a real
+  // target. `setDefaultTemplateAction` keeps `isDefault` a single slot per
+  // database; `reorderTemplatesAction` rewrites `position` from this order.
+  const orderedTemplates = templateOrder
+    .map((id) => (templates ?? []).find((template) => template.id === id) ?? null)
+    .filter((template): template is ViewTemplateOption => template !== null);
+
+  const toggleDefaultTemplate = (template: ViewTemplateOption) => {
+    if (!databasePageId) return;
+    const nextDefault = defaultTemplateId === template.id ? null : template.id;
+    setDefaultTemplateId(nextDefault);
+    runAction(
+      () => setDefaultTemplateAction(template.id, nextDefault === template.id),
+      {
+        success:
+          nextDefault === template.id
+            ? "Default template set"
+            : "Default template cleared",
+      },
+    );
+  };
+
+  const moveDefaultTemplate = (index: number, delta: number) => {
+    if (!databasePageId) return;
+    const next = moveTemplate(templateOrder, index, delta);
+    if (next.join("|") === templateOrder.join("|")) return;
+    setTemplateOrder(next);
+    runAction(() => reorderTemplatesAction(databasePageId, next));
+  };
+
+  // --- Footer calculations (one function per visible column) ---------------
+  /** Set (or clear, on blank/unknown) one column's footer function. */
+  const setColumnFooter = (property: DBProperty, value: string) => {
+    const known = footerFunctionsForType(property.type);
+    const next =
+      value === "" || !known.includes(value as AggregationFn)
+        ? removeFooterFunction(footerSpec, property.id)
+        : setFooterFunction(footerSpec, property.id, value as AggregationFn);
+    setFooterSpec(next);
+    onChange({ footer: next });
+  };
+
+  // --- Conditional formatting (add / remove / reorder + colour) ------------
+  /**
+   * Persist a colour-rule edit and its conditional-format projection together.
+   * `colorRules` is what the row-colour engine renders; `formatRules` is the
+   * same list in the vocabulary `@/lib/conditional-format` parses — including
+   * the ascending priority the array order encodes.
+   */
+  const commitColorRules = (next: ColorRule[]) => {
+    onChange({ colorRules: next, formatRules: colorRulesToFormatRules(next) });
+  };
+
+  // --- Footer columns (visible columns, resolved from the merged layout) ----
+  const footerColumns = visibleIds
+    .map((id) => properties.find((property) => property.id === id) ?? null)
+    .filter((property): property is DBProperty => property !== null);
+  const footerFnById = new Map(
+    footerSpec.map((entry) => [entry.propertyId, entry.fn] as const),
+  );
+
   return (
     <div className="mb-3 flex flex-wrap items-center gap-1 text-sm">
       {/* Filter */}
@@ -1342,11 +1660,15 @@ export function ViewSettings({
         </label>
       )}
 
-      {/* Color */}
+      {/* Color — conditional formatting rules. Array order is the precedence the
+          row-colour engine reads (first match wins), so the up/down buttons
+          persist `colorRules` order and each edit also writes the same list as
+          `formatRules` for the conditional-format engine. */}
       <Popover>
         <PopoverTrigger asChild>
           <button
             type="button"
+            data-testid="color-trigger"
             className={cn(
               "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
               (config.colorRules?.length ?? 0) > 0 && "bg-surface-2 text-fg",
@@ -1383,11 +1705,11 @@ export function ViewSettings({
                   <select
                     value={rule.propertyId}
                     onChange={(e) =>
-                      onChange({
-                        colorRules: (config.colorRules ?? []).map((r, i) =>
+                      commitColorRules(
+                        (config.colorRules ?? []).map((r, i) =>
                           i === index ? { ...r, propertyId: e.target.value } : r,
                         ),
-                      })
+                      )
                     }
                     className={cn(CONTROL_CLASS, "flex-1")}
                   >
@@ -1397,26 +1719,52 @@ export function ViewSettings({
                   </select>
                   <select
                     value={rule.color}
+                    data-testid={`color-rule-color-${index}`}
+                    aria-label="Rule colour"
                     onChange={(e) =>
-                      onChange({
-                        colorRules: (config.colorRules ?? []).map((r, i) =>
+                      commitColorRules(
+                        (config.colorRules ?? []).map((r, i) =>
                           i === index ? { ...r, color: e.target.value } : r,
                         ),
-                      })
+                      )
                     }
                     className={cn(CONTROL_CLASS, "w-24")}
                   >
-                    {COLOR_CHOICES.map((color) => (
+                    {COLOR_TOKENS.map((color) => (
                       <option key={color} value={color}>{color}</option>
                     ))}
                   </select>
                   <button
                     type="button"
+                    aria-label={`Move rule ${index + 1} up`}
+                    data-testid={`color-rule-up-${index}`}
+                    disabled={index === 0}
+                    onClick={() =>
+                      commitColorRules(moveColorRule(config.colorRules ?? [], index, -1))
+                    }
+                    className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
+                  >
+                    <span aria-hidden>↑</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move rule ${index + 1} down`}
+                    data-testid={`color-rule-down-${index}`}
+                    disabled={index === (config.colorRules?.length ?? 0) - 1}
+                    onClick={() =>
+                      commitColorRules(moveColorRule(config.colorRules ?? [], index, 1))
+                    }
+                    className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
+                  >
+                    <span aria-hidden>↓</span>
+                  </button>
+                  <button
+                    type="button"
                     aria-label="Remove rule"
                     onClick={() =>
-                      onChange({
-                        colorRules: (config.colorRules ?? []).filter((_, i) => i !== index),
-                      })
+                      commitColorRules(
+                        (config.colorRules ?? []).filter((_, i) => i !== index),
+                      )
                     }
                     className="text-muted hover:text-red-500"
                   >
@@ -1429,13 +1777,13 @@ export function ViewSettings({
                     aria-label="Color rule target"
                     data-testid="color-rule-target"
                     onChange={(e) =>
-                      onChange({
-                        colorRules: (config.colorRules ?? []).map((r, i) =>
+                      commitColorRules(
+                        (config.colorRules ?? []).map((r, i) =>
                           i === index
                             ? { ...r, target: e.target.value as ColorRule["target"] }
                             : r,
                         ),
-                      })
+                      )
                     }
                     className={cn(CONTROL_CLASS, "w-20")}
                   >
@@ -1445,13 +1793,13 @@ export function ViewSettings({
                   <select
                     value={rule.operator}
                     onChange={(e) =>
-                      onChange({
-                        colorRules: (config.colorRules ?? []).map((r, i) =>
+                      commitColorRules(
+                        (config.colorRules ?? []).map((r, i) =>
                           i === index
                             ? { ...r, operator: e.target.value as Filter["operator"] }
                             : r,
                         ),
-                      })
+                      )
                     }
                     className={cn(CONTROL_CLASS, "flex-1")}
                   >
@@ -1464,11 +1812,11 @@ export function ViewSettings({
                   <input
                     value={rule.value ?? ""}
                     onChange={(e) =>
-                      onChange({
-                        colorRules: (config.colorRules ?? []).map((r, i) =>
+                      commitColorRules(
+                        (config.colorRules ?? []).map((r, i) =>
                           i === index ? { ...r, value: e.target.value } : r,
                         ),
-                      })
+                      )
                     }
                     placeholder="Value"
                     className={cn(CONTROL_CLASS, "flex-1")}
@@ -1478,20 +1826,19 @@ export function ViewSettings({
             ))}
             <button
               type="button"
+              data-testid="add-color-rule"
               disabled={!defaultProperty || config.conditionalFormat === false}
               onClick={() =>
-                onChange({
-                  colorRules: [
-                    ...(config.colorRules ?? []),
-                    {
-                      propertyId: defaultProperty?.id ?? "",
-                      operator: "is",
-                      value: "",
-                      color: "blue",
-                      target: "row",
-                    } as ColorRule,
-                  ],
-                })
+                commitColorRules([
+                  ...(config.colorRules ?? []),
+                  {
+                    propertyId: defaultProperty?.id ?? "",
+                    operator: "is",
+                    value: "",
+                    color: "blue",
+                    target: "row",
+                  } as ColorRule,
+                ])
               }
               className="flex items-center gap-1 text-xs text-accent disabled:opacity-50"
             >
@@ -1916,6 +2263,132 @@ export function ViewSettings({
           )}
         </PopoverContent>
       </Popover>
+
+      {/* Calculations — one footer function per visible column, persisted as
+          the view's `footer` in the `{ propertyId, fn }[]` shape
+          `@/lib/footer-calculations` parses (TableView renders each value). */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-testid="footer-trigger"
+            className={cn(
+              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
+              footerSpec.length > 0 && "bg-surface-2 text-fg",
+            )}
+          >
+            <Calculator className="h-3.5 w-3.5" />
+            Calculations{footerSpec.length > 0 ? ` (${footerSpec.length})` : ""}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-72" data-testid="db-footer-popover">
+          <p className="mb-2 text-xs text-muted">
+            Show a calculation under a column. “None” removes it.
+          </p>
+          {footerColumns.length === 0 ? (
+            <p className="text-xs text-muted">No visible columns.</p>
+          ) : (
+            <ul className="space-y-1">
+              {footerColumns.map((property) => (
+                <li key={property.id} className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {property.name}
+                  </span>
+                  <select
+                    value={footerFnById.get(property.id) ?? ""}
+                    data-testid={`footer-fn-${property.id}`}
+                    aria-label={`${property.name} footer calculation`}
+                    onChange={(event) =>
+                      setColumnFooter(property, event.target.value)
+                    }
+                    className={cn(CONTROL_CLASS, "w-32")}
+                  >
+                    <option value="">None</option>
+                    {footerFunctionsForType(property.type).map((fn) => (
+                      <option key={fn} value={fn}>{fn}</option>
+                    ))}
+                  </select>
+                </li>
+              ))}
+            </ul>
+          )}
+        </PopoverContent>
+      </Popover>
+
+      {/* Templates — the database default (a single slot) and the authored
+          order. Only rendered when the caller supplies the template list and
+          the database page the two template actions operate on. */}
+      {databasePageId && orderedTemplates.length > 0 && (
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              data-testid="templates-trigger"
+              className={cn(
+                "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
+                defaultTemplateId && "bg-surface-2 text-fg",
+              )}
+            >
+              <LayoutTemplate className="h-3.5 w-3.5" />
+              Templates{defaultTemplateId ? " (1)" : ""}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-72" data-testid="db-templates-popover">
+            <p className="mb-2 text-xs text-muted">
+              Set the default template and reorder the list.
+            </p>
+            <ul className="space-y-1">
+              {orderedTemplates.map((template, index) => (
+                <li key={template.id} className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label={
+                      defaultTemplateId === template.id
+                        ? `Clear default template ${template.name}`
+                        : `Set default template ${template.name}`
+                    }
+                    data-testid={`template-default-${template.id}`}
+                    onClick={() => toggleDefaultTemplate(template)}
+                    className="flex h-6 w-6 items-center justify-center rounded hover:bg-surface-2"
+                  >
+                    <Star
+                      className={cn(
+                        "h-3.5 w-3.5",
+                        defaultTemplateId === template.id
+                          ? "fill-amber-400 text-amber-400"
+                          : "text-muted",
+                      )}
+                    />
+                  </button>
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    <span aria-hidden>{template.icon ?? "📄"}</span> {template.name}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Move template ${template.name} up`}
+                    data-testid={`template-up-${template.id}`}
+                    disabled={index === 0}
+                    onClick={() => moveDefaultTemplate(index, -1)}
+                    className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
+                  >
+                    <span aria-hidden>↑</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move template ${template.name} down`}
+                    data-testid={`template-down-${template.id}`}
+                    disabled={index === orderedTemplates.length - 1}
+                    onClick={() => moveDefaultTemplate(index, 1)}
+                    className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
+                  >
+                    <span aria-hidden>↓</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </PopoverContent>
+        </Popover>
+      )}
 
       {/* Show / hide properties (per view) */}
       <Popover>
