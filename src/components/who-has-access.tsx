@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Users } from "lucide-react";
+import { ChevronDown, Crown, Loader2, UserPlus, Users } from "lucide-react";
 import {
   listPagePermissionsAction,
   setPagePermissionAction,
 } from "@/server/actions/page-permissions";
 import { useAction } from "@/lib/actions-client";
+import { resolveAvatar } from "@/lib/avatars";
+import { tagClass, type TagHue, Z } from "@/lib/design-tokens";
 import { t } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 import {
   focusableSelector,
   resolveReturnTarget,
@@ -16,9 +19,101 @@ import {
   type FocusPlan,
 } from "@/lib/focus-trap";
 
-type Row = { userId: string; name: string; email: string; level: string | null };
+/* ------------------------------------------------------------------------- *
+ * Pure domain helpers
+ *
+ * The roster's decisions that do not touch the DOM live here, so they can be
+ * unit-tested without a browser: how a permission level maps to a tag chip,
+ * and how the flat member list folds into the Owner / Members / Guests /
+ * Invited groups the panel renders. Everything reads only; no helper mutates
+ * its input.
+ * ------------------------------------------------------------------------- */
 
-const LEVEL_KEYS: Record<string, "inheritRole" | "canView" | "canComment" | "canEdit" | "fullAccess"> = {
+/** The bucket a row belongs to. Server rows that omit it read as members. */
+export type MemberKind = "owner" | "member" | "guest" | "invited";
+
+/** The groups in render order. */
+export const MEMBER_KINDS: readonly MemberKind[] = ["owner", "member", "guest", "invited"];
+
+/** Display label per group. Plain English until the i18n catalogue grows keys. */
+export const GROUP_LABELS: Readonly<Record<MemberKind, string>> = {
+  owner: "Owner",
+  member: "Members",
+  guest: "Guests",
+  invited: "Invited",
+};
+
+/** One roster row. Extra fields (avatar, group kind) are optional. */
+export type AccessRow = {
+  userId: string;
+  name: string;
+  email: string;
+  level: string | null;
+  /** Group bucket; omitted rows read as `member`. */
+  kind?: MemberKind;
+  avatarUrl?: string | null;
+};
+
+/** One non-empty group, in {@link MEMBER_KINDS} order. */
+export type MemberGroup = { kind: MemberKind; rows: AccessRow[] };
+
+/** i18n keys a chip may surface (kept narrow so the mapping stays typed). */
+export type RoleLabelKey =
+  | "inheritRole"
+  | "canView"
+  | "canComment"
+  | "canEdit"
+  | "fullAccess";
+
+/** A resolved role chip: the level key, its tag hue and its label key. */
+export type RoleChip = { key: string; hue: TagHue; labelKey: RoleLabelKey };
+
+/**
+ * Tag palette per access level — the same hues the app already uses for
+ * capability chips (gray lowest → purple highest). Keyed by the `SharePermission`
+ * string plus `NONE` (inherit). An unknown level falls back to `NONE`.
+ */
+export const ROLE_CHIPS: Readonly<Record<string, { hue: TagHue; labelKey: RoleLabelKey }>> = {
+  NONE: { hue: "gray", labelKey: "inheritRole" },
+  READ: { hue: "gray", labelKey: "canView" },
+  COMMENT: { hue: "teal", labelKey: "canComment" },
+  EDIT: { hue: "blue", labelKey: "canEdit" },
+  FULL: { hue: "purple", labelKey: "fullAccess" },
+};
+
+/** Resolve an access level to its chip. Never throws on junk input. */
+export function roleChip(level: string | null | undefined): RoleChip {
+  const key = typeof level === "string" && level in ROLE_CHIPS ? level : "NONE";
+  const spec = ROLE_CHIPS[key];
+  return { key, hue: spec.hue, labelKey: spec.labelKey };
+}
+
+/** Type guard for a persisted/raw group kind. */
+export function isMemberKind(value: unknown): value is MemberKind {
+  return typeof value === "string" && (MEMBER_KINDS as readonly string[]).includes(value);
+}
+
+/**
+ * Fold a flat roster into its non-empty groups, in {@link MEMBER_KINDS} order.
+ * Rows with no usable id are dropped (they cannot be keyed); a missing/unknown
+ * `kind` reads as `member`. The input is never mutated.
+ */
+export function groupMemberRows(rows: readonly AccessRow[] | null | undefined): MemberGroup[] {
+  const buckets = new Map<MemberKind, AccessRow[]>();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row.userId !== "string" || row.userId.trim() === "") continue;
+    const kind = isMemberKind(row.kind) ? row.kind : "member";
+    const list = buckets.get(kind);
+    if (list) list.push(row);
+    else buckets.set(kind, [row]);
+  }
+  return MEMBER_KINDS.filter((kind) => buckets.has(kind)).map((kind) => ({
+    kind,
+    rows: buckets.get(kind) as AccessRow[],
+  }));
+}
+
+const LEVEL_KEYS: Record<string, RoleLabelKey> = {
   NONE: "inheritRole",
   READ: "canView",
   COMMENT: "canComment",
@@ -71,13 +166,98 @@ function accessStops(root: HTMLElement): {
   return { stops, nodes };
 }
 
+/** Initials/photo avatar for a roster row (delegated to `@/lib/avatars`). */
+function MemberAvatar({ row }: { row: AccessRow }) {
+  const avatar = resolveAvatar(
+    { id: row.userId, name: row.name, email: row.email, avatarUrl: row.avatarUrl ?? null },
+    { size: 32 },
+  );
+  return (
+    <span
+      aria-hidden
+      className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full text-xs font-medium"
+      style={{ backgroundColor: avatar.background, color: avatar.foreground }}
+    >
+      {avatar.kind === "image" && avatar.src ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={avatar.src} alt="" className="h-full w-full object-cover" />
+      ) : (
+        avatar.initials
+      )}
+    </span>
+  );
+}
+
+/** One member row: avatar + identity, a palette role chip and an inline picker. */
+function MemberRow({
+  row,
+  locale,
+  busy,
+  disabled,
+  onChange,
+}: {
+  row: AccessRow;
+  locale: string;
+  busy: boolean;
+  disabled: boolean;
+  onChange: (level: string) => void;
+}) {
+  const chip = roleChip(row.level);
+  const current = row.level ?? "NONE";
+  return (
+    <li className="flex items-center gap-3 py-2">
+      <MemberAvatar row={row} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm" title={row.name}>
+          {row.name}
+        </span>
+        <span className="block truncate text-[11px] text-muted" title={row.email}>
+          {row.email}
+        </span>
+      </span>
+      <span className="relative inline-flex shrink-0 items-center">
+        <select
+          value={current}
+          aria-label={`${t(locale, "whoHasAccess")} — ${row.name}`}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+          className={cn(
+            tagClass(chip.hue),
+            "focus-ring cursor-pointer appearance-none pe-5 disabled:cursor-not-allowed",
+            busy && "opacity-50",
+          )}
+        >
+          {LEVELS.map((level) => (
+            <option key={level} value={level}>
+              {t(locale, LEVEL_KEYS[level])}
+            </option>
+          ))}
+        </select>
+        {busy ? (
+          <Loader2
+            aria-hidden
+            className="pointer-events-none absolute end-1.5 h-3 w-3 animate-spin"
+          />
+        ) : (
+          <ChevronDown
+            aria-hidden
+            className="pointer-events-none absolute end-1.5 h-3 w-3 opacity-70"
+          />
+        )}
+      </span>
+    </li>
+  );
+}
+
 /**
  * The member roster with per-person access levels — the shared body of both
  * share surfaces (the "Who has access" modal and the Share panel). Exported so
  * the Share dialog embeds exactly the same list instead of a second copy.
  *
  * The server answers guests and revoked users with an empty list, so this
- * renders an empty state rather than a roster they must not see.
+ * renders an empty state rather than a roster they must not see. Rows are
+ * folded into groups (`groupMemberRows`); a change shows an optimistic pending
+ * spinner on that row and only commits the new level once the server accepts.
  */
 export function AccessList({
   pageId,
@@ -86,14 +266,23 @@ export function AccessList({
   pageId: string;
   locale?: string;
 }) {
-  const [rows, setRows] = useState<Row[] | null>(null);
+  const [rows, setRows] = useState<AccessRow[] | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
   const { run, pending, error } = useAction(locale);
+  const wasPending = useRef(false);
+
+  // Clear the per-row pending marker once the shared transition settles — on
+  // success *and* on failure, so a rejected change never leaves a row spinning.
+  useEffect(() => {
+    if (wasPending.current && !pending) setPendingId(null);
+    wasPending.current = pending;
+  }, [pending]);
 
   useEffect(() => {
     let live = true;
     void listPagePermissionsAction(pageId)
-      .then((rows) => {
-        if (live) setRows(rows as Row[]);
+      .then((list) => {
+        if (live) setRows(list as AccessRow[]);
       })
       .catch(() => {
         if (live) setRows([]);
@@ -103,7 +292,8 @@ export function AccessList({
     };
   }, [pageId]);
 
-  const change = (userId: string, level: string) =>
+  const change = (userId: string, level: string) => {
+    setPendingId(userId);
     run(() => setPagePermissionAction(pageId, userId, level as "NONE"), {
       onSuccess: () =>
         setRows((current) =>
@@ -114,43 +304,66 @@ export function AccessList({
             : current,
         ),
     });
+  };
 
-  return (
-    <div className="max-h-80 overflow-y-auto">
-      {rows === null ? (
-        <p className="flex items-center gap-2 px-1 py-4 text-sm text-muted">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t(locale, "loadingMembers")}
+  if (rows === null) {
+    return (
+      <div aria-busy="true" className="space-y-2 py-2">
+        {[0, 1, 2].map((row) => (
+          <div key={row} className="flex items-center gap-3 py-1">
+            <span className="notion-skeleton h-8 w-8 rounded-full" />
+            <span className="min-w-0 flex-1 space-y-1.5">
+              <span className="notion-skeleton block h-3 w-1/3 rounded" />
+              <span className="notion-skeleton block h-2.5 w-1/2 rounded" />
+            </span>
+            <span className="notion-skeleton h-6 w-20 rounded-sm" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-1 px-1 py-6 text-center">
+        <span className="grid h-9 w-9 place-items-center rounded-lg bg-surface-2 text-muted">
+          <Users className="h-4 w-4" aria-hidden />
+        </span>
+        <p className="text-sm text-fg">{t(locale, "noMembers")}</p>
+        <p className="text-xs text-muted">
+          People with access will appear here as you share this page.
         </p>
-      ) : rows.length === 0 ? (
-        <p className="px-1 py-4 text-sm text-muted">{t(locale, "noMembers")}</p>
-      ) : (
-        <ul className="divide-y divide-border">
-          {rows.map((row) => (
-            <li key={row.userId} className="flex items-center gap-3 py-2">
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm">{row.name}</span>
-                <span className="block truncate text-[11px] text-muted">{row.email}</span>
-              </span>
-              <select
-                value={row.level ?? "NONE"}
-                aria-label={`Access for ${row.name}`}
+      </div>
+    );
+  }
+
+  const groups = groupMemberRows(rows);
+  return (
+    <div className="max-h-80 overflow-y-auto scrollbar-thin">
+      {groups.map((group) => (
+        <div key={group.kind} className="py-1">
+          <p className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+            {group.kind === "owner" && <Crown className="h-3 w-3" aria-hidden />}
+            {group.kind === "invited" && <UserPlus className="h-3 w-3" aria-hidden />}
+            {GROUP_LABELS[group.kind]}
+          </p>
+          <ul className="divide-y divide-border">
+            {group.rows.map((row) => (
+              <MemberRow
+                key={row.userId}
+                row={row}
+                locale={locale}
+                busy={pending && pendingId === row.userId}
                 disabled={pending}
-                onChange={(event) => change(row.userId, event.target.value)}
-                className="h-8 rounded border border-border bg-bg px-2 text-xs disabled:opacity-50"
-              >
-                {LEVELS.map((level) => (
-                  <option key={level} value={level}>
-                    {t(locale, LEVEL_KEYS[level])}
-                  </option>
-                ))}
-              </select>
-            </li>
-          ))}
-        </ul>
-      )}
+                onChange={(level) => change(row.userId, level)}
+              />
+            ))}
+          </ul>
+        </div>
+      ))}
 
       {error && (
-        <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
+        <p role="alert" className="mt-2 text-sm text-danger">
           {error}
         </p>
       )}
@@ -212,8 +425,16 @@ export function WhoHasAccess({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button type="button" aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/30" />
+    <div
+      className="fixed inset-0 flex items-center justify-center p-4"
+      style={{ zIndex: Z.overlay }}
+    >
+      <button
+        type="button"
+        aria-label={t(locale, "close")}
+        onClick={onClose}
+        className="absolute inset-0 bg-overlay"
+      />
       <div
         ref={dialogRef}
         role="dialog"
@@ -221,7 +442,8 @@ export function WhoHasAccess({
         aria-modal="true"
         tabIndex={-1}
         onKeyDown={onDialogKeyDown}
-        className="relative z-10 w-full max-w-lg rounded-xl border border-border bg-bg p-4 shadow-2xl outline-none"
+        style={{ zIndex: Z.modal }}
+        className="surface-raised-strong relative w-full max-w-lg p-4 outline-none"
       >
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <Users className="h-4 w-4 text-muted" aria-hidden /> {t(locale, "whoHasAccess")}
@@ -238,7 +460,7 @@ export function WhoHasAccess({
           <button
             type="button"
             onClick={onClose}
-            className="h-9 rounded border border-border px-3 text-sm hover:bg-surface-2"
+            className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm hover:bg-surface-2"
           >
             {t(locale, "done")}
           </button>
