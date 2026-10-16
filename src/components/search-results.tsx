@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { loadMoreSearchAction } from "@/server/actions/search";
 import { useAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
 import { highlightSnippet } from "@/lib/fuzzy";
+import { nextIndex, rovingTabIndex } from "@/lib/keyboard-nav";
 import { refineByRelevance } from "@/lib/search-ranking";
-import { offsetForIndex, totalHeight, visibleRange } from "@/lib/virtual-list";
+import { offsetForIndex, scrollToIndex, totalHeight, visibleRange } from "@/lib/virtual-list";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_SUMMARY_LENGTH,
@@ -176,6 +177,16 @@ export function SearchResults({
   const [offset, setOffset] = useState<number | null>(nextOffset);
   // Top of the windowed scroller; only read when the list is windowed.
   const [scrollTop, setScrollTop] = useState(0);
+  // Roving focus over the result links (§11 Search keyboard nav, R78.10): one
+  // row carries `tabIndex=0`, and ↑/↓ (plus Home/End) move both the cursor and
+  // the real DOM focus, so the ring tracks the row and Enter opens it natively.
+  // `rowRefs` maps a row index to its anchor so a move can focus it.
+  const [activeIndex, setActiveIndex] = useState(0);
+  const rowRefs = useRef(new Map<number, HTMLAnchorElement>());
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  // A row selected while windowed may not be mounted yet: remember it and focus
+  // once the re-render (driven by the scroll adjustment below) mounts it.
+  const pendingFocus = useRef<number | null>(null);
 
   // Rank the whole merged set (initial + appended) so ordering is stable as
   // pages load; `rows` keeps arrival order underneath for lossless ties.
@@ -233,14 +244,91 @@ export function SearchResults({
       })
     : { start: 0, end: 0 };
   const visible = windowed ? filteredRows.slice(range.start, range.end) : filteredRows;
+  // The single tab stop of the roving model; `-1` (no row focusable) when empty.
+  const activeRow = rovingTabIndex(activeIndex, filteredRows.length);
+
+  // Focus a row that a move requested while windowed, once it is mounted.
+  useEffect(() => {
+    const index = pendingFocus.current;
+    if (index === null) return;
+    const element = rowRefs.current.get(index);
+    if (!element) return;
+    element.focus();
+    pendingFocus.current = null;
+  }, [activeIndex, range.start, range.end, windowed]);
+
+  // Move the roving cursor to `next`, scrolling a windowed row into the window
+  // and focusing its link so the visible ring follows the cursor.
+  const moveTo = (next: number) => {
+    setActiveIndex(next);
+    if (!windowed) {
+      rowRefs.current.get(next)?.focus();
+      return;
+    }
+    const container = scrollerRef.current;
+    if (container) {
+      const top = scrollToIndex(next, {
+        itemHeight: ROW_BASE_HEIGHT,
+        itemCount: filteredRows.length,
+        viewportSize: VIEWPORT_HEIGHT,
+        scrollTop: container.scrollTop,
+        heightOf,
+        align: "nearest",
+      });
+      if (top !== container.scrollTop) container.scrollTop = top;
+      setScrollTop(top);
+    }
+    pendingFocus.current = next;
+  };
+
+  // Keyboard nav for the result list (R78.10): ↑/↓/Home/End move the ring,
+  // Enter opens the focused row, Esc hands focus back to the search field. A
+  // focused <Link> already activates on Enter, so Enter is only intercepted
+  // when the list region itself holds focus. The field lives in the page (out
+  // of this component's tree), so Esc restores it by name.
+  const onListKeyDown = (event: React.KeyboardEvent) => {
+    const count = filteredRows.length;
+    const { key } = event;
+    if (key === "Escape") {
+      const input = document.querySelector<HTMLInputElement>('input[name="q"]');
+      if (input) {
+        event.preventDefault();
+        input.focus();
+      }
+      return;
+    }
+    if (key === "Enter") {
+      if ((event.target as HTMLElement).closest("a")) return;
+      const element = rowRefs.current.get(activeRow);
+      if (element) {
+        event.preventDefault();
+        element.click();
+      }
+      return;
+    }
+    if (count === 0) return;
+    if (key === "ArrowDown" || key === "ArrowUp" || key === "Home" || key === "End") {
+      event.preventDefault();
+      moveTo(nextIndex(activeRow, { key, count }));
+    }
+  };
 
   // Shared row body so the plain and windowed lists stay byte-identical in what
   // they render (only the positioning wrapper differs).
-  const resultBody = (page: SearchRow, teaser: string) => (
-    <Link href={`/w/${slug}/${page.id}`} className="block px-4 py-3 hover:bg-surface-2">
+  const resultBody = (page: SearchRow, teaser: string, index: number) => (
+    <Link
+      href={`/w/${slug}/${page.id}`}
+      ref={(element) => {
+        if (element) rowRefs.current.set(index, element);
+        else rowRefs.current.delete(index);
+      }}
+      tabIndex={index === activeRow ? 0 : -1}
+      onFocus={() => setActiveIndex(index)}
+      className="block px-4 py-3 hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+    >
       <p className="flex items-center gap-2 text-sm font-medium">
         <span>{page.icon ?? (page.type === "DATABASE" ? "🗂️" : "📄")}</span>
-        {page.title || "Untitled"}
+        <HighlightedText text={page.title || "Untitled"} query={query} />
       </p>
       {teaser && (
         <p className="mt-1 text-sm text-muted">
@@ -286,10 +374,12 @@ export function SearchResults({
 
       {windowed ? (
         <div
+          ref={scrollerRef}
           role="region"
           aria-label="Search results"
-          tabIndex={0}
+          tabIndex={-1}
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+          onKeyDown={onListKeyDown}
           className="mt-4 overflow-y-auto rounded-lg border border-border"
           style={{ height: VIEWPORT_HEIGHT }}
         >
@@ -307,16 +397,19 @@ export function SearchResults({
                   className="absolute inset-x-0 border-b border-border"
                   style={{ top: offsetForIndex(index, ROW_BASE_HEIGHT, heightOf) }}
                 >
-                  {resultBody(page, teasers[index] ?? "")}
+                  {resultBody(page, teasers[index] ?? "", index)}
                 </li>
               );
             })}
           </ul>
         </div>
       ) : (
-        <ul className="mt-4 divide-y divide-border rounded-lg border border-border">
+        <ul
+          onKeyDown={onListKeyDown}
+          className="mt-4 divide-y divide-border rounded-lg border border-border"
+        >
           {filteredRows.map((page, index) => (
-            <li key={page.id}>{resultBody(page, teasers[index] ?? "")}</li>
+            <li key={page.id}>{resultBody(page, teasers[index] ?? "", index)}</li>
           ))}
           {filteredRows.length === 0 && (
             <li className="px-4 py-6 text-center text-sm text-muted">
