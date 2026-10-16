@@ -28,6 +28,7 @@ const LABELS: Record<string, string> = {
   "comment.reply": "Someone replied to your comment",
   "page.mention": "You were mentioned on a page",
   "page.shared": "A page was shared with you",
+  "page.updated": "A page you follow was updated",
 };
 
 /**

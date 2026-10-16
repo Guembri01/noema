@@ -10,6 +10,15 @@ import {
   parsePrefs as parseEnginePrefs,
   resolveRecipients,
 } from "@/lib/notification-prefs-engine";
+import {
+  actions,
+  buildSlackMessage,
+  button,
+  escapeMrkdwn,
+  header,
+  section,
+} from "@/lib/slack-blocks";
+import type { SlackMessage } from "@/lib/slack-blocks";
 
 export async function markAllNotificationsRead(): Promise<void> {
   const user = await requireUser();
@@ -99,6 +108,107 @@ export async function updateNotificationPrefs(
 // the whole app with "A \"use server\" file can only export async functions").
 const PAGE_UPDATED_DEDUPE_MS = 24 * 60 * 60 * 1000;
 
+/** Per-attempt timeout for the outbound Slack POST. */
+const SLACK_TIMEOUT_MS = 5_000;
+
+/** True only for a Slack incoming-webhook endpoint (`https://hooks.slack.com/…`). */
+function isSlackWebhookUrl(url: string): boolean {
+  try {
+    return new URL(url).host === "hooks.slack.com";
+  } catch {
+    return false;
+  }
+}
+
+/** A Slack link: the label is escaped, the target only needs `&` made safe. */
+function slackLink(url: string, label: string): string {
+  return `<${url.replace(/&/g, "&amp;")}|${escapeMrkdwn(label)}>`;
+}
+
+/**
+ * Render a followed-page edit as a validated Slack Block Kit message using the
+ * `slack-blocks` builder (the production wire for that module). The body is
+ * escaped through `escapeMrkdwn`, so a page title cannot inject Slack markup,
+ * and `buildSlackMessage` fails closed on a malformed payload.
+ */
+function pageUpdatedSlackMessage(input: {
+  actorName: string;
+  pageTitle: string;
+  pageUrl: string;
+}): SlackMessage {
+  const title = input.pageTitle.trim() || "Untitled";
+  return buildSlackMessage({
+    text: `${input.actorName} updated ${title}`,
+    blocks: [
+      header("Page updated"),
+      section(
+        `*${escapeMrkdwn(input.actorName)}* updated ${slackLink(input.pageUrl, title)}`,
+      ),
+      actions(button("Open page", input.pageUrl)),
+    ],
+  });
+}
+
+/**
+ * Post a page-update notice to every active Slack incoming webhook in the
+ * workspace.
+ *
+ * The repo has **no** Slack client — only generic outbound webhooks — so this is
+ * where `slack-blocks` is made reachable: a webhook whose URL is a Slack
+ * incoming endpoint receives the Block Kit body the module builds, rather than
+ * the generic JSON envelope (which Slack rejects). Best-effort and never
+ * throwing, mirroring `dispatchWebhooks`: a Slack outage cannot fail the edit
+ * that triggered the notification.
+ */
+async function postSlackPageUpdate(
+  workspaceId: string,
+  input: { actorName: string; pageTitle: string; pageId: string },
+): Promise<void> {
+  try {
+    const origin = (
+      process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL
+    )?.replace(/\/+$/, "");
+    if (!origin) return; // no absolute origin ⇒ no valid Slack button; skip
+    const hooks = await prisma.webhook.findMany({
+      where: { workspaceId, active: true },
+      select: { url: true },
+    });
+    const slackUrls = hooks.map((hook) => hook.url).filter(isSlackWebhookUrl);
+    if (slackUrls.length === 0) return;
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { slug: true },
+    });
+    const pageUrl = workspace
+      ? `${origin}/w/${workspace.slug}/${input.pageId}`
+      : origin;
+    const body = JSON.stringify(
+      pageUpdatedSlackMessage({
+        actorName: input.actorName,
+        pageTitle: input.pageTitle,
+        pageUrl,
+      }),
+    );
+    await Promise.all(
+      slackUrls.map(async (url) => {
+        try {
+          await fetch(url, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body,
+            signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
+          });
+        } catch {
+          /* outbound Slack must never break the edit */
+        }
+      }),
+    );
+  } catch {
+    /* never break the caller */
+  }
+}
+
 export async function notifyPageUpdated(pageId: string): Promise<void> {
   try {
     const actor = await requireUser();
@@ -163,6 +273,14 @@ export async function notifyPageUpdated(pageId: string): Promise<void> {
       })),
     });
     revalidatePath("/w", "layout");
+    // Secondary channel (outbound Slack): build the Block Kit payload with
+    // `slack-blocks` and post it to Slack incoming webhooks. Best-effort — its
+    // own guard swallows failures so the edit never fails (R82.8).
+    await postSlackPageUpdate(page.workspaceId, {
+      actorName: actor.name,
+      pageTitle: page.title,
+      pageId: page.id,
+    });
   } catch (error) {
     // R82.8 — never fail the edit that triggered the dispatch.
     console.warn("notifyPageUpdated: dispatch failed", error);
