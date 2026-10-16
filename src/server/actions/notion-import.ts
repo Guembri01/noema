@@ -119,6 +119,19 @@ function notionPropertyTypes(properties: unknown): string[] {
   return types;
 }
 
+/**
+ * R24: the import toggles the dialog carries (introduced client-side by Q20).
+ * Both default to `true`, which reproduces the pre-R24 behaviour; the action
+ * echoes the values it actually honoured on `NotionImportResult.options` so
+ * the dialog can show what was applied.
+ */
+export type NotionImportOptions = {
+  /** Import Notion page properties (property type coverage / loss report). */
+  importProperties: boolean;
+  /** Import the root page's nested child pages in addition to the root. */
+  includeSubpages: boolean;
+};
+
 export type NotionImportResult =
   | {
       ok: true;
@@ -128,6 +141,8 @@ export type NotionImportResult =
       counts: ImportCounts;
       /** Which Notion block/property types had no Noema mapping (loss report). */
       unmapped: NotionMappingSummary;
+      /** R24: the options this run actually honoured. */
+      options: NotionImportOptions;
     }
   | { error: string };
 
@@ -148,18 +163,34 @@ type FetchedPage = {
  * point leaves exactly the rows the workspace had before. Child subtree
  * fetch failures are counted into `counts.failed` instead of being swallowed
  * silently (D23.3, honesty per D23.4). The depth cap (4) is unchanged.
+ *
+ * R24: honours the Q20 dialog toggles (`importProperties`, `includeSubpages`,
+ * both default `true`) and echoes the applied values on the result
+ * (`options`). See `NotionImportOptions`.
  */
 export async function importNotionPageAction(input: {
   workspaceId: string;
   parentId?: string | null;
   token: string;
   pageId: string;
+  /** R24: import Notion page properties (default `true`). */
+  importProperties?: boolean;
+  /** R24: import nested child pages, not just the root (default `true`). */
+  includeSubpages?: boolean;
 }): Promise<NotionImportResult> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, input.workspaceId);
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import pages." };
   }
+
+  // R24: normalise the dialog toggles once. Absent/undefined means the
+  // pre-existing behaviour (everything imported), so older callers such as the
+  // REST route (`src/app/api/import/notion/route.ts`) are unaffected.
+  const options: NotionImportOptions = {
+    importProperties: input.importProperties !== false,
+    includeSubpages: input.includeSubpages !== false,
+  };
 
   const token = input.token.trim();
   if (!token) return { error: "A Notion integration token is required." };
@@ -198,9 +229,19 @@ export async function importNotionPageAction(input: {
       // they are not a mapping loss and are left out of the report.
       if (!NOTION_PAGE_BLOCKS.includes(child.type)) blockTypes.push(child.type);
     }
-    propertyTypes.push(...notionPropertyTypes(pageData.properties));
+    // R24: `importProperties=false` intentionally drops the property mapping
+    // and its loss report (the property types are the only Notion properties
+    // this importer consumes). The page title is read below regardless — it is
+    // the page's identity, not an optional property.
+    if (options.importProperties) {
+      propertyTypes.push(...notionPropertyTypes(pageData.properties));
+    }
     fetched.push({ blockId, parentBlockId, title, doc });
 
+    // R24: honour `includeSubpages=false` by stopping after each page's own
+    // content — no child page is fetched, so no nested page is written. The
+    // depth cap (4) still applies when subpages are included.
+    if (!options.includeSubpages) return;
     if (depth >= 4) return;
     for (const child of children) {
       if (!NOTION_PAGE_BLOCKS.includes(child.type)) continue;
@@ -274,5 +315,6 @@ export async function importNotionPageAction(input: {
     pages: created,
     counts: { imported: created, skippedColumns: 0, skippedCells: 0, failed },
     unmapped: summarizeNotionMapping(blockTypes, propertyTypes),
+    options,
   };
 }
