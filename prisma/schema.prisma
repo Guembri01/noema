@@ -404,6 +404,9 @@ model ShareLink {
   permission   SharePermission @default(READ)
   passwordHash String?
   expiresAt    DateTime?
+  allowDuplicate Boolean       @default(false)
+  indexing     Boolean         @default(true)
+  exportRestricted Boolean     @default(false)
   createdAt    DateTime        @default(now())
 
   page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
