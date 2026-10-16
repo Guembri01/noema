@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { normalizePasteHtml, pastePlan, sanitizePastedHtml, stripToPlainText } from "@/lib/paste";
+import {
+  normalizePasteHtml,
+  pastePlan,
+  plainTextPastePlan,
+  richPastePlan,
+  sanitizePastedHtml,
+  stripToPlainText,
+} from "@/lib/paste";
 
 /**
  * Paste normalisation: clipboard HTML (from another Noema page, or a foreign
@@ -663,6 +670,154 @@ describe("HTML table parsing fidelity (B37)", () => {
           },
         ],
       },
+    ]);
+  });
+});
+
+/**
+ * The paste *planner* for MISSING_FEATURES §2 "Paste with formatting" /
+ * "Paste without formatting" (and the multi-block copy case): one call takes
+ * the clipboard flavours the editor's paste handler reads and returns the
+ * insertion to make.
+ *
+ * `richPastePlan` hardens HTML through `src/lib/html-sanitize.ts`, normalises
+ * it to blocks + marks and turns spreadsheet/CSV text into a table through
+ * `src/lib/paste-matrix.ts`; `plainTextPastePlan` strips every mark and block
+ * type down to plain paragraphs.
+ */
+
+describe("richPastePlan", () => {
+  it("preserves block types, marks and safe attributes from HTML", () => {
+    const html =
+      '<h2 style="text-align: center">Title</h2>' +
+      '<p><strong>bold</strong> and <span style="color: #d44c47">red</span></p>' +
+      "<ul><li>one</li></ul>";
+    const plan = richPastePlan({ html }, { empty: true });
+    expect(plan.mode).toBe("blocks");
+    expect(plan.parsed.partial).toBe(false);
+    expect(plan.nodes).toEqual([
+      {
+        type: "heading",
+        attrs: { level: 2, textAlign: "center" },
+        content: [{ type: "text", text: "Title" }],
+      },
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "bold", marks: [{ type: "bold" }] },
+          { type: "text", text: " and " },
+          {
+            type: "text",
+            text: "red",
+            marks: [{ type: "textStyle", attrs: { color: "#d44c47" } }],
+          },
+        ],
+      },
+      {
+        type: "bulletList",
+        content: [
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "one" }] }] },
+        ],
+      },
+    ]);
+  });
+
+  it("hardens HTML through the sanitizer (script/on*/javascript: never survive)", () => {
+    const html =
+      '<p onclick="steal()">safe<script>alert("x")</script></p>' +
+      '<a href="javascript:evil()">click</a>';
+    const plan = richPastePlan({ html }, { empty: true });
+    expect(plan.nodes).toEqual([
+      { type: "paragraph", content: [{ type: "text", text: "safe" }] },
+      { type: "paragraph", content: [{ type: "text", text: "click" }] },
+    ]);
+    expect(JSON.stringify(plan.nodes)).not.toMatch(/onclick|alert|javascript/);
+  });
+
+  it("merges a single paragraph into a non-empty target but keeps multi-block as blocks", () => {
+    expect(richPastePlan({ html: "<p>sentence</p>" }, { empty: false }).mode).toBe("inline");
+    const multi = richPastePlan({ html: "<p>one</p><p>two</p>" }, { empty: false });
+    expect(multi.mode).toBe("blocks");
+    expect(multi.nodes).toHaveLength(2);
+  });
+
+  it("merges a partial single-block copy into a non-empty target", () => {
+    const plan = richPastePlan({ html: '<h2 data-pm-slice="1 1 []">Half</h2>' }, { empty: false });
+    expect(plan.mode).toBe("inline");
+    expect(plan.parsed.partial).toBe(true);
+  });
+
+  it("turns spreadsheet / CSV text into a table block", () => {
+    const plan = richPastePlan({ text: "Name\tAge\nAlice\t30" }, { empty: false });
+    expect(plan.mode).toBe("blocks");
+    expect(plan.nodes).toHaveLength(1);
+    const [table] = plan.nodes;
+    expect(table?.type).toBe("table");
+    expect(table?.content?.[0]?.content?.map((cellNode) => cellNode.type)).toEqual([
+      "tableHeader",
+      "tableHeader",
+    ]);
+  });
+
+  it("falls back to plain paragraphs for non-grid text", () => {
+    const plan = richPastePlan({ text: "one\n\nlater" }, { empty: true });
+    expect(plan.mode).toBe("blocks");
+    expect(plan.nodes.map((node) => node.type)).toEqual(["paragraph", "paragraph", "paragraph"]);
+  });
+
+  it("returns an inline plan with no nodes for an empty clipboard", () => {
+    expect(richPastePlan({}, { empty: true })).toEqual({
+      mode: "inline",
+      nodes: [],
+      parsed: { blocks: [], inline: [], partial: false },
+    });
+  });
+});
+
+describe("plainTextPastePlan", () => {
+  it("strips marks and block types from HTML down to plain paragraphs", () => {
+    const plan = plainTextPastePlan(
+      { html: "<h2>Title</h2><p>Hello <b>world</b></p>" },
+      { empty: true },
+    );
+    expect(plan.mode).toBe("blocks");
+    expect(plan.nodes).toEqual([
+      { type: "paragraph", content: [{ type: "text", text: "Title" }] },
+      { type: "paragraph", content: [{ type: "text", text: "Hello world" }] },
+    ]);
+  });
+
+  it("keeps every plain-text line as its own block and drops a trailing newline", () => {
+    const plan = plainTextPastePlan({ text: "alpha\nbeta\n" }, { empty: true });
+    expect(plan.mode).toBe("blocks");
+    expect(plan.nodes).toEqual([
+      { type: "paragraph", content: [{ type: "text", text: "alpha" }] },
+      { type: "paragraph", content: [{ type: "text", text: "beta" }] },
+    ]);
+  });
+
+  it("merges a single line into a non-empty target as inline text", () => {
+    const plan = plainTextPastePlan({ text: "just one" }, { empty: false });
+    expect(plan.mode).toBe("inline");
+    expect(plan.nodes).toEqual([{ type: "text", text: "just one" }]);
+  });
+
+  it("does not build a table from tabular HTML (formatting is stripped)", () => {
+    const plan = plainTextPastePlan(
+      { html: "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>" },
+      { empty: true },
+    );
+    expect(plan.nodes.some((node) => node.type === "table")).toBe(false);
+    expect(plan.nodes.map((node) => node.content?.[0]?.text ?? "")).toEqual(["A", "B", "1", "2"]);
+  });
+
+  it("prefers the text flavour over HTML when both are present", () => {
+    const plan = plainTextPastePlan(
+      { html: "<p>rich</p>", text: "plain" },
+      { empty: true },
+    );
+    expect(plan.nodes).toEqual([
+      { type: "paragraph", content: [{ type: "text", text: "plain" }] },
     ]);
   });
 });
