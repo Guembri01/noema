@@ -162,6 +162,7 @@ export default async function PageRoute({
         initialSharedToken={page.shareLinks[0]?.token ?? null}
         initialFollowing={Boolean(following)}
         initialLocked={page.locked}
+        breadcrumbTrail={breadcrumbTrail}
         workspaces={userWorkspaces
           .filter((candidate) => candidate.id !== workspace.id)
           .map((candidate) => ({ id: candidate.id, name: candidate.name, slug: candidate.slug }))}
@@ -210,6 +211,7 @@ export default async function PageRoute({
           }
           members={members.map((member) => ({ id: member.id, name: member.name }))}
           editable={editable}
+          schemaLocked={page.schemaLocked}
         />
       ) : (
         <PageEditor
