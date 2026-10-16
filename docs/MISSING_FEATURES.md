@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Scoreboard:** 563 feature rows — 212 implemented · 123 partial · 214 planned · 14 deliberately out of scope.
+**Scoreboard:** 563 feature rows — 213 implemented · 122 partial · 214 planned · 14 deliberately out of scope.
 
-This file lists the **337** rows that are not finished, area by area, plus 14 intentional divergences.
+This file lists the **336** rows that are not finished, area by area, plus 14 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -30,7 +30,7 @@ This file lists the **337** rows that are not finished, area by area, plus 14 in
 
 ### 1. Editor & blocks
 
-54 done · 37 partial · 7 planned · 2 out of scope
+55 done · 36 partial · 7 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -69,7 +69,6 @@ This file lists the **337** rows that are not finished, area by area, plus 14 in
 | Page cover | Banner image on a page. | 🟡 | Upload works; reposition/resize missing. |
 | Sub-pages section | Auto-list of child pages on a parent. | 🟡 | Inline listing exists; reorder partial. |
 | Full-width toggle | Expand content to the full viewport width. | 🟡 | Toggle works per page; persisted. |
-| Page locking | Prevent edits to a page. | 🟡 | Planned; depends on permission layer. [B84 audit] Ships today — Page.locked + topbar toggle (src/app/w/[slug]/[pageId]/page.tsx:88; src/components/page-title.tsx:279-281); server-side enforcement gap tracked as D6 in docs/specs/realtime-collab.md §2.3; glyph left for orchestrator re-baseline. |
 | Page breadcrumb header | Ancestor path in the page header. | 🟡 | Renders; interactions partial. |
 | Column resize | Drag the divider to change column width. | 🧭 | Planned with persisted widths. |
 | Synced block source marker | Visual marker of the canonical source. | 🧭 | Planned. |

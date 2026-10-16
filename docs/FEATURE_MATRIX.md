@@ -155,7 +155,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Small text | Reduce body font size for a page. | ✅ | Planned page-level style setting. [B84 audit] Ships today — src/app/w/[slug]/[pageId]/page.tsx:115,130 + src/components/page-title.tsx:270-273; glyph left for orchestrator re-baseline. |
 | Page fonts | Choose from preset font families. | ✅ | Planned; ships three classic pairings. |
 | Line spacing | Control paragraph line-height. | ✅ | Planned as a page/appearance option. |
-| Page locking | Prevent edits to a page. | 🟡 | Planned; depends on permission layer. [B84 audit] Ships today — Page.locked + topbar toggle (src/app/w/[slug]/[pageId]/page.tsx:88; src/components/page-title.tsx:279-281); server-side enforcement gap tracked as D6 in docs/specs/realtime-collab.md §2.3; glyph left for orchestrator re-baseline. |
+| Page locking | Prevent edits to a page. | ✅ | Planned; depends on permission layer. [B84 audit] Ships today — Page.locked + topbar toggle (src/app/w/[slug]/[pageId]/page.tsx:88; src/components/page-title.tsx:279-281); server-side enforcement gap tracked as D6 in docs/specs/realtime-collab.md §2.3; glyph left for orchestrator re-baseline. |
 | Page description | Short summary surfaced in previews. | ✅ | Planned; used by search previews. |
 | Page breadcrumb header | Ancestor path in the page header. | 🟡 | Renders; interactions partial. |
 | Favorite page | Star a page for the sidebar. | ✅ | Stored (star in topbar, B11) + sidebar section renders it: row, count badge, hover unfavorite/open-in-new-tab, empty-state hint; verified by `e2e/favorites-parity.spec.ts` (B44). |
@@ -768,7 +768,7 @@ The table below summarizes how many feature rows fall into each status, per area
 
 | Area | ✅ Implemented | 🟡 Partial | 🧭 Planned | ⛔ Out of scope | Total |
 | --- | --- | --- | --- | --- | --- |
-| 1. Editor & blocks | 54 | 37 | 7 | 2 | 100 |
+| 1. Editor & blocks | 55 | 36 | 7 | 2 | 100 |
 | 2. Text formatting | 11 | 7 | 3 | 1 | 22 |
 | 3. Databases | 21 | 26 | 6 | 0 | 53 |
 | 4. Properties | 19 | 3 | 13 | 1 | 36 |
@@ -789,7 +789,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 8 | 7 | 15 |
 | 20. Projects, tickets & planning | 27 | 1 | 4 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **212** | **123** | **214** | **14** | **563** |
+| **Total** | **213** | **122** | **214** | **14** | **563** |
 
 ## Deliberate divergences
 
