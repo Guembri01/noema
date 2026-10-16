@@ -3,6 +3,8 @@
  * self-hosted deployment; swap for Redis in a multi-instance setup.
  * Pure core so it can be unit-tested with an injected clock.
  */
+import { createLru, LruCache } from "./lru";
+import { createBucket, tryConsume, type ConsumeResult, type TokenBucket } from "./token-bucket";
 
 type Bucket = { count: number; resetAt: number };
 
@@ -84,6 +86,20 @@ export type SlidingEntry = { hits: number[]; windowMs: number };
 export type SlidingState = Map<string, SlidingEntry>;
 
 /**
+ * Default cap on distinct keys a stateful limiter tracks. A bounded key space
+ * keeps a flood of unique clients from growing memory without limit; the
+ * least-recently-used key is evicted when the cap is exceeded (its window
+ * simply restarts, the same trade-off a Redis `MAXMEMORY` policy makes).
+ */
+export const DEFAULT_MAX_KEYS = 10_000;
+
+/** Options accepted by {@link RateLimiter} and {@link TokenBucketLimiter}. */
+export type RateLimiterOptions = {
+  /** Maximum distinct keys tracked before LRU eviction. Defaults to 10_000. */
+  maxKeys?: number;
+};
+
+/**
  * Drop hits that have slid out of the window and delete keys with no hits
  * left, so the in-memory state can't grow unbounded. Mutates `state` in
  * place and returns the number of keys removed.
@@ -123,10 +139,18 @@ export function pruneExpired(
  * deployment; swap for Redis in a multi-instance setup.
  */
 export class RateLimiter {
-  private readonly state: SlidingState = new Map();
+  /**
+   * Keyed sliding windows, bounded by an LRU so a flood of distinct keys
+   * cannot grow memory without limit. Recency tracks the last `hit`/`get`,
+   * so the coldest key is the eviction victim.
+   */
+  private readonly state: LruCache<string, SlidingEntry>;
   private readonly tiers: Record<RateTier, RateTierPolicy>;
 
-  constructor(tiers?: Partial<Record<RateTier, RateTierPolicy>>) {
+  constructor(
+    tiers?: Partial<Record<RateTier, RateTierPolicy>>,
+    options: RateLimiterOptions = {},
+  ) {
     this.tiers = { ...DEFAULT_RATE_TIERS };
     if (tiers) {
       for (const tier of Object.keys(DEFAULT_RATE_TIERS) as RateTier[]) {
@@ -134,6 +158,9 @@ export class RateLimiter {
         if (override) this.tiers[tier] = override;
       }
     }
+    this.state = createLru<string, SlidingEntry>({
+      capacity: options.maxKeys ?? DEFAULT_MAX_KEYS,
+    });
   }
 
   /**
@@ -183,18 +210,94 @@ export class RateLimiter {
     };
   }
 
-  /** Prune every key using its own recorded window. Returns keys removed. */
+  /**
+   * Prune every key using its own recorded window. Returns keys removed.
+   * Walks the LRU's live keys (each `get` refreshes recency, harmless here).
+   */
   prune(now: number): number {
-    return pruneExpired(this.state, now);
+    let removed = 0;
+    for (const key of this.state.keys()) {
+      const entry = this.state.get(key);
+      if (!entry) continue;
+      const cutoff = now - entry.windowMs;
+      const kept = entry.hits.filter((t) => t > cutoff);
+      if (kept.length === entry.hits.length) continue;
+      if (kept.length === 0) {
+        this.state.delete(key);
+        removed += 1;
+      } else {
+        entry.hits = kept;
+      }
+    }
+    return removed;
   }
 
   /** Number of keys currently tracked (test/ops helper). */
   size(): number {
-    return this.state.size;
+    return this.state.size();
   }
 
   /** Test/ops helper. */
   reset(): void {
     this.state.clear();
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Token-bucket limiter (sustained throughput, burst smoothing).
+ * `token-bucket.ts` is the pure, immutable rule set; this class is the
+ * stateful, keyed wrapper that owns one bucket per client. Additive to
+ * the fixed/sliding windows above — a caller that needs to allow a burst
+ * but cap the long-run rate picks this instead of a time box.
+ * ------------------------------------------------------------------ */
+
+/** Options for {@link TokenBucketLimiter}. */
+export type TokenBucketLimiterOptions = RateLimiterOptions & {
+  /** Maximum tokens a bucket holds (the burst size). */
+  capacity: number;
+  /** Tokens replenished per second (the sustained rate). */
+  refillPerSecond: number;
+};
+
+/**
+ * Keyed token-bucket limiter. Each key owns a bucket (grown lazily on first
+ * `hit`), refilled from the injected `now` — nothing reads the wall clock.
+ * The key space is LRU-bounded like the sliding limiter above.
+ */
+export class TokenBucketLimiter {
+  private readonly buckets: LruCache<string, TokenBucket>;
+  private readonly capacity: number;
+  private readonly refillPerSecond: number;
+
+  constructor(options: TokenBucketLimiterOptions) {
+    this.capacity = options.capacity;
+    this.refillPerSecond = options.refillPerSecond;
+    this.buckets = createLru<string, TokenBucket>({
+      capacity: options.maxKeys ?? DEFAULT_MAX_KEYS,
+    });
+  }
+
+  /**
+   * Spend `tokens` (default 1) from `key`'s bucket at `now`, returning the
+   * pure {@link ConsumeResult}: `allowed`, the persisted next bucket and the
+   * `retryAfterMs` a denied caller should wait.
+   */
+  hit(key: string, now: number, tokens = 1): ConsumeResult {
+    const existing =
+      this.buckets.get(key) ??
+      createBucket({ capacity: this.capacity, refillPerSecond: this.refillPerSecond });
+    const result = tryConsume(existing, { now, tokens });
+    this.buckets.set(key, result.bucket);
+    return result;
+  }
+
+  /** Number of buckets currently tracked (test/ops helper). */
+  size(): number {
+    return this.buckets.size();
+  }
+
+  /** Test/ops helper. */
+  reset(): void {
+    this.buckets.clear();
   }
 }

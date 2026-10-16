@@ -323,6 +323,15 @@ export default async function SettingsPage({
             Create and revoke scoped REST API tokens.
           </span>
         </Link>
+        <Link
+          href={`/w/${workspace.slug}/settings/data`}
+          className="rounded-lg border border-border px-4 py-3 text-sm hover:bg-surface-2"
+        >
+          Data &amp; privacy
+          <span className="mt-0.5 block text-xs text-muted">
+            Export or erase your personal data (GDPR).
+          </span>
+        </Link>
       </nav>
 
       <section className="mt-10">
