@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Scoreboard:** 563 feature rows — 314 implemented · 218 partial · 9 planned · 22 deliberately out of scope.
+**Scoreboard:** 563 feature rows — 316 implemented · 225 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **227** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **225** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -155,15 +155,13 @@ This file lists the **227** rows that are not finished, area by area, plus 22 in
 
 ### 5. Formulas
 
-11 done · 3 partial · 2 planned
+13 done · 3 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Formula editor | Author expressions with autocomplete. | 🟡 | Planned; expression parser first. Spec: docs/specs/formula-engine.md. |
 | Regex extraction | Capture groups into values. | 🟡 | Planned. Spec: docs/specs/formula-engine.md. |
 | Rollups in formulas | Reference rollup results. | 🟡 | Planned; ordering dependency. Spec: docs/specs/formula-engine.md. |
-| Formula result caching | Recompute efficiently on change. | 🧭 | Planned; dependency graph. Spec: docs/specs/formula-engine.md. |
-| Named constants | Reuse of workspace-level values. | 🧭 | Planned nicety. Spec: docs/specs/formula-engine.md. |
 
 ### 6. Templates
 
@@ -182,18 +180,18 @@ This file lists the **227** rows that are not finished, area by area, plus 22 in
 
 ### 7. Collaboration
 
-18 done · 6 partial · 2 planned
+18 done · 8 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
+| Real-time multiplayer editing | Multiple users edit simultaneously. | 🟡 | Planned; local-first CRDT then sync. Spec: docs/specs/realtime-collab.md. |
+| CRDT data model | Conflict-free replicated structures. | 🟡 | Planned (automerge/Yjs-style). Spec: docs/specs/realtime-collab.md. |
 | Presence | See who is viewing a page. | 🟡 | Planned. |
 | Live cursors | Remote carets and selections. | 🟡 | Planned; needs presence transport. |
 | Avatars | Per-user avatars in the UI. | 🟡 | Avatar field exists; presence UI pending. |
 | Page comments | Comment threads on a page. | 🟡 | Data model basic; UI minimal. B79 audit: threads/resolve/reactions/mentions all live; deepest gaps are server-side depth validation, block anchors and dispatch scoping (see rows below). Spec: docs/specs/collaboration-deep.md. |
 | Following pages | Follow a page for updates. | 🟡 | Planned. B79 audit: the page-follow bell already ships (row state from `PageFollow` via `page-title.tsx:338-356`, toggle `pages.ts:463-481`, read `page.tsx:58-61`) but no mutation ever consults `PageFollow` — following dispatches zero notifications (see Notification inbox). R79.5. |
 | Coarse edit locks | Prevent simultaneous structural edits. | 🟡 | Planned fallback before full CRDT. |
-| Real-time multiplayer editing | Multiple users edit simultaneously. | 🧭 | Planned; local-first CRDT then sync. Spec: docs/specs/realtime-collab.md. |
-| CRDT data model | Conflict-free replicated structures. | 🧭 | Planned (automerge/Yjs-style). Spec: docs/specs/realtime-collab.md. |
 
 ### 8. Sharing & permissions
 
@@ -248,20 +246,20 @@ This file lists the **227** rows that are not finished, area by area, plus 22 in
 
 ### 12. Import & export
 
-12 done · 6 partial · 4 planned
+12 done · 10 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Import Markdown | Bring in `.md` files. | 🟡 | Basic parser; frontmatter partial. Spec: docs/specs/import-export.md. |
 | Import HTML | Import HTML documents. | 🟡 | Planned. |
+| Import Asana | Tasks into databases. | 🟡 | Planned. |
+| Import Evernote | Notes into pages. | 🟡 | Planned. |
+| Import Google Docs | Docs into pages. | 🟡 | Planned. |
 | Import PDF | Extract PDF into a page. | 🟡 | Planned; text-layer only first. |
+| Import Confluence | Spaces into pages. | 🟡 | Planned. |
 | Import rollback | Undo a failed import. | 🟡 | Planned. Spec: docs/specs/import-export.md. |
 | Export Markdown | Page as `.md`. | 🟡 | Basic export; nested content partial. Spec: docs/specs/import-export.md. |
 | Export PDF | Page as PDF. | 🟡 | Planned; headless render. Spec: docs/specs/import-export.md. |
-| Import Asana | Tasks into databases. | 🧭 | Planned. |
-| Import Evernote | Notes into pages. | 🧭 | Planned. |
-| Import Google Docs | Docs into pages. | 🧭 | Planned. |
-| Import Confluence | Spaces into pages. | 🧭 | Planned. |
 
 ### 13. Integrations & API
 
@@ -408,12 +406,12 @@ This file lists the **227** rows that are not finished, area by area, plus 22 in
 
 ### 20. Projects, tickets & planning
 
-28 done · 3 partial · 1 planned
+28 done · 4 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Roadmap view | Timeline across projects. | 🟡 | Project Gantt exists; a cross-project roadmap view is pending. |
+| Automations | Rules on status/label changes. | 🟡 | Planned. Spec: docs/specs/automations.md. |
 | Recurring tickets | Repeat on a schedule. | 🟡 | Planned; template recurrence exists for page templates. Spec: docs/specs/automations.md. |
 | Per-project role editor | Fine-grained project roles. | 🟡 | Planned; workspace roles exist today. |
-| Automations | Rules on status/label changes. | 🧭 | Planned. Spec: docs/specs/automations.md. |
 

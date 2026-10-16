@@ -325,8 +325,8 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Regex extraction | Capture groups into values. | 🟡 | Planned. Spec: docs/specs/formula-engine.md. |
 | Rollups in formulas | Reference rollup results. | 🟡 | Planned; ordering dependency. Spec: docs/specs/formula-engine.md. |
 | Formula error states | Friendly errors for bad expressions. | ✅ | Planned. Spec: docs/specs/formula-engine.md. |
-| Formula result caching | Recompute efficiently on change. | 🧭 | Planned; dependency graph. Spec: docs/specs/formula-engine.md. |
-| Named constants | Reuse of workspace-level values. | 🧭 | Planned nicety. Spec: docs/specs/formula-engine.md. |
+| Formula result caching | Recompute efficiently on change. | ✅ | Planned; dependency graph. Spec: docs/specs/formula-engine.md. |
+| Named constants | Reuse of workspace-level values. | ✅ | Planned nicety. Spec: docs/specs/formula-engine.md. |
 
 ## 6. Templates
 <!-- AREA: 6. Templates -->
@@ -349,8 +349,8 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Real-time multiplayer editing | Multiple users edit simultaneously. | 🧭 | Planned; local-first CRDT then sync. Spec: docs/specs/realtime-collab.md. |
-| CRDT data model | Conflict-free replicated structures. | 🧭 | Planned (automerge/Yjs-style). Spec: docs/specs/realtime-collab.md. |
+| Real-time multiplayer editing | Multiple users edit simultaneously. | 🟡 | Planned; local-first CRDT then sync. Spec: docs/specs/realtime-collab.md. |
+| CRDT data model | Conflict-free replicated structures. | 🟡 | Planned (automerge/Yjs-style). Spec: docs/specs/realtime-collab.md. |
 | Presence | See who is viewing a page. | 🟡 | Planned. |
 | Live cursors | Remote carets and selections. | 🟡 | Planned; needs presence transport. |
 | Avatars | Per-user avatars in the UI. | 🟡 | Avatar field exists; presence UI pending. |
@@ -476,11 +476,11 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Import from another Notion-class workspace | Migrate an external export. | ✅ | Planned; mapping to blocks. Spec: docs/specs/import-export.md. |
 | Import Word (.docx) | Import documents. | ✅ | Planned; docx parser needed. Spec: docs/specs/import-export.md. |
 | Import Trello | Boards into databases. | ✅ | Planned. Spec: docs/specs/import-export.md. |
-| Import Asana | Tasks into databases. | 🧭 | Planned. |
-| Import Evernote | Notes into pages. | 🧭 | Planned. |
-| Import Google Docs | Docs into pages. | 🧭 | Planned. |
+| Import Asana | Tasks into databases. | 🟡 | Planned. |
+| Import Evernote | Notes into pages. | 🟡 | Planned. |
+| Import Google Docs | Docs into pages. | 🟡 | Planned. |
 | Import PDF | Extract PDF into a page. | 🟡 | Planned; text-layer only first. |
-| Import Confluence | Spaces into pages. | 🧭 | Planned. |
+| Import Confluence | Spaces into pages. | 🟡 | Planned. |
 | Import progress/status | Show import job state. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Import rollback | Undo a failed import. | 🟡 | Planned. Spec: docs/specs/import-export.md. |
 | Export Markdown | Page as `.md`. | 🟡 | Basic export; nested content partial. Spec: docs/specs/import-export.md. |
@@ -737,7 +737,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Saved views | Reusable filter/sort presets. | ✅ | Ticket tracker: save the current filters, search and view type as a named workspace view, apply it from the Views menu, delete it inline (`TicketView`). |
 | Cycles / sprints | Time-boxed iterations. | ✅ | `/w/<slug>/cycles`: named cycles with dates + goal, tickets scheduled from the drawer, committed vs completed estimate, a burndown chart (actual over ideal) and average velocity. `Cycle` model + 4 actions. |
 | Velocity & burndown | Estimation trend charts. | ✅ | Per-cycle burndown (daily remaining vs the ideal line) and a 6-cycle velocity average, both computed by tested pure functions in `src/lib/cycles.ts`. |
-| Automations | Rules on status/label changes. | 🧭 | Planned. Spec: docs/specs/automations.md. |
+| Automations | Rules on status/label changes. | 🟡 | Planned. Spec: docs/specs/automations.md. |
 | Ticket description | Multi-line description in the ticket drawer + composer. | ✅ | Drawer textarea under the title with 800 ms debounced autosave via `updateTicketAction` (server cap raised 4 000/8 000 → 10 000 chars through `sanitizeDescription`); composer field at create time; empty renders no box (`data-testid="ticket-description-box"` only when non-empty). Covered by `src/lib/description.test.ts` + `e2e/descriptions.spec.ts`. |
 | Project description | Editable description on the project. | ✅ | `Project.description String?` (prisma db push), editable header textarea in `project-detail.tsx` saved with the project form (`createProject`/`updateProject` accept sanitised `description`), one-line clamp on list cards. |
 | Cycle goal (description) | Time-box description. | ✅ | `Cycle.goal` shown and edited in the cycles UI. |
@@ -772,14 +772,14 @@ The table below summarizes how many feature rows fall into each status, per area
 | 2. Text formatting | 14 | 7 | 0 | 1 | 22 |
 | 3. Databases | 24 | 29 | 0 | 0 | 53 |
 | 4. Properties | 21 | 14 | 0 | 1 | 36 |
-| 5. Formulas | 11 | 3 | 2 | 0 | 16 |
+| 5. Formulas | 13 | 3 | 0 | 0 | 16 |
 | 6. Templates | 2 | 7 | 0 | 1 | 10 |
-| 7. Collaboration | 18 | 6 | 2 | 0 | 26 |
+| 7. Collaboration | 18 | 8 | 0 | 0 | 26 |
 | 8. Sharing & permissions | 13 | 9 | 0 | 0 | 22 |
 | 9. Workspaces & structure | 16 | 7 | 0 | 0 | 23 |
 | 10. Version history | 4 | 5 | 0 | 0 | 9 |
 | 11. Search | 9 | 2 | 0 | 0 | 11 |
-| 12. Import & export | 12 | 6 | 4 | 0 | 22 |
+| 12. Import & export | 12 | 10 | 0 | 0 | 22 |
 | 13. Integrations & API | 9 | 13 | 0 | 0 | 22 |
 | 14. AI | 5 | 11 | 0 | 0 | 16 |
 | 15. Media & embeds | 15 | 6 | 0 | 0 | 21 |
@@ -787,9 +787,9 @@ The table below summarizes how many feature rows fall into each status, per area
 | 17. Data model & platform | 18 | 19 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 0 | 14 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
-| 20. Projects, tickets & planning | 28 | 3 | 1 | 0 | 32 |
+| 20. Projects, tickets & planning | 28 | 4 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **314** | **218** | **9** | **22** | **563** |
+| **Total** | **316** | **225** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 
