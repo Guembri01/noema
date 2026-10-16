@@ -68,14 +68,16 @@ lines.push(
 lines.push("");
 lines.push(`This file lists the **${count("partial") + count("planned")}** rows that are not finished, area by area, plus ${count("out")} intentional divergences.`);
 lines.push("");
-lines.push("## Read this first — highest-leverage gaps");
-lines.push("");
-lines.push("| # | Gap | Why it matters | Area |");
-lines.push("| --- | --- | --- | --- |");
-PRIORITY.forEach(([gap, why, where], index) => {
-  lines.push(`| ${index + 1} | **${gap}** | ${why} | ${where} |`);
-});
-lines.push("");
+if (count("partial") + count("planned") > 0) {
+  lines.push("## Read this first — highest-leverage gaps");
+  lines.push("");
+  lines.push("| # | Gap | Why it matters | Area |");
+  lines.push("| --- | --- | --- | --- |");
+  PRIORITY.forEach(([gap, why, where], index) => {
+    lines.push(`| ${index + 1} | **${gap}** | ${why} | ${where} |`);
+  });
+  lines.push("");
+}
 lines.push("## By area");
 lines.push("");
 
