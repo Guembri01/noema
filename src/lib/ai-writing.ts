@@ -294,6 +294,11 @@ export function postProcess(kind: AiWritingKind, raw: string): string {
     out = out.replace(/^["“«]([\s\S]*)["”»]$/, "$1").trim();
   }
 
+  // Never strip a response down to nothing. A reply that happens to *look*
+  // like a preamble ("Here's an explanation:") would otherwise be removed
+  // wholesale, so fall back to the original text when cleaning empties it.
+  if (out === "" && raw.trim() !== "") return raw.trim();
+
   return out;
 }
 
