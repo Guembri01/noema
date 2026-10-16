@@ -6,6 +6,37 @@
  */
 
 import { docToMarkdown, type BlockDoc, type RichNode } from "./blocks";
+import { formatCaption } from "./code-block";
+import { DEFAULT_PULL_QUOTE_SIZE, isPullQuoteSize } from "./pull-quote";
+
+/**
+ * Recognise the optional `{lineNumbers caption="…"}` fence options the editor
+ * writes out (`code-block.ts`'s `formatCaption` normalises the caption). The
+ * language is whatever precedes the trailing `{…}` group, so a language-less
+ * fence keeps working; unknown tokens are ignored.
+ */
+function parseFenceInfo(info: string | undefined): {
+  language: string;
+  lineNumbers?: boolean;
+  caption?: string;
+} {
+  const text = (info ?? "").trim();
+  const optionMatch = /\{([^}]*)\}\s*$/.exec(text);
+  const language = (optionMatch ? text.slice(0, optionMatch.index) : text).trim();
+  const options = optionMatch?.[1] ?? "";
+  const parsed: { language: string; lineNumbers?: boolean; caption?: string } = { language };
+  if (/\blineNumbers\b/.test(options)) parsed.lineNumbers = true;
+  const caption = /caption="((?:[^"\\]|\\.)*)"|caption=(\S+)/.exec(options);
+  if (caption) {
+    const raw = (caption[1] ?? caption[2] ?? "").replace(/\\(["\\])/g, "$1");
+    const value = formatCaption(raw);
+    if (value) parsed.caption = value;
+  }
+  return parsed;
+}
+
+/** A leading `[!large]` line inside a blockquote marks it as a pull quote. */
+const PULL_QUOTE_MARKER = /^\[!large\]$/i;
 
 function parseInline(text: string): RichNode[] {
   const nodes: RichNode[] = [];
@@ -50,7 +81,7 @@ export function markdownToDoc(markdown: string): BlockDoc {
     const line = lines[i];
 
     if (line.trimStart().startsWith("```")) {
-      const language = line.trim().slice(3).trim();
+      const fence = parseFenceInfo(line.trim().slice(3));
       const buffer: string[] = [];
       i += 1;
       while (i < lines.length && !lines[i].trimStart().startsWith("```")) {
@@ -60,7 +91,11 @@ export function markdownToDoc(markdown: string): BlockDoc {
       i += 1;
       content.push({
         type: "codeBlock",
-        attrs: { language: language || null },
+        attrs: {
+          language: fence.language || null,
+          ...(fence.lineNumbers ? { lineNumbers: true } : {}),
+          ...(fence.caption ? { caption: fence.caption } : {}),
+        },
         content: buffer.length ? [{ type: "text", text: buffer.join("\n") }] : [],
       });
       continue;
@@ -89,8 +124,14 @@ export function markdownToDoc(markdown: string): BlockDoc {
         buffer.push(lines[i].replace(/^>\s?/, ""));
         i += 1;
       }
+      // A leading `[!large]` marker (the pull-quote form, see `pull-quote.ts`)
+      // sets the display scale and is consumed, not quoted.
+      const marker = buffer.findIndex((entry) => entry.trim() !== "");
+      const isLarge = marker !== -1 && PULL_QUOTE_MARKER.test(buffer[marker].trim());
+      if (isLarge) buffer.splice(marker, 1);
       content.push({
         type: "blockquote",
+        ...(isLarge ? { attrs: { size: "large" } } : {}),
         content: [paragraph(buffer.join(" "))],
       });
       continue;
@@ -268,10 +309,24 @@ function blockHtml(node: RichNode): string {
       const box = node.type === "taskItem" ? `<input type="checkbox" disabled ${checked ? "checked" : ""}/> ` : "";
       return `<li>${box}${(node.content ?? []).map(blockHtml).join("")}</li>`;
     }
-    case "blockquote":
-      return `<blockquote>${(node.content ?? []).map(blockHtml).join("")}</blockquote>`;
-    case "codeBlock":
-      return `<pre><code>${escapeHtml(inlineHtml(node.content))}</code></pre>`;
+    case "blockquote": {
+      // A pull quote (see `pull-quote.ts`) keeps its display scale on the
+      // element as `data-size`, matching the editor's parseHTML contract.
+      const size = node.attrs?.size;
+      const large = isPullQuoteSize(size) && size !== DEFAULT_PULL_QUOTE_SIZE;
+      return `<blockquote${large ? ' data-size="large"' : ""}>${(node.content ?? []).map(blockHtml).join("")}</blockquote>`;
+    }
+    case "codeBlock": {
+      // `data-line-numbers` / `data-caption` mirror `code-block.tsx`'s
+      // renderHTML so the exported HTML re-imports through the editor intact;
+      // the caption is normalised with the shared `formatCaption`.
+      const rawCaption = node.attrs?.caption;
+      const caption = formatCaption(typeof rawCaption === "string" ? rawCaption : null);
+      const flags = `${node.attrs?.lineNumbers ? ' data-line-numbers="true"' : ""}${
+        caption ? ` data-caption="${escapeHtml(caption)}"` : ""
+      }`;
+      return `<pre${flags}><code>${escapeHtml(inlineHtml(node.content))}</code></pre>`;
+    }
     case "horizontalRule":
       return "<hr/>";
     case "image":
