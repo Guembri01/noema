@@ -8,8 +8,28 @@ import {
   type NodeViewProps,
 } from "@tiptap/react";
 import { ExternalLink, Loader2, Pencil, Trash2 } from "lucide-react";
-import { formatCell, type QueryProperty } from "@/lib/database-query";
+import { formatCell, type QueryProperty, type ViewConfig } from "@/lib/database-query";
 import { t } from "@/lib/i18n";
+import {
+  convertMode,
+  createLinkedView,
+  describeLinkedView,
+  resolveViewConfig as resolveLinkedViewConfig,
+  validateLinkedView,
+  type LinkedView,
+  type LinkedViewMode,
+  type LinkedViewOverrides,
+} from "@/lib/linked-view";
+import {
+  DEFAULT_ROW_HEIGHT,
+  parseInlineDatabaseBlock,
+  resolveShell,
+  rowWindow,
+  type InlineDatabaseBlock,
+  type InlineDisplay,
+  type RowWindow,
+  type ShellLayout,
+} from "@/lib/inline-database";
 import {
   CARD_SIZES,
   cardFieldOrder,
@@ -61,6 +81,12 @@ export const LinkedDatabase = Node.create<LinkedDatabaseOptions>({
     return {
       databasePageId: { default: null },
       title: { default: null },
+      /** `@/lib/linked-view` mode for this instance: "synced" | "detached". */
+      mode: { default: "synced", rendered: false },
+      /** The bound source view (`@/lib/linked-view` `sourceViewId`). */
+      sourceViewId: { default: null, rendered: false },
+      /** Rows the inline shell grows to before scrolling (`@/lib/inline-database`). */
+      maxRows: { default: null, rendered: false },
     };
   },
 
@@ -85,6 +111,129 @@ export const LinkedDatabase = Node.create<LinkedDatabaseOptions>({
     return ReactNodeViewRenderer(LinkedDatabaseView);
   },
 });
+
+/**
+ * fix04 — additive bridges onto `@/lib/linked-view` (per-instance identity,
+ * synced/detached mode, view-config merge) and `@/lib/inline-database` (the
+ * height/scroll shell + row window). Exported pure so the mappings are
+ * node-testable; `LinkedDatabaseView` is the only caller.
+ */
+
+/** The inline display a source view type maps to (unknown → `table`). */
+export function inlineDisplayFor(viewType: string | null | undefined): InlineDisplay {
+  switch ((viewType ?? "").toUpperCase()) {
+    case "LIST":
+      return "list";
+    case "BOARD":
+      return "board";
+    case "GALLERY":
+      return "gallery";
+    case "CALENDAR":
+      return "calendar";
+    case "TIMELINE":
+      return "timeline";
+    case "CHART":
+      return "chart";
+    default:
+      return "table";
+  }
+}
+
+/** Keep only defined override values; anything non-object yields `{}`. */
+function sanitizeOverrides(value: unknown): LinkedViewOverrides {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const out: LinkedViewOverrides = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === undefined) continue;
+    (out as Record<string, unknown>)[key] = entry;
+  }
+  return out;
+}
+
+export type LinkedEmbedInput = {
+  instanceId: string;
+  databaseId: string;
+  sourceViewId?: string | null;
+  mode?: string | null;
+  overrides?: unknown;
+  sourceConfig?: ViewConfig | null;
+  sourceViewType?: string | null;
+  display?: InlineDisplay | null;
+  maxRows?: number | null;
+  contentHeight: number;
+  viewportHeight: number;
+  scrollTop?: number;
+  rowHeight?: number;
+  overscan?: number;
+};
+
+export type LinkedEmbedModel = {
+  linked: LinkedView;
+  /** The effective `ViewConfig` after merging overrides over the source. */
+  effective: ViewConfig;
+  valid: boolean;
+  block: InlineDatabaseBlock;
+  display: InlineDisplay;
+  shell: ShellLayout;
+  window: RowWindow;
+};
+
+/**
+ * Resolve an embed's identity, effective view config and inline shell from the
+ * node's attributes and the source view. Identity + mode + overrides go through
+ * `createLinkedView`/`resolveViewConfig`/`validateLinkedView`; the shell height,
+ * scroll/virtual flags and visible row window go through
+ * `parseInlineDatabaseBlock`/`resolveShell`/`rowWindow`.
+ */
+export function linkedEmbedModel(input: LinkedEmbedInput): LinkedEmbedModel {
+  const linked = createLinkedView({
+    instanceId: input.instanceId,
+    databaseId: input.databaseId,
+    ...(input.sourceViewId ? { sourceViewId: input.sourceViewId } : {}),
+    ...(input.mode === "detached" ? { mode: "detached" as LinkedViewMode } : {}),
+  });
+  const instance: LinkedView = {
+    ...linked,
+    overrides: sanitizeOverrides(input.overrides),
+  };
+  const effective = resolveLinkedViewConfig(input.sourceConfig ?? null, instance);
+  const validation = validateLinkedView(instance, { exists: () => true });
+
+  const display = input.display ?? inlineDisplayFor(input.sourceViewType ?? null);
+  const parsed = parseInlineDatabaseBlock({
+    id: input.instanceId,
+    databaseId: input.databaseId,
+    ...(input.sourceViewId ? { viewId: input.sourceViewId } : {}),
+    display,
+    heightMode: "auto",
+    ...(typeof input.maxRows === "number" ? { maxRows: input.maxRows } : {}),
+  });
+  const block: InlineDatabaseBlock = parsed ?? {
+    id: input.instanceId,
+    databaseId: input.databaseId,
+    display,
+    heightMode: "auto",
+  };
+  const shell = resolveShell(block, {
+    contentHeight: input.contentHeight,
+    viewportHeight: input.viewportHeight,
+  });
+  const window = rowWindow(block, {
+    scrollTop: input.scrollTop ?? 0,
+    rowHeight: input.rowHeight ?? DEFAULT_ROW_HEIGHT,
+    ...(input.overscan === undefined ? {} : { overscan: input.overscan }),
+  });
+
+  return { linked: instance, effective, valid: validation.valid, block, display, shell, window };
+}
+
+/** Flip an instance between synced and detached through `convertMode`. */
+export function toggleLinkedMode(
+  linked: LinkedView,
+  sourceConfig: ViewConfig | null | undefined,
+): LinkedView {
+  return convertMode(linked, linked.mode === "synced" ? "detached" : "synced", sourceConfig);
+}
 
 function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: NodeViewProps) {
   const options = extension.options as LinkedDatabaseOptions;
@@ -219,6 +368,33 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
   }
 
   const primary = data?.properties[0];
+  // fix04 — the linked-view identity + inline shell for this instance. Mode and
+  // the bound source view come from the node's attributes; the shell height,
+  // scroll flag and visible row window replace the fixed `slice(0, 20)`.
+  const sourceRows = data?.rows ?? [];
+  const embed = linkedEmbedModel({
+    instanceId: databasePageId,
+    databaseId: databasePageId,
+    sourceViewId: node.attrs.sourceViewId as string | null,
+    mode: node.attrs.mode as string | null,
+    overrides: null,
+    sourceConfig: null,
+    sourceViewType: data?.views[0]?.type ?? null,
+    maxRows: typeof node.attrs.maxRows === "number" ? (node.attrs.maxRows as number) : 20,
+    contentHeight: sourceRows.length * DEFAULT_ROW_HEIGHT,
+    viewportHeight: 0,
+    overscan: 0,
+  });
+  const visibleRows = sourceRows.slice(embed.window.start, embed.window.end);
+  // A per-instance override of `visiblePropertyIds` narrows the embed; with no
+  // source config (and so no override) every property renders, as before.
+  const effectiveIds = embed.effective.visiblePropertyIds;
+  const visibleProperties =
+    effectiveIds === undefined
+      ? data?.properties ?? []
+      : (data?.properties ?? []).filter(
+          (property) => property.id === primary?.id || effectiveIds.includes(property.id),
+        );
   // The source database's first view decides how the embed renders. `table` and
   // `list` get their own read-only renderers below; `gallery` (and any other or
   // absent view type — board, calendar, …) uses the card grid this node has
@@ -229,7 +405,7 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
   // The shared view-presets engine reads lower-case property types (e.g.
   // "files"), matching `COVER_PROPERTY_TYPES`; the linked-database payload
   // stores them upper-case.
-  const presetProperties: ViewPropertyLike[] = (data?.properties ?? []).map(
+  const presetProperties: ViewPropertyLike[] = visibleProperties.map(
     (property) => ({
       id: property.id,
       name: property.name,
@@ -262,10 +438,20 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
     <NodeViewWrapper className="noema-linked-db" data-linked-database="">
       <div className="noema-linked-shell">
         <div className="noema-linked-header" contentEditable={false}>
-          <span className="noema-linked-title">
+          <span className="noema-linked-title" title={describeLinkedView(embed.linked)}>
             {data?.icon ?? "🗂️"}{" "}
             {String(node.attrs.title ?? data?.title ?? t(locale, "linkedDatabaseFallback"))}
           </span>
+          <button
+            type="button"
+            aria-pressed={embed.linked.mode === "detached"}
+            aria-label={t(locale, "syncedViewHint")}
+            title={t(locale, "syncedViewHint")}
+            onClick={() => updateAttributes({ mode: toggleLinkedMode(embed.linked, null).mode })}
+            className="noema-linked-open"
+          >
+            {embed.linked.mode}
+          </button>
           <a
             href={`/w/${options.workspaceSlug}/${databasePageId}`}
             className="noema-linked-open"
@@ -295,7 +481,15 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
-        <div className="noema-linked-body" contentEditable={false} data-view-mode={viewMode}>
+        <div
+          className="noema-linked-body"
+          contentEditable={false}
+          data-view-mode={viewMode}
+          style={{
+            height: embed.shell.heightCss,
+            overflowY: embed.shell.scroll ? "auto" : undefined,
+          }}
+        >
           {loading ? (
             <span className="noema-linked-loading">
               <Loader2 className="h-4 w-4 animate-spin" /> {t(locale, "loading")}
@@ -307,15 +501,15 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
           ) : viewMode === "table" ? (
             <LinkedTableView
               locale={locale}
-              columns={data.properties}
-              rows={data.rows.slice(0, 20)}
+              columns={visibleProperties}
+              rows={visibleRows}
               primaryId={primary?.id ?? null}
             />
           ) : viewMode === "list" ? (
             <LinkedListView
               locale={locale}
               properties={presetProperties}
-              rows={data.rows.slice(0, 20)}
+              rows={visibleRows}
             />
           ) : (
             <div
@@ -324,7 +518,7 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
               style={{ gridTemplateColumns: `repeat(${spec.columns}, minmax(0, 1fr))` }}
               data-card-size={size}
             >
-              {data.rows.slice(0, 20).map((row) => {
+              {visibleRows.map((row) => {
                 const viewRow: ViewRowLike = {
                   id: row.id,
                   title: row.title,

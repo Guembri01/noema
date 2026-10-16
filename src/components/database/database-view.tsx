@@ -64,22 +64,38 @@ import { AGGREGATION_FUNCTIONS, type AggregationFn } from "@/lib/aggregations";
 import type { ChartType } from "@/lib/charts";
 import type { RowColorRule } from "@/lib/row-color-rules";
 import { mergeLayout, type ColumnLayout } from "@/lib/column-layout";
+import type { DependencyEdge } from "@/lib/dependencies";
 import {
-  blockersOf,
-  buildDependencyGraph,
-  dependentsOf,
-  type DependencyEdge,
-} from "@/lib/dependencies";
+  buildSubIssueTree,
+  canMoveSubIssue,
+  dependencyTree as buildSubIssueDependencyTree,
+  describeRollup as describeSubIssueRollup,
+  flattenTree as flattenSubIssueTree,
+  moveSubIssue,
+  rollupEstimates,
+  type DependencyEdge as SubIssueDependencyEdge,
+  type NodeRollup,
+} from "@/lib/sub-issues";
+import {
+  computeRollup as computeRelationRollup,
+  createRelationPair,
+  createRelationState,
+  linkRows,
+  setRollupConfig,
+  symmetricPairs,
+  unlinkRows,
+  type InverseLink,
+  type RelationState,
+  type RollupFn as RelationRollupFn,
+} from "@/lib/relation-pairs";
+import { normalizeRollupConfig } from "@/lib/rollup-config";
 import {
   canEditSchema,
   describeLock,
   toggleLock,
   type LockRole,
   type LockState } from "@/lib/database-lock";
-import {
-  childrenOf as subItemChildrenOf,
-  visibleRows as visibleSubItemRows,
-} from "@/lib/sub-items";
+import { childrenOf as subItemChildrenOf } from "@/lib/sub-items";
 import { CARD_SIZES, type CardSizeName } from "@/lib/view-presets";
 import type { RelationData } from "@/server/queries";
 import {
@@ -329,6 +345,300 @@ const DEPENDENCY_COLUMN_ID = "__dependencies__";
 type SubItemFields = { parentId?: string | null; order?: number };
 type SubItemDisplayRow = QueryRow & SubItemFields;
 
+/**
+ * fix04 — additive bridges onto the newer sub-issue / relation / rollup engines
+ * (`@/lib/sub-issues`, `@/lib/relation-pairs`, `@/lib/rollup-config`). Each
+ * helper below is pure and exported so the mapping onto the view's row / config
+ * shapes is node-testable without a DOM; `DatabaseView` is the only caller.
+ */
+
+/** Nested sub-issue depth cap. Deeper rows surface as flat orphans, never lost. */
+export const SUB_ISSUE_MAX_DEPTH = 4;
+
+/** `@/lib/dependencies` edges (`from` blocks `to`) → sub-issues blocking edges. */
+export function toSubIssueEdges(edges: readonly DependencyEdge[]): SubIssueDependencyEdge[] {
+  return edges.map((edge) => ({ blockerId: edge.from, blockedId: edge.to }));
+}
+
+export type SubIssueLayout = {
+  /** The visible rows, depth-first, with collapsed subtrees folded shut. */
+  rows: QueryRow[];
+  /** Per-row estimate/done roll-up keyed by row id (`@/lib/sub-issues`). */
+  rollups: Map<string, NodeRollup>;
+  /** Rows the tree could not place (unknown parents, depth cap, cycles). */
+  orphans: string[];
+  /** One concrete closed walk per parent cycle. */
+  cycles: string[][];
+};
+
+/**
+ * Map the view's rows onto the sub-issue forest and back: nest through
+ * `buildSubIssueTree`, resolve the visible rows (honouring `collapsedIds`) with
+ * `flattenTree`, and roll estimates up with `rollupEstimates`. Rows the tree
+ * could not place are appended so no data is ever dropped from the surface.
+ */
+export function layoutSubIssues(
+  rows: readonly SubItemDisplayRow[],
+  collapsedIds: Iterable<string> = [],
+  options: { maxDepth?: number } = {},
+): SubIssueLayout {
+  const built = buildSubIssueTree(rows, {
+    maxDepth: options.maxDepth ?? SUB_ISSUE_MAX_DEPTH,
+  });
+  const flat = flattenSubIssueTree(built.tree, { collapsedIds });
+  return {
+    rows: [...flat.map((entry) => entry.row), ...built.orphans],
+    rollups: rollupEstimates(built.tree),
+    orphans: built.orphans.map((row) => row.id),
+    cycles: built.cycles,
+  };
+}
+
+/** Relation rows keyed by the property that links them, as the engine reads them. */
+export type RelationPairIndex = Record<
+  string,
+  { pairId: string; inversePropertyId: string | null; targetDatabaseId: string }
+>;
+
+/** The relation world built from a single database's rows. */
+export type BuiltRelationState = { state: RelationState; pairs: RelationPairIndex };
+
+const pageIdsOf = (value: unknown): string[] => {
+  const ids = (value as { pageIds?: unknown } | null | undefined)?.pageIds;
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+};
+
+const relationIdsIn = (state: RelationState, propertyId: string, rowId: string): string[] => {
+  const ids = state.links[propertyId]?.[rowId];
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+};
+
+/** Project a stored property value onto the primitive the rollup aggregates. */
+function projectRelationValue(raw: unknown, type: string): unknown {
+  const value = (raw ?? {}) as Record<string, unknown>;
+  if (type === "NUMBER") return typeof value.number === "number" ? value.number : null;
+  if (type === "CHECKBOX") return typeof value.checked === "boolean" ? value.checked : false;
+  if (type === "DATE") return typeof value.start === "string" ? value.start : null;
+  if (type === "RELATION") return null; // link ids are read from the raw value
+  return (
+    formatCell(raw, {
+      id: "",
+      name: "",
+      type,
+      config: null,
+    } as unknown as QueryProperty) || null
+  );
+}
+
+/**
+ * Build a `@/lib/relation-pairs` state from the view's own rows and the related
+ * rows the query already resolved (`relationData`). RELATION properties become
+ * cross-referencing pairs (the inverse property is picked out of the target
+ * database's schema when it is a relation, otherwise a synthetic id keeps the
+ * pair well-formed without ever being persisted); both stored sides are
+ * projected so `symmetricPairs` sees real reciprocal edges.
+ */
+export function buildRelationState(input: {
+  databaseId: string;
+  properties: readonly DBProperty[];
+  rows: readonly DBRow[];
+  relationData: Record<string, RelationData>;
+}): BuiltRelationState {
+  const relationProperties = input.properties.filter((property) => {
+    if (property.type !== "RELATION") return false;
+    const config = property.config as { targetDatabaseId?: unknown } | null;
+    return typeof config?.targetDatabaseId === "string" && config.targetDatabaseId !== "";
+  });
+
+  const valueOf = (row: DBRow, propertyId: string): unknown =>
+    row.propertyValues.find((entry) => entry.propertyId === propertyId)?.value;
+
+  const rows: { id: string; databaseId: string; values: Record<string, unknown> }[] = [];
+  for (const row of input.rows) {
+    const values: Record<string, unknown> = {};
+    for (const property of input.properties) {
+      values[property.id] = projectRelationValue(valueOf(row, property.id), property.type);
+    }
+    rows.push({ id: row.id, databaseId: input.databaseId, values });
+  }
+
+  const pairs: RelationPairIndex = {};
+  const definitions = [];
+  const links: Record<string, Record<string, string[]>> = {};
+  const seenTargets = new Set<string>();
+
+  for (const property of relationProperties) {
+    const config = property.config as { targetDatabaseId: string; multi?: boolean };
+    const target = input.relationData[property.id];
+    const inversePropertyId =
+      target?.properties.find((candidate) => candidate.type === "RELATION")?.id ?? null;
+    const definition = createRelationPair({
+      a: { databaseId: input.databaseId, propertyId: property.id },
+      b: {
+        databaseId: config.targetDatabaseId,
+        propertyId: inversePropertyId ?? `${property.id}::inverse`,
+      },
+      cardinality: config.multi === false ? "one" : "many",
+    });
+    definitions.push(definition);
+    pairs[property.id] = {
+      pairId: definition.id,
+      inversePropertyId,
+      targetDatabaseId: config.targetDatabaseId,
+    };
+
+    if (target) {
+      const types = new Map(target.properties.map((entry) => [entry.id, entry.type]));
+      for (const [targetRowId, rawById] of Object.entries(target.valuesByRow)) {
+        if (!seenTargets.has(`${config.targetDatabaseId}\u0000${targetRowId}`)) {
+          seenTargets.add(`${config.targetDatabaseId}\u0000${targetRowId}`);
+          const values: Record<string, unknown> = {};
+          for (const [propertyId, raw] of Object.entries(rawById)) {
+            values[propertyId] = projectRelationValue(raw, types.get(propertyId) ?? "TEXT");
+          }
+          rows.push({ id: targetRowId, databaseId: config.targetDatabaseId, values });
+        }
+        if (inversePropertyId) {
+          const stored = pageIdsOf(rawById[inversePropertyId]);
+          if (stored.length > 0) {
+            links[inversePropertyId] = {
+              ...(links[inversePropertyId] ?? {}),
+              [targetRowId]: stored,
+            };
+          }
+        }
+      }
+    }
+  }
+
+  for (const property of relationProperties) {
+    const byRow: Record<string, string[]> = {};
+    for (const row of input.rows) {
+      const ids = pageIdsOf(valueOf(row, property.id));
+      if (ids.length > 0) byRow[row.id] = ids;
+    }
+    if (Object.keys(byRow).length > 0) links[property.id] = byRow;
+  }
+
+  return {
+    state: createRelationState({ pairs: definitions, rows, links }),
+    pairs,
+  };
+}
+
+/**
+ * The rollup functions `@/lib/relation-pairs` supports natively and that share
+ * an exact result with the persisted `@/lib/rollup` vocabulary — so routing the
+ * cell through `computeRollup` never changes what a saved rollup displays. Any
+ * other function returns `null` and the caller keeps the existing aggregator.
+ */
+const PAIR_ROLLUP_FNS: Readonly<Partial<Record<RollupFunction, RelationRollupFn>>> = {
+  sum: "sum",
+  avg: "average",
+  min: "min",
+  max: "max",
+  median: "median",
+  unique: "unique",
+  checked: "checked",
+  show_original: "join",
+};
+
+/**
+ * Compute a rollup cell through `@/lib/relation-pairs` `computeRollup`, after
+ * normalising the persisted config through `@/lib/rollup-config`. Returns the
+ * formatted cell text, or `null` when the function is outside the mapped subset
+ * (the caller then falls back to the legacy aggregator).
+ */
+export function rollupCellFromPairs(
+  state: RelationState,
+  rowId: string,
+  storedConfig: unknown,
+): string | null {
+  const normalized = normalizeRollupConfig(storedConfig);
+  const fn = PAIR_ROLLUP_FNS[normalized.aggregateFn];
+  if (!fn || normalized.relationPropertyId === "" || normalized.targetPropertyId === "") {
+    return null;
+  }
+  const result = computeRelationRollup(
+    state,
+    rowId,
+    setRollupConfig({
+      relationPropertyId: normalized.relationPropertyId,
+      targetPropertyId: normalized.targetPropertyId,
+      fn,
+      separator: ", ",
+    }),
+  );
+  if (result.value === null) return "—";
+  if (typeof result.value === "number") {
+    return Number.isInteger(result.value) ? String(result.value) : result.value.toFixed(2);
+  }
+  return String(result.value);
+}
+
+/** A related row's reciprocal-edge count for `rowId` across every relation. */
+export function mutualRelationCount(state: RelationState, pairId: string, rowId: string): number {
+  return symmetricPairs(state, pairId).filter((edge) => edge.aRowId === rowId).length;
+}
+
+/** One property write the relation planner wants persisted. */
+export type RelationWrite = {
+  rowId: string;
+  propertyId: string;
+  value: { pageIds: string[] };
+};
+
+/**
+ * Plan a relation edit as a two-way write: reconcile `rowId` to `value`'s
+ * `pageIds` through `linkRows`/`unlinkRows` (single-cardinality replacement and
+ * dedupe are the engine's job), then emit the source write plus every far-side
+ * write the engine reports for a *real* inverse property. Returns `null` when
+ * the property is not a paired relation, so the caller keeps the plain write.
+ */
+export function planRelationWrite(
+  state: RelationState,
+  pairs: RelationPairIndex,
+  property: DBProperty,
+  rowId: string,
+  value: unknown,
+): { writes: RelationWrite[] } | null {
+  const entry = pairs[property.id];
+  if (!entry) return null;
+
+  const next = pageIdsOf(value);
+  const current = relationIdsIn(state, property.id, rowId);
+  const added = next.filter((id) => !current.includes(id));
+  const removed = current.filter((id) => !next.includes(id));
+
+  const linked = added.length
+    ? linkRows(state, { fromId: rowId, toIds: added, pairId: entry.pairId })
+    : { state, inverseLinks: [] as InverseLink[] };
+  const unlinked = removed.length
+    ? unlinkRows(linked.state, { fromId: rowId, toIds: removed, pairId: entry.pairId })
+    : { state: linked.state, inverseLinks: [] as InverseLink[] };
+
+  const writes: RelationWrite[] = [
+    {
+      rowId,
+      propertyId: property.id,
+      value: { pageIds: relationIdsIn(unlinked.state, property.id, rowId) },
+    },
+  ];
+
+  if (entry.inversePropertyId) {
+    for (const inverse of [...linked.inverseLinks, ...unlinked.inverseLinks]) {
+      if (inverse.propertyId !== entry.inversePropertyId) continue;
+      writes.push({
+        rowId: inverse.rowId,
+        propertyId: inverse.propertyId,
+        value: { pageIds: inverse.targetIds },
+      });
+    }
+  }
+
+  return { writes };
+}
+
 export function DatabaseView({
   locale,
   databasePageId,
@@ -518,15 +828,19 @@ export function DatabaseView({
     setPeek(row);
   };
 
-  // R89.30 — sub-items tree. Rows carry an optional `parentId`/`order` (read
-  // defensively: today's flat rows have neither). When the "Sub-tickets"
-  // toggle is on the table and list render the forest in depth-first order and
-  // fold the descendants of any collapsed parent; when it is off these rows
-  // are passed through untouched, so an unmigrated database is byte-for-byte
-  // unchanged. Indentation/chevrons inside the renderers are a follow-up.
+  // R89.30 — sub-issue tree. Rows carry an optional `parentId`/`order` (read
+  // defensively: today's flat rows have neither). When the "Sub-tickets" toggle
+  // is on the table and list render the forest in depth-first order and fold the
+  // descendants of any collapsed parent; when it is off these rows are passed
+  // through untouched, so an unmigrated database is byte-for-byte unchanged.
+  // This is the `@/lib/sub-issues` engine (depth cap + estimate roll-up +
+  // reparent); the session-local reparent overlay mirrors `rowOrderByView`.
   const [nestSubItems, setNestSubItems] = useState(false);
   const [collapsedSubItems, setCollapsedSubItems] = useState<
     Record<string, string[]>
+  >({});
+  const [subIssueRowsByView, setSubIssueRowsByView] = useState<
+    Record<string, SubItemDisplayRow[]>
   >({});
   const subItemRows = useMemo<SubItemDisplayRow[]>(
     () =>
@@ -536,12 +850,19 @@ export function DatabaseView({
       }),
     [viewRows],
   );
+  const effectiveSubItemRows = activeView
+    ? subIssueRowsByView[activeView.id] ?? subItemRows
+    : subItemRows;
   const collapsedSubItemIds = new Set(
     activeView ? collapsedSubItems[activeView.id] ?? [] : [],
   );
-  const displayRows: QueryRow[] = nestSubItems
-    ? visibleSubItemRows(subItemRows, collapsedSubItemIds)
-    : viewRows;
+  const subIssueLayout = useMemo(() => {
+    const collapsed = activeView ? collapsedSubItems[activeView.id] ?? [] : [];
+    return layoutSubIssues(effectiveSubItemRows, collapsed, {
+      maxDepth: SUB_ISSUE_MAX_DEPTH,
+    });
+  }, [effectiveSubItemRows, collapsedSubItems, activeView]);
+  const displayRows: QueryRow[] = nestSubItems ? subIssueLayout.rows : viewRows;
   const toggleSubItemCollapse = (parentId: string) => {
     if (!activeView) return;
     setCollapsedSubItems((previous) => {
@@ -552,18 +873,32 @@ export function DatabaseView({
       return { ...previous, [activeView.id]: next };
     });
   };
+  /** Promote a nested row to the top level through `@/lib/sub-issues`. */
+  const promoteSubIssue = (id: string) => {
+    if (!activeView) return;
+    if (!canMoveSubIssue(effectiveSubItemRows, id, { toParentId: null }).ok) return;
+    const moved = moveSubIssue(effectiveSubItemRows, id, { toParentId: null });
+    setSubIssueRowsByView((previous) => ({ ...previous, [activeView.id]: moved }));
+  };
+  /** The roll-up summary for a sub-issue parent, or `null` for a leaf. */
+  const subIssueRollupText = (id: string): string | null => {
+    const rollup = subIssueLayout.rollups.get(id);
+    return rollup && rollup.count > 1 ? describeSubIssueRollup(rollup) : null;
+  };
 
-  // R89.31 — dependency indicator. The blocking graph is built from the
-  // optional edges the caller supplies (`from` blocks `to`); with no edges the
-  // graph is empty, every indicator is blank and no column is added, so an
+  // R89.31 — dependency indicator, now driven by the sub-issues engine
+  // (`dependencyTree`), which folds the same `{ from, to }` blocking edges into
+  // a transitive blocked-by / blocks closure and reports cycles. With no edges
+  // the graph is empty, every indicator is blank and no column is added, so an
   // ordinary database renders exactly as before.
   const dependencyGraph = useMemo(
-    () => buildDependencyGraph(dependencyEdges),
+    () => buildSubIssueDependencyTree(toSubIssueEdges(dependencyEdges)),
     [dependencyEdges],
   );
   const dependencySummary = (rowId: string): string => {
-    const blocked = blockersOf(dependencyGraph, rowId).length;
-    const blocking = dependentsOf(dependencyGraph, rowId).length;
+    const node = dependencyGraph.nodes.get(rowId);
+    const blocked = node?.blockedBy.length ?? 0;
+    const blocking = node?.blocks.length ?? 0;
     const parts: string[] = [];
     if (blocked > 0) parts.push(`${blocked} ${t(locale, "relationBlockedBy")}`);
     if (blocking > 0) parts.push(`${blocking} ${t(locale, "relationBlocks")}`);
@@ -571,8 +906,9 @@ export function DatabaseView({
   };
   const blockedRowCount = useMemo(
     () =>
-      viewRows.filter((row) => blockersOf(dependencyGraph, row.id).length > 0)
-        .length,
+      viewRows.filter(
+        (row) => (dependencyGraph.nodes.get(row.id)?.blockedBy.length ?? 0) > 0,
+      ).length,
     [viewRows, dependencyGraph],
   );
   const lockState: LockState = {
@@ -994,8 +1330,36 @@ export function DatabaseView({
   const relationOptionsFor = (propertyId: string) =>
     relationData[propertyId]?.options ?? [];
 
-  /** Aggregate related rows' values for a rollup property. */
+  // fix04 — the `@/lib/relation-pairs` world for this database, built from the
+  // rows and the related rows the query resolved. Feeds the two-way write plan
+  // (`linkRows`/`unlinkRows`), the reciprocal display (`symmetricPairs`) and the
+  // rollup cell (`computeRollup`).
+  const relationState = useMemo(
+    () => buildRelationState({ databaseId: databasePageId, properties, rows, relationData }),
+    [databasePageId, properties, rows, relationData],
+  );
+
+  /** Reciprocal (stored-on-both-sides) relation edges for the open row. */
+  const mutualRelationsFor = (rowId: string): number => {
+    let total = 0;
+    for (const [propertyId, entry] of Object.entries(relationState.pairs)) {
+      const property = properties.find((candidate) => candidate.id === propertyId);
+      if (property?.type !== "RELATION") continue;
+      total += mutualRelationCount(relationState.state, entry.pairId, rowId);
+    }
+    return total;
+  };
+
+  /**
+   * Aggregate related rows' values for a rollup property. Routed through
+   * `@/lib/relation-pairs` `computeRollup` (its config normalised by
+   * `@/lib/rollup-config`) for the functions it computes exactly as the legacy
+   * aggregator did; every other function keeps the existing `@/lib/rollup` path.
+   */
   const computeRollup = (row: DBRow, property: DBProperty): string => {
+    const viaPairs = rollupCellFromPairs(relationState.state, row.id, property.config);
+    if (viaPairs !== null) return viaPairs;
+
     const config = (property.config ?? {}) as {
       relationPropertyId?: string;
       targetPropertyId?: string;
@@ -1062,6 +1426,29 @@ export function DatabaseView({
   };
 
   const setValue = (rowId: string, propertyId: string, value: unknown) => {
+    // RELATION edits are maintained on both sides through the relation-pairs
+    // engine: reconcile the source row, then persist every far-side write the
+    // engine reports for a real inverse property. Other properties keep the
+    // plain single-value write.
+    const property = properties.find((candidate) => candidate.id === propertyId);
+    if (property?.type === "RELATION") {
+      const plan = planRelationWrite(
+        relationState.state,
+        relationState.pairs,
+        property,
+        rowId,
+        value,
+      );
+      if (plan) {
+        startTransition(async () => {
+          for (const write of plan.writes) {
+            await setPropertyValueAction(write.rowId, write.propertyId, write.value);
+          }
+          router.refresh();
+        });
+        return;
+      }
+    }
     startTransition(async () => {
       await setPropertyValueAction(rowId, propertyId, value);
       router.refresh();
@@ -1956,18 +2343,18 @@ export function DatabaseView({
               <span>{dependencySummary(peek.id)}</span>
             </p>
           )}
-          {blockersOf(dependencyGraph, peek.id).length > 0 && (
+          {(dependencyGraph.nodes.get(peek.id)?.blockedBy.length ?? 0) > 0 && (
             <p className="mb-2 text-xs text-muted">
               {t(locale, "relationBlockedBy")}:{" "}
-              {blockersOf(dependencyGraph, peek.id)
+              {(dependencyGraph.nodes.get(peek.id)?.blockedBy ?? [])
                 .map((id) => rowsById.get(id)?.title ?? id)
                 .join(", ")}
             </p>
           )}
-          {/* R89.30 — fold this row's sub-items. No-op until rows carry a
-              `parentId`, at which point the toggle (and the table/list tree)
-              light up together. Only offered while the nesting toggle is on. */}
-          {nestSubItems && subItemChildrenOf(subItemRows, peek.id).length > 0 && (
+          {/* R89.30 — sub-issue controls: fold children, read the rolled-up
+              estimate/done state, or promote a nested row to the top level.
+              No-ops until rows carry a `parentId`. */}
+          {nestSubItems && subItemChildrenOf(effectiveSubItemRows, peek.id).length > 0 && (
             <button
               type="button"
               onClick={() => toggleSubItemCollapse(peek.id)}
@@ -1982,9 +2369,29 @@ export function DatabaseView({
               {collapsedSubItemIds.has(peek.id)
                 ? t(locale, "toggleExpand")
                 : t(locale, "toggleCollapse")}{" "}
-              ({subItemChildrenOf(subItemRows, peek.id).length}{" "}
+              ({subItemChildrenOf(effectiveSubItemRows, peek.id).length}{" "}
               {t(locale, "subTicketMany")})
             </button>
+          )}
+          {nestSubItems && subIssueRollupText(peek.id) !== null && (
+            <p className="mb-2 text-xs text-muted">{subIssueRollupText(peek.id)}</p>
+          )}
+          {nestSubItems &&
+            effectiveSubItemRows.find((row) => row.id === peek.id)?.parentId != null && (
+              <button
+                type="button"
+                aria-label={t(locale, "subticketsHeading")}
+                title={t(locale, "subticketsHeading")}
+                onClick={() => promoteSubIssue(peek.id)}
+                className="mb-2 flex items-center gap-1.5 text-xs text-accent hover:underline"
+              >
+                ↥
+              </button>
+            )}
+          {mutualRelationsFor(peek.id) > 0 && (
+            <p className="mb-2 text-xs text-muted">
+              ↔ {mutualRelationsFor(peek.id)} {t(locale, "relationsHeading")}
+            </p>
           )}
           {/* Properties panel: one labelled row per property, editable in
               place — computed values (formula, rollup, system) stay read-only. */}
