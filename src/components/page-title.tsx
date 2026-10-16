@@ -1,11 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
   Bell,
   ImagePlus,
   Link as LinkIcon,
+  Loader2,
   Lock,
   Move,
   Redo2,
@@ -36,7 +45,6 @@ import { ShareDialog } from "@/components/share-dialog";
 import { NotionImportDialog } from "@/components/notion-import-dialog";
 import {
   ActionsMenu,
-  COVERS,
   EMOJIS,
   type ActionsMenuToggleKey,
   type NotifyLevel,
@@ -61,11 +69,9 @@ import {
   patchAppearance,
   type PageAppearance,
 } from "@/lib/page-appearance";
-import { isImageIcon, pageIconToCss, parsePageIcon } from "@/lib/page-icon";
+import { isImageIcon, pageIconToCss, parsePageIcon, type PageIcon } from "@/lib/page-icon";
 import {
-  BREADCRUMB_ELLIPSIS_ID,
   buildBreadcrumb,
-  truncateBreadcrumb,
   type BreadcrumbItem,
   type BreadcrumbPage,
 } from "@/lib/breadcrumb";
@@ -84,6 +90,8 @@ import {
 } from "@/lib/page-cover";
 import { pageToMarkdown } from "@/lib/serialize";
 import type { TextBlock } from "@/lib/text-stats";
+import { DUR, Z } from "@/lib/design-tokens";
+import { estimateTextWidth } from "@/lib/text-measure";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -128,8 +136,106 @@ type BreadcrumbTrail = readonly { id: string; title: string }[];
 
 const EMPTY_BREADCRUMB_TRAIL: BreadcrumbTrail = [];
 
-/** Header crumbs beyond this budget collapse their middle into an ellipsis. */
-const HEADER_BREADCRUMB_MAX = 4;
+/** Header crumbs beyond this budget collapse their middle into an overflow menu. */
+export const HEADER_BREADCRUMB_MAX = 6;
+
+/* ------------------------------------------------------------------------- *
+ * Pure header geometry — the title-row model
+ *
+ * The header is the first thing a user sees, so its behaviour is decided by
+ * small, DOM-free functions the node tests can pin: how many breadcrumbs fit
+ * before the middle folds into an overflow menu, and when the compact sticky
+ * title takes over from the in-page `h1`.
+ * ------------------------------------------------------------------------- */
+
+/** Font size (px) the header breadcrumb renders at (`text-sm` = 14). */
+export const HEADER_CRUMB_FONT_PX = 14;
+
+/** Width (px) reserved after each crumb for its separator + gap. */
+export const HEADER_CRUMB_GAP_PX = 18;
+
+/** Fewest crumbs the header keeps when the trail must collapse (root + current). */
+export const HEADER_BREADCRUMB_MIN = 2;
+
+/** Default inline width (px) budgeted for the breadcrumb trail. */
+export const HEADER_BREADCRUMB_WIDTH_PX = 560;
+
+/** Estimated inline width (px) of one breadcrumb, separator included. */
+export function crumbWidthPx(label: string): number {
+  return estimateTextWidth(label) * HEADER_CRUMB_FONT_PX + HEADER_CRUMB_GAP_PX;
+}
+
+/**
+ * How many crumbs fit the header at `availablePx`, never fewer than
+ * {@link HEADER_BREADCRUMB_MIN} (root + current) when both fit, never more than
+ * {@link HEADER_BREADCRUMB_MAX}. The root and the current page are kept first;
+ * spare room is filled from the deepest middle crumbs outward. A non-finite or
+ * non-positive width falls back to {@link HEADER_BREADCRUMB_WIDTH_PX} rather
+ * than collapsing the trail.
+ */
+export function headerBreadcrumbBudget(
+  items: readonly BreadcrumbItem[],
+  availablePx: number = HEADER_BREADCRUMB_WIDTH_PX,
+): number {
+  const count = items.length;
+  if (count === 0) return 0;
+  if (count === 1) return 1;
+  const limit =
+    Number.isFinite(availablePx) && availablePx > 0
+      ? availablePx
+      : HEADER_BREADCRUMB_WIDTH_PX;
+  const ends = crumbWidthPx(items[0].label) + crumbWidthPx(items[count - 1].label);
+  if (ends > limit) return 1;
+  let used = ends;
+  let budget = 2;
+  for (let i = count - 2; i >= 1; i -= 1) {
+    if (budget >= HEADER_BREADCRUMB_MAX) break;
+    const next = used + crumbWidthPx(items[i].label);
+    if (next > limit) break;
+    used = next;
+    budget += 1;
+  }
+  return Math.min(budget, count);
+}
+
+/**
+ * Split a crumb trail into the crumbs that render inline and the middle crumbs
+ * that fold into the overflow menu. Mirrors `truncateBreadcrumb`'s keep-ends
+ * rule: the root and the current page always survive, and `budget === 1` keeps
+ * the current page alone. Returns fresh arrays and never mutates `items`.
+ */
+export function splitBreadcrumbOverflow(
+  items: readonly BreadcrumbItem[],
+  budget: number,
+): { visible: BreadcrumbItem[]; overflow: BreadcrumbItem[] } {
+  const count = items.length;
+  if (budget <= 0) return { visible: [], overflow: items.slice() };
+  if (count <= budget) return { visible: items.slice(), overflow: [] };
+  if (budget === 1) {
+    return { visible: items.slice(-1), overflow: items.slice(0, count - 1) };
+  }
+  const tail = items.slice(count - (budget - 1));
+  return { visible: [items[0], ...tail], overflow: items.slice(1, count - tail.length) };
+}
+
+/** Budget + split in one step: the layout the header renders for `availablePx`. */
+export function layoutHeaderBreadcrumbs(
+  items: readonly BreadcrumbItem[],
+  availablePx: number = HEADER_BREADCRUMB_WIDTH_PX,
+): { visible: BreadcrumbItem[]; overflow: BreadcrumbItem[] } {
+  return splitBreadcrumbOverflow(items, headerBreadcrumbBudget(items, availablePx));
+}
+
+/**
+ * Sticky-title threshold: the compact title fades into the sticky bar only once
+ * the in-page `h1` has scrolled fully out of view — i.e. once the scroll offset
+ * passes the `h1`'s top. Non-finite inputs fail closed (hidden), so a
+ * not-yet-measured heading never flashes a title.
+ */
+export function stickyTitleVisible(scrollTop: number, h1Top: number): boolean {
+  if (!Number.isFinite(scrollTop) || !Number.isFinite(h1Top)) return false;
+  return scrollTop > h1Top;
+}
 
 /** A persisted cover decoded into its tagged value plus the focal point. */
 type StoredCover = { value: CoverValue; position: CoverPosition };
@@ -154,18 +260,23 @@ function splitCoverCss(raw: string): { css: string; position: CoverPosition } {
   };
 }
 
+/** `url("…")` / `url(…)` wrapper emitted by `coverCss` for an image cover. */
+const COVER_URL_CSS = /^url\(\s*["']?([^"')]+)["']?\s*\)$/i;
+
 /**
  * Decode a persisted cover string through the page-cover engine, or `null` for
- * an absent/unrecognised value. Gradients match the catalog by CSS value and
- * images must pass `isImageIcon`, so a hostile string never reaches the
- * renderer as a banner.
+ * an absent/unrecognised value. Gradients match the catalog by CSS value; an
+ * image's `url("…")` wrapper is unwrapped first and the href must pass
+ * `isImageIcon`, so a hostile string never reaches the renderer as a banner.
  */
-function decodeCover(raw: string | null): StoredCover | null {
+export function decodeCover(raw: string | null): StoredCover | null {
   if (!raw) return null;
   const { css, position } = splitCoverCss(raw);
   const gradientId = GRADIENT_ID_BY_CSS.get(css);
   if (gradientId) return { value: { type: "gradient", gradientId }, position };
-  if (isImageIcon(css)) return { value: { type: "image", url: css }, position };
+  const imageMatch = COVER_URL_CSS.exec(css);
+  const href = imageMatch ? imageMatch[1] : css;
+  if (isImageIcon(href)) return { value: { type: "image", url: href }, position };
   return null;
 }
 
@@ -174,7 +285,7 @@ function decodeCover(raw: string | null): StoredCover | null {
  * column the save path persists. The centred default is omitted so a plain
  * preset round-trips byte-for-byte.
  */
-function encodeCover(value: CoverValue, position: CoverPosition): string {
+export function encodeCover(value: CoverValue, position: CoverPosition): string {
   const css = coverCss(value);
   if (css === "") return "";
   const focal = formatObjectPosition(position);
@@ -223,6 +334,325 @@ function lastEditedLabel(
     // departed author still renders instead of "Unknown".
     actorName: resolved === "Unknown" ? edited.lastEditedBy : resolved,
   });
+}
+
+/** Px of scroll before the sticky bar gains its hairline + the title can appear. */
+export const HEADER_SCROLL_HAIRLINE = 12;
+
+/**
+ * Presentational props for {@link PageTitleRow}. Every handler and interactive
+ * cluster is injected, so the row stays a pure function of its props and renders
+ * identically on the server — which is what the SSR tests exercise.
+ */
+export type PageTitleRowProps = {
+  workspaceSlug: string;
+  workspaceName: string;
+  pageId: string;
+  title: string;
+  icon: PageIcon;
+  crumbs: readonly BreadcrumbItem[];
+  locked: boolean;
+  canEdit: boolean;
+  favorite: boolean;
+  following: boolean;
+  followPending?: boolean;
+  starPopped?: boolean;
+  scrolled: boolean;
+  showStickyTitle: boolean;
+  editedLabel?: string | null;
+  breadcrumbWidth?: number;
+  h1Ref?: React.Ref<HTMLHeadingElement>;
+  titleRef?: React.Ref<HTMLTextAreaElement>;
+  onTitleChange: (value: string) => void;
+  onTitleBlur: () => void;
+  onTitleKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  onToggleIcon: () => void;
+  onToggleFavorite: () => void;
+  onToggleFollow: () => void;
+  onCopyLink: () => void;
+  onShare: () => void;
+  iconMenu?: ReactNode;
+  undoRedo?: ReactNode;
+  actions?: ReactNode;
+  avatars?: ReactNode;
+  cover?: ReactNode;
+  addCover?: ReactNode;
+};
+
+/**
+ * The page header row — the first thing a user sees.
+ *
+ * It renders four parts: a muted, truncating breadcrumb trail (with a native
+ * `<details>` overflow menu for the collapsed middle), the presence/actions
+ * cluster, the compact sticky title that fades in once the in-page `h1` scrolls
+ * out, and the inline-editable `h1`-scale title with its hover icon affordance.
+ * Colours, radii, motion and layering all come from tokens; the seven states
+ * (`default`/`hover`/`focus-visible`/`active`/`disabled`/`loading`/`error`) are
+ * covered across the controls.
+ */
+export function PageTitleRow({
+  workspaceSlug,
+  workspaceName,
+  pageId,
+  title,
+  icon,
+  crumbs,
+  locked,
+  canEdit,
+  favorite,
+  following,
+  followPending = false,
+  starPopped = false,
+  scrolled,
+  showStickyTitle,
+  editedLabel,
+  breadcrumbWidth,
+  h1Ref,
+  titleRef,
+  onTitleChange,
+  onTitleBlur,
+  onTitleKeyDown,
+  onToggleIcon,
+  onToggleFavorite,
+  onToggleFollow,
+  onCopyLink,
+  onShare,
+  iconMenu,
+  undoRedo,
+  actions,
+  avatars,
+  cover,
+  addCover,
+}: PageTitleRowProps) {
+  const { visible, overflow } = layoutHeaderBreadcrumbs(crumbs, breadcrumbWidth);
+  const displayTitle = title.trim() || "Untitled";
+  const iconStyle = pageIconToCss(icon);
+
+  return (
+    <>
+      <div
+        className={cn(
+          "relative sticky top-0 -mx-12 mb-2 flex items-center justify-between gap-2 bg-bg/85 px-12 py-2 backdrop-blur-sm transition-[border-color,background-color] duration-[var(--dur-1)]",
+          scrolled ? "border-b border-border" : "border-b border-transparent",
+        )}
+        style={{ zIndex: Z.sticky }}
+        data-testid="page-title-bar"
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <nav
+            aria-label="Breadcrumb"
+            className="flex min-w-0 items-center gap-1 text-sm text-muted"
+          >
+            <a
+              href={`/w/${workspaceSlug}`}
+              className="focus-ring u-colors truncate rounded px-0.5 hover:text-fg"
+            >
+              {workspaceName}
+            </a>
+            {visible.map((crumb) => (
+              <span key={crumb.id} className="flex min-w-0 items-center gap-1">
+                <span aria-hidden className="shrink-0 px-0.5">
+                  /
+                </span>
+                {crumb.id === pageId ? (
+                  <span aria-current="page" className="truncate text-fg">
+                    {crumb.label}
+                  </span>
+                ) : (
+                  <a
+                    href={`/w/${workspaceSlug}/${crumb.id}`}
+                    className="focus-ring u-colors truncate rounded px-0.5 hover:text-fg"
+                    title={crumb.label}
+                  >
+                    {crumb.label}
+                  </a>
+                )}
+              </span>
+            ))}
+            {overflow.length > 0 && (
+              <details className="relative shrink-0" data-testid="breadcrumb-overflow">
+                <summary
+                  aria-label={`Show ${overflow.length} more ${
+                    overflow.length === 1 ? "page" : "pages"
+                  }`}
+                  className="focus-ring u-colors flex cursor-pointer list-none items-center rounded px-1 text-muted hover:bg-surface-2 hover:text-fg"
+                >
+                  …
+                </summary>
+                <ul
+                  className="surface-raised absolute start-0 top-full mt-1 max-w-64 min-w-40 py-1 text-sm text-fg"
+                  style={{ zIndex: Z.popover }}
+                >
+                  {overflow.map((crumb) => (
+                    <li key={crumb.id}>
+                      <a
+                        href={`/w/${workspaceSlug}/${crumb.id}`}
+                        className="focus-ring u-colors block truncate px-3 py-1 hover:bg-surface-2"
+                        title={crumb.label}
+                      >
+                        {crumb.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {locked && (
+              <span
+                className="flex shrink-0 items-center rounded px-1 text-muted"
+                role="img"
+                aria-label="Page locked"
+                title="This page is locked"
+              >
+                <Lock className="h-3.5 w-3.5" aria-hidden />
+              </span>
+            )}
+          </nav>
+          {showStickyTitle && (
+            <span
+              data-testid="sticky-title"
+              className="animate-fade flex min-w-0 items-center gap-1.5 ps-2"
+            >
+              {icon.kind === "emoji" && (
+                <span aria-hidden className="shrink-0 text-base leading-none">
+                  {icon.value}
+                </span>
+              )}
+              <span className="truncate text-sm font-semibold tracking-[-0.02em] text-fg">
+                {displayTitle}
+              </span>
+            </span>
+          )}
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1">
+          {editedLabel && (
+            <span
+              className="hidden whitespace-nowrap text-xs text-muted md:inline"
+              suppressHydrationWarning
+            >
+              {editedLabel}
+            </span>
+          )}
+          <button
+            type="button"
+            aria-label={following ? "Unfollow page" : "Follow page"}
+            aria-pressed={following}
+            aria-busy={followPending || undefined}
+            title={following ? "Following" : "Follow"}
+            disabled={followPending}
+            onClick={onToggleFollow}
+            className={cn(
+              "focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50",
+              following && "text-accent",
+              followPending && "animate-pulse-soft",
+            )}
+          >
+            {followPending ? (
+              <Loader2 className="h-4 w-4" aria-hidden />
+            ) : (
+              <Bell className={cn("h-4 w-4", following && "fill-current")} aria-hidden />
+            )}
+          </button>
+          <button
+            type="button"
+            aria-label="Share"
+            onClick={onShare}
+            className="focus-ring u-interactive flex h-7 items-center gap-1 rounded px-2 text-sm text-muted hover:bg-surface-2"
+          >
+            <Lock className="h-3.5 w-3.5" aria-hidden />
+            <span className="hidden sm:inline">Share</span>
+          </button>
+          <button
+            type="button"
+            aria-label="Copy link"
+            title="Copy link"
+            onClick={onCopyLink}
+            className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
+          >
+            <LinkIcon className="h-4 w-4" aria-hidden />
+          </button>
+          <button
+            type="button"
+            aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
+            aria-pressed={favorite}
+            title={favorite ? "Remove from favorites" : "Add to favorites"}
+            onClick={onToggleFavorite}
+            className={cn(
+              "focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2",
+              favorite && "text-warning",
+            )}
+          >
+            <Star
+              className={cn("h-4 w-4", favorite && "fill-current")}
+              style={
+                starPopped
+                  ? { animation: "scale-in var(--dur-2) var(--ease-spring) both" }
+                  : undefined
+              }
+              aria-hidden
+            />
+          </button>
+          {undoRedo}
+          {actions}
+          {avatars}
+        </div>
+      </div>
+
+      {cover}
+
+      <div className="group/title relative">
+        <div className="relative mb-1 flex h-8 items-center gap-1">
+          {icon.kind !== "none" ? (
+            <button
+              type="button"
+              disabled={!canEdit}
+              onClick={onToggleIcon}
+              aria-label="Change icon"
+              className={cn(
+                "focus-ring u-interactive rounded p-0.5 leading-none hover:bg-surface-2 disabled:cursor-not-allowed",
+                icon.kind === "emoji" && "text-5xl",
+                icon.kind === "image" && "h-14 w-14 bg-cover bg-center bg-no-repeat",
+              )}
+              style={iconStyle}
+            >
+              {icon.kind === "emoji" ? icon.value : null}
+            </button>
+          ) : canEdit ? (
+            <button
+              type="button"
+              onClick={onToggleIcon}
+              aria-label="Add icon"
+              className="focus-ring u-colors flex items-center gap-1 rounded px-1 py-0.5 text-sm text-muted opacity-0 hover:bg-surface-2 hover:text-fg focus-visible:opacity-100 group-hover/title:opacity-100"
+            >
+              <Smile className="h-4 w-4" aria-hidden /> Add icon
+            </button>
+          ) : null}
+          {iconMenu}
+        </div>
+        <h1 ref={h1Ref} className="scroll-mt-16">
+          <textarea
+            ref={titleRef}
+            aria-label="Page title"
+            value={title}
+            readOnly={!canEdit}
+            placeholder="Untitled"
+            rows={1}
+            spellCheck={false}
+            onChange={(event) => {
+              onTitleChange(event.target.value);
+              event.target.style.height = "auto";
+              event.target.style.height = `${event.target.scrollHeight}px`;
+            }}
+            onBlur={onTitleBlur}
+            onKeyDown={onTitleKeyDown}
+            className="w-full resize-none overflow-hidden bg-transparent text-[28px] font-semibold leading-[1.2] tracking-[-0.02em] text-fg outline-none placeholder:text-muted/40"
+          />
+        </h1>
+        {addCover}
+      </div>
+    </>
+  );
 }
 
 export function PageTitle({
@@ -321,8 +751,17 @@ export function PageTitle({
   const canEdit = editable && !locked;
   const [showEmoji, setShowEmoji] = useState(false);
   const [showCover, setShowCover] = useState(false);
-  const [titleEl, setTitleEl] = useState<HTMLTextAreaElement | null>(null);
+  const titleRef = useRef<HTMLTextAreaElement | null>(null);
+  const h1Ref = useRef<HTMLHeadingElement | null>(null);
+  // The in-page `h1`'s offset inside the scroll container, cached so each scroll
+  // tick compares against a stable threshold (re-measured on resize / cover swap).
+  const h1TopRef = useRef(Number.POSITIVE_INFINITY);
   const [scrolled, setScrolled] = useState(false);
+  const [showStickyTitle, setShowStickyTitle] = useState(false);
+  const [starPopped, setStarPopped] = useState(false);
+  const [followPending, setFollowPending] = useState(false);
+  const [draggingCover, setDraggingCover] = useState(false);
+  const [repositioning, setRepositioning] = useState(false);
   const [accessOpen, setAccessOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -340,14 +779,14 @@ export function PageTitle({
   const avatarUsers = useMemo(() => toAvatarUsers(members), [members]);
 
   // A stored icon is either an emoji glyph or an http(s) image URL; classify it
-  // so the renderer shows text for the former and a CSS background for the
+  // so `PageTitleRow` shows text for the former and a CSS background for the
   // latter, instead of spilling a raw URL into the heading.
   const pageIcon = parsePageIcon(icon);
-  const iconStyle = pageIconToCss(pageIcon);
 
   // Ancestor header trail: only the route-supplied ancestors are chained; with
   // no trail the render falls back to the workspace/title crumbs. The engine
-  // walk is cycle-safe and fail-closed, and a deep chain collapses its middle.
+  // walk is cycle-safe and fail-closed; a deep chain is folded into an overflow
+  // menu by `PageTitleRow` (width-budgeted), never truncated to an ellipsis.
   const crumbs = useMemo<BreadcrumbItem[]>(() => {
     if (breadcrumbTrail.length === 0) return [];
     const pages: BreadcrumbPage[] = breadcrumbTrail.map((ancestor, index) => ({
@@ -360,23 +799,54 @@ export function PageTitle({
       parentId: breadcrumbTrail[breadcrumbTrail.length - 1].id,
       title,
     });
-    return truncateBreadcrumb(buildBreadcrumb(pages, pageId), {
-      max: HEADER_BREADCRUMB_MAX,
-    });
+    return buildBreadcrumb(pages, pageId);
   }, [breadcrumbTrail, pageId, title]);
 
   const notifyKey = `noema:page-notify:${pageId}`;
   const [notifyLevel, setNotifyLevel] = useState<NotifyLevel>("all");
 
-  // Notion keeps the page's action bar visible and reveals a hairline only
-  // once the content moves under it.
+  // Cache the in-page `h1`'s offset inside the scroll container. Recomputed only
+  // on resize (and after mount), so the scroll tick stays a cheap comparison.
+  const measureH1Top = useCallback(() => {
+    const container = document.getElementById("main");
+    const heading = h1Ref.current;
+    if (!container || !heading) return;
+    h1TopRef.current =
+      heading.getBoundingClientRect().top -
+      container.getBoundingClientRect().top +
+      container.scrollTop;
+  }, []);
+
+  useEffect(() => {
+    measureH1Top();
+    window.addEventListener("resize", measureH1Top);
+    return () => window.removeEventListener("resize", measureH1Top);
+  }, [measureH1Top]);
+
+  // Notion keeps the action bar visible and fades the page title into it only
+  // once the in-page `h1` has scrolled out of view. The listener is rAF-throttled
+  // so a fast wheel never queues a setState per event, and it never runs on the
+  // initial paint (both flags start hidden), so a restored scroll position can
+  // never flash a title before the user moves.
   useEffect(() => {
     const container = document.getElementById("main");
     if (!container) return;
-    const onScroll = () => setScrolled(container.scrollTop > 12);
-    onScroll();
+    let frame = 0;
+    const tick = () => {
+      frame = 0;
+      const top = container.scrollTop;
+      setScrolled(top > HEADER_SCROLL_HAIRLINE);
+      setShowStickyTitle(stickyTitleVisible(top, h1TopRef.current));
+    };
+    const onScroll = () => {
+      if (frame !== 0) return;
+      frame = window.requestAnimationFrame(tick);
+    };
     container.addEventListener("scroll", onScroll, { passive: true });
-    return () => container.removeEventListener("scroll", onScroll);
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+      if (frame !== 0) window.cancelAnimationFrame(frame);
+    };
   }, []);
 
   // Relative "Edited … ago" label in the topbar.
@@ -404,12 +874,14 @@ export function PageTitle({
 
   // The persisted cover carries its focal point, so re-seed the drag state
   // whenever the stored string changes: a cover swap in the menu (or another
-  // client) is reflected without a remount.
+  // client) is reflected without a remount. A cover adds/removes height above
+  // the heading, so the sticky-title threshold is re-measured too.
   useEffect(() => {
     setCoverPosition(
       decodeCover(cover)?.position ?? { ...DEFAULT_COVER_POSITION },
     );
-  }, [cover]);
+    measureH1Top();
+  }, [cover, measureH1Top]);
 
   // Keep the full-width toggle truthful to the server after a refresh: the
   // local state flips optimistically for the menu, then reconciles with the
@@ -445,6 +917,44 @@ export function PageTitle({
     save({ coverUrl: value });
   };
 
+  // Optimistic follow toggle: the bell flips immediately and shows a pending
+  // (pulsing) state until the server confirms, then reconciles with its answer.
+  const toggleFollow = () => {
+    if (followPending) return;
+    setFollowPending(true);
+    const optimistic = !following;
+    setFollowing(optimistic);
+    startTransition(async () => {
+      try {
+        const result = await toggleFollowAction(workspaceId, pageId);
+        if ("ok" in result) {
+          setFollowing(result.following);
+          toast.success(result.following ? "Following page" : "Unfollowed");
+        } else {
+          setFollowing(!optimistic);
+          toast.error(result.error);
+        }
+        router.refresh();
+      } finally {
+        setFollowPending(false);
+      }
+    });
+  };
+
+  // Star toggle with a small spring "pop": the glyph re-animates on every flip.
+  const toggleFavorite = () => {
+    const optimistic = !favorite;
+    setFavorite(optimistic);
+    setStarPopped(true);
+    window.setTimeout(() => setStarPopped(false), DUR.slow);
+    startTransition(async () => {
+      const result = await toggleFavoriteAction(workspaceId, pageId);
+      if ("ok" in result) setFavorite(result.favorite);
+      else toast.error(result.error);
+      router.refresh();
+    });
+  };
+
   // ---- Cover reposition (drag the banner) --------------------------------
   const onCoverPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!canEdit || !storedCover || event.button !== 0) return;
@@ -459,6 +969,8 @@ export function PageTitle({
       height: surface.clientHeight || 1,
     };
     surface.setPointerCapture(event.pointerId);
+    // 1:1 drag: the banner drops its transition while the pointer is down.
+    setDraggingCover(true);
   };
 
   const onCoverPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -477,6 +989,7 @@ export function PageTitle({
     const drag = coverDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     coverDragRef.current = null;
+    setDraggingCover(false);
     try {
       event.currentTarget.releasePointerCapture(event.pointerId);
     } catch {
@@ -667,122 +1180,87 @@ export function PageTitle({
 
   return (
     <header className={cn("mb-4", ...appearanceClasses(appearance))}>
-      <div
-        className={cn(
-          "sticky top-0 z-20 -mx-12 mb-2 flex items-center justify-between gap-2 bg-bg/85 px-12 py-2 backdrop-blur-sm transition-[border-color,box-shadow] duration-150",
-          scrolled ? "border-b border-border" : "border-b border-transparent",
-        )}
-      >
-        <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-sm text-muted">
-          <a
-            href={`/w/${workspaceSlug}`}
-            className="truncate rounded hover:text-fg"
-          >
-            {workspaceName}
-          </a>
-          {crumbs.length > 0 ? (
-            crumbs.map((crumb) => (
-              <span key={crumb.id} className="flex min-w-0 items-center gap-1">
-                <span aria-hidden className="shrink-0 px-0.5">/</span>
-                {crumb.id === BREADCRUMB_ELLIPSIS_ID ? (
-                  <span aria-hidden className="shrink-0">
-                    {crumb.label}
-                  </span>
-                ) : crumb.id === pageId ? (
-                  <span aria-current="page" className="truncate text-fg">
-                    {crumb.label}
-                  </span>
-                ) : (
-                  <a
-                    href={`/w/${workspaceSlug}/${crumb.id}`}
-                    className="truncate rounded hover:text-fg"
-                  >
-                    {crumb.label}
-                  </a>
-                )}
-              </span>
-            ))
-          ) : (
-            <>
-              <span aria-hidden className="px-0.5">/</span>
-              <span aria-current="page" className="truncate text-fg">{title || "Untitled"}</span>
-            </>
-          )}
-          {locked && (
-            <span
-              className="flex shrink-0 items-center rounded px-1 text-muted"
-              role="img"
-              aria-label="Page locked"
-              title="This page is locked"
+      <PageTitleRow
+        workspaceSlug={workspaceSlug}
+        workspaceName={workspaceName}
+        pageId={pageId}
+        title={title}
+        icon={pageIcon}
+        crumbs={crumbs}
+        locked={locked}
+        canEdit={canEdit}
+        favorite={favorite}
+        following={following}
+        followPending={followPending}
+        starPopped={starPopped}
+        scrolled={scrolled}
+        showStickyTitle={showStickyTitle}
+        editedLabel={edited ? lastEditedLabel(edited, members, new Date()) : null}
+        h1Ref={h1Ref}
+        titleRef={titleRef}
+        onTitleChange={setTitle}
+        onTitleBlur={saveTitle}
+        onTitleKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            titleRef.current?.blur();
+          }
+        }}
+        onToggleIcon={() => setShowEmoji((value) => !value)}
+        onToggleFavorite={toggleFavorite}
+        onToggleFollow={toggleFollow}
+        onCopyLink={() => void copyLink()}
+        onShare={() => setShareOpen(true)}
+        iconMenu={
+          showEmoji || showCover ? (
+            <div
+              role="dialog"
+              aria-label={showEmoji ? "Pick an icon" : "Pick a cover"}
+              className="surface-raised absolute start-0 top-9 p-2"
+              style={{ zIndex: Z.popover, width: 288 }}
             >
-              <Lock className="h-3.5 w-3.5" aria-hidden />
-            </span>
-          )}
-        </nav>
-
-        <div className="flex items-center gap-1">
-          {edited && (
-            <span className="hidden whitespace-nowrap text-xs text-muted md:inline" suppressHydrationWarning>
-              {lastEditedLabel(edited, members, new Date())}
-            </span>
-          )}
-          <button
-            type="button"
-            aria-label={following ? "Unfollow page" : "Follow page"}
-            title={following ? "Following" : "Follow"}
-            onClick={() =>
-              startTransition(async () => {
-                const result = await toggleFollowAction(workspaceId, pageId);
-
-                if ("ok" in result) {
-                  setFollowing(result.following);
-                  toast.success(result.following ? "Following page" : "Unfollowed");
-                }
-                router.refresh();
-              })
-            }
-            className={cn(
-              "flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2",
-              following && "text-accent",
-            )}
-          >
-            <Bell className={cn("h-4 w-4", following && "fill-current")} />
-          </button>
-          <button
-            type="button"
-            aria-label="Share"
-            onClick={() => setShareOpen(true)}
-            className="flex h-7 items-center gap-1 rounded px-2 text-sm text-muted hover:bg-surface-2"
-          >
-            <Lock className="h-3.5 w-3.5" aria-hidden />
-            <span>Share</span>
-          </button>
-          <button
-            type="button"
-            aria-label="Copy link"
-            onClick={() => void copyLink()}
-            className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
-          >
-            <LinkIcon className="h-4 w-4" aria-hidden />
-          </button>
-          <button
-            type="button"
-            aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
-            onClick={() =>
-              startTransition(async () => {
-                const result = await toggleFavoriteAction(workspaceId, pageId);
-
-                if ("ok" in result) setFavorite(result.favorite);
-                router.refresh();
-              })
-            }
-            className={cn(
-              "flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2",
-              favorite && "text-amber-500",
-            )}
-          >
-            <Star className={cn("h-4 w-4", favorite && "fill-current")} />
-          </button>
+              {showEmoji && (
+                <div className="grid grid-cols-8 gap-1">
+                  {EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      aria-label={`Set icon ${emoji}`}
+                      onClick={() => pickIcon(emoji)}
+                      className="focus-ring grid h-8 w-8 place-items-center rounded text-lg hover:bg-surface-2"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {showCover && (
+                <div className="grid grid-cols-4 gap-2">
+                  {(Object.keys(GRADIENTS) as GradientId[]).map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      aria-label={`Set cover ${id}`}
+                      aria-pressed={
+                        storedCover?.value.type === "gradient" &&
+                        storedCover.value.gradientId === id
+                      }
+                      onClick={() => pickCover(GRADIENTS[id])}
+                      className="focus-ring h-12 rounded-sm bg-cover"
+                      style={{
+                        backgroundImage: coverCss({
+                          type: "gradient",
+                          gradientId: id,
+                        }),
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null
+        }
+        undoRedo={
           <div
             role="group"
             aria-label="Undo and redo"
@@ -794,7 +1272,7 @@ export function PageTitle({
               title="Undo (Ctrl+Z)"
               disabled={!canUndo}
               onClick={undoGlobal}
-              className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+              className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Undo2 className="h-4 w-4" aria-hidden />
             </button>
@@ -804,11 +1282,13 @@ export function PageTitle({
               title="Redo (Ctrl+Shift+Z)"
               disabled={!canRedo}
               onClick={redoGlobal}
-              className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+              className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Redo2 className="h-4 w-4" aria-hidden />
             </button>
           </div>
+        }
+        actions={
           <ActionsMenu
             pageId={pageId}
             title={title || "Untitled"}
@@ -844,146 +1324,82 @@ export function PageTitle({
             onPickIcon={pickIcon}
             onPickCover={pickCover}
           />
-          <AvatarStack users={avatarUsers} className="ms-1" />
-        </div>
-      </div>
+        }
+        avatars={<AvatarStack users={avatarUsers} className="ms-1" />}
+        cover={
+          storedCover ? (
+            <div className="group/cover relative -mx-12 mb-4">
+              <div
+                className={cn(
+                  "aspect-[16/6] max-h-64 w-full bg-cover bg-center bg-no-repeat",
+                  canEdit && "cursor-grab touch-none active:cursor-grabbing",
+                  draggingCover && "u-no-transition",
+                )}
+                style={{
+                  backgroundImage: coverCss(storedCover.value),
+                  backgroundPosition: formatObjectPosition(coverPosition),
+                }}
+                aria-label={canEdit ? "Page cover — drag to reposition" : "Page cover"}
+                onPointerDown={onCoverPointerDown}
+                onPointerMove={onCoverPointerMove}
+                onPointerUp={endCoverDrag}
+                onPointerCancel={endCoverDrag}
+              />
+              {canEdit && (
+                <div
+                  className={cn(
+                    "pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-end gap-1 p-3 transition-opacity duration-[var(--dur-1)] focus-within:opacity-100 group-hover/cover:opacity-100",
+                    repositioning ? "opacity-100" : "opacity-0",
+                  )}
+                >
+                  <span className="pointer-events-none me-auto flex items-center gap-1 rounded-sm bg-bg/85 px-2 py-1 text-xs text-muted shadow-1">
+                    <Move className="h-3.5 w-3.5" aria-hidden /> Drag to reposition
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowCover(true)}
+                    className="focus-ring u-colors pointer-events-auto flex h-7 items-center gap-1 rounded-sm bg-bg/90 px-2 text-xs text-fg shadow-1 hover:bg-bg"
+                  >
+                    <ImagePlus className="h-3.5 w-3.5" aria-hidden /> Change cover
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={repositioning}
+                    onClick={() => setRepositioning((value) => !value)}
+                    className={cn(
+                      "focus-ring u-colors pointer-events-auto flex h-7 items-center gap-1 rounded-sm bg-bg/90 px-2 text-xs text-fg shadow-1 hover:bg-bg",
+                      repositioning && "text-accent",
+                    )}
+                  >
+                    <Move className="h-3.5 w-3.5" aria-hidden /> Reposition
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => pickCover(null)}
+                    className="focus-ring u-colors pointer-events-auto flex h-7 items-center gap-1 rounded-sm bg-bg/90 px-2 text-xs text-fg shadow-1 hover:bg-bg"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden /> Remove
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null
+        }
 
-      {storedCover && (
-        <div className="group relative -mx-12 mb-4">
-          <div
-            className={cn(
-              "h-44 bg-cover bg-center",
-              canEdit && "cursor-grab touch-none active:cursor-grabbing",
-            )}
-            style={{
-              backgroundImage: coverCss(storedCover.value),
-              backgroundPosition: formatObjectPosition(coverPosition),
-            }}
-            aria-label={canEdit ? "Page cover — drag to reposition" : "Page cover"}
-            onPointerDown={onCoverPointerDown}
-            onPointerMove={onCoverPointerMove}
-            onPointerUp={endCoverDrag}
-            onPointerCancel={endCoverDrag}
-          />
-          {canEdit && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-end gap-1 p-3 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-              <span className="pointer-events-none me-auto flex items-center gap-1 rounded bg-bg/85 px-2 py-1 text-xs text-muted shadow-sm">
-                <Move className="h-3.5 w-3.5" aria-hidden /> Drag to reposition
-              </span>
+        addCover={
+          canEdit && !storedCover ? (
+            <div className="mt-2">
               <button
                 type="button"
                 onClick={() => setShowCover(true)}
-                className="pointer-events-auto flex h-7 items-center gap-1 rounded bg-bg/90 px-2 text-xs text-fg shadow hover:bg-bg"
+                className="focus-ring u-colors rounded px-1 py-0.5 text-sm text-muted hover:bg-surface-2"
               >
-                <ImagePlus className="h-3.5 w-3.5" aria-hidden /> Change cover
-              </button>
-              <button
-                type="button"
-                onClick={() => pickCover(null)}
-                className="pointer-events-auto flex h-7 items-center gap-1 rounded bg-bg/90 px-2 text-xs text-fg shadow hover:bg-bg"
-              >
-                <Trash2 className="h-3.5 w-3.5" aria-hidden /> Remove
+                <ImagePlus className="mr-1 inline h-4 w-4" aria-hidden /> Add cover
               </button>
             </div>
-          )}
-        </div>
-      )}
-
-      <div className="relative px-0">
-        {pageIcon.kind !== "none" ? (
-          <button
-            type="button"
-            disabled={!canEdit}
-            onClick={() => setShowEmoji((v) => !v)}
-            aria-label="Change icon"
-            className={cn(
-              "mb-1 block leading-none",
-              pageIcon.kind === "emoji" && "text-6xl",
-              pageIcon.kind === "image" &&
-                "h-16 w-16 rounded bg-cover bg-center bg-no-repeat",
-            )}
-            style={iconStyle}
-          >
-            {pageIcon.kind === "emoji" ? pageIcon.value : null}
-          </button>
-        ) : canEdit ? (
-          <button
-            type="button"
-            onClick={() => setShowEmoji((v) => !v)}
-            className="mb-1 flex items-center gap-1 rounded px-1 py-0.5 text-sm text-muted hover:bg-surface-2"
-          >
-            <Smile className="h-4 w-4" /> Add icon
-          </button>
-        ) : null}
-
-        {(showEmoji || showCover) && (
-          <div className="absolute z-30 mt-1 w-72 rounded-lg border border-border bg-bg p-2 shadow-xl">
-            {showEmoji && (
-              <div className="grid grid-cols-8 gap-1">
-                {EMOJIS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    onClick={() => pickIcon(emoji)}
-                    className="grid h-8 w-8 place-items-center rounded text-lg hover:bg-surface-2"
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-            )}
-            {showCover && (
-              <div className="grid grid-cols-4 gap-2">
-                {COVERS.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    aria-label="Choose cover"
-                    onClick={() => pickCover(c)}
-                    className="h-12 rounded"
-                    style={{ background: c }}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        <h1 className="sr-only">{title.trim() || "Untitled"}</h1>
-        <textarea
-          ref={setTitleEl}
-          aria-label="Page title"
-          value={title}
-          readOnly={!canEdit}
-          placeholder="Untitled"
-          rows={1}
-          onChange={(e) => {
-            setTitle(e.target.value);
-            e.target.style.height = "auto";
-            e.target.style.height = `${e.target.scrollHeight}px`;
-          }}
-          onBlur={saveTitle}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              titleEl?.blur();
-            }
-          }}
-          className="w-full resize-none overflow-hidden bg-transparent text-[40px] font-bold leading-[1.2] tracking-[-0.02em] outline-none placeholder:text-muted/40"
-        />
-
-        {canEdit && !storedCover && (
-          <div className="mt-2">
-            <button
-              type="button"
-              onClick={() => setShowCover(true)}
-              className="rounded px-1 py-0.5 text-sm text-muted hover:bg-surface-2"
-            >
-              <ImagePlus className="mr-1 inline h-4 w-4" /> Add cover
-            </button>
-          </div>
-        )}
-      </div>
+          ) : null
+        }
+      />
       {accessOpen && (
         <WhoHasAccess
           pageId={pageId}
