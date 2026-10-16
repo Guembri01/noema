@@ -58,3 +58,7 @@ next-env.d.ts
 # generated audit data
 docs/_audit-raw.json
 /backups/
+
+# Local verification artefacts (screenshots captured by scripts/_capture.cjs)
+docs/screenshots/
+scripts/_capture.cjs
