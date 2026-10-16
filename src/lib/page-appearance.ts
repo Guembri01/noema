@@ -13,7 +13,9 @@
  * {@link DEFAULT_APPEARANCE}) and it never throws. The emitted class names match
  * the ones already shipped in `src/app/globals.css` (`noema-page-small`,
  * `noema-font-serif`, `noema-font-mono`) and the page route
- * (`src/app/w/[slug]/[pageId]/page.tsx`).
+ * (`src/app/w/[slug]/[pageId]/page.tsx`); the extended `sans` / named presets
+ * emit their own `noema-font-*` hooks and stay inert until the stylesheet
+ * catches up. {@link PAGE_FONTS} is the single source of truth for the set.
  *
  * Unit-pinned red-first by `src/lib/page-appearance.test.ts`.
  */
@@ -22,7 +24,13 @@
 export type PageFontSize = "small" | "default";
 
 /** Preset font family for the editor and read-only renderer. */
-export type PageFont = "default" | "serif" | "mono";
+export type PageFont =
+  | "default"
+  | "serif"
+  | "sans"
+  | "mono"
+  | "literata"
+  | "newsreader";
 
 /** Paragraph line-height rhythm. */
 export type PageLineSpacing = "tight" | "normal" | "loose";
@@ -42,8 +50,35 @@ export const DEFAULT_APPEARANCE: PageAppearance = {
 };
 
 const FONT_SIZES: readonly PageFontSize[] = ["small", "default"];
-const FONTS: readonly PageFont[] = ["default", "serif", "mono"];
+/**
+ * Every supported font preset, in menu order: the neutral `default`, the three
+ * generic families, then the named presets. Exported so a settings menu can
+ * render the choices without hand-maintaining its own list; the class mapping
+ * below stays in lockstep with it.
+ */
+export const PAGE_FONTS: readonly PageFont[] = [
+  "default",
+  "serif",
+  "sans",
+  "mono",
+  "literata",
+  "newsreader",
+];
 const LINE_SPACINGS: readonly PageLineSpacing[] = ["tight", "normal", "loose"];
+
+/**
+ * CSS class emitted for a font preset. `default` is intentionally absent: the
+ * shipped typography is the baseline and must emit nothing. Every other preset
+ * owns a `noema-font-*` hook (serif/mono already style the page; the rest are
+ * inert until `globals.css` catches up, but the model and mapping are stable).
+ */
+const FONT_CLASSES: Partial<Record<PageFont, string>> = {
+  serif: "noema-font-serif",
+  sans: "noema-font-sans",
+  mono: "noema-font-mono",
+  literata: "noema-font-literata",
+  newsreader: "noema-font-newsreader",
+};
 
 /** Non-null, non-array object - the only input shape trusted as a record. */
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -55,7 +90,7 @@ function isFontSize(value: unknown): value is PageFontSize {
 }
 
 function isFont(value: unknown): value is PageFont {
-  return typeof value === "string" && FONTS.includes(value as PageFont);
+  return typeof value === "string" && PAGE_FONTS.includes(value as PageFont);
 }
 
 function isLineSpacing(value: unknown): value is PageLineSpacing {
@@ -91,8 +126,8 @@ export function parseAppearance(raw: unknown): PageAppearance {
 export function appearanceClasses(appearance: PageAppearance): string[] {
   const classes: string[] = [];
   if (appearance.fontSize === "small") classes.push("noema-page-small");
-  if (appearance.font === "serif") classes.push("noema-font-serif");
-  else if (appearance.font === "mono") classes.push("noema-font-mono");
+  const fontClass = FONT_CLASSES[appearance.font];
+  if (fontClass) classes.push(fontClass);
   if (appearance.lineSpacing === "tight") classes.push("noema-line-tight");
   else if (appearance.lineSpacing === "loose") classes.push("noema-line-loose");
   return classes;

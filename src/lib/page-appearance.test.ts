@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_APPEARANCE,
+  PAGE_FONTS,
   appearanceClasses,
   deserializeAppearance,
   isDefaultAppearance,
@@ -229,5 +230,68 @@ describe("isDefaultAppearance", () => {
     expect(isDefaultAppearance(null)).toBe(true);
     expect(isDefaultAppearance(undefined)).toBe(true);
     expect(isDefaultAppearance("junk")).toBe(true);
+  });
+});
+
+describe("extended font presets", () => {
+  it("lists every supported preset, default first", () => {
+    expect(PAGE_FONTS[0]).toBe("default");
+    expect(PAGE_FONTS).toContain("serif");
+    expect(PAGE_FONTS).toContain("sans");
+    expect(PAGE_FONTS).toContain("mono");
+    expect(PAGE_FONTS).toContain("literata");
+    expect(PAGE_FONTS).toContain("newsreader");
+    expect(new Set(PAGE_FONTS).size).toBe(PAGE_FONTS.length);
+  });
+
+  it("keeps every known preset verbatim through parseAppearance", () => {
+    for (const font of PAGE_FONTS) {
+      expect(parseAppearance({ font })).toEqual(withAppearance({ font }));
+    }
+  });
+
+  it("falls back to the default for unknown or mistyped presets", () => {
+    expect(parseAppearance({ font: "wingdings" })).toEqual(DEFAULT_APPEARANCE);
+    expect(parseAppearance({ font: "SANS" })).toEqual(DEFAULT_APPEARANCE);
+    expect(parseAppearance({ font: "comic-sans" })).toEqual(DEFAULT_APPEARANCE);
+  });
+
+  it("maps each non-default preset to its own class", () => {
+    expect(appearanceClasses(withAppearance({ font: "sans" }))).toEqual([
+      "noema-font-sans",
+    ]);
+    expect(appearanceClasses(withAppearance({ font: "literata" }))).toEqual([
+      "noema-font-literata",
+    ]);
+    expect(appearanceClasses(withAppearance({ font: "newsreader" }))).toEqual([
+      "noema-font-newsreader",
+    ]);
+  });
+
+  it("emits no font class for the default preset", () => {
+    expect(appearanceClasses(withAppearance({ font: "default" }))).toEqual([]);
+  });
+
+  it("round-trips every preset through serialize/deserialize", () => {
+    for (const font of PAGE_FONTS) {
+      const appearance = withAppearance({ font });
+      expect(deserializeAppearance(serializeAppearance(appearance))).toEqual(
+        appearance,
+      );
+    }
+  });
+
+  it("normalizes an unknown stored preset to the default per field", () => {
+    expect(
+      deserializeAppearance(
+        '{"fontSize":"small","font":"papyrus","lineSpacing":"loose"}',
+      ),
+    ).toEqual({ fontSize: "small", font: "default", lineSpacing: "loose" });
+  });
+
+  it("accepts the new presets through patchAppearance", () => {
+    expect(patchAppearance(DEFAULT_APPEARANCE, { font: "literata" })).toEqual(
+      withAppearance({ font: "literata" }),
+    );
   });
 });
