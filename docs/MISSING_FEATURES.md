@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Scoreboard:** 563 feature rows — 316 implemented · 225 partial · 0 planned · 22 deliberately out of scope.
+**Scoreboard:** 563 feature rows — 378 implemented · 163 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **225** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **163** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -30,7 +30,7 @@ This file lists the **225** rows that are not finished, area by area, plus 22 in
 
 ### 1. Editor & blocks
 
-55 done · 43 partial · 0 planned · 2 out of scope
+76 done · 22 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -41,38 +41,17 @@ This file lists the **225** rows that are not finished, area by area, plus 22 in
 | Inline equation | Small LaTeX expression inside a text line. | 🟡 | KaTeX renderer wired; editing UX rough. |
 | Block equation | Centered display equation. | 🟡 | Renders via KaTeX; edit/preview split unstable. |
 | KaTeX/LaTeX support | Math syntax engine for equations. | 🟡 | KaTeX chosen; macro support limited. |
-| Columns (2/3/4/5) | Arrange blocks side by side. | 🟡 | Two-column layout works; add/remove columns UI missing. Spec: docs/specs/editor-deep.md (R84.1-R84.3; cap is 4 today — custom-blocks.tsx:240). |
 | Column resize | Drag the divider to change column width. | 🟡 | Planned with persisted widths. |
-| Simple table block | Grid of rows and columns in a page. | 🟡 | Basic table; no header styling controls yet. Spec: docs/specs/editor-deep.md (R84.4-R84.6). |
-| Table header row/column | Designate header row/column. | 🟡 | Toggle exists in logic; styling minimal. Spec: docs/specs/editor-deep.md (R84.4-R84.6; in-table toolbar binds the unbound TableKit commands, th scope in the read-only renderer). |
-| Table cell colors | Background color for cells. | 🟡 | Planned. |
-| Table of contents | Auto-generated page outline with links. | 🟡 | Lists headings; scroll-spy navigation partial. Spec detail: docs/specs/editor-deep.md §5 (R84.16); live close: B96 (e2e/toc.spec.ts). |
-| Breadcrumb block | Shows the page's ancestor path. | 🟡 | Renders path; deep-tree linking rough. |
 | Synced block | Mirror one block's content in many places. | 🟡 | Planned via reference ids; editing propagation needs care. |
 | Synced block source marker | Visual marker of the canonical source. | 🟡 | Planned. |
 | Template button block | Reusable set of blocks inserted on click. | 🟡 | Planned; depends on template subsystem. |
 | Button block | Interactive button triggering configured actions. | 🟡 | Planned; depends on automations. |
 | Ask-AI block | Prompt-driven AI block inside a page. | 🟡 | Planned; depends on AI layer and provider keys. |
 | Two-column page property layout | Place properties side by side. | 🟡 | Planned with property panel rework. |
-| Video block | Embed or upload video. | 🟡 | Drops insert a download link the browser plays; provider embeds (YouTube/Vimeo) ship through the embed block instead. No `<video>` node in `src/` today — spec docs/specs/editor-deep.md R84.7 (T84.6, editor slot); honest partial. |
-| Audio block | Embed or upload audio. | 🟡 | Drops insert a download link; no `<audio>` player and no waveform yet — spec docs/specs/editor-deep.md R84.7/R84.9 (T84.6); honest partial. |
-| File block | Attach an arbitrary file for download. | 🟡 | Upload/download works; non-image uploads insert a download link, so preview types stay limited (no dedicated file node yet). |
-| Embed block | Generic iframe embed by URL. | 🟡 | Config half shipped (B20): `EMBED_HOST_ALLOWLIST` + `isEmbedHostAllowed()` is the single gate over `detectEmbed()` (spec R84.15), provider meta drives iframe title/aspect/`allow`, and CSP `frame-src` mirrors the outputs. Still provider-only — no arbitrary-URL iframe and no `sandbox` attribute; UI half R84.13-R84.15 stays open. |
-| PDF preview block | Inline PDF viewer. | 🟡 | Planned; needs a viewer component. |
-| Map block | Embedded map for an address. | 🟡 | Planned; provider-agnostic embed. |
-| Twitter/X embed | Rich post embed. | 🟡 | Planned via oEmbed-style resolution. |
-| Figma embed | Live design embed. | 🟡 | Planned. |
-| CodePen/CodeSandbox embed | Interactive code embeds. | 🟡 | Planned. |
-| Google Drive preview | Preview a linked Drive document. | 🟡 | Planned. |
 | Inline database block | A database rendered inside a page. | 🟡 | Renders a collection view inline; view config incomplete. |
 | Linked view of a database | Re-display an existing database elsewhere. | 🟡 | Planned; requires stable view model. |
-| Page link mention | Inline link to another page. | 🟡 | `@` picker inserts a page link node. |
-| Block reference / mention | Inline reference to a specific block. | 🟡 | Planned; block-id resolution needed. |
-| Person mention | Inline user chip. | 🟡 | Renders user; notifications on mention minimal. |
-| Synced/reference content | Reference that mirrors another block. | 🟡 | Shares machinery with synced blocks. |
 | Drag to another page | Move a block into a different page. | 🟡 | Planned. |
 | Multi-block selection | Select a range of blocks. | 🟡 | Shift+click works; select-all edge cases. Spec: docs/specs/editor-deep.md (R84.10-R84.12 for the range edges; select-all subset owned by B18). |
-| Copy as Markdown | Copy selection as Markdown text. | 🟡 | Planned. |
 | Page cover | Banner image on a page. | 🟡 | Upload works; reposition/resize missing. |
 | Sub-pages section | Auto-list of child pages on a parent. | 🟡 | Inline listing exists; reorder partial. |
 | Full-width toggle | Expand content to the full viewport width. | 🟡 | Toggle works per page; persisted. |
@@ -82,28 +61,20 @@ This file lists the **225** rows that are not finished, area by area, plus 22 in
 
 ### 2. Text formatting
 
-14 done · 7 partial · 0 planned · 1 out of scope
+19 done · 2 partial · 0 planned · 1 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Link editing | Change or remove a link. | 🟡 | Remove works; inline edit popover basic. |
-| Link title on hover | Show URL on hover. | 🟡 | Tooltip present; styling minimal. |
-| Highlight/background color | Marker-style background on text. | 🟡 | Background works; palette limited. |
-| Text color | Colored text spans. | 🟡 | Palette limited; some hues missing. |
-| Inline math | LaTeX span inside text. | 🟡 | KaTeX renderer; inline edit rough. |
 | Paste with formatting | Preserve rich formatting on paste. | 🟡 | HTML paste works; style cleanup partial. |
 | Paste without formatting | Strip styles on paste. | 🟡 | Shortcut present; some wrappers leak. |
 | Small caps / all caps | Display transforms for text. | ⛔ | Rarely used in prose; not planned. |
 
 ### 3. Databases
 
-24 done · 29 partial · 0 planned
+32 done · 21 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Calendar view | Rows on a month/week calendar. | 🟡 | Planned; needs date property engine. Month grid landed but single-day only (B15); week scale + multi-day spans + date-property picker spec'd: docs/specs/database-deep.md (R89.10). |
-| Timeline view | Rows on a horizontal time axis. | 🟡 | Planned. Static bars landed (B15, fixed window); zoom/drag/dates spec'd: docs/specs/database-deep.md (R89.11). |
-| Chart view | Aggregate charts over the database. | 🟡 | Planned; aggregation dependency. Count-only bars landed (B15); chart type/measure/group-by over ROLLUP_FUNCTIONS spec'd: docs/specs/database-deep.md (R89.12). |
 | Form view | Public/Internal form that creates rows. | 🟡 | Planned. No ViewType.FORM exists yet; builder + submit path spec'd: docs/specs/database-deep.md (R89.29). |
 | AND/OR filter groups | Boolean combination of filters. | 🟡 | Planned as a filter tree. FilterNode tree already evaluates (database-query.ts:66); tree UI spec'd: docs/specs/database-deep.md (R89.2). |
 | Nested filter groups | Arbitrary-depth boolean nesting. | 🟡 | Planned after flat groups. Spec'd with the tree UI: docs/specs/database-deep.md (R89.2). |
@@ -113,19 +84,14 @@ This file lists the **225** rows that are not finished, area by area, plus 22 in
 | Conditional formatting | Color rows/cells by rule. | 🟡 | Planned. ColorRule already modelled in view config (database-query.ts:68); rule editor + evaluation spec'd: docs/specs/database-deep.md (R89.5). |
 | Row color rules | Two-tone row backgrounds. | 🟡 | Planned subset of conditional formatting. Spec'd: docs/specs/database-deep.md (R89.5). |
 | Quick filter from header | Filter directly from a column header. | 🟡 | Planned. Spec'd as an entry point into the filter panel: docs/specs/database-deep.md (R89.6). |
-| Open row as page | Full-page row view. | 🟡 | Route, editor blocks and comments work, and the table/peek offer one-click *Open as page*; a properties strip + back-to-database breadcrumb on the row page needs `app/w/[slug]/[pageId]/page.tsx`, outside B15's ownership (queued for the page-route batch). |
-| Open row in side peek | Preview row in a side drawer. | 🟡 | Planned; needs drawer shell. Spec: docs/specs/navigation-ux.md. |
 | Inline database | Database embedded in a page body. | 🟡 | Renders through the editor's linked-database node view; its height/scroll shell lives in `src/components/editor/**` (editor slot), so the scroll fix is queued there rather than patched from B15. |
 | Linked database | Reuse a database elsewhere. | 🟡 | Planned; requires view identity model. Read-only node exists (linked-database.tsx, attrs = databasePageId only); view identity, per-instance overrides and synced mode spec'd: docs/specs/database-deep.md (R89.14, R89.15). |
 | Column resize/reorder | Resize and reorder columns. | 🟡 | Planned. Per-view width/order in view config spec'd: docs/specs/database-deep.md (R89.13). |
 | Calculations/footer | Aggregations under columns. | 🟡 | Planned (count, sum, average, etc.). Spec'd over rollup ROLLUP_FUNCTIONS: docs/specs/database-deep.md (R89.4). |
-| Database lock | Prevent schema edits. | 🟡 | Planned; depends on permissions. Database-scoped capability split (readRows/editRows/editSchema) + schemaLocked flag spec'd: docs/specs/database-deep.md (R89.23, R89.24). |
 | Sub-items / sub-tasks | Parent-child rows inside a database. | 🟡 | Planned; tree ordering needed. Page.subOfId (depth cap 1) spec'd independent of relations: docs/specs/database-deep.md (R89.30). |
 | Dependencies | Blocking/blocked-by between rows. | 🟡 | Planned; mainly for timeline. RowDependency join model with cycle guard spec'd: docs/specs/database-deep.md (R89.31). |
 | Timeline dependencies | Draw dependency arrows on timeline. | 🟡 | Planned. Arrow rendering inside the gantt depth spec: docs/specs/database-deep.md (R89.31 with R89.11). |
-| Calendar multi-day events | Span events across days. | 🟡 | Planned. Span-day expansion replaces today's single-day match (view-renderers.tsx:624-634): docs/specs/database-deep.md (R89.10). |
 | Gallery previews | Show cover or page content on cards. | 🟡 | Planned. First-image banner landed (B15); cover property + page-content preview spec'd: docs/specs/database-deep.md (R89.9). |
-| Buttons in databases | Row actions via buttons. | 🟡 | Planned; depends on automations. Property shell (label/style/config) spec'd: docs/specs/database-deep.md (R89.26); action execution owned by docs/specs/automations.md (R27.x). |
 | Database templates | Pre-filled row templates. | 🟡 | Planned. Minimal CRUD shipped (save row as template / instantiate / recurrence, database.ts:464-588); depth (default, preview, edit) integration spec'd: docs/specs/database-deep.md (R89.16) with docs/specs/templates.md (R31.x). |
 | Default template | Auto-apply a template to new rows. | 🟡 | Planned. Flag + semantics owned by docs/specs/templates.md (R31.13); createRowAction application + New-row split button spec'd: docs/specs/database-deep.md (R89.16). |
 | Recurring templates | Create rows on a schedule. | 🟡 | Planned; depends on a scheduler. Core (resolver/nextRun/cron driver) owned by docs/specs/templates.md (R31.18-R31.23); database-side surfacing + system-actor materialization spec'd: docs/specs/database-deep.md (R89.17). |
@@ -133,12 +99,10 @@ This file lists the **225** rows that are not finished, area by area, plus 22 in
 
 ### 4. Properties
 
-21 done · 14 partial · 0 planned · 1 out of scope
+23 done · 12 partial · 0 planned · 1 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Date range | Start and end date. | 🟡 | Planned. |
-| Date reminders | Notify at a chosen time. | 🟡 | Planned; depends on scheduler. |
 | Relation property | Link rows across databases. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
 | Relation (single) | One linked row. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
 | Relation (multi) | Many linked rows. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
@@ -155,13 +119,11 @@ This file lists the **225** rows that are not finished, area by area, plus 22 in
 
 ### 5. Formulas
 
-13 done · 3 partial · 0 planned
+15 done · 1 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Formula editor | Author expressions with autocomplete. | 🟡 | Planned; expression parser first. Spec: docs/specs/formula-engine.md. |
-| Regex extraction | Capture groups into values. | 🟡 | Planned. Spec: docs/specs/formula-engine.md. |
-| Rollups in formulas | Reference rollup results. | 🟡 | Planned; ordering dependency. Spec: docs/specs/formula-engine.md. |
 
 ### 6. Templates
 
@@ -195,7 +157,7 @@ This file lists the **225** rows that are not finished, area by area, plus 22 in
 
 ### 8. Sharing & permissions
 
-13 done · 9 partial · 0 planned
+16 done · 6 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -204,14 +166,11 @@ This file lists the **225** rows that are not finished, area by area, plus 22 in
 | Admin role | Manage members and settings. | 🟡 | Modeled; UI partial. |
 | Page sharing | Grant a user access to a page. | 🟡 | Basic share record; UI minimal. |
 | Allow editing toggle | Choose edit vs read-only shares. | 🟡 | Planned. |
-| Allow duplicate toggle | Let viewers copy the page. | 🟡 | Planned. |
-| Search-engine indexing toggle | Allow crawlers on public pages. | 🟡 | Planned. |
 | Move pages across workspaces | Relocate content between workspaces. | 🟡 | Planned; id-remap complexity. |
-| Export-restricted pages | Disable export for sensitive pages. | 🟡 | Planned. |
 
 ### 9. Workspaces & structure
 
-16 done · 7 partial · 0 planned
+17 done · 6 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -220,44 +179,27 @@ This file lists the **225** rows that are not finished, area by area, plus 22 in
 | Restore from trash | Undo a deletion. | 🟡 | Planned. |
 | Permanent delete | Permanently remove an item. | 🟡 | Planned; purge job needed. |
 | Sidebar collapse | Collapse the sidebar. | 🟡 | Toggle works. |
-| Duplicate page | Clone a page with children. | 🟡 | Works; relation remap partial. B80 audit: copies the single page only — no children walk (`src/server/actions/page-menu.ts:229-281`); subtree clone is R80.10. Spec: docs/specs/workspaces-structure.md. |
 | Trash retention policy | How long trash is kept. | 🟡 | Planned; see platform. |
 
 ### 10. Version history
 
-4 done · 5 partial · 0 planned
+8 done · 1 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Auto-snapshot cadence | Periodic version capture. | 🟡 | Planned. Spec: docs/specs/version-history-v2.md. |
-| Retention window | How long versions persist. | 🟡 | Planned; configurable. Spec: docs/specs/version-history-v2.md. |
-| Version authorship | Who made each version. | 🟡 | Planned. Spec: docs/specs/version-history-v2.md. |
 | Trash recovery window | Restore window for deleted pages. | 🟡 | Planned. Spec: docs/specs/version-history-v2.md. |
-| Block-level attribution | Which block changed. | 🟡 | Planned; CRDT history dependency. Spec: docs/specs/version-history-v2.md. |
-
-### 11. Search
-
-9 done · 2 partial · 0 planned
-
-| Feature | What it should do | Status | Notes |
-| --- | --- | --- | --- |
-| Content search | Match block content. | 🟡 | Basic; no ranking. Spec: docs/specs/search.md. |
-| Search keyboard nav | Arrow/enter navigation. | 🟡 | Planned. Spec: docs/specs/search.md. |
 
 ### 12. Import & export
 
-12 done · 10 partial · 0 planned
+15 done · 7 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Import Markdown | Bring in `.md` files. | 🟡 | Basic parser; frontmatter partial. Spec: docs/specs/import-export.md. |
-| Import HTML | Import HTML documents. | 🟡 | Planned. |
 | Import Asana | Tasks into databases. | 🟡 | Planned. |
 | Import Evernote | Notes into pages. | 🟡 | Planned. |
 | Import Google Docs | Docs into pages. | 🟡 | Planned. |
 | Import PDF | Extract PDF into a page. | 🟡 | Planned; text-layer only first. |
 | Import Confluence | Spaces into pages. | 🟡 | Planned. |
-| Import rollback | Undo a failed import. | 🟡 | Planned. Spec: docs/specs/import-export.md. |
 | Export Markdown | Page as `.md`. | 🟡 | Basic export; nested content partial. Spec: docs/specs/import-export.md. |
 | Export PDF | Page as PDF. | 🟡 | Planned; headless render. Spec: docs/specs/import-export.md. |
 
@@ -314,34 +256,23 @@ This file lists the **225** rows that are not finished, area by area, plus 22 in
 
 ### 16. Navigation & UX
 
-33 done · 14 partial · 0 planned · 2 out of scope
+43 done · 4 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Breadcrumbs | Ancestor path in header. | 🟡 | Renders; interactions partial. |
-| Page tree navigation | Expand/collapse tree. | 🟡 | Works; state persistence partial. |
-| Mobile layout | Responsive small-screen UI. | 🟡 | Planned; dedicated shell. |
-| Side peek | Preview in a side drawer. | 🟡 | Planned. Spec: docs/specs/navigation-ux.md. |
 | Back/forward navigation | History within the app. | 🟡 | Planned; router-driven. Spec: docs/specs/navigation-ux.md. |
-| Tabs for pages | Multiple open pages as tabs. | 🟡 | Planned; optional UX. Spec: docs/specs/navigation-ux.md. |
-| Keyboard shortcuts | Global and editor shortcuts. | 🟡 | Core subset implemented. |
-| Custom fonts | Choose font pairing. | 🟡 | Planned. |
 | Focus management | Visible focus and traps. | 🟡 | Global `:focus-visible` ring everywhere; B45 hardened `ui/dialog` — Tab/Shift+Tab cycle inside with wrap, explicit `aria-modal="true"`, initial focus in-dialog, and focus restored to the invoker even for trigger-less controlled dialogs — plus `ui/dropdown-menu` (Escape → focus back to its trigger); both locked by `e2e/focus.spec.ts`. Still partial: hand-rolled feature overlays bypass the primitive entirely — `topbar/actions-menu`, `who-has-access`, `version-history`, `tickets/ticket-drawer`, `editor/equation-editor` have no Tab trap, Escape only works in the actions menu and equation editor, and `version-history` / `ticket-drawer` also lack `aria-modal` → feature-level follow-up (feature components are off-limits to B45). |
 | RTL support | Right-to-left layouts. | 🟡 | Arabic sets `dir="rtl"` and logical CSS; mixed-direction blocks untested. |
-| Notifications / toasts | Transient status messages. | 🟡 | Planned. B82 spec `docs/specs/notifications.md` §9 standardizes the surface (202 `toast.*` sites / 41 files audited): one `<Toaster>`, `toast.info` banned by `check:coherence`, all strings via `t()` (51 literals → 0), shared catalog + `check-toasts.mjs`, durations 4 s/8 s — R82.30-R82.36. |
 | Undo/redo (global) | App-wide undo beyond editor. | 🟡 | Planned. |
-| Offline mode | Work without connectivity. | 🟡 | Planned; core to local-first goal. |
-| Actions menu: Notify me → Comments submenu | Per-page comment notification level (All/Mentions/None). | 🟡 | Radio submenu ships and persists per page — but in localStorage only; no server-side model/enforcement yet (B11 partial). B82 spec `docs/specs/notifications.md` closes it: the level becomes a server `NotificationPreference` row that `notify()` itself enforces (today `comment.reply`/`page.mention` ignore it — D6/D7); `noema:page-notify:*` survives only as a one-time hydration source — R82.15-R82.18. |
 | Actions menu: Turn into wiki | Convert page to a wiki. | ⛔ | Data model lacks wiki type; blocked pending spec. B11 ships the entry as a disabled menu item with tooltip "Wiki coming soon" — not faked. |
 | Open in desktop app | "Open in Windows app" entry. | ⛔ | No desktop app; N/A for web parity. |
 
 ### 17. Data model & platform
 
-18 done · 19 partial · 0 planned
+19 done · 18 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Stable block ids | Every block has a durable id. | 🟡 | Ids exist; not enforced on all operations. Spec: docs/specs/engineering-hardening.md. |
 | Page snapshots | Versioned page state. | 🟡 | Planned; basis for history. |
 | Incremental syncing | Sync only changed blocks. | 🟡 | Planned; op-log approach. |
 | Offline cache | Local store for offline use. | 🟡 | Planned (IndexedDB/SQLite). |
