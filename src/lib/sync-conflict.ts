@@ -325,11 +325,323 @@ function formatValue(value: unknown): string {
 }
 
 /**
- * One-line human summary of a conflict, e.g.
+ * One-line human summary of a three-way-merge conflict, e.g.
  * `title: local changed "B", remote changed "C"; base "A"`.
  */
-export function describeConflict(conflict: FieldConflict): string {
+export function describeConflict(conflict: FieldConflict): string;
+/**
+ * One-line human summary of a logical-clock conflict, e.g.
+ * `title: alice@1 "A" -> bob@2 "B"; actors alice, bob; unresolved`.
+ */
+export function describeConflict(conflict: MergeConflict): string;
+export function describeConflict(conflict: FieldConflict | MergeConflict): string {
+  if ("before" in conflict) return describeMergeConflict(conflict);
   const local = `local ${conflict.localOp} ${formatValue(conflict.local)}`;
   const remote = `remote ${conflict.remoteOp} ${formatValue(conflict.remote)}`;
   return `${conflict.field}: ${local}, ${remote}; base ${formatValue(conflict.base)}`;
+}
+
+/* ============================================================================
+ * S17 - logical-clock conflict resolution with visible provenance
+ *
+ * The three-way helpers above detect conflicts relative to a shared `base`.
+ * A local-first replica does not always have one: two offline clients each
+ * stamp their edit with a Lamport clock and reconcile on reconnect. That path
+ * is modelled here and it is deliberately **not silent** — last-writer-wins
+ * picks a value, but every competitor is retained in `provenance` / `conflicts`
+ * so a UI (or a resolver policy) can show what was overwritten and by whom.
+ *
+ *  - CLOCK: `tick(clock, actorId)` advances a Lamport counter; `compare(a, b)`
+ *    orders two stamps by `(clock, actorId)` ascending, so a given pair of
+ *    edits always wins/loses the same way on every replica.
+ *  - VERSION: `RecordVersion` is one field's `{clock, actorId, value, at}`.
+ *  - MERGE: `mergeField` and `mergeDoc` are commutative — `merge(a, b)` deep-
+ *    equals `merge(b, a)` — because ordering is canonical and no result field
+ *    is relative to argument position.
+ *  - VISIBILITY: `conflicts[]` carries `before`/`after` and the `actors`, and
+ *    `resolveConflict` / `applyResolutions` turn a deferred conflict into a
+ *    chosen value without dropping the losing candidate.
+ * ========================================================================== */
+
+/** A Lamport clock reading: a monotonic counter branded with its issuing actor. */
+export type ClockStamp = {
+  /** Monotonic logical counter. */
+  readonly clock: number;
+  /** The actor that issued the reading; the tiebreak when counters collide. */
+  readonly actorId: string;
+};
+
+/** One field's value on a replica, stamped for last-writer-wins ordering. */
+export type RecordVersion<T = unknown> = {
+  /** Monotonic Lamport counter of the write. */
+  readonly clock: number;
+  /** Actor that authored the write (the clock-tie tiebreak). */
+  readonly actorId: string;
+  /** The field value at that stamp. */
+  readonly value: T;
+  /** Caller-supplied wall-clock stamp (epoch ms); display only, never ordered. */
+  readonly at: number;
+};
+
+/**
+ * Advance a Lamport clock: the next counter for `actorId` after observing
+ * `clock`. A local edit calls `tick(lastSeen, me)`; merging a peer's clock and
+ * then editing calls `tick(max(mine, theirs), me)`. The result never decreases,
+ * so a later edit can never sort before an earlier one, and a non-finite input
+ * degrades to `1` rather than poisoning the clock.
+ */
+export function tick(clock: ClockStamp | number, actorId: string): ClockStamp {
+  const current = typeof clock === "number" ? clock : clock.clock;
+  const counter = Number.isFinite(current) ? Math.max(0, Math.trunc(current)) : 0;
+  return { clock: counter + 1, actorId };
+}
+
+/**
+ * Total order on two clock stamps: higher logical clock first, then
+ * `actorId` ascending. The **greater** stamp wins, so a later edit beats an
+ * earlier one and a genuine tie is decided deterministically by author —
+ * every replica that sees the same two stamps agrees which one wins.
+ */
+export function compare(a: ClockStamp, b: ClockStamp): number {
+  if (a.clock !== b.clock) return a.clock < b.clock ? -1 : 1;
+  if (a.actorId === b.actorId) return 0;
+  return a.actorId < b.actorId ? -1 : 1;
+}
+
+/** Canonical JSON (object keys sorted, `undefined` omitted) for stable ties. */
+function canonicalJson(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, child]) => child !== undefined)
+    .sort(([left], [right]) => compareKeys(left, right))
+    .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`);
+  return `{${entries.join(",")}}`;
+}
+
+/**
+ * Canonical order of two versions: Lamport order, then the value as a
+ * last-resort tiebreak. Two versions with the same actor and clock but
+ * different values (a contract violation) still order deterministically, so
+ * convergence never depends on argument order.
+ */
+function compareVersions(a: RecordVersion, b: RecordVersion): number {
+  return compare(a, b) || compareKeys(canonicalJson(a.value), canonicalJson(b.value));
+}
+
+/** The outcome of merging one field. */
+export type FieldMerge<T = unknown> = {
+  /** The winning value (the last writer's). */
+  readonly value: T;
+  /** The winning version. */
+  readonly winner: RecordVersion<T>;
+  /** The candidates seen, canonically ordered; both on a conflict. */
+  readonly provenance: readonly RecordVersion<T>[];
+  /** `true` when the two candidates hold different values. */
+  readonly conflict: boolean;
+};
+
+/**
+ * Merge one field from two replicas by last-writer-wins on the logical clock,
+ * never silently: on a conflict both candidates are returned in `provenance`
+ * (loser first, winner last), so the overwritten value is recoverable. The
+ * result is order-independent — `mergeField(a, b)` deep-equals
+ * `mergeField(b, a)` — and neither version is mutated.
+ */
+export function mergeField<T>(local: RecordVersion<T>, remote: RecordVersion<T>): FieldMerge<T> {
+  const order = compareVersions(local, remote);
+  const winner = order >= 0 ? local : remote;
+  const loser = order >= 0 ? remote : local;
+  const conflict = !deepEqual(local.value, remote.value);
+  return {
+    value: winner.value,
+    winner,
+    provenance: conflict ? [loser, winner] : [winner],
+    conflict,
+  };
+}
+
+/** How a document merge resolves conflicts. */
+export type MergeStrategy = "lww" | "manual";
+
+/** Options for {@link mergeDoc}. */
+export type MergeDocOptions = {
+  /** `"lww"` (default) resolves automatically; `"manual"` defers every conflict. */
+  readonly strategy?: MergeStrategy;
+};
+
+/**
+ * One field both replicas moved to different values. `before` / `after` are the
+ * superseded and winning candidates (canonical order, independent of argument
+ * order) and `actors` lists both authors, ASCII-ascending.
+ */
+export type MergeConflict = {
+  /** Top-level field name. */
+  readonly field: string;
+  /** The candidate last-writer-wins superseded (the loser). */
+  readonly before: RecordVersion;
+  /** The candidate that won (the current value, unless manually overridden). */
+  readonly after: RecordVersion;
+  /** The competing actors, ASCII-ascending and de-duplicated. */
+  readonly actors: readonly string[];
+  /** `true` once the field has a value under the active strategy. */
+  readonly resolved: boolean;
+};
+
+/** The result of {@link mergeDoc}: the fields, their versions and any conflicts. */
+export type MergedDoc = {
+  /** The strategy applied. */
+  readonly strategy: MergeStrategy;
+  /** Field name -> winning {@link RecordVersion} (deferred fields omitted). */
+  readonly versions: Record<string, RecordVersion>;
+  /** Field name -> winning value (deferred fields omitted). */
+  readonly fields: Record<string, unknown>;
+  /** Every conflicting field, ASCII-ordered by name. */
+  readonly conflicts: readonly MergeConflict[];
+};
+
+/** Defensively rebuild one version from untrusted input, or `null` if unusable. */
+function toVersion(raw: unknown): RecordVersion | null {
+  if (!isPlainObject(raw)) return null;
+  const clock = typeof raw.clock === "number" && Number.isFinite(raw.clock) ? Math.trunc(raw.clock) : null;
+  if (clock === null || clock < 0) return null;
+  if (typeof raw.actorId !== "string" || raw.actorId.length === 0) return null;
+  const at = typeof raw.at === "number" && Number.isFinite(raw.at) ? raw.at : 0;
+  return { clock, actorId: raw.actorId, value: raw.value, at };
+}
+
+/** Rebuild a `field -> version` map from untrusted input, dropping junk entries. */
+function toVersionMap(raw: unknown): Record<string, RecordVersion> {
+  const out: Record<string, RecordVersion> = {};
+  if (!isPlainObject(raw)) return out;
+  for (const [field, value] of Object.entries(raw)) {
+    const version = toVersion(value);
+    if (version !== null) out[field] = version;
+  }
+  return out;
+}
+
+/**
+ * Merge two versioned documents, returning the merged fields plus a
+ * `conflicts[]` list. Non-conflicting fields are always applied; a field both
+ * replicas changed to different values is recorded in `conflicts[]` either way,
+ * so the resolution is never silent. Under `"lww"` (default) the greater
+ * `(clock, actorId)` wins; under `"manual"` every conflict is deferred (omitted
+ * from `fields`/`versions`) for {@link resolveConflict} / {@link applyResolutions}.
+ *
+ * The merge is commutative — `mergeDoc(a, b)` deep-equals `mergeDoc(b, a)` —
+ * and neither input is mutated.
+ */
+export function mergeDoc(
+  local: unknown,
+  remote: unknown,
+  options: MergeDocOptions = {},
+): MergedDoc {
+  const strategy: MergeStrategy = options.strategy === "manual" ? "manual" : "lww";
+  const left = toVersionMap(local);
+  const right = toVersionMap(remote);
+  const keys = [...new Set([...Object.keys(left), ...Object.keys(right)])].sort(compareKeys);
+
+  const versions: Record<string, RecordVersion> = {};
+  const fields: Record<string, unknown> = {};
+  const conflicts: MergeConflict[] = [];
+
+  for (const field of keys) {
+    const localVersion = left[field];
+    const remoteVersion = right[field];
+
+    if (localVersion === undefined) {
+      versions[field] = remoteVersion;
+      fields[field] = remoteVersion.value;
+      continue;
+    }
+    if (remoteVersion === undefined) {
+      versions[field] = localVersion;
+      fields[field] = localVersion.value;
+      continue;
+    }
+
+    const merged = mergeField(localVersion, remoteVersion);
+    if (!merged.conflict) {
+      versions[field] = merged.winner;
+      fields[field] = merged.value;
+      continue;
+    }
+
+    const conflict: MergeConflict = {
+      field,
+      before: merged.provenance[0],
+      after: merged.winner,
+      actors: [...new Set([localVersion.actorId, remoteVersion.actorId])].sort(compareKeys),
+      resolved: strategy === "lww",
+    };
+    conflicts.push(conflict);
+    if (strategy === "lww") {
+      versions[field] = merged.winner;
+      fields[field] = merged.value;
+    }
+  }
+
+  return { strategy, versions, fields, conflicts };
+}
+
+/** Which side of a conflict to keep when resolving it. */
+export type ConflictChoice = "before" | "after";
+
+/**
+ * Resolve one conflict to a concrete version: `"after"` keeps the winner LWW
+ * chose, `"before"` restores the superseded candidate. Returns a fresh copy and
+ * never mutates the conflict.
+ */
+export function resolveConflict(conflict: MergeConflict, choice: ConflictChoice): RecordVersion {
+  const chosen = choice === "before" ? conflict.before : conflict.after;
+  return { ...chosen };
+}
+
+/** A deferred conflict and the side the resolver chose for it. */
+export type ConflictResolution = {
+  /** The conflict's field name. */
+  readonly field: string;
+  /** Which candidate to keep. */
+  readonly choice: ConflictChoice;
+};
+
+/**
+ * Apply manual resolutions to a {@link MergedDoc}: each resolved field gains the
+ * chosen version, its conflict is marked `resolved` but keeps its `before`/
+ * `after` provenance, and unknown fields are ignored. Pure and idempotent —
+ * inputs are never mutated and re-applying the same resolutions is a no-op.
+ */
+export function applyResolutions(
+  doc: MergedDoc,
+  resolutions: readonly ConflictResolution[],
+): MergedDoc {
+  const choices = new Map<string, ConflictChoice>();
+  for (const resolution of resolutions) {
+    if (resolution && typeof resolution.field === "string") {
+      choices.set(resolution.field, resolution.choice);
+    }
+  }
+
+  const versions: Record<string, RecordVersion> = { ...doc.versions };
+  const fields: Record<string, unknown> = { ...doc.fields };
+  const conflicts = doc.conflicts.map((conflict) => {
+    const choice = choices.get(conflict.field);
+    if (choice === undefined) return conflict;
+    const chosen = resolveConflict(conflict, choice);
+    versions[conflict.field] = chosen;
+    fields[conflict.field] = chosen.value;
+    return { ...conflict, resolved: true };
+  });
+
+  return { strategy: doc.strategy, versions, fields, conflicts };
+}
+
+/** Render a logical-clock conflict for {@link describeConflict}. */
+function describeMergeConflict(conflict: MergeConflict): string {
+  const before = `${conflict.before.actorId}@${conflict.before.clock} ${formatValue(conflict.before.value)}`;
+  const after = `${conflict.after.actorId}@${conflict.after.clock} ${formatValue(conflict.after.value)}`;
+  const state = conflict.resolved ? "resolved" : "unresolved";
+  return `${conflict.field}: ${before} -> ${after}; actors ${conflict.actors.join(", ")}; ${state}`;
 }
