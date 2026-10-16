@@ -10,19 +10,34 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   pageFindUnique: vi.fn(),
+  pageFindMany: vi.fn(),
+  pageCount: vi.fn(),
   workspaceFindUnique: vi.fn(),
   ticketFindMany: vi.fn(),
   projectFindMany: vi.fn(),
+  labelCount: vi.fn(),
+  commentCount: vi.fn(),
+  commentFindMany: vi.fn(),
+  chatThreadCount: vi.fn(),
+  chatMessageFindMany: vi.fn(),
   searchPagesForPrompt: vi.fn(),
   fetch: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    page: { findUnique: mocks.pageFindUnique },
+    page: {
+      findUnique: mocks.pageFindUnique,
+      findMany: mocks.pageFindMany,
+      count: mocks.pageCount,
+    },
     workspace: { findUnique: mocks.workspaceFindUnique },
     ticket: { findMany: mocks.ticketFindMany },
     project: { findMany: mocks.projectFindMany },
+    label: { count: mocks.labelCount },
+    comment: { count: mocks.commentCount, findMany: mocks.commentFindMany },
+    chatThread: { count: mocks.chatThreadCount },
+    chatMessage: { findMany: mocks.chatMessageFindMany },
   },
 }));
 
@@ -37,9 +52,16 @@ const originalFetch = globalThis.fetch;
 
 function resetMocks() {
   mocks.pageFindUnique.mockReset().mockResolvedValue(null);
+  mocks.pageFindMany.mockReset().mockResolvedValue([]);
+  mocks.pageCount.mockReset().mockResolvedValue(0);
   mocks.workspaceFindUnique.mockReset().mockResolvedValue(null);
   mocks.ticketFindMany.mockReset().mockResolvedValue([]);
   mocks.projectFindMany.mockReset().mockResolvedValue([]);
+  mocks.labelCount.mockReset().mockResolvedValue(0);
+  mocks.commentCount.mockReset().mockResolvedValue(0);
+  mocks.commentFindMany.mockReset().mockResolvedValue([]);
+  mocks.chatThreadCount.mockReset().mockResolvedValue(0);
+  mocks.chatMessageFindMany.mockReset().mockResolvedValue([]);
   mocks.searchPagesForPrompt.mockReset().mockResolvedValue([]);
   mocks.fetch.mockReset().mockImplementation(() =>
     Promise.reject(new Error("network disabled in unit tests")),
@@ -121,6 +143,73 @@ describe("deterministic keyword → data-intent routing", () => {
   });
 });
 
+describe("workspace overview (always-on grounding)", () => {
+  it("includes live counts even when no intent matches the question", async () => {
+    mocks.workspaceFindUnique.mockResolvedValue({ name: "Acme" });
+    mocks.pageCount
+      .mockResolvedValueOnce(3) // notes
+      .mockResolvedValueOnce(1); // databases
+    mocks.ticketFindMany.mockResolvedValue([
+      { status: "todo", dueDate: null, assigneeId: "u1", estimate: 2, estimateUnit: "points", title: "A", key: "A-1" },
+      { status: "done", dueDate: null, assigneeId: "u1", estimate: 3, estimateUnit: "points", title: "B", key: "A-2" },
+    ]);
+    mocks.projectFindMany.mockResolvedValue([
+      {
+        name: "Apollo",
+        status: "active",
+        dueDate: null,
+        milestones: [{ name: "M2", status: "todo", dueDate: new Date("2026-03-01T00:00:00.000Z") }],
+      },
+    ]);
+
+    const request = await buildChatRequest({
+      workspaceId: "ws1",
+      pageId: null,
+      question: "hmm, what is going on here?",
+    });
+
+    expect(request.context).toContain('WORKSPACE OVERVIEW — "Acme"');
+    expect(request.context).toContain("Notes: 3");
+    expect(request.context).toContain("Databases: 1");
+    expect(request.context).toContain("Tickets: 2 (1 open, 2 points remaining)");
+    expect(request.context).toContain("Next milestone: M2 (Apollo) due 2026-03-01");
+    expect(request.intel.activity).toContain("Read the workspace overview");
+  });
+
+  it("answers 'my last message' from the recent-messages intent", async () => {
+    mocks.workspaceFindUnique.mockResolvedValue({ name: "Acme" });
+    mocks.commentFindMany.mockResolvedValue([
+      {
+        body: "Ping about the launch",
+        createdAt: new Date("2026-05-01T10:00:00.000Z"),
+        author: { name: "Ada" },
+        page: { id: "p1", title: "Launch plan" },
+      },
+    ]);
+
+    const request = await buildChatRequest({
+      workspaceId: "ws1",
+      pageId: null,
+      question: "what is my last message?",
+    });
+
+    expect(request.intel.intents).toContain("messages");
+    expect(request.context).toContain("RECENT MESSAGES (newest first):");
+    expect(request.context).toContain('comment on "Launch plan" by Ada');
+    expect(request.context).toContain("Ping about the launch");
+  });
+
+  it("says so explicitly when there are no messages", async () => {
+    mocks.workspaceFindUnique.mockResolvedValue({ name: "Acme" });
+    const request = await buildChatRequest({
+      workspaceId: "ws1",
+      pageId: null,
+      question: "show me the latest comments",
+    });
+    expect(request.context).toContain("RECENT MESSAGES: none");
+  });
+});
+
 describe("buildChatRequest grounding per intent branch", () => {
   it("uses the shared system prompt and passes intel through", async () => {
     const request = await buildChatRequest({
@@ -146,17 +235,20 @@ describe("buildChatRequest grounding per intent branch", () => {
       question: "who are the members of my team?",
     });
 
-    expect(mocks.workspaceFindUnique).toHaveBeenCalledTimes(1);
-    expect(mocks.workspaceFindUnique.mock.calls[0][0]).toMatchObject({
-      where: { id: "ws1" },
-    });
+    expect(mocks.workspaceFindUnique).toHaveBeenCalled();
+    expect(
+      mocks.workspaceFindUnique.mock.calls.some(
+        (call) => "members" in ((call[0] as { select?: object }).select ?? {}),
+      ),
+    ).toBe(true);
     expect(request.context).toContain("Workspace members (2): Ada (ada@x.test, owner)");
     expect(request.context).toContain("Bob (bob@x.test, admin)");
     expect(request.context).toContain("Pending invitations: new@x.test (member)");
     expect(request.intel.activity).toContain("Checked members");
-    // Routing isolation: no other data source was consulted.
-    expect(mocks.ticketFindMany).not.toHaveBeenCalled();
-    expect(mocks.projectFindMany).not.toHaveBeenCalled();
+    // Routing isolation: the always-on overview runs, but the other branches
+    // did not contribute their own blocks.
+    expect(request.context).not.toContain("Tickets (");
+    expect(request.context).not.toContain("Apollo");
     expect(mocks.searchPagesForPrompt).not.toHaveBeenCalled();
     expect(mocks.pageFindUnique).not.toHaveBeenCalled();
   });
@@ -181,12 +273,12 @@ describe("buildChatRequest grounding per intent branch", () => {
       question: "list the bugs in the backlog",
     });
 
-    expect(mocks.ticketFindMany).toHaveBeenCalledTimes(1);
+    expect(mocks.ticketFindMany).toHaveBeenCalled();
     expect(request.context).toContain("Tickets (1, 1 open · 3 points remaining):");
     expect(request.context).toContain("- ENG-1 [open, high] @Ada · 3 points · bug — Fix login");
     expect(request.intel.activity).toContain("Reviewed tickets");
-    expect(mocks.workspaceFindUnique).not.toHaveBeenCalled();
-    expect(mocks.projectFindMany).not.toHaveBeenCalled();
+    expect(request.context).not.toContain("Workspace members (");
+    expect(request.context).not.toContain("Apollo");
     expect(mocks.searchPagesForPrompt).not.toHaveBeenCalled();
   });
 
@@ -211,13 +303,13 @@ describe("buildChatRequest grounding per intent branch", () => {
       question: "show the project milestones and timeline",
     });
 
-    expect(mocks.projectFindMany).toHaveBeenCalledTimes(1);
+    expect(mocks.projectFindMany).toHaveBeenCalled();
     expect(request.context).toContain(
       "- Apollo (active), due 2026-03-01, 1/2 milestones, next: M2 (2026-03-01), 4 notes",
     );
     expect(request.intel.activity).toContain("Reviewed projects");
-    expect(mocks.ticketFindMany).not.toHaveBeenCalled();
-    expect(mocks.workspaceFindUnique).not.toHaveBeenCalled();
+    expect(request.context).not.toContain("Tickets (");
+    expect(request.context).not.toContain("Workspace members (");
     expect(mocks.searchPagesForPrompt).not.toHaveBeenCalled();
   });
 
@@ -240,9 +332,10 @@ describe("buildChatRequest grounding per intent branch", () => {
       { id: "p1", title: "Onboarding guide", icon: ":book:" },
     ]);
     expect(request.intel.activity).toContain("Searched notes");
-    expect(mocks.ticketFindMany).not.toHaveBeenCalled();
-    expect(mocks.workspaceFindUnique).not.toHaveBeenCalled();
-    expect(mocks.projectFindMany).not.toHaveBeenCalled();
+    // The overview runs regardless; the tickets/projects/members branches did not.
+    expect(request.context).not.toContain("Tickets (ENG-");
+    expect(request.context).not.toContain("Workspace members (");
+    expect(request.context).not.toContain("Apollo");
   });
 
   it("opens the pinned note and lists only its unchecked tasks", async () => {
@@ -280,7 +373,7 @@ describe("buildChatRequest grounding per intent branch", () => {
     expect(request.intel.activity).toContain("Opened the current note");
     expect(request.intel.activity).toContain("Checked tasks");
     expect(mocks.searchPagesForPrompt).not.toHaveBeenCalled();
-    expect(mocks.ticketFindMany).not.toHaveBeenCalled();
+    expect(request.context).not.toContain("Tickets (");
   });
 
   it("opens the pinned note without the task panel when every task is checked", async () => {
