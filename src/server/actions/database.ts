@@ -10,6 +10,7 @@ import {
   canEditContent,
   type WorkspaceAccess,
 } from "@/lib/permissions";
+import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { csvToMatrix } from "@/lib/serialize";
 import { coerceCsvValue, type CsvPropertyConfig } from "@/lib/csv-value-coercion";
 import type { ImportCounts } from "@/lib/importers";
@@ -31,7 +32,12 @@ type Result<T = unknown> = ({ ok: true } & T) | { error: string };
 type DatabaseAuth =
   | { error: string }
   | {
-      page: { id: string; workspaceId: string; type: string };
+      page: {
+        id: string;
+        workspaceId: string;
+        type: string;
+        schemaLocked: boolean;
+      };
       access: NonNullable<WorkspaceAccess>;
       user: SessionUser;
     };
@@ -55,12 +61,51 @@ async function authorizeDatabase(
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: databasePageId },
-    select: { id: true, workspaceId: true, type: true },
+    select: { id: true, workspaceId: true, type: true, schemaLocked: true },
   });
   if (!page || page.type !== "DATABASE") return { error: "Database not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return { error: "No access to this database." };
   return { page, access, user };
+}
+
+/**
+ * Reduce workspace access to the lock policy's role shape
+ * (`src/lib/database-lock.ts`). Mirrors `lockRoleFor` in `pages.ts`: only the
+ * owner keeps the locked-schema override, so the lock stays releasable.
+ */
+function lockRoleFor(role: NonNullable<WorkspaceAccess>["role"]): LockRole {
+  return {
+    isOwner: role === "OWNER",
+    isMember: role === "ADMIN" || role === "MEMBER",
+  };
+}
+
+/**
+ * R89.23/R89.24 — the lock gate for *structural* database edits. A member may
+ * change properties, views, templates and import while the database is
+ * unlocked; `Page.schemaLocked` freezes all of it for them, while the owner
+ * keeps access so the lock toggle stays reachable. Row and cell writes never
+ * call this: the schema lock leaves values editable.
+ *
+ * Callers perform the role check first (the existing `canEditContent` guard),
+ * so a denial here is always the schema lock and not a missing role.
+ */
+function schemaLockDenied(auth: {
+  page: { schemaLocked: boolean };
+  access: NonNullable<WorkspaceAccess>;
+}): { error: string } | null {
+  if (
+    !canEditSchema(
+      { locked: auth.page.schemaLocked },
+      lockRoleFor(auth.access.role),
+    )
+  ) {
+    return {
+      error: "This database's schema is locked. Unlock it to change its structure.",
+    };
+  }
+  return null;
 }
 
 function revalidateDatabase(workspaceId: string) {
@@ -179,6 +224,8 @@ export async function createPropertyAction(
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
 
   const last = await prisma.property.findFirst({
     where: { databasePageId },
@@ -225,6 +272,8 @@ export async function updatePropertyAction(
   const auth = await authorizeDatabase(property.databasePageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
 
   await prisma.property.update({
     where: { id: propertyId },
@@ -250,6 +299,8 @@ export async function deletePropertyAction(
   const auth = await authorizeDatabase(property.databasePageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
   await prisma.property.delete({ where: { id: propertyId } });
   revalidateDatabase(auth.page.workspaceId);
   return { ok: true };
@@ -267,6 +318,8 @@ export async function reorderPropertiesAction(
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
 
   const existing = await prisma.property.findMany({
     where: { databasePageId },
@@ -545,6 +598,8 @@ export async function createViewAction(
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
   const last = await prisma.databaseView.findFirst({
     where: { databasePageId },
     orderBy: { position: "desc" },
@@ -574,6 +629,9 @@ export async function updateViewAction(
   if (!view) return { error: "View not found." };
   const auth = await authorizeDatabase(view.databasePageId);
   if ("error" in auth) return auth;
+  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
   if (patch.type !== undefined && !isViewType(patch.type)) {
     return { error: "Unknown view type." };
   }
@@ -607,6 +665,8 @@ export async function duplicateViewAction(
   const auth = await authorizeDatabase(source.databasePageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
 
   const last = await prisma.databaseView.findFirst({
     where: { databasePageId: source.databasePageId },
@@ -705,6 +765,8 @@ export async function duplicateDatabaseAction(
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
 
   const source = await prisma.page.findUnique({
     where: { id: databasePageId },
@@ -888,6 +950,8 @@ export async function saveRowAsTemplateAction(
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
 
   const row = await prisma.page.findUnique({
     where: { id: rowId },
@@ -976,6 +1040,8 @@ export async function deleteTemplateAction(
   const auth = await authorizeDatabase(template.databasePageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
   await prisma.template.delete({ where: { id: templateId } });
   revalidateDatabase(auth.page.workspaceId);
   return { ok: true };
@@ -996,6 +1062,8 @@ export async function setTemplateRecurrenceAction(
   const auth = await authorizeDatabase(template.databasePageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
   await prisma.template.update({
     where: { id: templateId },
     data: {
@@ -1003,6 +1071,97 @@ export async function setTemplateRecurrenceAction(
       nextRunAt: recurrence ? nextRunFor(recurrence) : null,
     },
   });
+  revalidateDatabase(auth.page.workspaceId);
+  return { ok: true };
+}
+
+/**
+ * R31.15 — mark one template as the database's default (or clear the default).
+ *
+ * `isDefault` is a single slot per database, so setting it clears every other
+ * template in the same transaction: a half-written state where two templates
+ * are default can never be observed. Passing `false` clears the slot without
+ * naming a new holder. A structural edit, so `canEditSchema` gates it.
+ */
+export async function setDefaultTemplateAction(
+  templateId: string,
+  isDefault = true,
+): Promise<Result> {
+  const template = await prisma.template.findUnique({
+    where: { id: templateId },
+    select: { databasePageId: true },
+  });
+  if (!template) return { error: "Template not found." };
+  const auth = await authorizeDatabase(template.databasePageId);
+  if ("error" in auth) return auth;
+  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
+
+  await prisma.$transaction([
+    prisma.template.updateMany({
+      where: { databasePageId: template.databasePageId },
+      data: { isDefault: false },
+    }),
+    ...(isDefault
+      ? [
+          prisma.template.update({
+            where: { id: templateId },
+            data: { isDefault: true },
+          }),
+        ]
+      : []),
+  ]);
+  revalidateDatabase(auth.page.workspaceId);
+  return { ok: true };
+}
+
+/**
+ * Persist a template order: positions are rewritten from the client's visible
+ * order on the same dense 1000-step scale the property/view reorder actions
+ * use. Ids the client does not know are kept and pushed to the end, so a stale
+ * tab can never drop a template someone else added; unknown and duplicate ids
+ * are ignored. A structural edit, so `canEditSchema` gates it.
+ */
+export async function reorderTemplatesAction(
+  databasePageId: string,
+  orderedIds: string[],
+): Promise<Result> {
+  const auth = await authorizeDatabase(databasePageId);
+  if ("error" in auth) return auth;
+  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
+
+  const existing = await prisma.template.findMany({
+    where: { databasePageId },
+    select: { id: true },
+  });
+  const known = new Set(existing.map((template) => template.id));
+  const seen = new Set<string>();
+  const order: string[] = [];
+  for (const id of orderedIds) {
+    if (known.has(id) && !seen.has(id)) {
+      seen.add(id);
+      order.push(id);
+    }
+  }
+  for (const template of existing) {
+    if (!seen.has(template.id)) {
+      seen.add(template.id);
+      order.push(template.id);
+    }
+  }
+  if (order.length === 0) return { ok: true };
+
+  await prisma.$transaction(
+    order.map((id, index) =>
+      prisma.template.update({
+        where: { id },
+        data: { position: (index + 1) * 1000 },
+      }),
+    ),
+  );
   revalidateDatabase(auth.page.workspaceId);
   return { ok: true };
 }
@@ -1015,6 +1174,8 @@ export async function importCsvAction(
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
 
   const matrix = csvToMatrix(csv);
   if (matrix.length < 2) {
