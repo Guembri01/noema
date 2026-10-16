@@ -45,6 +45,7 @@ export default async function TrashPage({ params }: { params: Promise<{ slug: st
           id: page.id,
           title: page.title,
           icon: page.icon,
+          parentId: page.parentId,
           deletedAt: page.deletedAt ? page.deletedAt.toISOString() : null,
         }))}
       />

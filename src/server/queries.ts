@@ -199,7 +199,7 @@ export async function getTrash(workspaceId: string) {
   return prisma.page.findMany({
     where: { workspaceId, deletedAt: { not: null } },
     orderBy: [{ deletedAt: "desc" }, { id: "asc" }],
-    select: { id: true, title: true, icon: true, deletedAt: true },
+    select: { id: true, title: true, icon: true, deletedAt: true, parentId: true },
   });
 }
 
