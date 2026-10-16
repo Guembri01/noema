@@ -112,6 +112,7 @@ import {
   GalleryView,
   CalendarView,
   FormView,
+  type TableFooterCalculation,
 } from "./view-renderers";
 
 export {
@@ -230,6 +231,32 @@ function normalizeChartAggregate(value: unknown): AggregationFn | undefined {
     AGGREGATION_FUNCTIONS.some((fn) => fn.id === value)
     ? (value as AggregationFn)
     : undefined;
+}
+
+/**
+ * A TABLE view's persisted footer calculations (`config.footer`), or `undefined`
+ * when the stored value is absent, empty or unusable. Only entries that name a
+ * property id and a function the aggregator knows survive, so a stale or
+ * hand-edited value can never hide the footer's own fallback: with no usable
+ * pair `TableView` still summarises the view's `aggregationPropertyId` column —
+ * or shows no footer at all — exactly as it rendered before this option existed.
+ */
+function normalizeFooterCalculations(
+  value: unknown,
+): TableFooterCalculation[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const entries: TableFooterCalculation[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const candidate = entry as { propertyId?: unknown; fn?: unknown };
+    const propertyId = candidate.propertyId;
+    const fn = candidate.fn;
+    if (typeof propertyId !== "string" || propertyId === "") continue;
+    if (typeof fn !== "string") continue;
+    if (!AGGREGATION_FUNCTIONS.some((aggregation) => aggregation.id === fn)) continue;
+    entries.push({ propertyId, fn: fn as AggregationFn });
+  }
+  return entries.length > 0 ? entries : undefined;
 }
 
 /**
@@ -603,11 +630,22 @@ export function DatabaseView({
     (activeView?.config as { cardSize?: unknown } | null | undefined)?.cardSize,
   );
 
+  // GALLERY preview + TABLE footer: the persisted per-view choices the settings
+  // popovers write. `previewPropertyId` is part of the parsed `viewConfig`, so it
+  // is read from there; `footer` is not in the general schema, so — like
+  // `laneBy`/`cardSize` above — it is read off the raw view config and
+  // normalised. An absent or unusable value resolves to `undefined`, so
+  // `GalleryView` keeps its automatic cover and `TableView` keeps its
+  // `aggregationPropertyId` fallback — exactly how both rendered before.
+  const galleryPreviewPropertyId = viewConfig.previewPropertyId;
+  const tableFooter = normalizeFooterCalculations(
+    (activeView?.config as { footer?: unknown } | null | undefined)?.footer,
+  );
+
   // CHART + BOARD options: the parsed `viewConfig` carries `chartType` /
-  // `chartAggregate`, but the two id-shaped keys (`previewPropertyId` for the
-  // GALLERY card cover, `aggregationPropertyId` for the BOARD column summary)
-  // are not part of the general schema. Like `laneBy`/`cardSize` above, every
-  // value is read off the raw view config and normalised: an absent or malformed
+  // `chartAggregate`, but the id-shaped `aggregationPropertyId` (the BOARD column
+  // summary) is not part of the general schema. Like `laneBy`/`cardSize` above,
+  // it is read off the raw view config and normalised: an absent or malformed
   // value resolves to `undefined`, so `ChartView` keeps its own bar/count
   // defaults and `BoardView` keeps summarising the first NUMBER column — exactly
   // how the view rendered before these options existed.
@@ -1355,9 +1393,11 @@ export function DatabaseView({
             </span>
           )}
           {/* R89.24 — database lock. Read-only for now: the engine's canonical
-              summary, shown while the structure is frozen. The interactive
-              toggle needs a schema-lock server action (follow-up). */}
-          {schemaLocked && (
+              summary, shown while the structure is frozen or while individual
+              properties are pinned by the per-property lock (`describeLock`
+              covers both). The interactive toggle needs a schema-lock server
+              action (follow-up). */}
+          {(schemaLocked || (lockedPropertyIds?.length ?? 0) > 0) && (
             <span
               className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted"
               title={describeLock(lockState)}
@@ -1668,6 +1708,7 @@ export function DatabaseView({
           valueFor={valueFor}
           computedFor={computedFor}
           cardSize={galleryCardSize}
+          previewPropertyId={galleryPreviewPropertyId}
         />
       ) : activeView.type === "CALENDAR" ? (
         <CalendarView
@@ -1749,6 +1790,7 @@ export function DatabaseView({
           rowColorRules={rowColorRules}
           onRenameProperty={renameProperty}
           onDuplicateProperty={duplicateProperty}
+          footer={tableFooter}
         />
       ) : (
         <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted">
