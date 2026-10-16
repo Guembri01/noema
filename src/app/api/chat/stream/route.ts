@@ -6,8 +6,33 @@ import { prisma } from "@/lib/db";
 import { resolveAiConfig, chatCompleteStream } from "@/lib/ai-provider";
 import { buildChatRequest } from "@/lib/chat-runtime";
 import { linkifyReferences } from "@/lib/chat-context";
+import {
+  planChatAction,
+  proposalBody,
+  proposalLabel,
+  type ChatActionProposal,
+} from "@/lib/chat-actions";
+import { executeChatActionAction } from "@/server/actions/chat";
 
 export const runtime = "nodejs";
+
+const STREAM_HEADERS = {
+  "content-type": "text/plain; charset=utf-8",
+  "cache-control": "no-store",
+  "x-accel-buffering": "no",
+} as const;
+
+/** A one-shot response that streams a fixed, deterministic string. */
+function textStream(body: string): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(body));
+      controller.close();
+    },
+  });
+  return new Response(stream, { headers: STREAM_HEADERS });
+}
 
 /**
  * POST /api/chat/stream — the same grounded answer as `postChatMessageAction`,
@@ -18,6 +43,12 @@ export const runtime = "nodejs";
  * connection leaves no half-written row.
  *
  * Body: `{ threadId, body }`
+ *
+ * The chat action layer runs before the model. An explicit "create / update /
+ * move / delete / archive a ticket" or "create a note" request never reaches the
+ * model: it becomes a deterministic proposal the UI renders as a confirm
+ * button. Body `{ threadId, confirm, proposalMessageId? }` applies a confirmed
+ * proposal through the real server actions (the only path that changes data).
  */
 export async function POST(request: Request) {
   const limited = rateLimit(request, "chat-stream", 20, 60_000);
@@ -26,11 +57,27 @@ export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  let payload: { threadId?: string; body?: string };
+  let payload: {
+    threadId?: string;
+    body?: string;
+    confirm?: ChatActionProposal;
+    proposalMessageId?: string | null;
+  };
   try {
     payload = (await request.json()) as typeof payload;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  // --- Confirmation: apply a previously proposed action ---------------------
+  if (payload.confirm && payload.threadId) {
+    const result = await executeChatActionAction({
+      threadId: payload.threadId,
+      action: payload.confirm,
+      proposalMessageId: payload.proposalMessageId ?? null,
+    });
+    if ("error" in result) return NextResponse.json(result, { status: 400 });
+    return NextResponse.json(result);
   }
 
   const message = (payload.body ?? "").trim().slice(0, 4000);
@@ -47,11 +94,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "You do not have permission to post here." }, { status: 403 });
   }
 
-  const config = await resolveAiConfig(thread.workspaceId);
-  if (!config) {
-    return NextResponse.json({ error: "AI is not configured for this workspace." }, { status: 503 });
-  }
-
   // Persist the question first (and name the thread on its first message).
   await prisma.chatMessage.create({
     data: { threadId: thread.id, userId: user.id, role: "user", body: message },
@@ -64,6 +106,32 @@ export async function POST(request: Request) {
         title: message.replace(/\s+/g, " ").slice(0, 60) || thread.title,
       },
     });
+  }
+
+  // --- Chat actions: deterministic, no model, no blind execution ------------
+  const plan = await planChatAction(thread.workspaceId, message);
+  if (plan) {
+    const body = plan.status === "clarify" ? plan.message : proposalBody(plan.proposal);
+    const meta =
+      plan.status === "clarify"
+        ? { activity: ["Asked a clarifying question"] }
+        : {
+            proposal: plan.proposal,
+            activity: [`Prepared: ${proposalLabel(plan.proposal.kind)}`],
+            intents: [],
+          };
+    await prisma.chatMessage
+      .create({
+        data: { threadId: thread.id, userId: null, role: "assistant", body, meta },
+      })
+      .catch(() => undefined);
+    return textStream(body);
+  }
+
+  // --- Otherwise answer from the workspace with the configured model --------
+  const config = await resolveAiConfig(thread.workspaceId);
+  if (!config) {
+    return NextResponse.json({ error: "AI is not configured for this workspace." }, { status: 503 });
   }
 
   const chatRequest = await buildChatRequest({
@@ -121,11 +189,5 @@ export async function POST(request: Request) {
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      "content-type": "text/plain; charset=utf-8",
-      "cache-control": "no-store",
-      "x-accel-buffering": "no",
-    },
-  });
+  return new Response(stream, { headers: STREAM_HEADERS });
 }

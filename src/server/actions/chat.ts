@@ -9,6 +9,23 @@ import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { linkifyReferences } from "@/lib/chat-context";
 import { buildChatRequest } from "@/lib/chat-runtime";
 import { chatComplete, resolveAiConfig } from "@/lib/ai-provider";
+import {
+  planChatAction,
+  proposalBody,
+  proposalLabel,
+  resolveTicketRef,
+  statusLabel,
+  type ChatActionPlan,
+  type ChatActionProposal,
+} from "@/lib/chat-actions";
+import {
+  archiveTicketAction,
+  createTicketAction,
+  moveTicketAction,
+  toggleTicketLabelAction,
+  updateTicketAction,
+} from "@/server/actions/tickets";
+import { createPageAction } from "@/server/actions/pages";
 
 export type ChatResult<T = unknown> = ({ ok: true } & T) | { error: string };
 
@@ -148,10 +165,21 @@ export async function discussPageAction(
   // Every conversation is an AI conversation: answer from the workspace data the
   // question needs (notes, members, projects/milestones, tasks). The `/ask`
   // prefix stays supported for muscle memory.
+  const question = message.replace(new RegExp(`^\\${CHAT_ASK_PREFIX}\\s*`, "i"), "").trim();
+
+  // An explicit request to change data becomes a proposal the UI confirms —
+  // the model is never asked to perform (or claim) a mutation.
+  const plan = await planChatAction(thread.workspaceId, question);
+  if (plan) {
+    await persistChatActionPlan(threadId, plan);
+    revalidatePath("/w", "layout");
+    return { ok: true, id: created.id, title, answered: true };
+  }
+
   const answered = await replyAsAssistant(threadId, {
     workspaceId: thread.workspaceId,
     pageId: thread.pageId,
-    question: message.replace(new RegExp(`^\\${CHAT_ASK_PREFIX}\\s*`, "i"), "").trim(),
+    question,
   });
 
   revalidatePath("/w", "layout");
@@ -360,4 +388,315 @@ export async function deleteChatThreadAction(threadId: string): Promise<ChatResu
   await prisma.chatThread.delete({ where: { id: threadId } });
   revalidatePath("/w", "layout");
   return { ok: true };
+}
+
+/* -------------------------------------------------------------------------- *
+ * Chat actions — deterministic propose/confirm, then execute through the real
+ * ticket/page actions (same permission checks, same activity trail).
+ * -------------------------------------------------------------------------- */
+
+/** Store the deterministic assistant turn for a parsed action plan. */
+async function persistChatActionPlan(threadId: string, plan: ChatActionPlan): Promise<void> {
+  if (plan.status === "clarify") {
+    await prisma.chatMessage.create({
+      data: {
+        threadId,
+        userId: null,
+        role: "assistant",
+        body: plan.message,
+        meta: { activity: ["Asked a clarifying question"] },
+      },
+    });
+    return;
+  }
+  const { proposal } = plan;
+  await prisma.chatMessage.create({
+    data: {
+      threadId,
+      userId: null,
+      role: "assistant",
+      body: proposalBody(proposal),
+      meta: {
+        proposal,
+        activity: [`Prepared: ${proposalLabel(proposal.kind)}`],
+        intents: [],
+      },
+    },
+  });
+}
+
+/** Resolve (and workspace-check) the ticket an action targets. */
+async function resolveActionTicket(
+  workspaceId: string,
+  args: { ticketId?: string; ticketKey?: string; ticketRef?: string },
+): Promise<{ ok: true; id: string; key: string } | { ok: false; error: string }> {
+  if (args.ticketId) {
+    const ticket = await prisma.ticket.findUnique({
+      where: { id: args.ticketId },
+      select: { id: true, key: true, workspaceId: true },
+    });
+    if (!ticket || ticket.workspaceId !== workspaceId) {
+      return { ok: false, error: "That ticket is not in this workspace." };
+    }
+    return { ok: true, id: ticket.id, key: ticket.key };
+  }
+  if (!args.ticketRef) return { ok: false, error: "That action is missing its ticket." };
+  const resolved = await resolveTicketRef(workspaceId, args.ticketRef);
+  if (!resolved.ok) {
+    return { ok: false, error: `I couldn't find a ticket matching "${args.ticketRef}".` };
+  }
+  return { ok: true, id: resolved.ticket.id, key: resolved.ticket.key };
+}
+
+/** A workspace member by name or email ("me" is the acting user). */
+async function resolveAssigneeId(
+  workspaceId: string,
+  name: string,
+  actorId: string,
+): Promise<string | null> {
+  const trimmed = name.trim();
+  if (/^(me|myself)$/i.test(trimmed)) return actorId;
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: {
+      owner: { select: { id: true, name: true, email: true } },
+      members: { select: { user: { select: { id: true, name: true, email: true } } } },
+    },
+  });
+  if (!workspace) return null;
+  const people = [workspace.owner, ...workspace.members.map((member) => member.user)];
+  const needle = trimmed.toLowerCase();
+  const exact = people.find(
+    (person) => person.name.toLowerCase() === needle || person.email.toLowerCase() === needle,
+  );
+  if (exact) return exact.id;
+  const partial = people.filter((person) => person.name.toLowerCase().includes(needle));
+  return partial.length === 1 ? partial[0].id : null;
+}
+
+/** A project by name within the workspace (exact, then unique partial). */
+async function resolveProjectId(workspaceId: string, name: string): Promise<string | null> {
+  const trimmed = name.trim();
+  const exact = await prisma.project.findFirst({
+    where: { workspaceId, name: { equals: trimmed, mode: "insensitive" } },
+    select: { id: true },
+  });
+  if (exact) return exact.id;
+  const partial = await prisma.project.findMany({
+    where: { workspaceId, name: { contains: trimmed, mode: "insensitive" } },
+    take: 5,
+    select: { id: true },
+  });
+  return partial.length === 1 ? partial[0].id : null;
+}
+
+/** Existing workspace labels matching the given names (unknown ones are skipped). */
+async function resolveLabelIds(workspaceId: string, names: string[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (const name of names) {
+    const label = await prisma.label.findFirst({
+      where: { workspaceId, name: { equals: name.trim(), mode: "insensitive" } },
+      select: { id: true },
+    });
+    if (label) ids.push(label.id);
+  }
+  return ids;
+}
+
+/**
+ * Apply a confirmed chat action. This is the ONLY path that changes data from
+ * the chat: it re-checks workspace permission, resolves names to ids, and
+ * delegates to the existing ticket/page server actions (so the same guards and
+ * the same activity trail apply). The assistant's confirmation is appended to
+ * the thread and the proposal turn is marked applied.
+ */
+export async function executeChatActionAction(input: {
+  threadId: string;
+  action: ChatActionProposal;
+  proposalMessageId?: string | null;
+}): Promise<ChatResult<{ message: string }>> {
+  const user = await requireUser();
+  const thread = await prisma.chatThread.findUnique({
+    where: { id: input.threadId },
+    select: { id: true, workspaceId: true },
+  });
+  if (!thread) return { error: "Discussion not found." };
+  const access = await getWorkspaceAccess(user.id, thread.workspaceId);
+  if (!access || !canEditContent(access.role)) {
+    return { error: "You do not have permission to change this workspace." };
+  }
+  const workspaceId = thread.workspaceId;
+  const { action } = input;
+  if (!action || !action.kind) return { error: "That action is no longer valid." };
+
+  let message: string;
+  let activity: string;
+  try {
+    switch (action.kind) {
+      case "createTicket": {
+        const title = (action.args.title ?? "").trim();
+        if (!title) return { error: "Give the ticket a title." };
+        const payload: Parameters<typeof createTicketAction>[0] = { workspaceId, title };
+        if (action.args.status) payload.status = action.args.status;
+        if (action.args.priority) payload.priority = action.args.priority;
+        if (action.args.estimate !== undefined) payload.estimate = action.args.estimate;
+        if (action.args.estimateUnit) payload.estimateUnit = action.args.estimateUnit;
+        if (action.args.dueDate) payload.dueDate = action.args.dueDate;
+        if (action.args.assigneeName) {
+          const assigneeId = await resolveAssigneeId(workspaceId, action.args.assigneeName, user.id);
+          if (!assigneeId) {
+            return { error: `I couldn't find a member matching "${action.args.assigneeName}".` };
+          }
+          payload.assigneeId = assigneeId;
+        }
+        if (action.args.projectName) {
+          const projectId = await resolveProjectId(workspaceId, action.args.projectName);
+          if (!projectId) {
+            return { error: `I couldn't find a project matching "${action.args.projectName}".` };
+          }
+          payload.projectId = projectId;
+        }
+        if (action.args.labels && action.args.labels.length > 0) {
+          payload.labelIds = await resolveLabelIds(workspaceId, action.args.labels);
+        }
+        const created = await createTicketAction(payload);
+        if ("error" in created) return { error: created.error };
+        message = `Created **${title}** — ${created.key}.`;
+        activity = `Created ${created.key}`;
+        break;
+      }
+      case "createNote": {
+        const title = (action.args.title ?? "").trim();
+        if (!title) return { error: "Give the note a title." };
+        const created = await createPageAction({ workspaceId, title });
+        if ("error" in created) return { error: created.error };
+        message = `Created note **${title}**.`;
+        activity = `Created note ${title}`;
+        break;
+      }
+      case "updateTicket": {
+        const ticket = await resolveActionTicket(workspaceId, action.args);
+        if (!ticket.ok) return { error: ticket.error };
+        const changes = action.args.changes ?? {};
+        const payload: Parameters<typeof updateTicketAction>[0] = { ticketId: ticket.id };
+        if (changes.status) payload.status = changes.status;
+        if (changes.priority) payload.priority = changes.priority;
+        if (changes.estimate !== undefined) payload.estimate = changes.estimate;
+        if (changes.estimateUnit) payload.estimateUnit = changes.estimateUnit;
+        if (changes.dueDate) payload.dueDate = changes.dueDate;
+        if (changes.assigneeName) {
+          const assigneeId = await resolveAssigneeId(workspaceId, changes.assigneeName, user.id);
+          if (!assigneeId) {
+            return { error: `I couldn't find a member matching "${changes.assigneeName}".` };
+          }
+          payload.assigneeId = assigneeId;
+        }
+        if (changes.projectName) {
+          const projectId = await resolveProjectId(workspaceId, changes.projectName);
+          if (!projectId) {
+            return { error: `I couldn't find a project matching "${changes.projectName}".` };
+          }
+          payload.projectId = projectId;
+        }
+        const updated = await updateTicketAction(payload);
+        if ("error" in updated) return { error: updated.error };
+        if (changes.labels && changes.labels.length > 0) {
+          const labelIds = await resolveLabelIds(workspaceId, changes.labels);
+          const attached = await prisma.ticketLabel.findMany({
+            where: { ticketId: ticket.id },
+            select: { labelId: true },
+          });
+          const present = new Set(attached.map((row) => row.labelId));
+          for (const labelId of labelIds) {
+            if (present.has(labelId)) continue;
+            const toggled = await toggleTicketLabelAction(ticket.id, labelId);
+            if ("error" in toggled) return { error: toggled.error };
+          }
+        }
+        message = `Updated **${ticket.key}**.`;
+        activity = `Updated ${ticket.key}`;
+        break;
+      }
+      case "moveTicket": {
+        const ticket = await resolveActionTicket(workspaceId, action.args);
+        if (!ticket.ok) return { error: ticket.error };
+        const status = action.args.status ?? "";
+        const moved = await moveTicketAction({ ticketId: ticket.id, status });
+        if ("error" in moved) return { error: moved.error };
+        message = `Moved **${ticket.key}** to ${statusLabel(status)}.`;
+        activity = `Moved ${ticket.key}`;
+        break;
+      }
+      case "archiveTicket": {
+        const ticket = await resolveActionTicket(workspaceId, action.args);
+        if (!ticket.ok) return { error: ticket.error };
+        const archived = await archiveTicketAction(ticket.id, true);
+        if ("error" in archived) return { error: archived.error };
+        message = `Archived **${ticket.key}**.`;
+        activity = `Archived ${ticket.key}`;
+        break;
+      }
+      case "deleteTicket": {
+        const ticket = await resolveActionTicket(workspaceId, action.args);
+        if (!ticket.ok) return { error: ticket.error };
+        const row = await prisma.ticket.findUnique({
+          where: { id: ticket.id },
+          select: { title: true },
+        });
+        await prisma.ticket.delete({ where: { id: ticket.id } });
+        // The ticket's own activity cascades away, so record the deletion on the
+        // workspace trail instead.
+        await prisma.activity
+          .create({
+            data: {
+              workspaceId,
+              actorId: user.id,
+              action: "ticket.deleted",
+              targetType: "ticket",
+              targetId: ticket.id,
+              meta: { key: ticket.key, title: row?.title ?? null },
+            },
+          })
+          .catch(() => undefined);
+        message = `Deleted **${ticket.key}**${row?.title ? ` — ${row.title}` : ""}.`;
+        activity = `Deleted ${ticket.key}`;
+        break;
+      }
+      default:
+        return { error: "That action is not supported." };
+    }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "The action could not be applied." };
+  }
+
+  await prisma.chatMessage.create({
+    data: {
+      threadId: thread.id,
+      userId: null,
+      role: "assistant",
+      body: message,
+      meta: { activity: [activity], appliedAction: action.kind },
+    },
+  });
+
+  // Hide the confirm button: the proposal turn is now applied.
+  if (input.proposalMessageId) {
+    const proposalMessage = await prisma.chatMessage.findUnique({
+      where: { id: input.proposalMessageId },
+      select: { threadId: true, meta: true },
+    });
+    if (proposalMessage && proposalMessage.threadId === thread.id) {
+      const meta =
+        proposalMessage.meta && typeof proposalMessage.meta === "object" && !Array.isArray(proposalMessage.meta)
+          ? (proposalMessage.meta as Record<string, unknown>)
+          : {};
+      await prisma.chatMessage.update({
+        where: { id: input.proposalMessageId },
+        data: { meta: { ...meta, applied: true } },
+      });
+    }
+  }
+
+  revalidatePath("/w", "layout");
+  return { ok: true, message };
 }

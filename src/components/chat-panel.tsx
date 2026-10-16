@@ -21,8 +21,10 @@ import { toast } from "sonner";
 import {
   createChatThreadAction,
   deleteChatThreadAction,
+  executeChatActionAction,
   postChatMessageAction,
 } from "@/server/actions/chat";
+import type { ChatActionProposal } from "@/lib/chat-actions";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -59,6 +61,11 @@ export type ChatMessageMeta = {
   provider?: string;
   savedPageId?: string;
   savedPageTitle?: string;
+  /** A pending chat action the user can confirm (rendered as a button). */
+  proposal?: ChatActionProposal;
+  /** Set once a proposal has been applied — the confirm button disappears. */
+  applied?: boolean;
+  appliedAction?: string;
 };
 
 export type PanelMessage = {
@@ -84,6 +91,19 @@ const QUICK_PROMPTS = [
   { label: "Who is on the team?", prompt: "Who are the members of this workspace and what are their roles?" },
   { label: "What should I do next?", prompt: "Based on my notes, projects and open tasks, what should I focus on next?" },
 ];
+
+/**
+ * Button copy for a proposed chat action. Kept local (a plain string map) so the
+ * client bundle never imports `@/lib/chat-actions`, which pulls in Prisma.
+ */
+const PROPOSAL_LABELS: Record<ChatActionProposal["kind"], string> = {
+  createTicket: "Create ticket",
+  updateTicket: "Update ticket",
+  moveTicket: "Move ticket",
+  deleteTicket: "Delete ticket",
+  archiveTicket: "Archive ticket",
+  createNote: "Create note",
+};
 
 /** Default token budget for the conversation context attached to a question. */
 const DEFAULT_CONTEXT_BUDGET = 1024;
@@ -405,6 +425,32 @@ export function ChatPanel({
     });
   };
 
+  /**
+   * Apply a proposed chat action. This is the ONLY way the assistant changes
+   * workspace data; it runs the same server action the board uses, which
+   * re-checks permission server-side.
+   */
+  const confirmAction = (messageId: string, proposal: ChatActionProposal) => {
+    const threadId = active?.id;
+    if (!threadId) return;
+    startTransition(async () => {
+      const outcome = await safeAction(
+        () => executeChatActionAction({ threadId, action: proposal, proposalMessageId: messageId }),
+        { locale },
+      );
+      if (!outcome.ok) {
+        toast.error(outcome.error);
+        return;
+      }
+      if ("error" in outcome.value) {
+        toast.error(outcome.value.error);
+        return;
+      }
+      toast.success(outcome.value.message || "Done");
+      router.refresh();
+    });
+  };
+
   return (
     <aside
       aria-label={t(locale, "chatTitle")}
@@ -611,6 +657,22 @@ export function ChatPanel({
                       />
                     </ContextMenuContent>
                   </ContextMenu>
+                  {meta && meta.proposal && !meta.applied && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border bg-surface/40 px-3 py-2">
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => confirmAction(message.id, meta.proposal as ChatActionProposal)}
+                        className="flex items-center gap-1.5 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-accent-fg disabled:opacity-40"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                        {PROPOSAL_LABELS[meta.proposal.kind] ?? "Confirm"}
+                      </button>
+                      <span className="text-[11px] text-muted">
+                        Confirm to apply — this changes workspace data.
+                      </span>
+                    </div>
+                  )}
                   <div className="mt-1 flex items-center gap-3 text-[11px] text-muted opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
                     <span>{time(message.createdAt)}</span>
                     <button
