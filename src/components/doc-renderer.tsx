@@ -103,8 +103,8 @@ function renderInline(nodes: PMNode[] = []): ReactNode {
       // LaTeX preview: the authored TeX is shown in place (mono-styled by
       // `.noema-math-inline`) and mirrored onto `data-latex`/`aria-label` so the
       // source survives round-trips and assistive tech can read it. Full KaTeX
-      // rasterisation here would need the dangerouslySetInnerHTML allow-list
-      // (see scripts/check-coherence.mjs) — tracked as a follow-up.
+      // rasterisation would need a raw-HTML injection sink, which this read path
+      // deliberately does not have — tracked as a follow-up.
       const latex = String(node.attrs?.latex ?? "");
       return (
         <span
