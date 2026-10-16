@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { Prisma, WorkspaceRole } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { workspaceSchema } from "@/lib/validation";
@@ -12,13 +12,15 @@ import {
   canPerformWorkspaceAction,
   getWorkspaceAccess,
 } from "@/lib/permissions";
+import {
+  roleChangeMessage,
+  toPersistedRole,
+  validatePersistedRoleChange,
+} from "@/lib/workspace-role-map";
 
 export type WorkspaceResult<T = unknown> =
   | ({ ok: true } & T)
   | { error: string };
-
-/** Roles an admin/owner can assign. Ownership moves only via `transferOwnershipAction`. */
-const ASSIGNABLE_ROLES: WorkspaceRole[] = ["ADMIN", "MEMBER", "GUEST"];
 
 /**
  * Create a workspace with a starter page.
@@ -132,7 +134,16 @@ export async function deleteWorkspaceAction(
   return { ok: true };
 }
 
-/** Change a member's role. Ownership moves only through `transferOwnershipAction`. */
+/**
+ * Change a member's role. Ownership moves only through `transferOwnershipAction`.
+ *
+ * The decision is made by `@/lib/workspace-roles` via the persisted-enum bridge
+ * in `@/lib/workspace-role-map`: `validateRoleChange` gets the full roster so
+ * the last-owner check reads real counts, and an admin may only grant a role
+ * strictly below their own. The two explicit guards below are kept because the
+ * engine does not express them: the owner's row is never re-roled here (that is
+ * what a transfer is for), and only the owner may re-role another admin.
+ */
 export async function setMemberRoleAction(
   workspaceId: string,
   userId: string,
@@ -143,20 +154,26 @@ export async function setMemberRoleAction(
   if (!access || !canPerformWorkspaceAction(access.role, "manageMembers")) {
     return { error: "You do not have permission to change roles." };
   }
-  if (!ASSIGNABLE_ROLES.includes(role as WorkspaceRole)) {
+  const nextRole = toPersistedRole(role);
+  if (!nextRole) {
     return { error: "That role cannot be assigned here." };
   }
 
-  const target = await prisma.workspaceMember.findFirst({
-    where: { workspaceId, userId },
-    select: { id: true, role: true, user: { select: { name: true } } },
-  });
+  const [target, workspace, roster] = await Promise.all([
+    prisma.workspaceMember.findFirst({
+      where: { workspaceId, userId },
+      select: { id: true, role: true, user: { select: { name: true } } },
+    }),
+    prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { ownerId: true },
+    }),
+    prisma.workspaceMember.findMany({
+      where: { workspaceId },
+      select: { role: true },
+    }),
+  ]);
   if (!target) return { error: "That person is not a member of this workspace." };
-
-  const workspace = await prisma.workspace.findUnique({
-    where: { id: workspaceId },
-    select: { ownerId: true, name: true },
-  });
   if (!workspace) return { error: "Workspace not found." };
   if (target.role === "OWNER" || userId === workspace.ownerId) {
     return { error: "Transfer ownership before changing the owner's role." };
@@ -165,11 +182,20 @@ export async function setMemberRoleAction(
     return { error: "Only the owner can change another admin." };
   }
 
+  const validation = validatePersistedRoleChange({
+    actorRole: access.role,
+    targetRole: target.role,
+    newRole: nextRole,
+    members: roster,
+    self: userId === user.id,
+  });
+  if (!validation.ok) return { error: roleChangeMessage(validation.errors) };
+
   await prisma.workspaceMember.update({
     where: { id: target.id },
-    data: { role: role as WorkspaceRole },
+    data: { role: nextRole },
   });
-  await logActivity({ workspaceId, actorId: user.id, action: "member.role_changed", targetType: "member", targetId: userId, meta: { role, name: target.user.name } });
+  await logActivity({ workspaceId, actorId: user.id, action: "member.role_changed", targetType: "member", targetId: userId, meta: { role: nextRole, name: target.user.name } });
   revalidatePath("/w", "layout");
   return { ok: true };
 }

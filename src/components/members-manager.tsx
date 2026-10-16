@@ -19,6 +19,11 @@ import {
   suggestDomainFixes,
 } from "@/lib/email-validation";
 import { t } from "@/lib/i18n";
+import {
+  membersCapabilities,
+  roleChangeMessage,
+  validatePersistedRoleChange,
+} from "@/lib/workspace-role-map";
 
 export type MemberRow = {
   userId: string;
@@ -68,8 +73,12 @@ export function MembersManager({
   const [inviteRole, setInviteRole] = useState<"GUEST" | "MEMBER" | "ADMIN">("MEMBER");
   const [inviteTouched, setInviteTouched] = useState(false);
 
-  const isOwner = currentUserRole === "OWNER" || currentUserId === ownerId;
-  const canManage = isOwner || currentUserRole === "ADMIN";
+  // Gating comes from the workspace-role engine (through the persisted-enum
+  // bridge), never from hand-rolled role comparisons, so the UI cannot drift
+  // from the decision table the server re-checks.
+  const caps = membersCapabilities(currentUserRole);
+  const isOwner = currentUserId === ownerId || caps.persistedRole === "OWNER";
+  const canManage = caps.canManageMembers;
   const refresh = () => router.refresh();
 
   // Live validation of the invite address via `@/lib/email-validation`: the same
@@ -151,16 +160,30 @@ export function MembersManager({
                   value={member.role}
                   aria-label={`Role for ${member.name}`}
                   disabled={pending}
-                  onChange={(event) =>
-                    run(
-                      () =>
-                        setMemberRoleAction(workspaceId, member.userId, event.target.value),
-                      { success: `${member.name} is now ${t(locale, ROLE_KEYS[event.target.value] ?? "member")}`, onSuccess: refresh },
-                    )
-                  }
+                  onChange={(event) => {
+                    const nextRole = event.target.value;
+                    // Validate against the engine before touching the server, so a
+                    // refused change never leaves the select showing a role it will
+                    // not take.
+                    const validation = validatePersistedRoleChange({
+                      actorRole: currentUserRole,
+                      targetRole: member.role,
+                      newRole: nextRole,
+                      members: members.map((row) => ({ role: row.role })),
+                      self: isSelf,
+                    });
+                    if (!validation.ok) {
+                      toast.error(roleChangeMessage(validation.errors));
+                      return;
+                    }
+                    run(() => setMemberRoleAction(workspaceId, member.userId, nextRole), {
+                      success: `${member.name} is now ${t(locale, ROLE_KEYS[nextRole] ?? "member")}`,
+                      onSuccess: refresh,
+                    });
+                  }}
                   className="h-8 rounded border border-border bg-bg px-1.5 text-xs disabled:opacity-50"
                 >
-                  {["ADMIN", "MEMBER", "GUEST"].map((role) => (
+                  {caps.assignable.map((role) => (
                     <option key={role} value={role}>
                       {t(locale, ROLE_KEYS[role] ?? "member")}
                     </option>
@@ -173,7 +196,7 @@ export function MembersManager({
               )}
 
               {/* Ownership only moves to a member or admin — a guest can never own. */}
-              {isOwner &&
+              {caps.canTransferOwnership &&
                 !isSelf &&
                 !isTargetOwner &&
                 member.role !== "GUEST" &&
@@ -271,9 +294,15 @@ export function MembersManager({
             onChange={(event) => setInviteRole(event.target.value as typeof inviteRole)}
             className="h-8 rounded border border-border bg-bg px-1.5 text-xs"
           >
-            <option value="MEMBER">{t(locale, "inviteRoleMember")}</option>
-            <option value="ADMIN">{t(locale, "inviteRoleAdmin")}</option>
-            <option value="GUEST">{t(locale, "inviteRoleGuest")}</option>
+            {caps.assignable.includes("ADMIN") && (
+              <option value="ADMIN">{t(locale, "inviteRoleAdmin")}</option>
+            )}
+            {caps.assignable.includes("MEMBER") && (
+              <option value="MEMBER">{t(locale, "inviteRoleMember")}</option>
+            )}
+            {caps.assignable.includes("GUEST") && (
+              <option value="GUEST">{t(locale, "inviteRoleGuest")}</option>
+            )}
           </select>
           <button
             type="submit"
