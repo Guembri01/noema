@@ -11,9 +11,13 @@
 import { prisma } from "./db";
 import { decryptSecret } from "./secrets";
 import { providerDefaultBaseUrl, normalizeBaseUrl } from "./ai-providers";
+import { checkBudget, estimateTokens, recordUsage, type BudgetRecord } from "./ai-cost";
 
 export const AI_NOT_CONFIGURED =
   "AI is not configured. Add a provider in workspace settings (AI) or set AI_API_KEY / AI_BASE_URL / AI_MODEL.";
+
+export const AI_BUDGET_EXCEEDED =
+  "The workspace AI token budget is exhausted for this period. Raise AI_BUDGET_TOKENS or wait for the next period.";
 
 export type AiRuntimeConfig = {
   provider: string;
@@ -21,7 +25,68 @@ export type AiRuntimeConfig = {
   model: string;
   apiKey: string;
   source: "workspace" | "env";
+  /** Workspace the call is billed to; absent for the env/global defaults. */
+  workspaceId?: string;
 };
+
+/**
+ * Monthly token ceiling for every AI call, read from `AI_BUDGET_TOKENS`.
+ * A missing, non-numeric or non-positive value disables enforcement (the
+ * default), so self-hosters who never set it keep unmetered behaviour. The
+ * budget engine (`./ai-cost`) is the gate; this only supplies the limit.
+ */
+export function aiBudgetLimitTokens(): number {
+  const raw = Number(process.env.AI_BUDGET_TOKENS);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+}
+
+/** The calendar-month period key (`YYYY-MM`, UTC) a budget belongs to. */
+export function budgetPeriod(now: Date = new Date()): string {
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * In-process usage ledger keyed by workspace + provider + model. Token usage
+ * accrues here for the life of the process; `resetAiBudgetLedger` clears it
+ * (tests invoke it between cases). Durable, cross-instance accounting is a
+ * follow-up once a budget table exists — the *enforcement* path below is the
+ * real one either way.
+ */
+const usageLedger = new Map<string, BudgetRecord>();
+
+function budgetKey(config: AiRuntimeConfig): string {
+  return `${config.workspaceId ?? "env"}:${config.provider}:${config.model}`;
+}
+
+/** The current budget record for a config, or `null` when enforcement is off. */
+function loadBudget(config: AiRuntimeConfig): BudgetRecord | null {
+  const limitTokens = aiBudgetLimitTokens();
+  if (limitTokens <= 0) return null;
+  const key = budgetKey(config);
+  const existing = usageLedger.get(key);
+  if (existing && existing.limitTokens === limitTokens) return existing;
+  return {
+    workspaceId: config.workspaceId ?? "env",
+    period: budgetPeriod(),
+    limitTokens,
+    usedInput: 0,
+    usedOutput: 0,
+    spendUsd: 0,
+  };
+}
+
+/** Forget the in-process usage ledger (tests and maintenance). */
+export function resetAiBudgetLedger(): void {
+  usageLedger.clear();
+}
+
+/** Estimated prompt tokens for a chat request (spec `chars / 4` heuristic). */
+function promptTokens(input: { system: string; user?: string; context?: string }): number {
+  const text = [input.system, input.context, input.user]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join("\n");
+  return estimateTokens(text);
+}
 
 export type ChatMessage = { role: "system" | "user"; content: string };
 
@@ -64,6 +129,7 @@ export async function resolveAiConfig(
           model: stored.model,
           apiKey,
           source: "workspace",
+          workspaceId,
         };
       }
     }
@@ -87,6 +153,22 @@ export async function chatComplete(
     messages.push({ role: "user", content: `Context:\n${input.context}` });
   }
   if (input.user) messages.push({ role: "user", content: input.user });
+
+  // Cost control: refuse the call up-front when it would cross the workspace's
+  // token ceiling. `checkBudget` is inclusive, so a request landing exactly on
+  // the limit is still allowed. Enforcement is off unless AI_BUDGET_TOKENS is
+  // set, so the default deployment is unaffected.
+  const estimatedPromptTokens = promptTokens(input);
+  const budget = loadBudget(config);
+  if (budget) {
+    const verdict = checkBudget(budget, {
+      estimatedTokens: estimatedPromptTokens + (input.maxTokens ?? 0),
+      model: config.model,
+    });
+    if (!verdict.allowed) {
+      return { ok: false, status: 429, error: AI_BUDGET_EXCEEDED };
+    }
+  }
 
   try {
     const response = await fetch(`${config.baseUrl}/chat/completions`, {
@@ -113,8 +195,25 @@ export async function chatComplete(
     }
     const data = (await response.json()) as {
       choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
-    return { ok: true, text: data.choices?.[0]?.message?.content ?? "" };
+    const text = data.choices?.[0]?.message?.content ?? "";
+
+    // Meter the call against the budget. Providers usually report token usage;
+    // when one does not, fall back to the same `chars / 4` estimate the
+    // pre-flight check used, so limits still hold under real traffic.
+    if (budget) {
+      const recorded = recordUsage(budget, {
+        model: config.model,
+        inputTokens: data.usage?.prompt_tokens ?? estimatedPromptTokens,
+        outputTokens: data.usage?.completion_tokens ?? estimateTokens(text),
+        surface: "chat",
+        period: budgetPeriod(),
+      });
+      usageLedger.set(budgetKey(config), recorded);
+    }
+
+    return { ok: true, text };
   } catch (error) {
     return {
       ok: false,

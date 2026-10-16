@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
 import { CheckCircle2, Gauge, Loader2, Plug, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -11,10 +12,36 @@ import {
   testAiProviderAction,
   type AiProviderSummary,
 } from "@/server/actions/ai-settings";
+import { runAiAutofillAction } from "@/server/actions/ai-autofill";
 import { AI_PROVIDERS, providerDefaultBaseUrl, type ProviderDefinition } from "@/lib/ai-providers";
-import {safeAction } from "@/lib/actions-client";
+import { AI_SKILLS } from "@/lib/ai-skills";
+import { SKILL_CATALOG } from "@/lib/ai-writing";
+import {
+  PROVIDERS,
+  describeProvider,
+  findProvider,
+  isLocal,
+  parseProviderConfig,
+  validateProviderConfig,
+} from "@/lib/local-models";
+import { safeAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
 import { assembleContext, estimateTokens, fitToBudget, truncateToTokens } from "@/lib/ai-context";
+
+/** Self-hosted runtimes a workspace can point at without a cloud key. */
+const LOCAL_PROVIDERS = PROVIDERS.filter((provider) => isLocal(provider));
+
+/**
+ * The full skill catalogue surfaced in settings: the editor's registry
+ * (`./ai-skills`) plus the writing skills (`./ai-writing`) that only exist in
+ * that module — `continue` and `simplify` — so the new ids are discoverable.
+ */
+const SKILLS = [
+  ...AI_SKILLS.map((skill) => ({ id: skill.id, label: skill.label, hint: skill.hint })),
+  ...SKILL_CATALOG.filter(
+    (skill) => !AI_SKILLS.some((editor) => editor.id === skill.id),
+  ).map((skill) => ({ id: skill.id, label: skill.label, hint: skill.hint })),
+];
 
 /** Standing instruction used when previewing an assembled prompt. */
 const CONTEXT_PREVIEW_SYSTEM =
@@ -47,6 +74,8 @@ export function AiSettings({
   locale: string;
 }) {
   const router = useRouter();
+  const params = useParams<{ slug: string }>();
+  const slug = typeof params?.slug === "string" ? params.slug : "";
   const [pending, startTransition] = useTransition();
   const [provider, setProvider] = useState(summary.provider);
   const [baseUrl, setBaseUrl] = useState(summary.baseUrl);
@@ -59,6 +88,12 @@ export function AiSettings({
   const [status, setStatus] = useState<string | null>(null);
   const [contextBudget, setContextBudget] = useState(DEFAULT_CONTEXT_BUDGET);
   const [samplePrompt, setSamplePrompt] = useState(CONTEXT_PREVIEW_SAMPLE);
+  const [localProviderId, setLocalProviderId] = useState(LOCAL_PROVIDERS[0]?.id ?? "ollama");
+  const [localBaseUrl, setLocalBaseUrl] = useState(LOCAL_PROVIDERS[0]?.baseUrl ?? "");
+  const [localModel, setLocalModel] = useState(LOCAL_PROVIDERS[0]?.defaultModel ?? "");
+  const [localApiKey, setLocalApiKey] = useState("");
+  const [autofillPropertyId, setAutofillPropertyId] = useState("");
+  const [autofillRowId, setAutofillRowId] = useState("");
 
   // Preview the sizing layer (`@/lib/ai-context`) for the current sample/budget.
   const contextPreview = useMemo(() => {
@@ -106,6 +141,22 @@ export function AiSettings({
   const definition: ProviderDefinition | undefined = AI_PROVIDERS.find(
     (entry) => entry.id === provider,
   );
+
+  // Local-provider support (`@/lib/local-models`): parse the endpoint into the
+  // canonical config, then validate it (scheme, model, key requirement) so the
+  // form can refuse an unusable endpoint before it is stored.
+  const localDescriptor = findProvider(localProviderId);
+  const localConfig = useMemo(
+    () =>
+      parseProviderConfig({
+        providerId: localProviderId,
+        baseUrl: localBaseUrl,
+        model: localModel,
+        apiKey: localApiKey,
+      }),
+    [localProviderId, localBaseUrl, localModel, localApiKey],
+  );
+  const localValidation = useMemo(() => validateProviderConfig(localConfig), [localConfig]);
 
   // Static catalogue ids for the selected provider, kept alongside any live
   // ids returned by `listAiModelsAction` so refreshing never drops a known model.
@@ -187,6 +238,58 @@ export function AiSettings({
       router.refresh();
       return { ok: true, message: t(locale, "providerRemovedMsg") };
     });
+
+  const pickLocalProvider = (id: string) => {
+    setLocalProviderId(id);
+    const descriptor = findProvider(id);
+    if (descriptor) {
+      setLocalBaseUrl(descriptor.baseUrl);
+      setLocalModel(descriptor.defaultModel);
+    }
+    setStatus(null);
+  };
+
+  // Store a keyless self-hosted endpoint. The existing provider action requires
+  // a key when enabled, so keyless runtimes send the conventional `local`
+  // placeholder that OpenAI-compatible and Ollama servers ignore.
+  const saveLocal = () =>
+    run(t(locale, "aiProviderSaved"), async () => {
+      const result = await saveAiProviderAction({
+        workspaceId,
+        provider: "custom",
+        baseUrl: localBaseUrl,
+        model: localModel,
+        apiKey: localApiKey || "local",
+        enabled: true,
+      });
+      if ("error" in result) return { ok: false, message: result.error };
+      if (!result.ok) return { ok: false, message: t(locale, "somethingWentWrong") };
+      router.refresh();
+      return { ok: true, message: t(locale, "savedWord") };
+    });
+
+  // Run one AI-autofill column for a row (`@/server/actions/ai-autofill`).
+  const runAutofill = () => {
+    if (!autofillPropertyId.trim() || !autofillRowId.trim()) return;
+    startTransition(async () => {
+      const outcome = await safeAction(() =>
+        runAiAutofillAction({
+          workspaceId,
+          rowId: autofillRowId.trim(),
+          propertyId: autofillPropertyId.trim(),
+        }),
+      );
+      const value = outcome.ok ? outcome.value : { ok: false as const, error: outcome.error };
+      if (value.ok) {
+        setStatus(`AI autofill wrote "${value.value}" to ${value.propertyId}.`);
+        toast.success(t(locale, "autofilled"));
+        router.refresh();
+      } else {
+        setStatus(value.error);
+        toast.error(value.error);
+      }
+    });
+  };
 
   return (
     <section className="mt-10">
@@ -407,6 +510,150 @@ export function AiSettings({
         >
           {contextPreview.preview}
         </pre>
+      </div>
+
+      {/* Local model support (`@/lib/local-models`). */}
+      <div className="mt-10 border-t border-border pt-6">
+        <h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted">Local model</h3>
+        <p className="mb-4 text-xs text-muted">
+          Point the workspace at a self-hosted runtime. Requests stay on your infrastructure and a
+          key is usually unnecessary.
+        </p>
+
+        {localDescriptor && (
+          <p className="mb-3 text-xs text-muted">
+            {describeProvider(localDescriptor)} · {isLocal(localDescriptor) ? "local" : "cloud"}
+          </p>
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="text-xs font-medium uppercase tracking-wide text-muted">
+            Runtime
+            <select
+              value={localProviderId}
+              aria-label="Local runtime"
+              onChange={(event) => pickLocalProvider(event.target.value)}
+              className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
+            >
+              {LOCAL_PROVIDERS.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-medium uppercase tracking-wide text-muted">
+            Base URL
+            <input
+              value={localBaseUrl}
+              aria-label="Local base URL"
+              onChange={(event) => setLocalBaseUrl(event.target.value)}
+              className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
+            />
+          </label>
+          <label className="text-xs font-medium uppercase tracking-wide text-muted">
+            Model
+            <input
+              value={localModel}
+              aria-label="Local model"
+              onChange={(event) => setLocalModel(event.target.value)}
+              className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
+            />
+          </label>
+        </div>
+
+        <label className="mt-3 block text-xs font-medium uppercase tracking-wide text-muted">
+          Token (optional)
+          <input
+            type="password"
+            value={localApiKey}
+            aria-label="Local API token"
+            onChange={(event) => setLocalApiKey(event.target.value)}
+            className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
+          />
+        </label>
+
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
+          {localValidation.ok ? (
+            <CheckCircle2 className="h-3.5 w-3.5" />
+          ) : (
+            <TriangleAlert className="h-3.5 w-3.5" />
+          )}
+          {localValidation.ok
+            ? "Endpoint looks valid."
+            : localValidation.errors.map((entry) => entry.message).join(" ")}
+        </p>
+
+        <button
+          type="button"
+          disabled={pending || !localValidation.ok}
+          onClick={saveLocal}
+          className="mt-3 h-9 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
+        >
+          {t(locale, "save")} local provider
+        </button>
+      </div>
+
+      {/* Skills catalogue (`@/lib/ai-skills` + `@/lib/ai-writing`). */}
+      <div className="mt-10 border-t border-border pt-6">
+        <h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted">
+          Writing skills
+        </h3>
+        <p className="mb-3 text-xs text-muted">
+          Run from the editor menus and <code>/api/ai/skills</code>. The writing skills add{" "}
+          <code>continue</code> and <code>simplify</code> to the editor set.
+        </p>
+        <ul className="grid gap-1 text-xs text-muted sm:grid-cols-2">
+          {SKILLS.map((skill) => (
+            <li key={skill.id}>
+              <span className="text-fg">{skill.label}</span> — {skill.hint}{" "}
+              <code className="text-[10px]">{skill.id}</code>
+            </li>
+          ))}
+        </ul>
+        <Link
+          href={`/w/${slug}/settings/prompts`}
+          className="mt-3 inline-block text-xs text-accent hover:underline"
+        >
+          Manage the prompt library →
+        </Link>
+      </div>
+
+      {/* AI autofill (`@/server/actions/ai-autofill`). */}
+      <div className="mt-10 border-t border-border pt-6">
+        <h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted">AI autofill</h3>
+        <p className="mb-3 text-xs text-muted">
+          Run an AI-autofill column for a single row. Paste the column id and the row id to
+          backfill it.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-medium uppercase tracking-wide text-muted">
+            Column id
+            <input
+              value={autofillPropertyId}
+              aria-label="AI autofill column id"
+              onChange={(event) => setAutofillPropertyId(event.target.value)}
+              className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
+            />
+          </label>
+          <label className="text-xs font-medium uppercase tracking-wide text-muted">
+            Row id
+            <input
+              value={autofillRowId}
+              aria-label="AI autofill row id"
+              onChange={(event) => setAutofillRowId(event.target.value)}
+              className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm font-normal normal-case text-fg outline-none focus:border-accent"
+            />
+          </label>
+        </div>
+        <button
+          type="button"
+          disabled={pending || !autofillPropertyId.trim() || !autofillRowId.trim()}
+          onClick={runAutofill}
+          className="mt-3 h-9 rounded border border-border px-3 text-sm hover:bg-surface-2 disabled:opacity-50"
+        >
+          Run autofill
+        </button>
       </div>
     </section>
   );
