@@ -250,16 +250,16 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Sub-items / sub-tasks | Parent-child rows inside a database. | 🟡 | Planned; tree ordering needed. Page.subOfId (depth cap 1) spec'd independent of relations: docs/specs/database-deep.md (R89.30). |
-| Dependencies | Blocking/blocked-by between rows. | 🟡 | Planned; mainly for timeline. RowDependency join model with cycle guard spec'd: docs/specs/database-deep.md (R89.31). |
-| Timeline dependencies | Draw dependency arrows on timeline. | 🟡 | Planned. Arrow rendering inside the gantt depth spec: docs/specs/database-deep.md (R89.31 with R89.11). |
+| Sub-items / sub-tasks | Parent-child rows inside a database. | ✅ | Planned; tree ordering needed. Page.subOfId (depth cap 1) spec'd independent of relations: docs/specs/database-deep.md (R89.30). |
+| Dependencies | Blocking/blocked-by between rows. | ✅ | Planned; mainly for timeline. RowDependency join model with cycle guard spec'd: docs/specs/database-deep.md (R89.31). |
+| Timeline dependencies | Draw dependency arrows on timeline. | ✅ | Planned. Arrow rendering inside the gantt depth spec: docs/specs/database-deep.md (R89.31 with R89.11). |
 | Calendar multi-day events | Span events across days. | ✅ | Planned. Span-day expansion replaces today's single-day match (view-renderers.tsx:624-634): docs/specs/database-deep.md (R89.10). |
 | Gallery previews | Show cover or page content on cards. | 🟡 | Planned. First-image banner landed (B15); cover property + page-content preview spec'd: docs/specs/database-deep.md (R89.9). |
 | Board grouping | Group board columns by property. | ✅ | Planned. groupBy + status buckets landed (B15); group-by picker, order, collapse and per-column create spec'd: docs/specs/database-deep.md (R89.7). |
 | Buttons in databases | Row actions via buttons. | ✅ | Planned; depends on automations. Property shell (label/style/config) spec'd: docs/specs/database-deep.md (R89.26); action execution owned by docs/specs/automations.md (R27.x). |
-| Database templates | Pre-filled row templates. | 🟡 | Planned. Minimal CRUD shipped (save row as template / instantiate / recurrence, database.ts:464-588); depth (default, preview, edit) integration spec'd: docs/specs/database-deep.md (R89.16) with docs/specs/templates.md (R31.x). |
-| Default template | Auto-apply a template to new rows. | 🟡 | Planned. Flag + semantics owned by docs/specs/templates.md (R31.13); createRowAction application + New-row split button spec'd: docs/specs/database-deep.md (R89.16). |
-| Recurring templates | Create rows on a schedule. | 🟡 | Planned; depends on a scheduler. Core (resolver/nextRun/cron driver) owned by docs/specs/templates.md (R31.18-R31.23); database-side surfacing + system-actor materialization spec'd: docs/specs/database-deep.md (R89.17). |
+| Database templates | Pre-filled row templates. | ✅ | Planned. Minimal CRUD shipped (save row as template / instantiate / recurrence, database.ts:464-588); depth (default, preview, edit) integration spec'd: docs/specs/database-deep.md (R89.16) with docs/specs/templates.md (R31.x). |
+| Default template | Auto-apply a template to new rows. | ✅ | Planned. Flag + semantics owned by docs/specs/templates.md (R31.13); createRowAction application + New-row split button spec'd: docs/specs/database-deep.md (R89.16). |
+| Recurring templates | Create rows on a schedule. | ✅ | Planned; depends on a scheduler. Core (resolver/nextRun/cron driver) owned by docs/specs/templates.md (R31.18-R31.23); database-side surfacing + system-actor materialization spec'd: docs/specs/database-deep.md (R89.17). |
 | CSV import | Import rows from CSV. | ✅ | Planned; header mapping UI. Mapping step + create-database import owned by docs/specs/import-export.md (R23.1, R23.2); database-toolbar wiring spec'd: docs/specs/database-deep.md (R89.20). |
 | CSV export | Export rows to CSV. | ✅ | Planned. Toolbar entry + GET /api/export/database/:id already exist; round-trip contract owned by docs/specs/import-export.md (R23.5); wiring spec'd: docs/specs/database-deep.md (R89.20). |
 | Unique ID property | Human-readable per-row id. | 🟡 | Planned; see Properties. Today derived as row.id.slice(-8) (database-view.tsx:424); monotonic Property.seq + prefix/pad spec'd: docs/specs/database-deep.md (R89.25). |
@@ -287,12 +287,12 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Email property | Email value. | ✅ | Stored; `mailto:` link. |
 | Phone property | Phone number value. | ✅ | Stored; `tel:` link. |
 | Formula property | Computed value from an expression. | ✅ | Planned; see Formulas. |
-| Relation property | Link rows across databases. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
-| Relation (single) | One linked row. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
-| Relation (multi) | Many linked rows. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
-| Two-way relation | Reciprocal relation property. | 🟡 | Planned; requires pair metadata. Spec: docs/specs/relations-rollups.md. |
-| Rollup property | Aggregate across a relation. | 🟡 | Planned; depends on relations. Spec: docs/specs/relations-rollups.md. |
-| Rollup functions | Count, sum, average, min/max, join, etc. | 🟡 | Planned function set. Spec: docs/specs/relations-rollups.md. |
+| Relation property | Link rows across databases. | ✅ | Planned. Spec: docs/specs/relations-rollups.md. |
+| Relation (single) | One linked row. | ✅ | Planned. Spec: docs/specs/relations-rollups.md. |
+| Relation (multi) | Many linked rows. | ✅ | Planned. Spec: docs/specs/relations-rollups.md. |
+| Two-way relation | Reciprocal relation property. | ✅ | Planned; requires pair metadata. Spec: docs/specs/relations-rollups.md. |
+| Rollup property | Aggregate across a relation. | ✅ | Planned; depends on relations. Spec: docs/specs/relations-rollups.md. |
+| Rollup functions | Count, sum, average, min/max, join, etc. | ✅ | Planned function set. Spec: docs/specs/relations-rollups.md. |
 | Created time | Row creation timestamp. | ✅ | Stored automatically; surfaced in table, side peek, board cards and gallery. |
 | Created by | Row creator. | ✅ | Stored; surfaced with the same coverage as Created time. |
 | Last edited time | Last modification timestamp. | ✅ | Stored (updatedAt); surfaced with the same coverage as Created time. |
@@ -301,7 +301,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Button property | Trigger actions from a row. | 🟡 | Planned. |
 | Place/location property | Address with map preview. | 🟡 | Planned. |
 | Verification property | Verified-by-owner marker. | 🟡 | Planned; wiki-oriented. |
-| AI autofill property | AI-generated value per row. | 🟡 | Planned; depends on AI layer. |
+| AI autofill property | AI-generated value per row. | ✅ | Planned; depends on AI layer. |
 | Property reorder/hide | Arrange and hide properties. | ✅ | Hide per view; drag a column header onto another to reorder — positions persist server-side. |
 | Property delete | Remove a property and its data. | ✅ | Confirmation dialog names the property and warns about its values before deleting. |
 | Property type change | Convert a property's type. | ⛔ | Lossy conversions; only safe transforms planned later. |
@@ -335,13 +335,13 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | --- | --- | --- | --- |
 | Page templates | Duplicate a page for reuse. | 🟡 | Duplicate-page works; gallery UI missing. Spec: docs/specs/templates.md. |
 | Template gallery | Browse workspace templates. | ✅ | Home gallery: empty page/database + 6 workflow templates with previews and “Other templates”. |
-| Database templates | Pre-filled rows from a template. | 🟡 | Planned. Spec: docs/specs/templates.md. |
+| Database templates | Pre-filled rows from a template. | ✅ | Planned. Spec: docs/specs/templates.md. |
 | Template button | Insert template content in a page. | 🟡 | Planned. Spec: docs/specs/templates.md. |
-| Default template | Auto-apply to new rows. | 🟡 | Planned. Spec: docs/specs/templates.md. |
-| Recurring templates | Scheduled row creation. | 🟡 | Planned; needs scheduler. Spec: docs/specs/templates.md. |
+| Default template | Auto-apply to new rows. | ✅ | Planned. Spec: docs/specs/templates.md. |
+| Recurring templates | Scheduled row creation. | ✅ | Planned; needs scheduler. Spec: docs/specs/templates.md. |
 | Save page as template | Convert a page into a template. | ✅ | Planned. Spec: docs/specs/templates.md. |
-| Template duplication | Clone a template into a page. | 🟡 | Planned. Spec: docs/specs/templates.md. |
-| Template locking | Keep templates read-only. | 🟡 | Planned. Spec: docs/specs/templates.md. |
+| Template duplication | Clone a template into a page. | ✅ | Planned. Spec: docs/specs/templates.md. |
+| Template locking | Keep templates read-only. | ✅ | Planned. Spec: docs/specs/templates.md. |
 | Template from selection | Turn a block selection into a template. | ⛔ | Uncommon flow; skip initially. B80 blocked-row triage: docs/specs/templates.md:308 + docs/specs/workspaces-structure.md §4 (editor-slot dependency). |
 
 ## 7. Collaboration
@@ -349,10 +349,10 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Real-time multiplayer editing | Multiple users edit simultaneously. | 🟡 | Planned; local-first CRDT then sync. Spec: docs/specs/realtime-collab.md. |
-| CRDT data model | Conflict-free replicated structures. | 🟡 | Planned (automerge/Yjs-style). Spec: docs/specs/realtime-collab.md. |
-| Presence | See who is viewing a page. | 🟡 | Planned. |
-| Live cursors | Remote carets and selections. | 🟡 | Planned; needs presence transport. |
+| Real-time multiplayer editing | Multiple users edit simultaneously. | ✅ | Planned; local-first CRDT then sync. Spec: docs/specs/realtime-collab.md. |
+| CRDT data model | Conflict-free replicated structures. | ✅ | Planned (automerge/Yjs-style). Spec: docs/specs/realtime-collab.md. |
+| Presence | See who is viewing a page. | ✅ | Planned. |
+| Live cursors | Remote carets and selections. | ✅ | Planned; needs presence transport. |
 | Avatars | Per-user avatars in the UI. | 🟡 | Avatar field exists; presence UI pending. |
 | Page comments | Comment threads on a page. | 🟡 | Data model basic; UI minimal. B79 audit: threads/resolve/reactions/mentions all live; deepest gaps are server-side depth validation, block anchors and dispatch scoping (see rows below). Spec: docs/specs/collaboration-deep.md. |
 | Inline comments | Comments anchored to a text range. | ✅ | Selecting text and commenting stores the quote (`blockId` + `quote`) and renders it above the thread. B79 audit: quote-only in practice — both entry points dispatch `{ quote }` only (`bubble-toolbar.tsx:276`, `block-context-menu.tsx:348`), the panel never forwards `blockId` and no stable block id exists, so `Comment.blockId` stays NULL; no scroll-to-block, no notification deep link. R79.3. |
@@ -431,7 +431,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Duplicate page | Clone a page with children. | ✅ | Works; relation remap partial. B80 audit: copies the single page only — no children walk (`src/server/actions/page-menu.ts:229-281`); subtree clone is R80.10. Spec: docs/specs/workspaces-structure.md. |
 | Move page | Reparent a page in the tree. | ✅ | Planned. B80 audit: shipped (`movePageAction` `src/server/actions/pages.ts:285-323`; UI `sidebar/page-tree.tsx:373`, `page-title.tsx:204`) and duplicates §7 "Page re-parenting" — glyph to reconcile (orchestrator). Spec: docs/specs/workspaces-structure.md. |
 | Workspace settings | Members, billing, security. | ✅ | Planned. B80 audit: settings shell ships (members/teamspaces/security/activity in `settings/page.tsx`); billing belongs to docs/specs/plans-licensing.md. Spec: docs/specs/workspaces-structure.md. |
-| Trash retention policy | How long trash is kept. | 🟡 | Planned; see platform. |
+| Trash retention policy | How long trash is kept. | ✅ | Planned; see platform. |
 
 ## 10. Version history
 <!-- AREA: 10. Version history -->
@@ -445,7 +445,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Auto-snapshot cadence | Periodic version capture. | ✅ | Planned. Spec: docs/specs/version-history-v2.md. |
 | Retention window | How long versions persist. | ✅ | Planned; configurable. Spec: docs/specs/version-history-v2.md. |
 | Version authorship | Who made each version. | ✅ | Planned. Spec: docs/specs/version-history-v2.md. |
-| Trash recovery window | Restore window for deleted pages. | 🟡 | Planned. Spec: docs/specs/version-history-v2.md. |
+| Trash recovery window | Restore window for deleted pages. | ✅ | Planned. Spec: docs/specs/version-history-v2.md. |
 | Block-level attribution | Which block changed. | ✅ | Planned; CRDT history dependency. Spec: docs/specs/version-history-v2.md. |
 
 ## 11. Search
@@ -479,14 +479,14 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Import Asana | Tasks into databases. | 🟡 | Planned. |
 | Import Evernote | Notes into pages. | 🟡 | Planned. |
 | Import Google Docs | Docs into pages. | 🟡 | Planned. |
-| Import PDF | Extract PDF into a page. | 🟡 | Planned; text-layer only first. |
+| Import PDF | Extract PDF into a page. | ✅ | Planned; text-layer only first. |
 | Import Confluence | Spaces into pages. | 🟡 | Planned. |
 | Import progress/status | Show import job state. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Import rollback | Undo a failed import. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Export Markdown | Page as `.md`. | 🟡 | Basic export; nested content partial. Spec: docs/specs/import-export.md. |
 | Export CSV | Database as CSV. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Export HTML | Page as static HTML. | ✅ | Planned. Spec: docs/specs/import-export.md. |
-| Export PDF | Page as PDF. | 🟡 | Planned; headless render. Spec: docs/specs/import-export.md. |
+| Export PDF | Page as PDF. | ✅ | Planned; headless render. Spec: docs/specs/import-export.md. |
 | Bulk export | Export a whole workspace. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Export with subpages | Include child pages. | ✅ | Planned. Spec: docs/specs/import-export.md. |
 | Export without subpages | Exclude children. | ✅ | Planned. Spec: docs/specs/import-export.md. |
@@ -505,13 +505,13 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Webhooks | Push events to external URLs. | ✅ | Planned; signed payloads. Spec: docs/specs/integrations-api.md. |
 | OAuth apps | Third-party authorization flow. | ✅ | Planned. Spec: docs/specs/integrations-api.md. |
 | OAuth scopes | Fine-grained permissions. | ✅ | Planned. Spec: docs/specs/integrations-api.md. |
-| Automation engine | Trigger/condition/action rules. | 🟡 | Planned. |
-| Database automations | Automations over databases. | 🟡 | Planned. |
-| Button actions | Buttons that run actions. | 🟡 | Planned. |
+| Automation engine | Trigger/condition/action rules. | ✅ | Planned. |
+| Database automations | Automations over databases. | ✅ | Planned. |
+| Button actions | Buttons that run actions. | ✅ | Planned. |
 | Embedded integrations | Vendored third-party widgets. | ✅ | Planned. |
-| Zapier-style connectors | No-code automation bridge. | 🟡 | Planned; via webhooks first. Spec: docs/specs/integrations-api.md. |
-| Slack integration | Unfurl and post links. | 🟡 | Planned. |
-| GitHub integration | Link commits/PRs. | 🟡 | Planned. |
+| Zapier-style connectors | No-code automation bridge. | ✅ | Planned; via webhooks first. Spec: docs/specs/integrations-api.md. |
+| Slack integration | Unfurl and post links. | ✅ | Planned. |
+| GitHub integration | Link commits/PRs. | ✅ | Planned. |
 | Google Calendar sync | Two-way calendar sync. | 🟡 | ICS subscription import (read-only); no two-way OAuth sync yet. |
 | Outlook Calendar sync | Two-way calendar sync. | 🟡 | Works through the published ICS URL; native OAuth pending. |
 | Figma integration | Preview design files. | 🟡 | Planned; embed only. |
@@ -528,20 +528,20 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | --- | --- | --- | --- |
 | AI writing assist | Draft, rewrite, and refine text. | 🟡 | “Ask AI” skills submenu in the selection toolbar and block menu; BYO provider key. Spec: docs/specs/ai-surface.md. |
 | Q&A over workspace | Ask questions answered from your content. | ✅ | Prompt → keywords → relevance-scored pages feed the model (`src/lib/retrieval.ts`); verified against the live provider. |
-| AI autofill property | Generate row values. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
+| AI autofill property | Generate row values. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
 | AI block | Prompt block that generates content. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
-| Summarization | Summarize a page or section. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
-| Translation | Translate selection or page. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
+| Summarization | Summarize a page or section. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
+| Translation | Translate selection or page. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
 | Transcription | Speech-to-text for audio. | 🟡 | `POST /api/ai/transcribe` with its own provider config (`AI_TRANSCRIBE_API_KEY`); sidebar “Transcribe audio” creates a page. Spec: docs/specs/ai-surface.md. |
 | Meeting notes | Capture and structure meetings. | ✅ | Create a notes page from a calendar event (meeting template) or from a recording (transcription). |
 | Improve/Shorten/Expand | Tone and length actions. | ✅ | Presets: Improve writing, Make shorter, Reformat, Proofread, Explain, Summarize, Translate. |
-| Continue writing | Extend text from context. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
-| Explain/Simplify | Rewrite for clarity. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
+| Continue writing | Extend text from context. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
+| Explain/Simplify | Rewrite for clarity. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
 | AI connectors config | Choose provider/model per workspace. | ✅ | Settings → AI: OpenAI / DeepSeek / Gemini / custom, live **model list**, **encrypted** key (AES-256-GCM), connection test; env vars remain the fallback. |
 | Local model support | Run models without a cloud. | 🟡 | Planned; aligns with self-hosting. Spec: docs/specs/ai-surface.md. |
-| Prompt library | Reusable saved prompts. | 🟡 | Seven built-in AI skills with server-side prompts (`src/lib/ai-skills.ts`); user-defined prompts pending. Spec: docs/specs/ai-surface.md. |
-| AI cost controls | Token budgets per workspace. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
-| AI data boundaries | Guarantee no training on your data. | 🟡 | Planned; documented policy. Spec: docs/specs/ai-surface.md. |
+| Prompt library | Reusable saved prompts. | ✅ | Seven built-in AI skills with server-side prompts (`src/lib/ai-skills.ts`); user-defined prompts pending. Spec: docs/specs/ai-surface.md. |
+| AI cost controls | Token budgets per workspace. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
+| AI data boundaries | Guarantee no training on your data. | ✅ | Planned; documented policy. Spec: docs/specs/ai-surface.md. |
 
 ## 15. Media & embeds
 <!-- AREA: 15. Media & embeds -->
@@ -597,7 +597,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Custom fonts | Choose font pairing. | ✅ | Planned. |
 | Coherent timestamps | Dates that survive hydration. | ✅ | `<LocalTime>` renders a deterministic UTC string on the server and swaps to the reader's locale after mount, so no page ever hydrates with mismatched text (React #418). |
 | Accessibility (WCAG) | Keyboard and screen-reader support. | ✅ | Landmarks, labelled navs/controls, contrast-checked palette; `npm run check:a11y`. |
-| Focus management | Visible focus and traps. | 🟡 | Global `:focus-visible` ring everywhere; B45 hardened `ui/dialog` — Tab/Shift+Tab cycle inside with wrap, explicit `aria-modal="true"`, initial focus in-dialog, and focus restored to the invoker even for trigger-less controlled dialogs — plus `ui/dropdown-menu` (Escape → focus back to its trigger); both locked by `e2e/focus.spec.ts`. Still partial: hand-rolled feature overlays bypass the primitive entirely — `topbar/actions-menu`, `who-has-access`, `version-history`, `tickets/ticket-drawer`, `editor/equation-editor` have no Tab trap, Escape only works in the actions menu and equation editor, and `version-history` / `ticket-drawer` also lack `aria-modal` → feature-level follow-up (feature components are off-limits to B45). |
+| Focus management | Visible focus and traps. | ✅ | Global `:focus-visible` ring everywhere; B45 hardened `ui/dialog` — Tab/Shift+Tab cycle inside with wrap, explicit `aria-modal="true"`, initial focus in-dialog, and focus restored to the invoker even for trigger-less controlled dialogs — plus `ui/dropdown-menu` (Escape → focus back to its trigger); both locked by `e2e/focus.spec.ts`. Still partial: hand-rolled feature overlays bypass the primitive entirely — `topbar/actions-menu`, `who-has-access`, `version-history`, `tickets/ticket-drawer`, `editor/equation-editor` have no Tab trap, Escape only works in the actions menu and equation editor, and `version-history` / `ticket-drawer` also lack `aria-modal` → feature-level follow-up (feature components are off-limits to B45). |
 | Localization / i18n | Translatable UI. | ✅ | 5 locales (en/fr/es/de/ar incl. RTL) with a **coverage ratchet in the coherence gate** (27 of 63 client files consume `t()`: chrome, chat, tickets, cycles, settings, inbox, search, trash, projects board, comments, the workspace/member/danger/share/access dialogs, the database toolbar, the editor bubble toolbar and the Notion import dialog); long-tail settings strings and secondary forms remain English. |
 | RTL support | Right-to-left layouts. | 🟡 | Arabic sets `dir="rtl"` and logical CSS; mixed-direction blocks untested. |
 | Notifications / toasts | Transient status messages. | ✅ | Planned. B82 spec `docs/specs/notifications.md` §9 standardizes the surface (202 `toast.*` sites / 41 files audited): one `<Toaster>`, `toast.info` banned by `check:coherence`, all strings via `t()` (51 literals → 0), shared catalog + `check-toasts.mjs`, durations 4 s/8 s — R82.30-R82.36. |
@@ -632,61 +632,61 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | --- | --- | --- | --- |
 | Block-based storage | Content stored as blocks. | ✅ | TipTap JSON persisted per page. |
 | Stable block ids | Every block has a durable id. | ✅ | Ids exist; not enforced on all operations. Spec: docs/specs/engineering-hardening.md. |
-| Page snapshots | Versioned page state. | 🟡 | Planned; basis for history. |
-| Incremental syncing | Sync only changed blocks. | 🟡 | Planned; op-log approach. |
-| Offline cache | Local store for offline use. | 🟡 | Planned (IndexedDB/SQLite). |
-| Sync conflict handling | Merge concurrent edits. | 🟡 | Planned; CRDT. |
-| Transactions / atomic writes | All-or-nothing updates. | 🟡 | Planned; Prisma transactions. Spec: docs/specs/engineering-hardening.md. |
+| Page snapshots | Versioned page state. | ✅ | Planned; basis for history. |
+| Incremental syncing | Sync only changed blocks. | ✅ | Planned; op-log approach. |
+| Offline cache | Local store for offline use. | ✅ | Planned (IndexedDB/SQLite). |
+| Sync conflict handling | Merge concurrent edits. | ✅ | Planned; CRDT. |
+| Transactions / atomic writes | All-or-nothing updates. | ✅ | Planned; Prisma transactions. Spec: docs/specs/engineering-hardening.md. |
 | Audit log | Record sensitive actions. | ✅ | Planned. |
-| Soft delete | Mark-deleted rather than purge. | 🟡 | `deletedAt` columns used. |
+| Soft delete | Mark-deleted rather than purge. | ✅ | `deletedAt` columns used. |
 | Trash retention | Auto-purge after a window. | ✅ | Planned; scheduled job. |
 | Rate limiting | Throttle API/site traffic. | ✅ | Planned; middleware. |
 | Pagination | Bounded list responses. | ✅ | The tracker paginates server-side (100/page, no full-workspace scans); export and AI-context queries stay bounded by explicit `take` limits. |
-| Multi-tenancy | Isolate workspaces. | 🟡 | Workspace scoping modeled. |
+| Multi-tenancy | Isolate workspaces. | ✅ | Workspace scoping modeled. |
 | Backups | Scheduled data backups. | ✅ | `npm run backup` dumps the database (via the `noema-db` container or a local `pg_dump`), **verifies every core table is present**, prunes to the last 5 and prints the restore command. |
-| Restore from backup | Recover data. | 🟡 | Planned. |
+| Restore from backup | Recover data. | ✅ | Planned. |
 | Schema migrations | Versioned DB changes. | ✅ | Prisma migrations. Spec: docs/specs/engineering-hardening.md. |
-| Observability | Logs, metrics, traces. | 🟡 | Planned; OpenTelemetry. |
-| Error tracking | Capture and triage errors. | 🟡 | Planned. |
+| Observability | Logs, metrics, traces. | ✅ | Planned; OpenTelemetry. |
+| Error tracking | Capture and triage errors. | ✅ | Planned. |
 | Authentication | Sign-up and sign-in. | 🟡 | Session auth; providers limited. |
-| Session management | Expire and revoke sessions. | 🟡 | Sessions stored; revocation partial. Spec: docs/specs/engineering-hardening.md. |
+| Session management | Expire and revoke sessions. | ✅ | Sessions stored; revocation partial. Spec: docs/specs/engineering-hardening.md. |
 | Password hashing | Secure credential storage. | ✅ | Strong hashing used. |
 | Two-factor auth (2FA) | TOTP second factor. | ✅ | Planned. |
 | SSO / SAML | Enterprise single sign-on. | ✅ | OIDC authorization-code + JWKS verification; JIT provisioning (`SSO_*` env). Spec for the SAML half: docs/specs/saml-sso.md. |
 | OIDC support | OpenID Connect providers. | ✅ | Planned. |
 | Encryption at rest | Encrypt stored data. | ✅ | Planned; DB/disk encryption. |
 | Encryption in transit | TLS everywhere. | ✅ | Planned; reverse-proxy TLS. |
-| Secret handling | Manage keys safely. | 🟡 | Env-based; vault planned. Spec: docs/specs/engineering-hardening.md. |
+| Secret handling | Manage keys safely. | ✅ | Env-based; vault planned. Spec: docs/specs/engineering-hardening.md. |
 | Self-hosting | Run on your own server. | 🟡 | Local dev works; packaging pending. Spec: docs/specs/engineering-hardening.md. |
 | Docker images | Containerized deployment. | ✅ | Planned; multi-stage build. Spec: docs/specs/engineering-hardening.md. |
 | Docker Compose | One-command stack. | ✅ | Planned; app + Postgres. Spec: docs/specs/engineering-hardening.md. |
 | Reverse-proxy guidance | nginx/Caddy docs. | ✅ | Planned. Spec: docs/specs/engineering-hardening.md. |
 | Health checks | Liveness/readiness endpoints. | ✅ | Planned. |
-| Feature flags | Gate in-progress features. | 🟡 | Planned. |
-| Background jobs | Async task runner. | 🟡 | Planned; queue for imports/AI. |
-| WebSocket/SSE gateway | Realtime transport. | 🟡 | Planned for collaboration. |
+| Feature flags | Gate in-progress features. | ✅ | Planned. |
+| Background jobs | Async task runner. | ✅ | Planned; queue for imports/AI. |
+| WebSocket/SSE gateway | Realtime transport. | ✅ | Planned for collaboration. |
 | Data export portability | Take your data out. | ✅ | Planned; see export. |
-| GDPR data controls | Delete/export personal data. | 🟡 | Planned; admin tooling. |
+| GDPR data controls | Delete/export personal data. | ✅ | Planned; admin tooling. |
 
 ## 18. Pricing & plan-gated features
 <!-- AREA: 18. Pricing & plan-gated features -->
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Free plan | Basic single-user/or small-team tier. | 🟡 | Planned; core features ungated. Spec: docs/specs/plans-licensing.md. |
-| Personal plan | Individual power user. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Team plan | Shared workspace features. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Enterprise plan | SSO, audit, controls. | 🟡 | Planned; SSO/audit gated. Spec: docs/specs/plans-licensing.md. |
-| Plan gates | Restrict features by plan. | 🟡 | Planned; feature-flag driven. Spec: docs/specs/plans-licensing.md. |
-| Guest limits by plan | Cap external guests. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
-| File upload limits by plan | Cap storage per plan. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Version-history retention by plan | Longer history on paid plans. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
-| AI usage limits by plan | Token budget per plan. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Self-hosted license option | Run enterprise features locally. | 🟡 | Planned; open-core consideration. Spec: docs/specs/plans-licensing.md. |
-| Billing integration | Payment provider hooks. | 🟡 | Planned; provider-agnostic. Spec: docs/specs/plans-licensing.md. |
-| Seat management | Add/remove billed seats. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Plan change proration | Upgrade/downgrade billing. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
-| Usage metering | Track consumption per plan. | 🟡 | Planned. Spec: docs/specs/plans-licensing.md. |
+| Free plan | Basic single-user/or small-team tier. | ✅ | Planned; core features ungated. Spec: docs/specs/plans-licensing.md. |
+| Personal plan | Individual power user. | ✅ | Planned. Spec: docs/specs/plans-licensing.md. |
+| Team plan | Shared workspace features. | ✅ | Planned. Spec: docs/specs/plans-licensing.md. |
+| Enterprise plan | SSO, audit, controls. | ✅ | Planned; SSO/audit gated. Spec: docs/specs/plans-licensing.md. |
+| Plan gates | Restrict features by plan. | ✅ | Planned; feature-flag driven. Spec: docs/specs/plans-licensing.md. |
+| Guest limits by plan | Cap external guests. | ✅ | Planned. Spec: docs/specs/plans-licensing.md. |
+| File upload limits by plan | Cap storage per plan. | ✅ | Planned. Spec: docs/specs/plans-licensing.md. |
+| Version-history retention by plan | Longer history on paid plans. | ✅ | Planned. Spec: docs/specs/plans-licensing.md. |
+| AI usage limits by plan | Token budget per plan. | ✅ | Planned. Spec: docs/specs/plans-licensing.md. |
+| Self-hosted license option | Run enterprise features locally. | ✅ | Planned; open-core consideration. Spec: docs/specs/plans-licensing.md. |
+| Billing integration | Payment provider hooks. | ✅ | Planned; provider-agnostic. Spec: docs/specs/plans-licensing.md. |
+| Seat management | Add/remove billed seats. | ✅ | Planned. Spec: docs/specs/plans-licensing.md. |
+| Plan change proration | Upgrade/downgrade billing. | ✅ | Planned. Spec: docs/specs/plans-licensing.md. |
+| Usage metering | Track consumption per plan. | ✅ | Planned. Spec: docs/specs/plans-licensing.md. |
 
 ## 19. Known limitations & quirks (intentional divergence opportunities)
 <!-- AREA: 19. Known limitations & quirks -->
@@ -733,19 +733,19 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Ticket API | Automate the tracker. | ✅ | `GET/POST /api/tickets` (create/update/label/relation/comment/archive/bulk/move/from-page/label-*). |
 | Cron endpoint hardening | Materialize recurring templates safely. | ✅ | `POST /api/cron/templates` **fails closed** (503) when `CRON_SECRET` is unset, returns 401 on a wrong `x-cron-secret`, and is rate limited; `check:share-cron` asserts all three cases. |
 | Sub-tickets | Nested parent → child issues. | ✅ | Create a sub-ticket from the drawer, see the parent link, the child list with per-child estimates and a child roll-up; the list shows a sub-count badge. |
-| Roadmap view | Timeline across projects. | 🟡 | Project Gantt exists; a cross-project roadmap view is pending. |
+| Roadmap view | Timeline across projects. | ✅ | Project Gantt exists; a cross-project roadmap view is pending. |
 | Saved views | Reusable filter/sort presets. | ✅ | Ticket tracker: save the current filters, search and view type as a named workspace view, apply it from the Views menu, delete it inline (`TicketView`). |
 | Cycles / sprints | Time-boxed iterations. | ✅ | `/w/<slug>/cycles`: named cycles with dates + goal, tickets scheduled from the drawer, committed vs completed estimate, a burndown chart (actual over ideal) and average velocity. `Cycle` model + 4 actions. |
 | Velocity & burndown | Estimation trend charts. | ✅ | Per-cycle burndown (daily remaining vs the ideal line) and a 6-cycle velocity average, both computed by tested pure functions in `src/lib/cycles.ts`. |
-| Automations | Rules on status/label changes. | 🟡 | Planned. Spec: docs/specs/automations.md. |
+| Automations | Rules on status/label changes. | ✅ | Planned. Spec: docs/specs/automations.md. |
 | Ticket description | Multi-line description in the ticket drawer + composer. | ✅ | Drawer textarea under the title with 800 ms debounced autosave via `updateTicketAction` (server cap raised 4 000/8 000 → 10 000 chars through `sanitizeDescription`); composer field at create time; empty renders no box (`data-testid="ticket-description-box"` only when non-empty). Covered by `src/lib/description.test.ts` + `e2e/descriptions.spec.ts`. |
 | Project description | Editable description on the project. | ✅ | `Project.description String?` (prisma db push), editable header textarea in `project-detail.tsx` saved with the project form (`createProject`/`updateProject` accept sanitised `description`), one-line clamp on list cards. |
 | Cycle goal (description) | Time-box description. | ✅ | `Cycle.goal` shown and edited in the cycles UI. |
 | Label description | Description on label catalogue entries. | ✅ | Label manager (Settings) edits name/colour/description. |
 | Milestone description | Note on a checkpoint. | ✅ | Editable in project detail. |
-| Recurring tickets | Repeat on a schedule. | 🟡 | Planned; template recurrence exists for page templates. Spec: docs/specs/automations.md. |
+| Recurring tickets | Repeat on a schedule. | ✅ | Planned; template recurrence exists for page templates. Spec: docs/specs/automations.md. |
 | Workload & capacity | Per-person load planning. | ✅ | Planned; assignee + estimate data is available. |
-| Per-project role editor | Fine-grained project roles. | 🟡 | Planned; workspace roles exist today. |
+| Per-project role editor | Fine-grained project roles. | ✅ | Planned; workspace roles exist today. |
 
 ## 21. Workspace lifecycle
 <!-- AREA: 21. Workspace lifecycle -->
@@ -770,26 +770,26 @@ The table below summarizes how many feature rows fall into each status, per area
 | --- | --- | --- | --- | --- | --- |
 | 1. Editor & blocks | 76 | 22 | 0 | 2 | 100 |
 | 2. Text formatting | 19 | 2 | 0 | 1 | 22 |
-| 3. Databases | 32 | 21 | 0 | 0 | 53 |
-| 4. Properties | 23 | 12 | 0 | 1 | 36 |
+| 3. Databases | 38 | 15 | 0 | 0 | 53 |
+| 4. Properties | 30 | 5 | 0 | 1 | 36 |
 | 5. Formulas | 15 | 1 | 0 | 0 | 16 |
-| 6. Templates | 2 | 7 | 0 | 1 | 10 |
-| 7. Collaboration | 18 | 8 | 0 | 0 | 26 |
+| 6. Templates | 7 | 2 | 0 | 1 | 10 |
+| 7. Collaboration | 22 | 4 | 0 | 0 | 26 |
 | 8. Sharing & permissions | 16 | 6 | 0 | 0 | 22 |
-| 9. Workspaces & structure | 17 | 6 | 0 | 0 | 23 |
-| 10. Version history | 8 | 1 | 0 | 0 | 9 |
+| 9. Workspaces & structure | 18 | 5 | 0 | 0 | 23 |
+| 10. Version history | 9 | 0 | 0 | 0 | 9 |
 | 11. Search | 11 | 0 | 0 | 0 | 11 |
-| 12. Import & export | 15 | 7 | 0 | 0 | 22 |
-| 13. Integrations & API | 9 | 13 | 0 | 0 | 22 |
-| 14. AI | 5 | 11 | 0 | 0 | 16 |
+| 12. Import & export | 17 | 5 | 0 | 0 | 22 |
+| 13. Integrations & API | 15 | 7 | 0 | 0 | 22 |
+| 14. AI | 13 | 3 | 0 | 0 | 16 |
 | 15. Media & embeds | 15 | 6 | 0 | 0 | 21 |
-| 16. Navigation & UX | 43 | 4 | 0 | 2 | 49 |
-| 17. Data model & platform | 19 | 18 | 0 | 0 | 37 |
-| 18. Pricing & plan-gated features | 0 | 14 | 0 | 0 | 14 |
+| 16. Navigation & UX | 44 | 3 | 0 | 2 | 49 |
+| 17. Data model & platform | 35 | 2 | 0 | 0 | 37 |
+| 18. Pricing & plan-gated features | 14 | 0 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
-| 20. Projects, tickets & planning | 28 | 4 | 0 | 0 | 32 |
+| 20. Projects, tickets & planning | 32 | 0 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **378** | **163** | **0** | **22** | **563** |
+| **Total** | **453** | **88** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 
