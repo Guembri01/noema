@@ -697,17 +697,17 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | No offline-first guarantee | Some apps require connectivity. | ⛔ | Noema is local-first by design; divergence. |
 | Vendor data residency | Content lives on vendor servers. | ⛔ | Self-hosting keeps data on your infra; divergence. |
 | Opaque sync conflicts | Silent last-writer-wins behavior. | ⛔ | Noema uses CRDT with visible provenance. |
-| Limited export fidelity | Exports lose some structure. | 🧭 | Noema targets lossless round-trips. |
-| Steep permissions model | Complex inheritance surprises. | 🧭 | Noema makes inheritance explicit and previewable. |
-| Performance on huge pages | Very large pages degrade. | 🧭 | Noema virtualizes blocks and lags less. |
-| Formula language quirks | Subtle type/precedence gotchas. | 🧭 | Noema documents semantics precisely. |
-| Two-way relation setup friction | Relations confuse new users. | 🧭 | Noema offers guided relation creation. |
-| Recurring template scheduler | Limited scheduling control. | 🧭 | Noema exposes cron-style control. |
-| Search relevance opacity | Ranking is hard to tune. | 🧭 | Noema exposes ranking knobs. |
+| Limited export fidelity | Exports lose some structure. | ⛔ | Noema targets lossless round-trips. |
+| Steep permissions model | Complex inheritance surprises. | ⛔ | Noema makes inheritance explicit and previewable. |
+| Performance on huge pages | Very large pages degrade. | ⛔ | Noema virtualizes blocks and lags less. |
+| Formula language quirks | Subtle type/precedence gotchas. | ⛔ | Noema documents semantics precisely. |
+| Two-way relation setup friction | Relations confuse new users. | ⛔ | Noema offers guided relation creation. |
+| Recurring template scheduler | Limited scheduling control. | ⛔ | Noema exposes cron-style control. |
+| Search relevance opacity | Ranking is hard to tune. | ⛔ | Noema exposes ranking knobs. |
 | Migration lock-in | Hard to leave the platform. | ⛔ | Noema prioritizes portable data; divergence. |
 | AI vendor lock-in | AI options tied to one vendor. | ⛔ | Noema supports BYO/local models; divergence. |
 | Third-party tracking | Hosted analytics on public pages. | ⛔ | Noema ships no trackers by default; divergence. |
-| Mandatory accounts for sharing | Viewers may need accounts. | 🧭 | Noema plans lightweight guest viewing. |
+| Mandatory accounts for sharing | Viewers may need accounts. | ⛔ | Noema plans lightweight guest viewing. |
 
 ## 20. Projects, tickets & planning
 <!-- AREA: 20. Projects, tickets & planning -->
@@ -786,10 +786,10 @@ The table below summarizes how many feature rows fall into each status, per area
 | 16. Navigation & UX | 33 | 14 | 0 | 2 | 49 |
 | 17. Data model & platform | 18 | 19 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 0 | 14 | 0 | 0 | 14 |
-| 19. Known limitations & quirks | 0 | 0 | 8 | 7 | 15 |
+| 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 28 | 3 | 1 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **314** | **218** | **17** | **14** | **563** |
+| **Total** | **314** | **218** | **9** | **22** | **563** |
 
 ## Deliberate divergences
 

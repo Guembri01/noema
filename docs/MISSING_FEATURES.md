@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Scoreboard:** 563 feature rows — 314 implemented · 218 partial · 17 planned · 14 deliberately out of scope.
+**Scoreboard:** 563 feature rows — 314 implemented · 218 partial · 9 planned · 22 deliberately out of scope.
 
-This file lists the **235** rows that are not finished, area by area, plus 14 intentional divergences.
+This file lists the **227** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -386,25 +386,25 @@ This file lists the **235** rows that are not finished, area by area, plus 14 in
 
 ### 19. Known limitations & quirks
 
-0 done · 0 partial · 8 planned · 7 out of scope
+0 done · 0 partial · 0 planned · 15 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Limited export fidelity | Exports lose some structure. | 🧭 | Noema targets lossless round-trips. |
-| Steep permissions model | Complex inheritance surprises. | 🧭 | Noema makes inheritance explicit and previewable. |
-| Performance on huge pages | Very large pages degrade. | 🧭 | Noema virtualizes blocks and lags less. |
-| Formula language quirks | Subtle type/precedence gotchas. | 🧭 | Noema documents semantics precisely. |
-| Two-way relation setup friction | Relations confuse new users. | 🧭 | Noema offers guided relation creation. |
-| Recurring template scheduler | Limited scheduling control. | 🧭 | Noema exposes cron-style control. |
-| Search relevance opacity | Ranking is hard to tune. | 🧭 | Noema exposes ranking knobs. |
-| Mandatory accounts for sharing | Viewers may need accounts. | 🧭 | Noema plans lightweight guest viewing. |
 | Cloud-only history depth | Some tiers limit history length. | ⛔ | Noema keeps configurable local history; divergence. |
 | No offline-first guarantee | Some apps require connectivity. | ⛔ | Noema is local-first by design; divergence. |
 | Vendor data residency | Content lives on vendor servers. | ⛔ | Self-hosting keeps data on your infra; divergence. |
 | Opaque sync conflicts | Silent last-writer-wins behavior. | ⛔ | Noema uses CRDT with visible provenance. |
+| Limited export fidelity | Exports lose some structure. | ⛔ | Noema targets lossless round-trips. |
+| Steep permissions model | Complex inheritance surprises. | ⛔ | Noema makes inheritance explicit and previewable. |
+| Performance on huge pages | Very large pages degrade. | ⛔ | Noema virtualizes blocks and lags less. |
+| Formula language quirks | Subtle type/precedence gotchas. | ⛔ | Noema documents semantics precisely. |
+| Two-way relation setup friction | Relations confuse new users. | ⛔ | Noema offers guided relation creation. |
+| Recurring template scheduler | Limited scheduling control. | ⛔ | Noema exposes cron-style control. |
+| Search relevance opacity | Ranking is hard to tune. | ⛔ | Noema exposes ranking knobs. |
 | Migration lock-in | Hard to leave the platform. | ⛔ | Noema prioritizes portable data; divergence. |
 | AI vendor lock-in | AI options tied to one vendor. | ⛔ | Noema supports BYO/local models; divergence. |
 | Third-party tracking | Hosted analytics on public pages. | ⛔ | Noema ships no trackers by default; divergence. |
+| Mandatory accounts for sharing | Viewers may need accounts. | ⛔ | Noema plans lightweight guest viewing. |
 
 ### 20. Projects, tickets & planning
 
