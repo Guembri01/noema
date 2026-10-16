@@ -15,6 +15,7 @@ import {
   Palette,
   Plus,
   RotateCcw,
+  Sigma,
   Trash2,
   X } from "lucide-react";
 import {
@@ -507,6 +508,14 @@ type ViewSettingsConfig = ViewConfig & {
    * picks the first cover-eligible property itself, as before.
    */
   previewPropertyId?: string | null;
+  /**
+   * BOARD: the property whose cells feed each board column's group summary
+   * (Sum / Average / Count) — the "Summarize by property" picker below. Like
+   * `laneBy`/`wipLimits`, it is a view-config key this toolbar owns and rides
+   * through `sanitizeViewSettings` untouched; `BoardView` (feat/q03) reads it
+   * and falls back to the first NUMBER column when it is unset or unknown.
+   */
+  aggregationPropertyId?: string | null;
 };
 
 /** A JSON object (not an array, not null), or `null` for anything else. */
@@ -751,6 +760,18 @@ export function ViewSettings({
   const previewPropertyId = config.previewPropertyId ?? "";
   const previewable = properties.filter((property) =>
     GALLERY_PREVIEW_TYPES.includes(property.type),
+  );
+
+  // --- Board group summary (summarize by property) -------------------------
+  // The property each board column aggregates (Sum / Average / Count). Like
+  // `laneBy`/`wipLimits`, it is a view-config key this toolbar owns and rides
+  // through `sanitizeViewSettings` untouched; `BoardView` (feat/q03) falls back
+  // to the first NUMBER column when it is unset or unknown, so an empty value
+  // here mirrors that "Automatic" default. Only NUMBER properties are offered,
+  // since that is all the per-column aggregation maths can summarize.
+  const aggregationPropertyId = config.aggregationPropertyId ?? "";
+  const numericProperties = properties.filter(
+    (property) => property.type === "NUMBER",
   );
 
   // --- WIP limits (board columns) ------------------------------------------
@@ -1640,6 +1661,52 @@ export function ViewSettings({
           ) : (
             <p className="text-xs text-muted">
               Group by a select or status property to hide or show groups.
+            </p>
+          )}
+        </PopoverContent>
+      </Popover>
+
+      {/* Summarize by — the metric each board column aggregates (Sum / Average
+          / Count), persisted as the view's `aggregationPropertyId` for the
+          per-column summary in `BoardView` (feat/q03). */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-testid="aggregation-trigger"
+            className={cn(
+              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
+              aggregationPropertyId && "bg-surface-2 text-fg",
+            )}
+          >
+            <Sigma className="h-3.5 w-3.5" />
+            Summarize
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-64" data-testid="db-aggregation-popover">
+          <label className="mb-1 block text-xs text-muted" htmlFor="aggregation-property">
+            Summarize by property
+          </label>
+          <select
+            id="aggregation-property"
+            data-testid="aggregation-property"
+            value={aggregationPropertyId}
+            onChange={(e) =>
+              onChange({ aggregationPropertyId: e.target.value || null })
+            }
+            className={cn(CONTROL_CLASS, "w-full")}
+          >
+            <option value="">Automatic (first number)</option>
+            {numericProperties.map((property) => (
+              <option key={property.id} value={property.id}>{property.name}</option>
+            ))}
+          </select>
+          <p className="mt-2 text-xs text-muted">
+            The value each board column sums, averages or counts.
+          </p>
+          {numericProperties.length === 0 && (
+            <p className="mt-2 text-xs text-muted">
+              Add a number property to summarize by one.
             </p>
           )}
         </PopoverContent>
