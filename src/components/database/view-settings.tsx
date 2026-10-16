@@ -1692,7 +1692,7 @@ export function ViewSettings({
             data-testid="aggregation-property"
             value={aggregationPropertyId}
             onChange={(e) =>
-              onChange({ aggregationPropertyId: e.target.value || null })
+              onChange({ aggregationPropertyId: e.target.value || undefined })
             }
             className={cn(CONTROL_CLASS, "w-full")}
           >
