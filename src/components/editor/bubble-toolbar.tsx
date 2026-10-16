@@ -55,6 +55,7 @@ const TEXT_COLORS: { labelKey: I18nKey; value: string | null }[] = [
 const HIGHLIGHTS: { labelKey: I18nKey; value: string | null }[] = [
   { labelKey: "colorNone", value: null },
   { labelKey: "colorGray", value: "#e3e2e0" },
+  { labelKey: "colorBrown", value: "#eee0da" },
   { labelKey: "colorYellow", value: "#fdecc8" },
   { labelKey: "colorGreen", value: "#dbeddb" },
   { labelKey: "colorBlue", value: "#d3e5ef" },
@@ -70,6 +71,13 @@ const HIGHLIGHTS: { labelKey: I18nKey; value: string | null }[] = [
 const TRANSFORM_ACTIONS = TEXT_TRANSFORMS.filter(
   (transform) => transform.kind !== "none",
 );
+
+/* Tiptap stores mark attributes as declared, but editors/viewers may normalise
+   hex casing or trim whitespace, so compare colours case-insensitively and
+   treat `null`/`undefined`/empty as the same "unset" value. */
+function sameColor(a: string | null | undefined, b: string | null): boolean {
+  return (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
+}
 
 /* ---------------------------------------------------------------------------
    Bubble menu
@@ -211,6 +219,28 @@ export function BubbleToolbar({
     });
   };
 
+  // Inline math: hand the current selection to the shared equation editor so it
+  // opens pre-filled, then the Mathematics extension inserts the confirmed
+  // LaTeX in place. Reuses the extension's existing event contract.
+  const openInlineMath = () => {
+    const { from, to } = editor.state.selection;
+    const latex =
+      from === to ? "" : editor.state.doc.textBetween(from, to, " ");
+    window.dispatchEvent(
+      new CustomEvent(EQUATION_EVENT, { detail: { kind: "inline", latex } }),
+    );
+  };
+
+  // Current mark attributes drive the swatch "selected" ring and the link
+  // button's hover title. Reading them during render is safe: the bubble menu
+  // only mounts while a selection exists and re-renders on selection/mark
+  // changes, like the `editor.isActive` checks below.
+  const activeTextColor =
+    (editor.getAttributes("textStyle") as { color?: string }).color ?? null;
+  const activeHighlightColor =
+    (editor.getAttributes("highlight") as { color?: string }).color ?? null;
+  const activeHref = (editor.getAttributes("link") as { href?: string }).href;
+
   return (
     <div
       ref={toolbarRef}
@@ -240,11 +270,7 @@ export function BubbleToolbar({
       </BubbleButton>
       <BubbleButton
         label={t(locale, "inlineEquation")}
-        onClick={() =>
-          window.dispatchEvent(
-            new CustomEvent(EQUATION_EVENT, { detail: { kind: "inline" } }),
-          )
-        }
+        onClick={openInlineMath}
       >
         <Sigma className="h-4 w-4" />
       </BubbleButton>
@@ -283,9 +309,12 @@ export function BubbleToolbar({
 
       <BubbleButton
         label={t(locale, "link")}
+        tooltip={
+          activeHref ? `${t(locale, "link")}: ${activeHref}` : t(locale, "link")
+        }
         active={editor.isActive("link")}
         onClick={() => {
-          setUrl(editor.getAttributes("link").href ?? "");
+          setUrl(activeHref ?? "");
           setLinkOpen((v) => !v);
         }}
       >
@@ -300,7 +329,10 @@ export function BubbleToolbar({
       {linkOpen && (
         <input
           autoFocus
+          type="url"
+          inputMode="url"
           aria-label={t(locale, "linkUrl")}
+          title={url || undefined}
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => {
@@ -367,22 +399,32 @@ export function BubbleToolbar({
               </div>
             ) : (
               <div className="flex items-center gap-1">
-                {(panel === "color" ? TEXT_COLORS : HIGHLIGHTS).map((choice) => (
-                  <button
-                    key={choice.labelKey}
-                    type="button"
-                    title={t(locale, choice.labelKey)}
-                    aria-label={t(locale, choice.labelKey)}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() =>
-                      panel === "color"
-                        ? applyTextColor(choice.value)
-                        : applyHighlight(choice.value)
-                    }
-                    className="h-6 w-6 rounded border border-border"
-                    style={{ background: choice.value ?? "transparent" }}
-                  />
-                ))}
+                {(panel === "color" ? TEXT_COLORS : HIGHLIGHTS).map((choice) => {
+                  const selected =
+                    panel === "color"
+                      ? sameColor(activeTextColor, choice.value)
+                      : sameColor(activeHighlightColor, choice.value);
+                  return (
+                    <button
+                      key={choice.labelKey}
+                      type="button"
+                      title={t(locale, choice.labelKey)}
+                      aria-label={t(locale, choice.labelKey)}
+                      aria-pressed={selected}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() =>
+                        panel === "color"
+                          ? applyTextColor(choice.value)
+                          : applyHighlight(choice.value)
+                      }
+                      className={cn(
+                        "h-6 w-6 rounded border border-border",
+                        selected && "ring-2 ring-accent ring-offset-1",
+                      )}
+                      style={{ background: choice.value ?? "transparent" }}
+                    />
+                  );
+                })}
               </div>
             )}
           </div>,
@@ -394,17 +436,19 @@ export function BubbleToolbar({
 
 function BubbleButton({
   label,
+  tooltip,
   active,
   onClick,
   children,
 }: {
   label: string;
+  tooltip?: React.ReactNode;
   active?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <Tooltip label={label}>
+    <Tooltip label={tooltip ?? label}>
       <button
         type="button"
         aria-label={label}
