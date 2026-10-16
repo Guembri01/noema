@@ -5,12 +5,27 @@ import { createPortal } from "react-dom";
 import katex from "katex";
 import type { Editor } from "@tiptap/react";
 import { t } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 import {
   MATH_CATEGORIES,
   insertSnippet,
   searchMathSymbols,
   type MathCategory,
 } from "@/lib/math-symbols";
+import {
+  applyDirAttr,
+  detectDirection,
+  isMixed,
+  type DirAttr,
+  type DirectionHint,
+} from "@/lib/bidi";
+import {
+  focusableSelector,
+  resolveReturnTarget,
+  trapPlan,
+  type Focusable,
+  type FocusPlan,
+} from "@/lib/focus-trap";
 
 /**
  * LaTeX editor for the inline/block equation nodes.
@@ -47,11 +62,72 @@ const CATEGORY_LABELS: Record<MathCategory, string> = {
   accents: "Accents",
 };
 
+/**
+ * Per-block direction for the LaTeX source *and* its live preview, from the
+ * shared bidi engine. `applyDirAttr` resolves `dir` and the `dir-ltr` /
+ * `dir-rtl` / `dir-mixed` / `dir-auto` classes; `hint`/`mixed` are surfaced so
+ * the caller (and tests) can see which of `detectDirection` / `isMixed` drove
+ * the result.
+ */
+export function equationDirection(latex: string): DirAttr & {
+  hint: DirectionHint;
+  mixed: boolean;
+} {
+  const { dir, className } = applyDirAttr(latex);
+  return { dir, className, hint: detectDirection(latex), mixed: isMixed(latex) };
+}
+
+/* ------------------------------------------------------------------------- *
+ * Focus management (shared kernel: @/lib/focus-trap)
+ *
+ * The equation dialog is rendered through a portal and bypasses `ui/dialog`,
+ * so it owns its own Tab trap: its source box, symbol-search field, palette
+ * buttons and Apply/Cancel controls are mapped to `Focusable` descriptors,
+ * `trapPlan` decides the next stop (wrapping at the ends), and
+ * `resolveReturnTarget` restores focus to the invoking element on close.
+ * Escape keeps its existing handling (the source box + the overlay itself).
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Tab / Shift+Tab plan for the equation dialog, delegated to the shared
+ * `@/lib/focus-trap` kernel. `activeId` is the focused stop's id (`null` when
+ * focus is outside the ring, which enters at the first stop — last on
+ * Shift+Tab). `null` means "nothing to trap".
+ */
+export function planEquationEditorTab(
+  stops: readonly Focusable[],
+  { activeId = null, shift = false }: { activeId?: string | null; shift?: boolean } = {},
+): FocusPlan | null {
+  return trapPlan(stops, {
+    initial: activeId === null ? null : { id: activeId },
+    shift,
+  });
+}
+
+/** The dialog's real tabbable elements, tagged with their index as the id. */
+function equationStops(root: HTMLElement): {
+  stops: Focusable[];
+  nodes: HTMLElement[];
+} {
+  const nodes = Array.from(root.querySelectorAll<HTMLElement>(focusableSelector));
+  const stops = nodes.map((element, index) => ({
+    id: String(index),
+    disabled:
+      element.hasAttribute("disabled") ||
+      element.getAttribute("aria-disabled") === "true",
+    hidden: element.hidden || element.getAttribute("aria-hidden") === "true",
+    tabIndex: element.tabIndex,
+  }));
+  return { stops, nodes };
+}
+
 export function EquationEditor({ editor, locale = "en" }: { editor: Editor; locale?: string }) {
   const [request, setRequest] = useState<EquationRequest | null>(null);
   const [latex, setLatex] = useState("");
   const [symbolQuery, setSymbolQuery] = useState("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const invokerRef = useRef<HTMLElement | null>(null);
+  const open = request !== null;
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -69,6 +145,26 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
     window.addEventListener(EQUATION_EVENT, handler);
     return () => window.removeEventListener(EQUATION_EVENT, handler);
   }, []);
+
+  // Record the invoking element on open and restore focus to it on close
+  // (only while it is still connected).
+  useEffect(() => {
+    if (!open) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body) {
+      invokerRef.current = active;
+    }
+    return () => {
+      const invoker = invokerRef.current;
+      invokerRef.current = null;
+      const target = resolveReturnTarget({
+        invoker: invoker
+          ? { id: "equation-invoker", connected: invoker.isConnected }
+          : null,
+      });
+      if (target) invoker?.focus();
+    };
+  }, [open]);
 
   /** Matched symbols bucketed into their sections; empty sections are dropped. */
   const symbolGroups = useMemo(() => {
@@ -101,6 +197,23 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
     }, 0);
   };
 
+  // Tab / Shift+Tab cycles inside the dialog; Escape keeps its handling below.
+  const onDialogKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") return;
+    const { stops, nodes } = equationStops(event.currentTarget);
+    const active = document.activeElement;
+    const activeIndex = active instanceof HTMLElement ? nodes.indexOf(active) : -1;
+    const plan = planEquationEditorTab(stops, {
+      activeId: activeIndex >= 0 ? String(activeIndex) : null,
+      shift: event.shiftKey,
+    });
+    if (!plan) return;
+    const target = nodes[Number(plan.target.id)];
+    if (!target) return;
+    event.preventDefault();
+    target.focus();
+  };
+
   if (!request) return null;
 
   let preview = "";
@@ -112,6 +225,9 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
   } catch {
     preview = "";
   }
+
+  // Per-block direction for the source and its preview, from the bidi engine.
+  const direction = equationDirection(latex);
 
   const close = () => setRequest(null);
 
@@ -142,6 +258,7 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
       role="dialog"
       aria-modal="true"
       aria-label={t(locale, "equationTitle")}
+      onKeyDown={onDialogKeyDown}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) close();
       }}
@@ -157,6 +274,7 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
           ref={inputRef}
           rows={3}
           value={latex}
+          dir={direction.dir}
           aria-label={t(locale, "latexSourceAria")}
           placeholder="\frac{a}{b}"
           onChange={(event) => setLatex(event.target.value)}
@@ -167,10 +285,17 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
             }
             if (event.key === "Escape") close();
           }}
-          className="mt-3 w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm outline-none focus:border-accent"
+          className={cn(
+            "mt-3 w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm outline-none focus:border-accent",
+            direction.className,
+          )}
         />
         <div
-          className="mt-3 min-h-12 overflow-x-auto rounded-md border border-border bg-surface px-3 py-2 text-center"
+          dir={direction.dir}
+          className={cn(
+            "mt-3 min-h-12 overflow-x-auto rounded-md border border-border bg-surface px-3 py-2 text-center",
+            direction.className,
+          )}
           aria-live="polite"
           dangerouslySetInnerHTML={{ __html: preview }}
         />
