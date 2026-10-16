@@ -49,7 +49,12 @@ import {
   type TopbarMember,
 } from "@/components/topbar/avatar-stack";
 import { useUndoRedo } from "@/components/providers/undo-redo-provider";
-import { formatEditedLabel } from "@/lib/actions-menu";
+import {
+  describeLastEdited,
+  lastEditor,
+  resolveDisplayName,
+  type EditEvent,
+} from "@/lib/last-edited";
 import {
   appearanceClasses,
   parseAppearance,
@@ -176,6 +181,48 @@ function encodeCover(value: CoverValue, position: CoverPosition): string {
   return focal === formatObjectPosition(DEFAULT_COVER_POSITION)
     ? css
     : `${css} ${focal}`;
+}
+
+/**
+ * "Last edited by …" adapter (docs/MISSING_FEATURES §4, `src/lib/last-edited`).
+ *
+ * The page route exposes only the resolved editor name and the `updatedAt`
+ * instant (`PageEditedInfo`), not the edit-event log the engine consumes, so
+ * this rebuilds the single event that data implies, resolves the author through
+ * `resolveDisplayName` (member first, the server's own name otherwise) and hands
+ * the summary to `describeLastEdited`.
+ *
+ * Seam to make this lossless: `PageEditedInfo` should carry the last edit's
+ * `actorId` — the `PageVersion.createdById` its query already reads — and its
+ * `kind`, or the raw `EditEvent[]`, so `lastEditor` can pick the true newest
+ * edit instead of the one synthetic event built here.
+ */
+function lastEditedLabel(
+  edited: PageEditedInfo | null,
+  members: readonly TopbarMember[],
+  now: Date,
+): string {
+  if (edited === null) return describeLastEdited(null, { now });
+  const member = members.find((candidate) => candidate.name === edited.lastEditedBy);
+  const event: EditEvent = {
+    id: `page-edit:${edited.updatedAt}`,
+    entityType: "page",
+    entityId: "page",
+    actorId: member?.id ?? edited.lastEditedBy ?? "",
+    kind: "content",
+    at: edited.updatedAt,
+  };
+  const latest = lastEditor([event], { entityId: "page" });
+  const resolved = resolveDisplayName(latest, {
+    members: members.map((candidate) => ({ id: candidate.id, name: candidate.name })),
+    fallback: "unknown",
+  });
+  return describeLastEdited(latest, {
+    now,
+    // Prefer the member name; otherwise keep the server-resolved name so a
+    // departed author still renders instead of "Unknown".
+    actorName: resolved === "Unknown" ? edited.lastEditedBy : resolved,
+  });
 }
 
 export function PageTitle({
@@ -675,8 +722,8 @@ export function PageTitle({
 
         <div className="flex items-center gap-1">
           {edited && (
-            <span className="hidden whitespace-nowrap text-xs text-muted md:inline">
-              {formatEditedLabel(edited.updatedAt, new Date())}
+            <span className="hidden whitespace-nowrap text-xs text-muted md:inline" suppressHydrationWarning>
+              {lastEditedLabel(edited, members, new Date())}
             </span>
           )}
           <button
