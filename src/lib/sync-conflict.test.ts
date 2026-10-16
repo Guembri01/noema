@@ -1,10 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   UNRESOLVED,
+  applyResolutions,
   autoResolve,
+  compare,
   detectConflicts,
   describeConflict,
+  mergeDoc,
+  mergeField,
+  resolveConflict,
+  tick,
   type FieldConflict,
+  type MergeConflict,
+  type MergedDoc,
+  type RecordVersion,
 } from "./sync-conflict";
 
 /**
@@ -318,5 +327,316 @@ describe("describeConflict", () => {
     expect(describeConflict(conflict)).toBe(
       'cfg: local changed {"a":2}, remote changed {"a":3}; base {"a":1}',
     );
+  });
+});
+
+/**
+ * S17 - logical-clock conflict resolution with visible provenance.
+ *
+ * Red-first: `tick`, `compare`, `mergeField`, `mergeDoc`, `resolveConflict` and
+ * `applyResolutions` did not exist when these blocks were written. The design
+ * rule under test is "last-writer-wins, but never silent": every field both
+ * replicas moved to *different* values is listed in `conflicts[]` with both
+ * candidates and their actors, so a resolver can always see the loser, not just
+ * the winner.
+ */
+
+/** Build a stamped RecordVersion for the tests. */
+function version<T>(actorId: string, clock: number, value: T, at = 0): RecordVersion<T> {
+  return { actorId, clock, value, at };
+}
+
+describe("tick / compare (Lamport clock)", () => {
+  it("tick advances the counter by one and carries the actor", () => {
+    expect(tick(3, "alice")).toEqual({ clock: 4, actorId: "alice" });
+  });
+
+  it("tick accepts an existing ClockStamp", () => {
+    expect(tick({ clock: 7, actorId: "bob" }, "carol")).toEqual({
+      clock: 8,
+      actorId: "carol",
+    });
+  });
+
+  it("tick is monotonic across repeated ticks", () => {
+    let clock = tick(0, "a").clock;
+    for (let i = 0; i < 5; i += 1) clock = tick(clock, "a").clock;
+    expect(clock).toBe(6);
+  });
+
+  it("tick clamps a non-finite counter to a usable base", () => {
+    expect(tick(Number.NaN, "a")).toEqual({ clock: 1, actorId: "a" });
+  });
+
+  it("compare orders by logical clock first", () => {
+    expect(compare(version("a", 1, "x"), version("b", 2, "y"))).toBeLessThan(0);
+    expect(compare(version("a", 5, "x"), version("b", 2, "y"))).toBeGreaterThan(0);
+  });
+
+  it("compare breaks a clock tie by actorId ascending", () => {
+    expect(compare(version("alice", 3, "x"), version("bob", 3, "y"))).toBeLessThan(0);
+    expect(compare(version("bob", 3, "x"), version("alice", 3, "y"))).toBeGreaterThan(0);
+  });
+
+  it("compare ignores the value and returns 0 for identical stamps", () => {
+    expect(compare(version("a", 2, "x"), version("a", 2, "different"))).toBe(0);
+  });
+
+  it("compare is antisymmetric", () => {
+    const a = version("a", 2, 1);
+    const b = version("b", 2, 2);
+    expect(Math.sign(compare(a, b))).toBe(-Math.sign(compare(b, a)));
+  });
+});
+
+describe("mergeField (LWW + provenance)", () => {
+  it("picks the higher logical clock", () => {
+    const result = mergeField(version("a", 1, "old"), version("b", 2, "new"));
+    expect(result.value).toBe("new");
+    expect(result.winner).toEqual(version("b", 2, "new"));
+  });
+
+  it("breaks a clock tie by actorId", () => {
+    expect(mergeField(version("alice", 3, "A"), version("bob", 3, "B")).value).toBe("B");
+  });
+
+  it("reports no conflict for equal values", () => {
+    const result = mergeField(version("a", 1, { x: 1 }), version("b", 2, { x: 1 }));
+    expect(result.conflict).toBe(false);
+  });
+
+  it("compares values deeply, ignoring object key order", () => {
+    const result = mergeField(version("a", 1, { x: 1, y: 2 }), version("b", 2, { y: 2, x: 1 }));
+    expect(result.conflict).toBe(false);
+  });
+
+  it("reports a conflict for different values", () => {
+    expect(mergeField(version("a", 1, "A"), version("b", 2, "B")).conflict).toBe(true);
+  });
+
+  it("records both candidates in provenance (no data loss)", () => {
+    const result = mergeField(version("a", 1, "A"), version("b", 2, "B"));
+    expect(result.provenance).toEqual([version("a", 1, "A"), version("b", 2, "B")]);
+  });
+
+  it("keeps provenance canonically ordered regardless of call order", () => {
+    const a = version("a", 1, "A");
+    const b = version("b", 2, "B");
+    expect(mergeField(a, b).provenance).toEqual(mergeField(b, a).provenance);
+  });
+
+  it("is order-independent (mergeField(a,b) equals mergeField(b,a))", () => {
+    const a = version("alice", 3, "A");
+    const b = version("bob", 3, "B");
+    expect(mergeField(a, b)).toEqual(mergeField(b, a));
+  });
+
+  it("keeps a single provenance entry when the values agree", () => {
+    const result = mergeField(version("a", 1, "same"), version("b", 2, "same"));
+    expect(result.provenance).toHaveLength(1);
+  });
+
+  it("returns a result without mutating the inputs", () => {
+    const local = version("a", 1, "A");
+    const remote = version("b", 2, "B");
+    mergeField(local, remote);
+    expect(local).toEqual({ actorId: "a", clock: 1, value: "A", at: 0 });
+    expect(remote).toEqual({ actorId: "b", clock: 2, value: "B", at: 0 });
+  });
+});
+
+describe("mergeDoc (lww)", () => {
+  it("defaults to the lww strategy", () => {
+    expect(mergeDoc({}, {}).strategy).toBe("lww");
+  });
+
+  it("unions disjoint fields", () => {
+    const doc = mergeDoc({ a: version("x", 1, 1) }, { b: version("y", 1, 2) });
+    expect(doc.fields).toEqual({ a: 1, b: 2 });
+    expect(doc.conflicts).toEqual([]);
+  });
+
+  it("takes a field present on only one side without a conflict", () => {
+    const doc = mergeDoc({ a: version("x", 1, 1) }, {});
+    expect(doc.fields).toEqual({ a: 1 });
+    expect(doc.conflicts).toEqual([]);
+  });
+
+  it("resolves a divergence to the greater version and records it", () => {
+    const doc = mergeDoc({ title: version("alice", 1, "A") }, { title: version("bob", 2, "B") });
+    expect(doc.fields).toEqual({ title: "B" });
+    expect(doc.conflicts).toHaveLength(1);
+    expect(doc.conflicts[0]?.resolved).toBe(true);
+  });
+
+  it("gives every conflict before/after and the competing actors", () => {
+    const doc = mergeDoc({ title: version("alice", 1, "A") }, { title: version("bob", 2, "B") });
+    expect(doc.conflicts[0]).toEqual({
+      field: "title",
+      before: version("alice", 1, "A"),
+      after: version("bob", 2, "B"),
+      actors: ["alice", "bob"],
+      resolved: true,
+    });
+  });
+
+  it("orders conflicts ASCII-ascending by field", () => {
+    const doc = mergeDoc(
+      { b: version("x", 1, 1), a: version("x", 1, 1), c: version("x", 1, 1) },
+      { b: version("y", 1, 2), a: version("y", 1, 2), c: version("y", 1, 2) },
+    );
+    expect(doc.conflicts.map((conflict) => conflict.field)).toEqual(["a", "b", "c"]);
+  });
+
+  it("sorts actors ascending and de-duplicates them", () => {
+    const doc = mergeDoc({ a: version("zoe", 1, 1) }, { a: version("amy", 2, 2) });
+    expect(doc.conflicts[0]?.actors).toEqual(["amy", "zoe"]);
+  });
+
+  it("converges: mergeDoc(a,b) equals mergeDoc(b,a)", () => {
+    const a = { title: version("alice", 3, "A"), tags: version("alice", 1, ["x"]) };
+    const b = { title: version("bob", 3, "B"), tags: version("bob", 2, ["y"]) };
+    expect(mergeDoc(a, b)).toEqual(mergeDoc(b, a));
+  });
+
+  it("does not mutate its inputs", () => {
+    const a = { title: version("alice", 1, "A") };
+    const b = { title: version("bob", 2, "B") };
+    mergeDoc(a, b);
+    expect(a).toEqual({ title: version("alice", 1, "A") });
+    expect(b).toEqual({ title: version("bob", 2, "B") });
+  });
+
+  it("degrades non-record inputs to an empty document", () => {
+    expect(mergeDoc(42, null).fields).toEqual({});
+    expect(mergeDoc(42, null).conflicts).toEqual([]);
+  });
+
+  it("never resolves silently: a diverging field always appears in conflicts", () => {
+    const doc = mergeDoc(
+      { a: version("x", 1, 1), b: version("x", 1, 1) },
+      { a: version("y", 2, 2), b: version("y", 1, 1) },
+    );
+    expect(doc.conflicts.map((conflict) => conflict.field)).toEqual(["a"]);
+  });
+});
+
+describe("mergeDoc (manual)", () => {
+  it("defers diverging fields instead of resolving them", () => {
+    const doc = mergeDoc(
+      { title: version("alice", 1, "A") },
+      { title: version("bob", 2, "B") },
+      { strategy: "manual" },
+    );
+    expect(doc.fields).toEqual({});
+    expect(doc.conflicts[0]?.resolved).toBe(false);
+  });
+
+  it("still applies non-conflicting fields", () => {
+    const doc = mergeDoc(
+      { title: version("alice", 1, "A"), keep: version("alice", 1, 1) },
+      { title: version("bob", 2, "B"), keep: version("alice", 1, 1) },
+      { strategy: "manual" },
+    );
+    expect(doc.fields).toEqual({ keep: 1 });
+    expect(doc.conflicts.map((conflict) => conflict.field)).toEqual(["title"]);
+  });
+
+  it("converges under manual too", () => {
+    const a = { title: version("alice", 3, "A") };
+    const b = { title: version("bob", 3, "B") };
+    expect(mergeDoc(a, b, { strategy: "manual" })).toEqual(
+      mergeDoc(b, a, { strategy: "manual" }),
+    );
+  });
+});
+
+describe("resolveConflict", () => {
+  const conflict: MergeConflict = {
+    field: "title",
+    before: version("alice", 1, "A"),
+    after: version("bob", 2, "B"),
+    actors: ["alice", "bob"],
+    resolved: true,
+  };
+
+  it("returns the winning (after) version for choice after", () => {
+    expect(resolveConflict(conflict, "after")).toEqual(version("bob", 2, "B"));
+  });
+
+  it("returns the superseded (before) version for choice before", () => {
+    expect(resolveConflict(conflict, "before")).toEqual(version("alice", 1, "A"));
+  });
+
+  it("returns a copy, not the stored object", () => {
+    expect(resolveConflict(conflict, "after")).not.toBe(conflict.after);
+  });
+});
+
+describe("applyResolutions", () => {
+  const build = (): MergedDoc =>
+    mergeDoc(
+      { title: version("alice", 1, "A"), keep: version("alice", 1, 1) },
+      { title: version("bob", 2, "B"), keep: version("alice", 1, 1) },
+      { strategy: "manual" },
+    );
+
+  it("fills a deferred field with the chosen candidate", () => {
+    const doc = applyResolutions(build(), [{ field: "title", choice: "before" }]);
+    expect(doc.fields).toEqual({ keep: 1, title: "A" });
+  });
+
+  it("marks the conflict resolved but keeps its provenance", () => {
+    const doc = applyResolutions(build(), [{ field: "title", choice: "after" }]);
+    const conflict = doc.conflicts[0];
+    expect(conflict?.resolved).toBe(true);
+    expect(conflict?.before).toEqual(version("alice", 1, "A"));
+    expect(conflict?.after).toEqual(version("bob", 2, "B"));
+  });
+
+  it("ignores resolutions for unknown fields", () => {
+    const doc = applyResolutions(build(), [{ field: "ghost", choice: "after" }]);
+    expect(doc.fields).toEqual({ keep: 1 });
+    expect(doc.conflicts[0]?.resolved).toBe(false);
+  });
+
+  it("does not mutate the input document", () => {
+    const doc = build();
+    applyResolutions(doc, [{ field: "title", choice: "after" }]);
+    expect(doc.fields).toEqual({ keep: 1 });
+    expect(doc.conflicts[0]?.resolved).toBe(false);
+  });
+
+  it("is idempotent", () => {
+    const once = applyResolutions(build(), [{ field: "title", choice: "after" }]);
+    expect(applyResolutions(once, [{ field: "title", choice: "after" }])).toEqual(once);
+  });
+});
+
+describe("describeConflict (logical-clock conflicts)", () => {
+  it("names the field, both candidates, the actors and the state", () => {
+    const conflict: MergeConflict = {
+      field: "title",
+      before: version("alice", 1, "A"),
+      after: version("bob", 2, "B"),
+      actors: ["alice", "bob"],
+      resolved: false,
+    };
+    const text = describeConflict(conflict);
+    expect(text).toContain("title");
+    expect(text).toContain("alice");
+    expect(text).toContain("bob");
+    expect(text).toContain("unresolved");
+  });
+
+  it("flags a resolved conflict", () => {
+    const conflict: MergeConflict = {
+      field: "title",
+      before: version("alice", 1, "A"),
+      after: version("bob", 2, "B"),
+      actors: ["alice", "bob"],
+      resolved: true,
+    };
+    expect(describeConflict(conflict)).toContain("resolved");
   });
 });
