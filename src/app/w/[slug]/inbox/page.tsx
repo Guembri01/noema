@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Bell } from "lucide-react";
 import { requireUser } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { getNotifications, getWorkspaceBySlug } from "@/server/queries";
 import { markAllNotificationsRead, markNotificationRead } from "@/server/actions/notifications";
@@ -16,6 +17,12 @@ import {
   unreadCount,
 } from "@/lib/notification-inbox";
 import type { InboxBucket, InboxNotification } from "@/lib/notification-inbox";
+import {
+  isWithinQuietHours,
+  nextDeliveryTime,
+  validateSchedule,
+} from "@/lib/notification-schedule";
+import type { QuietSchedule } from "@/lib/notification-schedule";
 
 const LABELS: Record<string, string> = {
   "comment.reply": "Someone replied to your comment",
@@ -61,6 +68,22 @@ function toInboxNotification(row: RawNotification): InboxNotification {
   };
 }
 
+/**
+ * Read the user's quiet-hours schedule out of the persisted `notificationPrefs`
+ * JSON (`User.notificationPrefs`). The field is optional and, like every input
+ * to `notification-schedule`, is validated rather than trusted: an absent,
+ * malformed or day-less value yields `null`, so the inbox behaves exactly as it
+ * did before the prefs existed (no banner, default delivery).
+ */
+function readQuietSchedule(prefs: unknown): QuietSchedule | null {
+  if (typeof prefs !== "object" || prefs === null || Array.isArray(prefs)) {
+    return null;
+  }
+  const candidate = (prefs as Record<string, unknown>).quietHours;
+  const result = validateSchedule(candidate);
+  return result.ok && result.value.days.length > 0 ? result.value : null;
+}
+
 export default async function InboxPage({
   params,
 }: {
@@ -77,11 +100,21 @@ export default async function InboxPage({
   const rows = await getNotifications(user.id);
   const notifications = rows.map(toInboxNotification);
 
+  // The persisted preference blob (`User.notificationPrefs`, feat/r13) drives
+  // both the delivery suppression and the quiet-hours banner below. When the
+  // column is unset we pass `null`, and the engines fall back to their defaults.
+  const prefsRow = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { notificationPrefs: true },
+  });
+  const prefs = prefsRow?.notificationPrefs ?? null;
+
+  const now = new Date();
   // The engine owns the view model: it drops what the delivery rules would
   // suppress, buckets the rest by UTC day (today / yesterday / earlier) and
-  // sorts each bucket recency-first. Preferences have no per-user column yet,
-  // so `buildInbox` applies its defaults.
-  const buckets = buildInbox(notifications);
+  // sorts each bucket recency-first. The user's prefs are handed through so a
+  // MENTIONS-only or OFF preference is honoured here too.
+  const buckets = buildInbox(notifications, prefs, now);
   const visible = buckets.flatMap((bucket) => bucket.items);
   const unread = unreadCount(visible);
   // A scope changes a row iff the engine returns a new object for it. Ask the
@@ -89,6 +122,13 @@ export default async function InboxPage({
   const canMarkAllRead = markAllRead(visible).some(
     (notification, index) => notification !== visible[index],
   );
+
+  // Quiet hours are part of the same prefs blob. When a valid schedule is
+  // present and `now` sits inside it, the banner tells the user when delivery
+  // resumes (`nextDeliveryTime` is the first instant outside the window).
+  const quiet = readQuietSchedule(prefs);
+  const isQuiet = quiet !== null && isWithinQuietHours(now, quiet);
+  const resumeAt = isQuiet ? nextDeliveryTime(now, quiet) : null;
 
   const renderNotification = (notification: InboxNotification) => {
     const href = notification.pageId
@@ -109,7 +149,7 @@ export default async function InboxPage({
         <span className={cn("flex-1", notification.read && "text-muted")}>
           {LABELS[notification.type] ?? notification.type}
         </span>
-        {isInDigest(notification) && (
+        {isInDigest(notification, prefs) && (
           <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">
             digest
           </span>
@@ -138,6 +178,11 @@ export default async function InboxPage({
 
   return (
     <div className="mx-auto max-w-2xl px-10 py-12">
+      {resumeAt && (
+        <div className="mb-5 rounded-lg border border-border bg-surface-2 px-4 py-3 text-sm text-muted">
+          {`Quiet hours: notifications are paused (now ${now.toLocaleString()}) and resume at ${resumeAt.toLocaleString()}.`}
+        </div>
+      )}
       <div className="mb-5 flex items-center justify-between">
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
           <Bell className="h-5 w-5" />
