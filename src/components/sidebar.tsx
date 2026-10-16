@@ -2,8 +2,24 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
-import { CalendarDays, Home, MessageSquare, Plus, Search, SlidersHorizontal } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import {
+  CalendarDays,
+  Home,
+  MessageSquare,
+  PanelLeftClose,
+  Plus,
+  Search,
+  SlidersHorizontal,
+} from "lucide-react";
 import type { PageTreeNode } from "@/server/queries";
 import { SidebarChat, OPEN_CHAT_EVENT } from "@/components/sidebar-chat";
 import {
@@ -25,6 +41,17 @@ import { HomeQuickLinks, FavoritesList } from "@/components/sidebar/home-links";
 import { PageTree } from "@/components/sidebar/page-tree";
 import { ImportSection } from "@/components/sidebar/importers";
 import { SidebarFooter } from "@/components/sidebar/sidebar-footer";
+import {
+  SIDEBAR_DEFAULT_WIDTH,
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  SIDEBAR_STEP,
+  SIDEBAR_WIDTH_STORAGE_KEY,
+  clampSidebarWidth,
+  dragSidebarWidth,
+  nudgeSidebarWidth,
+  parseStoredSidebarWidth,
+} from "@/lib/sidebar-layout";
 
 type SidebarProps = {
   workspace: {
@@ -47,6 +74,8 @@ type SidebarProps = {
   projects: { id: string; name: string; icon: string | null }[];
   openTickets: number;
   onOpenQuickFind: () => void;
+  /** Collapse the sidebar to nothing (desktop). Ctrl/Cmd+\ also toggles it. */
+  onHideSidebar?: () => void;
 };
 
 export function Sidebar({
@@ -64,15 +93,82 @@ export function Sidebar({
   projects,
   openTickets,
   onOpenQuickFind,
+  onHideSidebar,
 }: SidebarProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [width, setWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const [resizing, setResizing] = useState(false);
+  const widthRef = useRef(width);
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(tree.filter((p) => p.parentId === null).map((p) => p.id)),
   );
   const [notionOpen, setNotionOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [tab, setTab] = useState<"home" | "chat" | "meetings">("home");
+
+  // --- Sidebar width: restore, persist, drag + keyboard resize ------------
+  useEffect(() => {
+    try {
+      setWidth(parseStoredSidebarWidth(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)));
+    } catch {
+      /* private mode / storage blocked: keep the default width */
+    }
+  }, []);
+
+  useEffect(() => {
+    widthRef.current = width;
+  }, [width]);
+
+  const commitWidth = useCallback((value: number) => {
+    const next = clampSidebarWidth(value);
+    setWidth(next);
+    widthRef.current = next;
+    try {
+      window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(next));
+    } catch {
+      /* ignore storage failures */
+    }
+  }, []);
+
+  const startResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = widthRef.current;
+      setResizing(true);
+      const onMove = (move: PointerEvent) => {
+        setWidth(dragSidebarWidth(startWidth, move.clientX - startX));
+      };
+      const onUp = () => {
+        setResizing(false);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+        commitWidth(widthRef.current);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    },
+    [commitWidth],
+  );
+
+  const resizeByKeyboard = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      const shift = event.shiftKey;
+      let next: number;
+      if (event.key === "ArrowLeft") next = nudgeSidebarWidth(widthRef.current, -SIDEBAR_STEP, shift);
+      else if (event.key === "ArrowRight") next = nudgeSidebarWidth(widthRef.current, SIDEBAR_STEP, shift);
+      else if (event.key === "Home") next = SIDEBAR_MIN_WIDTH;
+      else if (event.key === "End") next = SIDEBAR_MAX_WIDTH;
+      else return;
+      event.preventDefault();
+      commitWidth(next);
+    },
+    [commitWidth],
+  );
 
   const discuss = (pageId: string) =>
     startTransition(async () => {
@@ -115,7 +211,11 @@ export function Sidebar({
   };
 
   return (
-    <aside className="flex h-screen w-60 shrink-0 flex-col border-r border-border bg-sidebar">
+    <aside
+      data-testid="sidebar"
+      style={{ width }}
+      className="relative flex h-screen shrink-0 flex-col border-r border-border bg-sidebar"
+    >
       <WorkspaceSwitcher
         workspace={workspace}
         workspaces={workspaces}
@@ -124,16 +224,28 @@ export function Sidebar({
         onCreateWorkspace={() => setCreateOpen(true)}
       />
 
-      <div className="px-2">
+      <div className="flex items-center gap-1 px-2">
         <button
           type="button"
           onClick={onOpenQuickFind}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted transition-colors hover:bg-surface-2"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted transition-colors hover:bg-surface-2"
         >
-          <Search className="h-4 w-4" />
-          <span className="flex-1 text-left">{t(locale, "quickFind")}</span>
+          <Search className="h-4 w-4 shrink-0" />
+          <span className="flex-1 truncate text-left">{t(locale, "quickFind")}</span>
           <Kbd>Ctrl K</Kbd>
         </button>
+        {onHideSidebar ? (
+          <button
+            type="button"
+            onClick={onHideSidebar}
+            title="Hide sidebar (Ctrl+\)"
+            aria-label="Hide sidebar"
+            data-testid="sidebar-hide"
+            className="shrink-0 rounded-md p-1.5 text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </button>
+        ) : null}
       </div>
 
       <div className="px-2 pt-1">
@@ -254,6 +366,29 @@ export function Sidebar({
         onOpenChange={setNotionOpen}
         workspaceId={workspace.id}
         slug={workspace.slug}
+      />
+
+      {/* Drag to resize. Keyboard-reachable: arrows nudge, Shift widens the
+        step, Home/End jump to the min/max. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        aria-valuemin={SIDEBAR_MIN_WIDTH}
+        aria-valuemax={SIDEBAR_MAX_WIDTH}
+        aria-valuenow={width}
+        tabIndex={0}
+        data-testid="sidebar-resize"
+        onPointerDown={startResize}
+        onKeyDown={resizeByKeyboard}
+        onDoubleClick={() => commitWidth(SIDEBAR_DEFAULT_WIDTH)}
+        title="Drag to resize · double-click to reset"
+        className={cn(
+          "absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none select-none",
+          "after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent",
+          "hover:after:bg-accent/50 focus-visible:after:bg-accent focus-visible:outline-none",
+          resizing && "after:w-0.5 after:bg-accent",
+        )}
       />
     </aside>
   );

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Database, FileText, Menu, X } from "lucide-react";
+import { Database, FileText, Menu, PanelLeftOpen, X } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";
 import { OPEN_CHAT_EVENT } from "@/components/sidebar-chat";
 import { ChatPanel, type PanelThread } from "@/components/chat-panel";
@@ -26,6 +26,10 @@ import type { PageTreeNode } from "@/server/queries";
 function tabsStorageKey(workspaceId: string): string {
   return `notion:page-tabs:${workspaceId}`;
 }
+
+import {
+  SIDEBAR_HIDDEN_STORAGE_KEY,
+} from "@/lib/sidebar-layout";
 
 /** Narrow one parsed storage entry to a {@link RecentPage} without trusting disk. */
 function isTabEntry(value: unknown): value is RecentPage {
@@ -100,7 +104,8 @@ export function WorkspaceShell({
   const [quickOpen, setQuickOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  // Desktop collapse for the sidebar (Ctrl/Cmd+\ and the palette action).
+  // Desktop collapse for the sidebar (Ctrl/Cmd+\, the sidebar's own button and
+  // the palette action). Persisted so the choice survives a reload.
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatThreadId, setChatThreadId] = useState<string | null>(null);
@@ -136,6 +141,16 @@ export function WorkspaceShell({
     setTabs(readTabs(workspace.id));
     setTabsWorkspaceId(workspace.id);
   }, [workspace.id]);
+
+  // Restore the persisted desktop-sidebar state after mount so SSR and the
+  // first client paint agree.
+  useEffect(() => {
+    try {
+      setSidebarHidden(window.localStorage.getItem(SIDEBAR_HIDDEN_STORAGE_KEY) === "1");
+    } catch {
+      /* private mode / storage blocked: keep it visible */
+    }
+  }, []);
 
   // Persist every change so tabs survive reloads; storage being unavailable
   // (private mode / quota) leaves the in-memory strip intact.
@@ -182,7 +197,19 @@ export function WorkspaceShell({
     setTabs((prev) => removePage(prev, pageId));
   }, []);
 
-  const toggleSidebar = useCallback(() => setSidebarHidden((hidden) => !hidden), []);
+  const toggleSidebar = useCallback(
+    () =>
+      setSidebarHidden((hidden) => {
+        const next = !hidden;
+        try {
+          window.localStorage.setItem(SIDEBAR_HIDDEN_STORAGE_KEY, next ? "1" : "0");
+        } catch {
+          /* private mode / storage blocked */
+        }
+        return next;
+      }),
+    [],
+  );
 
   const createNewPage = useCallback(async () => {
     const outcome = await safeAction(() =>
@@ -284,8 +311,23 @@ export function WorkspaceShell({
           unreadCount={unreadCount}
           locale={locale}
           onOpenQuickFind={() => setQuickOpen(true)}
+          onHideSidebar={toggleSidebar}
         />
       </div>
+
+      {/* Always-visible way back when the desktop sidebar is collapsed. */}
+      {sidebarHidden ? (
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          title="Show sidebar (Ctrl+\)"
+          aria-label="Show sidebar"
+          data-testid="sidebar-show"
+          className="fixed left-3 top-3 z-40 hidden h-8 w-8 items-center justify-center rounded-md border border-border bg-bg text-muted shadow-sm transition-colors hover:bg-surface-2 hover:text-fg md:flex"
+        >
+          <PanelLeftOpen className="h-4 w-4" />
+        </button>
+      ) : null}
 
       {sidebarOpen && (
         <button
