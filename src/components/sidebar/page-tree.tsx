@@ -9,6 +9,7 @@ import {
   useState,
   type Dispatch,
   type DragEvent,
+  type KeyboardEvent,
   type ReactNode,
   type SetStateAction,
 } from "react";
@@ -282,6 +283,16 @@ export function PageTree({
       .filter((node): node is PageTreeNode => node !== undefined);
   }, [recent, byId]);
 
+  /**
+   * Direct child pages of the page currently open in the route, for the
+   * sidebar "Sub-pages" section. Empty when no bare page URL is active or the
+   * open page has no children, so the section only appears when it has content.
+   */
+  const subPages = useMemo(
+    () => (activePageId ? byParent.get(activePageId) ?? [] : []),
+    [activePageId, byParent],
+  );
+
   // Drag-and-drop intention (docs "Drag & drop"): the pointer is hit-tested by
   // `resolveDropTarget` over the rows currently laid out in the nav and gated by
   // `canDrop`, so no ad-hoc edge/indent math lives here. `draggingId` is the row
@@ -372,6 +383,86 @@ export function PageTree({
     );
   };
 
+  /** Move DOM focus to a tree row's link (fallback: the row container itself). */
+  const focusRow = (id: string) => {
+    const container = navRef.current;
+    if (!container) return;
+    const rows = container.querySelectorAll<HTMLElement>("[data-page-row]");
+    for (const row of rows) {
+      if (row.dataset.pageId !== id) continue;
+      const link = row.querySelector<HTMLAnchorElement>("a[href]");
+      (link ?? row).focus();
+      return;
+    }
+  };
+
+  /**
+   * Roving keyboard navigation for the visible page tree (WAI-ARIA tree
+   * pattern): Up/Down step between the rendered rows, Home/End jump to the
+   * ends, Right expands a collapsed row or steps into its first child, and
+   * Left collapses an open row or steps out to its parent. Only the rows
+   * actually laid out are addressed, so a collapsed subtree is never reached.
+   * Typing in the inline rename field and modifier-key combos are left to the
+   * browser (the rename input and menus keep their own key handling).
+   */
+  const handleTreeKeyDown = (
+    event: KeyboardEvent<HTMLDivElement>,
+    id: string,
+  ) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const element = event.target as HTMLElement | null;
+    if (element && (element.tagName === "INPUT" || element.tagName === "TEXTAREA")) {
+      return;
+    }
+    const container = navRef.current;
+    if (!container) return;
+    const rows = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-page-row]"),
+    );
+    const index = rows.findIndex((row) => row.dataset.pageId === id);
+    if (index === -1) return;
+    const children = byParent.get(id) ?? [];
+    const isOpen = expanded.has(id);
+    const parentId = byId.get(id)?.parentId ?? null;
+    const focusAt = (next: number) => {
+      const nextId = rows[next]?.dataset.pageId;
+      if (nextId) focusRow(nextId);
+    };
+    switch (event.key) {
+      case "ArrowDown":
+        event.preventDefault();
+        focusAt(Math.min(index + 1, rows.length - 1));
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        focusAt(Math.max(index - 1, 0));
+        break;
+      case "Home":
+        event.preventDefault();
+        focusAt(0);
+        break;
+      case "End":
+        event.preventDefault();
+        focusAt(rows.length - 1);
+        break;
+      case "ArrowRight":
+        event.preventDefault();
+        // Closed parent: open it (a second Right then steps into the child).
+        if (children.length > 0) {
+          if (isOpen) focusAt(index + 1);
+          else toggle(id);
+        }
+        break;
+      case "ArrowLeft":
+        event.preventDefault();
+        if (children.length > 0 && isOpen) toggle(id);
+        else if (parentId) focusRow(parentId);
+        break;
+      default:
+        break;
+    }
+  };
+
   const renderNodes = (
     parentId: string | null,
     depth: number,
@@ -396,12 +487,14 @@ export function PageTree({
                 <ContextMenuTrigger asChild>
               <div
                 className={cn(
-                  "group flex items-center rounded-md pr-0.5 hover:bg-surface-2",
+                  "group flex items-center rounded-md pr-0.5 hover:bg-surface-2 focus-within:bg-surface-2",
                   active && "bg-surface-2",
                   draggingId === node.id && "opacity-50",
                 )}
                 data-page-row
                 data-page-id={node.id}
+                tabIndex={-1}
+                onKeyDown={(event) => handleTreeKeyDown(event, node.id)}
                 draggable
                 onDragStart={(event) => handleDragStart(event, node.id)}
                 onDragEnd={handleDragEnd}
@@ -410,6 +503,7 @@ export function PageTree({
                 <button
                   type="button"
                   aria-label={isOpen ? "Collapse" : "Expand"}
+                  aria-expanded={children.length > 0 ? isOpen : undefined}
                   onClick={() => toggle(node.id)}
                   className={cn(
                     "flex h-7 w-5 shrink-0 items-center justify-center text-muted",
@@ -735,6 +829,36 @@ export function PageTree({
             {renderNodes(null, 0, (node) => !node.teamspaceId)}
           </div>
         </>
+      )}
+      {subPages.length > 0 && (
+        <div className="mt-4">
+          <p className="px-1 pb-1 text-[11px] font-medium text-muted/90">
+            Sub-pages
+          </p>
+          <ul className="space-y-px">
+            {subPages.map((node) => {
+              const href = `/w/${workspace.slug}/${node.id}`;
+              return (
+                <li key={node.id}>
+                  <Link
+                    href={href}
+                    className={cn(
+                      "flex items-center gap-2 rounded-md px-1 py-1 text-sm hover:bg-surface-2",
+                      pathname === href && "bg-surface-2",
+                    )}
+                  >
+                    <span className="w-4 shrink-0 text-center text-sm">
+                      {node.icon ?? (node.type === "DATABASE" ? "🗂️" : "📄")}
+                    </span>
+                    <span className="truncate">
+                      {truncateEnd(node.title || "Untitled", SIDEBAR_TITLE_MAX)}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
       {recentNodes.length > 0 && (
         <div className="mt-4">
