@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { UndoRedoProvider } from "@/components/providers/undo-redo-provider";
 import { ActionErrorGuard } from "@/components/action-error-guard";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
@@ -41,7 +42,7 @@ export default async function RootLayout({
             <a href="#main" className="skip-link">
               Skip to content
             </a>
-            {children}
+            <UndoRedoProvider>{children}</UndoRedoProvider>
             <ActionErrorGuard locale={locale} />
             <Toaster />
           </TooltipProvider>

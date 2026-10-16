@@ -8,9 +8,11 @@ import {
   Link as LinkIcon,
   Lock,
   Move,
+  Redo2,
   Smile,
   Star,
   Trash2,
+  Undo2,
 } from "lucide-react";
 import {
   archivePageAction,
@@ -40,6 +42,13 @@ import {
   type NotifyLevel,
 } from "@/components/topbar/actions-menu";
 import { sendChatPrompt } from "@/components/topbar/chat-bridge";
+import {
+  AvatarStack,
+  NO_MEMBERS,
+  toAvatarUsers,
+  type TopbarMember,
+} from "@/components/topbar/avatar-stack";
+import { useUndoRedo } from "@/components/providers/undo-redo-provider";
 import { formatEditedLabel } from "@/lib/actions-menu";
 import {
   appearanceClasses,
@@ -190,6 +199,7 @@ export function PageTitle({
   breadcrumbTrail = EMPTY_BREADCRUMB_TRAIL,
   workspaces = [],
   teamspaces = [],
+  members = NO_MEMBERS,
   editable,
 }: {
   pageId: string;
@@ -217,8 +227,8 @@ export function PageTitle({
    */
   breadcrumbTrail?: BreadcrumbTrail;
   workspaces?: { id: string; name: string; slug: string }[];
-  /** Accepted for the route; member permissions live in WhoHasAccess. */
-  members?: { id: string; name: string }[];
+  /** Workspace members; resolved into the topbar presence/avatar stack. */
+  members?: readonly TopbarMember[];
   teamspaces?: { id: string; name: string; icon: string | null }[];
   editable: boolean;
   locale?: string;
@@ -276,6 +286,11 @@ export function PageTitle({
   // The two legacy booleans now read through the appearance engine.
   const smallText = appearance.fontSize === "small";
   const font = appearance.font;
+
+  // Global undo/redo (mounted by the root layout) drives the topbar controls.
+  const { canUndo, canRedo, undo: undoGlobal, redo: redoGlobal } = useUndoRedo();
+  // Workspace members → the presence/avatar stack model (src/lib/avatars.ts).
+  const avatarUsers = useMemo(() => toAvatarUsers(members), [members]);
 
   // A stored icon is either an emoji glyph or an http(s) image URL; classify it
   // so the renderer shows text for the former and a CSS background for the
@@ -721,6 +736,32 @@ export function PageTitle({
           >
             <Star className={cn("h-4 w-4", favorite && "fill-current")} />
           </button>
+          <div
+            role="group"
+            aria-label="Undo and redo"
+            className="flex items-center gap-0.5"
+          >
+            <button
+              type="button"
+              aria-label="Undo"
+              title="Undo (Ctrl+Z)"
+              disabled={!canUndo}
+              onClick={undoGlobal}
+              className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Undo2 className="h-4 w-4" aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-label="Redo"
+              title="Redo (Ctrl+Shift+Z)"
+              disabled={!canRedo}
+              onClick={redoGlobal}
+              className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Redo2 className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
           <ActionsMenu
             pageId={pageId}
             title={title || "Untitled"}
@@ -756,6 +797,7 @@ export function PageTitle({
             onPickIcon={pickIcon}
             onPickCover={pickCover}
           />
+          <AvatarStack users={avatarUsers} className="ms-1" />
         </div>
       </div>
 
