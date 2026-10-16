@@ -8,13 +8,33 @@ import { refineByRelevance } from "@/lib/search-ranking";
 
 export const runtime = "nodejs";
 
+/** The engine's `PageType`, keyed by the lower-case `type` query values. */
+const SEARCH_TYPE_BY_PARAM: Readonly<Record<string, "PAGE" | "DATABASE">> = {
+  page: "PAGE",
+  database: "DATABASE",
+};
+
 /**
- * GET /api/v1/search?workspaceId=…&q=…&page_size=…&start_cursor=… — search page
- * titles and bodies. Keyset pagination over the engine's rank with an `id`
+ * Resolve the optional `type` query parameter to a `PageType`, or `null` to
+ * search every type. Matching is case-insensitive; an absent, blank or
+ * unrecognised value means "all", so the parameter is purely additive.
+ */
+function parseSearchType(raw: string | null): "PAGE" | "DATABASE" | null {
+  if (raw === null) return null;
+  return SEARCH_TYPE_BY_PARAM[raw.trim().toLowerCase()] ?? null;
+}
+
+/**
+ * GET /api/v1/search?workspaceId=…&q=…&page_size=…&start_cursor=…&type=… —
+ * search page titles and bodies. Keyset pagination over the engine's rank with an `id`
  * tie-break. `page_size` defaults to 50, clamped to 1..100; bad values are 400
  * `invalid_page_size`, unreadable cursors 400 `invalid_cursor`. Additive
  * `rank=bm25` re-ranks only the hits loaded for the current page (title-
  * weighted); the default response order and `next_cursor` are unchanged.
+ * Additive `type=page|database` narrows the returned hits to a single
+ * `PageType`; omitting it (or an unknown value) searches every type. The
+ * engine keyset still drives the walk, so `has_more` / `next_cursor` are
+ * unchanged and a scoped walk neither skips nor repeats a hit.
  */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "v1");
@@ -41,11 +61,14 @@ export async function GET(request: Request) {
     return NextResponse.json(malformedCursorResult(), { status: 400 });
   }
 
+  const type = parseSearchType(url.searchParams.get("type"));
+
   const page = await searchPagesPage(workspaceId, query, null, { limit, cursor });
+  const scoped = type === null ? page.items : page.items.filter((result) => result.type === type);
   const items =
     url.searchParams.get("rank") === "bm25"
-      ? refineByRelevance(page.items, query, { titleWeight: 3, getBody: (r) => r.snippet })
-      : page.items;
+      ? refineByRelevance(scoped, query, { titleWeight: 3, getBody: (r) => r.snippet })
+      : scoped;
   return NextResponse.json({
     results: items.map((result) => ({
       id: result.id,
