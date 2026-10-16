@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_RETENTION,
+  DEFAULT_SNAPSHOT_INTERVAL_MS,
+  FORMER_MEMBER_LABEL,
+  attributeBlocks,
   buildVersionRecord,
   diffVersions,
   normalizeVersionLabel,
   pickLatestNamedVersion,
   pickVersionAuthor,
+  pruneVersions,
+  resolveVersionAuthorship,
   restoreVersionSummary,
+  shouldSnapshot,
 } from "./version-history";
 
 /**
@@ -273,5 +280,272 @@ describe("pickLatestNamedVersion (R30.10-lite)", () => {
     expect(latest?.id).toBe("t1");
     expect(latest?.label).toBe("one");
     expect(latest?.isNamed).toBe(true);
+  });
+});
+
+/**
+ * M3 slice - the four remaining section-10 behaviours, still lib-level:
+ * cadence (R30.3), retention (R30.7), authorship fields (R30.11) and
+ * block-level attribution (R30.16 stage 1). Written BEFORE the exports existed
+ * (named-import error -> suite red), then implemented to green.
+ */
+
+describe("shouldSnapshot (R30.3 cadence)", () => {
+  const now = new Date("2021-01-01T12:00:00.000Z");
+  const at = (msAgo: number) => new Date(now.getTime() - msAgo);
+
+  it("always snapshots when there is no previous row", () => {
+    expect(shouldSnapshot(null, now)).toBe(true);
+    expect(shouldSnapshot(undefined, now)).toBe(true);
+  });
+
+  it("uses a 5-minute default window (R30.3/D2)", () => {
+    expect(DEFAULT_SNAPSHOT_INTERVAL_MS).toBe(5 * 60 * 1000);
+    expect(shouldSnapshot({ createdAt: at(5 * 60 * 1000 - 1) }, now)).toBe(false);
+    expect(shouldSnapshot({ createdAt: at(5 * 60 * 1000) }, now)).toBe(true);
+    expect(shouldSnapshot({ createdAt: at(5 * 60 * 1000 + 1) }, now)).toBe(true);
+  });
+
+  it("honours a custom minIntervalMs", () => {
+    const options = { minIntervalMs: 1000 };
+    expect(shouldSnapshot({ createdAt: at(999) }, now, options)).toBe(false);
+    expect(shouldSnapshot({ createdAt: at(1000) }, now, options)).toBe(true);
+  });
+
+  it("skips an unchanged payload even when the window has elapsed (R30.3 dedupe)", () => {
+    expect(shouldSnapshot({ createdAt: at(60 * 60 * 1000) }, now, { changed: false })).toBe(false);
+    expect(shouldSnapshot(null, now, { changed: false })).toBe(false);
+    // Omitting `changed` is the pure clock gate (assume changed).
+    expect(shouldSnapshot({ createdAt: at(60 * 60 * 1000) }, now)).toBe(true);
+  });
+
+  it("treats a non-positive window as always due", () => {
+    expect(shouldSnapshot({ createdAt: now }, now, { minIntervalMs: 0 })).toBe(true);
+  });
+});
+
+describe("pruneVersions (R30.7 retention tiers)", () => {
+  const now = new Date("2021-06-01T12:00:00.000Z");
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const WEEK_MS = 7 * DAY_MS;
+  const days = (n: number) => new Date(now.getTime() - n * DAY_MS);
+  const row = (id: string, createdAt: Date, label?: string | null) => ({ id, createdAt, label });
+
+  it("publishes the D3 defaults", () => {
+    expect(DEFAULT_RETENTION).toEqual({ fullFidelityDays: 30, dailyWindowDays: 90, maxRows: 500 });
+  });
+
+  it("keeps everything inside the full-fidelity window, in input order", () => {
+    const rows = [row("a", days(0)), row("b", days(10)), row("c", days(29))];
+    const result = pruneVersions(rows, now);
+    expect(result.keep.map((entry) => entry.id)).toEqual(["a", "b", "c"]);
+    expect(result.prune).toEqual([]);
+    expect(result.prunedIds).toEqual([]);
+  });
+
+  it("never prunes labelled rows, however old", () => {
+    const rows = [row("pinned", days(400), "keep me"), row("newest", days(1))];
+    const result = pruneVersions(rows, now);
+    expect(result.prunedIds).toEqual([]);
+    expect(result.keep.map((entry) => entry.id)).toEqual(["pinned", "newest"]);
+  });
+
+  it("never prunes the newest row even beyond every tier", () => {
+    const rows = [row("newest", days(500)), row("older", days(501))];
+    const result = pruneVersions(rows, now, { maxRows: 1 });
+    expect(result.prunedIds).toEqual(["older"]);
+    expect(result.keep.map((entry) => entry.id)).toEqual(["newest"]);
+  });
+
+  it("thins the daily tier to one row per UTC day (keeping the newest)", () => {
+    const base = days(40).getTime();
+    const dayStart = Math.floor(base / DAY_MS) * DAY_MS;
+    const older = row("older", new Date(dayStart + 1000));
+    const newer = row("newer", new Date(dayStart + 2000));
+    const result = pruneVersions([older, newer], now);
+    expect(result.prunedIds).toEqual(["older"]);
+    expect(result.keep.map((entry) => entry.id)).toEqual(["newer"]);
+  });
+
+  it("treats the 30-day boundary as the daily tier (age >= fullFidelityDays)", () => {
+    const base = days(30).getTime();
+    const dayStart = Math.floor(base / DAY_MS) * DAY_MS;
+    const older = row("older", new Date(dayStart + 1000));
+    const newer = row("newer", new Date(dayStart + 2000));
+    expect(pruneVersions([older, newer], now).prunedIds).toEqual(["older"]);
+  });
+
+  it("thins beyond the daily window to one row per 7-day bucket", () => {
+    const base = days(100).getTime();
+    const weekStart = Math.floor(base / WEEK_MS) * WEEK_MS;
+    const older = row("older", new Date(weekStart + 1000));
+    const newer = row("newer", new Date(weekStart + 2000));
+    const result = pruneVersions([older, newer], now);
+    expect(result.prunedIds).toEqual(["older"]);
+    expect(result.keep.map((entry) => entry.id)).toEqual(["newer"]);
+  });
+
+  it("caps unlabelled rows, pruning the oldest first", () => {
+    const rows = [row("n1", days(1)), row("n2", days(2)), row("n3", days(3)), row("n4", days(4))];
+    const result = pruneVersions(rows, now, { maxRows: 2 });
+    expect(result.prunedIds).toEqual(["n3", "n4"]);
+    expect(result.keep.map((entry) => entry.id)).toEqual(["n1", "n2"]);
+  });
+
+  it("does not count labelled rows toward the cap", () => {
+    const rows = [
+      row("auto1", days(1)),
+      row("auto2", days(2)),
+      row("auto3", days(3)),
+      row("pinned", days(4), "pinned"),
+    ];
+    const result = pruneVersions(rows, now, { maxRows: 2 });
+    expect(result.prunedIds).toEqual(["auto3"]);
+    expect(result.keep.map((entry) => entry.id)).toEqual(["auto1", "auto2", "pinned"]);
+  });
+});
+
+describe("resolveVersionAuthorship (R30.11)", () => {
+  const users = [
+    { id: "u1", name: "Ada Lovelace", email: "ada@example.test" },
+    { id: "u2", name: "Grace Hopper", email: "grace@example.test" },
+  ];
+
+  it("resolves a present author to their name", () => {
+    const authorship = resolveVersionAuthorship("u2", users);
+    expect(authorship.createdById).toBe("u2");
+    expect(authorship.author).toEqual(users[1]);
+    expect(authorship.label).toBe("Grace Hopper");
+    expect(authorship.isFormerMember).toBe(false);
+  });
+
+  it("renders a stable former-member label for a departed/deleted author", () => {
+    const authorship = resolveVersionAuthorship("deleted-user", users);
+    expect(authorship.author).toBeNull();
+    expect(authorship.label).toBe(FORMER_MEMBER_LABEL);
+    expect(authorship.isFormerMember).toBe(true);
+  });
+
+  it("carries no label when the row never had an author", () => {
+    for (const id of [null, undefined, ""]) {
+      const authorship = resolveVersionAuthorship(id, users);
+      expect(authorship.createdById).toBeNull();
+      expect(authorship.author).toBeNull();
+      expect(authorship.label).toBeNull();
+      expect(authorship.isFormerMember).toBe(false);
+    }
+  });
+});
+
+describe("buildVersionRecord authorship fields (R30.11)", () => {
+  const createdAt = new Date("2020-05-04T10:30:00.000Z");
+  const users = [{ id: "u1", name: "Ada Lovelace", email: "ada@example.test" }];
+
+  it("attaches resolved authorship when given an author id + users", () => {
+    const record = buildVersionRecord({ id: "v1", createdAt, createdById: "u1", users });
+    expect(record.authorship.label).toBe("Ada Lovelace");
+    expect(record.authorship.isFormerMember).toBe(false);
+  });
+
+  it("marks a departed author without changing the label or the summary", () => {
+    const record = buildVersionRecord({ id: "v1", createdAt, label: "keep", createdById: "gone", users });
+    expect(record.authorship.isFormerMember).toBe(true);
+    expect(record.authorship.label).toBe(FORMER_MEMBER_LABEL);
+    expect(record.label).toBe("keep");
+    expect(record.summary).toContain(createdAt.toLocaleDateString());
+  });
+
+  it("defaults to no authorship when the input carries none", () => {
+    const record = buildVersionRecord({ id: "v1", createdAt });
+    expect(record.authorship).toEqual({
+      createdById: null,
+      author: null,
+      label: null,
+      isFormerMember: false,
+    });
+  });
+});
+
+describe("attributeBlocks (R30.16 block-level attribution)", () => {
+  const p = (id: string, text: string) => ({
+    id,
+    type: "paragraph",
+    content: [{ type: "text", text }],
+  });
+
+  it("attributes every block as unchanged for identical snapshots", () => {
+    const doc = [p("b1", "one"), p("b2", "two")];
+    const attributed = attributeBlocks(doc, doc);
+    expect(attributed.map((entry) => [entry.id, entry.kind, entry.changed, entry.moved])).toEqual([
+      ["b1", "unchanged", false, false],
+      ["b2", "unchanged", false, false],
+    ]);
+    expect(attributed[0]).toMatchObject({ aIndex: 0, bIndex: 0, before: doc[0], after: doc[0] });
+  });
+
+  it("attributes an insert with a null a-side and a positional b index", () => {
+    const before = [p("b1", "one"), p("b3", "three")];
+    const after = [p("b1", "one"), p("b2", "two"), p("b3", "three")];
+    const attributed = attributeBlocks(before, after);
+    expect(attributed.map((entry) => entry.id)).toEqual(["b1", "b2", "b3"]);
+    expect(attributed[1]).toMatchObject({
+      id: "b2",
+      kind: "added",
+      aIndex: null,
+      bIndex: 1,
+      before: null,
+    });
+    expect(attributed[1].after).toEqual(after[1]);
+  });
+
+  it("attributes a delete on the a-side after the b-ordered blocks", () => {
+    const before = [p("b1", "one"), p("b2", "two"), p("b3", "three")];
+    const after = [p("b1", "one"), p("b3", "three")];
+    const attributed = attributeBlocks(before, after);
+    expect(attributed.map((entry) => [entry.id, entry.kind])).toEqual([
+      ["b1", "unchanged"],
+      ["b3", "unchanged"],
+      ["b2", "removed"],
+    ]);
+    expect(attributed[2]).toMatchObject({ aIndex: 1, bIndex: null, after: null });
+  });
+
+  it("attributes an edit as changed with both payloads attached", () => {
+    const before = [p("b1", "one"), p("b2", "two")];
+    const after = [p("b1", "one"), p("b2", "two EDITED")];
+    const edited = attributeBlocks(before, after)[1];
+    expect(edited).toMatchObject({
+      id: "b2",
+      kind: "changed",
+      changed: true,
+      moved: false,
+      aIndex: 1,
+      bIndex: 1,
+    });
+    expect(edited.before).toEqual(before[1]);
+    expect(edited.after).toEqual(after[1]);
+  });
+
+  it("attributes a reorder as moved, and an edit + move as changed + moved", () => {
+    const before = [p("b1", "one"), p("b2", "two"), p("b3", "three")];
+    const reordered = attributeBlocks(before, [p("b3", "three"), p("b1", "one"), p("b2", "two")]);
+    expect(reordered.find((entry) => entry.id === "b3")).toMatchObject({
+      kind: "moved",
+      moved: true,
+      changed: false,
+    });
+    const editedMove = attributeBlocks(before, [p("b3", "three EDITED"), p("b1", "one"), p("b2", "two")]);
+    expect(editedMove.find((entry) => entry.id === "b3")).toMatchObject({
+      kind: "changed",
+      changed: true,
+      moved: true,
+    });
+  });
+
+  it("accepts JSON strings and never throws on malformed input", () => {
+    const before = [p("b1", "one")];
+    expect(() => attributeBlocks("{ nope", before)).not.toThrow();
+    expect(attributeBlocks("{ nope", before).map((entry) => entry.kind)).toEqual(["added"]);
+    expect(attributeBlocks(JSON.stringify(before), JSON.stringify(before))[0].kind).toBe("unchanged");
   });
 });
