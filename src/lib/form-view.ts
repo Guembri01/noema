@@ -22,7 +22,7 @@
  * JSON, so everything is checked at runtime and nothing throws.
  */
 
-import { validateCell, type CellError } from "@/lib/cell-validation";
+import { validateCell, type CellError, type CellErrorCode } from "@/lib/cell-validation";
 
 /**
  * Property types that are derived or system-managed and therefore cannot be
@@ -59,14 +59,32 @@ export type FormConfig = {
   submitLabel?: string;
 };
 
-/** One resolved form question. `config` is the property config the editors use. */
+/**
+ * One form question.
+ *
+ * The parsed-schema fields (R89.29) only require `propertyId` and `label` and
+ * carry the builder knobs (`required`/`help`/`hidden`/`default`). The resolved
+ * builder/renderer path additionally fills the property metadata (`type`,
+ * `primary`, `config`) so the same object can drive the live cell editors;
+ * those extras stay optional so a hand-parsed schema is still a valid field.
+ */
 export type FormField = {
   propertyId: string;
   label: string;
-  type: string;
-  required: boolean;
-  primary: boolean;
-  config: Record<string, unknown>;
+  /** Whether the respondent must answer. Defaults to the property's own flag. */
+  required?: boolean;
+  /** Optional helper text shown under the question. */
+  help?: string;
+  /** Hidden questions are excluded from the respondent form (and its order). */
+  hidden?: boolean;
+  /** Pre-filled answer for a fresh respondent, in the property's stored shape. */
+  default?: unknown;
+  /** Resolved property type (`TEXT`, `NUMBER`, …) used by the cell editors. */
+  type?: string;
+  /** Resolved primary-property flag. */
+  primary?: boolean;
+  /** Resolved property config the editors read (`min`/`max`/`options`/…). */
+  config?: Record<string, unknown>;
 };
 
 /** One failing field of a submission. */
@@ -288,12 +306,13 @@ function normalizeAnswers(answers: unknown): Map<string, unknown> {
 }
 
 /**
- * Validate a submission against resolved fields. Each answer is checked with
- * `validateCell` under the field's toggled `required` flag, so type constraints
- * (min/max, length, pattern, options, date range) match a real cell write.
- * Returns one issue per failing field in field order; never throws.
+ * Validate a submission against resolved fields (the builder's `FormField[]`).
+ * Each answer is checked with `validateCell` under the field's toggled
+ * `required` flag, so type constraints (min/max, length, pattern, options, date
+ * range) match a real cell write. Returns one issue per failing field in field
+ * order; never throws.
  */
-export function validateSubmission(fields: unknown, answers: unknown): FormValidation {
+function validateResolvedFields(fields: unknown, answers: unknown): FormIssue[] {
   const issues: FormIssue[] = [];
   try {
     const answerMap = normalizeAnswers(answers);
@@ -320,10 +339,47 @@ export function validateSubmission(fields: unknown, answers: unknown): FormValid
       }
     }
   } catch {
+    // Fail open: an exotic field list must never break the caller.
+    return [];
+  }
+  return issues;
+}
+
+/** Flatten resolved issues to the compact `{ propertyId, code }` shape. */
+function issuesToErrors(issues: FormIssue[]): SubmissionError[] {
+  const errors: SubmissionError[] = [];
+  for (const issue of issues) {
+    for (const error of issue.errors) {
+      errors.push({ propertyId: issue.propertyId, code: error.code });
+    }
+  }
+  return errors;
+}
+
+/**
+ * Validate a submission.
+ *
+ * Accepts either a parsed {@link FormSchema} (the form-view engine; returns
+ * `errors`) or a resolved `FormField[]` (the live builder/respondent renderer;
+ * returns rich `issues`). Both are backed by `validateCell`, so the form can
+ * never accept a value a real cell write would reject. Returns `ok:true` for a
+ * valid submission; otherwise both the compact `errors` list and the detailed
+ * `issues`. Never throws.
+ */
+export function validateSubmission(input: unknown, answers: unknown): FormSubmission {
+  try {
+    if (isFormSchemaInput(input)) {
+      const issues = validateSchemaFields(parseFormSchema(input), answers);
+      const errors = issuesToErrors(issues);
+      return errors.length > 0 ? { ok: false, errors, issues } : { ok: true };
+    }
+    const issues = validateResolvedFields(input, answers);
+    const errors = issuesToErrors(issues);
+    return errors.length > 0 ? { ok: false, errors, issues } : { ok: true };
+  } catch {
     // Fail open, matching cell-validation: an exotic answer is not an error.
     return { ok: true };
   }
-  return issues.length > 0 ? { ok: false, issues } : { ok: true };
 }
 
 /**
@@ -348,4 +404,362 @@ export function answersToPropertyValues(
     // Return whatever was collected before the malformed input.
   }
   return out;
+}
+
+/* ---------------------------------------------------------------------------
+   Parsed form schema engine (R89.29)
+   ---------------------------------------------------------------------------
+
+   `buildFormSchema` above derives an ordered question list from *live*
+   database properties. The engine below models the *stored* form: a JSON-safe
+   {@link FormSchema} round-tripped through `DatabaseView.config.form`. It is
+   parsed (`parseFormSchema`), linted against the database's properties
+   (`validateFormSchema`), used to pre-fill (`defaultAnswers`) and validate
+   (`validateSubmission`) a submission, mapped to row cells (`toRowValues`),
+   described for the builder/closed state (`describeForm`), paused/resumed
+   (`toggleAccepting`) and reordered (`fieldOrder`). Everything is pure and
+   never throws: stored config is untrusted JSON.
+*/
+
+/** Default success copy shown after a submission when none is configured. */
+export const DEFAULT_SUCCESS_MESSAGE = "Your response has been recorded.";
+
+/** Longest accepted form title (builder constraint, R89.29). */
+export const FORM_TITLE_MAX_LENGTH = 200;
+
+/** A known database property: a bare id or a Prisma-shaped `{ id }` record. */
+export type FormPropertyRef = string | { id: string };
+
+/** The JSON-safe stored form: title, ordered questions and settings. */
+export type FormSchema = {
+  /** The form/view identifier. */
+  id: string;
+  /** The database the submission creates rows in (re-authorization target). */
+  databaseId: string;
+  /** Respondent-facing title (builder shows it at the top). */
+  title: string;
+  /** Optional intro copy under the title. */
+  description?: string;
+  /** Ordered questions. */
+  fields: FormField[];
+  /** `false` ⇒ the polite closed-state page (R89.29). Defaults to `true`. */
+  accepting: boolean;
+  /** Submit button label; defaults to `DEFAULT_SUBMIT_LABEL`. */
+  submitLabel?: string;
+  /** Copy shown after a successful submit; defaults to `DEFAULT_SUCCESS_MESSAGE`. */
+  successMessage?: string;
+};
+
+/** Machine-readable reason a stored schema was rejected. */
+export type FormSchemaErrorCode =
+  /** Missing or over-long title. */
+  | "TITLE_LENGTH"
+  /** A question points at a property the database does not have. */
+  | "UNKNOWN_PROPERTY"
+  /** The same property is asked twice. */
+  | "DUPLICATE_PROPERTY"
+  /** A required question is hidden (impossible to answer). */
+  | "REQUIRED_HIDDEN"
+  /** Every question is hidden (or there are none). */
+  | "NO_VISIBLE_FIELDS";
+
+/** One schema-level problem. */
+export type FormSchemaError = {
+  code: FormSchemaErrorCode;
+  message: string;
+  /** Offending property id, when the error is about one question. */
+  propertyId?: string;
+};
+
+/** `ok:true` when the schema is publishable; otherwise the failures. */
+export type FormSchemaValidation = { ok: true } | { ok: false; errors: FormSchemaError[] };
+
+/** One failing answer, reduced to its property id and machine code. */
+export type SubmissionError = { propertyId: string; code: CellErrorCode };
+
+/**
+ * A submission outcome: valid, or the compact `errors` list plus the detailed
+ * `issues` (so both the schema engine and the live renderer read one result).
+ */
+export type FormSubmission =
+  | { ok: true }
+  | { ok: false; errors: SubmissionError[]; issues: FormIssue[] };
+
+/** Everything the respondent UI needs to render a form's chrome. */
+export type FormDescription = {
+  title: string;
+  description: string;
+  submitLabel: string;
+  successMessage: string;
+  accepting: boolean;
+  /** Number of visible (answerable) questions. */
+  questionCount: number;
+};
+
+/** JSON-safe structural clone so defaults never share a mutable reference. */
+function cloneDefault<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((entry) => cloneDefault(entry)) as unknown as T;
+  }
+  if (value instanceof Date) {
+    return new Date(value.getTime()) as unknown as T;
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = cloneDefault(entry);
+    }
+    return out as T;
+  }
+  return value;
+}
+
+/** Coerce one untrusted schema field; returns `null` when it has no property. */
+function asSchemaField(input: unknown): FormField | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const raw = input as Record<string, unknown>;
+  const propertyId = raw.propertyId;
+  if (typeof propertyId !== "string" || propertyId.trim() === "") return null;
+  const label = raw.label;
+  const field: FormField = {
+    propertyId,
+    label: typeof label === "string" && label.trim() !== "" ? label : "Value",
+  };
+  if (raw.required === true) field.required = true;
+  else if (raw.required === false) field.required = false;
+  if (typeof raw.help === "string") field.help = raw.help;
+  if (raw.hidden === true) field.hidden = true;
+  if (raw.default !== undefined) field.default = cloneDefault(raw.default);
+  if (typeof raw.type === "string" && raw.type !== "") field.type = raw.type;
+  if (raw.primary === true) field.primary = true;
+  if (raw.config && typeof raw.config === "object" && !Array.isArray(raw.config)) {
+    field.config = raw.config as Record<string, unknown>;
+  }
+  return field;
+}
+
+/**
+ * Normalize untrusted JSON (a `DatabaseView.config.form` blob) into a
+ * {@link FormSchema}. Missing scalars fall back to `""`/`true`, malformed fields
+ * are dropped, and duplicate/unknown property ids are preserved so
+ * `validateFormSchema` can report them. Idempotent and never throws.
+ */
+export function parseFormSchema(raw: unknown): FormSchema {
+  const schema: FormSchema = {
+    id: "",
+    databaseId: "",
+    title: "",
+    fields: [],
+    accepting: true,
+  };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return schema;
+  const record = raw as Record<string, unknown>;
+  if (typeof record.id === "string") schema.id = record.id;
+  if (typeof record.databaseId === "string") schema.databaseId = record.databaseId;
+  if (typeof record.title === "string") schema.title = record.title;
+  if (typeof record.description === "string") schema.description = record.description;
+  if (typeof record.submitLabel === "string") schema.submitLabel = record.submitLabel;
+  if (typeof record.successMessage === "string") schema.successMessage = record.successMessage;
+  schema.accepting = record.accepting !== false;
+  if (Array.isArray(record.fields)) {
+    for (const entry of record.fields) {
+      const field = asSchemaField(entry);
+      if (field) schema.fields.push(field);
+    }
+  }
+  return schema;
+}
+
+/** The answerable questions, in order (hidden fields excluded). */
+function visibleFields(schema: FormSchema): FormField[] {
+  return schema.fields.filter((field) => field.hidden !== true);
+}
+
+/**
+ * Lint a stored schema against the database's properties: missing/over-long
+ * title, questions pointing at unknown or duplicated properties, required-but-
+ * hidden questions, and a form with nothing to answer. Returns every problem
+ * (never throws) so the builder can surface them together.
+ */
+export function validateFormSchema(
+  schema: FormSchema,
+  options: { properties: readonly FormPropertyRef[] },
+): FormSchemaValidation {
+  const errors: FormSchemaError[] = [];
+  const title = typeof schema.title === "string" ? schema.title.trim() : "";
+  if (title === "") {
+    errors.push({ code: "TITLE_LENGTH", message: "Form title is required." });
+  } else if (title.length > FORM_TITLE_MAX_LENGTH) {
+    errors.push({
+      code: "TITLE_LENGTH",
+      message: `Form title must be at most ${FORM_TITLE_MAX_LENGTH} characters.`,
+    });
+  }
+
+  const known = new Set<string>();
+  for (const property of options.properties) {
+    const id = typeof property === "string" ? property : property.id;
+    if (typeof id === "string" && id !== "") known.add(id);
+  }
+
+  const seen = new Set<string>();
+  let visible = 0;
+  for (const field of schema.fields) {
+    if (field.hidden !== true) visible += 1;
+    if (!known.has(field.propertyId)) {
+      errors.push({
+        code: "UNKNOWN_PROPERTY",
+        propertyId: field.propertyId,
+        message: `Unknown property: ${field.propertyId}`,
+      });
+    } else if (seen.has(field.propertyId)) {
+      errors.push({
+        code: "DUPLICATE_PROPERTY",
+        propertyId: field.propertyId,
+        message: `Duplicate property: ${field.propertyId}`,
+      });
+    }
+    seen.add(field.propertyId);
+    if (field.required === true && field.hidden === true) {
+      errors.push({
+        code: "REQUIRED_HIDDEN",
+        propertyId: field.propertyId,
+        message: `Required property cannot be hidden: ${field.propertyId}`,
+      });
+    }
+  }
+
+  if (visible === 0) {
+    errors.push({
+      code: "NO_VISIBLE_FIELDS",
+      message: "A form must show at least one question.",
+    });
+  }
+
+  return errors.length === 0 ? { ok: true } : { ok: false, errors };
+}
+
+/** Whether the input looks like a stored `FormSchema` (has a `fields` array). */
+function isFormSchemaInput(input: unknown): boolean {
+  return (
+    !!input &&
+    typeof input === "object" &&
+    !Array.isArray(input) &&
+    Array.isArray((input as Record<string, unknown>).fields)
+  );
+}
+
+/** Validate a parsed schema's answers with the shared cell rules. */
+function validateSchemaFields(schema: FormSchema, answers: unknown): FormIssue[] {
+  const issues: FormIssue[] = [];
+  const answerMap = normalizeAnswers(answers);
+  for (const field of visibleFields(schema)) {
+    const result = validateCell(
+      {
+        id: field.propertyId,
+        name: field.label,
+        type: typeof field.type === "string" ? field.type : "",
+        required: field.required === true,
+        config: field.config ?? {},
+      },
+      answerMap.get(field.propertyId),
+    );
+    if (!result.ok) {
+      issues.push({ propertyId: field.propertyId, label: field.label, errors: result.errors });
+    }
+  }
+  return issues;
+}
+
+/**
+ * The pre-filled answers for a fresh respondent: each visible field's `default`,
+ * deep-cloned so a caller cannot mutate the stored schema. Fields without a
+ * default are omitted. Never throws.
+ */
+export function defaultAnswers(schema: FormSchema): Record<string, unknown> {
+  const answers: Record<string, unknown> = {};
+  try {
+    for (const field of visibleFields(schema)) {
+      if (field.default !== undefined) answers[field.propertyId] = cloneDefault(field.default);
+    }
+  } catch {
+    // Return whatever was collected before a malformed default.
+  }
+  return answers;
+}
+
+/**
+ * Map answers to the `{ propertyId, value }` cells a new row stores, in field
+ * order. A field's `default` fills in when its answer is absent; questions with
+ * neither are skipped, and answer keys not in the schema are ignored. Hidden
+ * fields are never written. Never throws.
+ */
+export function toRowValues(
+  schema: FormSchema,
+  answers: unknown,
+): { propertyId: string; value: unknown }[] {
+  const out: { propertyId: string; value: unknown }[] = [];
+  try {
+    const answerMap = normalizeAnswers(answers);
+    for (const field of visibleFields(schema)) {
+      if (answerMap.has(field.propertyId)) {
+        out.push({ propertyId: field.propertyId, value: answerMap.get(field.propertyId) });
+      } else if (field.default !== undefined) {
+        out.push({ propertyId: field.propertyId, value: cloneDefault(field.default) });
+      }
+    }
+  } catch {
+    // Return whatever was collected before the malformed input.
+  }
+  return out;
+}
+
+/** Display metadata for a form: filled-in copy, accept state, question count. */
+export function describeForm(schema: FormSchema): FormDescription {
+  const submitLabel =
+    typeof schema.submitLabel === "string" && schema.submitLabel.trim() !== ""
+      ? schema.submitLabel.trim()
+      : DEFAULT_SUBMIT_LABEL;
+  const successMessage =
+    typeof schema.successMessage === "string" && schema.successMessage.trim() !== ""
+      ? schema.successMessage.trim()
+      : DEFAULT_SUCCESS_MESSAGE;
+  return {
+    title: typeof schema.title === "string" ? schema.title : "",
+    description: typeof schema.description === "string" ? schema.description : "",
+    submitLabel,
+    successMessage,
+    accepting: schema.accepting === true,
+    questionCount: visibleFields(schema).length,
+  };
+}
+
+/** Return a copy of `schema` with `accepting` set to `on` (never mutates). */
+export function toggleAccepting(schema: FormSchema, on: boolean): FormSchema {
+  return { ...schema, accepting: on === true };
+}
+
+/**
+ * The questions in their effective order. Without `order` the stored order is
+ * returned; with it, the listed property ids lead (in that order) and the
+ * remaining questions keep their relative order — a stable drag-reorder helper.
+ * A copy is always returned, so callers can assign it back to `schema.fields`.
+ */
+export function fieldOrder(schema: FormSchema, order?: readonly string[]): FormField[] {
+  const next = schema.fields.slice();
+  const priority = Array.isArray(order) ? order : [];
+  const rank = new Map<string, number>();
+  priority.forEach((id, index) => {
+    if (typeof id === "string" && !rank.has(id)) rank.set(id, index);
+  });
+  if (rank.size === 0) return next;
+  next.sort((a, b) => {
+    const rankA = rank.get(a.propertyId);
+    const rankB = rank.get(b.propertyId);
+    if (rankA === undefined && rankB === undefined) return 0;
+    if (rankA === undefined) return 1;
+    if (rankB === undefined) return -1;
+    return rankA - rankB;
+  });
+  return next;
 }
