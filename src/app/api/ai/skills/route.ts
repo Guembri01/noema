@@ -173,17 +173,26 @@ async function runWritingSkill(
   }
 
   const build = buildWritingPrompt(kind, budgeted, body);
-  const result = await chatComplete(
-    {
-      system: build.system,
-      user: build.user,
-      temperature: build.params.temperature,
-      maxTokens: build.params.maxTokens,
-    },
-    config,
-  );
+  const request = {
+    system: build.system,
+    user: build.user,
+    temperature: build.params.temperature,
+    maxTokens: build.params.maxTokens,
+  };
+  const result = await chatComplete(request, config);
   if (!result.ok) return result;
-  return { ok: true, text: postProcess(kind, result.text) };
+  const cleaned = postProcess(kind, result.text);
+  if (cleaned.trim() !== "") return { ok: true, text: cleaned };
+
+  // A provider can occasionally answer with nothing. Retry once at a slightly
+  // higher temperature before surfacing an error, so a blank reply never
+  // silently reaches the editor as an empty result.
+  const retry = await chatComplete({ ...request, temperature: Math.min(1, request.temperature + 0.2) }, config);
+  if (!retry.ok) return retry;
+  const retried = postProcess(kind, retry.text);
+  if (retried.trim() !== "") return { ok: true, text: retried };
+
+  return { ok: false, status: 502, error: "The model returned an empty reply. Please try again." };
 }
 
 /** The catalogue the UI/editors consume: editor skills plus the writing-only ids. */
