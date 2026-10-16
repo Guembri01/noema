@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -12,6 +13,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type SetStateAction,
+  type UIEvent,
 } from "react";
 import {
   ChevronRight,
@@ -49,6 +51,16 @@ import {
   toggleExpanded,
   visibleChildren,
 } from "@/lib/page-tree";
+import {
+  anchorForScroll,
+  buildRenderPlan,
+  scrollToIndex,
+  shouldVirtualize,
+  visibleRange,
+  type PageTreeRenderPlan,
+  type PageTreeWindowOptions,
+  type PageTreeWindowRange,
+} from "@/lib/page-tree-window";
 import {
   canDrop,
   dropIndicatorStyle,
@@ -172,7 +184,198 @@ function readRecent(workspaceId: string): RecentPage[] {
  * Pure page-tree helpers (moveCandidates, grouping, expand toggles, the
  * visible-rows plan) live in `@/lib/page-tree` — extracted verbatim by B66 so
  * they are unit-testable without a DOM.
+ *
+ * W10 wires the un-wired `@/lib/page-tree-window` engine into this sidebar: the
+ * big-tree path renders only the rows inside the viewport window, while a short
+ * tree keeps the exact nested markup it always had. The mapping from the
+ * windowing engine's plan to the props this component renders (section headers
+ * plus page rows, each with an absolute `top`/`height`) is pure and exported
+ * below, so it is provable in a node test without a DOM. See
+ * `page-tree.test.ts`.
  */
+
+/** Fixed row pitch of the virtualized sidebar, in px (matches the classic row). */
+export const SIDEBAR_ROW_HEIGHT = 28;
+
+/** Extra rows rendered above and below the viewport window. */
+const SIDEBAR_OVERSCAN = 4;
+
+/**
+ * Assumed nav height (px) before the first client measurement, so the server
+ * renders a plausible window instead of an empty one; the first layout effect
+ * replaces it with the measured height.
+ */
+const SIDEBAR_VIEWPORT_FALLBACK = 600;
+
+/**
+ * Synthetic id prefix for a section-header row in the plan tree. Page ids are
+ * cuids, so a collision with a real id is impossible.
+ */
+const SECTION_ID_PREFIX = "__sidebar_section__:";
+
+/** A teamspace the sidebar groups root pages under. */
+export type SidebarTeamspace = { id: string; name: string; icon: string | null };
+
+/** A section header turned into a virtualizable row. */
+export type SidebarHeaderRow = {
+  /** Synthetic id in the plan tree; never a real page id. */
+  id: string;
+  kind: "teamspace" | "private";
+  label: string;
+  icon: string | null;
+};
+
+/**
+ * One item the virtualizer draws: a section header or a page row, positioned
+ * absolutely in the full scroll content. `height` is the plan's row height for
+ * every item, so the DOM stays in sync with the windowing math.
+ */
+export type SidebarRenderItem =
+  | {
+      kind: "header";
+      id: string;
+      header: SidebarHeaderRow;
+      top: number;
+      height: number;
+    }
+  | {
+      kind: "row";
+      id: string;
+      node: PageTreeNode;
+      depth: number;
+      top: number;
+      height: number;
+      expanded: boolean;
+      hasChildren: boolean;
+    };
+
+/** The sidebar's virtualization plan, mapped to render props. */
+export type SidebarRenderPlan = {
+  /** The raw windowing plan (full height + the rendered slice). */
+  plan: PageTreeRenderPlan;
+  /** `visibleRange(plan)` — the half-open rendered window. */
+  window: PageTreeWindowRange;
+  /** Only the windowed items, positioned for absolute rendering. */
+  items: SidebarRenderItem[];
+  /** Header rows by synthetic id, for the item mapping. */
+  headers: ReadonlyMap<string, SidebarHeaderRow>;
+  /** Real page ids in visible order (headers removed) — keyboard-nav order. */
+  rowIds: string[];
+  /** Visible item count (headers + rows) — the virtualization input. */
+  count: number;
+  /** Whether this many items warrant virtualization. */
+  virtualized: boolean;
+};
+
+/** A `PageTreeNode` stand-in for a section header, so it rides the same plan. */
+function headerNode(header: SidebarHeaderRow): PageTreeNode {
+  return {
+    id: header.id,
+    parentId: null,
+    teamspaceId: null,
+    title: header.label,
+    icon: header.icon,
+    type: "PAGE",
+    position: -1,
+    isFavorite: false,
+  };
+}
+
+/**
+ * Flatten the sidebar into windowed render items.
+ *
+ * The component's visual order is *sectioned* (each teamspace's roots, then the
+ * private roots) rather than the raw `position` order `flattenTree` walks. To
+ * feed that order through the fixed-height `buildRenderPlan`, each section's
+ * header becomes a synthetic root and the section's roots are re-parented under
+ * it; descendants are untouched. `flattenTree` then emits header → rows →
+ * header → rows, exactly the order the nested renderer produced, and the whole
+ * thing — headers included — windows uniformly. The resulting plan row `depth`
+ * is one deeper than the visual indent, so `depth - 1` is what a row renders
+ * with.
+ *
+ * Pure and deterministic; no DOM, no clock, no mutation of `tree`.
+ */
+export function buildSidebarRenderPlan(
+  tree: readonly PageTreeNode[],
+  teamspaces: readonly SidebarTeamspace[],
+  options: PageTreeWindowOptions,
+): SidebarRenderPlan {
+  const roots = tree.filter((node) => node.parentId === null);
+  const headers = new Map<string, SidebarHeaderRow>();
+  const planTree: PageTreeNode[] = [];
+
+  const addSection = (header: SidebarHeaderRow, sectionRoots: PageTreeNode[]) => {
+    headers.set(header.id, header);
+    planTree.push(headerNode(header));
+    for (const root of sectionRoots) {
+      planTree.push({ ...root, parentId: header.id });
+    }
+  };
+
+  for (const teamspace of teamspaces) {
+    const sectionRoots = roots.filter((node) => node.teamspaceId === teamspace.id);
+    if (sectionRoots.length === 0) continue;
+    addSection(
+      {
+        id: `${SECTION_ID_PREFIX}teamspace:${teamspace.id}`,
+        kind: "teamspace",
+        label: teamspace.name,
+        icon: teamspace.icon,
+      },
+      sectionRoots,
+    );
+  }
+
+  // The private section header always renders (even with no roots), matching the
+  // nested renderer, so it is part of the plan whenever the tree is non-empty.
+  addSection(
+    { id: `${SECTION_ID_PREFIX}private`, kind: "private", label: "", icon: null },
+    roots.filter((node) => !node.teamspaceId),
+  );
+
+  for (const node of tree) {
+    if (node.parentId !== null) planTree.push(node);
+  }
+
+  // A header is always open (its children are the section).
+  const expandedIds = new Set(options.expandedIds ?? []);
+  for (const id of headers.keys()) expandedIds.add(id);
+
+  const plan = buildRenderPlan(planTree, { ...options, expandedIds });
+  const byId = new Map(tree.map((node) => [node.id, node]));
+
+  const items: SidebarRenderItem[] = [];
+  for (const row of plan.rows) {
+    const header = headers.get(row.id);
+    if (header) {
+      items.push({ kind: "header", id: row.id, header, top: row.top, height: row.height });
+      continue;
+    }
+    const node = byId.get(row.id);
+    if (!node) continue;
+    items.push({
+      kind: "row",
+      id: row.id,
+      node,
+      depth: Math.max(0, row.depth - 1),
+      top: row.top,
+      height: row.height,
+      expanded: row.expanded,
+      hasChildren: row.hasChildren,
+    });
+  }
+
+  return {
+    plan,
+    window: visibleRange(plan),
+    items,
+    headers,
+    rowIds: plan.visibleIds.filter((id) => !headers.has(id)),
+    count: plan.visibleIds.length,
+    virtualized: shouldVirtualize(plan.visibleIds.length),
+  };
+}
 
 export function PageTree({
   tree,
@@ -199,7 +402,35 @@ export function PageTree({
   const [recent, setRecent] = useState<RecentPage[]>([]);
   const [recentLoaded, setRecentLoaded] = useState(false);
 
+  // Virtualization geometry (W10). `viewportHeight` starts at a plausible
+  // fallback so SSR draws a window, then the first layout effect measures the
+  // real nav; `scrollTop` mirrors the nav's scroll offset; `pendingFocusId`
+  // re-focuses a row that had to be scrolled into the window first.
+  const [viewportHeight, setViewportHeight] = useState(SIDEBAR_VIEWPORT_FALLBACK);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
+
   const byParent = useMemo(() => groupByParent(tree), [tree]);
+
+  /**
+   * The sidebar's render plan: section headers + visible rows, windowed to the
+   * viewport. Recomputed as the tree, expand state, size or scroll changes; the
+   * pure mapping lives in {@link buildSidebarRenderPlan}.
+   */
+  const geometry = useMemo(
+    () =>
+      buildSidebarRenderPlan(tree, teamspaces, {
+        expandedIds: expanded,
+        rowHeight: SIDEBAR_ROW_HEIGHT,
+        viewportHeight,
+        scrollTop,
+        overscan: SIDEBAR_OVERSCAN,
+      }),
+    [tree, teamspaces, expanded, viewportHeight, scrollTop],
+  );
+
+  /** Above the threshold the tree renders as a windowed flat list. */
+  const virtualizing = geometry.virtualized;
 
   const toggle = (id: string) =>
     setExpanded((prev) => toggleExpanded(prev, id));
@@ -304,6 +535,60 @@ export function PageTree({
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; mode: DropMode } | null>(null);
 
+  // Keep the plan's viewport in sync with the real nav height. A layout effect
+  // runs before paint, so the window is sized correctly with no visible flash;
+  // a ResizeObserver follows sidebar/show-hide changes.
+  useLayoutEffect(() => {
+    const container = navRef.current;
+    if (!container) return;
+    const measure = () => setViewportHeight(container.clientHeight);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  // Mirror the nav's scroll offset into the plan so the window follows it.
+  const handleScroll = (event: UIEvent<HTMLElement>) => {
+    setScrollTop(event.currentTarget.scrollTop);
+  };
+
+  // Re-pin the row at the viewport top across expand/collapse: when the visible
+  // id list changes (not merely the scroll), `anchorForScroll` maps the old
+  // scrollTop onto the new list so the same row stays put.
+  const prevPlanRef = useRef<PageTreeRenderPlan | null>(null);
+  useEffect(() => {
+    const previous = prevPlanRef.current;
+    prevPlanRef.current = geometry.plan;
+    if (!previous || !virtualizing) return;
+    const nextIds = geometry.plan.visibleIds;
+    if (
+      previous.visibleIds.length === nextIds.length &&
+      previous.visibleIds.every((id, index) => id === nextIds[index])
+    ) {
+      return;
+    }
+    const container = navRef.current;
+    if (!container) return;
+    container.scrollTop = anchorForScroll(previous, geometry.plan, container.scrollTop);
+  }, [geometry.plan, virtualizing]);
+
+  // Focus a row that had to be scrolled into the window on the previous frame.
+  useEffect(() => {
+    if (!pendingFocusId) return;
+    const container = navRef.current;
+    if (!container) return;
+    const rows = container.querySelectorAll<HTMLElement>("[data-page-row]");
+    for (const row of rows) {
+      if (row.dataset.pageId !== pendingFocusId) continue;
+      const link = row.querySelector<HTMLAnchorElement>("a[href]");
+      (link ?? row).focus();
+      setPendingFocusId(null);
+      return;
+    }
+  }, [pendingFocusId, geometry.plan]);
+
   /** The laid-out rows, measured fresh so scroll/collapse stay in sync. */
   const dropRects = (): DropRect[] => {
     const container = navRef.current;
@@ -383,7 +668,12 @@ export function PageTree({
     );
   };
 
-  /** Move DOM focus to a tree row's link (fallback: the row container itself). */
+  /**
+   * Move DOM focus to a tree row's link (fallback: the row container itself).
+   * When virtualizing, a row outside the window is not in the DOM: centre it
+   * with `scrollToIndex` and let the pending-focus effect land on it once the
+   * window re-renders.
+   */
   const focusRow = (id: string) => {
     const container = navRef.current;
     if (!container) return;
@@ -394,16 +684,23 @@ export function PageTree({
       (link ?? row).focus();
       return;
     }
+    if (!virtualizing) return;
+    const index = geometry.plan.visibleIds.indexOf(id);
+    if (index < 0) return;
+    container.scrollTop = scrollToIndex(geometry.plan, index);
+    setPendingFocusId(id);
   };
 
   /**
    * Roving keyboard navigation for the visible page tree (WAI-ARIA tree
-   * pattern): Up/Down step between the rendered rows, Home/End jump to the
-   * ends, Right expands a collapsed row or steps into its first child, and
-   * Left collapses an open row or steps out to its parent. Only the rows
-   * actually laid out are addressed, so a collapsed subtree is never reached.
-   * Typing in the inline rename field and modifier-key combos are left to the
-   * browser (the rename input and menus keep their own key handling).
+   * pattern): Up/Down step between the visible rows in render order, Home/End
+   * jump to the ends, Right expands a collapsed row or steps into its first
+   * child, and Left collapses an open row or steps out to its parent. The order
+   * comes from the render plan's `rowIds` (section order, headers removed), so
+   * navigation keeps working once virtualization has laid out only a window of
+   * rows — focusing an off-window row scrolls it in first. Typing in the inline
+   * rename field and modifier-key combos are left to the browser (the rename
+   * input and menus keep their own key handling).
    */
   const handleTreeKeyDown = (
     event: KeyboardEvent<HTMLDivElement>,
@@ -414,24 +711,20 @@ export function PageTree({
     if (element && (element.tagName === "INPUT" || element.tagName === "TEXTAREA")) {
       return;
     }
-    const container = navRef.current;
-    if (!container) return;
-    const rows = Array.from(
-      container.querySelectorAll<HTMLElement>("[data-page-row]"),
-    );
-    const index = rows.findIndex((row) => row.dataset.pageId === id);
+    const navIds = geometry.rowIds;
+    const index = navIds.indexOf(id);
     if (index === -1) return;
     const children = byParent.get(id) ?? [];
     const isOpen = expanded.has(id);
     const parentId = byId.get(id)?.parentId ?? null;
     const focusAt = (next: number) => {
-      const nextId = rows[next]?.dataset.pageId;
+      const nextId = navIds[next];
       if (nextId) focusRow(nextId);
     };
     switch (event.key) {
       case "ArrowDown":
         event.preventDefault();
-        focusAt(Math.min(index + 1, rows.length - 1));
+        focusAt(Math.min(index + 1, navIds.length - 1));
         break;
       case "ArrowUp":
         event.preventDefault();
@@ -443,7 +736,7 @@ export function PageTree({
         break;
       case "End":
         event.preventDefault();
-        focusAt(rows.length - 1);
+        focusAt(navIds.length - 1);
         break;
       case "ArrowRight":
         event.preventDefault();
@@ -463,26 +756,17 @@ export function PageTree({
     }
   };
 
-  const renderNodes = (
-    parentId: string | null,
-    depth: number,
-    rootFilter?: (node: PageTreeNode) => boolean,
-  ) => {
-    const nodes = visibleChildren(byParent, parentId, rootFilter);
-    if (nodes.length === 0) return null;
+  /** One page row: expand toggle, link, inline rename, menus and drag handlers. */
+  const renderRow = (node: PageTreeNode, depth: number) => {
+    const children = byParent.get(node.id) ?? [];
+    const isOpen = expanded.has(node.id);
+    const href = `/w/${workspace.slug}/${node.id}`;
+    const active = pathname === href;
+    const indicator =
+      dropTarget && dropTarget.id === node.id
+        ? dropIndicatorStyle({ index: 0, mode: dropTarget.mode })
+        : null;
     return (
-      <ul className="space-y-px">
-        {nodes.map((node) => {
-          const children = byParent.get(node.id) ?? [];
-          const isOpen = expanded.has(node.id);
-          const href = `/w/${workspace.slug}/${node.id}`;
-          const active = pathname === href;
-          const indicator =
-            dropTarget && dropTarget.id === node.id
-              ? dropIndicatorStyle({ index: 0, mode: dropTarget.mode })
-              : null;
-          return (
-            <li key={node.id}>
               <ContextMenu>
                 <ContextMenuTrigger asChild>
               <div
@@ -769,13 +1053,71 @@ export function PageTree({
                   </ContextMenuItem>
                 </ContextMenuContent>
               </ContextMenu>
-              {isOpen && renderNodes(node.id, depth + 1)}
-            </li>
-          );
-        })}
+    );
+  };
+
+  /**
+   * The classic nested renderer, used below the virtualization threshold so a
+   * short tree keeps its exact markup (nested `<ul>`, `space-y-px`, section
+   * spacing). Above the threshold the windowed flat list takes over instead.
+   */
+  const renderNodes = (
+    parentId: string | null,
+    depth: number,
+    rootFilter?: (node: PageTreeNode) => boolean,
+  ) => {
+    const nodes = visibleChildren(byParent, parentId, rootFilter);
+    if (nodes.length === 0) return null;
+    return (
+      <ul className="space-y-px">
+        {nodes.map((node) => (
+          <li key={node.id}>
+            {renderRow(node, depth)}
+            {expanded.has(node.id) && renderNodes(node.id, depth + 1)}
+          </li>
+        ))}
       </ul>
     );
   };
+
+  /**
+   * The virtualized tree: only the plan's windowed items are materialised, each
+   * absolutely positioned at its plan `top` inside a spacer of the full visible
+   * height. Headers and rows both use the plan's row height, so the DOM pitch
+   * always matches the windowing math. The classic markup is untouched below
+   * the threshold.
+   */
+  const renderVirtual = () => (
+    <div className="relative" style={{ height: geometry.plan.totalHeight }}>
+      {geometry.items.map((item) =>
+        item.kind === "header" ? (
+          <div
+            key={item.id}
+            className="absolute left-0 right-0"
+            style={{ top: item.top, height: item.height }}
+          >
+            <p className="truncate px-1 pt-1 text-[11px] font-medium text-muted/90">
+              {item.header.kind === "teamspace" ? `${item.header.icon ?? "👥"} ` : ""}
+              {truncateEnd(
+                item.header.kind === "private"
+                  ? t(locale, "privatePages")
+                  : item.header.label,
+                SECTION_LABEL_MAX,
+              )}
+            </p>
+          </div>
+        ) : (
+          <div
+            key={item.id}
+            className="absolute left-0 right-0"
+            style={{ top: item.top, height: item.height }}
+          >
+            {renderRow(item.node, item.depth)}
+          </div>
+        ),
+      )}
+    </div>
+  );
 
   return (
     <>
@@ -799,12 +1141,15 @@ export function PageTree({
       ref={navRef}
       aria-label={t(locale, "pages")}
       className="mt-1 flex-1 overflow-y-auto px-2 pb-3"
+      onScroll={handleScroll}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {(byParent.get(null) ?? []).length === 0 && teamspaces.length === 0 ? (
         <p className="px-2 py-4 text-sm text-muted">No pages yet.</p>
+      ) : virtualizing ? (
+        renderVirtual()
       ) : (
         <>
           {teamspaces.map((teamspace) => {
