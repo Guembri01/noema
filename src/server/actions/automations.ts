@@ -256,6 +256,13 @@ export async function saveRecurringTicketAction(input: {
 
   const id = input.id?.trim() || nextId("recur");
   const existing = recurringTickets.get(id);
+  // Schedule-ID overwrite guard: a caller may update a schedule it owns by
+  // passing its id, but an id that points at a schedule of another workspace
+  // must never silently overwrite that tenant's schedule (and its history).
+  // Fail closed without naming the foreign schedule.
+  if (existing && existing.workspaceId !== input.workspaceId) {
+    return { error: "That recurring ticket does not exist in this workspace." };
+  }
   const record: StoredRecurringTicket = {
     id,
     workspaceId: input.workspaceId,

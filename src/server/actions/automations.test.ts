@@ -162,6 +162,30 @@ describe("recurring tickets", () => {
     expect(after.tickets.map((ticket) => ticket.id)).not.toContain(saved.id);
   });
 
+  it("does not overwrite a recurring ticket schedule of another workspace (schedule-ID)", async () => {
+    const victim = await saveRecurringTicketAction({
+      workspaceId: "ws-sched-victim",
+      id: "sched-overwrite-victim",
+      title: "Victim schedule",
+      rule: { freq: "weekly", interval: 1 },
+    });
+    if (!("ok" in victim)) throw new Error(victim.error);
+
+    const attacker = await saveRecurringTicketAction({
+      workspaceId: "ws-sched-attacker",
+      id: "sched-overwrite-victim",
+      title: "Attacker schedule",
+      rule: { freq: "weekly", interval: 1 },
+    });
+    expect("error" in attacker).toBe(true);
+
+    // The victim's schedule keeps its original title.
+    const list = await listRecurringTicketsAction("ws-sched-victim");
+    if (!("ok" in list)) throw new Error(list.error);
+    expect(list.tickets.map((ticket) => ticket.title)).toContain("Victim schedule");
+    expect(list.tickets.map((ticket) => ticket.title)).not.toContain("Attacker schedule");
+  });
+
   it("exposes schedule rules to the cron route only behind CRON_SECRET", async () => {
     await saveAutomationRuleAction({
       workspaceId: "ws-cron",
