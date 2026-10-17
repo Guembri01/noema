@@ -30,6 +30,11 @@ const MAX_PARTS = 10_000;
  * MIME types the uploader accepts. Kept as an allow-list of rules so the shared
  * `isAllowedType` matcher owns the comparison and `extForMime` derives the
  * stored extension — `@/lib/file-type` is the single source of truth.
+ *
+ * `image/svg+xml` is on the list, so an SVG can be pasted and uploaded like
+ * every other image. It is an active document, though: the file route
+ * delivers it with `Content-Disposition: attachment`, so it never runs as a
+ * document in the app's own origin (B112).
  */
 const ALLOWED_TYPES: readonly string[] = [
   "image/png",

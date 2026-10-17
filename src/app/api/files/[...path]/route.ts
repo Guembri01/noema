@@ -4,8 +4,19 @@ import { getCurrentUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { contentTypeFor, isValidAssetKey, storageDriver } from "@/lib/storage";
 import { buildTransformQuery, parseTransformQuery } from "@/lib/image-transform";
+import { contentDisposition } from "@/lib/page-export";
 
 export const runtime = "nodejs";
+
+/**
+ * Whether the delivered content type is an SVG document. The type comes from
+ * the storage driver — the stored name for the local driver, the bucket's own
+ * header for the S3 one — so the parameters are cut off before the
+ * comparison: `image/svg+xml; charset=utf-8` is the same type.
+ */
+function isSvgContentType(contentType: string): boolean {
+  return contentType.split(";", 1)[0].trim().toLowerCase() === "image/svg+xml";
+}
 
 /**
  * Serve an uploaded asset from the storage driver (local disk or S3-compatible).
@@ -22,6 +33,11 @@ export const runtime = "nodejs";
  * deliberate: a guest sees the text of a shared page but none of its media
  * (image blocks, cover, icon, attachments) until an asset can be linked to a
  * page.
+ *
+ * An SVG is an active document: the upload endpoint accepts `image/svg+xml`,
+ * and a document that is served inline runs in the app's own origin. It is
+ * therefore delivered as a download (`Content-Disposition: attachment`) — the
+ * raster images stay inline, they are what the editor renders in an `<img>`.
  *
  * Image transforms: derived-rendition query params (`w`,`h`,`fit`,`format`,`q`)
  * are parsed and clamped by `parseTransformQuery`, so invalid values are dropped
@@ -82,10 +98,16 @@ export async function GET(
 
     const body = new Uint8Array(stored.body);
     const etag = `"${createHash("sha256").update(body).update(rendition).digest("hex").slice(0, 32)}"`;
+    const contentType = stored.contentType || contentTypeFor(name);
 
     return new NextResponse(body, {
       headers: {
-        "content-type": stored.contentType || contentTypeFor(name),
+        "content-type": contentType,
+        // B112: an SVG is delivered as a download, never as a document of the
+        // app's origin (see the route comment).
+        ...(isSvgContentType(contentType)
+          ? { "content-disposition": contentDisposition(name) }
+          : {}),
         "cache-control": "private, max-age=3600",
         vary: "Accept",
         etag,

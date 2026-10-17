@@ -214,6 +214,18 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   value is missing. `.env.example` ships the password empty, and a gate
   (`scripts/check-compose-exposure.mjs`) fails when a database is published
   without a loopback address or carries a fixed password.
+- An uploaded SVG is no longer served as a document of the app's own origin.
+  The upload endpoint accepts `image/svg+xml` and the asset route handed the
+  bytes back with that content type and without a `Content-Disposition`, so a
+  member who opened the asset URL got an active document in the app's origin.
+  An SVG is now delivered as a download (`Content-Disposition: attachment`);
+  the raster images stay inline, they are what the editor renders in an
+  `<img>`. The SVG safety check reads the scheme the way a browser reads it
+  as well: it tested the raw source, so a scheme that hid behind a line break
+  (`java\nscript:`) passed the gate, while a browser strips the control
+  characters out of a URL before it parses the scheme. The blocklist is now
+  tested against the source without its control characters too — the same
+  normalisation `safeHref` applies to a link target.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
