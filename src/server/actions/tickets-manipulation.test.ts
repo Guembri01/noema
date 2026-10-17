@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   ticket: {
     findUnique: vi.fn(),
+    findMany: vi.fn(),
     delete: vi.fn(),
     deleteMany: vi.fn(),
     updateMany: vi.fn(),
@@ -55,6 +56,11 @@ beforeEach(() => {
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
   });
   db.ticketActivity.create.mockResolvedValue({ id: "a1" });
+  // The scope filter: the whole selection is in the workspace, so the bulk
+  // writes cover every selected ticket.
+  db.ticket.findMany.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) =>
+    where.id.in.map((id) => ({ id })),
+  );
 });
 
 describe("deleteTicketAction (permanent, single)", () => {
