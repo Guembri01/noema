@@ -2003,7 +2003,7 @@ export function Cell({
           <a
             href={step.payload.url}
             target={step.payload.openInNewTab ? "_blank" : undefined}
-            rel={step.payload.openInNewTab ? "noreferrer" : undefined}
+            rel={step.payload.openInNewTab ? "noreferrer noopener" : undefined}
             onClick={(event) => {
               if (!confirmRun(event.currentTarget)) event.preventDefault();
             }}
@@ -2087,7 +2087,7 @@ export function Cell({
               key={`${entry.href}-${index}`}
               href={entry.href}
               target="_blank"
-              rel="noreferrer"
+              rel="noreferrer noopener"
               title={entry.name}
               className="focus-ring max-w-[10rem] truncate rounded bg-surface-2 px-1.5 py-0.5 text-xs underline-offset-2 hover:underline"
             >

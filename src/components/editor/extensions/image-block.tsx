@@ -353,7 +353,7 @@ export function ImageView({
             href={fileHref}
             download={attrs.alt ?? attrs.title ?? undefined}
             target="_blank"
-            rel="noreferrer"
+            rel="noreferrer noopener"
             contentEditable={false}
           >
             <FileIcon className="h-4 w-4 shrink-0" aria-hidden="true" />

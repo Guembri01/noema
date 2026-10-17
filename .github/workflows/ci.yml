@@ -70,6 +70,16 @@ jobs:
       - name: Parent scope
         run: node scripts/check-parent-scope.mjs && node scripts/check-parent-scope.test.mjs
 
+      # A link that opens a new tab hands the opened document a `window.opener`
+      # unless its `rel` says `noopener`; `noreferrer` cuts the opener and the
+      # `Referer` header. The tree writes `rel="noreferrer noopener"` — this
+      # gate is what keeps it that way, and it also reads the conditional
+      # `target`s a grep for `target="_blank"` never sees. Pure source scan: no
+      # build, no database, no dependencies. Its own regression test runs with
+      # it, so the shapes it has to report stay reported.
+      - name: Target blank links
+        run: node scripts/check-target-blank-links.mjs && node scripts/check-target-blank-links.test.mjs
+
       # = tsc --noEmit && eslint --quiet . && vitest run --changed --passWithNoTests
       # Note: in CI the checkout is clean, so `vitest --changed` sees no diff and
       # may run 0 tests; tsc + eslint still gate every push. Switching this line
