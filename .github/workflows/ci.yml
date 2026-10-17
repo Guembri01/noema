@@ -34,6 +34,19 @@ jobs:
           node-version: 24
           cache: npm
 
+      # A *new* advisory in the dependency tree must fail the build. The
+      # advisories that are already known — and that cannot be fixed today —
+      # are listed in scripts/npm-audit-baseline.mjs with the reason; a plain
+      # `npm audit --audit-level=high` would fail on those as well, and the
+      # step would be dead after the first week. The gate compares the report
+      # with that list: a known advisory passes, every other one fails.
+      #
+      # It runs before the install: the audit reads the lockfile, not
+      # node_modules, so a violation fails the job in seconds instead of
+      # after the whole dependency tree is on disk.
+      - name: Dependency audit
+        run: npm run check:audit
+
       - name: Install dependencies
         run: npm ci
 
@@ -139,3 +152,47 @@ jobs:
       #         env:
       #           E2E_BASE_URL: http://localhost:3000   # + next build/start or dev
       # -------------------------------------------------------------------------
+
+  rust-advisories:
+    # The Rust half of the tree has its own advisory database (RustSec), and
+    # `cargo audit` is not part of the Rust toolchain — it is installed here.
+    #
+    # The two advisories that are ignored below are the ones the tree carries
+    # today. Both are the same issue (CVE-2026-111943): a distrusted emSign
+    # intermediate whose private key is public.
+    #   · RUSTSEC-2026-0381 — webpki-roots; the tree carries 1.0.9, the fix
+    #     is 1.0.10.
+    #   · RUSTSEC-2026-0382 — rustls-webpki; the tree carries 0.103.15, the
+    #     fix is 0.103.16.
+    # Moving them is a `cargo update` of the Tauri dependency tree, which this
+    # pull request does not make — until it does, the two are ignored with
+    # their reason, and every other advisory fails this job.
+    name: rust advisories
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The token must not outlive the checkout: the steps below install
+          # and build code, and a read-scoped token in .git/config is a token
+          # the code under review can read.
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri
+
+      - name: Install cargo-audit
+        # An exact version, not a range: the audit is a gate, and a gate that
+        # changes its own tool without a commit cannot be reviewed.
+        run: cargo install cargo-audit --version "0.22.2" --locked
+
+      - name: Rust advisory audit
+        working-directory: src-tauri
+        run: |
+          cargo audit \
+            --ignore RUSTSEC-2026-0381 \
+            --ignore RUSTSEC-2026-0382

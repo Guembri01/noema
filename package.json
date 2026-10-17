@@ -67,6 +67,7 @@
     "audit": "node scripts/audit-inventory.mjs",
     "check:coherence": "node scripts/check-coherence.mjs",
     "check:secrets": "node scripts/check-secrets.mjs",
+    "check:audit": "node scripts/check-npm-audit.mjs",
     "check:workflow-permissions": "node scripts/check-workflow-permissions.mjs",
     "check:use-server": "node scripts/check-use-server.mjs",
     "check:parent-scope": "node scripts/check-parent-scope.mjs",
@@ -130,7 +131,8 @@
   },
   "overrides": {
     "deepmerge-ts": "^8.0.0",
-    "postcss": "^8.5.18"
+    "postcss": "^8.5.18",
+    "argparse": "^2.0.1"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

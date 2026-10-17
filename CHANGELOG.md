@@ -13,6 +13,33 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ### Security
 
+- The dependency tree is audited in CI, and one advisory chain is gone. The
+  lockfile carried `mammoth` → `argparse` 1.0.10 → `sprintf-js` 1.0.3, and
+  `sprintf-js` 1.0.3 carries GHSA-hp3w-g68c-fv3c (a denial of service through
+  unbounded precision specifiers). `mammoth` converts the `.docx` files a
+  user uploads, so the chain is in the request path. `sprintf-js` has **no
+  patched version** — 1.1.3 is the latest release on the registry and is
+  still affected — so pinning it cannot lift the tree out of the advisory; the
+  only way out is `argparse` itself. The pin `argparse: ^2.0.1` is outside
+  the affected range (`1.0.0 - 1.0.10`) and has no dependency on
+  `sprintf-js`, so the whole chain leaves the tree. The library API this
+  application uses (`mammoth.convertToMarkdown`) never reaches `argparse`; only
+  the package's own command-line wrapper does.
+- Nothing looked at `npm audit` before, so an advisory that landed in the
+  lockfile stayed there. The CI now audits the tree, and a **new** advisory
+  fails the build. A plain `npm audit --audit-level=high` would fail on the
+  advisories the tree already carries — and the step would be dead after the
+  first week — so the gate compares the report with a list of accepted
+  advisories (`scripts/npm-audit-baseline.mjs`), each with its reason. An
+  advisory that is not on the list is a finding; an entry the audit no longer
+  reports is a finding too, so the list can only shrink. The severity does not
+  decide: a moderate advisory that is not on the list fails as well.
+- The Rust half of the tree has its own advisory database, and the CI now
+  audits it with `cargo audit`. The two advisories that are ignored are the
+  ones the tree carries today — both the same issue (CVE-2026-111943): a
+  distrusted emSign intermediate whose private key is public. Every other
+  advisory fails the job.
+
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
