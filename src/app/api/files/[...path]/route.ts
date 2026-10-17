@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { contentTypeFor, isValidAssetKey, storageDriver } from "@/lib/storage";
 import { buildTransformQuery, parseTransformQuery } from "@/lib/image-transform";
 
@@ -11,6 +11,17 @@ export const runtime = "nodejs";
  * Serve an uploaded asset from the storage driver (local disk or S3-compatible).
  * The file is streamed only to members of the owning workspace, and the path
  * segments are validated to prevent traversal.
+ *
+ * The surface is reserved for full members: a `GUEST` is refused with a 403
+ * before the storage driver is asked, so a refused request yields no bytes,
+ * no asset content-type and no etag, and it is the same answer for a missing
+ * asset.
+ * An asset cannot be scoped to a page — it is served by its random name and
+ * `Asset.pageId` is never populated — so there is no guest scope to apply
+ * here; the role gate is the only gate this route can apply. The cost is
+ * deliberate: a guest sees the text of a shared page but none of its media
+ * (image blocks, cover, icon, attachments) until an asset can be linked to a
+ * page.
  *
  * Image transforms: derived-rendition query params (`w`,`h`,`fit`,`format`,`q`)
  * are parsed and clamped by `parseTransformQuery`, so invalid values are dropped
@@ -42,6 +53,15 @@ export async function GET(
   }
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  // An asset cannot be scoped to a page: the route serves it by its random
+  // name, and `Asset.pageId` is never populated, so "the assets of the pages
+  // shared with this guest" cannot be answered here. Until that link exists
+  // the surface is reserved for full members — an asset is a full-text copy
+  // of workspace content. The gate sits above the storage lookup, so the
+  // refusal leaks neither the bytes nor the asset's existence.
+  if (!canEditContent(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
