@@ -26,7 +26,7 @@ const PREFIX_SEGMENT = PAGE_ROUTE_PREFIX.replace(/^\/+/, "");
 
 export interface BlockDeepLinkOptions {
   /**
-   * Absolute origin (e.g. `"https://noema.app"`). Omit for a site-relative
+   * Absolute origin (e.g. `"https://noema.example.com"`). Omit for a site-relative
    * link. A trailing slash is ignored.
    */
   origin?: string;

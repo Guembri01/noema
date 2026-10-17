@@ -49,7 +49,7 @@ export interface SitemapEntry {
 
 /** Options for {@link buildSitemap}. */
 export interface BuildSitemapOptions {
-  /** Origin the relative `loc`s are resolved against, e.g. `https://noema.app`. */
+  /** Origin the relative `loc`s are resolved against, e.g. `https://noema.example.com`. */
   baseUrl: string;
 }
 

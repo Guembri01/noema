@@ -45,8 +45,8 @@ describe("coerceCsvValue — empty cells", () => {
 describe("coerceCsvValue — text-shaped types", () => {
   it("trims and stores TEXT, URL, EMAIL and PHONE as { text }", () => {
     expect(coerceCsvValue("  hello  ", "TEXT")).toStrictEqual({ text: "hello" });
-    expect(coerceCsvValue("https://noema.app", "URL")).toStrictEqual({
-      text: "https://noema.app",
+    expect(coerceCsvValue("https://noema.example.com", "URL")).toStrictEqual({
+      text: "https://noema.example.com",
     });
     expect(coerceCsvValue(" a@b.com ", "EMAIL")).toStrictEqual({ text: "a@b.com" });
     expect(coerceCsvValue("+33 6 12 34 56 78", "PHONE")).toStrictEqual({

@@ -38,11 +38,11 @@ describe("buildBlockDeepLink", () => {
   });
 
   it("prefixes the origin for an absolute link, trimming a trailing slash", () => {
-    expect(buildBlockDeepLink("page-1", "block-1", { origin: "https://noema.app" })).toBe(
-      "https://noema.app/w/page-1#block-1",
+    expect(buildBlockDeepLink("page-1", "block-1", { origin: "https://noema.example.com" })).toBe(
+      "https://noema.example.com/w/page-1#block-1",
     );
-    expect(buildBlockDeepLink("page-1", "block-1", { origin: "https://noema.app/" })).toBe(
-      "https://noema.app/w/page-1#block-1",
+    expect(buildBlockDeepLink("page-1", "block-1", { origin: "https://noema.example.com/" })).toBe(
+      "https://noema.example.com/w/page-1#block-1",
     );
   });
 
@@ -76,7 +76,7 @@ describe("parseBlockDeepLink", () => {
 
   it("tolerates absolute URLs of any origin", () => {
     for (const link of [
-      "https://noema.app/w/acme/page-1#block-1",
+      "https://noema.example.com/w/acme/page-1#block-1",
       "http://localhost:3200/w/acme/page-1#block-1",
       "https://evil.example/w/acme/page-1#block-1",
     ]) {
@@ -107,7 +107,7 @@ describe("parseBlockDeepLink", () => {
   it("rejects foreign page-path prefixes", () => {
     expect(parseBlockDeepLink("/p/abc").ok).toBe(false);
     expect(parseBlockDeepLink("/page/abc").ok).toBe(false);
-    expect(parseBlockDeepLink("https://noema.app/other/abc").ok).toBe(false);
+    expect(parseBlockDeepLink("https://noema.example.com/other/abc").ok).toBe(false);
   });
 
   it("rejects links without a page id", () => {

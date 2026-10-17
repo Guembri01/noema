@@ -356,7 +356,7 @@ describe("parseGoogleDoc — other blocks and safety", () => {
       "<html><head><title>Roadmap &amp; Notes</title><style>.c1{color:#000}</style></head>",
       "<body>",
       '<h1 class="c1"><span>Roadmap</span></h1>',
-      '<p class="c2">Intro <strong>bold</strong> <a href="https://noema.app/x">link</a></p>',
+      '<p class="c2">Intro <strong>bold</strong> <a href="https://noema.example.com/x">link</a></p>',
       '<ul class="c3"><li class="c4"><span>one</span><ul><li>two</li></ul></li></ul>',
       "<ol><li>first</li></ol>",
       "<table><tr><td>A</td></tr></table>",

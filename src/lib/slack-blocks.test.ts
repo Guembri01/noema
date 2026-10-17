@@ -40,14 +40,14 @@ describe("escapeMrkdwn", () => {
   });
 
   it("rewrites a safe markdown link into Slack link syntax", () => {
-    expect(escapeMrkdwn("[Roadmap](https://noema.app/w/p1)")).toBe(
-      "<https://noema.app/w/p1|Roadmap>",
+    expect(escapeMrkdwn("[Roadmap](https://noema.example.com/w/p1)")).toBe(
+      "<https://noema.example.com/w/p1|Roadmap>",
     );
   });
 
   it("escapes the label of a rewritten markdown link", () => {
-    expect(escapeMrkdwn("[a & b](https://noema.app/w/p1)")).toBe(
-      "<https://noema.app/w/p1|a &amp; b>",
+    expect(escapeMrkdwn("[a & b](https://noema.example.com/w/p1)")).toBe(
+      "<https://noema.example.com/w/p1|a &amp; b>",
     );
   });
 
@@ -94,13 +94,13 @@ describe("block helpers", () => {
   });
 
   it("actions wraps buttons built from a label + url", () => {
-    expect(actions(button("Open", "https://noema.app/w/p1"))).toEqual({
+    expect(actions(button("Open", "https://noema.example.com/w/p1"))).toEqual({
       type: "actions",
       elements: [
         {
           type: "button",
           text: { type: "plain_text", text: "Open", emoji: true },
-          url: "https://noema.app/w/p1",
+          url: "https://noema.example.com/w/p1",
         },
       ],
     });
@@ -214,7 +214,7 @@ describe("slackMessageForEvent", () => {
       kind: "comment",
       actor: "Ada",
       pageTitle: "Roadmap",
-      pageUrl: "https://noema.app/w/acme/p1",
+      pageUrl: "https://noema.example.com/w/acme/p1",
       body: "Nice <work>",
     });
     const types = message.blocks.map((block) => block.type);
@@ -233,12 +233,12 @@ describe("slackMessageForEvent", () => {
       kind: "mention",
       actor: "Ada",
       pageTitle: "Roadmap",
-      pageUrl: "https://noema.app/w/acme/p1",
+      pageUrl: "https://noema.example.com/w/acme/p1",
     });
     const sectionBlock = message.blocks.find((block) => block.type === "section");
     expect(
       sectionBlock?.type === "section" && sectionBlock.text.text,
-    ).toBe("*Ada* mentioned you on <https://noema.app/w/acme/p1|Roadmap>");
+    ).toBe("*Ada* mentioned you on <https://noema.example.com/w/acme/p1|Roadmap>");
     expect(message.text).toBe("Ada mentioned you on Roadmap");
   });
 
@@ -248,7 +248,7 @@ describe("slackMessageForEvent", () => {
       actor: "Ada",
       ticketKey: "NOE-42",
       title: "Fix <login>",
-      ticketUrl: "https://noema.app/w/acme/tickets/42",
+      ticketUrl: "https://noema.example.com/w/acme/tickets/42",
       status: "todo",
       priority: "high",
     });
@@ -270,7 +270,7 @@ describe("slackMessageForEvent", () => {
       actor: "Ada",
       ticketKey: "NOE-1",
       title: "Ship it",
-      ticketUrl: "https://noema.app/w/acme/tickets/1",
+      ticketUrl: "https://noema.example.com/w/acme/tickets/1",
     });
     expect(validateSlackMessage(message).ok).toBe(true);
   });

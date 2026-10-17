@@ -37,7 +37,7 @@ describe("extractPageLinks", () => {
     const result = extractPageLinks("p1", [
       block("b1", { href: "/page/p2" }),
       block("b2", { href: "/page/p3?tab=comments#c1" }),
-      block("b3", { href: "https://noema.app/page/p4" }),
+      block("b3", { href: "https://noema.example.com/page/p4" }),
       block("b4", { href: "https://example.com/other" }),
       block("b5", { href: "/page/p6/extra" }),
     ]);

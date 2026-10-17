@@ -97,8 +97,8 @@ describe("defaultValueFor — empty stored shapes", () => {
 describe("defaultValueFor — configured defaults", () => {
   it("stores trimmed text defaults and null when blank", () => {
     expect(defaultValueFor("TEXT", { default: "  hello " })).toStrictEqual({ text: "hello" });
-    expect(defaultValueFor("URL", { default: "https://noema.app" })).toStrictEqual({
-      text: "https://noema.app",
+    expect(defaultValueFor("URL", { default: "https://noema.example.com" })).toStrictEqual({
+      text: "https://noema.example.com",
     });
     expect(defaultValueFor("EMAIL", { default: "   " })).toBeNull();
     expect(defaultValueFor("PHONE", { default: 42 })).toBeNull();

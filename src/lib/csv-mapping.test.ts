@@ -48,7 +48,7 @@ describe("inferColumnType", () => {
   });
 
   it("detects url columns", () => {
-    expect(inferColumnType(["https://noema.app", "http://x.io", "www.example.com"])).toBe("url");
+    expect(inferColumnType(["https://noema.example.com", "http://x.io", "www.example.com"])).toBe("url");
   });
 
   it("falls back to text for an empty column", () => {
