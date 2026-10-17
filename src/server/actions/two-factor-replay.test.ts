@@ -40,6 +40,9 @@ const auth = vi.hoisted(() => ({
   destroySession: vi.fn(),
   hashPassword: vi.fn(),
   verifyPassword: vi.fn(),
+  // B39: `disableTwoFactorAction` reads the session of the caller to keep it
+  // alive while it ends the other sessions of the account.
+  getSessionId: vi.fn(async () => null),
 }));
 
 vi.mock("@/lib/db", () => ({
