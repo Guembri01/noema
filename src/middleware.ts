@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildCsp, insideDesktopShell, NONCE_HEADER } from "./lib/security-headers";
+import { isSharePath } from "./lib/share-page";
 import {
   THEME_COOKIE,
   THEME_COOKIE_OPTIONS,
@@ -149,11 +150,16 @@ export function middleware(request: NextRequest): NextResponse {
   // `'unsafe-eval'` leaves every page rendered but *inert* — no hydration, no
   // interactivity. Only development loosens it; a production build (and the static
   // map, which passes no options) keeps `'unsafe-eval'` out.
+  // B69: the public share pages (`/s/<token>`) get the stricter variant — their
+  // pictures are fetched by the server's proxy, so no third-party host has to
+  // be reachable from that page at all.
+  const share = isSharePath(request.nextUrl.pathname);
   const csp = buildCsp(nonce, {
     dev: process.env.NODE_ENV !== "production",
     // Under the desktop shell the page must be able to reach the shell's
     // commands (the window theme is one); the hosted site must not.
     shell: insideDesktopShell(),
+    allowExternalMedia: !share,
   });
 
   const requestHeaders = new Headers(request.headers);
@@ -162,6 +168,13 @@ export function middleware(request: NextRequest): NextResponse {
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set("Content-Security-Policy", csp);
+  // B69: a share link carries the token in its URL, so the share page answers
+  // with `no-referrer` - no `Referer` at all leaves it. The rest of the site
+  // keeps `strict-origin-when-cross-origin` (the map in
+  // `src/lib/security-headers.ts`, wired through `next.config.ts`).
+  if (share) {
+    response.headers.set("Referrer-Policy", "no-referrer");
+  }
   return response;
 }
 

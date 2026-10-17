@@ -25,7 +25,9 @@
  *   SSR inline styles. Out of B98 scope (documented allowance).
  * - `img/media-src` allow `data:`/`blob:` (editor previews, uploads) +
  *   `https:` (external markdown/bookmark images); `connect-src 'self'`
- *   covers same-origin fetch/SSE + dev HMR websocket.
+ *   covers same-origin fetch/SSE + dev HMR websocket. The public share pages
+ *   drop the `https:` part (B69): every picture there is fetched by the
+ *   server's proxy, so the share page never pulls media from a third party.
  * - `connect-src` ALSO admits Tauri's IPC endpoint, but **only when this
  *   process is the desktop app's own server** (`insideDesktopShell`). The
  *   installed app is a webview pointed at this server, so the page reaches the
@@ -98,10 +100,14 @@ export function insideDesktopShell(): boolean {
  * @param options.shell Admit Tauri's IPC endpoint in `connect-src` — pass
  *   `insideDesktopShell()`; the site must never widen this.
  *   Same directive order as B61 so live diffs are reviewable.
+ * @param options.allowExternalMedia Admit `https:` in `img-src`/`media-src`
+ *   (default). The public share pages pass `false`: their pictures are
+ *   fetched by the server's proxy (B69), so a third-party host must not be
+ *   reachable from that page at all.
  */
 export function buildCsp(
   nonce?: string | null,
-  options: { dev?: boolean; shell?: boolean } = {},
+  options: { dev?: boolean; shell?: boolean; allowExternalMedia?: boolean } = {},
 ): string {
   // Development needs `'unsafe-eval'`: Next's dev runtime evaluates module
   // boundaries, and without it the *whole page* fails to hydrate — the markup renders
@@ -111,6 +117,11 @@ export function buildCsp(
   // browser reported the eval violation. Production still has no `'unsafe-eval'`,
   // which is where it matters, and `npm run check:csp` keeps asserting that.
   const allowEval = options.dev === true;
+  // B69: the public share pages fetch every picture through the server's
+  // proxy, so their policy does not admit a third-party host at all. The app
+  // keeps `https:` (the editor's own media).
+  const allowExternalMedia = options.allowExternalMedia ?? true;
+  const externalMedia = allowExternalMedia ? " https:" : "";
   return [
     "default-src 'self'",
     "base-uri 'self'",
@@ -127,7 +138,7 @@ export function buildCsp(
       .filter(Boolean)
       .join(" "),
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https:",
+    `img-src 'self' data: blob:${externalMedia}`,
     "font-src 'self' data:",
     [
       "connect-src",
@@ -139,7 +150,7 @@ export function buildCsp(
     ]
       .filter(Boolean)
       .join(" "),
-    "media-src 'self' blob: data: https:",
+    `media-src 'self' blob: data:${externalMedia}`,
     FRAME_SRC,
   ].join("; ");
 }
@@ -170,4 +181,21 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Permissions-Policy":
     "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
+};
+
+/**
+ * B69 - the header map for the PUBLIC SHARE pages (`/s/<token>`).
+ *
+ * A share link carries the token in its URL. The site-wide
+ * `strict-origin-when-cross-origin` sends the whole URL to a same-origin
+ * request and only the ORIGIN to another host - so the token itself did not
+ * travel, but every host the page talked to still learned which instance the
+ * visitor came from. The share pages therefore answer with `no-referrer`: no
+ * `Referer` at all, neither to a third party nor to ourselves.
+ *
+ * Every other header is the site's map, unchanged.
+ */
+export const SHARE_SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  ...SECURITY_HEADERS,
+  "Referrer-Policy": "no-referrer",
 };

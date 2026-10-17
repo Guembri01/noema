@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { SECURITY_HEADERS } from "./src/lib/security-headers";
+import { SECURITY_HEADERS, SHARE_SECURITY_HEADERS } from "./src/lib/security-headers";
 // Next.js only accepts a Server Action POST when the request's `Origin` matches
 // the `Host` header (CSRF protection), so this machine's own addresses have to be
 // listed explicitly — otherwise browsing at `http://<lan-ip>:3200` (or `127.0.0.1`
@@ -15,7 +15,7 @@ import { SECURITY_HEADERS } from "./src/lib/security-headers";
 // interfaces the build machine happened to have (see docs/DESKTOP.md).
 import { allowedOrigins } from "./scripts/desktop/allowed-origins.cjs";
 
-export { SECURITY_HEADERS };
+export { SECURITY_HEADERS, SHARE_SECURITY_HEADERS };
 
 const root = dirname(fileURLToPath(import.meta.url));
 
@@ -88,11 +88,20 @@ const nextConfig: NextConfig = {
   // misses the map above. B98: on document paths src/middleware.ts
   // supersedes the CSP with the per-response nonce variant; api/, _next/
   // and favicon keep serving exactly this static policy.
+  // B69: the public share pages (`/s/<token>`) carry the share token in their
+  // URL, so they answer with `Referrer-Policy: no-referrer` instead of the
+  // site-wide `strict-origin-when-cross-origin`. The entry comes AFTER the
+  // catch-all, and Next applies the matching entries in order, so it is the
+  // one that decides the `Referrer-Policy` on a share page.
   async headers() {
     return [
       {
         source: "/:path*",
         headers: Object.entries(SECURITY_HEADERS).map(([key, value]) => ({ key, value })),
+      },
+      {
+        source: "/s/:path*",
+        headers: Object.entries(SHARE_SECURITY_HEADERS).map(([key, value]) => ({ key, value })),
       },
     ];
   },
