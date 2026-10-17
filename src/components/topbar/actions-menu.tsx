@@ -1228,7 +1228,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={t(locale, "moreActions")}
+        aria-label={t(locale, "pageActions")}
         data-contrast={highContrast ? "more" : "normal"}
         onKeyDown={onDialogKeyDown}
         style={{
