@@ -239,6 +239,9 @@ function toPageCreateData(
   const data: Prisma.PageCreateManyInput = {
     id: page.id,
     workspaceId,
+    // The planner remaps the parent into the moved set (or drops it to `null`),
+    // so the parent is either a page that moves along — same target workspace —
+    // or nothing. A foreign id is never written (B08).
     parentId: typeof page.parentId === "string" && page.parentId.length > 0 ? page.parentId : null,
     title,
     icon: asNullableString(page.icon),
