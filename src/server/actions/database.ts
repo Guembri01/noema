@@ -589,6 +589,23 @@ export async function setPropertyValueAction(
     return { error: "That file link is not allowed." };
   }
 
+  // B99: the cell belongs to a column of the row's **own** database — the
+  // same database the call was authorised against (`auth.page` is the
+  // database of `row.parentId`). The property id arrives from the client and
+  // used to be written into the table unchecked, so a member of workspace A
+  // could file a value under a column of a database in workspace B: the
+  // value is invisible in B (B reads its rows by `pageId`), but it hijacks
+  // the UNIQUE_ID counter of that foreign column.
+  //
+  // The refusal is the same as for a property id that does not exist
+  // ("Property not found."), so the caller learns nothing about the foreign
+  // id — no existence oracle.
+  const property = await prisma.property.findFirst({
+    where: { id: propertyId, databasePageId: auth.page.id },
+    select: { id: true },
+  });
+  if (!property) return { error: "Property not found." };
+
   await prisma.propertyValue.upsert({
     where: { propertyId_pageId: { propertyId, pageId: rowPageId } },
     create: {
