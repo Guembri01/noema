@@ -89,6 +89,18 @@ describe("the desktop shell's handshake (B49)", () => {
     expect(check).toContain("constant_time_eq");
   });
 
+  it("the readiness probe is not inverted", () => {
+    // A probe that asks "is this NOT our server?" would take the foreign
+    // answer for ours — the opposite of the fail-closed rule. The wiring test
+    // above only proves that the check is *called*; this one proves that the
+    // answer is used the right way round.
+    const probe = rustFunction(sidecar, "pub async fn wait_until_ready");
+    const inverted = [...probe.matchAll(/!\s*health_response_is_ours/g)];
+    expect(inverted).toHaveLength(0);
+    const check = rustFunction(sidecar, "pub fn health_response_is_ours");
+    expect([...check.matchAll(/!\s*constant_time_eq/g)]).toHaveLength(0);
+  });
+
   it("the token reaches the server through the environment", () => {
     const env = rustFunction(sidecar, "pub fn server_env");
     expect(env).toMatch(/SHELL_TOKEN_ENV\.into\(\),\s*shell_token\.into\(\)/);

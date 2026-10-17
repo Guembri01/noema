@@ -259,8 +259,11 @@ impl Readiness {
 ///
 /// One token per start: a token from an earlier run is worthless, and the
 /// program that squats the port never learns this one. It cannot read the
-/// server process' environment (that belongs to another user), and the server
-/// only echoes the token to a caller that already knows it.
+/// server process' environment (that belongs to another user — a process of
+/// the *same* user can, and that is what B48 is about), and the server
+/// echoes the token in the health answer — to every caller of it, but the
+/// token is bound to this run and this port, so a program that grabbed the
+/// port before the server did never learns it.
 ///
 /// Without a token the shell cannot tell its own server apart from an
 /// impostor, so a generator that fails is a reason not to start at all.
@@ -820,12 +823,21 @@ mod tests {
     }
 
     #[test]
-    fn free_port_is_usable_and_unique_enough() {
+    fn free_port_is_usable() {
+        // The promise the code actually makes: the port is in the ephemeral
+        // range and can be bound again. It does **not** promise that two calls
+        // hand out two different ports — the kernel picks the ephemeral port
+        // from a counter, and it may hand the same one back (that is exactly
+        // the window B49 is about). The old assertion of uniqueness was
+        // therefore a promise the code never made, and it failed sporadically
+        // on a busy runner.
         let a = free_port().expect("port available");
         let b = free_port().expect("port available");
         assert!(a > 1024, "ephemeral ports are > 1024, got {a}");
         assert!(b > 1024);
-        assert_ne!(a, b);
+        // Usable: the port can be bound again right away.
+        let listener = std::net::TcpListener::bind(("127.0.0.1", a)).expect("bind the port again");
+        assert_eq!(listener.local_addr().expect("address").port(), a);
     }
 
     #[test]
