@@ -90,6 +90,71 @@
   --selection: #1f4a7a;
 }
 
+/* ---------------------------------------------------------------------------
+   Editor-sheet tokens.
+   Raw values that used to live inline in the rules below are hoisted here so
+   every rule references a token. These belong in tokens.css long-term; that
+   file is owned by another batch, so they live here until the token layer can
+   take them. Light + dark are covered; the block tints intentionally keep their
+   light value in both modes, matching the behaviour that shipped before.
+   --------------------------------------------------------------------------- */
+:root {
+  /* Inline code + highlight mark. */
+  --code-inline-fg: #eb5757;
+  --code-inline-bg: #eb5757;
+  --mark-bg: #fdecc8;
+
+  /* highlight.js token palette (light). */
+  --hljs-keyword: #cf222e;
+  --hljs-string: #0a3069;
+  --hljs-number: #0550ae;
+  --hljs-title: #8250df;
+  --hljs-type: #953800;
+  --hljs-builtin: #b35900;
+  --hljs-meta: #0550ae;
+  --hljs-deletion: #82071e;
+
+  /* Block background tints. */
+  --block-gray-bg: #f1f1ef;
+  --block-brown-bg: #eee0da;
+  --block-orange-bg: #faebdd;
+  --block-yellow-bg: #fbf3db;
+  --block-green-bg: #edf3ec;
+  --block-blue-bg: #e7f3f8;
+  --block-purple-bg: #f6f3f9;
+  --block-pink-bg: #fbe4e8;
+  --block-red-bg: #fdebec;
+
+  /* Suggestions (track changes). */
+  --suggestion-insert: #2f9e44;
+  --suggestion-insert-fg: #2f9e44;
+  --suggestion-delete: #eb5757;
+  --suggestion-delete-fg: #b91c1c;
+}
+
+.dark {
+  --code-inline-fg: #ff7369;
+  --mark-bg: #5b4b21;
+
+  --hljs-keyword: #ff7b72;
+  --hljs-string: #a5d6ff;
+  --hljs-number: #79c0ff;
+  --hljs-title: #d2a8ff;
+  --hljs-type: #ffa657;
+  --hljs-builtin: #ffa657;
+  --hljs-meta: #79c0ff;
+  --hljs-deletion: #ffa198;
+
+  --suggestion-insert-fg: #69db7c;
+  --suggestion-delete: #ff7369;
+  --suggestion-delete-fg: #ffa198;
+}
+
+/* ---------------------------------------------------------------------------
+   Base element styles. Layered in `base` so Tailwind utilities can override
+   them (previously unlayered, which forced components into inline styles).
+   --------------------------------------------------------------------------- */
+@layer base {
 html,
 body {
   height: 100%;
@@ -126,10 +191,13 @@ body {
   background-color: color-mix(in srgb, var(--muted) 55%, transparent);
   background-clip: content-box;
 }
+}
 
 /* ---------------------------------------------------------------------------
    Editor content — Notion-like typography and rhythm
    --------------------------------------------------------------------------- */
+
+@layer components {
 .noema-editor .ProseMirror {
   outline: none;
   min-height: 2rem;
@@ -163,11 +231,11 @@ body {
 }
 
 .noema-editor .ProseMirror > * + * {
-  margin-top: 2px;
+  margin-top: var(--space-0-5);
 }
 
 .noema-editor .ProseMirror p {
-  padding: 3px 2px;
+  padding: 3px var(--space-0-5);
   margin: 0;
 }
 
@@ -176,48 +244,48 @@ body {
   font-weight: 700;
   line-height: 1.3;
   margin: 1.4rem 0 0;
-  padding: 3px 2px;
+  padding: 3px var(--space-0-5);
 }
 .noema-editor .ProseMirror h2 {
   font-size: 1.5rem;
   font-weight: 600;
   line-height: 1.3;
   margin: 1.2rem 0 0;
-  padding: 3px 2px;
+  padding: 3px var(--space-0-5);
 }
 .noema-editor .ProseMirror h3 {
   font-size: 1.25rem;
   font-weight: 600;
   line-height: 1.3;
   margin: 1rem 0 0;
-  padding: 3px 2px;
+  padding: 3px var(--space-0-5);
 }
 .noema-editor .ProseMirror h4 {
   font-size: 1.0625rem;
   font-weight: 600;
   line-height: 1.3;
   margin: 0.9rem 0 0;
-  padding: 3px 2px;
+  padding: 3px var(--space-0-5);
 }
 .noema-editor .ProseMirror h5 {
   font-size: 0.9375rem;
   font-weight: 600;
   line-height: 1.3;
   margin: 0.8rem 0 0;
-  padding: 3px 2px;
+  padding: 3px var(--space-0-5);
 }
 .noema-editor .ProseMirror h6 {
   font-size: 0.8125rem;
   font-weight: 600;
   line-height: 1.3;
   margin: 0.7rem 0 0;
-  padding: 3px 2px;
+  padding: 3px var(--space-0-5);
 }
 
 .noema-editor .ProseMirror ul,
 .noema-editor .ProseMirror ol {
-  padding-left: 1.7rem;
-  margin: 2px 0;
+  padding-inline-start: 1.7rem;
+  margin: var(--space-0-5) 0;
 }
 .noema-editor .ProseMirror ul {
   list-style: disc;
@@ -231,11 +299,11 @@ body {
 
 .noema-editor .ProseMirror ul[data-type="taskList"] {
   list-style: none;
-  padding-left: 0;
+  padding-inline-start: 0;
 }
 .noema-editor .ProseMirror ul[data-type="taskList"] li {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-2);
   align-items: flex-start;
 }
 .noema-editor .ProseMirror ul[data-type="taskList"] li > label {
@@ -260,21 +328,19 @@ body {
 
 .noema-editor .ProseMirror blockquote,
 .noema-editor .ProseMirror [data-callout] {
-  border-left: 3px solid var(--fg);
-  padding: 3px 2px 3px 14px;
+  border-inline-start: 3px solid var(--fg);
+  padding-block: 3px;
+  padding-inline: var(--space-0-5) 14px;
   margin: 6px 0;
 }
 
 .noema-editor .ProseMirror code {
   font-family: var(--font-mono);
   font-size: 85%;
-  color: #eb5757;
-  background: color-mix(in srgb, #eb5757 10%, transparent);
+  color: var(--code-inline-fg);
+  background: color-mix(in srgb, var(--code-inline-bg) 10%, transparent);
   padding: 0.2em 0.4em;
-  border-radius: 4px;
-}
-.dark .noema-editor .ProseMirror code {
-  color: #ff7369;
+  border-radius: var(--radius-sm);
 }
 
 .noema-editor .ProseMirror pre {
@@ -283,8 +349,8 @@ body {
   font-family: var(--font-mono);
   font-size: 14px;
   line-height: 1.5;
-  padding: 16px 16px;
-  border-radius: 6px;
+  padding: var(--space-4) var(--space-4);
+  border-radius: var(--radius-md);
   margin: 6px 0;
   overflow-x: auto;
 }
@@ -296,7 +362,8 @@ body {
 }
 
 /* ------------------------------------------------------------------------ *
- * Code block: Notion-style language selector + highlighted tokens
+ * Code block wrapper (the language picker lives in the node view now) and the
+ * highlight.js token palette below.
  * ------------------------------------------------------------------------ */
 .noema-code-block {
   position: relative;
@@ -309,100 +376,6 @@ body {
 }
 .noema-code-block.is-selected {
   outline: none;
-}
-
-/* Corner chip + dropdown (light grey chrome, muted label, token colours). */
-.noema-code-lang {
-  position: absolute;
-  top: 7px;
-  left: 8px;
-  z-index: 2;
-}
-.noema-code-lang-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.4;
-  cursor: pointer;
-}
-.noema-code-lang-trigger:hover,
-.noema-code-lang-trigger[aria-expanded="true"] {
-  background: color-mix(in srgb, var(--muted) 12%, transparent);
-  border-color: var(--border);
-}
-.noema-code-lang-trigger:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-.noema-code-lang-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 30;
-  width: 190px;
-  max-height: 260px;
-  display: flex;
-  flex-direction: column;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--fg) 12%, transparent);
-}
-.noema-code-lang-filter {
-  width: 100%;
-  padding: 5px 8px;
-  margin-bottom: 6px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--fg);
-  font-size: 12px;
-}
-.noema-code-lang-filter::placeholder {
-  color: var(--muted);
-}
-.noema-code-lang-filter:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 0;
-}
-.noema-code-lang-list {
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-}
-.noema-code-lang-option {
-  padding: 5px 8px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--fg);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-.noema-code-lang-option:hover,
-.noema-code-lang-option:focus-visible {
-  background: var(--surface-2);
-  outline: none;
-}
-.noema-code-lang-option.is-active {
-  color: var(--muted);
-}
-.noema-code-lang-option.is-active::after {
-  content: "✓";
-  float: right;
-}
-.noema-code-lang-empty {
-  padding: 5px 8px;
-  color: var(--muted);
-  font-size: 12px;
 }
 
 /* highlight.js token colours (light) - applies to the editor now and to any
@@ -421,14 +394,14 @@ body {
 .hljs-literal,
 .hljs-doctag,
 .hljs-formula {
-  color: #cf222e;
+  color: var(--hljs-keyword);
 }
 .hljs-string,
 .hljs-regexp,
 .hljs-addition,
 .hljs-attribute,
 .hljs-meta .hljs-string {
-  color: #0a3069;
+  color: var(--hljs-string);
 }
 .hljs-number,
 .hljs-symbol,
@@ -438,26 +411,26 @@ body {
 .hljs-selector-pseudo,
 .hljs-template-variable,
 .hljs-variable {
-  color: #0550ae;
+  color: var(--hljs-number);
 }
 .hljs-title,
 .hljs-section,
 .hljs-name,
 .hljs-selector-id,
 .hljs-selector-class {
-  color: #8250df;
+  color: var(--hljs-title);
 }
 .hljs-type,
 .hljs-params {
-  color: #953800;
+  color: var(--hljs-type);
 }
 .hljs-built_in,
 .hljs-title.class_,
 .hljs-class .hljs-title {
-  color: #b35900;
+  color: var(--hljs-builtin);
 }
 .hljs-meta {
-  color: #0550ae;
+  color: var(--hljs-number);
 }
 .hljs-emphasis {
   font-style: italic;
@@ -466,21 +439,21 @@ body {
   font-weight: 600;
 }
 .hljs-deletion {
-  color: #82071e;
+  color: var(--hljs-deletion);
 }
 .dark .hljs-keyword,
 .dark .hljs-selector-tag,
 .dark .hljs-literal,
 .dark .hljs-doctag,
 .dark .hljs-formula {
-  color: #ff7b72;
+  color: var(--hljs-keyword);
 }
 .dark .hljs-string,
 .dark .hljs-regexp,
 .dark .hljs-addition,
 .dark .hljs-attribute,
 .dark .hljs-meta .hljs-string {
-  color: #a5d6ff;
+  color: var(--hljs-string);
 }
 .dark .hljs-number,
 .dark .hljs-symbol,
@@ -491,32 +464,32 @@ body {
 .dark .hljs-template-variable,
 .dark .hljs-variable,
 .dark .hljs-meta {
-  color: #79c0ff;
+  color: var(--hljs-number);
 }
 .dark .hljs-title,
 .dark .hljs-section,
 .dark .hljs-name,
 .dark .hljs-selector-id,
 .dark .hljs-selector-class {
-  color: #d2a8ff;
+  color: var(--hljs-title);
 }
 .dark .hljs-type,
 .dark .hljs-params {
-  color: #ffa657;
+  color: var(--hljs-type);
 }
 .dark .hljs-built_in,
 .dark .hljs-title.class_,
 .dark .hljs-class .hljs-title {
-  color: #ffa657;
+  color: var(--hljs-type);
 }
 .dark .hljs-deletion {
-  color: #ffa198;
+  color: var(--hljs-deletion);
 }
 
 .noema-editor .ProseMirror hr {
   border: none;
   border-top: 1px solid var(--border);
-  margin: 12px 0;
+  margin: var(--space-3) 0;
 }
 .noema-editor .ProseMirror hr.ProseMirror-selectednode {
   border-top-color: var(--accent);
@@ -524,7 +497,7 @@ body {
 
 .noema-editor .ProseMirror img {
   max-width: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 .noema-editor .ProseMirror img.ProseMirror-selectednode {
   outline: 2px solid var(--accent);
@@ -554,12 +527,12 @@ body {
 
 /* Highlight mark default. */
 .noema-editor .ProseMirror mark {
-  background: #fdecc8;
-  border-radius: 3px;
+  background: var(--mark-bg);
+  border-radius: var(--radius-xs);
   padding: 0.1em 0;
 }
 .dark .noema-editor .ProseMirror mark {
-  background: #5b4b21;
+  background: var(--mark-bg);
   color: var(--fg);
 }
 
@@ -568,9 +541,9 @@ body {
    --------------------------------------------------------------------------- */
 .noema-editor .ProseMirror .noema-callout {
   display: flex;
-  gap: 8px;
-  padding: 12px 16px;
-  border-radius: 4px;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
   margin: 6px 0;
 }
 .noema-callout-emoji {
@@ -583,23 +556,23 @@ body {
 }
 .noema-callout-picker {
   position: absolute;
-  z-index: 30;
+  z-index: var(--z-popover);
   top: 28px;
-  left: 0;
+  inset-inline-start: 0;
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 2px;
+  gap: var(--space-0-5);
   width: 210px;
   padding: 6px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
 }
 .noema-callout-picker button {
   font-size: 16px;
-  padding: 4px;
-  border-radius: 4px;
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
 }
 .noema-callout-picker button:hover {
   background: var(--surface-2);
@@ -609,19 +582,19 @@ body {
   min-width: 0;
 }
 .noema-callout-content > * + * {
-  margin-top: 2px;
+  margin-top: var(--space-0-5);
 }
 
 /* ---------------------------------------------------------------------------
    Toggle
    --------------------------------------------------------------------------- */
 .noema-editor .ProseMirror .noema-toggle {
-  margin: 2px 0;
+  margin: var(--space-0-5) 0;
 }
 .noema-toggle-header {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 .noema-toggle-chevron {
   display: flex;
@@ -630,14 +603,14 @@ body {
   width: 22px;
   height: 24px;
   color: var(--muted);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 .noema-toggle-chevron:hover {
   background: var(--surface-2);
 }
 .noema-toggle-summary {
   flex: 1;
-  padding: 3px 2px;
+  padding: 3px var(--space-0-5);
   font-weight: 500;
   background: transparent;
   outline: none;
@@ -646,7 +619,7 @@ body {
   color: var(--muted);
 }
 .noema-toggle-body {
-  padding-left: 22px;
+  padding-inline-start: 22px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -654,7 +627,7 @@ body {
    --------------------------------------------------------------------------- */
 .noema-editor .ProseMirror [data-columns] {
   display: flex;
-  gap: 16px;
+  gap: var(--space-4);
   margin: 6px 0;
 }
 .noema-editor .ProseMirror [data-column] {
@@ -662,7 +635,7 @@ body {
   min-width: 0;
 }
 .noema-editor .ProseMirror [data-column] > * + * {
-  margin-top: 2px;
+  margin-top: var(--space-0-5);
 }
 
 /* ---------------------------------------------------------------------------
@@ -670,7 +643,7 @@ body {
    --------------------------------------------------------------------------- */
 .noema-editor .ProseMirror .tableWrapper {
   overflow-x: auto;
-  margin: 8px 0;
+  margin: var(--space-2) 0;
 }
 .noema-editor .ProseMirror table {
   border-collapse: collapse;
@@ -682,14 +655,14 @@ body {
 .noema-editor .ProseMirror table th {
   position: relative;
   min-width: 1em;
-  padding: 6px 8px;
+  padding: 6px var(--space-2);
   border: 1px solid var(--border);
   vertical-align: top;
 }
 .noema-editor .ProseMirror table th {
   background: var(--surface);
   font-weight: 600;
-  text-align: left;
+  text-align: start;
 }
 .noema-editor .ProseMirror table .selectedCell::after {
   content: "";
@@ -700,7 +673,7 @@ body {
 }
 .noema-editor .ProseMirror table .column-resize-handle {
   position: absolute;
-  right: -2px;
+  inset-inline-end: -2px;
   top: 0;
   bottom: 0;
   width: 4px;
@@ -712,10 +685,10 @@ body {
    Table of contents
    --------------------------------------------------------------------------- */
 .noema-editor .ProseMirror .noema-toc {
-  margin: 8px 0;
-  padding: 12px 16px;
+  margin: var(--space-2) 0;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 .noema-toc-title {
@@ -736,14 +709,14 @@ body {
   list-style: none;
 }
 .noema-toc li {
-  margin: 2px 0;
+  margin: var(--space-0-5) 0;
 }
 .noema-toc button {
-  padding: 2px 4px;
-  border-radius: 4px;
+  padding: var(--space-0-5) var(--space-1);
+  border-radius: var(--radius-sm);
   font-size: 14px;
   color: var(--fg);
-  text-align: left;
+  text-align: start;
 }
 .noema-toc button:hover {
   background: var(--surface-2);
@@ -764,7 +737,7 @@ body {
   justify-content: center;
   width: 18px;
   height: 24px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   color: var(--muted);
   cursor: grab;
@@ -780,8 +753,8 @@ body {
    --------------------------------------------------------------------------- */
 .noema-editor .ProseMirror .noema-mention {
   display: inline;
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--fg);
   white-space: nowrap;
@@ -809,7 +782,7 @@ body {
   height: 36px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   font-size: 14px;
   outline: none;
@@ -821,9 +794,9 @@ body {
 }
 .noema-bookmark-btn {
   height: 36px;
-  padding: 0 12px;
+  padding: 0 var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 14px;
 }
 .noema-bookmark-btn:hover {
@@ -833,12 +806,12 @@ body {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 .noema-bookmark-link {
   display: flex;
-  gap: 12px;
-  padding: 12px;
+  gap: var(--space-3);
+  padding: var(--space-3);
   color: inherit;
   text-decoration: none;
 }
@@ -863,7 +836,7 @@ body {
 .noema-bookmark-host {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   color: var(--muted);
   font-size: 12px;
 }
@@ -874,18 +847,18 @@ body {
 .noema-bookmark-image {
   width: 120px;
   height: 84px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
 }
 .noema-bookmark-actions,
 .noema-embed-actions {
   position: absolute;
   top: 6px;
-  right: 6px;
+  inset-inline-end: 6px;
   display: flex;
-  gap: 2px;
+  gap: var(--space-0-5);
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity var(--dur-1) var(--ease-smooth);
 }
 .noema-bookmark-card:hover .noema-bookmark-actions,
 .noema-embed-frame:hover .noema-embed-actions {
@@ -893,9 +866,9 @@ body {
 }
 .noema-bookmark-actions button,
 .noema-embed-actions button {
-  padding: 4px;
+  padding: var(--space-1);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--muted);
 }
@@ -908,12 +881,12 @@ body {
    Embed
    --------------------------------------------------------------------------- */
 .noema-editor .ProseMirror .noema-embed {
-  margin: 8px 0;
+  margin: var(--space-2) 0;
 }
 .noema-embed-input {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 .noema-embed-hint {
   color: var(--muted);
@@ -923,7 +896,7 @@ body {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   aspect-ratio: 16 / 9;
 }
 .noema-embed-frame iframe {
@@ -934,14 +907,14 @@ body {
 }
 .noema-embed-provider {
   position: absolute;
-  left: 8px;
+  inset-inline-start: 8px;
   bottom: 8px;
-  padding: 2px 6px;
+  padding: var(--space-0-5) 6px;
   font-size: 11px;
   color: var(--muted);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   pointer-events: none;
 }
 
@@ -956,7 +929,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 4px;
+  gap: var(--space-0-5) var(--space-1);
   color: var(--muted);
 }
 .noema-breadcrumb-item a {
@@ -968,7 +941,7 @@ body {
   text-decoration: underline;
 }
 .noema-breadcrumb-sep {
-  margin-left: 4px;
+  margin-inline-start: var(--space-1);
 }
 .noema-breadcrumb-empty {
   color: var(--muted);
@@ -979,12 +952,12 @@ body {
    Synced page view
    --------------------------------------------------------------------------- */
 .noema-editor .ProseMirror .noema-page-embed {
-  margin: 8px 0;
+  margin: var(--space-2) 0;
 }
 .noema-page-embed-shell {
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 .noema-page-embed-header {
   display: flex;
@@ -1004,8 +977,8 @@ body {
 }
 .noema-page-embed-open,
 .noema-page-embed-remove {
-  padding: 2px;
-  border-radius: 4px;
+  padding: var(--space-0-5);
+  border-radius: var(--radius-sm);
   color: var(--muted);
 }
 .noema-page-embed-open:hover,
@@ -1035,11 +1008,11 @@ body {
 .noema-page-embed-result {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 4px;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
   font-size: 14px;
-  text-align: left;
+  text-align: start;
 }
 .noema-page-embed-result:hover {
   background: var(--surface-2);
@@ -1053,59 +1026,59 @@ body {
   line-height: 1.6;
 }
 .noema-doc-renderer h1 {
-  margin: 10px 0 4px;
+  margin: 10px 0 var(--space-1);
   font-size: 1.6rem;
   font-weight: 700;
 }
 .noema-doc-renderer h2 {
-  margin: 8px 0 4px;
+  margin: var(--space-2) 0 var(--space-1);
   font-size: 1.3rem;
   font-weight: 600;
 }
 .noema-doc-renderer h3 {
-  margin: 6px 0 4px;
+  margin: 6px 0 var(--space-1);
   font-size: 1.1rem;
   font-weight: 600;
 }
 .noema-doc-renderer h4 {
-  margin: 5px 0 4px;
+  margin: 5px 0 var(--space-1);
   font-size: 1rem;
   font-weight: 600;
 }
 .noema-doc-renderer h5 {
-  margin: 4px 0 4px;
+  margin: var(--space-1) 0 var(--space-1);
   font-size: 0.95rem;
   font-weight: 600;
 }
 .noema-doc-renderer h6 {
-  margin: 4px 0 4px;
+  margin: var(--space-1) 0 var(--space-1);
   font-size: 0.9rem;
   font-weight: 600;
 }
 .noema-doc-renderer p {
-  margin: 2px 0;
+  margin: var(--space-0-5) 0;
 }
 .noema-doc-renderer ul {
-  padding-left: 1.5rem;
+  padding-inline-start: 1.5rem;
   list-style: disc;
 }
 .noema-doc-renderer ol {
-  padding-left: 1.5rem;
+  padding-inline-start: 1.5rem;
   list-style: decimal;
 }
 .noema-doc-renderer .noema-render-tasks {
-  padding-left: 0;
+  padding-inline-start: 0;
   list-style: none;
 }
 .noema-doc-renderer blockquote {
-  padding-left: 12px;
-  border-left: 3px solid var(--border);
+  padding-inline-start: var(--space-3);
+  border-inline-start: 3px solid var(--border);
   color: var(--muted);
 }
 .noema-doc-renderer pre {
   overflow-x: auto;
-  padding: 16px;
-  border-radius: 6px;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--fg);
   font-family: var(--font-mono);
@@ -1133,16 +1106,16 @@ body {
 }
 .noema-doc-renderer td,
 .noema-doc-renderer th {
-  padding: 6px 8px;
+  padding: 6px var(--space-2);
   border: 1px solid var(--border);
 }
 .noema-doc-renderer img {
   max-width: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 .noema-doc-renderer [data-columns] {
   display: flex;
-  gap: 16px;
+  gap: var(--space-4);
 }
 .noema-doc-renderer [data-column] {
   flex: 1;
@@ -1159,11 +1132,11 @@ body {
 .noema-editor .ProseMirror .noema-template-card {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   width: fit-content;
   padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
   font-size: 13px;
 }
@@ -1176,9 +1149,9 @@ body {
 .noema-template-select,
 .noema-template-insert {
   height: 26px;
-  padding: 0 8px;
+  padding: 0 var(--space-2);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   font-size: 13px;
 }
@@ -1187,11 +1160,11 @@ body {
 }
 .noema-template-remove {
   color: var(--muted);
-  padding: 0 4px;
+  padding: 0 var(--space-1);
   font-size: 15px;
 }
 .noema-template-remove:hover {
-  color: var(--red, #d44c47);
+  color: var(--danger);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1214,10 +1187,10 @@ body {
    --------------------------------------------------------------------------- */.noema-editor .ProseMirror .noema-ask-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 .noema-ask-head {
@@ -1234,7 +1207,7 @@ body {
   height: 34px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   font-size: 14px;
   outline: none;
@@ -1250,11 +1223,11 @@ body {
 .noema-ask-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   height: 30px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   font-size: 13px;
 }
@@ -1262,27 +1235,27 @@ body {
   background: var(--surface-2);
 }
 .noema-ask-icon {
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--muted);
 }
 .noema-ask-icon:hover {
-  color: var(--red, #d44c47);
+  color: var(--danger);
 }
 .noema-ask-answer {
   font-size: 14px;
   line-height: 1.6;
   border-top: 1px solid var(--border);
-  padding-top: 8px;
+  padding-top: var(--space-2);
 }
 
 /* ---------------------------------------------------------------------------
    Linked database (embedded read-only view)
    --------------------------------------------------------------------------- */
 .noema-editor .ProseMirror .noema-linked-shell {
-  margin: 8px 0;
+  margin: var(--space-2) 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 .noema-linked-header {
   display: flex;
@@ -1297,8 +1270,8 @@ body {
   font-weight: 500;
 }
 .noema-linked-open {
-  padding: 2px;
-  border-radius: 4px;
+  padding: var(--space-0-5);
+  border-radius: var(--radius-sm);
   color: var(--muted);
 }
 .noema-linked-open:hover {
@@ -1307,7 +1280,7 @@ body {
 }
 .noema-linked-body {
   overflow-x: auto;
-  padding: 8px 10px;
+  padding: var(--space-2) 10px;
 }
 .noema-linked-loading,
 .noema-linked-empty {
@@ -1324,9 +1297,9 @@ body {
 }
 .noema-linked-table th,
 .noema-linked-table td {
-  padding: 5px 8px;
+  padding: 5px var(--space-2);
   border-bottom: 1px solid var(--border);
-  text-align: left;
+  text-align: start;
 }
 .noema-linked-table th {
   color: var(--muted);
@@ -1341,7 +1314,7 @@ body {
   height: 34px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   font-size: 14px;
   outline: none;
@@ -1353,35 +1326,40 @@ body {
 .noema-linked-result {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 4px;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
   font-size: 14px;
-  text-align: left;
+  text-align: start;
 }
 .noema-linked-result:hover {
   background: var(--surface-2);
 }
+}
 
 /* ---------------------------------------------------------------------------
-   Accessibility: visible focus ring everywhere
+   Accessibility: visible focus ring everywhere.
+   Deliberately UNLAYERED: this is the global a11y safety net and must beat a
+   utility `outline-none` chrome somewhere in the app, which it only does when
+   it is not inside a cascade layer.
    --------------------------------------------------------------------------- */
 :where(a, button, input, select, textarea, [tabindex]):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+@layer components {
 .skip-link {
   position: absolute;
-  left: -9999px;
+  inset-inline-start: -9999px;
   top: 0;
-  z-index: 100;
-  padding: 8px 12px;
+  z-index: var(--z-tooltip);
+  padding: var(--space-2) var(--space-3);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 .skip-link:focus {
-  left: 12px;
+  inset-inline-start: 12px;
   top: 12px;
 }
 
@@ -1412,7 +1390,7 @@ body {
 .notion-markdown h6 {
   font-weight: 600;
   letter-spacing: -0.01em;
-  margin: 1em 0 4px;
+  margin: 1em 0 var(--space-1);
 }
 .notion-markdown h1 {
   font-size: 1.5em;
@@ -1450,8 +1428,8 @@ body {
 }
 .notion-markdown ul,
 .notion-markdown ol {
-  margin: 4px 0;
-  padding-left: 1.45em;
+  margin: var(--space-1) 0;
+  padding-inline-start: 1.45em;
 }
 .notion-markdown ul {
   list-style: disc;
@@ -1470,12 +1448,13 @@ body {
 }
 .notion-markdown li > ul,
 .notion-markdown li > ol {
-  margin: 2px 0;
+  margin: var(--space-0-5) 0;
 }
 .notion-markdown blockquote {
-  margin: 8px 0;
-  padding: 2px 0 2px 14px;
-  border-left: 3px solid var(--fg);
+  margin: var(--space-2) 0;
+  padding-block: var(--space-0-5);
+  padding-inline: 0 14px;
+  border-inline-start: 3px solid var(--fg);
 }
 .notion-markdown hr {
   border: 0;
@@ -1485,22 +1464,18 @@ body {
 .notion-markdown .notion-inline-code,
 .notion-markdown code {
   background: var(--surface);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   padding: 0.12em 0.35em;
   font-family: var(--font-mono);
   font-size: 0.86em;
-  color: #eb5757;
-}
-.dark .notion-markdown .notion-inline-code,
-.dark .notion-markdown code {
-  color: #ff7369;
+  color: var(--code-inline-fg);
 }
 
 /* Fenced code */
 .notion-code {
-  margin: 8px 0;
+  margin: var(--space-2) 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface);
   overflow: hidden;
 }
@@ -1508,7 +1483,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 10px;
+  padding: var(--space-1) 10px;
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   color: var(--muted);
@@ -1520,9 +1495,9 @@ body {
 .notion-code-copy {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  border-radius: 4px;
-  padding: 2px 6px;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  padding: var(--space-0-5) 6px;
 }
 .notion-code-copy:hover {
   background: var(--surface-2);
@@ -1530,7 +1505,7 @@ body {
 }
 .notion-code pre {
   margin: 0;
-  padding: 10px 12px;
+  padding: 10px var(--space-3);
   overflow-x: auto;
   font-family: var(--font-mono);
   font-size: 12.5px;
@@ -1544,7 +1519,7 @@ body {
 
 /* Tables */
 .notion-markdown-table {
-  margin: 8px 0;
+  margin: var(--space-2) 0;
   overflow-x: auto;
 }
 .notion-markdown table {
@@ -1569,12 +1544,12 @@ body {
 /* Task lists */
 .notion-markdown-tasks {
   list-style: none;
-  padding-left: 0.2em;
+  padding-inline-start: 0.2em;
 }
 .notion-markdown-task {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .notion-markdown-task > :not(.notion-check) {
   min-width: 0;
@@ -1587,7 +1562,7 @@ body {
   width: 14px;
   height: 14px;
   border: 1px solid var(--muted);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
 }
 .notion-check-on {
   background: var(--accent);
@@ -1599,8 +1574,8 @@ body {
 .notion-ref {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  border-radius: 4px;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
   background: var(--surface);
   padding: 1px 6px;
   font-size: 0.92em;
@@ -1640,21 +1615,12 @@ body {
 /* ---------------------------------------------------------------------------
    Notion-like surface primitives
    --------------------------------------------------------------------------- */
-.notion-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  transition: background-color 120ms ease, border-color 120ms ease;
-}
-.notion-card:hover {
-  background: color-mix(in srgb, var(--surface) 60%, transparent);
-}
 .notion-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 40px 16px;
+  padding: var(--space-10) var(--space-4);
   text-align: center;
   color: var(--muted);
   font-size: 14px;
@@ -1664,24 +1630,12 @@ body {
   place-items: center;
   width: 40px;
   height: 40px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
   color: var(--muted);
 }
-.notion-kbd {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1px 5px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--muted);
-  background: var(--bg);
-}
 .notion-skeleton {
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: linear-gradient(
     90deg,
     var(--surface) 0%,
@@ -1689,15 +1643,7 @@ body {
     var(--surface) 100%
   );
   background-size: 200% 100%;
-  animation: notion-skeleton 1.4s ease-in-out infinite;
-}
-@keyframes notion-skeleton {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
-  }
+  animation: var(--animate-sweep);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1716,8 +1662,12 @@ body {
   text-wrap: balance;
 }
 
+}
+
 /* ---------------------------------------------------------------------------
-   Motion: respect the user's preference
+   Motion: respect the user's preference.
+   UNLAYERED on purpose: like the focus baseline above, this global kill-switch
+   must beat every component transition regardless of cascade-layer order.
    Neutralises every CSS transition/animation (delays included, so nothing
    fades in late) and forces instant scrolling app-wide.
    --------------------------------------------------------------------------- */
@@ -1734,40 +1684,35 @@ body {
   }
 }
 
-
-
-
-
-
-
+@layer components {
 /* ------------------------------------------------------------------ image */
 .noema-image-block {
-  margin: 8px 0;
+  margin: var(--space-2) 0;
 }
 .noema-image-block.is-selected .noema-image {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 .noema-image {
   display: block;
   max-width: 100%;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 .noema-image-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 4px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 .noema-image-caption {
   flex: 1;
-  padding: 2px 6px;
+  padding: var(--space-0-5) 6px;
   font-size: 12px;
   color: var(--muted);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: none;
 }
 .noema-image-caption:focus {
@@ -1786,11 +1731,11 @@ body {
   color: var(--fg);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: none;
 }
 .noema-image-caption-view {
-  margin: 4px 0 0;
+  margin: var(--space-1) 0 0;
   font-size: 12px;
   color: var(--muted);
   text-align: center;
@@ -1808,16 +1753,16 @@ body {
 .noema-image-resize {
   position: absolute;
   top: 50%;
-  right: -7px;
+  inset-inline-end: -7px;
   width: 12px;
   height: 34px;
   transform: translateY(-50%);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--accent);
   opacity: 0;
   cursor: ew-resize;
   touch-action: none;
-  transition: opacity 0.15s;
+  transition: opacity var(--dur-1) var(--ease-smooth);
 }
 .noema-image-block:hover .noema-image-resize,
 .noema-image-block.is-selected .noema-image-resize {
@@ -1825,13 +1770,13 @@ body {
 }
 .noema-image-align {
   display: inline-flex;
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 .noema-image-align button {
   padding: 3px;
   color: var(--muted);
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 .noema-image-align button:hover {
   color: var(--fg);
@@ -1845,32 +1790,34 @@ body {
 /* ----------------------------------------------------- block backgrounds */
 .noema-editor .ProseMirror [data-block-color],
 .noema-doc-renderer [data-block-color] {
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 .noema-editor .ProseMirror [data-block-color="gray"],
-.noema-doc-renderer [data-block-color="gray"] { background-color: #f1f1ef; }
+.noema-doc-renderer [data-block-color="gray"] { background-color: var(--block-gray-bg); }
 .noema-editor .ProseMirror [data-block-color="brown"],
-.noema-doc-renderer [data-block-color="brown"] { background-color: #eee0da; }
+.noema-doc-renderer [data-block-color="brown"] { background-color: var(--block-brown-bg); }
 .noema-editor .ProseMirror [data-block-color="orange"],
-.noema-doc-renderer [data-block-color="orange"] { background-color: #faebdd; }
+.noema-doc-renderer [data-block-color="orange"] { background-color: var(--block-orange-bg); }
 .noema-editor .ProseMirror [data-block-color="yellow"],
-.noema-doc-renderer [data-block-color="yellow"] { background-color: #fbf3db; }
+.noema-doc-renderer [data-block-color="yellow"] { background-color: var(--block-yellow-bg); }
 .noema-editor .ProseMirror [data-block-color="green"],
-.noema-doc-renderer [data-block-color="green"] { background-color: #edf3ec; }
+.noema-doc-renderer [data-block-color="green"] { background-color: var(--block-green-bg); }
 .noema-editor .ProseMirror [data-block-color="blue"],
-.noema-doc-renderer [data-block-color="blue"] { background-color: #e7f3f8; }
+.noema-doc-renderer [data-block-color="blue"] { background-color: var(--block-blue-bg); }
 .noema-editor .ProseMirror [data-block-color="purple"],
-.noema-doc-renderer [data-block-color="purple"] { background-color: #f6f3f9; }
+.noema-doc-renderer [data-block-color="purple"] { background-color: var(--block-purple-bg); }
 .noema-editor .ProseMirror [data-block-color="pink"],
-.noema-doc-renderer [data-block-color="pink"] { background-color: #fbe4e8; }
+.noema-doc-renderer [data-block-color="pink"] { background-color: var(--block-pink-bg); }
 .noema-editor .ProseMirror [data-block-color="red"],
-.noema-doc-renderer [data-block-color="red"] { background-color: #fdebec; }
+.noema-doc-renderer [data-block-color="red"] { background-color: var(--block-red-bg); }
 
 /* B96 — TOC scroll-spy: highlight the current outline entry (aria-current).
    Scoped to the TOC block; append-only (shared file). */
 .noema-toc button[aria-current="true"] {
   background: var(--surface-2);
   font-weight: 600;
+}
+
 }
 
 /* ---------------------------------------------------------------------------
@@ -1966,6 +1913,7 @@ body {
   --selection: #1f4a7a;
 }
 
+@layer components {
 /* ---------------------------------------------------------------------------
    Bidi text direction (src/lib/bidi.ts `applyDirAttr`)
    The engine returns `dir-ltr` / `dir-rtl` alongside the `dir` attribute; the
@@ -1994,19 +1942,19 @@ body {
    the shared theme tokens so light / dark / high-contrast all agree.
    --------------------------------------------------------------------------- */
 .noema-editor .ProseMirror .noema-suggestion {
-  border-radius: 3px;
-  transition: background-color 120ms ease;
+  border-radius: var(--radius-xs);
+  transition: background-color var(--dur-1) var(--ease-smooth);
 }
 .noema-editor .ProseMirror .noema-suggestion[data-suggestion-kind="insert"] {
-  background: color-mix(in srgb, #2f9e44 14%, transparent);
-  box-shadow: inset 3px 0 0 color-mix(in srgb, #2f9e44 55%, transparent);
+  background: color-mix(in srgb, var(--suggestion-insert) 14%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--suggestion-insert) 55%, transparent);
 }
 .noema-editor .ProseMirror .noema-suggestion[data-suggestion-kind="replace"] {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
 }
 .dark .noema-editor .ProseMirror .noema-suggestion[data-suggestion-kind="insert"] {
-  background: color-mix(in srgb, #2f9e44 24%, transparent);
+  background: color-mix(in srgb, var(--suggestion-insert) 24%, transparent);
 }
 .dark .noema-editor .ProseMirror .noema-suggestion[data-suggestion-kind="replace"] {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
@@ -2014,7 +1962,7 @@ body {
 
 .noema-suggestion-badge {
   display: inline-block;
-  margin-right: 0.25rem;
+  margin-inline-end: 0.25rem;
   font-size: 0.85em;
   line-height: 1;
   vertical-align: middle;
@@ -2022,27 +1970,25 @@ body {
   opacity: 0.85;
 }
 .noema-suggestion-badge[data-suggestion-kind="insert"] {
-  color: #2f9e44;
+  color: var(--suggestion-insert-fg);
 }
 .noema-suggestion-badge[data-suggestion-kind="replace"] {
   color: var(--accent);
 }
-.dark .noema-suggestion-badge[data-suggestion-kind="insert"] {
-  color: #69db7c;
-}
 
 .noema-suggestion-delete {
   display: inline-block;
-  margin: 0 0.25rem;
+  margin-inline: 0.25rem;
   padding: 0 0.25rem;
-  border-radius: 0.25rem;
-  background: color-mix(in srgb, #eb5757 14%, transparent);
-  color: #b91c1c;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--suggestion-delete) 14%, transparent);
+  color: var(--suggestion-delete-fg);
   text-decoration: line-through;
   font-size: 0.85em;
   user-select: none;
 }
 .dark .noema-suggestion-delete {
-  background: color-mix(in srgb, #ff7369 24%, transparent);
-  color: #ffa198;
+  background: color-mix(in srgb, var(--suggestion-delete) 24%, transparent);
+  color: var(--suggestion-delete-fg);
+}
 }
