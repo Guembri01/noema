@@ -175,6 +175,23 @@ async function dedicatedUser() {
   });
 }
 
+/**
+ * B25: a two-factor code may be spent only once — the sign-in writes the time
+ * step it accepted (`User.twoFactorCounter`) and refuses a step that was
+ * spent already.
+ *
+ * The suite signs in more than once, and two sign-ins can land in the SAME
+ * authenticator step, so the fixture clears the spent step between the
+ * phases. That is what a user does by waiting for the next step — the suite
+ * does not have to wait for it.
+ */
+async function clearSpentStep(): Promise<void> {
+  await prisma.user.updateMany({
+    where: { email: USER.email },
+    data: { twoFactorCounter: null },
+  });
+}
+
 async function twoFactorEnabled(): Promise<boolean> {
   const row = await dedicatedUser();
   return row?.twoFactorEnabled ?? false;
@@ -386,6 +403,8 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
     // if the fixture is already enrolled (test 2 ran first / standalone
     // -g runs), plain otherwise (then enroll through the UI right here).
     const boot = await dedicatedUser();
+    // The enrolment of the previous test may have spent this step already.
+    await clearSpentStep();
     if (boot?.twoFactorEnabled && boot.twoFactorSecret) {
       await page.goto("/login", { waitUntil: "domcontentloaded", timeout: 60_000 });
       await page.getByLabel("Email").fill(USER.email);
@@ -449,6 +468,9 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
     await expect(page).toHaveURL(/\/login/, { timeout: UI_TIMEOUT });
 
     // Fresh code → accepted, lands back in THIS user's workspace.
+    // The sign-in above spent its step; the fixture clears it so this one is
+    // a fresh code and not a replay (B25).
+    await clearSpentStep();
     await codeInput.fill(totp(secret));
     await page.getByRole("button", { name: "Sign in" }).click();
     await page.waitForURL(new RegExp(`/w/${WORKSPACE.slug}`), {

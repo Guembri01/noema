@@ -1,0 +1,14 @@
+-- B25: a two-factor code may be used only once.
+--
+-- `verifyTotp` was a pure function and the accepted time step was never
+-- persisted, so nothing recorded that a step had been spent: an observed code
+-- (phishing, a screenshot, a shoulder surfer) opened a fresh session every
+-- time it was replayed inside the ±1 step window — up to 90 seconds.
+--
+-- `twoFactorCounter` holds the highest time step the account has accepted.
+-- The step is spent atomically (`updateMany` with `twoFactorCounter < step`),
+-- so the second use of a code matches no row and the sign-in is refused.
+--
+-- Existing rows keep NULL: the first successful two-factor sign-in spends the
+-- step it accepted.
+ALTER TABLE "User" ADD COLUMN "twoFactorCounter" INTEGER;

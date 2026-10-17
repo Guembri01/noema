@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { generateTotpSecret, otpauthUrl, verifyTotp } from "@/lib/totp";
+import { generateTotpSecret, otpauthUrl, verifyTotpCounter } from "@/lib/totp";
+import { consumeTotpStep } from "@/lib/totp-replay";
 import { authLimitMessage, checkTwoFactorLimit } from "@/lib/rate-limit";
 import { encryptTwoFactorSecret, openTwoFactorSecret } from "@/lib/secrets";
 
@@ -51,7 +52,13 @@ export async function enableTwoFactorAction(
   if (stored.kind === "unreadable") {
     return { error: "The two-factor secret could not be read. Start the setup again." };
   }
-  if (!verifyTotp(stored.secret, code)) {
+  // B25: the code answers with the time step it belongs to, and the step is
+  // spent here — an observed code cannot be used a second time.
+  const step = verifyTotpCounter(stored.secret, code);
+  if (step === null) {
+    return { error: "That code is not valid. Check your authenticator app." };
+  }
+  if (!(await consumeTotpStep(user.id, step))) {
     return { error: "That code is not valid. Check your authenticator app." };
   }
   // Always store the sealed form — this also migrates a pre-B05 cleartext row.
@@ -89,7 +96,13 @@ export async function disableTwoFactorAction(
   if (stored.kind === "unreadable") {
     return { error: "The two-factor secret could not be read." };
   }
-  if (!verifyTotp(stored.secret, code)) {
+  // B25: the code answers with the time step it belongs to, and the step is
+  // spent here — an observed code cannot be used a second time.
+  const step = verifyTotpCounter(stored.secret, code);
+  if (step === null) {
+    return { error: "That code is not valid." };
+  }
+  if (!(await consumeTotpStep(user.id, step))) {
     return { error: "That code is not valid." };
   }
   await prisma.user.update({

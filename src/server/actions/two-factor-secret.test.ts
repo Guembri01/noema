@@ -16,6 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
   userUpdate: vi.fn(),
+  // B25: the setup gates spend the two-factor time step they accepted.
+  userUpdateMany: vi.fn(),
   workspaceMemberFindFirst: vi.fn(),
   workspaceFindFirst: vi.fn(),
 }));
@@ -30,7 +32,7 @@ const auth = vi.hoisted(() => ({
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    user: { findUnique: db.userFindUnique, update: db.userUpdate },
+    user: { findUnique: db.userFindUnique, update: db.userUpdate, updateMany: db.userUpdateMany },
     workspaceMember: { findFirst: db.workspaceMemberFindFirst },
     workspace: { findFirst: db.workspaceFindFirst },
   },
@@ -96,6 +98,8 @@ beforeEach(async () => {
   auth.requireUser.mockResolvedValue(USER);
   auth.verifyPassword.mockResolvedValue(true);
   db.userUpdate.mockResolvedValue({ id: USER.id });
+  // B25: the two-factor step a code spends is free in every test.
+  db.userUpdateMany.mockResolvedValue({ count: 1 });
   db.workspaceMemberFindFirst.mockResolvedValue(null);
   db.workspaceFindFirst.mockResolvedValue(null);
 });
