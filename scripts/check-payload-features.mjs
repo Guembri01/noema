@@ -43,6 +43,20 @@ const CHECK_ENV = {
   SSO_CLIENT_SECRET: "secret",
 };
 
+/**
+ * B11 — the operator opt-in for the loopback range.
+ *
+ * The payload runs with NODE_ENV=production, and the webhook checker
+ * registers a hook on the hermetic receiver of `scripts/check-webhooks.mjs`
+ * (127.0.0.1:4280). The delivery-time SSRF guard refuses a loopback target
+ * in production unless the operator opts in explicitly, so the payload run
+ * sets the opt-in here. It opens the loopback range ONLY — the calendar feed
+ * path does not use it, so `check-workspace-ui` still sees a refused loopback
+ * feed, and every other private range (RFC1918, link-local, cloud metadata)
+ * stays refused.
+ */
+const LOOPBACK_OPT_IN_ENV = { NOEMA_ALLOW_LOOPBACK_TARGETS: "1" };
+
 const CHECKS = [
   "check-routes",
   "check-tickets",
@@ -133,6 +147,7 @@ async function main() {
     env: {
       ...process.env,
       ...CHECK_ENV,
+      ...LOOPBACK_OPT_IN_ENV,
       PORT: "3300",
       HOSTNAME: "127.0.0.1",
       NODE_ENV: "production",

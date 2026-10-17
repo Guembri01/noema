@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * B56 — webhook durability: signed payload v2 (R24.13), backoff schedule
@@ -17,12 +17,18 @@ const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
 }));
 
+// B11 — the delivery path resolves the target host before every attempt, so
+// DNS is mocked here exactly like in the calendar suite (hermetic, no network).
+const dns = vi.hoisted(() => ({ lookup: vi.fn() }));
+
 vi.mock("@/lib/db", () => ({
   prisma: {
     webhook: { findMany: mocks.webhookFindMany },
     webhookDelivery: { create: mocks.deliveryCreate, update: mocks.deliveryUpdate },
   },
 }));
+
+vi.mock("node:dns/promises", () => ({ lookup: dns.lookup }));
 
 // Spy on the shared signer while keeping its real behaviour, so a delivery test
 // can prove the dispatcher actually goes through `signPayload` (one signing
@@ -70,9 +76,18 @@ beforeEach(() => {
     async (args: { where: { id: string } }) => ({ id: args.where.id }),
   );
   mocks.fetch.mockReset().mockResolvedValue(http(200));
+  // A public answer for every hook host unless a test says otherwise.
+  dns.lookup.mockReset().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
   globalThis.fetch = mocks.fetch as unknown as typeof fetch;
   // Keep the real implementation installed by the module mock; only reset calls.
   sigMocks.signPayload.mockClear();
+  // The operator opt-in for loopback targets must never leak into the suite
+  // from the developer's environment; the tests that need it set it explicitly.
+  vi.stubEnv("NOEMA_ALLOW_LOOPBACK_TARGETS", undefined);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 afterAll(() => {
@@ -507,5 +522,145 @@ describe("shared signing scheme — dispatcher ⇄ verifier (D24)", () => {
     expect(verifyWebhookSignature({ secret: SECRET, body: BODY, signature: header, now: T0 })).toBe(
       true,
     );
+  });
+});
+
+/**
+ * B11 — an outbound webhook may not point at an internal service: the delivery
+ * would make the server POST to that host and the HTTP status would land in
+ * the delivery log (a status oracle for the internal network).
+ *
+ * The guard (`src/lib/feed-guard.ts`) runs before EVERY attempt - a check at
+ * creation time alone does not cover DNS rebinding or a target that changed
+ * after the hook was stored.
+ */
+describe("B11 - SSRF guard on the delivery path", () => {
+  it("never contacts a private target and records one uniform refusal", async () => {
+    await deliverWithRetry(
+      { ...HOOK, url: "http://10.0.0.5:8080/admin" },
+      "page.created",
+      BODY,
+      { deliveryId: "del_1", sleep: async () => {} },
+    );
+
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.deliveryUpdate).toHaveBeenCalledTimes(1);
+    const recorded = mocks.deliveryUpdate.mock.calls[0][0] as {
+      data: { attempts: number; ok: boolean; responseStatus: number | null; error: string };
+    };
+    expect(recorded.data).toMatchObject({ attempts: 1, ok: false, responseStatus: null });
+    expect(recorded.data.error).toBeTruthy();
+    expect(recorded.data.error).not.toMatch(/\d/); // no status code leaks
+  });
+
+  it("refuses a name that resolves into private space (rebinding)", async () => {
+    dns.lookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+    await deliverWithRetry(HOOK, "page.created", BODY, {
+      deliveryId: "del_1",
+      sleep: async () => {},
+    });
+
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.deliveryUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-checks the target before every attempt", async () => {
+    // Attempt 1 resolves to a public address, attempt 2 to a private one.
+    dns.lookup
+      .mockResolvedValueOnce([{ address: "93.184.216.34", family: 4 }])
+      .mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+    mocks.fetch.mockResolvedValue(http(500));
+
+    await deliverWithRetry(HOOK, "page.created", BODY, {
+      deliveryId: "del_1",
+      sleep: async () => {},
+    });
+
+    expect(mocks.fetch).toHaveBeenCalledTimes(1); // the second attempt never went out
+    expect(mocks.deliveryUpdate).toHaveBeenCalledTimes(2);
+    expect(mocks.deliveryUpdate.mock.calls[0][0]).toMatchObject({
+      data: { attempts: 1, ok: false, responseStatus: 500 },
+    });
+    expect(mocks.deliveryUpdate.mock.calls[1][0]).toMatchObject({
+      data: { attempts: 2, ok: false, responseStatus: null },
+    });
+  });
+
+  it("still delivers to a public target (the guard resolves it first)", async () => {
+    await deliverWithRetry(HOOK, "page.created", BODY, {
+      deliveryId: "del_1",
+      sleep: async () => {},
+    });
+
+    expect(dns.lookup).toHaveBeenCalledWith("receiver.test", expect.objectContaining({ all: true }));
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * B11 follow-up — the operator opt-in for the loopback range.
+ *
+ * The shipped payload runs with `NODE_ENV=production` and the live check
+ * `scripts/check-webhooks.mjs` registers a hook on the hermetic receiver on
+ * `127.0.0.1:4280`. The delivery guard refuses a loopback target in
+ * production unless the operator opts in explicitly
+ * (`NOEMA_ALLOW_LOOPBACK_TARGETS=1`); the opt-in opens the loopback range
+ * only.
+ */
+describe("B11 - SSRF guard on the delivery path (operator opt-in)", () => {
+  it("delivers to a loopback target when the operator opted in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NOEMA_ALLOW_LOOPBACK_TARGETS", "1");
+
+    await deliverWithRetry(
+      { ...HOOK, url: "http://127.0.0.1:4280/hook" },
+      "page.created",
+      BODY,
+      { deliveryId: "del_1", sleep: async () => {} },
+    );
+
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    expect(mocks.fetch.mock.calls[0][0]).toBe("http://127.0.0.1:4280/hook");
+    expect(mocks.deliveryUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ ok: true }) }),
+    );
+  });
+
+  it("refuses a loopback target in production without the opt-in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NOEMA_ALLOW_LOOPBACK_TARGETS", undefined);
+
+    await deliverWithRetry(
+      { ...HOOK, url: "http://127.0.0.1:4280/hook" },
+      "page.created",
+      BODY,
+      { deliveryId: "del_1", sleep: async () => {} },
+    );
+
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.deliveryUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.deliveryUpdate.mock.calls[0][0]).toMatchObject({
+      data: { attempts: 1, ok: false, responseStatus: null },
+    });
+  });
+
+  it("still refuses the other private ranges with the opt-in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NOEMA_ALLOW_LOOPBACK_TARGETS", "1");
+
+    for (const url of [
+      "http://10.0.0.5:8080/admin",
+      "http://192.168.1.10/hook",
+      "http://169.254.169.254/latest/meta-data/",
+    ]) {
+      await deliverWithRetry(
+        { ...HOOK, url },
+        "page.created",
+        BODY,
+        { deliveryId: "del_1", sleep: async () => {} },
+      );
+    }
+
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
 });

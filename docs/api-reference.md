@@ -516,12 +516,27 @@ which fetches from the Notion API server-side.
   `createWebhookAction` / `deleteWebhookAction`
   ([`src/server/actions/webhooks.ts`](../src/server/actions/webhooks.ts)) from
   the workspace settings card; requires a member-managing role; URL must be
-  `http(s)`.
+  `http(s)` **and must point to a public host** — private, reserved and cloud
+  metadata addresses are refused, including host names that resolve into
+  private space (DNS rebinding). Every refusal answers the same message, so
+  the form cannot be used to probe the internal network.
+  **The production default refuses a loopback target** (`127.0.0.0/8`, `::1`,
+  `localhost`). An operator who really has a receiver on the same machine can
+  open the loopback range explicitly with `NOEMA_ALLOW_LOOPBACK_TARGETS=1`;
+  the opt-in covers the loopback range only — RFC1918, link-local, cloud
+  metadata and `.internal`/`.local` names stay refused.
 - **Dispatch** (`dispatchWebhooks(workspaceId, event, data)`): persists one
   `WebhookDelivery` outbox row per receiver *before* any network I/O, then
   fires asynchronously with 5 attempts (0 s / 2 s / 8 s / 30 s / 2 min) and a
   5 s timeout; every attempt updates that single row — one row per logical
   delivery (readable via `getWebhookDeliveries` in `src/server/queries.ts`).
+  The target is checked again before **every** attempt (the creation-time
+  check does not cover DNS rebinding, nor a hook whose URL changed since): a
+  refused target is never contacted, and its row records no status code, so
+  the delivery history is no status oracle for internal services. The same
+  rules apply as at creation time, opt-in included: with
+  `NOEMA_ALLOW_LOOPBACK_TARGETS=1` a loopback target is delivered to, without
+  it the delivery is refused before the target is contacted.
 
 Delivery request your endpoint receives:
 

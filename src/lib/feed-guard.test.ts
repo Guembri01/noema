@@ -3,6 +3,7 @@ import {
   isBlockedFeedHost,
   isBlockedFeedTarget,
   isBlockedIpLiteral,
+  isBlockedOutboundTarget,
   safeFetchFeed,
   safeFetchGuarded,
 } from "./feed-guard";
@@ -25,6 +26,14 @@ vi.mock("node:dns/promises", () => ({ lookup: dns.lookup }));
 
 beforeEach(() => {
   dns.lookup.mockReset();
+  // The operator opt-in for loopback targets must never leak into the suite
+  // from the developer's environment; the tests that need it set it
+  // explicitly.
+  vi.stubEnv("NOEMA_ALLOW_LOOPBACK_TARGETS", undefined);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 const resolvePublic = () =>
@@ -303,5 +312,178 @@ describe("isBlockedFeedTarget - development-only loopback exemption", () => {
     await expect(isBlockedFeedTarget("http://localhost:4323/cal.ics")).resolves.toBe(true);
     vi.stubEnv("NODE_ENV", "production");
     await expect(isBlockedFeedTarget("http://127.0.0.1:4323/cal.ics")).resolves.toBe(true);
+  });
+});
+
+/**
+ * B11 follow-up — the operator opt-in for the loopback range.
+ *
+ * The shipped payload runs with `NODE_ENV=production`, and the hermetic
+ * webhook receiver of `scripts/check-webhooks.mjs` lives on `127.0.0.1:4280`.
+ * A `NODE_ENV` rule cannot serve both — the production guard must not exempt
+ * loopback on its own — so the exemption became an explicit operator opt-in:
+ * `NOEMA_ALLOW_LOOPBACK_TARGETS=1`.
+ *
+ * The opt-in opens the loopback range ONLY. RFC1918, link-local, the cloud
+ * metadata addresses and every `.internal`/`.local` name stay refused, and
+ * the calendar feed path never asks for the opt-in at all.
+ */
+describe("isBlockedOutboundTarget - operator opt-in for loopback targets (B11)", () => {
+  const OPT_IN = "NOEMA_ALLOW_LOOPBACK_TARGETS";
+
+  it("permits a loopback target when the operator opted in (also in production)", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv(OPT_IN, "1");
+
+    await expect(
+      isBlockedOutboundTarget("http://127.0.0.1:4280/hook", { allowLoopbackWithOptIn: true }),
+    ).resolves.toBe(false);
+    await expect(
+      isBlockedOutboundTarget("http://localhost:4280/hook", { allowLoopbackWithOptIn: true }),
+    ).resolves.toBe(false);
+    await expect(
+      isBlockedOutboundTarget("http://[::1]:4280/hook", { allowLoopbackWithOptIn: true }),
+    ).resolves.toBe(false);
+    expect(dns.lookup).not.toHaveBeenCalled();
+  });
+
+  it("permits a name whose every answer is a loopback address", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv(OPT_IN, "1");
+    dns.lookup.mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
+
+    await expect(
+      isBlockedOutboundTarget("http://receiver.test/hook", { allowLoopbackWithOptIn: true }),
+    ).resolves.toBe(false);
+  });
+
+  it("does not permit the other private ranges with the opt-in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv(OPT_IN, "1");
+
+    const targets = [
+      "http://10.0.0.5:8080/admin",
+      "http://172.16.0.9/hook",
+      "http://192.168.1.10/hook",
+      "http://169.254.169.254/latest/meta-data/",
+      "http://[fe80::1]/hook",
+      "http://metadata.google.internal/latest/meta-data/",
+      "http://foo.internal/hook",
+      "http://printer.local/hook",
+    ];
+    for (const target of targets) {
+      await expect(
+        isBlockedOutboundTarget(target, { allowLoopbackWithOptIn: true }),
+        target,
+      ).resolves.toBe(true);
+    }
+    // A name that resolves into private space stays refused as well.
+    dns.lookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+    await expect(
+      isBlockedOutboundTarget("http://receiver.test/hook", { allowLoopbackWithOptIn: true }),
+    ).resolves.toBe(true);
+    // …and so does a mixed answer (loopback + something else).
+    dns.lookup.mockResolvedValue([
+      { address: "127.0.0.1", family: 4 },
+      { address: "93.184.216.34", family: 4 },
+    ]);
+    await expect(
+      isBlockedOutboundTarget("http://mixed.test/hook", { allowLoopbackWithOptIn: true }),
+    ).resolves.toBe(true);
+  });
+
+  it("refuses a loopback target in production without the opt-in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv(OPT_IN, undefined);
+
+    await expect(
+      isBlockedOutboundTarget("http://127.0.0.1:4280/hook", { allowLoopbackWithOptIn: true }),
+    ).resolves.toBe(true);
+    await expect(
+      isBlockedOutboundTarget("http://localhost:4280/hook", { allowLoopbackWithOptIn: true }),
+    ).resolves.toBe(true);
+    // A caller that does not ask for the opt-in gets nothing either.
+    await expect(isBlockedOutboundTarget("http://127.0.0.1:4280/hook")).resolves.toBe(true);
+  });
+
+  it("does not open the loopback range for the calendar feed path", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv(OPT_IN, "1");
+
+    await expect(isBlockedFeedTarget("http://localhost:4323/cal.ics")).resolves.toBe(true);
+    await expect(isBlockedFeedTarget("http://127.0.0.1:4323/cal.ics")).resolves.toBe(true);
+  });
+});
+
+/**
+ * The merge invariant: ONE gate with ONE loopback policy.
+ *
+ * B10 gave the link-preview route its own guarded fetch
+ * (`safeFetchGuarded`) and made it opt out of the development exemption;
+ * B11 gave every outbound request one gate (`isBlockedOutboundTarget`) with
+ * the operator opt-in. Merged, the two must not cancel each other out:
+ *
+ *  - the preview route (`safeFetchGuarded`) stays strict in EVERY
+ *    environment - it never asks for the operator opt-in, so a granted
+ *    opt-in does not open the loopback range for it;
+ *  - the calendar path (`safeFetchFeed`) keeps its development-only
+ *    exemption, and the operator opt-in never reaches it either.
+ */
+describe("merged guard - one gate, one loopback policy (B10 + B11)", () => {
+  it("refuses a loopback preview target even with the operator opt-in", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("NOEMA_ALLOW_LOOPBACK_TARGETS", "1");
+    const fetchFn = vi.fn();
+
+    const result = await safeFetchGuarded("http://127.0.0.1:4323/page", undefined, { fetchFn });
+
+    expect(result).toEqual({ ok: false, reason: "blocked" });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("refuses a loopback preview target in production too", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NOEMA_ALLOW_LOOPBACK_TARGETS", "1");
+    const fetchFn = vi.fn();
+
+    const result = await safeFetchGuarded("http://localhost:4323/page", undefined, { fetchFn });
+
+    expect(result).toEqual({ ok: false, reason: "blocked" });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("keeps the calendar feed's development exemption", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const fetchFn = vi.fn();
+    fetchFn.mockResolvedValue(new Response("ok", { status: 200 }));
+
+    const response = await safeFetchFeed("http://127.0.0.1:4323/cal.ics", undefined, { fetchFn });
+
+    expect(response?.status).toBe(200);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a loopback feed in production, even with the operator opt-in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NOEMA_ALLOW_LOOPBACK_TARGETS", "1");
+    const fetchFn = vi.fn();
+
+    const response = await safeFetchFeed("http://127.0.0.1:4323/cal.ics", undefined, { fetchFn });
+
+    expect(response).toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("counts a DNS failure as blocked, not as failed", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    dns.lookup.mockRejectedValue(
+      Object.assign(new Error("getaddrinfo ETIMEDOUT"), { code: "ETIMEDOUT" }),
+    );
+    const fetchFn = vi.fn();
+
+    const result = await safeFetchGuarded("https://gone.test/feed", undefined, { fetchFn });
+
+    expect(result).toEqual({ ok: false, reason: "blocked" });
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });
