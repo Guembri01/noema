@@ -8,6 +8,7 @@ import {
   blockFromNode,
   deleteAnchorIndex,
   SmartSuggestions,
+  suggestionDeleteStyle,
   type BlockSource,
 } from "./suggestions";
 
@@ -239,5 +240,17 @@ describe("SmartSuggestions wiring", () => {
         "rejectAll",
       ]),
     );
+  });
+});
+
+describe("suggestionDeleteStyle — token-only marker chrome", () => {
+  it("uses the danger tokens instead of the old raw hex", () => {
+    const css = suggestionDeleteStyle();
+    expect(css).toContain("background:var(--danger-soft)");
+    expect(css).toContain("color:var(--danger)");
+    expect(css).toContain("border-radius:var(--radius-sm)");
+    expect(css).toContain("text-decoration:line-through");
+    expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(css).not.toMatch(/rgba?\(/);
   });
 });

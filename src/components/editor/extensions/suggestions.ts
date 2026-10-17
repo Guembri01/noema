@@ -330,6 +330,19 @@ function kindWidget(kind: "insert" | "replace"): HTMLElement {
   return element;
 }
 
+/**
+ * Inline `cssText` for the delete marker. Token-only (design system §1): the
+ * danger tokens replace the old `rgba(235,87,87,0.12)` / `#b91c1c`, so the
+ * marker follows light / dark / high-contrast from the same source. Pure, so a
+ * node test can pin it without a DOM.
+ */
+export function suggestionDeleteStyle(): string {
+  return (
+    "display:inline-block;margin:0 0.25rem;padding:0 0.25rem;border-radius:var(--radius-sm);" +
+    "background:var(--danger-soft);color:var(--danger);text-decoration:line-through;font-size:0.85em;"
+  );
+}
+
 /** Delete marker DOM (built lazily, only when the view renders). */
 function deletedWidget(label: string, id: string): HTMLElement {
   const element = document.createElement("span");
@@ -338,9 +351,7 @@ function deletedWidget(label: string, id: string): HTMLElement {
   element.setAttribute("data-suggestion-kind", "delete");
   element.setAttribute("contenteditable", "false");
   element.textContent = label;
-  element.style.cssText =
-    "display:inline-block;margin:0 0.25rem;padding:0 0.25rem;border-radius:0.25rem;" +
-    "background:rgba(235,87,87,0.12);color:#b91c1c;text-decoration:line-through;font-size:0.85em;";
+  element.style.cssText = suggestionDeleteStyle();
   return element;
 }
 
