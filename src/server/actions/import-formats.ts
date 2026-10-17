@@ -8,6 +8,7 @@ import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { markdownToDoc } from "@/lib/serialize";
 import { assertScopedParent } from "@/lib/page-parent";
+import { sanitizeDocHrefs } from "@/lib/validation";
 import type { RichNode } from "@/lib/blocks";
 import { parseGoogleDoc } from "@/lib/import-gdocs";
 import { parseConfluenceExport, type ConfluencePage } from "@/lib/import-confluence";
@@ -118,6 +119,10 @@ async function createPage(input: {
 }): Promise<string> {
   const title = input.title.trim().slice(0, 200) || "Imported page";
   const hasContent = Array.isArray(input.content) && input.content.length > 0;
+  // B110: every document an import writes meets the same href allowlist the
+  // save path applies (`parsePageContent`) — the HTML, Confluence and PDF
+  // importers all come through here.
+  const content = sanitizeDocHrefs({ type: "doc", content: input.content ?? [] });
   const page = await prisma.page.create({
     data: {
       workspaceId: input.workspaceId,
@@ -126,9 +131,7 @@ async function createPage(input: {
       icon: input.icon,
       createdById: input.userId,
       position: input.position,
-      ...(hasContent
-        ? { content: { type: "doc", content: input.content } as unknown as Prisma.InputJsonValue }
-        : {}),
+      ...(hasContent ? { content: content as unknown as Prisma.InputJsonValue } : {}),
     },
     select: { id: true },
   });
