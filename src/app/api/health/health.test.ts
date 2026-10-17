@@ -110,3 +110,64 @@ describe("GET /api/health (R28.24)", () => {
     expect(res.headers.get("cache-control")).toContain("no-store");
   });
 });
+
+/**
+ * B49 — the desktop shell's handshake.
+ *
+ * The shell starts the server on a loopback port and points the window at it
+ * as soon as `/api/health` answers `200`. That port is picked by binding
+ * `127.0.0.1:0`, reading the port and closing the socket again, so another
+ * program on the same machine can take it before the server does — and it
+ * only has to answer `200` to be believed. The window would then load *that*
+ * page with the app's IPC rights.
+ *
+ * The fix: the shell hands the server a random token per start, the server
+ * echoes it in a header, and the shell believes a server only when the header
+ * carries its token.
+ */
+describe("GET /api/health — the desktop shell's handshake (B49)", () => {
+  const previousToken = process.env.NOEMA_SHELL_TOKEN;
+
+  afterEach(() => {
+    if (previousToken === undefined) delete process.env.NOEMA_SHELL_TOKEN;
+    else process.env.NOEMA_SHELL_TOKEN = previousToken;
+  });
+
+  it("echoes the shell's token in a header", async () => {
+    process.env.NOEMA_SHELL_TOKEN = "token-of-this-run";
+    const res = await health();
+    expect(res.headers.get("x-noema-shell-token")).toBe("token-of-this-run");
+  });
+
+  it("sends no token header at all without a shell", async () => {
+    // A normal web deployment has no shell and no token. The header must be
+    // absent, not empty: an empty value would look like a token.
+    delete process.env.NOEMA_SHELL_TOKEN;
+    const res = await health();
+    expect(res.headers.get("x-noema-shell-token")).toBeNull();
+  });
+
+  it("sends no token header when the shell's token is empty", async () => {
+    process.env.NOEMA_SHELL_TOKEN = "   ";
+    const res = await health();
+    expect(res.headers.get("x-noema-shell-token")).toBeNull();
+  });
+
+  it("keeps the token out of the frozen body", async () => {
+    process.env.NOEMA_SHELL_TOKEN = "secret-token-value";
+    const res = await health();
+    const body = await bodyOf(res);
+    expect(Object.keys(body).sort()).toEqual(["db", "ok"]);
+    expect(JSON.stringify(body)).not.toContain("secret-token-value");
+  });
+
+  it("carries the token on an unhealthy answer too", async () => {
+    // The supervisor tells "our server, but the database is down" apart from
+    // "something else is on the port" — both answers have to be attributable.
+    process.env.NOEMA_SHELL_TOKEN = "token-of-this-run";
+    db.queryRaw.mockRejectedValue(new Error("ECONNREFUSED"));
+    const res = await health();
+    expect(res.status).toBe(503);
+    expect(res.headers.get("x-noema-shell-token")).toBe("token-of-this-run");
+  });
+});

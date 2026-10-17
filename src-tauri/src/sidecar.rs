@@ -26,11 +26,15 @@
 //!    are released cleanly.
 //! 4. **Observable.** stdout/stderr are streamed to the rotating log file, and
 //!    the last N lines are exposed to the app for a "Diagnostics" panel.
+//! 5. **Authenticated.** The readiness handshake carries a random token that
+//!    only this run's server knows, so a program that grabbed the port before
+//!    the server did is never mistaken for it — see `shell_token`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime::Receiver;
 use tauri::{AppHandle, Emitter, Manager};
@@ -54,6 +58,20 @@ pub const RESTART_BACKOFF: [Duration; 4] = [
     Duration::from_secs(3),
     Duration::from_secs(10),
 ];
+
+/// The environment variable that carries the handshake token to the server.
+///
+/// The server reads it out of its own environment and echoes it in the
+/// `SHELL_TOKEN_HEADER` response header; the supervisor only trusts a server
+/// that does. A plain web deployment sets nothing, and then the header is
+/// absent — an empty value would look like a token to a caller.
+pub const SHELL_TOKEN_ENV: &str = "NOEMA_SHELL_TOKEN";
+
+/// The response header the server echoes the handshake token in.
+///
+/// A header and not the body: `/api/health`'s JSON body is a frozen contract
+/// (`{ ok, db }`, see B62) that probes and load balancers parse.
+pub const SHELL_TOKEN_HEADER: &str = "x-noema-shell-token";
 
 /// Where the server entry point lives inside the installed app.
 ///
@@ -109,6 +127,8 @@ pub enum SidecarError {
     NotReady(Duration, String),
     #[error("failed to spawn the server: {0}")]
     Spawn(String),
+    #[error("the system random number generator failed")]
+    NoToken,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -205,6 +225,8 @@ pub enum Readiness {
     Ready,
     /// The server answered, but not with 200 — almost always the database.
     Unhealthy(u16),
+    /// Something else answered on the port: it is not our server.
+    Foreign,
     /// Nothing answered within the budget.
     Silent,
 }
@@ -218,10 +240,78 @@ impl Readiness {
                 "The local server is running but reports unhealthy (HTTP {status}) — \
                  usually the database connection. Check the connection string below."
             ),
+            Readiness::Foreign => {
+                "Another program is serving on this port — it is not the Noema server. \
+                 Quit that program and try again."
+                    .to_string()
+            }
             Readiness::Silent => {
                 "The local server did not answer at all. See the log for details.".to_string()
             }
         }
+    }
+}
+
+/// A fresh handshake token for this run.
+///
+/// 32 bytes from the operating system's CSPRNG (`OsRng` — the kernel's
+/// `getrandom`), hex encoded so it is a plain header value.
+///
+/// One token per start: a token from an earlier run is worthless, and the
+/// program that squats the port never learns this one. It cannot read the
+/// server process' environment (that belongs to another user — a process of
+/// the *same* user can, and that is what B48 is about), and the server
+/// echoes the token in the health answer — to every caller of it, but the
+/// token is bound to this run and this port, so a program that grabbed the
+/// port before the server did never learns it.
+///
+/// Without a token the shell cannot tell its own server apart from an
+/// impostor, so a generator that fails is a reason not to start at all.
+pub fn shell_token() -> Result<String, SidecarError> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut bytes = [0u8; 32];
+    let mut rng = rand::rngs::OsRng;
+    rng.try_fill_bytes(&mut bytes)
+        .map_err(|_| SidecarError::NoToken)?;
+    let mut token = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        token.push(HEX[(byte >> 4) as usize] as char);
+        token.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Ok(token)
+}
+
+/// Compare two secrets without leaking how much of them matched.
+///
+/// The length is not secret — the token is always the same length — but the
+/// content is: a comparison that returns as soon as it finds a difference
+/// tells whoever can measure the answer how much of the token was right.
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (a, b) in left.iter().zip(right.iter()) {
+        difference |= a ^ b;
+    }
+    difference == 0
+}
+
+/// Is this health response from *our* server?
+///
+/// The response must carry the token of this run in the `SHELL_TOKEN_HEADER`
+/// header, and the header must match it exactly.
+///
+/// A missing header is not a match. The server always sends it, so a response
+/// without one comes from something else — most likely the program that
+/// grabbed the port before the server did. That program answers `200` to
+/// everything, and the window would load *its* page on an origin the Tauri
+/// capability covers, with the app's IPC rights. So it must never be
+/// mistaken for the server.
+pub fn health_response_is_ours(received: Option<&str>, token: &str) -> bool {
+    match received {
+        Some(value) => constant_time_eq(value.as_bytes(), token.as_bytes()),
+        None => false,
     }
 }
 
@@ -237,11 +327,16 @@ pub fn api_base(port: u16) -> String {
 /// the signal that makes the bundled server provision its own embedded database,
 /// so a fresh install needs nothing installed — not even Postgres. (An empty
 /// value would work too, but an absent variable is unambiguous.)
+///
+/// `shell_token` is the handshake token of this run: the server echoes it in
+/// the `SHELL_TOKEN_HEADER` header, and the supervisor believes a server only
+/// when it does.
 pub fn server_env(
     port: u16,
     data_dir: &Path,
     origin: &str,
     database_url: &str,
+    shell_token: &str,
 ) -> Vec<(String, String)> {
     let mut env = vec![
         ("PORT".into(), port.to_string()),
@@ -270,6 +365,9 @@ pub fn server_env(
         // The webview origin must be able to call the loopback server.
         ("APP_ORIGINS".into(), origin.into()),
         ("NEXT_TELEMETRY_DISABLED".into(), "1".into()),
+        // The handshake token. It never leaves this machine: only the server
+        // process reads it, out of its own environment.
+        (SHELL_TOKEN_ENV.into(), shell_token.into()),
     ];
     if !database_url.trim().is_empty() {
         env.push(("DATABASE_URL".into(), database_url.to_string()));
@@ -314,12 +412,19 @@ pub fn backoff_for(attempt: u32) -> Duration {
     RESTART_BACKOFF[index]
 }
 
-/// Poll the health endpoint until it answers 200, or the timeout elapses.
+/// Poll the health endpoint until it answers 200 **with our token**, or the
+/// timeout elapses.
 ///
 /// Returns *why* it gave up, so the shell can tell "the database is unreachable"
 /// (the user can fix that on the bootstrap page) apart from "nothing is
 /// listening" (a real bug worth a bug report).
-pub async fn wait_until_ready(port: u16, timeout: Duration) -> Readiness {
+///
+/// A `200` alone is not enough: the port was picked by binding `127.0.0.1:0`,
+/// reading the port and closing the socket again, so another program on this
+/// machine can take it before the server does — and it only has to answer `200`
+/// to be believed. The token in `SHELL_TOKEN_HEADER` is what tells our own
+/// server apart from that impostor.
+pub async fn wait_until_ready(port: u16, timeout: Duration, token: &str) -> Readiness {
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -330,18 +435,32 @@ pub async fn wait_until_ready(port: u16, timeout: Duration) -> Readiness {
     let url = ready_url(port);
     let deadline = tokio::time::Instant::now() + timeout;
     let mut last_status: Option<u16> = None;
+    let mut foreign = false;
     while tokio::time::Instant::now() < deadline {
         if let Ok(response) = client.get(&url).send().await {
             let status = response.status().as_u16();
-            if response.status().is_success() {
-                return Readiness::Ready;
+            let echoed = response
+                .headers()
+                .get(SHELL_TOKEN_HEADER)
+                .and_then(|value| value.to_str().ok());
+            if health_response_is_ours(echoed, token) {
+                if response.status().is_success() {
+                    return Readiness::Ready;
+                }
+                last_status = Some(status);
+            } else {
+                // Something else is answering on this port. Keep waiting: the
+                // server may still win the port and answer with the token
+                // afterwards. Remember it, so the failure can say what
+                // happened instead of "nothing answered".
+                foreign = true;
             }
-            last_status = Some(status);
         }
         tokio::time::sleep(READY_POLL).await;
     }
     match last_status {
         Some(status) => Readiness::Unhealthy(status),
+        None if foreign => Readiness::Foreign,
         None => Readiness::Silent,
     }
 }
@@ -442,7 +561,12 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
     }
     crate::state::remember_port(app, port);
     let origin = api_base(port);
-    let env = server_env(port, &data_dir, &origin, &database_url);
+    // The handshake token of this run. The server reads it out of its own
+    // environment and echoes it in the health response; the supervisor only
+    // trusts a server that does, so a program that grabbed the port before the
+    // server did is never mistaken for it.
+    let token = shell_token()?;
+    let env = server_env(port, &data_dir, &origin, &database_url, &token);
 
     let command = app
         .shell()
@@ -470,7 +594,7 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
     // Stream logs to file + the UI, and notice an unexpected exit.
     spawn_log_pump(app.clone(), receiver, epoch);
 
-    match wait_until_ready(port, READY_TIMEOUT).await {
+    match wait_until_ready(port, READY_TIMEOUT, &token).await {
         Readiness::Ready => {
             let info = SidecarInfo {
                 api_base: origin,
@@ -572,6 +696,10 @@ mod tests {
         assert!(Readiness::Unhealthy(503).message().contains("503"));
         assert!(Readiness::Unhealthy(503).message().contains("database"));
         assert!(Readiness::Silent.message().contains("did not answer"));
+        // The impostor case has to say what happened, or the user is sent to
+        // the database field for a port that somebody else is holding.
+        assert!(Readiness::Foreign.message().contains("Another program"));
+        assert!(Readiness::Foreign.message().contains("port"));
     }
 
     #[test]
@@ -589,6 +717,7 @@ mod tests {
             Path::new("/data/noema"),
             "http://127.0.0.1:1234",
             "postgresql://u@h:5432/db",
+            "token-of-this-run",
         );
         let get = |key: &str| {
             env.iter()
@@ -603,6 +732,9 @@ mod tests {
         assert_eq!(get("APP_ORIGINS"), "http://127.0.0.1:1234");
         assert_eq!(get("DATABASE_URL"), "postgresql://u@h:5432/db");
         assert_eq!(get("NEXT_TELEMETRY_DISABLED"), "1");
+        // The handshake token goes to the server with the environment, and
+        // nowhere else.
+        assert_eq!(get(SHELL_TOKEN_ENV), "token-of-this-run");
         // The names the app reads, all inside the data directory. `UPLOAD_DIR`
         // was sent once and read by nobody, so uploads and the session file fell
         // back to the working directory - which for an install is the program
@@ -631,13 +763,54 @@ mod tests {
     /// lets a fresh install run with nothing installed.
     #[test]
     fn an_unconfigured_database_url_is_left_out_entirely() {
-        let env = server_env(1234, Path::new("/data/noema"), "http://127.0.0.1:1234", "");
+        let env = server_env(
+            1234,
+            Path::new("/data/noema"),
+            "http://127.0.0.1:1234",
+            "",
+            "token-of-this-run",
+        );
         assert!(
             !env.iter().any(|(key, _)| key == "DATABASE_URL"),
             "an empty DATABASE_URL must not be passed — unset is what selects the embedded database"
         );
         // The rest of the environment is unaffected.
-        assert_eq!(env.len(), 10);
+        assert_eq!(env.len(), 11);
+    }
+
+    /// The handshake. A program that grabbed the port before the server did
+    /// answers `200` to everything, and the window would load its page with the
+    /// app's IPC rights — so only a server that proves it knows this run's
+    /// token counts as ready.
+    #[test]
+    fn only_a_response_carrying_our_token_is_ours() {
+        let token = shell_token().expect("token");
+        // Our own server echoes the token of this run.
+        assert!(health_response_is_ours(Some(token.as_str()), &token));
+        // No header at all: not ours, whatever the status code was.
+        assert!(!health_response_is_ours(None, &token));
+        // A wrong token: not ours.
+        assert!(!health_response_is_ours(Some("not-the-token"), &token));
+        // An empty header is not a match either.
+        assert!(!health_response_is_ours(Some(""), &token));
+        // And the token of another run is not this run's token.
+        let other = shell_token().expect("token");
+        assert!(!health_response_is_ours(Some(other.as_str()), &token));
+    }
+
+    #[test]
+    fn the_handshake_token_is_fresh_and_unpredictable() {
+        let token = shell_token().expect("token");
+        assert_eq!(token.len(), 64, "32 bytes, hex encoded");
+        assert!(
+            token.chars().all(|character| character.is_ascii_hexdigit()),
+            "the token is plain hex: {token}"
+        );
+        assert_ne!(
+            token,
+            shell_token().expect("token"),
+            "every start gets its own token"
+        );
     }
 
     #[test]
@@ -650,12 +823,21 @@ mod tests {
     }
 
     #[test]
-    fn free_port_is_usable_and_unique_enough() {
+    fn free_port_is_usable() {
+        // The promise the code actually makes: the port is in the ephemeral
+        // range and can be bound again. It does **not** promise that two calls
+        // hand out two different ports — the kernel picks the ephemeral port
+        // from a counter, and it may hand the same one back (that is exactly
+        // the window B49 is about). The old assertion of uniqueness was
+        // therefore a promise the code never made, and it failed sporadically
+        // on a busy runner.
         let a = free_port().expect("port available");
         let b = free_port().expect("port available");
         assert!(a > 1024, "ephemeral ports are > 1024, got {a}");
         assert!(b > 1024);
-        assert_ne!(a, b);
+        // Usable: the port can be bound again right away.
+        let listener = std::net::TcpListener::bind(("127.0.0.1", a)).expect("bind the port again");
+        assert_eq!(listener.local_addr().expect("address").port(), a);
     }
 
     #[test]
@@ -729,7 +911,7 @@ mod send_guards {
 
     #[test]
     fn readiness_probe_future_is_send() {
-        assert_send(wait_until_ready(1, READY_TIMEOUT));
+        assert_send(wait_until_ready(1, READY_TIMEOUT, "token-of-this-run"));
     }
 
     #[test]
