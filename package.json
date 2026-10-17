@@ -75,7 +75,8 @@
     "check:i18n": "node scripts/check-i18n-keys.mjs",
     "desktop:smoke:embedded": "node scripts/desktop/smoke.mjs --embedded",
     "check:schema": "node scripts/check-schema-drift.mjs",
-    "check:features": "node scripts/check-payload-features.mjs"
+    "check:features": "node scripts/check-payload-features.mjs",
+    "audit:motion-spec": "node scripts/audit-motion-spec.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
