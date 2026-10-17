@@ -754,6 +754,11 @@ query string (`?provider=…`) or in the `x-webhook-provider` header; the raw
 body is read as text because the signature is verified over the exact bytes
 that were sent.
 
+The rule list the endpoint plans its actions from belongs to the endpoint: it
+is read from the `Webhook` row (`rules`), never from the request — a
+`?rules=` query parameter or an `x-noema-rules` header in the request is
+ignored.
+
 - **200** `{"ok":true}` · **400** `endpoint is required` · **401**
   (signature mismatch) · **404** `Unknown endpoint` · **409**
   `Endpoint disabled` · **429** rate limited

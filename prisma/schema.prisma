@@ -926,6 +926,10 @@ model Webhook {
   url         String
   events      String[] @default([])
   secret      String?
+  // B18: the action rules of an inbound endpoint. The list belongs to the
+  // endpoint, never to the caller: the inbound route plans the actions of
+  // THIS row, so a request cannot choose what the endpoint does.
+  rules       Json     @default("[]")
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
 
