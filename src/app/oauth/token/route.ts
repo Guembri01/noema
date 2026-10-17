@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { randomToken } from "@/lib/slug";
-import { hashApiToken } from "@/lib/api-auth";
+import { hashApiToken, hashOAuthSecret, oauthSecretMatches } from "@/lib/api-auth";
 import { rateLimit } from "@/lib/api-guard";
 import { verifyChallenge } from "@/lib/oauth-pkce";
 
@@ -23,11 +23,17 @@ export async function POST(request: Request) {
   const codeVerifier = String(form.get("code_verifier") ?? "");
 
   const app = await prisma.oAuthApp.findUnique({ where: { clientId } });
-  if (!app || app.clientSecret !== clientSecret) {
+  // The stored digest is compared in constant time; a client that presents
+  // anything but the original secret is refused.
+  if (!app || !oauthSecretMatches(clientSecret, app.clientSecretHash)) {
     return NextResponse.json({ error: "invalid_client" }, { status: 401 });
   }
 
-  const record = await prisma.oAuthCode.findUnique({ where: { code } });
+  // The authorization code is looked up by its digest, so the database never
+  // holds a redeemable code.
+  const record = await prisma.oAuthCode.findUnique({
+    where: { codeHash: hashOAuthSecret(code) },
+  });
   if (
     !record ||
     record.used ||
@@ -45,7 +51,18 @@ export async function POST(request: Request) {
     }
   }
 
-  await prisma.oAuthCode.update({ where: { id: record.id }, data: { used: true } });
+  // RFC 6749 §4.1.2: an authorization code is single-use. Consume it with a
+  // conditional update so the read above and the write cannot race: two
+  // concurrent exchanges both see `used = false`, but only the first
+  // `UPDATE ... WHERE used = false` matches a row (`count === 1`). The loser
+  // gets no token.
+  const consumed = await prisma.oAuthCode.updateMany({
+    where: { id: record.id, used: false },
+    data: { used: true },
+  });
+  if (consumed.count !== 1) {
+    return NextResponse.json({ error: "invalid_grant" }, { status: 400 });
+  }
 
   const accessToken = `noema_${randomToken(24)}`;
   await prisma.apiToken.create({

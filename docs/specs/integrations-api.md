@@ -91,10 +91,10 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
 | Aspect | Evidence | State |
 | --- | --- | --- |
 | Registration | `src/server/actions/oauth-apps.ts:9-39` | `clientId = noema_<rand>`, `clientSecret = randomToken(24)` shown once; redirect URIs URL-validated (`:19-26`). |
-| Schema | `model OAuthApp` / `model OAuthCode` | **`clientSecret` stored in plaintext**; code has `used` + `expiresAt`. |
+| Schema | `model OAuthApp` / `model OAuthCode` | **`clientSecretHash` (SHA-256 digest) and `codeHash`** — neither the secret nor the code is stored in plaintext; the code has `used` + `expiresAt`. |
 | Consent | `src/app/oauth/authorize/page.tsx:17-21, 41-65` | Validates client + redirect-URI membership; allow/deny form; **`scope` parameter never parsed**; no PKCE. |
 | Code issue | `oauth/authorize/complete/route.ts:31-40` | Single-use, 5-minute expiry, `state` echoed (`:27,43`). |
-| Exchange | `oauth/token/route.ts:23-54` | Secret compared plaintext (`:23-26`), code checks (`:28-39`), mints `ApiToken`, **`scope: "read write"` hardcoded (`:53`)**; no refresh token, no PKCE verifier. |
+| Exchange | `oauth/token/route.ts:23-54` | Secret compared against its digest, constant time (`oauthSecretMatches`); the code is looked up by its digest and consumed with a conditional update (`used = false`), so it can be exchanged exactly once; mints `ApiToken`, **`scope: "read write"` hardcoded (`:53`)**; no refresh token, no PKCE verifier. |
 | Management UI | `settings/page.tsx:125-136, 262` | `OAuthAppManager` lists apps; issued `OAuth:` tokens appear only as rows in the flat token list (`:155-159`). |
 
 ### 2.5 Pagination — what exists and what does not
@@ -133,7 +133,9 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
 - **D24.6** — Event catalog duplicated in UI code; picker has no descriptions;
   "empty = all events" is invisible to the user (§2.3).
 - **D24.7** — OAuth scopes hardcoded; consent ignores `scope`; no PKCE;
-  `clientSecret` plaintext at rest (§2.4).
+  `clientSecret` plaintext at rest — **fixed**: the secret and the
+  authorization code are stored as SHA-256 digests (`clientSecretHash`,
+  `codeHash`) and the secret is compared in constant time (§2.4).
 - **D24.8** — No marketplace-style install path: four managers sit flat in
   settings with no catalog, no test step, no health state (§2.1, §2.4).
 
@@ -310,7 +312,9 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
 - **R24.24** — Client secret hashed at rest: `OAuthApp.clientSecret` is
   replaced by `clientSecretHash = SHA-256(secret)`, compared timing-safe at
   exchange (mirroring `apiTokenMatches`, `api-auth.ts:9-13`); one-time display
-  at creation (`oauth-apps.ts:38`) is unchanged.
+  at creation (`oauth-apps.ts:38`) is unchanged. — **implemented**: the
+  column is renamed, the secret and the authorization code are stored as
+  digests, and the token endpoint compares the digest in constant time.
   *Acceptance:* a seeded DB dump of `OAuthApp` contains no plaintext secret;
   the existing authorize → exchange happy path still succeeds.
 - **R24.25** — Granted-token management: settings groups tokens by source —
@@ -371,6 +375,7 @@ model OAuthApp {
 
 model OAuthCode {
   // existing: code, clientId, userId, redirectUri, expiresAt, used
+  codeHash            String    @unique  // replaces `code` (R24.24) — digest only
   codeChallenge       String?  // PKCE (R24.23)
   codeChallengeMethod String?  // "S256"
 }
