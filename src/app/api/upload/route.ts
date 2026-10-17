@@ -7,6 +7,7 @@ import { rateLimit } from "@/lib/api-guard";
 import { bodyReadError, readFormDataBody } from "@/lib/body-limit";
 import { storageDriver } from "@/lib/storage";
 import { extForMime, fileNameExt, isAllowedType, mimeForExt } from "@/lib/file-type";
+import { isSvgSafe } from "@/lib/svg-safety";
 import { isComplete, planChunks, validateChunkPlan } from "@/lib/upload-chunk";
 
 export const runtime = "nodejs";
@@ -164,6 +165,19 @@ export async function POST(request: Request) {
   if (!isAllowedType(mime, { allow: ALLOWED_TYPES })) {
     return NextResponse.json(
       { error: `Unsupported file type: ${file.type || "unknown"}` },
+      { status: 415 },
+    );
+  }
+
+  // An SVG is served inline from the app origin, so it runs the same safety
+  // rule the clipboard path applies (`@/lib/svg-safety` — one rule, one
+  // place). Fail closed: the bytes are checked *before* anything is stored,
+  // so a refused SVG never reaches the disk, the Asset table or a URL.
+  // The answer names the rule, not the place in the file that broke it, so
+  // two different unsafe SVGs get the same reply.
+  if (mime === "image/svg+xml" && !isSvgSafe(await file.text())) {
+    return NextResponse.json(
+      { error: "File rejected by the image safety policy" },
       { status: 415 },
     );
   }
