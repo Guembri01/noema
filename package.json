@@ -68,7 +68,8 @@
     "postinstall": "prisma generate",
     "check:popovers": "node scripts/check-popovers.mjs",
     "check:chat": "node scripts/check-chat-live.mjs",
-    "check:csp": "node scripts/check-csp.mjs"
+    "check:csp": "node scripts/check-csp.mjs",
+    "audit:frontend": "node scripts/audit-frontend.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

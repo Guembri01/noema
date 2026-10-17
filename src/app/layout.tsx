@@ -40,9 +40,17 @@ export default async function RootLayout({
   const dir = directionOf(locale);
   // The middleware mints a nonce per document request; handing it to next-themes
   // is what lets its inline bootstrap run under `script-src 'self' 'nonce-…'`.
-  const nonce = await headers()
-    .then((store) => store.get(NONCE_HEADER) ?? undefined)
-    .catch(() => undefined);
+  //
+  // `headers()` throws *synchronously* outside a request scope (static rendering,
+  // unit tests), so this needs a real try/catch — a `.catch()` on a promise that
+  // was never created does not help, and a throw here would take down the whole
+  // document instead of degrading to "no nonce".
+  let nonce: string | undefined;
+  try {
+    nonce = (await headers()).get(NONCE_HEADER) ?? undefined;
+  } catch {
+    nonce = undefined;
+  }
   return (
     <html lang={locale} dir={dir} suppressHydrationWarning>
       <body className="min-h-screen bg-bg text-fg antialiased">
