@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { randomBytes, randomInt, randomToken, toBase64Url } from "@/lib/random";
+import { randomBytes, randomInt, randomToken, toBase64Url, toHex } from "@/lib/random";
 
 /**
  * Isomorphic randomness.
@@ -173,5 +173,16 @@ describe("random", () => {
     expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(token).toHaveLength(32); // 24 bytes → 32 base64url chars, no padding
     expect(randomToken(24)).not.toBe(token);
+  });
+
+  it("toHex matches Node's own encoder (so trace/span ids keep their shape)", () => {
+    for (const length of [0, 1, 2, 8, 16, 32]) {
+      const bytes = randomBytes(length);
+      expect(toHex(bytes)).toBe(Buffer.from(bytes).toString("hex"));
+    }
+  });
+
+  it("toHex pads every byte to two characters", () => {
+    expect(toHex(new Uint8Array([0, 1, 15, 16, 255]))).toBe("00010f10ff");
   });
 });

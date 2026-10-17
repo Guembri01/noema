@@ -8,6 +8,11 @@ import {
 } from "node:crypto";
 import { MIN_AUTH_SECRET_LENGTH, resolveAuthSecret } from "./auth-secret";
 import { cookieName } from "./cookie-security";
+import {
+  CONNECTION_STRING_KEYS,
+  SECRET_KEY_LIST,
+  normalizeSecretKey,
+} from "./redaction";
 
 /**
  * Envelope encryption for stored provider keys (AES-256-GCM).
@@ -430,45 +435,17 @@ export type SecretStatus = "ok" | "weak" | "missing";
 
 /**
  * Key names (normalized: lowercased, separators stripped) whose values
- * `redactObject` masks by default.
+ * `redactObject` masks by default. The names come from the repository's one
+ * shared secret-key list (`src/lib/redaction.ts`); the diagnostics match them
+ * as whole names, because they show masked values to an operator.
  */
-export const DEFAULT_REDACT_KEYS: readonly string[] = [
-  "secret",
-  "password",
-  "passwd",
-  "pwd",
-  "token",
-  "apikey",
-  "auth",
-  "authorization",
-  "cookie",
-  "setcookie",
-  "credential",
-  "credentials",
-  "privatekey",
-  "clientsecret",
-  "accesstoken",
-  "refreshtoken",
-  "sessiontoken",
-  "signature",
-];
-
-/** Keys whose string values are connection strings → `maskConnString`. */
-const CONNECTION_STRING_KEYS: readonly string[] = [
-  "databaseurl",
-  "connectionstring",
-  "dsn",
-];
+export const DEFAULT_REDACT_KEYS: readonly string[] = SECRET_KEY_LIST;
 
 /** Placeholder written in place of a masked credential. */
 const REDACTED_PLACEHOLDER = "***";
 
 /** Characters of the head kept before the ellipsis in `redact`. */
 const REDACT_HEAD_LENGTH = 3;
-
-function normalizeKey(key: string): string {
-  return key.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
 
 export interface ParseEnvSecretOptions {
   /** A missing required secret is invalid; a missing optional one is not. */
@@ -554,9 +531,7 @@ export function redactObject<T>(
   options: RedactObjectOptions = {},
 ): T {
   const keys = new Set<string>(
-    [...DEFAULT_REDACT_KEYS, ...CONNECTION_STRING_KEYS, ...extraKeys].map(
-      normalizeKey,
-    ),
+    [...DEFAULT_REDACT_KEYS, ...extraKeys].map(normalizeSecretKey),
   );
   const connectionKeys = new Set<string>(CONNECTION_STRING_KEYS);
   const seen = new WeakSet<object>();
@@ -572,7 +547,7 @@ export function redactObject<T>(
       seen.add(value);
       const out: Record<string, unknown> = {};
       for (const [key, child] of Object.entries(value)) {
-        const normalized = normalizeKey(key);
+        const normalized = normalizeSecretKey(key);
         out[key] = keys.has(normalized)
           ? redactMatched(child, connectionKeys.has(normalized), options)
           : walk(child);
@@ -774,7 +749,7 @@ function maskConnStringWithUrl(url: string): string {
   const parsed = new URL(url);
   if (parsed.password) parsed.password = REDACTED_PLACEHOLDER;
   for (const key of Array.from(parsed.searchParams.keys())) {
-    const normalized = normalizeKey(key);
+    const normalized = normalizeSecretKey(key);
     if (
       normalized === "password" ||
       normalized === "pwd" ||

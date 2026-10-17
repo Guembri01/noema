@@ -9,7 +9,7 @@
  *   `{ ts, level, msg, ...fields, traceId }` to the injected `sink`. Records
  *   below the configured level never reach the sink (the call returns `null`).
  *   Every field value is redacted before it leaves the process: sensitive keys
- *   (`pass*`, `token`, `secret*`, `authorization`, `cookie`, plus caller
+ *   (the repository's one secret-key list, `src/lib/redaction.ts`, plus caller
  *   `redactKeys`) become `"[redacted]"`, recursively through nested objects and
  *   arrays, cycle-safe and without mutating the caller's input.
  * - **Metrics.** `createMetrics()` is the one deliberately stateful piece:
@@ -22,11 +22,15 @@
  *   from the injected clock via `end(attrs)`, and `percentiles` summarises a
  *   series with linear interpolation (R-7).
  *
- * There is no clock, RNG, DB or network hidden here: `now` is injectable,
- * traces are synchronous scopes, and ids are generated locally. Wiring an
- * OpenTelemetry exporter or a real log shipper is a follow-up; this module is
- * the additive, unit-pinned core.
+ * There is no clock, DB or network hidden here: `now` is injectable, traces
+ * are synchronous scopes, and the ids are generated locally from the platform
+ * CSPRNG (`src/lib/random.ts`) — never `Math.random`. Wiring an OpenTelemetry
+ * exporter or a real log shipper is a follow-up; this module is the additive,
+ * unit-pinned core.
  */
+
+import { isSecretKey } from "./redaction";
+import { randomBytes, toHex } from "./random";
 
 /* -------------------------------------------------------------------------- */
 /* Shared primitives                                                          */
@@ -57,25 +61,18 @@ const LEVEL_RANK: Readonly<Record<LogLevel, number>> = {
   error: 3,
 };
 
-/** Secret-shaped key patterns: `pass*`, `token`, `secret*`, `authorization`, `cookie`. */
-const SENSITIVE_KEY_PATTERNS: readonly RegExp[] = [
-  /^pass/i,
-  /token/i,
-  /^secret/i,
-  /^authorization$/i,
-  /^cookie$/i,
-];
-
 /**
- * Whether a field key holds a secret and must be redacted. Built-in patterns
- * are intentionally broad (substring for `token`); `extraKeys` adds precise,
- * case-insensitive exact matches for names the built-ins miss (e.g. `ssn`).
+ * Whether a field key holds a secret and must be redacted. The built-in rule
+ * is the repository's shared list (`src/lib/redaction.ts`) and is intentionally
+ * broad (a substring match, so `tokenCount` is masked too); `extraKeys` adds
+ * precise, case-insensitive exact matches for names the built-ins miss (e.g.
+ * `ssn`).
  */
 export function isSensitiveKey(key: string, extraKeys?: readonly string[]): boolean {
   if (typeof key !== "string") return false;
   const lower = key.toLowerCase();
   if (extraKeys?.some((candidate) => candidate.toLowerCase() === lower)) return true;
-  return SENSITIVE_KEY_PATTERNS.some((pattern) => pattern.test(key));
+  return isSecretKey(key);
 }
 
 /** Options for {@link redactValue}. */
@@ -295,10 +292,13 @@ export type Span = {
   end(attrs?: LogFields): SpanRecord;
 };
 
+/**
+ * `length` hex characters from the platform CSPRNG. A trace id carries 128
+ * bits and a span id 64 — the sizes OpenTelemetry uses — so two ids of the
+ * same kind never collide by accident and cannot be guessed from another.
+ */
 function randomHex(length: number): string {
-  let out = "";
-  while (out.length < length) out += Math.floor(Math.random() * 16).toString(16);
-  return out.slice(0, length);
+  return toHex(randomBytes(Math.ceil(length / 2))).slice(0, length);
 }
 
 /** Generate a 128-bit trace id as 32 lowercase hex characters. */
