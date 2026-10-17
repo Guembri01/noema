@@ -23,6 +23,11 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   not). The stored URL now passes the shared href allowlist (`http`, `https`,
   `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
   editor as well as in the read-only renderer.
+- The share-link unlock endpoint now has a rate limit whose scope names the
+  share link, and it counts failed password attempts per share token, so a
+  share password can no longer be brute-forced by rotating the forwarded IP.
+  A link is locked for 15 minutes after 10 failed attempts, and no password is
+  compared at all while it is locked.
 
 ## [1.4.1] — 2026-10-17
 

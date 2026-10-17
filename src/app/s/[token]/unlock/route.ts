@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { verifySharePassword } from "@/server/actions/share";
+import { rateLimit } from "@/lib/api-guard";
+import { attemptShareUnlock } from "@/server/actions/share";
 
 export const runtime = "nodejs";
 
@@ -10,11 +11,39 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> },
 ) {
   const { token } = await params;
-  const form = await request.formData();
-  const password = String(form.get("password") ?? "");
   const origin = new URL(request.url).origin;
 
-  if (!(await verifySharePassword(token, password))) {
+  // This endpoint is unauthenticated, so it needs the same rate limit as
+  // every other non-public route.
+  //
+  // The limiter's bucket is `share-unlock-<token>:<ip>`: the scope names the
+  // share link, the address part comes from the forwarding header. A caller
+  // that rotates its forwarded ip therefore *does* get a fresh rate-limit
+  // budget. The attempt brake below is the token-bound limit that holds
+  // across an ip rotation.
+  const limited = rateLimit(request, `share-unlock-${token}`, 5, 60_000);
+  if (limited) return limited;
+
+  const form = await request.formData();
+  const password = String(form.get("password") ?? "");
+
+  // The attempt counter is keyed by the share token alone: it still stops a
+  // brute force when the caller rotates its forwarded ip.
+  const attempt = await attemptShareUnlock(token, password);
+  if (attempt.status === "locked") {
+    return NextResponse.json(
+      { error: "Too many unlock attempts" },
+      {
+        status: 429,
+        headers: {
+          "retry-after": String(
+            Math.max(1, Math.ceil(attempt.retryAfterMs / 1000)),
+          ),
+        },
+      },
+    );
+  }
+  if (attempt.status === "wrong-password") {
     return NextResponse.redirect(`${origin}/s/${token}?error=1`, 303);
   }
 
