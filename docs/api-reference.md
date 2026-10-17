@@ -768,6 +768,9 @@ into Noema.
   rules apply as at creation time, opt-in included: with
   `NOEMA_ALLOW_LOOPBACK_TARGETS=1` a loopback target is delivered to, without
   it the delivery is refused before the target is contacted.
+  A delivery whose signing secret cannot be opened — the `AUTH_SECRET` was
+  rotated out from under the row, or the ciphertext is corrupt — is refused as
+  well: it is never sent unsigned, and its row records the failure.
 
 Delivery request your endpoint receives:
 

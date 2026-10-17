@@ -1009,6 +1009,19 @@ list marks it as **No access**.
   loopback range explicitly with `NOEMA_ALLOW_LOOPBACK_TARGETS=1`, and that
   opt-in covers the loopback range only — RFC1918, link-local, cloud metadata
   and `.internal`/`.local` names stay refused.
+- An outbound webhook is no longer sent unsigned when its signing secret
+  cannot be read. The signing secret of a hook is sealed at rest, so the
+  delivery path has to open it before it can sign the payload. When the
+  envelope did not open — the `AUTH_SECRET` was rotated out from under the
+  row, or the ciphertext is corrupt — the delivery went out WITHOUT the
+  `x-noema-signature` header and was booked as a success on a 2xx: a receiver
+  that only asks whether the header is present accepted a manipulated payload
+  that way, and the operator saw a green delivery log for a request the
+  receiver never accepted. Such a delivery is now refused before it leaves
+  the server and recorded as failed, so the hook has to be re-created with a
+  secret the current key can open. A hook whose secret is stored in cleartext
+  from before the sealing keeps delivering signed requests — that transition
+  window is unchanged — and so does a hook that never had a secret at all.
 
 ## [1.4.1] — 2026-10-17
 
