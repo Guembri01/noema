@@ -79,7 +79,7 @@ export const PHOTOS = {
 } as const;
 
 /** The demo workspace's own URL — used in bookmark and link blocks. */
-const REPO = "https://github.com/your-org/noema";
+const REPO = "https://github.com/Guembri01/noema";
 
 export const pageSpecs: PageSpec[] = [
   /* ------------------------------------------------------------ product */
@@ -326,7 +326,7 @@ export const pageSpecs: PageSpec[] = [
       ),
       bookmark(
         REPO,
-        "your-org/noema",
+        "Guembri01/noema",
         "An original, open-source, self-hosted workspace for notes, docs and databases.",
         "github.com",
       ),

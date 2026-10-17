@@ -9,13 +9,11 @@ individuals. Everything is a page: documents, folders and database rows share
 one model. It runs on your machine, it is yours to extend, and it also ships as
 a desktop app that needs nothing else installed.
 
-<!-- Publishing: replace `your-org` with your GitHub org or username. Run
-     `git grep -n your-org` — it lists every place: the badge URLs below,
-     package.json, SECURITY.md, CODE_OF_CONDUCT.md, CITATION.cff, CHANGELOG.md,
-     .editorconfig, .github/ and src-tauri/. Nothing else needs editing. -->
+<!-- Every link points at the canonical repository, https://github.com/Guembri01/noema.
+     `src/lib/project-info.ts` holds the URL the app uses; keep the two in step. -->
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![CI](https://github.com/your-org/noema/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/noema/actions/workflows/ci.yml)
+[![CI](https://github.com/Guembri01/noema/actions/workflows/ci.yml/badge.svg)](https://github.com/Guembri01/noema/actions/workflows/ci.yml)
 [![Next.js 15](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org)
 [![Node 24](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](./.nvmrc)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)

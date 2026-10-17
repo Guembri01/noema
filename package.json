@@ -13,13 +13,13 @@
       "name": "Wissal Ben Othmen"
     }
   ],
-  "homepage": "https://github.com/your-org/noema#readme",
+  "homepage": "https://github.com/Guembri01/noema#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-org/noema.git"
+    "url": "git+https://github.com/Guembri01/noema.git"
   },
   "bugs": {
-    "url": "https://github.com/your-org/noema/issues"
+    "url": "https://github.com/Guembri01/noema/issues"
   },
   "keywords": [
     "notion-alternative",

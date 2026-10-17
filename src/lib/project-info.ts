@@ -6,16 +6,16 @@
  * Keeping the values here means the app cannot drift from what the repository
  * says, and a fork only has to edit one module to re-brand the UI.
  *
- * `PROJECT_REPOSITORY` is the one placeholder left in the tree. Publishing means
- * replacing `your-org` with the real organisation; `git grep -n your-org` lists
- * every place, this one included.
+ * `PROJECT_REPOSITORY` is the canonical repository URL —
+ * <https://github.com/Guembri01/noema>. The app's About box links to it, so a
+ * fork only has to change this one module and `README.md`'s badge links.
  */
 
 /** Display name, matching `package.json` and `tauri.conf.json`. */
 export const PROJECT_NAME = "Noema";
 
-/** Canonical repository URL. Replace `your-org` before publishing. */
-export const PROJECT_REPOSITORY = "https://github.com/your-org/noema";
+/** Canonical repository URL — <https://github.com/Guembri01/noema>. */
+export const PROJECT_REPOSITORY = "https://github.com/Guembri01/noema";
 
 /** Where the long-form documentation lives (see `docs/README.md`). */
 export const PROJECT_DOCS_URL = `${PROJECT_REPOSITORY}/tree/main/docs`;

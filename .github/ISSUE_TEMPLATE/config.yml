@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions and ideas
-    url: https://github.com/your-org/noema/discussions
+    url: https://github.com/Guembri01/noema/discussions
     about: Ask questions and share ideas.
   - name: Report a vulnerability
-    url: https://github.com/your-org/noema/security/policy
+    url: https://github.com/Guembri01/noema/security/policy
     about: Report a security issue privately.

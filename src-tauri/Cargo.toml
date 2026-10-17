@@ -6,7 +6,7 @@ authors = ["Bilel Guembri", "Wissal Ben Othmen"]
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
-repository = "https://github.com/your-org/noema"
+repository = "https://github.com/Guembri01/noema"
 default-run = "noema-desktop"
 
 # The shipped app is a thin Rust shell around a supervised local server:
