@@ -374,8 +374,10 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
     ).toBeVisible({ timeout: UI_TIMEOUT });
     await codeInput.fill(staleTotp(secret));
     await page.getByRole("button", { name: "Sign in" }).click();
+    // B24 — a wrong code answers with the same text as a wrong password, so
+    // the reply never confirms that the password was right.
     await expect(page.getByRole("alert").first()).toHaveText(
-      "Invalid two-factor code.",
+      "Incorrect email or password.",
       { timeout: UI_TIMEOUT },
     );
     await expect(codeInput).toBeVisible(); // still standing at the gate
