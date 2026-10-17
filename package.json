@@ -71,6 +71,7 @@
     "check:hooks": "node scripts/check-hook-gate.mjs",
     "check:compose": "node scripts/check-compose-exposure.mjs",
     "check:hsts": "tsx scripts/check-hsts.mjs",
+    "check:secrets:history": "node scripts/check-secrets.mjs --history",
     "check:workflow-permissions": "node scripts/check-workflow-permissions.mjs",
     "check:image-pins": "node scripts/check-image-pins.mjs",
     "check:use-server": "node scripts/check-use-server.mjs",

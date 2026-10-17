@@ -46,7 +46,11 @@ function rootFromArgs(argv) {
 const ROOT = rootFromArgs(process.argv.slice(2));
 
 /** Files whose whole point is to contain secret-shaped strings. */
-const SKIP = [/\.test\.tsx?$/, /\.spec\.tsx?$/, /(^|\/)\.env\.example$/];
+const SKIP = [/(^|\/)\.env\.example$/];
+/** A test or spec file — a fixture may carry a documented dummy (B34). */
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+/** The path of the gate itself — the allow lists below are written in it. */
+const SELF = relative(ROOT, fileURLToPath(import.meta.url)).replace(/\\/g, "/");
 
 /**
  * The env var names this app reads, plus the usual suspects. The name alone is
@@ -203,7 +207,84 @@ const ALLOWED = new Set([
   "${POSTGRES_PASSWORD:-noema}", // scripts/check-compose-exposure.test.mjs fixture — the default form the gate must reject
   "postgresql://noema:<POSTGRES_PASSWORD>@localhost:5433/noema?schema=public", // .env.example, scripts/check-compose-exposure.test.mjs
   "postgresql://${USER}:${encodeURIComponent(password)}@localhost:5433/${DATABASE}?schema=public", // scripts/check-payload-features.mjs
+  "postgresql://noema:sup3r-secret@db.example.com:5432/noema", // src-tauri/src/commands.rs — the redaction fixture (an earlier revision)
+  "sk-proj-0123456789abcdef", // src/lib/ai-provider.error.test.ts — a fixture of an earlier revision
+  "postgresql://${DB_USER}:${DB_USER}@${host}:${port}/${DB_NAME}?schema=public&connection_limit=1", // scripts/desktop/embedded-db.cjs — an earlier revision
+  "b85-proof-secret", // scripts/_b85-redproof.mjs — a deleted proof script, only in the history
 ]);
+
+const ALLOWED_IN_TESTS = new Set([
+  "sk-live-abcdef1234567890", // src/app/api/ai/*.test.ts, src/lib/ai-provider.error.test.ts
+  "sk-transcribe-abcdef1234567890", // src/app/api/ai/transcribe/route.test.ts
+  "sk-proj-zzzzzzzzzzzzzzzz", // src/lib/ai-provider.error.test.ts
+  "sk-live-abcdefghijklmno", // src/lib/error-reporting.test.ts, src/lib/error-tracking.test.ts
+  "sk-live-9f2c7a4b8e1d6205cafebabe", // src/lib/secrets.test.ts
+  "sk-ant-api03-DEADBEEFcafe", // src/lib/secrets.test.ts
+  "ghp_abcdefghijklmnopqrstuvwx", // src/lib/ai-provider.error.test.ts
+  "ghp_abcdefghijklmnopqrstuvwxyz01", // src/lib/error-reporting.test.ts, src/lib/error-tracking.test.ts
+  "xoxb-123456789012-abcdefghijkl", // src/lib/error-reporting.test.ts, src/lib/error-tracking.test.ts
+  "test-secret-for-the-ai-route-suite", // src/app/api/ai/route.provider.test.ts
+  "test-secret-for-the-ai-workspace-suite", // src/lib/ai-provider.workspace.test.ts
+  "test-secret-for-share-page-tests", // src/app/s/[token]/page.test.ts
+  "test-secret-for-share-unlock-tests", // src/app/s/[token]/unlock/route.test.ts
+  "9f2c4e6a8b0d1f3a5c7e9b1d3f5a7c9e9f2c4e6a8b0d1f3a5c7e9b1d3f5a7c9e", // src/app/api/ai/route.workspace.test.ts
+  "492ab3e1125d19ee06fc1f72772e35ebbfd522c4953da50ab325e03cd5956d49", // src/lib/auth-secret.test.ts
+  "4f8a1c9e2b7d3056f8a1c9e2b7d3056f4f8a1c9e2b7d3056f8a1c9e2b7d3056f", // src/lib/self-hosting.test.ts
+  "0123456789abcdef0123456789abcdef", // src/lib/self-hosting.test.ts (an earlier revision)
+  "b54-unit-secret-0123456789abcdef", // src/lib/auth-sessions.test.ts
+  "b54-unit-secret-0123456789", // src/lib/auth-sessions.test.ts (an earlier revision)
+  "b85-a-completely-different-secret", // src/lib/secrets.test.ts
+  "webhook-secret-test-key-0123456789", // src/lib/webhooks-secret.test.ts
+  "webhook-secret-test-key", // src/lib/webhooks-secret.test.ts (an earlier revision)
+  "webhook-ssrf-test-key-0123456789ab", // src/server/actions/webhooks.test.ts
+  "webhook-ssrf-test-key", // src/server/actions/webhooks.test.ts (an earlier revision)
+  "auth-test-secret-for-the-two-factor-gate", // src/server/actions/auth*.test.ts
+  "auth-test-secret-for-two-factor-0123", // src/server/actions/auth.test.ts
+  "auth-test-secret-for-two-factor", // src/server/actions/auth.test.ts (an earlier revision)
+  "b05-two-factor-test-secret-0123456789", // src/server/actions/two-factor-secret.test.ts
+  "b05-two-factor-test-secret", // src/server/actions/two-factor-secret.test.ts (an earlier revision)
+  "B95-2fa-passw0rd!", // e2e/auth-2fa.spec.ts
+  "memberPassword", // e2e/inbox.spec.ts
+  "B54-parole-123!", // e2e/sessions-parity.spec.ts
+  "test-secret-that-is-long-enough-for-the-rule", // src/app/api/ai/route.workspace.test.ts
+  "cron-test-secret", // src/app/api/cron/backups/route.test.ts
+  "cron-digest-secret", // src/app/api/cron/digest/route.test.ts
+  "postgres://user:pass@localhost:5432/noema", // src/app/api/ops-gate-order.test.ts
+  "noema_scope_test_token", // src/app/api/v1/scope-enforcement.test.ts
+  "inbound-webhook-test-key-0123456789abcdef", // src/app/api/webhooks/inbound/route.test.ts
+  "whsec-inbound-fixture-value", // src/app/api/webhooks/inbound/route.test.ts
+  "client-secret", // src/app/oauth/token/route.grant.test.ts
+  "client-secret-plaintext", // src/app/oauth/token/route.hash.test.ts
+  "share-token-abc", // src/app/s/[token]/page.test.ts
+  "correct-horse-battery-staple", // src/app/s/[token]/unlock/route.test.ts
+  "JBSWY3DPEHPK3PXP", // src/components/two-factor-manager.test.ts
+  "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc123signature", // src/lib/ai-provider.error.test.ts
+  "noema_api_auth_test_token", // src/lib/api-auth.scopes.test.ts
+  "old-secret-value", // src/lib/audit-diff.test.ts
+  "new-secret-value", // src/lib/audit-diff.test.ts
+  "supersecret1", // src/lib/audit-diff.test.ts
+  "supersecret2", // src/lib/audit-diff.test.ts
+  "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln", // src/lib/error-reporting.test.ts
+  "whsec_inbound_1234567890", // src/lib/inbound-webhooks.test.ts
+  "stored-pass-B88", // src/lib/mailer.test.ts
+  "SMTP_PASSWORD_CANARY", // src/lib/mailer.test.ts
+  "postgresql://noema:supersecretpw@localhost:5433/noema?schema=public", // src/lib/secrets.test.ts
+  "mysql://root:hunter2@db.internal:3306/app", // src/lib/secrets.test.ts
+  "SECRET_VALUE", // src/lib/secrets.test.ts
+  "postgresql://noema:noema@localhost:5433/noema", // src/lib/self-hosting.test.ts
+  "whsec_test_1234567890", // src/lib/webhook-signature.test.ts
+  "webhook-delivery-test-key-0123456789ab", // src/lib/webhooks.test.ts
+  "correct-horse", // src/server/actions/auth.lockout.test.ts
+  "Str0ngPassphrase", // src/server/actions/auth.lockout.test.ts
+  "GOOD_PASSWORD", // src/server/actions/auth.test.ts
+  "b30-action-secret", // src/server/actions/automations-ops-gate.test.ts
+  "Vivid-Quartz-91!Lantern", // src/server/actions/two-factor-replay.test.ts
+  "b25-two-factor-replay-test-secret-0123456789", // src/server/actions/two-factor-replay.test.ts
+]);
+
+const args = process.argv.slice(2);
+const withHistory = args.includes("--history");
+const ref = args.find((arg) => !arg.startsWith("--")) ?? "HEAD";
 
 const rel = (file) => relative(ROOT, file).replace(/\\/g, "/");
 
@@ -221,9 +302,91 @@ function trackedFiles() {
 }
 
 const files = trackedFiles();
+function isAllowed(path, value) {
+  if (ALLOWED.has(value)) return true;
+  if (!ALLOWED_IN_TESTS.has(value)) return false;
+  return TEST_FILE.test(path) || path === SELF;
+}
+
+function scanText(path, text, found) {
+  for (const { name, re } of PATTERNS) {
+    for (const match of text.matchAll(re)) {
+      const value = match[2] ?? match[3] ?? match[4] ?? match[0];
+      if (isAllowed(path, value) || isAllowed(path, match[0])) continue;
+      const line = text.slice(0, match.index).split("\n").length;
+      // One credential usually matches more than one pattern (`sk-proj-…` is
+      // both an OpenAI key and a configured value). Report the line once.
+      const fingerprint = `${path}:${line}:${value}`;
+      if (seen.has(fingerprint)) continue;
+      seen.add(fingerprint);
+      found.push({ path, line, name, value });
+    }
+  }
+}
+
+function scanHistory() {
+  let objects;
+  try {
+    objects = execFileSync("git", ["rev-list", "--objects", ref], {
+      cwd: ROOT,
+      maxBuffer: 1024 * 1024 * 1024,
+    }).toString("utf8");
+  } catch (error) {
+    console.error(`check-secrets: could not read the history of ${ref}\n${error.message}`);
+    process.exit(1);
+  }
+
+  // The path a blob was last seen at — the one a reader would look at.
+  const pathOf = new Map();
+  for (const line of objects.split("\n")) {
+    if (!line) continue;
+    const space = line.indexOf(" ");
+    const sha = space === -1 ? line : line.slice(0, space);
+    const path = space === -1 ? "" : line.slice(space + 1);
+    if (path && !pathOf.has(sha)) pathOf.set(sha, path);
+  }
+
+  // `git cat-file --batch` answers with a header line and the raw contents of
+  // every object. The whole answer is read in one go: the contents are read
+  // as views into it, so no blob is copied twice.
+  let raw;
+  try {
+    raw = execFileSync("git", ["cat-file", "--batch"], {
+      cwd: ROOT,
+      input: `${[...pathOf.keys()].join("\n")}\n`,
+      maxBuffer: 1024 * 1024 * 1024,
+    });
+  } catch (error) {
+    console.error(`check-secrets: could not read the blobs of ${ref}\n${error.message}`);
+    process.exit(1);
+  }
+
+  let offset = 0;
+  while (offset < raw.length) {
+    const newline = raw.indexOf(10, offset);
+    if (newline === -1) break;
+    const [sha, type, size] = raw.toString("utf8", offset, newline).split(" ");
+    offset = newline + 1;
+    if (type === "missing") continue;
+    const length = Number(size);
+    const payload = raw.subarray(offset, offset + length);
+    offset += length + 1; // every record ends with a newline
+    if (type !== "blob") continue;
+    historyBlobs += 1;
+    if (payload.includes(0)) continue; // binary — nothing to match against
+    const path = pathOf.get(sha);
+    if (!path) continue;
+    if (SKIP.some((re) => re.test(path))) continue;
+    scanText(path, payload.toString("utf8"), historyFindings);
+  }
+}
+
 const findings = [];
+const historyFindings = [];
 const seen = new Set();
 const trackedEnvFiles = [];
+/** How many blobs of the history the history scan read. */
+let historyBlobs = 0;
 
 for (const file of files) {
   const path = rel(file);
@@ -239,29 +402,17 @@ for (const file of files) {
     continue; // binary or unreadable — nothing to match against
   }
 
-  for (const { name, re } of PATTERNS) {
-    for (const match of text.matchAll(re)) {
-      // Group 1 is the variable *name* in the two value patterns; the value is
-      // the first of the three quoted/bare alternatives.
-      const value = match[2] ?? match[3] ?? match[4] ?? match[0];
-      // The allow-list holds **exact literals**: the value behind a variable
-      // name, and — for the connection string, whose groups are the user and
-      // the password — the whole URL. Both spellings are checked, so an
-      // entry can name the connection string as a whole.
-      if (ALLOWED.has(value) || ALLOWED.has(match[0])) continue;
-      const line = text.slice(0, match.index).split("\n").length;
-      // One credential usually matches more than one pattern (`sk-proj-…` is
-      // both an OpenAI key and a configured value). Report the line once.
-      const fingerprint = `${path}:${line}:${value}`;
-      if (seen.has(fingerprint)) continue;
-      seen.add(fingerprint);
-      findings.push({ path, line, name, value });
-    }
-  }
+  scanText(path, text, findings);
+}
+
+if (withHistory) {
+  scanHistory();
 }
 
 console.log(
-  `secret gate — ${files.length} tracked file(s) scanned · ${PATTERNS.length} pattern(s)\n`,
+  `secret gate — ${files.length} tracked file(s) scanned · ${PATTERNS.length} pattern(s)` +
+    (withHistory ? ` · ${historyBlobs} historical blob(s) scanned` : "") +
+    "\n",
 );
 
 if (trackedEnvFiles.length > 0) {
@@ -275,7 +426,12 @@ for (const { path, line, name, value } of findings) {
   console.log(`  LEAK     ${path}:${line} — ${name} (${shown})`);
 }
 
-if (findings.length === 0 && trackedEnvFiles.length === 0) {
+for (const { path, line, name, value } of historyFindings) {
+  const shown = value.length > 24 ? `${value.slice(0, 12)}…${value.slice(-4)}` : value;
+  console.log(`  HISTORY  ${path}:${line} — ${name} (${shown})`);
+}
+
+if (findings.length === 0 && historyFindings.length === 0 && trackedEnvFiles.length === 0) {
   console.log("  ok       no credential-shaped value in the tree");
   console.log("\n0 finding(s).");
   process.exit(0);
@@ -284,7 +440,7 @@ if (findings.length === 0 && trackedEnvFiles.length === 0) {
 console.error(
   [
     "",
-    `${findings.length + trackedEnvFiles.length} finding(s).`,
+    `${findings.length + historyFindings.length + trackedEnvFiles.length} finding(s).`,
     "",
     "Move the value into `.env` (git-ignored) and read it from the environment,",
     "then rotate it at the provider — anything committed is already public. If it",
