@@ -153,6 +153,7 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
 | `upload` | 60/min | `POST /api/upload` |
 | `ai` / `ai-skills` / `transcribe` | 30 / 30 / 10 per min | `POST /api/ai*` |
 | `notion-import` | 30/min | `POST /api/import/notion` |
+| `pdf-import` | 30/min | `POST /api/import/pdf` |
 | `oauth-token` | 30/min | `POST /oauth/token` |
 | `cron` | 12/min | `POST /api/cron/templates` (after the secret check) |
 
@@ -319,11 +320,16 @@ Errors: **400** `workspaceId is required` · **403** `Forbidden` · 401 · 429.
 - `workspaceId` required; `type` is `PAGE` (default) or `DATABASE`; `title`
   truncated to 500 chars, default `"Untitled"`; content starts as an empty
   ProseMirror doc; `position` = last sibling + 1000.
+- `parentId`, when given, must name a page **of the same workspace**. A parent
+  from another workspace (or one that does not exist) is refused with **400**
+  `That parent page does not exist in this workspace.` — the message never
+  names the foreign page, so it does not leak whether it exists.
 - Requires an **edit-capable role** (view/guest → 403).
 - Dispatches the outbound `page.created` webhook with `{"pageId","via":"api"}`.
 
 **201** `{"page":{"id":"…","title":"New doc","type":"PAGE"}}`
-Errors: 400 (`Invalid JSON body`, `workspaceId is required`) · 401 · 403 · 429.
+Errors: 400 (`Invalid JSON body`, `workspaceId is required`, `That parent page
+does not exist in this workspace.`) · 401 · 403 · 429.
 
 #### Retrying safely — `Idempotency-Key`
 
@@ -433,6 +439,25 @@ Delegates to `importNotionPageAction` (`src/server/actions/notion-import.ts`),
 which fetches from the Notion API server-side.
 
 - **200** `{"ok":true,"id":"…","slug":"…","pages":12}`
+- **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
+
+### `POST /api/import/pdf` — import a PDF text layer
+Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
+cookie session · rate scope `pdf-import` (30/min)
+
+```json
+{ "workspaceId": "…", "parentId": null, "filename": "notes.pdf", "text": "…" }
+```
+
+Delegates to `importPdfTextAction`
+([`src/server/actions/import-pdf.ts`](../src/server/actions/import-pdf.ts)),
+which runs the `pdf-import` engine over the extracted text layer and stores the
+recovered blocks as one page.
+
+- `parentId`, when given, must name a page **of the same workspace** — a
+  foreign parent is refused with **400** `That parent page does not exist in
+  this workspace.` and **nothing is written**.
+- **200** `{"ok":true,"id":"…","slug":"…","format":"pdf","title":"…","pages":1,…}`
 - **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
 
 ---
@@ -823,7 +848,7 @@ rescheduled.
 
 ---
 
-## Appendix A — endpoint index (31 endpoints / 26 route files)
+## Appendix A — endpoint index (32 endpoints / 27 route files)
 
 | # | Method | Path | Auth | Rate scope | File |
 |---|---|---|---|---|---|
@@ -844,20 +869,21 @@ rescheduled.
 | 15 | GET | `/api/export/database/[pageId]` | cookie | — | `src/app/api/export/database/[pageId]/route.ts` |
 | 16 | GET | `/api/export/workspace/[slug]` | cookie | — | `src/app/api/export/workspace/[slug]/route.ts` |
 | 17 | POST | `/api/import/notion` | cookie | `notion-import` | `src/app/api/import/notion/route.ts` |
-| 18 | GET | `/api/tickets` | cookie | `tickets-read` | `src/app/api/tickets/route.ts` |
-| 19 | POST | `/api/tickets` | cookie | `tickets-write` | `src/app/api/tickets/route.ts` |
-| 20 | GET | `/api/calendar` | cookie | `calendar-read` | `src/app/api/calendar/route.ts` |
-| 21 | POST | `/api/calendar` | cookie | `calendar-write` | `src/app/api/calendar/route.ts` |
-| 22 | GET | `/api/invites` | cookie | `invites-read` | `src/app/api/invites/route.ts` |
-| 23 | POST | `/api/invites` | cookie | `invites-write` | `src/app/api/invites/route.ts` |
-| 24 | GET | `/api/chat` | cookie | `chat-read` | `src/app/api/chat/route.ts` |
-| 25 | POST | `/api/chat` | cookie | `chat-write` | `src/app/api/chat/route.ts` |
-| 26 | POST | `/api/chat/stream` | cookie | `chat-stream` | `src/app/api/chat/stream/route.ts` |
-| 27 | POST | `/api/ai` | cookie | `ai` | `src/app/api/ai/route.ts` |
-| 28 | POST | `/api/ai/skills` | cookie | `ai-skills` | `src/app/api/ai/skills/route.ts` |
-| 29 | POST | `/api/ai/transcribe` | cookie | `transcribe` | `src/app/api/ai/transcribe/route.ts` |
-| 30 | POST | `/api/cron/templates` | `x-cron-secret` | `cron` | `src/app/api/cron/templates/route.ts` |
-| 31 | POST | `/s/[token]/unlock` | share password | — | `src/app/s/[token]/unlock/route.ts` |
+| 18 | POST | `/api/import/pdf` | cookie | `pdf-import` | `src/app/api/import/pdf/route.ts` |
+| 19 | GET | `/api/tickets` | cookie | `tickets-read` | `src/app/api/tickets/route.ts` |
+| 20 | POST | `/api/tickets` | cookie | `tickets-write` | `src/app/api/tickets/route.ts` |
+| 21 | GET | `/api/calendar` | cookie | `calendar-read` | `src/app/api/calendar/route.ts` |
+| 22 | POST | `/api/calendar` | cookie | `calendar-write` | `src/app/api/calendar/route.ts` |
+| 23 | GET | `/api/invites` | cookie | `invites-read` | `src/app/api/invites/route.ts` |
+| 24 | POST | `/api/invites` | cookie | `invites-write` | `src/app/api/invites/route.ts` |
+| 25 | GET | `/api/chat` | cookie | `chat-read` | `src/app/api/chat/route.ts` |
+| 26 | POST | `/api/chat` | cookie | `chat-write` | `src/app/api/chat/route.ts` |
+| 27 | POST | `/api/chat/stream` | cookie | `chat-stream` | `src/app/api/chat/stream/route.ts` |
+| 28 | POST | `/api/ai` | cookie | `ai` | `src/app/api/ai/route.ts` |
+| 29 | POST | `/api/ai/skills` | cookie | `ai-skills` | `src/app/api/ai/skills/route.ts` |
+| 30 | POST | `/api/ai/transcribe` | cookie | `transcribe` | `src/app/api/ai/transcribe/route.ts` |
+| 31 | POST | `/api/cron/templates` | `x-cron-secret` | `cron` | `src/app/api/cron/templates/route.ts` |
+| 32 | POST | `/s/[token]/unlock` | share password | — | `src/app/s/[token]/unlock/route.ts` |
 
 ## Appendix B — domains with **no** REST surface
 

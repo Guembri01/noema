@@ -19,6 +19,7 @@ import { requireUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { pageSearchText } from "@/lib/search";
+import { assertScopedParent } from "@/lib/page-parent";
 import {
   planPageDuplicate,
   validatePageDuplicate,
@@ -137,6 +138,17 @@ export async function duplicatePageSubtreeAction(
   const rootId = plan.idMap.get(pageId);
   if (!rootId) return { error: "Could not plan the page copy." };
 
+  // The copy root lands as a sibling of the source, so it keeps the source's
+  // own parent — the one parent link that leaves the copied set. The source
+  // row proves that the *source* lives in this workspace, not that its parent
+  // does, so that link is checked against the workspace here (B08). Every
+  // other copy hangs under a copy that is created in this same workspace.
+  const parent = await assertScopedParent({
+    workspaceId: source.workspaceId,
+    parentId: source.parentId,
+  });
+  if ("error" in parent) return parent;
+
   const sourceById = new Map(rows.map((row) => [row.id, row]));
   const originalIdByCopyId = new Map<string, string>();
   for (const [oldId, newId] of plan.idMap) originalIdByCopyId.set(newId, oldId);
@@ -144,7 +156,7 @@ export async function duplicatePageSubtreeAction(
   // The copy root sits after the last current sibling; descendants keep their
   // source position, which preserves each copied sibling group's order.
   const lastSibling = await prisma.page.findFirst({
-    where: { workspaceId: source.workspaceId, parentId: source.parentId },
+    where: { workspaceId: source.workspaceId, parentId: parent.parentId },
     orderBy: { position: "desc" },
     select: { position: true },
   });
@@ -160,7 +172,9 @@ export async function duplicatePageSubtreeAction(
           data: {
             id: copy.id,
             workspaceId: source.workspaceId,
-            parentId: copy.parentId ?? null,
+            // The root copy keeps the (validated) parent of the source; every
+            // other copy hangs under a copy created in this workspace.
+            parentId: copy.id === rootId ? parent.parentId : (copy.parentId ?? null),
             teamspaceId: origin.teamspaceId,
             projectId: origin.projectId,
             type: origin.type,

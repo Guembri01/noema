@@ -23,6 +23,12 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   not). The stored URL now passes the shared href allowlist (`http`, `https`,
   `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
   editor as well as in the read-only renderer.
+- When a page is created or moved, its parent is now checked against the
+  workspace: a page can no longer be filed under a page of another workspace.
+  It therefore no longer turns up in that workspace's database view or in its
+  CSV/JSON export, and it is no longer swept along by the foreign workspace's
+  cascade delete. The database and export views filter their rows by the
+  workspace as well.
 
 ## [1.4.1] — 2026-10-17
 

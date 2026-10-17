@@ -7,6 +7,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { markdownToDoc } from "@/lib/serialize";
+import { assertScopedParent } from "@/lib/page-parent";
 import type { RichNode } from "@/lib/blocks";
 import { parseGoogleDoc } from "@/lib/import-gdocs";
 import { parseConfluenceExport, type ConfluencePage } from "@/lib/import-confluence";
@@ -159,8 +160,14 @@ export async function importHtmlAction(input: {
   const auth = await authorize(workspaceId);
   if ("error" in auth) return auth;
 
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported tree into another
+  // tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  if ("error" in parent) return parent;
+
   const userId = auth.user.id;
-  const parentId = input.parentId ?? null;
+  const parentId = parent.parentId;
   const created: string[] = [];
 
   // Positions start after the current last sibling and increment per parent,
@@ -484,6 +491,12 @@ export async function importPdfAction(input: {
   const auth = await authorize(workspaceId);
   if ("error" in auth) return auth;
 
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported page into another
+  // tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  if ("error" in parent) return parent;
+
   const bytes = Buffer.from(data, "base64");
   if (bytes.length === 0) return { error: "That PDF payload decoded to zero bytes." };
   if (bytes.length > MAX_PDF_BYTES) {
@@ -501,7 +514,7 @@ export async function importPdfAction(input: {
   }
 
   const userId = auth.user.id;
-  const parentId = input.parentId ?? null;
+  const parentId = parent.parentId;
   const created: string[] = [];
   try {
     const last = await prisma.page.findFirst({
