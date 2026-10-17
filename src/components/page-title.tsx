@@ -1359,12 +1359,17 @@ export function PageTitle({
           storedCover ? (
             <div className="group/cover relative -mx-12 mb-4">
               <div
+                // Keyed on the image so *changing* the cover crossfades the new one in
+                // (spec: "cover changes — crossfade the image"). Repositioning by drag
+                // does not change the key, so this never fights the pointer.
+                key={storedCover.value}
                 className={cn(
-                  "aspect-[16/6] max-h-64 w-full bg-cover bg-center bg-no-repeat",
+                  "animate-fade aspect-[16/6] max-h-64 w-full bg-cover bg-center bg-no-repeat",
                   canEdit && "cursor-grab touch-none active:cursor-grabbing",
                   draggingCover && "u-no-transition",
                 )}
                 style={{
+                  animationDuration: "var(--dur-2)",
                   backgroundImage: coverCss(storedCover.value),
                   backgroundPosition: formatObjectPosition(coverPosition),
                 }}

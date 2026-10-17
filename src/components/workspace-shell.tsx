@@ -435,11 +435,13 @@ export function WorkspaceShell({
           )}
           {/* Keyed on the route so the fade replays per navigation; the tab
               strip above stays mounted, and the sidebar lives outside <main>
-              entirely, so neither re-mounts or flickers. */}
+              entirely, so neither re-mounts or flickers. `--dur-2` (180ms) is the
+              page-transition tier the design spec asks for (150–250ms); `--dur-1`
+              was a hair fast to read as a transition rather than a blink. */}
           <div
             key={pathname}
             className="animate-fade"
-            style={{ animationDuration: "var(--dur-1)" }}
+            style={{ animationDuration: "var(--dur-2)" }}
           >
             {children}
           </div>
