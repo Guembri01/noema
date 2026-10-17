@@ -23,6 +23,8 @@ import bcrypt from "bcryptjs";
 const db = vi.hoisted(() => ({
   userFindUnique: vi.fn<(args: { where: { email: string } }) => Promise<unknown>>(),
   userUpdate: vi.fn<(args: unknown) => Promise<{ failedLoginCount: number }>>(),
+  // B25: the sign-in spends the two-factor time step it accepted.
+  userUpdateMany: vi.fn<(args: unknown) => Promise<{ count: number }>>(),
   userCreate: vi.fn<
     (args: {
       data: { name: string; email: string; passwordHash: string };
@@ -46,6 +48,7 @@ vi.mock("@/lib/db", () => ({
     user: {
       findUnique: db.userFindUnique,
       update: db.userUpdate,
+      updateMany: db.userUpdateMany,
       create: db.userCreate,
     },
     workspace: {
@@ -114,6 +117,8 @@ beforeEach(() => {
   // on the successful sign-in.
   process.env.AUTH_SECRET = "auth-test-secret-for-two-factor-0123";
   db.userUpdate.mockResolvedValue({ failedLoginCount: 0 });
+  // B25: the two-factor step the sign-in spends is free in every test.
+  db.userUpdateMany.mockResolvedValue({ count: 1 });
   auth.hashPassword.mockImplementation(async (password: string) =>
     bcrypt.hashSync(password, 4),
   );

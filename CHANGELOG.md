@@ -390,6 +390,19 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   environment is the key the app uses: it probes the sealed AI-provider keys
   and the sealed SMTP password for that (the same `AUTH_SECRET` seals them),
   and an operator who has verified the key by hand can pass `--confirm-key`.
+- A two-factor code may now be used only once. The verification was a pure
+  function and the accepted time step was never persisted, so a code that had
+  been observed (a phishing screen, a screenshot, a shoulder surfer) stayed
+  valid for the whole ±1 step window — up to 90 seconds — and every replay of
+  it opened a fresh session. The account now holds the step it spent
+  (`User.twoFactorCounter`, added by the migration
+  `20261021000000_two_factor_counter`); the step is spent by a conditional
+  update (`UPDATE … WHERE twoFactorCounter < step`), so two racing uses of one
+  code cannot both win — the second one matches no row and is refused. The
+  sign-in, the enrolment and the de-enrolment all spend the step they accept.
+  **This changes what a user sees:** signing out and signing back in inside the
+  same 30-second step now needs the next code of the authenticator app, and so
+  does turning two-factor off right after turning it on.
 - A single sign-on no longer links a local account whose e-mail address was
   never verified: an attacker who pre-registers the address of a victim can
   no longer reach that account through the identity provider. Newly registered
