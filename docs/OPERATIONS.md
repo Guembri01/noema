@@ -110,6 +110,10 @@ A `failed[]` entry is a poison template: its schedule is *not* advanced, so the
 next tick retries it; other templates still run (each is its own try/catch +
 transaction).
 
+The gate order (the rate limit runs **before** the secret comparison, so a
+wrong secret is throttled instead of being an unlimited guessing oracle) and
+the per-route secret/limit table live in §8.6.
+
 ### 3.1 Provision the secret
 
 ```bash
@@ -423,6 +427,58 @@ curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 # 9. restart the cron driver + `npm run collab` so they pick up new code/env
 ```
 
+### 8.6 Ops gates: the shared secret, the rate limit, the order
+
+Every endpoint that authenticates with the shared ops secret runs the **same
+gate** — `@/lib/ops-guard` (`src/lib/ops-guard.ts`) — so the routes cannot
+drift apart. The gate owns three properties:
+
+| Property | What it means | Where |
+| --- | --- | --- |
+| **Fail closed** | No configured secret ⇒ the gate is **closed** (`503`), never open. An empty/absent presented value is never a match. | `guardOpsSecret` |
+| **Constant-time comparison** | The presented secret is compared byte by byte without an early exit, so the response time does not reveal *where* a guess differs. The comparison is case sensitive; both sides are trimmed before it. | `safeSecretEqual` → `constantTimeEqual` (`src/lib/secrets.ts`) |
+| **Throttle first** | The rate limit runs **before** the comparison, so a wrong secret is answered `429` once the budget is spent — the guessing is bounded instead of unlimited. | `guardOpsSecret` |
+
+**Order of the answers** (this is the contract):
+
+1. no secret configured → `503 {"error":"…is not configured…"}` (fail closed);
+2. over the rate limit → `429` (with a `retry-after` header) — **also for a
+   correct secret**: the limit covers legitimate calls too;
+3. wrong/missing secret → `401 {"error":"Unauthorized"}`;
+4. otherwise the request runs.
+
+**Which environment variable guards which route:**
+
+| Route | Secret | Header | Limit |
+| --- | --- | --- | --- |
+| `POST /api/cron/templates` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET /api/cron/versions` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET`/`POST /api/cron/jobs` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `POST /api/cron/tickets` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET`/`POST /api/cron/digest` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET /api/cron/backups` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET`/`POST /api/ready` | `CRON_SECRET` **or** `READY_SECRET` | `x-cron-secret` **or** `x-ready-secret` | token bucket: burst 30, 1/s |
+| `GET /api/metrics` | `CRON_SECRET` (besides the session-based workspace-admin path) | `x-cron-secret` | 120 / 60 s |
+| `listDueAutomationsForCronAction`, `commitRecurringRunAction` (server actions — HTTP endpoints too) | `CRON_SECRET` | the action's `secret` argument | 120 / 60 s, deployment-wide |
+
+`READY_SECRET` is an **alternative name for the readiness probe only** — it is
+accepted *in addition to* `CRON_SECRET` there, and nowhere else.
+
+**Operational notes:**
+
+- A `429` on a cron tick means the budget is spent — the tick itself is
+  throttled like any other call, so a scheduler that fires faster than the
+  limit sees `429`, not `401`.
+- The cron actions (`src/server/actions/automations.ts`) are exported from a
+  `"use server"` file and are therefore reachable over HTTP as well. Their
+  rate-limit key is derived from the **configured** secret, never from the
+  presented one — a key built from the guess would be a fresh bucket per
+  attempt and the limit would be bypassable. The budget is deployment-wide
+  (the action has no request of its own) and therefore more generous than the
+  routes' 12/min.
+- Rotation of `CRON_SECRET` changes the rate-limit key of the action surface
+  (it is hashed into the key) — the new secret starts with a fresh budget.
+
 ## 9. Incident quick reference
 
 | Symptom | First checks |
@@ -459,6 +515,7 @@ nothing was executed against live servers):
 | 7 | `/api/health` 200/503 shapes, 2 s ping, `no-store`, no auth/disclosure, compose healthcheck | `src/app/api/health/route.ts` · `docker-compose.yml` |
 | 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
 | 8 | single `20260113000000_init` migration vs push-evolved schema | `prisma/migrations/` · `docs/specs/engineering-hardening.md:149,367-373` |
+| 8.6 | ops-gate order (503 → 429 → 401), constant-time comparison, per-route secret/limit table, action-surface budget | `src/lib/ops-guard.ts` · `src/app/api/ready/route.ts` · `src/app/api/cron/*/route.ts` · `src/app/api/metrics/route.ts` · `src/server/actions/automations.ts` |
 | all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
 
 **Not verified by execution (be explicit when relying on them):** the backup →
