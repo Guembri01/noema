@@ -68,6 +68,7 @@
     "check:coherence": "node scripts/check-coherence.mjs",
     "check:secrets": "node scripts/check-secrets.mjs",
     "check:audit": "node scripts/check-npm-audit.mjs",
+    "check:hooks": "node scripts/check-hook-gate.mjs",
     "check:workflow-permissions": "node scripts/check-workflow-permissions.mjs",
     "check:image-pins": "node scripts/check-image-pins.mjs",
     "check:use-server": "node scripts/check-use-server.mjs",
