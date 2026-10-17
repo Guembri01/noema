@@ -307,7 +307,7 @@ export function Sidebar({
       )}
 
       <div className={cn("flex min-h-0 flex-1 flex-col", tab !== "chat" && "hidden")}>
-        <SidebarChat threads={chatThreads} locale={locale} />
+        <SidebarChat threads={chatThreads} locale={locale} role={workspace.role} />
       </div>
 
       <div className={cn("flex min-h-0 flex-1 flex-col", tab !== "meetings" && "hidden")}>
@@ -317,6 +317,7 @@ export function Sidebar({
           events={meetingEvents}
           feeds={calendarFeeds}
           locale={locale}
+          role={workspace.role}
         />
       </div>
 

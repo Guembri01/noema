@@ -39,6 +39,18 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- The workspace shell no longer hands a guest the workspace's chat log, its
+  calendar subscriptions and events, the project list or the open-ticket count.
+  Those datasets are workspace-wide rather than shared page by page, so they are
+  now scoped by the viewer's role before they reach the client payload. The
+  teamspace names are scoped rather than withheld: a guest sees the teamspaces
+  their own pages live in — the sidebar draws a page under the section of its
+  teamspace, so an empty list dropped the very pages that were shared with the
+  guest — and not the workspace's other teamspaces, neither in the shell nor in
+  the page route. The private calendar feed URL — the address of a personal
+  calendar, which often carries a secret token in its path — stays on the
+  server, which reads the feed itself. The sidebar offers a guest no action the
+  server refuses: neither "new discussion" nor "connect a calendar".
 
 ## [1.4.1] — 2026-10-17
 

@@ -3,6 +3,7 @@ import type { PageTreeNode } from "@/server/queries";
 import {
   SIDEBAR_ROW_HEIGHT,
   buildSidebarRenderPlan,
+  canMoveToTeamspace,
   type SidebarRenderItem,
   type SidebarTeamspace,
 } from "@/components/sidebar/page-tree";
@@ -258,5 +259,19 @@ describe("buildSidebarRenderPlan — navigation stays coherent with the window",
     });
     expect(rebuilt.items.some((item) => item.id === "B")).toBe(true);
     expect(rebuilt.plan.visibleIds[Math.floor(pinned / 20)]).toBe("B");
+  });
+});
+
+describe("canMoveToTeamspace — the move menu", () => {
+  it("offers the menu when there is a teamspace to move to", () => {
+    expect(canMoveToTeamspace([TEAMSPACE], "MEMBER")).toBe(true);
+  });
+
+  it("offers no menu without a teamspace", () => {
+    expect(canMoveToTeamspace([], "MEMBER")).toBe(false);
+  });
+
+  it("offers no menu to a guest — the server refuses the move", () => {
+    expect(canMoveToTeamspace([TEAMSPACE], "GUEST")).toBe(false);
   });
 });

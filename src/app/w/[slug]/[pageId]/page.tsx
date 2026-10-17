@@ -8,7 +8,7 @@ import { requireUser } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { groupReactions } from "@/lib/comments";
 import { getWorkspaceAccess } from "@/lib/permissions";
-import { pageScopeFor } from "@/lib/guest-access";
+import { viewerScopeFor } from "@/lib/guest-access";
 import { buildVersionRecord } from "@/lib/version-history";
 import {
   getAncestorTrail,
@@ -46,7 +46,11 @@ export default async function PageRoute({
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) notFound();
   // Guests may only open pages that were shared with them (or their own).
-  const visiblePageIds = await pageScopeFor(user.id, workspace.id, access.role);
+  // The scope also names the teamspaces whose names the viewer may see: a
+  // guest must not receive the workspace's teamspace names.
+  const scope = await viewerScopeFor(user.id, workspace.id, access.role);
+  const visiblePageIds = scope?.pageIds ?? null;
+  const visibleTeamspaceIds = scope?.teamspaceIds ?? null;
   if (visiblePageIds && !visiblePageIds.has(pageId)) notFound();
 
   const page = await getPageDetail(pageId);
@@ -84,7 +88,7 @@ export default async function PageRoute({
       select: { level: true },
       take: 1,
     }),
-    getTeamspaces(workspace.id),
+    getTeamspaces(workspace.id, visibleTeamspaceIds),
     // `PageVersion.label` (R30.10 named versions) is not part of
     // `getPageDetail`'s snapshot select, so read it here (same newest-first
     // window) and join it back onto the rows below by id.
