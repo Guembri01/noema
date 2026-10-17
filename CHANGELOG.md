@@ -11,6 +11,27 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Security
+
+- OAuth client secrets and authorization codes are no longer stored in
+  cleartext. `OAuthApp.clientSecret` and `OAuthCode.code` are replaced by
+  `clientSecretHash` and `codeHash` — the SHA-256 digest, the same treatment
+  API tokens already got — so a database dump, a backup or a leaked query
+  result no longer contains a redeemable client secret or authorization code.
+  The token endpoint looks the code up by its digest and compares the
+  presented secret against the stored digest in constant time
+  (`timingSafeEqual`); the plaintext secret is shown once, at creation, and
+  never again. The authorization code is also consumed with a conditional
+  update (`UPDATE … WHERE used = false`) instead of read-then-write, so a code
+  can be exchanged exactly once — also when two exchanges of the same code run
+  in parallel.
+- **Upgrade order:** the migration `20261019000000_oauth_secret_hashes` has to
+  be applied **before** the new build starts serving — it adds
+  `clientSecretHash` / `codeHash` and drops the cleartext columns, so the old
+  build fails on the dropped column and the new build fails on the missing
+  one. Keep the window between the migration and the restart as short as
+  possible; see `docs/OPERATIONS.md` §8.2.
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour

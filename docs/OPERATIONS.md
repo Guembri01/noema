@@ -393,16 +393,20 @@ docker compose ps            # docker health column (app healthcheck = /api/heal
 | `npm install` | `postinstall` runs `prisma generate` — the client is regenerated on install |
 
 **The honest note (documented gap, `docs/specs/engineering-hardening.md` §2.5):**
-the repo has **one** migration (`prisma/migrations/20260113000000_init/`), but
-the live schema has been evolved with **`prisma db push`** in the dev loop.
-So `prisma migrate deploy` alone does **not** reproduce the current schema —
-`npx prisma migrate status` will show drift until the baseline migration
-(reconciling today’s schema, tracked as R28.25) lands. Until then:
+the repo has **four** migrations (`20260113000000_init` →
+`20260114000000_complete_schema` → `20260114000001_search_index` →
+`20261019000000_oauth_secret_hashes`), and on a **fresh** database that chain
+reproduces today's schema exactly — `npx prisma migrate diff --from-url … --to-schema-datamodel prisma/schema.prisma`
+reports no difference. But the live schema has been evolved with
+**`prisma db push`** in the dev loop, and such a database carries no
+migration history: `npx prisma migrate deploy` refuses it with `P3005` until
+the existing migrations are baselined (§8.1 has the commands). Until that:
 
 - **Dev / this loop:** `npm run db:push` (Tier HEAVY: build serialization,
   stop `:3200`, restart after, restart dev `:3201`).
-- **Production:** prefer `npx prisma migrate deploy` *once the baseline exists*;
-  check first with `npx prisma migrate status`, and diff with
+- **Production:** prefer `npx prisma migrate deploy` (the chain reproduces the
+  schema — see the note above); check first with `npx prisma migrate status`,
+  and diff with
   `npx prisma migrate diff`. If you must use `db push` in production, review
   the change for data loss first — `prisma db push` only proceeds through
   destructive changes with `--accept-data-loss` (see
@@ -421,6 +425,62 @@ npm run build                       # 6. prod build (stop `next dev` first — s
 npm start -- --port 3200            # 7. serve
 curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 # 9. restart the cron driver + `npm run collab` so they pick up new code/env
+```
+
+### 8.1 Schema before app — the OAuth secret migration (breaking, both ways)
+
+`prisma/migrations/20261019000000_oauth_secret_hashes/` replaces the OAuth
+client secret and the authorization code with their SHA-256 digests:
+
+| Before | After |
+| --- | --- |
+| `OAuthApp.clientSecret` (plaintext) | `OAuthApp.clientSecretHash` (digest, `NOT NULL`) |
+| `OAuthCode.code` (plaintext) | `OAuthCode.codeHash` (digest, `NOT NULL`, unique) |
+
+The migration adds the digest column, backfills it
+(`encode(sha256(convert_to(x,'UTF8')),'hex')` — byte for byte the digest
+`node:crypto` computes), sets it `NOT NULL` and drops the plaintext column.
+The backfill is lossless: an app registered before the migration keeps
+working with the same secret, because the token endpoint compares the digest
+of the presented secret.
+
+**The order of the two steps is not optional — the change breaks in both
+directions:**
+
+- the **new** build queries `clientSecretHash` / `codeHash`; against an
+  unmigrated database it fails with `column "clientSecretHash" does not exist`;
+- the **old** build queries `clientSecret` / `code`; against a migrated
+  database it fails with `column "clientSecret" does not exist`.
+
+So the migration and the restart of the app belong together (steps 4 and 7 of
+the sequence above). Keep the window between them as short as possible: while
+it lasts, `POST /oauth/token` answers 500 and no OAuth app can exchange a
+code. A rollback is **not** `prisma migrate resolve` — the plaintext column
+is gone, so going back to the old build means restoring the dump from step 1.
+
+**`npm run db:push` cannot do this change.** `prisma db push` does not
+backfill: it refuses outright with *"Added the required column
+`clientSecretHash` to the `OAuthApp` table without a default value. There are
+N rows in this table, it is not possible to execute this step."* — and
+`--accept-data-loss` does not help, only `--force-reset` (which wipes the
+database) does. On the dev loop either use `npx prisma migrate deploy`, or
+delete **both** tables that carry a cleartext value first —
+`DELETE FROM "OAuthCode"; DELETE FROM "OAuthApp";` (the codes are short-lived
+and the apps are re-registered in the settings UI; they hold nothing else) —
+and then push. Deleting only the apps is not enough: the push stops at
+`OAuthCode` with the same refusal.
+
+**A database that was built with `prisma db push`** has no migration history,
+so `prisma migrate deploy` refuses it with `P3005 — The database schema is not
+empty`. Baseline the existing migrations first, then deploy — only the OAuth
+migration is left to apply:
+
+```bash
+for m in 20260113000000_init 20260114000000_complete_schema 20260114000001_search_index; do
+  npx prisma migrate resolve --applied "$m"
+done
+npx prisma migrate deploy      # now applies only 20261019000000_oauth_secret_hashes
+npx prisma migrate status      # expect: Database schema is up to date!
 ```
 
 ## 9. Incident quick reference

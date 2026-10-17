@@ -59,7 +59,9 @@ cookie routes and a session cookie is not accepted by `/api/v1/*`).
    current user (`{ ok: true }` or `{ error: "Token not found." }`).
 
 Tokens are also minted by the OAuth flow (§10) — same `ApiToken` table, named
-`OAuth: <app name>`.
+`OAuth: <app name>`. The OAuth **client secret** follows the same rule as the
+token itself: only its SHA-256 digest is persisted (`clientSecretHash`), the
+plaintext is shown once at registration (§10).
 
 ### 1.3 Cron secret (`/api/cron/templates`)
 
@@ -475,7 +477,11 @@ Apps are registered in workspace settings → **OAuth apps**
 → `createOAuthAppAction`
 in [`src/server/actions/oauth-apps.ts`](../src/server/actions/oauth-apps.ts)):
 name + one or more redirect URIs; returns `clientId` (`noema_<12 chars>`) and
-`clientSecret` **once**.
+`clientSecret` **once**. The secret is stored **only as a SHA-256 digest**
+(`clientSecretHash`) — the plaintext is handed back in that one response and
+never written to the database, never retrievable again; the token endpoint
+compares the presented secret against the digest in constant time
+(`oauthSecretMatches` → `timingSafeEqual`, `src/lib/api-auth.ts`).
 
 Flow:
 
@@ -494,7 +500,9 @@ cookie session · no rate limit
 `redirect_uri`, `state`, `decision` (`allow` | anything else = deny).
 
 - Code: `randomToken(24)`, valid **5 minutes**, single-use (marked used at
-  exchange), bound to client + redirect URI.
+  exchange), bound to client + redirect URI. Only the digest of the code is
+  stored (`codeHash`); the plaintext travels in the redirect below and is
+  looked up by its digest at the token endpoint.
 - **303** → `<redirect_uri>?code=…&state=…` (allow) or
   `<redirect_uri>?error=access_denied&state=…` (deny).
 - **401** `Unauthorized` (no session) · **400** `Invalid request`
@@ -520,6 +528,17 @@ Form body: `grant_type=authorization_code`, `code`, `client_id`,
 
 The minted token is a regular API token named `OAuth: <app name>` and works on
 `/api/v1/*` (§6).
+
+**How the exchange is verified.** The client secret is compared against the
+stored digest in constant time — the digest is looked up by `clientId`, the
+presented secret is hashed and the two digests are compared with
+`timingSafeEqual`; a wrong secret is refused before anything else happens.
+The authorization code is looked up by its **digest** (`codeHash`), so the
+database holds no redeemable code, and it is consumed with a conditional
+update (`UPDATE … WHERE used = false`): a token is minted only when that
+update matched exactly one row. Two exchanges of the same code that run in
+parallel therefore cannot both succeed — the loser gets
+`{"error":"invalid_grant"}` and no token (RFC 6749 §4.1.2).
 
 ---
 

@@ -12,6 +12,21 @@ export function apiTokenMatches(token: string, hash: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * OAuth client secrets and authorization codes are stored the same way API
+ * tokens are: as a SHA-256 digest. The plaintext exists only in the response
+ * that shows it to the user (or in the redirect that hands the code to the
+ * client) — never in the database.
+ */
+export function hashOAuthSecret(secret: string): string {
+  return hashApiToken(secret);
+}
+
+/** Constant-time comparison of a presented OAuth secret against its digest. */
+export function oauthSecretMatches(secret: string, hash: string): boolean {
+  return apiTokenMatches(secret, hash);
+}
+
 /** Resolve the user for a `Authorization: Bearer <token>` request. */
 export async function authenticateApiRequest(
   request: Request,
