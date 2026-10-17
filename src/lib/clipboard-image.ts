@@ -30,6 +30,10 @@
 
 import { extForMime } from "@/lib/file-type";
 import { isSvgSafe } from "@/lib/svg-safety";
+// The rule moved to `@/lib/svg-safety`, but the name stays exported from
+// here: the upload route and the clipboard path both import it from this
+// module, and the public name of the module must not change.
+export { isSvgSafe };
 
 /** One clipboard item, normalised from a `ClipboardItem`/`File`/DataTransfer. */
 export type ClipboardItem = {
