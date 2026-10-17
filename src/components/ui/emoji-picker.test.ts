@@ -1,15 +1,20 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   EMOJI_FRECENCY_NAMESPACE,
+  EmojiPicker,
   emojiCatalog,
   emojiFrecencyKey,
   filterEmojiCatalog,
   loadEmojiUsages,
   parseEmojiUsages,
   saveEmojiUsages,
+  type EmojiPickerTriggerProps,
   type EmojiStorage,
 } from "./emoji-picker";
 import { recordUse, topRecent } from "@/lib/emoji-frecency";
+import { t } from "@/lib/i18n";
 
 /**
  * fix07 — `@/lib/emoji-frecency` had no production importer; it is now the
@@ -138,5 +143,75 @@ describe("catalogue", () => {
       expect.arrayContaining(["🎉", "🥳"]),
     );
     expect(filterEmojiCatalog("")).toEqual(emojiCatalog());
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* dw10 — caller-supplied trigger                                              */
+/* -------------------------------------------------------------------------- */
+
+describe("EmojiPicker trigger render-prop", () => {
+  const render = (props: Parameters<typeof EmojiPicker>[0]): string =>
+    renderToStaticMarkup(createElement(EmojiPicker, props));
+
+  it("renders the default trigger unchanged, closed by default", () => {
+    const html = render({ onSelect: () => {}, locale: "en" });
+    expect(html).toContain('data-testid="emoji-picker-trigger"');
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("aria-controls=");
+    expect(html).toContain("🙂");
+    expect(html).not.toContain('data-testid="emoji-picker"');
+  });
+
+  it("renders a caller-supplied trigger and opens the picker around it", () => {
+    let captured: EmojiPickerTriggerProps | undefined;
+    const html = render({
+      onSelect: () => {},
+      locale: "en",
+      defaultOpen: true,
+      trigger: (props: EmojiPickerTriggerProps) => {
+        captured = props;
+        return createElement(
+          "button",
+          { type: "button", "data-testid": "reaction-add" },
+          "+",
+        );
+      },
+    });
+
+    // The custom trigger replaced the default one…
+    expect(html).toContain('data-testid="reaction-add"');
+    expect(html).toContain(">+<");
+    expect(html).not.toContain('data-testid="emoji-picker-trigger"');
+    // …and the picker is open around it.
+    expect(html).toContain('data-testid="emoji-picker"');
+    expect(html).toContain('role="dialog"');
+
+    expect(captured?.open).toBe(true);
+    expect(typeof captured?.toggle).toBe("function");
+    expect(captured?.label).toBe(t("en", "useEmoji"));
+    expect(typeof captured?.controls).toBe("string");
+    // controls points at the rendered dialog element
+    expect(html).toContain(`id="${captured?.controls}"`);
+  });
+
+  it("the supplied toggle flips the controlled open state via onOpenChange", () => {
+    let captured: EmojiPickerTriggerProps | undefined;
+    const seen: boolean[] = [];
+    render({
+      onSelect: () => {},
+      locale: "en",
+      open: false,
+      onOpenChange: (next: boolean) => seen.push(next),
+      trigger: (props: EmojiPickerTriggerProps) => {
+        captured = props;
+        return createElement("span", null, "trigger");
+      },
+    });
+
+    expect(captured?.open).toBe(false);
+    captured?.toggle();
+    expect(seen).toEqual([true]);
   });
 });

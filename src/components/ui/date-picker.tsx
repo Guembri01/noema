@@ -201,6 +201,12 @@ export type DatePickerProps = {
   presetLabels?: Partial<Record<DatePresetId, string>>;
   className?: string;
   id?: string;
+  /** Accessible name for the trigger (when it has no visible text of its own). */
+  "aria-label"?: string;
+  /** id(s) of external labelling element(s), forwarded to the trigger. */
+  "aria-labelledby"?: string;
+  /** id(s) of external description element(s), forwarded to the trigger. */
+  "aria-describedby"?: string;
 };
 
 function seedRange(value: DatePickerValue | undefined): RangeSelection {
@@ -244,6 +250,9 @@ export function DatePicker({
   presetLabels,
   className,
   id,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledby,
+  "aria-describedby": ariaDescribedby,
 }: DatePickerProps) {
   const hasTime = mode === "time" || mode === "datetime";
   const nowMs = now === undefined ? null : typeof now === "number" ? now : now.getTime();
@@ -344,6 +353,9 @@ export function DatePicker({
           id={triggerId}
           aria-haspopup="dialog"
           aria-expanded={open}
+          aria-label={ariaLabel}
+          aria-labelledby={ariaLabelledby}
+          aria-describedby={ariaDescribedby}
           data-testid="date-picker-trigger"
           title={title || undefined}
           className={cn(

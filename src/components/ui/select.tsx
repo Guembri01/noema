@@ -298,6 +298,20 @@ export function clearSelection(): string[] {
   return [];
 }
 
+/**
+ * Swallow the Escape key for the select. `preventDefault` stops the browser's
+ * default, and `stopPropagation` keeps the event from bubbling to a parent
+ * dialog — closing the listbox must not also close the dialog around it.
+ * Exported as a pure seam so the propagation contract is testable without a DOM.
+ */
+export function consumeEscape(event: {
+  preventDefault: () => void;
+  stopPropagation: () => void;
+}): void {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 /** Stable DOM id for an option row. */
 export function optionId(baseId: string, index: number): string {
   return `${baseId}-option-${index}`;
@@ -566,12 +580,8 @@ export function Select(props: SelectProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIndex, open, virtual]);
 
-  // Close when a pointer lands outside the control.
-  React.useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: MouseEvent) => {
-      // Resolve the popup placement whenever it opens, and keep it correct while
-  // the page scrolls or the window resizes (the layer is `fixed`).
+  // Resolve the popup placement whenever it opens, and keep it correct while the
+  // page scrolls or the window resizes (the layer is `fixed`).
   React.useEffect(() => {
     if (!open) {
       setPlacement(null);
@@ -604,8 +614,8 @@ export function Select(props: SelectProps) {
     };
   }, [open, rows.length, searchable]);
 
-  // Click outside: the layer lives in a portal, so `rootRef` no longer contains
-  // it — check both trees.
+  // Close when a pointer lands outside the control. The layer lives in a portal,
+  // so `rootRef` no longer contains it — check both trees.
   React.useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: MouseEvent) => {
@@ -613,11 +623,6 @@ export function Select(props: SelectProps) {
       if (rootRef.current?.contains(target)) return;
       if ((target as HTMLElement).closest?.('[data-testid="select-menu"]')) return;
       setOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [open]);
-
     };
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
@@ -707,7 +712,7 @@ export function Select(props: SelectProps) {
           activateRow(activeIndex);
           break;
         case "Escape":
-          event.preventDefault();
+          consumeEscape(event);
           closeMenu();
           break;
         case "Tab":
