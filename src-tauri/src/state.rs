@@ -21,6 +21,18 @@ pub mod prefs {
     pub const DATABASE_URL: &str = "databaseUrl";
 }
 
+/// Tidy a connection string the way databases, `.env` files and humans actually
+/// write them: `DATABASE_URL="postgresql://…"` is the conventional form, and a
+/// pasted value often arrives with its quoting intact.
+pub fn normalise_database_url(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
+}
+
 /// The database the local server should use.
 ///
 /// Resolution order, first match wins:
@@ -31,12 +43,13 @@ pub mod prefs {
 ///     local Postgres just works.
 pub fn database_url(app: &AppHandle) -> String {
     if let Ok(explicit) = std::env::var("NOEMA_DATABASE_URL") {
-        if !explicit.trim().is_empty() {
-            return explicit;
+        let cleaned = normalise_database_url(&explicit);
+        if !cleaned.is_empty() {
+            return cleaned;
         }
     }
-    let saved: String = pref(app, prefs::DATABASE_URL, String::new());
-    if saved.trim().is_empty() {
+    let saved = normalise_database_url(&pref::<String>(app, prefs::DATABASE_URL, String::new()));
+    if saved.is_empty() {
         crate::sidecar::DEFAULT_DATABASE_URL.to_string()
     } else {
         saved
@@ -81,5 +94,30 @@ pub fn set_pref(app: &AppHandle, key: &str, value: serde_json::Value) {
     if let Ok(store) = app.store(PREFS_FILE) {
         store.set(key, value);
         let _ = store.save();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_quoted_connection_string_is_unwrapped() {
+        // `DATABASE_URL="postgresql://…"` is the conventional .env form, and a
+        // pasted value often keeps its quotes. Prisma rejects both.
+        assert_eq!(
+            normalise_database_url("\"postgresql://u:p@host:5432/db?schema=public\""),
+            "postgresql://u:p@host:5432/db?schema=public"
+        );
+        assert_eq!(
+            normalise_database_url("  'postgresql://u@h/db'  "),
+            "postgresql://u@h/db"
+        );
+        assert_eq!(
+            normalise_database_url("  postgresql://u@h/db  "),
+            "postgresql://u@h/db"
+        );
+        assert_eq!(normalise_database_url("\"\""), "");
+        assert_eq!(normalise_database_url("   "), "");
     }
 }

@@ -165,7 +165,7 @@ pub async fn check_update() -> Result<Option<String>, String> {
 /// Save the database connection string and restart the server with it.
 #[tauri::command]
 pub async fn set_database_url(app: AppHandle, url: String) -> Result<SidecarInfo, String> {
-    let trimmed = url.trim().to_string();
+    let trimmed = state::normalise_database_url(&url);
     state::set_pref(
         &app,
         state::prefs::DATABASE_URL,

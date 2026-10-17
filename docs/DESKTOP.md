@@ -266,6 +266,9 @@ what that means for the user (SmartScreen) and what is already wired for signing
 | Window stays on "Noema is starting…" | server not ready | open **Advanced: database connection**, paste a working `DATABASE_URL`, **Save & restart**; **Copy diagnostics** pastes a redacted report |
 | `prisma migrate deploy` fails | database missing or unreachable | create the database (e.g. `docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine`) or point the app at an existing one |
 | `prepare` refuses to stage: "incomplete payload" | a site build replaced `.next/` | rebuild the payload (no `NOEMA_SKIP_BUILD=1`), and never run the two builds together |
+| App starts and dies instantly, no window | a Rust panic — `panic = "abort"` makes it silent | read `%TEMP%\noema-panic.log` (also written to `<data dir>/logs/panic.log`); the shell installs a panic hook precisely so this is never traceless |
+| Panic: `invalid type: map, expected unit` for a plugin | Tauri v2 plugins such as `single-instance` and `window-state` declare **no** config object, so `"plugins": { "single-instance": {} }` fails deserialization | drop the entry; move any options into the Rust builder where they are type-checked |
+| Panic: `a webview with label main already exists` | the window is declared in `tauri.conf.json` *and* built in `setup()` | declare it in one place only — this app declares it in config and fetches it in code |
 | `link.exe not found` | no MSVC toolchain | install VS Build Tools with "Desktop development with C++" |
 | `cargo` not found | no Rust | <https://rustup.rs> |
 | `binaries/noema-node-…` missing | payload not prepared | `npm run desktop:prepare` |

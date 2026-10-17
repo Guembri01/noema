@@ -22,7 +22,7 @@ pub mod state;
 use std::path::PathBuf;
 
 use sidecar::{SidecarEvent, SidecarState};
-use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, RunEvent};
 
 /// Record panics somewhere a user (or a support engineer) can find them.
 ///
@@ -59,7 +59,11 @@ pub fn install_panic_hook() {
             }
         }
         for target in targets {
-            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&target) {
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&target)
+            {
                 use std::io::Write as _;
                 let _ = file.write_all(report.as_bytes());
             }
@@ -162,19 +166,15 @@ pub fn run() {
             shell::build_tray(&handle)?;
             app.on_menu_event(|app, event| shell::on_shell_command(app, event.id().as_ref()));
 
-            // 3. the window: a bootstrap page immediately, swapped for the app
-            //    once the server answers.
-            // The window opens on the shell's own page (src-tauri/dist/index.html),
-            // which shows progress and, on failure, the database + retry controls.
-            // It is replaced by the workspace as soon as the server answers.
-            let window =
-                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                    .title("Noema")
-                    .inner_size(1360.0, 900.0)
-                    .min_inner_size(900.0, 620.0)
-                    .resizable(true)
-                    .center()
-                    .build()?;
+            // 3. the window is declared in `tauri.conf.json` (label "main") and
+            //    loads the shell's own page (`frontendDist` = dist/index.html),
+            //    which shows progress and, on failure, the database + retry
+            //    controls. Declaring it in config and *not* rebuilding it here is
+            //    deliberate: building a second window with the same label fails
+            //    with "a webview with label `main` already exists".
+            let window = app
+                .get_webview_window("main")
+                .ok_or("the main window is missing from tauri.conf.json")?;
 
             // Closing the window hides the app on macOS and quits elsewhere; the
             // server is stopped by the exit hook below either way.

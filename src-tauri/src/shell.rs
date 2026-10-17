@@ -21,15 +21,21 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .accelerator("CmdOrCtrl+,")
         .build(app)?;
 
-    let file = SubmenuBuilder::new(app, "File")
+    // Settings lives in the app submenu on macOS (the platform convention) and in
+    // File everywhere else — which also means the item is used on every platform,
+    // rather than existing only for the macOS branch.
+    #[cfg_attr(target_os = "macos", allow(unused_mut))]
+    let mut file_builder = SubmenuBuilder::new(app, "File")
         .item(&new_note)
         .separator()
         .item(&quick_find)
         .item(&search)
-        .separator()
-        .close_window()
-        .quit()
-        .build()?;
+        .separator();
+    #[cfg(not(target_os = "macos"))]
+    {
+        file_builder = file_builder.item(&settings).separator();
+    }
+    let file = file_builder.close_window().quit().build()?;
 
     let edit = SubmenuBuilder::new(app, "Edit")
         .undo()
