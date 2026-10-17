@@ -13,7 +13,6 @@ import {
 import { deleteTicketConfirmLabel } from "@/lib/ticket-delete";
 import { assignTicketToCycleAction } from "@/server/actions/cycles";
 import { safeAction, withUndo } from "@/lib/actions-client";
-import { DESCRIPTION_MAX } from "@/lib/description";
 import {
   convert,
   formatEstimate,
@@ -29,6 +28,8 @@ import {
   TICKET_PRIORITIES,
   TICKET_STATUSES,
   UNASSIGNED_BUCKET,
+  milestoneAfterProjectChange,
+  milestoneChoices,
   statusMeta,
   typeMeta,
 } from "@/lib/tickets";
@@ -47,6 +48,7 @@ import { Stepper } from "@/components/ui/stepper";
 import { Tag } from "@/components/ui/tag";
 import { Tooltip } from "@/components/ui/tooltip";
 import { StatusPill } from "./ticket-bits";
+import { TicketDescription } from "./ticket-description";
 import { type LabelRow, type TicketRow } from "./ticket-types";
 
 /** Whether a raw estimate is a usable number (missing/non-finite = absent). */
@@ -185,6 +187,7 @@ export type TicketPropertyField =
   | "priority"
   | "assignee"
   | "project"
+  | "milestone"
   | "cycle"
   | "estimate"
   | "startDate"
@@ -204,6 +207,7 @@ export const PROPERTY_CONTROL: Record<TicketPropertyField, TicketPropertyControl
   priority: "select",
   assignee: "select",
   project: "select",
+  milestone: "select",
   cycle: "select",
   estimate: "stepper",
   startDate: "date",
@@ -277,7 +281,13 @@ export type TicketDrawerBodyProps = {
   ticket: TicketRow;
   labels: LabelRow[];
   members: { id: string; name: string }[];
-  projects: { id: string; name: string; icon: string | null }[];
+  projects: {
+    id: string;
+    name: string;
+    icon: string | null;
+    /** The project's milestones — what the Milestone picker offers. */
+    milestones?: { id: string; name: string }[];
+  }[];
   allTickets: TicketRow[];
   activity: TicketActivityRow[];
   cycles: { id: string; name: string }[];
@@ -331,45 +341,9 @@ export function TicketDrawerBody({
   const [relationQuery, setRelationQuery] = useState("");
   const [relationType, setRelationType] = useState("relates");
 
-  // Debounced description autosave: local state while typing, one save per
-  // quiet period (or on blur). Reset only when another ticket is opened.
-  const [description, setDescription] = useState(ticket.description ?? "");
-  const [descriptionFocused, setDescriptionFocused] = useState(false);
-  const savedDescription = useRef(ticket.description ?? "");
-  const descriptionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hasDescription = description.trim().length > 0;
+  // Description: the rich editor owns its own autosave state (see
+  // `TicketDescription`), so the drawer only supplies the stored doc.
   const titleDirection = applyDirAttr(ticket.title);
-  const descriptionDirection = applyDirAttr(description);
-
-  useEffect(() => {
-    setDescription(ticket.description ?? "");
-    savedDescription.current = ticket.description ?? "";
-  }, [ticket.id]); // eslint-disable-line react-hooks/exhaustive-deps -- reset per opened ticket only
-
-  useEffect(
-    () => () => {
-      if (descriptionTimer.current) clearTimeout(descriptionTimer.current);
-    },
-    [],
-  );
-
-  const saveDescription = (value: string) => {
-    if (value === savedDescription.current) return;
-    savedDescription.current = value;
-    onPatch({ description: value });
-  };
-
-  const onDescriptionChange = (value: string) => {
-    const next = value.length > DESCRIPTION_MAX ? value.slice(0, DESCRIPTION_MAX) : value;
-    setDescription(next);
-    if (descriptionTimer.current) clearTimeout(descriptionTimer.current);
-    descriptionTimer.current = setTimeout(() => saveDescription(next), 800);
-  };
-
-  const flushDescription = (value: string) => {
-    if (descriptionTimer.current) clearTimeout(descriptionTimer.current);
-    saveDescription(value);
-  };
 
   const related = ticket.labelIds;
   const parent = ticket.parentId
@@ -437,6 +411,27 @@ export function TicketDrawerBody({
     label: project.name,
     icon: project.icon ? <span aria-hidden>{project.icon}</span> : undefined,
   }));
+  // Milestones belong to projects, so the picker follows the ticket's project:
+  // that project's milestones when it has one, every workspace milestone
+  // (project-qualified) when it does not. `milestoneChoices` owns that rule.
+  const milestoneOptions: SelectOption[] = milestoneChoices(projects, ticket.projectId).map(
+    (choice) => ({ value: choice.id, label: choice.label }),
+  );
+  const changeProject = (value: string) => {
+    const nextProjectId = value || null;
+    // A milestone from another project would contradict the new project, so the
+    // same patch drops it; `milestoneAfterProjectChange` owns that rule.
+    const keep = milestoneAfterProjectChange(
+      ticket.milestoneId,
+      milestoneChoices(projects, nextProjectId),
+    );
+    onPatch(
+      keep === ticket.milestoneId
+        ? { projectId: nextProjectId }
+        : { projectId: nextProjectId, milestoneId: keep },
+      t(locale, "projectUpdated"),
+    );
+  };
   const cycleOptions: SelectOption[] = cycles.map((cycle) => ({
     value: cycle.id,
     label: cycle.name,
@@ -483,8 +478,18 @@ export function TicketDrawerBody({
               value={ticket.projectId ?? ""}
               options={projectOptions}
               placeholder={t(locale, "noProject")}
+              onChange={changeProject}
+            />
+          </PropertyRow>
+
+          <PropertyRow label={t(locale, "milestoneWord")}>
+            <Select
+              aria-label={t(locale, "ticketMilestoneAria")}
+              value={ticket.milestoneId ?? ""}
+              options={milestoneOptions}
+              placeholder={t(locale, "noMilestone")}
               onChange={(value) =>
-                onPatch({ projectId: value || null }, t(locale, "projectUpdated"))
+                onPatch({ milestoneId: value || null }, t(locale, "milestoneUpdated"))
               }
             />
           </PropertyRow>
@@ -573,26 +578,12 @@ export function TicketDrawerBody({
       <Separator />
 
       <DrawerSection title={t(locale, "description")}>
-        <textarea
-          data-testid={hasDescription ? "ticket-description-box" : undefined}
-          value={description}
-          dir={descriptionDirection.dir}
-          aria-label={t(locale, "ticketDescriptionAria")}
-          rows={Math.min(12, description.split("\n").length + 1)}
-          placeholder={t(locale, "addDescription")}
-          onChange={(event) => onDescriptionChange(event.target.value)}
-          onFocus={() => setDescriptionFocused(true)}
-          onBlur={(event) => {
-            setDescriptionFocused(false);
-            flushDescription(event.target.value);
-          }}
-          className={cn(
-            "focus-ring w-full resize-y rounded-md px-3 py-2 text-sm text-fg outline-none placeholder:text-muted u-colors",
-            descriptionDirection.className,
-            hasDescription || descriptionFocused
-              ? "border border-border bg-bg"
-              : "border border-dashed border-border bg-transparent",
-          )}
+        <TicketDescription
+          key={ticket.id}
+          doc={ticket.descriptionDoc}
+          text={ticket.description ?? ""}
+          locale={locale}
+          onSave={(next) => onPatch({ descriptionDoc: next })}
         />
       </DrawerSection>
 
@@ -853,7 +844,13 @@ export function TicketDrawer({
   ticket: TicketRow;
   labels: LabelRow[];
   members: { id: string; name: string }[];
-  projects: { id: string; name: string; icon: string | null }[];
+  projects: {
+    id: string;
+    name: string;
+    icon: string | null;
+    /** The project's milestones — what the Milestone picker offers. */
+    milestones?: { id: string; name: string }[];
+  }[];
   allTickets: TicketRow[];
   workspaceId: string;
   /** Per-ticket activity trail; omit/empty hides the section. */

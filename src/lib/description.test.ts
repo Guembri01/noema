@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DESCRIPTION_MAX, descriptionDoc, descriptionToText, sanitizeDescription } from "./description";
+import { DESCRIPTION_DOC_MAX, DESCRIPTION_MAX, descriptionDoc, descriptionEntryDoc, descriptionToText, sanitizeDescription } from "./description";
 
 describe("sanitizeDescription", () => {
   it("trims surrounding whitespace and normalises line endings", () => {
@@ -83,5 +83,52 @@ describe("descriptionDoc", () => {
   it("sanitises before storing (control chars never reach the database)", () => {
     const doc = descriptionDoc("bad\u0000input");
     expect(descriptionToText(doc)).toBe("badinput");
+  });
+});
+
+describe("descriptionEntryDoc", () => {
+  it("opens a stored doc as-is (rich text keeps its blocks and marks)", () => {
+    const stored = {
+      type: "doc",
+      content: [
+        { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Title" }] },
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                { type: "paragraph", content: [{ type: "text", marks: [{ type: "bold" }], text: "one" }] },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    expect(descriptionEntryDoc(stored, "stale plain text")).toBe(stored);
+  });
+
+  it("falls back to the plain-text doc when nothing is stored", () => {
+    expect(descriptionEntryDoc(null, "hello")).toEqual(descriptionDoc("hello"));
+    expect(descriptionEntryDoc(undefined, "hello")).toEqual(descriptionDoc("hello"));
+  });
+
+  it("ignores a value that is not a doc (a legacy string never reaches the editor)", () => {
+    expect(descriptionEntryDoc("just a string", "from the column")).toEqual(
+      descriptionDoc("from the column"),
+    );
+    expect(descriptionEntryDoc({ type: "doc" }, "no content array")).toEqual(
+      descriptionDoc("no content array"),
+    );
+  });
+
+  it("yields an empty doc for an empty description (the placeholder shows)", () => {
+    expect(descriptionEntryDoc(null, "")).toEqual({ type: "doc", content: [] });
+  });
+});
+
+describe("DESCRIPTION_DOC_MAX", () => {
+  it("caps rich docs above the plain-text ceiling", () => {
+    expect(DESCRIPTION_DOC_MAX).toBeGreaterThan(DESCRIPTION_MAX);
   });
 });

@@ -119,12 +119,27 @@ test.describe("descriptions", () => {
 
       await page.reload();
       const reopened = await openDrawer(page, created.key);
-      await expect(reopened.getByLabel("Ticket description")).toHaveValue(
+      // A contenteditable has no `value`: the saved text is the editor's text.
+      await expect(reopened.getByLabel("Ticket description")).toHaveText(
         "B12 drawer description body",
         { timeout: 15_000 },
       );
       // Non-empty description renders the box.
       await expect(reopened.getByTestId("ticket-description-box")).toHaveCount(1);
+      // The rich field keeps the page editor's document shape, so the stored
+      // description is still one `{ type: "doc" }` with the typed text inside.
+      await expect
+        .poll(
+          async () => {
+            const row = await prisma.ticket.findUnique({
+              where: { id: created.id },
+              select: { description: true },
+            });
+            return JSON.stringify(row?.description ?? null);
+          },
+          { timeout: 15_000 },
+        )
+        .toContain("B12 drawer description body");
     } finally {
       await prisma.ticket.delete({ where: { id: created.id } }).catch(() => {});
     }
@@ -178,18 +193,21 @@ test.describe("descriptions", () => {
     }
   });
 
-  test("an empty ticket description renders no box", async ({ page }) => {
+  test("an empty ticket description keeps only the affordance", async ({ page }) => {
     await signIn(page);
     const created = await createTicket(`B12 empty ${Date.now()}`);
 
     try {
       const drawer = await openDrawer(page, created.key);
       const field = drawer.getByLabel("Ticket description");
-      // The affordance stays (so it can be filled in), but there is no box…
+      // The affordance stays (so it can be filled in)…
       await expect(field).toBeVisible();
-      await expect(field).toHaveAttribute("placeholder", "Add a description…");
-      await expect(drawer.getByTestId("ticket-description-box")).toHaveCount(0);
-      // …and nothing was written to the database.
+      // …with the placeholder on the empty first block (an attribute no longer:
+      // a contenteditable draws its hint from CSS, not from `placeholder`).
+      await expect(drawer.locator(".ProseMirror .is-editor-empty")).toHaveCount(1);
+      // …and the box stays dashed until there is something in it.
+      await expect(drawer.getByTestId("ticket-description-box")).toHaveClass(/border-dashed/);
+      // Nothing was written to the database by merely opening the drawer.
       const row = await prisma.ticket.findUnique({
         where: { id: created.id },
         select: { description: true },

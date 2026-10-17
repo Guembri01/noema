@@ -9,6 +9,14 @@
 /** Longest description we store (matches the server-side action cap). */
 export const DESCRIPTION_MAX = 10_000;
 
+/**
+ * Longest description *document* the rich editor may save, measured on the
+ * serialised JSON. Rich text is bulkier than the plain text it replaced (marks
+ * and block wrappers), so it gets its own, larger ceiling instead of reusing
+ * `DESCRIPTION_MAX` — which stays the cap for the plain-text fallback.
+ */
+export const DESCRIPTION_DOC_MAX = 40_000;
+
 /** C0/C1 control characters (tab and newline are kept: they are allowed below). */
 const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 
@@ -59,4 +67,21 @@ export function descriptionDoc(text: string): { type: "doc"; content: unknown[] 
       ...(line ? { content: [{ type: "text", text: line }] } : {}),
     })),
   };
+}
+
+/**
+ * The document a rich description editor should open with: the stored doc when
+ * there is one, else the plain-text fallback mapped through `descriptionDoc`.
+ *
+ * Both shapes are valid ProseMirror docs, so the editor needs no migration step:
+ * a description written (or seeded) before the rich editor existed keeps its
+ * text, and the first save upgrades it in place. An absent/empty description
+ * yields an empty doc, which the editor renders as one empty paragraph — so the
+ * placeholder shows and the caret has somewhere to land.
+ */
+export function descriptionEntryDoc(doc: unknown, text = ""): { type: "doc"; content: unknown[] } {
+  if (doc && typeof doc === "object" && Array.isArray((doc as DocNode).content)) {
+    return doc as { type: "doc"; content: unknown[] };
+  }
+  return descriptionDoc(text);
 }

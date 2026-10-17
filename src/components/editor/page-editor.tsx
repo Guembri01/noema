@@ -69,6 +69,7 @@ import {
   type MaybeRange,
 } from "@/lib/block-selection";
 import { moveBlocks, type BlockPage } from "@/lib/block-move";
+import { blankClickPlan } from "@/lib/blank-click";
 import { restrictCommands } from "@/lib/math-render";
 import { createStack, push as pushSnapshot, type UndoStack } from "@/lib/undo-stack";
 import {
@@ -202,6 +203,42 @@ function presenceColor(name: string | undefined): string {
     if (hex) return hex;
   }
   return OPTION_COLORS.gray;
+}
+
+/**
+ * Does this mousedown land in the empty canvas *under* the last block, and if so
+ * start a paragraph there? Returns true when it consumed the event.
+ *
+ * The canvas' breathing room lives inside `.ProseMirror` (`.noema-page-canvas`),
+ * so a click below the content targets the editable element itself rather than a
+ * child block. What to do about it is `blankClickPlan`'s call; this is the
+ * geometry and the transaction: reuse the trailing empty paragraph or append a
+ * new one, then put the caret in it. Treated as handled, so ProseMirror does not
+ * then move the caret to the end of the *previous* block as well.
+ */
+function clickUnderContent(view: EditorView, event: MouseEvent): boolean {
+  if (event.target !== view.dom) return false;
+  const last = view.dom.lastElementChild;
+  const contentBottom = last
+    ? last.getBoundingClientRect().bottom
+    : view.dom.getBoundingClientRect().top;
+  if (event.clientY < contentBottom) return false;
+
+  const tail = view.state.doc.lastChild;
+  const plan = blankClickPlan({
+    lastBlockType: tail?.type.name,
+    lastBlockEmpty: tail !== null && tail.content.size === 0,
+  });
+
+  const { tr, schema } = view.state;
+  if (plan.kind === "append") {
+    tr.insert(tr.doc.content.size, schema.nodes.paragraph.create());
+  }
+  tr.setSelection(Selection.near(tr.doc.resolve(tr.doc.content.size), -1));
+  view.dispatch(tr);
+  view.focus();
+  event.preventDefault();
+  return true;
 }
 
 /**
@@ -1499,6 +1536,9 @@ export function PageEditor({
       handleDOMEvents: {
         mousedown(view, event) {
           const mouse = event as MouseEvent;
+          // The space under the content is still the page: a click there starts a
+          // paragraph at the end instead of landing in the last block.
+          if (clickUnderContent(view, mouse)) return true;
           const active = blockRangeRef.current;
           const toggling = active !== null && (mouse.metaKey || mouse.ctrlKey);
           if (!mouse.shiftKey && !toggling) {
@@ -1888,16 +1928,15 @@ export function PageEditor({
     return <div className="h-40 animate-pulse rounded bg-surface" />;
   }
 
-  // Bottom breathing room (30vh) under the block list so the caret at the end of
-  // a long page can be scrolled up to the middle of the viewport instead of
-  // staying pinned to the bottom edge. Unconditional, as the reference editor
-  // does: a short page's own content stays within the fold, so no extra
-  // scrollbar appears in practice. Intentional layout constant, not a token.
+  // The bottom breathing room (30vh) belongs to the editable area itself — see
+  // `.noema-page-canvas .ProseMirror` in globals.css — so a click in it is a click
+  // in the document and `clickUnderContent` can start the paragraph there. The
+  // caret at the end of a long page can still be scrolled up to the middle of the
+  // viewport instead of staying pinned to the bottom edge.
   return (
     <div
       ref={listRef}
-      className={`noema-editor relative ${dragActiveClass(dragging)}`.trim()}
-      style={{ paddingBottom: "30vh" }}
+      className={`noema-editor noema-page-canvas relative ${dragActiveClass(dragging)}`.trim()}
       data-undo-depth={snapshotDepth.undoable}
       data-redo-depth={snapshotDepth.redoable}
       data-block-selected={blockSelected}

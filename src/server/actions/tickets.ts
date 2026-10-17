@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { canEditContent, canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
 import { parsePageContent } from "@/lib/validation";
-import { DESCRIPTION_MAX, descriptionDoc, sanitizeDescription } from "@/lib/description";
+import { DESCRIPTION_DOC_MAX, DESCRIPTION_MAX, descriptionDoc, sanitizeDescription } from "@/lib/description";
 import { getTicketDetail, getTicketsPage } from "@/server/queries";
 import { notifyTicketAssigned } from "@/server/actions/notifications";
 import type { TicketActivityRow } from "@/components/tickets/ticket-drawer";
@@ -297,6 +297,12 @@ export async function updateTicketAction(input: {
   ticketId: string;
   title?: string;
   description?: string;
+  /**
+   * Rich description document straight from the description editor. Wins over
+   * the plain-text `description` when both are sent; the text path stays for
+   * callers that only ever had text (`createTicketAction`, the REST route).
+   */
+  descriptionDoc?: unknown;
   type?: string;
   status?: string;
   priority?: string;
@@ -328,6 +334,17 @@ export async function updateTicketAction(input: {
       data.description = parsed.doc as Prisma.InputJsonValue;
       changes.description = "updated";
     }
+  }
+  if (input.descriptionDoc !== undefined) {
+    // The editor's own doc: validated against the page-content schema (the same
+    // one `Page.content` uses, so a description is a page body in miniature) and
+    // capped on its serialised size, since rich text carries marks and blocks.
+    const parsed = parsePageContent(JSON.stringify(input.descriptionDoc));
+    if (!parsed.ok || JSON.stringify(parsed.doc).length > DESCRIPTION_DOC_MAX) {
+      return { error: "That description is too large." };
+    }
+    data.description = parsed.doc as Prisma.InputJsonValue;
+    changes.description = "updated";
   }
   if (input.status !== undefined && STATUS_IDS.includes(input.status)) {
     if (input.status !== auth.ticket.status) {
@@ -363,8 +380,29 @@ export async function updateTicketAction(input: {
     changes.projectId = input.projectId;
   }
   if (input.milestoneId !== undefined) {
-    data.milestone = input.milestoneId ? { connect: { id: input.milestoneId } } : { disconnect: true };
-    changes.milestoneId = input.milestoneId;
+    if (input.milestoneId === null) {
+      data.milestone = { disconnect: true };
+      changes.milestoneId = null;
+    } else {
+      // A milestone is a project's milestone: it must belong to this workspace and,
+      // when the ticket is in (or is being moved into) a project, to that same
+      // project. Without this a ticket could be pointed at another workspace's
+      // milestone by id, or at one the ticket's project does not own.
+      const nextProjectId =
+        input.projectId !== undefined ? input.projectId : auth.ticket.projectId;
+      const milestone = await prisma.milestone.findUnique({
+        where: { id: input.milestoneId },
+        select: { projectId: true, project: { select: { workspaceId: true } } },
+      });
+      if (!milestone || milestone.project.workspaceId !== auth.ticket.workspaceId) {
+        return { error: "That milestone is not in this workspace." };
+      }
+      if (nextProjectId && milestone.projectId !== nextProjectId) {
+        return { error: "That milestone belongs to another project." };
+      }
+      data.milestone = { connect: { id: input.milestoneId } };
+      changes.milestoneId = input.milestoneId;
+    }
   }
   if (input.assigneeId !== undefined) {
     data.assignee = input.assigneeId ? { connect: { id: input.assigneeId } } : { disconnect: true };

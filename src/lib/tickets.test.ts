@@ -7,6 +7,8 @@ import {
   groupByStatus,
   isClosed,
   keyPrefix,
+  milestoneAfterProjectChange,
+  milestoneChoices,
   normalizeLabelInput,
   priorityMeta,
   sortTickets,
@@ -556,5 +558,48 @@ describe("suggest rebalance", () => {
     // By points u2 leads (9 > 2); by open tickets u1 leads (2 > 1).
     expect(suggestRebalance(tickets, {}).from).toBe("u2");
     expect(suggestRebalance(tickets, {}, { basis: "tickets" }).from).toBe("u1");
+  });
+});
+
+describe("milestone choices", () => {
+  const projects = [
+    {
+      id: "p1",
+      name: "Apollo",
+      milestones: [
+        { id: "m1", name: "Launch" },
+        { id: "m2", name: "Orbit" },
+      ],
+    },
+    { id: "p2", name: "Borealis", milestones: [{ id: "m3", name: "Launch" }] },
+  ];
+
+  it("scopes a project ticket to that project's milestones with bare names", () => {
+    expect(milestoneChoices(projects, "p2")).toEqual([
+      { id: "m3", name: "Launch", projectId: "p2", projectName: "Borealis", label: "Launch" },
+    ]);
+  });
+
+  it("qualifies every workspace milestone when the ticket has no project", () => {
+    expect(milestoneChoices(projects, null).map((choice) => choice.label)).toEqual([
+      "Apollo - Launch",
+      "Apollo - Orbit",
+      "Borealis - Launch",
+    ]);
+  });
+
+  it("tolerates a project whose milestones were not loaded", () => {
+    expect(milestoneChoices([{ id: "p3", name: "Cygnus" }], null)).toEqual([]);
+  });
+
+  it("keeps a milestone the ticket's project owns and drops a foreign one", () => {
+    const choices = milestoneChoices(projects, "p1");
+    expect(milestoneAfterProjectChange("m1", choices)).toBe("m1");
+    expect(milestoneAfterProjectChange("m3", choices)).toBeNull();
+    expect(milestoneAfterProjectChange(null, choices)).toBeNull();
+  });
+
+  it("keeps the milestone when the ticket leaves its project (all are offered then)", () => {
+    expect(milestoneAfterProjectChange("m1", milestoneChoices(projects, null))).toBe("m1");
   });
 });

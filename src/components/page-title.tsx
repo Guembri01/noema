@@ -676,7 +676,7 @@ export function PageTitleRow({
             }}
             onBlur={onTitleBlur}
             onKeyDown={onTitleKeyDown}
-            className="w-full resize-none overflow-hidden bg-transparent text-title font-semibold leading-[1.2] tracking-title text-fg outline-none placeholder:text-muted/40"
+            className="noema-page-title w-full resize-none overflow-hidden bg-transparent text-title font-semibold leading-[1.2] tracking-title text-fg outline-none placeholder:text-muted/40"
           />
         </h1>
         {addCover}
@@ -742,7 +742,12 @@ export function PageTitle({
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [title, setTitle] = useState(initialTitle);
+  // A new page is stamped with the literal placeholder title (`createPageAction`).
+  // Showing that string as a value makes the writer select-and-delete it before
+  // naming the page, so an untouched placeholder starts empty instead and lets the
+  // placeholder do its job; `saveTitle` never writes an empty title back, so the
+  // page keeps the name it was created with until something real is typed.
+  const [title, setTitle] = useState(initialTitle === t(locale, "untitled") ? "" : initialTitle);
   const [icon, setIcon] = useState(initialIcon);
   const [cover, setCover] = useState(initialCover);
   const [favorite, setFavorite] = useState(initialFavorite);
@@ -897,6 +902,24 @@ export function PageTitle({
     };
   }, [pageId]);
 
+  /**
+   * The caret starts in the title of a page that has no name yet — the first
+   * thing anybody writes on a new page. The placeholder title (`""` in state) is
+   * the signal; `autofocusedPage` keeps it to one attempt per page, so leaving
+   * the field is permanent and a re-render never steals focus back.
+   */
+  const autofocusedPage = useRef<string | null>(null);
+  useEffect(() => {
+    if (!canEdit || autofocusedPage.current === pageId) return;
+    autofocusedPage.current = pageId;
+    if (title !== "") return;
+    const field = titleRef.current;
+    if (!field) return;
+    field.focus();
+    // Caret at the end of the (empty) value, so typing appends.
+    field.setSelectionRange(field.value.length, field.value.length);
+  }, [canEdit, pageId, title]);
+
   // Per-page comment notification level (localStorage — no server model yet).
   useEffect(() => {
     try {
@@ -939,6 +962,10 @@ export function PageTitle({
 
   const saveTitle = () => {
     if (!canEdit || title === initialTitle) return;
+    // A page is never nameless: abandoning the field leaves the placeholder (and
+    // the stored name) alone rather than writing an empty title, which would also
+    // mark the page as edited for a keystroke that never happened.
+    if (!title.trim()) return;
     save({ title });
   };
 

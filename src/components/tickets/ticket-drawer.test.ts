@@ -32,6 +32,7 @@ import {
   type TicketPropertyField,
 } from "./ticket-drawer";
 import type { TicketRow } from "./ticket-types";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 const noop = () => {};
 
@@ -40,6 +41,7 @@ const ticket: TicketRow = {
   key: "ABC-1",
   title: "Fix the thing",
   description: "A described problem.",
+  descriptionDoc: null,
   type: "task",
   status: "todo",
   priority: "high",
@@ -51,6 +53,7 @@ const ticket: TicketRow = {
   cycleId: null,
   projectId: null,
   projectName: null,
+  milestoneId: null,
   milestoneName: null,
   assigneeId: "u1",
   assigneeName: "Ada Lovelace",
@@ -78,24 +81,28 @@ const liveActivity: TicketActivityRow[] = [
 
 const renderBody = () =>
   renderToStaticMarkup(
-    createElement(TicketDrawerBody, {
-      ticket,
-      labels: [{ id: "l1", name: "bug", color: "red", count: 1 }],
-      members: [{ id: "u1", name: "Ada Lovelace" }],
-      projects: [],
-      allTickets: [ticket],
-      activity: liveActivity,
-      cycles: [],
-      slug: "workspace",
-      locale: "en",
-      onPatch: noop,
-      onOpen: noop,
-      onAddChild: noop,
-      onCycleChange: noop,
-      onToggleLabel: noop,
-      onLinkTicket: noop,
-      onAddComment: noop,
-    }),
+    createElement(
+      TooltipProvider,
+      null,
+      createElement(TicketDrawerBody, {
+        ticket,
+        labels: [{ id: "l1", name: "bug", color: "red", count: 1 }],
+        members: [{ id: "u1", name: "Ada Lovelace" }],
+        projects: [],
+        allTickets: [ticket],
+        activity: liveActivity,
+        cycles: [],
+        slug: "workspace",
+        locale: "en",
+        onPatch: noop,
+        onOpen: noop,
+        onAddChild: noop,
+        onCycleChange: noop,
+        onToggleLabel: noop,
+        onLinkTicket: noop,
+        onAddComment: noop,
+      }),
+    ),
   );
 
 describe("property row → control", () => {
@@ -105,6 +112,7 @@ describe("property row → control", () => {
       "priority",
       "assignee",
       "project",
+      "milestone",
       "cycle",
       "estimate",
       "startDate",
@@ -122,6 +130,7 @@ describe("property row → control", () => {
     expect(propertyControl("priority")).toBe("select");
     expect(propertyControl("assignee")).toBe("select");
     expect(propertyControl("project")).toBe("select");
+    expect(propertyControl("milestone")).toBe("select");
     expect(propertyControl("cycle")).toBe("select");
     expect(propertyControl("estimate")).toBe("stepper");
     expect(propertyControl("startDate")).toBe("date");

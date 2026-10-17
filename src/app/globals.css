@@ -246,6 +246,15 @@ body {
   caret-color: var(--fg);
 }
 
+/* Bottom breathing room (30vh) *inside* the editable area, so the empty space
+   under the last block is part of the document: a click there is a click in the
+   canvas, and the page editor's mousedown handler turns it into the paragraph
+   the writer meant to type in. On the wrapper it would be inert chrome. A short
+   page's own content stays within the fold, so no extra scrollbar appears. */
+.noema-page-canvas .ProseMirror {
+  padding-bottom: 30vh;
+}
+
 /* Text selection inside the editor mirrors the app's selection colour. */
 .noema-editor .ProseMirror ::selection,
 .noema-editor .ProseMirror::selection {
@@ -1222,6 +1231,15 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+   Compact rich-text fields (ticket description)
+   Borrows the page body's typography via `.noema-editor`, but not its canvas:
+   one comfortable block of writing height, and no page-scale breathing room.
+   --------------------------------------------------------------------------- */
+.noema-description-editor .ProseMirror {
+  min-height: 4.5rem;
+}
+
+/* ---------------------------------------------------------------------------
    Ask AI block
    --------------------------------------------------------------------------- */.noema-editor .ProseMirror .noema-ask-card {
   display: flex;
@@ -1385,6 +1403,14 @@ body {
 :where(a, button, input, select, textarea, [tabindex]):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* The page title is where a page is *written*, not a control to operate: an
+   accent box around the caret reads as a selection. The caret — plus the title
+   row's own hover chrome — is the affordance, so the title opts out of the ring
+   above. Every real control keeps it. */
+.noema-page-title:focus-visible {
+  outline: none;
 }
 @layer components {
 .skip-link {

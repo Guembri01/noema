@@ -89,6 +89,12 @@ export default async function TicketsPage({
           id: project.id,
           name: project.name,
           icon: project.icon,
+          // Milestones belong to a project, so the drawer's Milestone picker
+          // needs each project's own list (not every workspace milestone).
+          milestones: project.milestones.map((milestone) => ({
+            id: milestone.id,
+            name: milestone.name,
+          })),
         }))}
       />
     </div>

@@ -4,6 +4,8 @@ export type TicketRow = {
   title: string;
   /** Plain-text description (sanitised), empty string when none. */
   description: string;
+  /** The stored description doc — what the rich description editor opens with. */
+  descriptionDoc: unknown;
   type: string;
   status: string;
   priority: string;
@@ -15,6 +17,7 @@ export type TicketRow = {
   cycleId: string | null;
   projectId: string | null;
   projectName: string | null;
+  milestoneId: string | null;
   milestoneName: string | null;
   assigneeId: string | null;
   assigneeName: string | null;

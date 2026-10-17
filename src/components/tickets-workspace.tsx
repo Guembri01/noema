@@ -50,7 +50,13 @@ export function TicketsWorkspace({
   tickets: TicketRow[];
   labels: LabelRow[];
   members: { id: string; name: string }[];
-  projects: { id: string; name: string; icon: string | null }[];
+  projects: {
+    id: string;
+    name: string;
+    icon: string | null;
+    /** The project's milestones — what the drawer's Milestone picker offers. */
+    milestones?: { id: string; name: string }[];
+  }[];
   initialProjectFilter?: string;
   /** `?ticket=` - the ticket a notification named, opened as a drawer on load. */
   initialTicketId?: string;

@@ -269,6 +269,8 @@ export type TrackerTicket = {
   title: string;
   /** Plain-text description (sanitised), empty string when none. */
   description: string;
+  /** The stored description doc, for the rich description editor. */
+  descriptionDoc: unknown;
   type: string;
   status: string;
   priority: string;
@@ -280,6 +282,8 @@ export type TrackerTicket = {
   cycleId: string | null;
   projectId: string | null;
   projectName: string | null;
+  /** The milestone the ticket is in, and its name for the read-only summary. */
+  milestoneId: string | null;
   milestoneName: string | null;
   assigneeId: string | null;
   assigneeName: string | null;
@@ -319,6 +323,7 @@ export function toTrackerTicket(ticket: TicketRecord): TrackerTicket {
     key: ticket.key,
     title: ticket.title,
     description: descriptionToText(ticket.description),
+    descriptionDoc: ticket.description ?? null,
     type: ticket.type,
     status: ticket.status,
     priority: ticket.priority,
@@ -330,6 +335,7 @@ export function toTrackerTicket(ticket: TicketRecord): TrackerTicket {
     cycleId: ticket.cycleId,
     projectId: ticket.project?.id ?? null,
     projectName: ticket.project?.name ?? null,
+    milestoneId: ticket.milestone?.id ?? null,
     milestoneName: ticket.milestone?.name ?? null,
     assigneeId: ticket.assignee?.id ?? null,
     assigneeName: ticket.assignee?.name ?? null,
@@ -339,6 +345,69 @@ export function toTrackerTicket(ticket: TicketRecord): TrackerTicket {
     commentCount: ticket._count.comments,
     childCount: ticket._count.children,
   };
+}
+
+/* ------------------------------------------------------------------------ *
+ * Milestones — the one relation a ticket cannot set directly by name.
+ *
+ * Milestones belong to a project, so the ticket drawer has to answer two
+ * questions purely: which milestones may this ticket use, and what happens to
+ * the milestone it already has when its project changes.
+ * ------------------------------------------------------------------------ */
+
+/** A project and the milestones it owns, as `getProjects` returns them. */
+export type MilestoneSource = {
+  id: string;
+  name: string;
+  /** Absent when a caller only needs the project's identity (e.g. the composer). */
+  milestones?: readonly { id: string; name: string }[];
+};
+
+/** One assignable milestone, carrying its project and its display label. */
+export type MilestoneChoice = {
+  id: string;
+  name: string;
+  projectId: string;
+  projectName: string;
+  /** `label` for the picker: the bare name, or project-qualified when unscoped. */
+  label: string;
+};
+
+/**
+ * The milestones a ticket can be assigned to. A milestone is a project's, so a
+ * ticket that sits in a project offers that project's milestones only; a ticket
+ * with no project offers every milestone in the workspace, each labelled with its
+ * project so two "Launch" milestones stay tellable apart.
+ */
+export function milestoneChoices(
+  projects: readonly MilestoneSource[],
+  projectId: string | null,
+): MilestoneChoice[] {
+  const scoped = projectId ? projects.filter((project) => project.id === projectId) : projects;
+  const qualify = projectId === null;
+  return scoped.flatMap((project) =>
+    (project.milestones ?? []).map((milestone) => ({
+      id: milestone.id,
+      name: milestone.name,
+      projectId: project.id,
+      projectName: project.name,
+      label: qualify ? `${project.name} - ${milestone.name}` : milestone.name,
+    })),
+  );
+}
+
+/**
+ * The milestone to keep when a ticket changes project. Switching to a project
+ * that does not own the current milestone drops it (returning `null`, which the
+ * caller sends as an explicit clear) instead of pairing the ticket with a
+ * milestone from another project.
+ */
+export function milestoneAfterProjectChange(
+  milestoneId: string | null,
+  choices: readonly MilestoneChoice[],
+): string | null {
+  if (!milestoneId) return null;
+  return choices.some((choice) => choice.id === milestoneId) ? milestoneId : null;
 }
 
 /* ------------------------------------------------------------------------ *
