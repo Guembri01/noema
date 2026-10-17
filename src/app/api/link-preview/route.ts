@@ -2,8 +2,14 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { hostOf, isHttpUrl, normalizeUrl, safeImageUrl } from "@/lib/embeds";
-import { isPreviewable, parseLinkMeta, resolveUrl } from "@/lib/link-preview-meta";
+import { parseLinkMeta, resolveUrl } from "@/lib/link-preview-meta";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  defaultHostResolver,
+  isBlockedFeedTarget,
+  safeFetchGuarded,
+  type HostResolver,
+} from "@/lib/feed-guard";
 
 export const runtime = "nodejs";
 
@@ -62,10 +68,66 @@ function cardResponse(card: PreviewCard, request: Request): NextResponse {
 }
 
 /**
+ * DNS resolution under the request deadline: `dns.lookup` takes no abort
+ * signal, so the lookup races the signal and fails closed when the deadline
+ * passes. A hung resolver must not hold the request open.
+ */
+function deadlineResolver(signal: AbortSignal): HostResolver {
+  return async (hostname) => {
+    if (signal.aborted) throw new Error("preview deadline exceeded");
+    let onAbort: (() => void) | undefined;
+    try {
+      return await Promise.race([
+        defaultHostResolver(hostname),
+        new Promise<never>((_, reject) => {
+          onAbort = () => reject(new Error("preview deadline exceeded"));
+          signal.addEventListener("abort", onAbort, { once: true });
+        }),
+      ]);
+    } finally {
+      if (onAbort) signal.removeEventListener("abort", onAbort);
+    }
+  };
+}
+
+/**
+ * The card's image/icon are fetched by the victim's browser, so they get the
+ * same gate as the page itself: no private host, no DNS answer in private
+ * space. `checkedHosts` holds the hosts already validated in this request
+ * (the page host first), so a same-host asset needs no second lookup.
+ */
+async function safeAssetUrl(
+  value: string | null,
+  checkedHosts: Set<string>,
+  resolve: HostResolver,
+): Promise<string | null> {
+  const asset = safeImageUrl(value);
+  if (asset === null) return null;
+  let host: string;
+  try {
+    host = new URL(asset).hostname;
+  } catch {
+    return null;
+  }
+  if (checkedHosts.has(host)) return asset;
+  if (await isBlockedFeedTarget(asset, resolve, { allowDevLoopback: false })) return null;
+  checkedHosts.add(host);
+  return asset;
+}
+
+/**
  * Fetch OpenGraph metadata for a URL so bookmark blocks can render a card.
- * Guards against SSRF via `isPreviewable` (http(s) only, no private/loopback
- * hosts), caps the response size and enforces a timeout. The resolved card is
- * cached with an `ETag` and conditional `If-None-Match` handling.
+ *
+ * The SSRF gate is the shared guard (`safeFetchGuarded` in
+ * `src/lib/feed-guard.ts`): the target is resolved through DNS, every answer
+ * must be public, redirects are followed manually and every hop is
+ * re-validated. A literal-host check alone is not enough - `169.254.169.254`
+ * answered by a public name (`…nip.io`) and a 30x hop into a metadata IP
+ * both slip through it (audit B10).
+ *
+ * The response size is capped and the whole operation - DNS included - runs
+ * under one deadline. The resolved card is cached with an `ETag` and
+ * conditional `If-None-Match` handling.
  */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "preview", 60, 60_000);
@@ -80,9 +142,6 @@ export async function GET(request: Request) {
   if (!isHttpUrl(url)) {
     return NextResponse.json({ error: "Invalid url" }, { status: 400 });
   }
-  if (!isPreviewable(url)) {
-    return NextResponse.json({ error: "Blocked host" }, { status: 400 });
-  }
 
   const fallback: PreviewCard = {
     url,
@@ -93,15 +152,31 @@ export async function GET(request: Request) {
     icon: null,
   };
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    const response = await fetch(url, {
-      signal: controller.signal,
-      redirect: "follow",
-      headers: { "user-agent": "NoemaBot/1.0 (+link-preview)", accept: "text/html" },
-    });
-    clearTimeout(timer);
+    const resolve = deadlineResolver(controller.signal);
+    const result = await safeFetchGuarded(
+      url,
+      {
+        signal: controller.signal,
+        headers: { "user-agent": "NoemaBot/1.0 (+link-preview)", accept: "text/html" },
+      },
+      // No development exemption here: the preview route has no hermetic mock
+      // to serve, so it stays strict in every environment.
+      { resolve, allowDevLoopback: false },
+    );
+    if (!result.ok) {
+      if (result.reason === "blocked") {
+        return NextResponse.json({ error: "Blocked host" }, { status: 400 });
+      }
+      return NextResponse.json(fallback, { headers: { "cache-control": NO_STORE } });
+    }
+
+    const response = result.response;
+    // Relative metadata resolves against the page that answered, not against
+    // the URL the caller asked for.
+    const baseUrl = result.finalUrl;
 
     if (!response.ok || !response.body) {
       return NextResponse.json(fallback, { headers: { "cache-control": NO_STORE } });
@@ -126,19 +201,23 @@ export async function GET(request: Request) {
     // `link-preview-meta` reads og:*/twitter:*/title/description/favicon and
     // resolves every URL field against the fetched page, replacing the ad-hoc
     // regex + `new URL` parsing that used to live here.
-    const meta = parseLinkMeta(html, { baseUrl: response.url });
+    const meta = parseLinkMeta(html, { baseUrl });
 
+    // The page host was validated by the guard; assets on it need no lookup.
+    const checkedHosts = new Set<string>([new URL(baseUrl).hostname]);
     const card: PreviewCard = {
       url,
       host: hostOf(url),
       title: meta.title ?? null,
       description: meta.description ?? null,
-      image: safeImageUrl(resolveUrl(response.url, meta.image ?? "")),
-      icon: safeImageUrl(resolveUrl(response.url, meta.favicon ?? "")),
+      image: await safeAssetUrl(resolveUrl(baseUrl, meta.image ?? ""), checkedHosts, resolve),
+      icon: await safeAssetUrl(resolveUrl(baseUrl, meta.favicon ?? ""), checkedHosts, resolve),
     };
 
     return cardResponse(card, request);
   } catch {
     return NextResponse.json(fallback, { headers: { "cache-control": NO_STORE } });
+  } finally {
+    clearTimeout(timer);
   }
 }

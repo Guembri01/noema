@@ -1,17 +1,23 @@
 /**
- * SSRF guard for server-side feed fetches (security audit #1, H4).
+ * SSRF guard for server-side outbound fetches (security audit #1, H4;
+ * B59 calendar feeds, B10 link preview).
  *
- * Reuses the exact pattern the link-preview route already runs - `isPrivateHost`
- * (`src/lib/embeds.ts:45-59`) applied to `new URL().hostname` at
- * `src/app/api/link-preview/route.ts:44-46` - and closes the gaps the audit
- * lists there (M1): bracketed IPv6 literals, the full private/reserved IPv4
- * and IPv6 range sets, DNS resolution of hostnames (rebind-style answers are
- * rejected), and re-validation of every redirect hop (`redirect: "manual"`).
+ * Built on `isPrivateHost` (`src/lib/embeds.ts`) and closes the gaps a
+ * literal-host check leaves open (audit M1): bracketed IPv6 literals, the
+ * full private/reserved IPv4 and IPv6 range sets, DNS resolution of hostnames
+ * (rebind-style answers are rejected), and re-validation of every redirect
+ * hop (`redirect: "manual"`).
+ *
+ * `safeFetchGuarded()` is the single entry point for every outbound fetch
+ * that follows untrusted URLs: the calendar feed path (`safeFetchFeed()`,
+ * which is a thin wrapper around it) and the link-preview route
+ * (`src/app/api/link-preview/route.ts`) both go through it, so the two
+ * cannot drift apart.
  *
  * Everything fails closed: an unparseable URL, a non-http(s) scheme, a DNS
- * error or an exhausted redirect budget all answer `null`/`true`, and callers
- * surface one uniform error so the connector cannot be used as a status
- * oracle.
+ * error or an exhausted redirect budget all answer `null`/`true`/`blocked`,
+ * and callers surface one uniform error so a connector cannot be used as a
+ * status oracle.
  *
  * Unit-pinned by `src/lib/feed-guard.test.ts` (ranges, rebinding, redirects)
  * and `src/server/actions/calendar.test.ts` (through the real action).
@@ -99,6 +105,20 @@ function isLoopbackHost(hostname: string): boolean {
   return false;
 }
 
+/** Options for {@link isBlockedFeedTarget}. */
+export type FeedTargetOptions = {
+  /**
+   * Allow loopback hosts while `NODE_ENV` is `development` - the end-to-end
+   * check subscribes to a hermetic mock calendar served on loopback (`:4323`,
+   * see docs/TEST_PLAN.md), which the shipped guard would otherwise refuse.
+   *
+   * Defaults to `true` so the calendar path keeps its exemption. The
+   * link-preview route opts out: it has no mock feed to serve, so it stays
+   * strict in every environment.
+   */
+  allowDevLoopback?: boolean;
+};
+
 /**
  * Full target check: scheme, hostname ranges, then DNS - every answer must be
  * public. Returns true when the target must NOT be fetched. Fail closed on
@@ -109,11 +129,13 @@ function isLoopbackHost(hostname: string): boolean {
  * see docs/TEST_PLAN.md), which the shipped guard would otherwise refuse. Only
  * loopback hosts are exempt, and only in development - vitest runs as `test`
  * and deployments as `production`, so the security suite and the shipped guard
- * still fail closed on every private range.
+ * still fail closed on every private range. Callers that must stay strict
+ * everywhere (the link-preview route) pass `allowDevLoopback: false`.
  */
 export async function isBlockedFeedTarget(
   rawUrl: string,
   resolve: HostResolver = defaultHostResolver,
+  options: FeedTargetOptions = {},
 ): Promise<boolean> {
   let url: URL;
   try {
@@ -124,7 +146,8 @@ export async function isBlockedFeedTarget(
   if (url.protocol !== "http:" && url.protocol !== "https:") return true;
   const hostname = normalizeHost(url.hostname);
   if (isBlockedFeedHost(hostname)) {
-    if (process.env.NODE_ENV === "development" && isLoopbackHost(hostname)) {
+    const allowDevLoopback = options.allowDevLoopback ?? true;
+    if (allowDevLoopback && process.env.NODE_ENV === "development" && isLoopbackHost(hostname)) {
       return false;
     }
     return true;
@@ -147,42 +170,104 @@ export type FeedFetchOptions = {
   fetchFn?: FeedFetchFn;
   /** Redirects followed before giving up (default 3). */
   maxRedirects?: number;
+  /** Injected by tests; defaults to the system resolver at call time. */
+  resolve?: HostResolver;
+  /** Loopback exemption in `development` - see {@link FeedTargetOptions}. */
+  allowDevLoopback?: boolean;
 };
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
+/** Why a guarded fetch produced no response. */
+export type GuardedFetchFailure = "blocked" | "failed";
+
+/**
+ * Outcome of a guarded fetch: the response plus the URL it was finally
+ * requested from, or the reason there is none. `blocked` means the target
+ * (or a redirect hop) was refused by the SSRF guard; `failed` means the
+ * request itself went wrong (network error, timeout, redirect budget
+ * exhausted) - the two are never conflated, so a caller can answer a refused
+ * target with a block and a broken one with a neutral fallback.
+ */
+export type GuardedFetchResult =
+  | { ok: true; response: Response; finalUrl: string }
+  | { ok: false; reason: GuardedFetchFailure };
+
+/** Do two URLs point at the same host? (`response.url` may differ only in path.) */
+function sameHost(a: string, b: string): boolean {
+  try {
+    return normalizeHost(new URL(a).hostname) === normalizeHost(new URL(b).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fetch a URL only when the initial target AND every redirect hop pass
+ * the guard. Redirects are requested with `redirect: "manual"` and each
+ * `Location` is re-validated before it is followed. Returns `blocked` when
+ * the guard refuses a target, `failed` on a network error, an unusable
+ * `Location` or an exhausted redirect budget.
+ *
+ * The URL the response was finally read from is returned as `finalUrl` so
+ * callers can resolve relative references against the page that answered -
+ * never against the URL the caller asked for.
+ */
+export async function safeFetchGuarded(
+  rawUrl: string,
+  init?: RequestInit,
+  options: FeedFetchOptions = {},
+): Promise<GuardedFetchResult> {
+  const fetchFn: FeedFetchFn =
+    options.fetchFn ?? ((url, requestInit) => globalThis.fetch(url, requestInit));
+  const maxRedirects = options.maxRedirects ?? 3;
+  const resolve = options.resolve ?? defaultHostResolver;
+  const targetOptions: FeedTargetOptions = { allowDevLoopback: options.allowDevLoopback };
+  let current = rawUrl;
+  for (let hop = 0; hop <= maxRedirects; hop += 1) {
+    if (await isBlockedFeedTarget(current, resolve, targetOptions)) {
+      return { ok: false, reason: "blocked" };
+    }
+    let response: Response;
+    try {
+      response = await fetchFn(current, { ...init, redirect: "manual" });
+    } catch {
+      return { ok: false, reason: "failed" };
+    }
+    if (!REDIRECT_STATUSES.has(response.status)) {
+      // Defence in depth: a `fetch` that followed a redirect on its own would
+      // report the final target here. Re-check it instead of trusting it -
+      // but only when the host changed, the host of `current` is validated
+      // already.
+      const finalUrl = response.url !== "" ? response.url : current;
+      if (finalUrl !== current && !sameHost(current, finalUrl)) {
+        if (await isBlockedFeedTarget(finalUrl, resolve, targetOptions)) {
+          return { ok: false, reason: "blocked" };
+        }
+      }
+      return { ok: true, response, finalUrl };
+    }
+    const location = response.headers.get("location");
+    if (!location) return { ok: false, reason: "failed" };
+    try {
+      current = new URL(location, current).toString();
+    } catch {
+      return { ok: false, reason: "failed" };
+    }
+  }
+  return { ok: false, reason: "failed" };
+}
+
 /**
  * Fetch a feed URL only when the initial target AND every redirect hop pass
- * the guard. Redirects are requested with `redirect: "manual"` and each
- * `Location` is re-validated before it is followed (the link-preview route's
- * known gap, audit M1). Returns `null` on block, redirect-budget exhaustion
- * or network failure - callers report one uniform error either way.
+ * the guard. Returns `null` on block, redirect-budget exhaustion or network
+ * failure - callers report one uniform error either way.
  */
 export async function safeFetchFeed(
   rawUrl: string,
   init?: RequestInit,
   options: FeedFetchOptions = {},
 ): Promise<Response | null> {
-  const fetchFn: FeedFetchFn =
-    options.fetchFn ?? ((url, requestInit) => globalThis.fetch(url, requestInit));
-  const maxRedirects = options.maxRedirects ?? 3;
-  let current = rawUrl;
-  for (let hop = 0; hop <= maxRedirects; hop += 1) {
-    if (await isBlockedFeedTarget(current)) return null;
-    let response: Response;
-    try {
-      response = await fetchFn(current, { ...init, redirect: "manual" });
-    } catch {
-      return null;
-    }
-    if (!REDIRECT_STATUSES.has(response.status)) return response;
-    const location = response.headers.get("location");
-    if (!location) return null;
-    try {
-      current = new URL(location, current).toString();
-    } catch {
-      return null;
-    }
-  }
-  return null;
+  const result = await safeFetchGuarded(rawUrl, init, options);
+  return result.ok ? result.response : null;
 }
