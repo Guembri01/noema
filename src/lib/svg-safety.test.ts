@@ -138,4 +138,23 @@ describe("isSvgSafe", () => {
     // input — the default test timeout is the guard.
     expect(isSvgSafe("<a".repeat(200_000))).toBe(true);
   });
+
+  /* -------------------------------- the three gaps of the diff review */
+
+  it("does not stand still on a stray slash in the attribute section", () => {
+    // The "/" cannot start an attribute name. A scan that reads it twice
+    // stands still and the request hangs — the default test timeout is the
+    // guard.
+    expect(isSvgSafe("<svg/onload=alert(1)>")).toBe(false);
+    expect(isSvgSafe("<svg/onload=alert(1)/>")).toBe(false);
+    expect(isSvgSafe("<svg /onload=alert(1)>")).toBe(false);
+  });
+
+  it("refuses a document that carries a NUL character", () => {
+    // XML forbids U+0000, and a UTF-16 document interleaves a NUL after
+    // every ASCII character. A browser would decode such a file and find the
+    // markup the scanner did not see, so the file is refused.
+    expect(isSvgSafe("<svg\0 onload=alert(1)>")).toBe(false);
+    expect(isSvgSafe("<svg><script>alert(1)</script>\0</svg>")).toBe(false);
+  });
 });

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { rateLimit } from "@/lib/api-guard";
-import { isSvgSafe } from "@/lib/clipboard-image";
+import { isSvgSafe } from "@/lib/svg-safety";
 import { isAllowedExternalImageHost } from "@/lib/external-image";
 import { fetchPinnedTarget, resolveOutboundTarget } from "@/lib/feed-guard";
 
@@ -158,9 +158,21 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Image too large" }, { status: 413 });
     }
     // An SVG is an active document: it has to pass the same check an uploaded
-    // one does, or it is refused.
-    if (type === "image/svg+xml" && !isSvgSafe(new TextDecoder().decode(body))) {
-      return NextResponse.json({ error: "Unsafe image" }, { status: 415 });
+    // one does, or it is refused. The bytes have to be **valid UTF-8** — a
+    // lenient decoder replaces the invalid bytes with U+FFFD, and the rule
+    // would read the replacement characters instead of the markup (a UTF-16
+    // document would slip through and a browser would find the script the
+    // rule never saw).
+    if (type === "image/svg+xml") {
+      let text: string;
+      try {
+        text = new TextDecoder("utf-8", { fatal: true }).decode(body);
+      } catch {
+        return NextResponse.json({ error: "Unsafe image" }, { status: 415 });
+      }
+      if (!isSvgSafe(text)) {
+        return NextResponse.json({ error: "Unsafe image" }, { status: 415 });
+      }
     }
 
     return new NextResponse(body, {
