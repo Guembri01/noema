@@ -45,7 +45,18 @@ export async function POST(request: Request) {
     }
   }
 
-  await prisma.oAuthCode.update({ where: { id: record.id }, data: { used: true } });
+  // RFC 6749 §4.1.2: an authorization code is single-use. Consume it with a
+  // conditional update so the read above and the write cannot race: two
+  // concurrent exchanges both see `used = false`, but only the first
+  // `UPDATE ... WHERE used = false` matches a row (`count === 1`). The loser
+  // gets no token.
+  const consumed = await prisma.oAuthCode.updateMany({
+    where: { id: record.id, used: false },
+    data: { used: true },
+  });
+  if (consumed.count !== 1) {
+    return NextResponse.json({ error: "invalid_grant" }, { status: 400 });
+  }
 
   const accessToken = `noema_${randomToken(24)}`;
   await prisma.apiToken.create({
