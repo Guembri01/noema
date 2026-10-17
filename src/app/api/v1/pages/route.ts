@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authenticateApiRequest } from "@/lib/api-auth";
+import { hasScope } from "@/lib/api-token-scope";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { pageScopeFor } from "@/lib/guest-access";
 import { prisma } from "@/lib/db";
@@ -52,12 +53,21 @@ function nextPageLink(requestUrl: URL, nextCursor: string | null): string | null
  * A `GUEST` only ever sees the pages shared with them: the listing (and the
  * breadcrumb tree) is filtered by the guest scope, exactly like the workspace
  * UI. A full member keeps the whole workspace.
- */
+ *
+ * The bearer token must hold the `read:pages` scope; a token without it is
+ * refused with 403 `insufficient_scope` before the workspace is even looked
+ * up. */
 export async function GET(request: Request) {
   const auth = await authenticateApiRequest(request);
   const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
   if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!hasScope(auth.scopes, "read:pages")) {
+    return NextResponse.json(
+      { error: "insufficient_scope", required: "read:pages" },
+      { status: 403 },
+    );
+  }
 
   const url = new URL(request.url);
   const workspaceId = url.searchParams.get("workspaceId");
@@ -119,12 +129,22 @@ export async function GET(request: Request) {
  * and resends would otherwise get two pages. An `Idempotency-Key` header makes the
  * retry replay the first outcome instead of creating again (spec §20). Callers
  * that send no key are unaffected — the handler simply runs.
+ *
+ * The bearer token must hold the `write:pages` scope; a token without it is
+ * refused with 403 `insufficient_scope` before the request is admitted to the
+ * idempotency store, so a rejected call is never memoized.
  */
 export async function POST(request: Request) {
   const auth = await authenticateApiRequest(request);
   const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
   if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!hasScope(auth.scopes, "write:pages")) {
+    return NextResponse.json(
+      { error: "insufficient_scope", required: "write:pages" },
+      { status: 403 },
+    );
+  }
 
   return withIdempotency(request, { userId: auth.userId }, async () => {
     let body: Record<string, unknown>;

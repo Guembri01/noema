@@ -35,6 +35,7 @@ import {
   COPY_FEEDBACK_MS,
   SCOPE_RESOURCE_HUES,
   ScopeChips,
+  ScopePicker,
   TOKEN_EXPIRY_WARN_MS,
   TokenReveal,
   TokenRow,
@@ -181,6 +182,53 @@ describe("renderToStaticMarkup — a token row", () => {
     expect(html).toContain("never used");
     expect(html).not.toContain('data-testid="token-expiry"');
     expect(html).not.toContain("--tag-");
+  });
+
+  it("marks a token without any scope as 'No access' — its grant is empty", () => {
+    const html = renderToStaticMarkup(
+      createElement(TokenRow, {
+        token: token({ scopes: [] }),
+        now: NOW,
+        locale: "en",
+        onRevoke: () => {},
+      }),
+    );
+    expect(html).toContain('data-testid="token-no-scopes"');
+    expect(html).toContain("No access");
+    expect(html).toContain('data-tone="warning"');
+  });
+
+  it("shows no 'No access' marker for a token that carries a scope", () => {
+    const html = renderToStaticMarkup(
+      createElement(TokenRow, {
+        token: token({ scopes: ["read:pages"] }),
+        now: NOW,
+        locale: "en",
+        onRevoke: () => {},
+      }),
+    );
+    expect(html).not.toContain('data-testid="token-no-scopes"');
+    expect(html).toContain("Read pages");
+  });
+});
+
+describe("renderToStaticMarkup — the scope picker", () => {
+  it("warns that the token grants nothing while no scope is picked", () => {
+    const html = renderToStaticMarkup(
+      createElement(ScopePicker, { selected: [], onToggle: () => {}, locale: "en" }),
+    );
+    expect(html).toContain('data-testid="token-scope-empty-hint"');
+    expect(html).toContain("No scope selected");
+    expect(html).not.toContain('data-testid="token-effective-scopes"');
+  });
+
+  it("shows the effective grant instead of the hint once a scope is picked", () => {
+    const html = renderToStaticMarkup(
+      createElement(ScopePicker, { selected: ["write:pages"], onToggle: () => {}, locale: "en" }),
+    );
+    expect(html).toContain('data-testid="token-effective-scopes"');
+    expect(html).toContain("Read pages");
+    expect(html).not.toContain('data-testid="token-scope-empty-hint"');
   });
 });
 

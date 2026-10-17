@@ -40,6 +40,10 @@ path that ties the pieces together.
 
 ## 2. Current state audit (evidence)
 
+This section records the state of the code **when the spec was written**. Rows
+marked *Superseded* have changed since — they name what the implementation does
+today; the specification below is unchanged.
+
 ### 2.1 Route inventory (`src/app/api/**`, 23 route files)
 
 | Group | Files | Auth | Notes |
@@ -63,12 +67,11 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
 | Concern | Evidence | State |
 | --- | --- | --- |
 | Token hashing | `src/lib/api-auth.ts:5-7` | SHA-256 hex at rest; `apiTokenMatches` uses `timingSafeEqual` (`:9-13`). |
-| Verification | `src/lib/api-auth.ts:16-35` | Bearer parse → `prisma.apiToken.findUnique({ tokenHash })` → `lastUsedAt` update (`:30-32`). Returns `{ userId }` **only — no token id, no scopes**. |
-| Minting (manual) | `src/server/actions/tokens.ts:10-21` | `noema_${randomToken(24)}`, plaintext returned once; revoke at `:23-31`. |
-| Minting (OAuth) | `src/app/oauth/token/route.ts:41-48` | Creates an `ApiToken` named `OAuth: ${app.name}`; **scope hardcoded `"read write"`** (`:53`). |
-| Schema | `prisma/schema.prisma` `model ApiToken` | `id, userId, name, tokenHash @unique, createdAt, lastUsedAt` — **no scopes, no expiry, no per-token quota**. |
-| Rate limiting | `src/lib/rate-limit.ts:143-169, 193-212` | In-memory fixed window in **two separate bounded LRU stores** (documented single-node topology, `:1-5`), each capped at 10 000 live buckets; key = `scope:clientIp` — the client IP is read from the forwarding headers **only** when `TRUSTED_PROXY_HOPS` declares the trusted proxy hops, otherwise the key is `scope:local` and every caller of the scope shares it. A **second** budget `scope:user:<id>` is keyed on the session/API-token user id and cannot be spoofed; it lives in its own store, so a flood of forged client addresses cannot evict it or reset an exhausted user window. Used as `"v1"` 120/min shared by all four v1 routes, `"oauth-token"` 30/min (`oauth/token/route.ts:11`), `"tickets-read"` 120 / `"tickets-write"` 60 (`api/tickets/route.ts:26,50`). |
-
+| Verification | `src/lib/api-auth.ts:16-35` | Bearer parse → `prisma.apiToken.findUnique({ tokenHash })` → `lastUsedAt` update (`:30-32`). *Superseded 2026-10-20 (B04, upstream #18):* the resolver returns the granted scopes as well (`{ userId, scopes }`) and every `/api/v1/*` route enforces them. |
+| Minting (manual) | `src/server/actions/api-tokens.ts:30-51` | `noema_${randomToken(24)}`, plaintext returned once; revoke at `:74-81`. `src/server/actions/tokens.ts` delegates to it. |
+| Minting (OAuth) | `src/app/oauth/token/route.ts:41-48` | Creates an `ApiToken` named `OAuth: ${app.name}`; *Superseded 2026-10-20 (B04, upstream #18):* the endpoint now mints the token with the catalogue's read and write scopes (without `admin:workspace`) and returns that list in the response's `scope` field. |
+| Schema | `prisma/schema.prisma` `model ApiToken` | `id, userId, name, tokenHash @unique, createdAt, lastUsedAt` — **no scopes, no expiry, no per-token quota**. *Superseded in part 2026-10-20 (B04, upstream #18):* the model has had a `scopes` column (`String[] @default([])`) for a while, but it was stored without being enforced; it is enforced on `/api/v1/*` now. There is still no expiry and no per-token quota. |
+| Rate limiting | `src/lib/rate-limit.ts:143-169, 193-212` | In-memory fixed window in **two separate bounded LRU stores** (documented single-node topology, `:1-5`), each capped at 10 000 live buckets; key = `scope:clientIp` — the client IP is read from the forwarding headers **only** when `TRUSTED_PROXY_HOPS` declares the trusted proxy hops, otherwise the key is `scope:local` and every caller of the scope shares it. A **second** budget `scope:user:<id>` is keyed on the session/API-token user id and cannot be spoofed; it lives in its own store, so a flood of forged client addresses cannot evict it or reset an exhausted user window. Used as `"v1"` 120/min shared by all four v1 routes, `"oauth-token"` 30/min (`oauth/token/route.ts:42`), `"tickets-read"` 120 / `"tickets-write"` 60 (`api/tickets/route.ts:26,50`). |
 ### 2.3 Webhooks & delivery
 
 | Aspect | Evidence | State |
@@ -114,10 +117,14 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
   `?page_size=100&start_cursor=…` and reads `has_more` / `next_cursor`
   (`src/server/actions/notion-import.ts:42-51`). Parity means speaking the
   same dialect outward.
-- **Consumers to keep green**: `scripts/check-api.mjs:34,40,50`,
-  `check-search.mjs:86`, `check-oauth.mjs:66`, `check-webhooks.mjs:43`,
+- **Consumers to keep green**: `scripts/check-api.mjs:51,57,67`,
+  `check-search.mjs:81`, `check-oauth.mjs:66`, `check-webhooks.mjs:47`,
   `check-routes.mjs:35` read `body.workspaces` / `body.pages` / `body.results`
-  — those keys must survive.
+  — those keys must survive. Since the grant is enforced on `/api/v1/*`, the
+  tokens these scripts mint have to carry it: `check-search.mjs` mints
+  `read:pages`, `check-webhooks.mjs` mints `write:pages`, `check-api.mjs`
+  mints `read:pages` + `write:pages` and proves the refusal with a second
+  token that has no grant and is answered with `403 insufficient_scope`.
 
 ### 2.6 Gap summary (defects this spec closes)
 

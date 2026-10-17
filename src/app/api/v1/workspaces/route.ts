@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authenticateApiRequest } from "@/lib/api-auth";
+import { hasScope } from "@/lib/api-token-scope";
 import { rateLimit } from "@/lib/api-guard";
 import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
 import { getWorkspacesPage } from "@/server/queries";
@@ -27,12 +28,28 @@ function nextLinkHeader(requestUrl: string, nextCursor: string | null): string |
  * `invalid_page_size`, unreadable cursors 400 `invalid_cursor`. When another
  * page exists, the response carries a `Link: <…>; rel="next"` header derived
  * from `next_cursor`; the body is unchanged.
+ *
+ * The bearer token must hold the `read:pages` scope; a token without it is
+ * refused with 403 `insufficient_scope`.
+ *
+ * Why `read:pages` and not `read:members`: the body is the caller's own
+ * workspace *directory* — id, name, slug, icon — and carries neither member
+ * data nor page content. The endpoint is the bootstrap step for the page
+ * routes, which all need a `workspaceId` the client can only learn here, so
+ * the read scope of that resource is the one that fits. `read:members` stays
+ * reserved for member listings, which `/api/v1` does not expose.
  */
 export async function GET(request: Request) {
   const auth = await authenticateApiRequest(request);
   const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
   if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!hasScope(auth.scopes, "read:pages")) {
+    return NextResponse.json(
+      { error: "insufficient_scope", required: "read:pages" },
+      { status: 403 },
+    );
+  }
 
   const url = new URL(request.url);
   const pageSize = url.searchParams.get("page_size");

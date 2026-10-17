@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authenticateApiRequest } from "@/lib/api-auth";
+import { hasScope } from "@/lib/api-token-scope";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { pageScopeFor } from "@/lib/guest-access";
 import { searchPagesPage } from "@/server/queries";
@@ -41,12 +42,21 @@ function parseSearchType(raw: string | null): "PAGE" | "DATABASE" | null {
  * workspace UI applies); a full member keeps the whole workspace. The scope
  * covers the ranked search — the **empty**-`q` branch ("recent pages") is
  * not scoped yet (tracked in #105).
- */
+ *
+ * The bearer token must hold the `read:pages` scope; a token without it is
+ * refused with 403 `insufficient_scope` before the workspace is even looked
+ * up. */
 export async function GET(request: Request) {
   const auth = await authenticateApiRequest(request);
   const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
   if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!hasScope(auth.scopes, "read:pages")) {
+    return NextResponse.json(
+      { error: "insufficient_scope", required: "read:pages" },
+      { status: 403 },
+    );
+  }
 
   const url = new URL(request.url);
   const workspaceId = url.searchParams.get("workspaceId");

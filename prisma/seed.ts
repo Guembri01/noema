@@ -27,6 +27,7 @@ import bcrypt from "bcryptjs";
 import { createRelationPair, setRollupConfig } from "../src/lib/relation-pairs";
 import { pageSearchText } from "../src/lib/search";
 import { welcomeDoc } from "../src/lib/welcome";
+import { DEMO_TOKEN_SCOPES } from "./demo-token";
 import { databaseIntros, pageSpecs } from "./demo-pages";
 import { databaseSpecs, relationPairs, rowLinks, type DbSpec } from "./demo-databases";
 import { seedDemoTickets, ticketCycleSpecs, ticketLabelSpecs } from "./demo-tickets";
@@ -871,7 +872,8 @@ async function main() {
     data: {
       userId: demoUserId,
       name: "Reporting script",
-      scopes: ["pages:read", "databases:read", "tickets:read"],
+      // Catalogue ids (`read:<resource>`), see `prisma/demo-token.ts`.
+      scopes: [...DEMO_TOKEN_SCOPES],
       tokenHash: "seeded-demo-token-hash-not-a-real-secret",
       lastUsedAt: daysAgo(1),
     },

@@ -69,7 +69,13 @@ beforeEach(() => {
   edge.pagePermissionFindMany.mockReset();
   edge.teamspaceMemberFindMany.mockReset();
 
-  edge.authenticateApiRequest.mockResolvedValue({ userId: "user-1" });
+  // The resolver hands back the granted scopes as well (B04): the v1 routes
+  // enforce them, so a token without `read:pages` is refused with 403 before
+  // the guest scope is even looked at.
+  edge.authenticateApiRequest.mockResolvedValue({
+    userId: "user-1",
+    scopes: ["read:pages", "write:pages"],
+  });
   edge.getWorkspaceAccess.mockResolvedValue({ role: "GUEST" });
   // The guest scope resolves for real: one shared page plus its ancestor.
   edge.pagePermissionFindMany.mockResolvedValue([{ pageId: "page-shared" }]);
