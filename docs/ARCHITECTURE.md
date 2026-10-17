@@ -107,9 +107,15 @@ finds the `Page.parentId` writes in `src/` statically — 31 of them, the same
 31 an independent TypeScript-parser inventory finds — and fails when one of
 them stores a value the helper has not proved, without a reasoned allow-list
 entry. It is a safety net over the tests, not a proof: a write it cannot
-recognise is not covered by it. It does not see a raw SQL write, a write
-outside `src/`, a member assignment (`data.parentId = …`) or the callers of an
-allow-listed helper.
+recognise is not covered by it. The holes that are known today are listed in
+the gate's own docstring — a raw SQL write, a write outside `src/`, a member
+assignment (`data.parentId = …`), a payload the gate does not follow, the
+callers of an allow-listed helper, a computed receiver (`prisma["page"]`) and
+a payload that arrives through a spread the gate cannot read. That list is a
+safety net, not an enumeration: a new shape of write can open a new hole, and
+the list only grows when somebody measures one. The shapes that *are* closed
+are pinned by the gate's own regression test
+([`scripts/check-parent-scope.test.mjs`](../scripts/check-parent-scope.test.mjs)).
 
 ## Editor
 

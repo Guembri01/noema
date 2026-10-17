@@ -164,6 +164,24 @@
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- When a page is created or moved, its parent is now checked against the
+  workspace: a page can no longer be filed under a page of another workspace.
+  It therefore no longer turns up in that workspace's database view or in its
+  CSV/JSON export, and it is no longer swept along by the foreign workspace's
+  cascade delete. The database and export views filter their rows by the
+  workspace as well — and so do the "Deleted rows" panel, the database
+  duplicate (which copies a database's rows **with their content**) and the
+  chat context that is sent to the AI, so a row that was linked across
+  workspaces before the check existed no longer surfaces there. The invariant is
+  checked mechanically where the repository gate can see it
+  (`scripts/check-parent-scope.mjs`): the gate finds the `Page.parentId` writes
+  in `src/` statically and fails when one of them stores a value the helper has
+  not proved. It is a safety net over the tests, not a proof — a write it
+  cannot recognise is not covered by it. The holes that are known today are
+  listed in the gate's own docstring, and that list is a safety net, not an
+  enumeration: a new shape of write can open a new hole, and the list only
+  grows when somebody measures one. The shapes that *are* closed are pinned by
+  the gate's own regression test (`scripts/check-parent-scope.test.mjs`).
 
 - The guest scope is now applied to every surface that hands workspace content
   to a `GUEST`, not only to the API routes. A guest could list, search, read

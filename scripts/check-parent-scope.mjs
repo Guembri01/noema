@@ -17,7 +17,11 @@
 //      with the reason why the workspace equality holds by construction.
 //   2. The value that is written may never be the raw request value
 //      (`input.parentId`, `body.parentId`, …): the checked one is the only
-//      one that is known to live in the caller's workspace.
+//      one that is known to live in the caller's workspace. That holds for
+//      the value as it is written **and** for the local it comes from: a
+//      local that mixes the raw value into the checked one
+//      (`const parentId = input.parentId ?? checked.parentId`) carries the
+//      raw value, whatever its name says.
 //
 // It is a **safety net over the tests**, not a proof. What it sees:
 //
@@ -26,13 +30,20 @@
 //     upsert` (with any receiver — `prisma.`, `tx.`, …) and the payloads
 //     that carry a `Prisma.Page*Input` type,
 //   - the three ways a parent is written: the `parentId` property, its
-//     shorthand, and the Prisma relation form `parent: { connect: { id } }`.
+//     shorthand, and the Prisma relation form `parent: { connect: { id } }`,
+//   - a payload that reaches the page through an **object spread**
+//     (`data: { ...payload }`), as long as the spread payload is a literal
+//     the gate can read.
 //
 // On the branch it finds **31** writes — the same 31 sites an independent
 // TypeScript-parser inventory of `src/` finds.
 //
 // What it does **not** see — a write it cannot recognise is *not* covered by
-// it, and the gate is no proof:
+// it, and the gate is no proof. The holes below are the ones that are
+// **known today**; the list is a safety net, not an enumeration: a new shape
+// of write can open a new hole, and the list only grows when somebody
+// measures one. `scripts/check-parent-scope.test.mjs` pins the shapes that
+// are closed, so a hole cannot re-open unnoticed.
 //
 //   - a raw SQL write (`prisma.$executeRaw`); the repo has none,
 //   - a member assignment (`data.parentId = …`), which is not an object
@@ -42,7 +53,12 @@
 //     unguarded, which is the safe direction),
 //   - the **callers** of an allow-listed helper: the gate matches a write by
 //     file, function and value, so a future caller that hands the helper a raw
-//     parent stays green (the helper itself is what rejects it).
+//     parent stays green (the helper itself is what rejects it),
+//   - a write through a **computed receiver** (`prisma["page"].create`),
+//     which the gate does not recognise as a page write at all,
+//   - a payload that reaches the page through a spread of a value whose
+//     contents the gate cannot see (`data: { ...payload }` with `payload`
+//     coming in as a parameter).
 //
 // The gate reads the source statically; it needs no database, no build and no
 // running server. It is the mechanical counterpart of the tests in
@@ -50,7 +66,7 @@
 // pins the *shape* of every write path it can see, including the ones no test
 // covers.
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 /**
@@ -535,11 +551,54 @@ function hasPrismaPageType(masked, index) {
 }
 
 /**
+ * The initializer of a declaration — the text from `=` to the end of the
+ * statement. The scan balances the brackets, so a `;` inside an object
+ * literal does not end it, and it stops at the semicolon that closes the
+ * statement (or at the start of the next statement in code without one).
+ */
+function initializer(masked, start) {
+  let depth = 0;
+  for (let i = start; i < masked.length; i += 1) {
+    const ch = masked[i];
+    if (ch === "(" || ch === "[" || ch === "{") {
+      depth += 1;
+      continue;
+    }
+    if (ch === ")" || ch === "]" || ch === "}") {
+      if (depth === 0) return masked.slice(start, i);
+      depth -= 1;
+      continue;
+    }
+    if (ch === ";" && depth === 0) return masked.slice(start, i);
+    if (ch === "\n" && depth === 0) {
+      const rest = masked.slice(i).trimStart();
+      if (
+        /^(?:const|let|var|return|await|if|for|while|switch|try|throw|export|import|function)\b/.test(
+          rest,
+        )
+      ) {
+        return masked.slice(start, i);
+      }
+    }
+  }
+  return masked.slice(start);
+}
+
+/**
  * The names that carry the parent the helper proved: the helper's own result
- * field and every local that was assigned from it.
+ * field and every local that was assigned from it — and, separately, the
+ * locals whose assignment carries the **raw** request value.
+ *
+ * The two are different things. `const parentId = checked.parentId` carries
+ * the proved value; `const parentId = input.parentId ?? checked.parentId`
+ * carries the raw one — the name is the same, the value is not. A local that
+ * mentions the raw request value is therefore **tainted**: it must never be
+ * mistaken for the checked one, or the gate would call a raw write
+ * "guarded".
  */
 function checkedNames(body) {
   const names = new Set();
+  const tainted = new Set();
   const call = new RegExp(
     `(?:const|let|var)\\s+([A-Za-z0-9_$]+)\\s*=\\s*await\\s*${HELPER}\\(`,
     "g",
@@ -548,14 +607,25 @@ function checkedNames(body) {
   while ((match = call.exec(body)) !== null) {
     const result = match[1];
     names.add(`${result}.parentId`);
-    const local = new RegExp(
-      `(?:const|let|var)\\s+([A-Za-z0-9_$]+)\\s*=\\s*[^;]*?\\b${result}\\.parentId\\b`,
-      "g",
-    );
+    const field = new RegExp(`\\b${result}\\.parentId\\b`);
+    const helperCall = new RegExp(`await\\s+${HELPER}\\(`);
+    // Every local of the function — the declaration is read, not guessed.
+    const local = /(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*=\s*/g;
     let found;
-    while ((found = local.exec(body)) !== null) names.add(found[1]);
+    while ((found = local.exec(body)) !== null) {
+      const name = found[1];
+      const init = initializer(body, found.index + found[0].length);
+      // The result of the helper *takes* the raw request value as its
+      // argument — it is the proved value, so it is never tainted by it.
+      if (helperCall.test(init)) continue;
+      if (RAW_REQUEST_VALUE.test(init)) {
+        tainted.add(name);
+        continue;
+      }
+      if (field.test(init)) names.add(name);
+    }
   }
-  return names;
+  return { names, tainted };
 }
 
 /** Whether the expression mentions one of the checked names. */
@@ -573,6 +643,18 @@ function mentionsChecked(value, names) {
 }
 
 /**
+ * The tainted local the written value mentions — the raw request value hides
+ * in it. A plain name only counts when it stands on its own: `checked.parentId`
+ * is the checked field, `parentId` is the local.
+ */
+function taintedName(value, tainted) {
+  for (const name of tainted) {
+    if (new RegExp(`(?<![.\\w$])${name}\\b`).test(value)) return name;
+  }
+  return null;
+}
+
+/**
  * The variable an object literal is assigned to (`const payload = { … }`).
  */
 function assignedVariable(masked, brace) {
@@ -586,9 +668,14 @@ function assignedVariable(masked, brace) {
  * Whether the name is used inside a page write call. That is what turns an
  * object literal that is only *assigned* to a variable into a page write:
  * the payload is handed to `page.create({ data })` further down.
+ *
+ * The name may reach the write as a plain reference (`data: payload`) or
+ * through an **object spread** (`data: { ...payload }`). The spread carries
+ * its own dots, so a plain lookbehind never matched it — and a write that
+ * arrives through a spread was not counted at all.
  */
 function usedInPageWrite(masked, name) {
-  const pattern = new RegExp(`(?<![.\\w$])${name}\\b`, "g");
+  const pattern = new RegExp(`(?<![.\\w$])${name}\\b|\\.\\.\\.${name}\\b`, "g");
   let match;
   while ((match = pattern.exec(masked)) !== null) {
     if (enclosingCallees(masked, match.index).some((callee) => PAGE_WRITE.test(callee))) {
@@ -730,12 +817,16 @@ for (const path of collectFiles(root)) {
     const fn = enclosingFunction(functions, index);
     const fnName = fn ? fn.name : "<module scope>";
     const body = fn ? masked.slice(fn.start, fn.end) : masked;
-    const names = checkedNames(body);
+    const { names, tainted } = checkedNames(body);
 
     const entry = ALLOW_LIST.find(
       (item) => item.file === file && item.fn === fnName && item.value === value,
     );
+    // A local that carries the raw request value is the raw value, whatever
+    // its name says (`const parentId = input.parentId ?? checked.parentId`).
+    const taintedLocal = taintedName(value, tainted);
     let verdict;
+    let raw = false;
     if (entry) {
       usedEntries.add(entry);
       verdict = "allow-listed";
@@ -745,6 +836,10 @@ for (const path of collectFiles(root)) {
       // A raw request value in the expression — even next to a checked one
       // (`parent.parentId ?? input.parentId`) — is a raw request value.
       verdict = "unguarded";
+      raw = true;
+    } else if (taintedLocal) {
+      verdict = "unguarded";
+      raw = true;
     } else if (names.size > 0 && mentionsChecked(value, names)) {
       verdict = "guarded";
     } else {
@@ -754,11 +849,14 @@ for (const path of collectFiles(root)) {
     checked.push({ file, line: lineOf(source, index), fn: fnName, value, verdict });
 
     if (verdict !== "unguarded") continue;
-    if (RAW_REQUEST_VALUE.test(value)) {
+    if (raw) {
+      const hint = taintedLocal
+        ? ` (the local \`${taintedLocal}\` is assigned from the raw request value)`
+        : "";
       problems.push({
         file,
         line: lineOf(source, index),
-        text: `parentId: ${value} — write the value ${HELPER}() returned, not the raw request value`,
+        text: `parentId: ${value} — write the value ${HELPER}() returned, not the raw request value${hint}`,
       });
       continue;
     }
@@ -772,7 +870,20 @@ for (const path of collectFiles(root)) {
 
 /* ------------------------------------------------------------------- report */
 
+/**
+ * Whether an allow-list entry belongs to the tree the gate scans. The
+ * allow-list describes the repository; a run over a fixture tree (the gate's
+ * own regression test) has no entries of its own, and the repository's must
+ * not be reported as stale there.
+ */
+function inScope(entry, root) {
+  const inside = relative(root, entry.file);
+  if (!inside || inside.startsWith("..")) return false;
+  return existsSync(join(root, inside));
+}
+
 for (const entry of ALLOW_LIST) {
+  if (!inScope(entry, root)) continue;
   if (!usedEntries.has(entry)) {
     problems.push({
       file: entry.file,
