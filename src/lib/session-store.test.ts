@@ -69,6 +69,33 @@ describe("session registry — register & list", () => {
     expect(isSessionRevoked("anything")).toBe(false);
   });
 
+  it("keeps a revoked record as long as its token can be replayed", () => {
+    // B129: the row used to be dropped a week after the revocation. The
+    // token of the session lives 30 days, and the request path treats an
+    // unknown sid as a legacy session (fail-open) — so a revoked session
+    // that the registry had forgotten was accepted again.
+    const record = registerSession({ userId: "user-a", device: "Chrome" });
+    expect(revokeSessionForUser(record.sid, "user-a")).toBe("revoked");
+
+    // Eight days later: the revocation is still known.
+    const records = JSON.parse(readFileSync(storePath(), "utf8")) as Array<{
+      sid: string;
+      revokedAt: string | null;
+    }>;
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+    writeFileSync(
+      storePath(),
+      JSON.stringify(
+        records.map((r) => (r.sid === record.sid ? { ...r, revokedAt: eightDaysAgo } : r)),
+      ),
+      "utf8",
+    );
+
+    registerSession({ userId: "user-a", device: "Edge" });
+
+    expect(isSessionRevoked(record.sid)).toBe(true);
+  });
+
   it("prunes records past the 30-day session lifetime on the next write", () => {
     const stale = registerSession({ userId: "user-a", device: "Chrome" });
     // Backdate the record beyond SESSION_DAYS.

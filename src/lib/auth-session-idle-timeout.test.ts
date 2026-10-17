@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -100,6 +100,24 @@ describe("session idle timeout — the request path", () => {
     // must not sign every device out.
     rmSync(join(dir, "sessions.json"), { force: true });
     expect(await getSessionUserId()).toBe("user-a");
+  });
+
+  it("a session without a registry row dies after the idle window, not after 30 days", async () => {
+    // B129: the registry is unwritable → the sign-in still succeeds (a broken
+    // store must not block authentication) → but the session is not in the
+    // registry: nothing can revoke it, nothing can list it, and nothing
+    // enforces the idle deadline for it. Such a session therefore carries the
+    // idle window instead of the 30 days of the token.
+    const blocker = join(dir, "not-a-directory");
+    writeFileSync(blocker, "x", "utf8");
+    process.env.SESSION_STORE_PATH = join(blocker, "sessions.json");
+
+    await createSession("user-a");
+    expect(await getSessionUserId()).toBe("user-a");
+
+    // Past the idle window the session is over — it does not live 30 days.
+    vi.setSystemTime(T0 + 13 * HOUR);
+    expect(await getSessionUserId()).toBeNull();
   });
 
   it("keeps the cookie itself — an expired session is not deleted, only refused", async () => {
