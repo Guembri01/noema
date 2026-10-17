@@ -23,15 +23,14 @@
 // read of `.parentId` was invisible in six forms (the optional chain, the
 // computed member, the indexed member, the non-null assertion, the result of
 // a call, the computed member of a spread), and the compound assignments
-// (`&&=`, `||=`, `??=`) were no assignments the gate saw at all. The round-8
+// (`&&=`, `||=`, `??=`) were no assignments the gate saw at all. The round-7
 // review measured three more shapes the gate released and that were in none
 // of the known holes (a member whose key is not the literal, the same with
 // the key in a local, and the reflective read) and the compound assignment of
-// the arithmetic family (`+=`) — the round-9 review then found that `|=` was
+// the arithmetic family (`+=`) — the round-8 review then found that `|=` was
 // still released, so **every** compound assignment is pinned now, one fixture
-// per operator. A last
-// fixture is the *clean* case: a write through the helper has to stay green,
-// because a gate that fails everything is no gate.
+// per operator. The last fixtures are the *clean* cases: a write through the
+// helper has to stay green, because a gate that fails everything is no gate.
 //
 // The shapes the gate still does **not** cover have a fixture of their own
 // (`blind: true`): the gate releases them today, the gate's docstring lists
