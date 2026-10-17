@@ -104,6 +104,14 @@ jobs:
       # runs with it, so the shapes that once slipped through stay reported.
       - name: Image pins
         run: node scripts/check-image-pins.mjs && node scripts/check-image-pins.test.mjs
+      # The compose stack must not publish its database on every interface of
+      # the machine, and it must not carry a fixed database password: the
+      # password comes from `.env`, and Compose refuses to start without it.
+      # The gate reads the compose file and the `.env` template; its own
+      # regression test runs with it, so the shapes the gate closes stay
+      # closed.
+      - name: Compose exposure
+        run: node scripts/check-compose-exposure.mjs && node scripts/check-compose-exposure.test.mjs
 
       # Every commit — author *and* committer date — must land inside a Noema
       # authoring window (Wed–Sat evenings, Europe/Paris). See

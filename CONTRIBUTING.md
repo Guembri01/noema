@@ -14,8 +14,8 @@ Requirements: **Node.js 24** (see [`.nvmrc`](./.nvmrc)), **npm**, and
 **Docker** for the development database.
 
 ```bash
-docker compose up -d        # Postgres 16 in the `noema-db` container, on :5433
-cp .env.example .env        # then set a real AUTH_SECRET (the file shows how)
+cp .env.example .env        # then set POSTGRES_PASSWORD and a real AUTH_SECRET (the file shows how)
+docker compose up -d        # Postgres 16 in the `noema-db` container, on 127.0.0.1:5433
 npm install                 # postinstall runs `prisma generate`
 
 npm run db:push             # create the schema

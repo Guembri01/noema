@@ -205,6 +205,13 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   appeared in the tracker and in `GET /api/tickets`. Every reference is now
   validated against the ticket's workspace before it is written, and the selects
   are scoped to the workspace column.
+- The compose stack no longer publishes its database on every interface of the
+  machine, and it no longer starts it with a password that is written down in
+  the file. The port is bound to the loopback, and the password is read from
+  `.env` with a mandatory interpolation — so Compose refuses to start when the
+  value is missing. `.env.example` ships the password empty, and a gate
+  (`scripts/check-compose-exposure.mjs`) fails when a database is published
+  without a loopback address or carries a fixed password.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.

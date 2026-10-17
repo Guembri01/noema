@@ -391,11 +391,11 @@ Requirements: **Node.js 24** (the toolchain is typed against Node 24 —
 `@types/node ^24`), **npm**, **Docker**.
 
 ```bash
-# 1. Database — Postgres 16 in the `noema-db` container, mapped to localhost:5433
-docker compose up -d
+# 1. Environment — required keys: POSTGRES_PASSWORD, DATABASE_URL (already points at :5433), AUTH_SECRET
+cp .env.example .env        # then set POSTGRES_PASSWORD and a real AUTH_SECRET (see .env.example for the generators)
 
-# 2. Environment — required keys: DATABASE_URL (already points at :5433), AUTH_SECRET
-cp .env.example .env        # then set a real AUTH_SECRET (see .env.example for the generator)
+# 2. Database — Postgres 16 in the `noema-db` container, mapped to 127.0.0.1:5433
+docker compose up -d        # refuses to start without POSTGRES_PASSWORD
 
 # 3. Install dependencies (postinstall runs `prisma generate`)
 npm install

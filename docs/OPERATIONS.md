@@ -10,7 +10,7 @@
 
 | Process | Command | Port | Notes |
 | --- | --- | --- | --- |
-| Database | `docker compose up -d` | `localhost:5433` → 5432 | container `noema-db`, volume `noema-db-data` |
+| Database | `docker compose up -d` | `127.0.0.1:5433` → 5432 | container `noema-db`, volume `noema-db-data`; needs `POSTGRES_PASSWORD` in `.env` |
 | App (dev) | `npm run dev` | 3000 (dev loop: 3201) | `next dev --turbopack` |
 | App (prod) | `npm run build` then `npm start -- --port 3200` | 3200 (default `npm start`: 3000) | **dev and prod share `.next` — never run both at once** |
 | Collab relay | `npm run collab` | 1234 (`PORT`/`HOST` env) | optional; clients need `NEXT_PUBLIC_COLLAB_URL` |
@@ -476,9 +476,15 @@ docker compose --profile app down           # stops app+db, KEEPS the noema-db-d
 docker compose down -v                      # ⚠ DESTRUCTIVE: deletes the noema-db-data volume
 ```
 
+**An existing volume keeps its old password.** The Postgres image honours
+`POSTGRES_PASSWORD` only when it initialises the volume, so a development
+volume that was created before the password became mandatory no longer
+matches the `.env`. Either set the old password in `.env` for that volume,
+or start with a fresh one: `docker compose down -v && docker compose up -d`.
+
 Facts from the compose file:
 
-- **`db`**: `postgres:16-alpine`, `noema-db`, `5433:5432`, restart
+- **`db`**: `postgres:16-alpine`, `noema-db`, `127.0.0.1:5433:5432` (the loopback only — a published port without a host part binds every interface), the password from `POSTGRES_PASSWORD` in `.env` (the stack refuses to start without it), restart
   `unless-stopped`, healthcheck `pg_isready -U noema -d noema` every 5 s.
 - **`app`** (`profiles: ["app"]`): builds `noema-app:local` from the repo
   `Dockerfile`, `env_file: .env` (secrets at run time, never baked into the
