@@ -60,6 +60,10 @@ jobs:
       - run: npx vitest run --maxWorkers=2
       - run: npm run check:coherence
       - run: npm run check:use-server
+      # Client-bundle guard: a client component that reaches a `node:` built-in
+      # passes tsc, passes tests, and works in `next dev` — and then fails
+      # `next build` with UnhandledSchemeError. That happened once; never again.
+      - run: npm run check:client
       # Design-system + motion ratchets. Both are pure file scans (no DB, no
       # browser) and their baselines are 0, so any new raw hex, magic z-index,
       # ad-hoc duration, legacy palette class or literal easing fails the build.

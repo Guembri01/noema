@@ -1,6 +1,12 @@
-# Pinned so every contributor and CI runner builds the shell identically.
+# The Rust toolchain for the desktop shell.
+#
+# `stable` rather than a hard pin: several crates in the Tauri tree now require
+# Rust 1.85+ (edition 2024), and pinning an older minor here breaks the build with
+# an error that looks unrelated ("feature `edition2024` is required"). CI pins the
+# exact version through `dtolnay/rust-toolchain@stable`; a release build should
+# record the version it used in the release notes.
 [toolchain]
-channel = "1.82.0"
+channel = "stable"
 components = ["rustfmt", "clippy"]
 targets = []
 profile = "minimal"

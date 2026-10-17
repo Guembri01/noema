@@ -252,6 +252,8 @@ without `.u-no-transition`, `@keyframes` outside `tokens.css`). Motion vocabular
 now includes a constant-rate token (`--ease-linear`) for loops and for
 time-locked indicators such as the undo countdown.
 
-Companion gates: `npm run check:coherence`, `npm run check:use-server`, and the
-visual harness `npm run visual:check` (local or PR review — it needs a seeded
-database and a browser, so it is intentionally not a CI step).
+Companion gates: `npm run check:coherence`, `npm run check:use-server`,
+`npm run check:client` (no client component may reach a `node:` built-in — the
+bug class that made `next build` fail while every test passed), and the visual
+harness `npm run visual:check` (local or PR review — it needs a seeded database
+and a browser, so it is intentionally not a CI step).

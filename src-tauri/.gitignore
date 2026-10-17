@@ -7,3 +7,5 @@
 !/icons/README.md
 Cargo.lock.bak
 *.log
+/server/
+/dist/output/

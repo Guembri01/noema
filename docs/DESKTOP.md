@@ -5,12 +5,11 @@ One codebase, two shipped products:
 | | **Site version** | **App version** |
 |---|---|---|
 | What | the hosted web app | the installable desktop app |
-| Runtime | Next.js server + Postgres | Tauri 2 (Rust) shell + a supervised local Next server |
-| Database | Postgres (pg_trgm + tsvector) | local database in the user's data directory |
-| Build | `npm run site:build` → `next start`, or `docker compose up --build` | `npm run desktop:build` → NSIS/MSI/DMG/AppImage/deb/rpm |
-| Update | redeploy the container | in-app updater (signed, `tauri-plugin-updater`) |
+| Runtime | Next.js server + Postgres | Tauri 2 (Rust) shell + a bundled Node runtime running the same Next server |
+| Database | Postgres | Postgres (same schema; connection string configurable on first run) |
+| Build | `npm run site:build` → `next start`, or `docker compose up --build` | `npm run desktop:bundle` → `Noema_x.y.z_x64-setup.exe` (NSIS) + `.msi` |
 | Users | many accounts, workspaces, SSO | one local user, no account required |
-| Entry | `npm run dev` / `npm run start` | `npm run desktop:dev` / `npm run desktop:build` |
+| Entry | `npm run dev` | `npm run desktop:dev` / `npm run desktop:build` |
 
 Everything under `src/**` — components, engines, database code, AI — is shared.
 Only four things differ, and they are resolved in **one module**
@@ -27,46 +26,66 @@ Only four things differ, and they are resolved in **one module**
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│ Noema.app / Noema.exe                     (Rust, tauri 2)     │
+│ Noema.exe / Noema.app                      (Rust, tauri 2)    │
 │                                                               │
-│  window (WKWebView / WebView2 / WebKitGTK)                    │
+│  window (WebView2 / WKWebView / WebKitGTK)                    │
 │    ▲  loads http://127.0.0.1:<port>                           │
 │    │  window.__NOEMA_DESKTOP__ = { apiBase, dataDir, … }      │
 │    │                                                          │
 │  ┌─ shell ────────────────────────────────────────────────┐   │
 │  │ sidecar supervisor  (src-tauri/src/sidecar.rs)         │   │
 │  │  · picks a free loopback port                          │   │
-│  │  · spawns `noema-server` with the data dir + env       │   │
-│  │  · polls /api/ready until 200 (45 s budget)            │   │
+│  │  · spawns `noema-node` (bundled runtime) on start.cjs  │   │
+│  │  · polls /api/ready until 200 (90 s budget)            │   │
 │  │  · streams stdout/stderr → logs/noema.log + UI         │   │
 │  │  · restarts with backoff if it dies (500ms…10s)        │   │
-│  │  · stops it cleanly on quit (8 s grace)                │   │
+│  │  · stops it cleanly on quit                            │   │
 │  ├───────────────────────────────────────────────────────┤   │
-│  │ native: menus, tray, deep links (noema://), updater,   │   │
-│  │ single-instance, window state, notifications, dialogs  │   │
+│  │ native: menus, tray, window state, single instance,    │   │
+│  │ dialogs, filesystem, notifications-ready hooks         │   │
 │  └───────────────────────────────────────────────────────┘   │
 │                          │ spawns                              │
 │                          ▼                                     │
-│  noema-server  (Node SEA single executable)                    │
-│    Next.js standalone server, bound to 127.0.0.1:<port>        │
-│    data dir: …/Application Support/app.noema.desktop/          │
-│      noema.db  uploads/  logs/  backups/                       │
+│  noema-node.exe  (the Node runtime we built with)              │
+│    runs <resources>/server/start.cjs                           │
+│      1. `prisma migrate deploy`  (idempotent, every launch)     │
+│      2. require('./server.js')   — the Next standalone server   │
+│    bound to 127.0.0.1:<port>                                   │
 └───────────────────────────────────────────────────────────────┘
 ```
 
-Why this shape:
+### Why a bundled runtime and not a Node SEA single executable
 
-- **No Node install required** — the server is a Node *Single Executable
-  Application* (SEA), produced by `scripts/desktop/sidecar.mjs` and injected with
-  `postject`. Tauri packs it as an `externalBin`, so the installer contains one
-  server executable per platform.
+The first design folded the server into a Node *Single Executable Application*.
+That cannot work here, and the build proves it rather than hoping:
+
+- `next build --output standalone` keeps its dependency graph in `node_modules`
+  and loads it with **dynamic `require`** — a SEA blob only exposes built-in
+  modules and its own embedded assets, so `require("next/dist/…")` fails.
+- Prisma loads a **native query engine** (`.node`/`.dll.node`) from disk.
+
+So the app ships the Node runtime itself (`noema-node-<triple>[.exe]`, a real
+`node` copied from the machine that built it, declared as a Tauri `externalBin`).
+The result still requires **nothing of the user** — no Node install, no PATH
+surgery, no admin rights — and the installer stays a single double-click.
+
+### Why a boot wrapper
+
+`server/start.cjs` (written by `scripts/desktop/prepare.mjs`) runs
+`prisma migrate deploy` and then requires the Next server. Migrations therefore
+happen on **every launch**: idempotent, cheap, and it means an app update can
+never leave the schema behind the code. If the database is unreachable the server
+still boots, `/api/ready` reports not-ready, and the app's own bootstrap page
+explains it instead of showing a white window.
+
+Other deliberate choices:
+
 - **Loopback only** — the server binds `127.0.0.1` on an ephemeral port chosen by
-  the kernel. Nothing is reachable from the network, two installs can run side by
-  side, and "which port?" is never a user-visible question.
-- **The shell survives a dead server** — the window opens immediately on a small
-  bundled page ("starting…") and swaps to the app once `/api/ready` answers. If
-  it never does, the page offers **Retry** and **Open data folder** instead of a
-  white screen.
+  the kernel. Nothing is exposed to the network, and two installs run side by side.
+- **The shell survives a dead server** — the window opens immediately on a
+  bundled page and swaps to the app once `/api/ready` answers. If it never does,
+  that page offers **Retry**, **Open data folder**, **Copy diagnostics**, and a
+  **database connection** field.
 - **Rust owns the OS, JavaScript owns the product.** No business logic is
   duplicated in Rust: the shell starts, supervises, exposes native power and gets
   out of the way.
@@ -76,50 +95,54 @@ Why this shape:
 | Concern | Decision |
 |---|---|
 | Server exposure | loopback only, ephemeral port, no `0.0.0.0` |
-| Webview ↔ server | explicit `APP_ORIGINS` allow-list (the loopback origin), CSP in `tauri.conf.json` |
-| Webview ↔ shell | only the commands in `src-tauri/src/commands.rs`; the IPC bridge is a frozen object (`Object.freeze`) |
-| Capabilities | `default.json` = least privilege for boot; `desktop-everything.json` = the broad set the product asked for (filesystem, dialogs, shell, notifications, updater, deep links, tray). Drop `desktop-everything` from `security.capabilities` for a hardened build |
-| Secrets | never in the bundle; the app is local, so there is nothing to sign in to |
-| Telemetry | off (`NEXT_TELEMETRY_DISABLED=1`, no crash reporting by default) |
-| Updates | signed artifacts only (`TAURI_SIGNING_PRIVATE_KEY` in CI); the pubkey lives in `tauri.conf.json` |
-| Supply chain | `npm ci` with a lockfile, `cargo` with a lockfile, CI builds from tags |
+| Webview ↔ server | explicit `APP_ORIGINS` allow-list (the loopback origin) + CSP in `tauri.conf.json` |
+| Webview ↔ shell | only the commands in `src-tauri/src/commands.rs`; IPC granted to the loopback origin via a capability with `remote.urls` |
+| Secrets | a database password can live in the connection string; it is **redacted** before diagnostics leave the shell (unit-tested in `commands.rs`) |
+| Capabilities | `default.json` = least privilege for boot; `desktop-everything.json` = the broad set the product asked for (filesystem, dialogs, shell, opener). Drop it for a hardened build |
+| Telemetry | off (`NEXT_TELEMETRY_DISABLED=1`) |
+| Updates | **deferred on purpose** — see §8 |
 
 ## 3. Data, backup and portability
 
-The app is local-first, so data ownership is explicit:
-
 ```
-<data dir>/
-  noema.db        the database
-  uploads/        uploaded files (served by /api/files/…)
-  logs/           noema.log (rotated), plus the shell's own lines
-  backups/        automatic backups, pruned by /api/cron/backups
+<data dir>/                 (%APPDATA%\app.noema.desktop on Windows)
+  logs/                     noema.log — the shell and the server share it
+  uploads/                  uploaded files
+  backups/                  automatic backups
+  preferences.json          window state, theme, database URL
 ```
 
-- **Data dir** — `app.path().app_data_dir()`; `NOEMA_DATA_DIR` overrides it (portable installs, CI, "put my notes on an external drive").
-- **Backup** — *Data → Back up now* (`Cmd/Ctrl+Shift+B`) or `shell://backup`; retention is the configurable policy in `src/lib/backup-retention.ts`.
-- **Move to another machine** — copy the data dir; the database is a single file.
-- **Leave the app** — every export path is shared with the site version (Markdown, HTML, CSV, workspace zip).
+- **Data dir** — `app.path().app_data_dir()`; `NOEMA_DATA_DIR` overrides it
+  (portable installs, CI, "put my notes on an external drive").
+- **Database** — the workspace data lives in Postgres, so "where is my data" has
+  two honest answers: app files in the data dir, content in the database. §8
+  explains the trade-off and the plan.
+- **Backup** — *Data → Back up now* (`Cmd/Ctrl+Shift+B`); retention is the policy
+  in `src/lib/backup-retention.ts`.
+- **Leave the app** — every export path is shared with the site version
+  (Markdown, HTML, CSV, workspace zip).
 
 ## 4. Building it
 
 ```bash
-# 1. one-time: prerequisites (Node 20+, Rust stable, platform webview deps)
+# 0. one-time prerequisites (Node 20+, Rust stable, MSVC Build Tools on Windows)
 npm run desktop:preflight      # tells you exactly what is missing, with the fix
+npm run desktop:icons          # generates every icon size from assets/icon.png
 
-# 2. icons (generated from one 1024 px source, never hand-edited)
-npm run desktop:icons          # npx tauri icon assets/icon.png
+# 1. package the payload: next build (standalone) + static/public + Prisma CLI
+#    + the Node runtime copied into src-tauri/binaries/
+npm run desktop:prepare
 
-# 3. develop: web dev server + the shell, hot reload on both sides
+# 2. develop: web dev server + the shell, hot reload on both sides
 npm run desktop:dev            # beforeDevCommand starts `next dev --port 3200`
 
-# 4. build the sidecar + installers
-npm run desktop:sidecar        # Next standalone → dist/sea-prep.blob → src-tauri/binaries/
-npm run desktop:bundle         # NSIS + MSI + DMG + AppImage + deb + rpm
+# 3. build the installers
+npm run desktop:bundle         # NSIS .exe + .msi
 ```
 
-`NOEMA_SIDECAR_MODE=shim` builds a development shim that uses the system `node`
-instead of the SEA binary — useful when you are iterating on the server.
+`cargo tauri` is the CLI (`cargo install tauri-cli --version ^2 --locked`), so no
+npm dependency has to change to build the app. A JS-driven team can use
+`@tauri-apps/cli` instead; the config is identical.
 
 ### The one flag that splits the outputs
 
@@ -131,73 +154,82 @@ instead of the SEA binary — useful when you are iterating on the server.
 ```
 
 The site build (`next start`, the Docker image) therefore behaves exactly as
-before, and the desktop sidecar opts in. `site.yml` asserts this invariant in CI.
+before, and the desktop build opts in. `scripts/desktop/prepare.mjs` sets the
+flag; `site.yml` asserts the invariant that a site build never emits
+`standalone/server.js`.
 
 ## 5. Release process
 
-1. Bump the version in **both** `package.json` and `src-tauri/tauri.conf.json`
-   (they must match; the updater compares against `tauri.conf.json`).
-2. Tag: `git tag v1.4.0 && git push --tags`.
-3. `desktop.yml` builds four targets (win-x64, linux-x64, mac-arm64, mac-x64),
-   runs `cargo fmt --check`, `cargo clippy -D warnings` and `cargo test`, signs the
-   artifacts, and opens a **draft** release with the updater manifest
-   (`includeUpdaterJson`).
-4. Review the draft, then publish. Installed apps pick the update up on next
-   launch (or immediately via *Help → Check for updates…*).
-5. `site.yml` publishes the container image to GHCR and runs the compose smoke
-   test against `/api/ready`.
+1. Bump the version in **both** `package.json` and `src-tauri/tauri.conf.json`.
+2. `npm run desktop:bundle` (or the `desktop.yml` matrix, which does this on
+   Windows, macOS and Linux and uploads the artifacts to a draft release).
+3. Ship the NSIS `.exe` (per-user install, no admin prompt) and/or the `.msi`.
+
+The app intentionally ships **unsigned** until certificates exist; §8 explains
+what that means for the user (SmartScreen) and what is already wired for signing.
 
 ## 6. Testing
 
 | Layer | What runs |
 |---|---|
-| Rust (shell) | `cargo test` — data-dir layout, loopback URL shape, SQLite URL normalisation, env contract, restart backoff, free-port behaviour, layout creation (in `src-tauri/src/sidecar.rs`), log ring buffer (`logging.rs`) |
+| Rust (shell) | `cargo test` — data-dir layout, loopback URL shape, resource path, env contract (incl. the database URL), restart backoff bounds, free-port behaviour, layout creation, log ring buffer, connection-string redaction |
 | Rust (quality) | `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` |
 | Shared TS | the whole existing suite — the app version adds **no** forked logic |
 | Runtime mode | `src/lib/runtime-mode.test.ts` (site vs desktop, API base, data dir, version, capabilities, SSR safety) |
-| Packaging | `desktop:preflight` on every run; `site.yml` asserts the site build never emits `standalone/server.js` |
-| Manual smoke | launch, wait for the window to swap in, create a note, quit, relaunch (state + window geometry restored), pull the network cable (app keeps working) |
+| Packaging | `desktop:preflight` on every run; `site.yml` asserts the site build never emits a standalone server |
+| Manual smoke | install → first run → the swap from "starting…" to the workspace → create a note → quit → relaunch (window geometry + theme restored) |
 
 ## 7. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Window stuck on "Noema is starting…" | sidecar crashed | Retry button, then `logs/noema.log`; `Data → Restart local server` |
-| `noema-server` missing at build time | sidecar not built | `npm run desktop:sidecar` (needs `postject` for SEA, or `NOEMA_SIDECAR_MODE=shim`) |
-| `cargo` not found | no Rust toolchain | <https://rustup.rs> |
-| Linux: `webkit2gtk` errors | missing native deps | see the apt line in `desktop:preflight` output |
+| Window stays on "Noema is starting…" | server not ready | open **Advanced: database connection**, paste a working `DATABASE_URL`, **Save & restart**; **Copy diagnostics** pastes a redacted report |
+| `prisma migrate deploy` fails | database missing or unreachable | create the database (e.g. `docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine`) or point the app at an existing one |
+| `link.exe not found` | no MSVC toolchain | install VS Build Tools with "Desktop development with C++" |
+| `cargo` not found | no Rust | <https://rustup.rs> |
+| `binaries/noema-node-…` missing | payload not prepared | `npm run desktop:prepare` |
 | Icon error while bundling | icon set not generated | `npm run desktop:icons` |
-| Two copies fight over data | same data dir | set `NOEMA_DATA_DIR` per install |
+| Two copies fight over state | same data dir | set `NOEMA_DATA_DIR` per install |
 
 ## 8. Known limits (honest list)
 
-- **Verified here:** the shared TypeScript core, the runtime-mode switch, the
-  preflight script, the CI configuration, and every existing test suite. **Not
-  verified here:** `cargo build`/`cargo test` and a real installer — this machine
-  has no Rust toolchain, so the Rust crates and the bundling steps must be
-  compiled on a machine with `rustc`/`cargo` (or in CI, which is set up to do it).
-- The SEA sidecar needs `postject`; it is not vendored (no dependency was added to
-  `package.json`), so the first build asks you to `npm i -D postject` or to use
-  the shim.
-- Local-mode database choice: the shell passes a `file:` SQLite URL
-  (`DATABASE_URL`). The schema currently targets Postgres features (full-text
-  search, `pg_trgm`), so a SQLite local mode needs a schema decision
-  (`docs/specs/engineering-hardening.md`) or the embedded-Postgres sidecar
-  documented in §9.
-- macOS: closing the window hides the app; **File → Quit** (⌘Q) really quits.
-  That matches the platform convention but surprises Windows users.
-- `desktop-everything.json` is deliberately broad (product decision). Narrow it
-  before shipping to an untrusted-user scenario.
+- **The desktop app currently talks to Postgres.** The schema uses Postgres
+  full-text search (`tsvector`, `pg_trgm`), so a self-contained desktop build
+  needs either a SQLite-compatible schema or an embedded Postgres. Until that
+  lands, the installer expects a reachable Postgres — a local container is enough
+  — and the first-run screen makes that configurable without a reinstall. This is
+  the single biggest remaining gap between "installable" and "no prerequisites".
+- **No auto-updater yet.** The updater needs a signing key pair and a release
+  endpoint; shipping one that cannot verify a signature would be worse than
+  shipping none, so the menu item resolves to "up to date" and `docs/DESKTOP.md`
+  §9 records the plan.
+- **Unsigned binaries.** Windows SmartScreen will warn until a code-signing
+  certificate is installed; `desktop.yml` already threads the signing secrets.
+- **macOS**: closing the window hides the app; **File → Quit** (⌘Q) really quits.
+  Native, but surprising for Windows users.
+- **`desktop-everything.json` is deliberately broad** (product decision). Narrow
+  it for an untrusted-user scenario.
+- **Verified where**: `cargo build`, `cargo test`, the packaging steps and the
+  installer run on a Windows machine with the MSVC toolchain (this repo's
+  environment). macOS/Linux installers are produced by `desktop.yml` on native
+  runners.
 
 ## 9. Deferred, with the design already chosen
 
-- **Embedded database without Postgres** — either a SQLite-compatible Prisma
-  schema (drop `tsvector`/`pg_trgm`, use the pure `src/lib/fts.ts` ranking) or ship
-  a small Postgres as a second sidecar (bigger installer, closer parity). The
-  shell already isolates the choice to one env var (`DATABASE_URL`).
-- **Code signing** — Windows (EV/OV certificate) and macOS (notarisation) secrets
-  are wired into `desktop.yml`; the certificates themselves are procurement.
-- **Portable build** — `NOEMA_DATA_DIR=./data` next to the executable gives a
-  portable install; a dedicated `desktop:portable` target is a small addition.
-- **Crash reporting** — the `crash-reporting` cargo feature exists, off by
-  default.
+- **Embedded database (the big one)** — two options, both already scoped:
+  1. **SQLite**: a `schema.desktop.prisma` with `provider = "sqlite"`, replace
+     `tsvector`/`pg_trgm` search with the pure `src/lib/fts.ts` ranking, and swap
+     the GIN-index setup for `LIKE`-backed ranking. Cheapest to ship, loses
+     Postgres-specific query plans.
+  2. **Bundled Postgres**: ship the Postgres binaries as resources and have the
+     shell `initdb` a cluster in the data dir and start it as a second sidecar.
+     Bigger installer (~80 MB), exact feature parity, no schema fork.
+  The shell already isolates the choice to one env var (`DATABASE_URL`), and the
+  first-run screen already accepts a connection string — so either path is a
+  packaging change, not a rewrite.
+- **Auto-updater** — `tauri-plugin-updater` + `createUpdaterArtifacts`, a pubkey
+  in `tauri.conf.json`, and `TAURI_SIGNING_PRIVATE_KEY` in CI.
+- **Deep links** (`noema://`) — `tauri-plugin-deep-link` plus the
+  `single-instance` deep-link feature; the shell already focuses the existing
+  window when a second instance launches.
+- **Portable build** — `NOEMA_DATA_DIR=./data` beside the executable.

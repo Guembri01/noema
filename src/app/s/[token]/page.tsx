@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { cookies } from "next/headers";
 import { Link2, Lock } from "lucide-react";
 import { prisma } from "@/lib/db";
@@ -48,12 +49,12 @@ function UnavailableState() {
         <p className="mt-2 text-sm text-muted">
           The page may have been unpublished or deleted, or the link may have expired.
         </p>
-        <a
+        <Link
           href="/"
           className="focus-ring u-interactive mt-4 inline-flex h-9 items-center justify-center rounded-sm bg-accent px-4 text-sm font-medium text-accent-fg hover:opacity-90"
         >
           Go to Noema
-        </a>
+        </Link>
       </div>
     </main>
   );

@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Core permissions the shell needs to boot the app: window, events, the local server, opening links, and logging. Everything else lives in `desktop-everything.json`.",
-  "local": false,
+  "description": "Core permissions the shell needs to boot the app: its own window, the local server, dialogs for file picking, and logging.",
+  "local": true,
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -20,7 +20,6 @@
     "core:window:allow-is-fullscreen",
     "core:window:allow-set-fullscreen",
     "core:window:allow-internal-toggle-maximize",
-    "core:webview:allow-internal-toggle-devtools",
     "core:app:allow-version",
     "core:app:allow-name",
     "core:app:allow-app-hide",
@@ -36,12 +35,12 @@
     "process:default",
     "process:allow-restart",
     "process:allow-exit",
-    "shell:allow-open",
     "opener:default",
     "opener:allow-open-path",
     "opener:allow-open-url",
     "opener:allow-reveal-item-in-dir",
-    "notification:default",
+    "dialog:default",
+    "fs:default",
     "store:default",
     "log:default",
     "window-state:default"

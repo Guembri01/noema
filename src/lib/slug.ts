@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomToken as createToken } from "@/lib/random";
 
 /** URL-safe slug derived from arbitrary text. */
 export function slugify(input: string): string {
@@ -13,9 +13,15 @@ export function slugify(input: string): string {
   );
 }
 
-/** Cryptographically random URL-safe token, used for share links and invites. */
+/**
+ * Cryptographically random URL-safe token, used for share links and invites.
+ *
+ * Delegates to `@/lib/random` (Web Crypto) rather than `node:crypto`: this module
+ * is imported by client components (`csv-mapping`, `slug-uniqueness`), and a
+ * `node:` import there fails the production build.
+ */
 export function randomToken(bytes = 24): string {
-  return randomBytes(bytes).toString("base64url");
+  return createToken(bytes);
 }
 
 /** FNV-1a hash producing a short deterministic key (for formulas/cache keys). */

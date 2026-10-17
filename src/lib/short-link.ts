@@ -1,4 +1,4 @@
-import { randomInt } from "node:crypto";
+import { randomInt } from "@/lib/random";
 
 /**
  * Short share links — the pure code space behind `/s/<code>` style URLs.
@@ -132,7 +132,8 @@ function buildCode(length: number, rand: () => number): string {
 
 /**
  * Generate a short code. With a `seed` the result is deterministic; without
- * one it is drawn from `crypto.randomInt`, so codes are unguessable. Reserved
+ * one it is drawn from the platform CSPRNG (`@/lib/random`), so codes are
+ * unguessable. Reserved
  * words are never returned: a blocked draw advances the deterministic stream
  * (or redraws) and tries again.
  */
@@ -143,7 +144,7 @@ export function generateShortCode(options: GenerateShortCodeOptions = {}): strin
   if (options.seed === undefined) {
     for (let attempt = 0; attempt < 1000; attempt += 1) {
       const code = Array.from({ length }, () =>
-        charAt(randomInt(0, BASE) / BASE),
+        charAt(randomInt(BASE) / BASE),
       ).join("");
       if (!RESERVED_CODES.has(code)) return code;
     }

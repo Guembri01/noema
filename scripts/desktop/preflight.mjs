@@ -1,32 +1,44 @@
 #!/usr/bin/env node
 /**
  * Desktop preflight: tells you exactly what is missing before a build fails
- * somewhere deep inside Cargo. Run it first (it is also wired into
- * `npm run desktop:build`).
+ * somewhere deep inside Cargo. Run it first; `npm run desktop:build` also
+ * depends on everything it checks.
  *
  * Checks, in the order they bite:
  *   1. node + npm versions
- *   2. the Rust toolchain (rustc, cargo, the target triple)
+ *   2. the Rust toolchain and **the linker** (the one people forget)
  *   3. the platform's native prerequisites (WebView2 / Xcode CLT / webkit2gtk)
- *   4. generated icons (Tauri refuses to bundle without them)
- *   5. the sidecar binary for this triple
- *   6. the Next standalone build
+ *   4. the generated icon set
+ *   5. the bundled Node runtime sidecar
+ *   6. the Next standalone payload (`.next/standalone` + its copied assets)
  *
  * Exit code 1 with an actionable list when something is missing. Nothing is
- * installed automatically: this is a local-first project, and a build step that
- * silently installs system packages is not acceptable.
+ * installed automatically: a build step that silently installs system packages
+ * is not acceptable.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { arch, platform, release } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { sidecarPath, targetTriple } from "./sidecar.mjs";
+import { nodeSidecarPath, targetTriple } from "./prepare.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const os = platform();
 const problems = [];
 const notes = [];
+const has = (command, args = ["--version"]) => {
+  try {
+    // `stdio` drops the "not recognized" noise from a missing command.
+    return execFileSync(command, args, {
+      encoding: "utf8",
+      shell: os === "win32",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+};
 
 const ok = (label) => console.log(`  ok    ${label}`);
 const bad = (label, fix) => {
@@ -38,78 +50,95 @@ const warn = (label) => {
   console.log(`  warn  ${label}`);
 };
 
-function version(command, args = ["--version"]) {
-  try {
-    return execFileSync(command, args, { encoding: "utf8", shell: os === "win32" }).trim();
-  } catch {
-    return null;
-  }
-}
-
-console.log("Noema desktop preflight\n");
+console.log(`Noema desktop preflight — ${os}-${arch()}\n`);
 
 // 1. Node / npm.
 const node = process.versions.node;
-const major = Number(node.split(".")[0]);
-if (major >= 20) ok(`node ${node}`);
-else bad(`node ${node}`, "install Node 20+ (the SEA build and Next 15 need it)");
-const npmVersion = version("npm.cmd") ?? version("npm");
-npmVersion ? ok(`npm ${npmVersion}`) : warn("npm not on PATH (fine if you only run tauri)");
+if (Number(node.split(".")[0]) >= 20) ok(`node ${node}`);
+else bad(`node ${node}`, "install Node 20+ (Next 15 and the standalone server need it)");
+const npmVersion = has("npm.cmd") ?? has("npm");
+npmVersion ? ok(`npm ${npmVersion}`) : warn("npm not on PATH");
 
-// 2. Rust toolchain.
-const rustc = version("rustc");
-const cargo = version("cargo");
-rustc ? ok(rustc) : bad("rustc not found", "install Rust: https://rustup.rs  (then `rustup default stable`)");
+// 2. Rust + linker.
+const rustc = has("rustc");
+const cargo = has("cargo");
+const cargoTauri = has("cargo-tauri", ["--version"]);
+rustc ? ok(rustc) : bad("rustc not found", "install Rust: https://rustup.rs (or `winget install Rustlang.Rustup`)");
 cargo ? ok(cargo) : bad("cargo not found", "install Rust: https://rustup.rs");
+cargoTauri
+  ? ok(`tauri cli ${cargoTauri.replace(/^tauri-cli\s*/, "")}`)
+  : bad("tauri CLI not found", "cargo install tauri-cli --version ^2 --locked");
 const triple = targetTriple();
-if (cargo) {
-  try {
-    const installed = execFileSync("rustup", ["target", "list", "--installed"], { encoding: "utf8", shell: os === "win32" });
-    if (installed.includes(triple)) ok(`rust target ${triple}`);
-    else bad(`rust target ${triple} not installed`, `rustup target add ${triple}`);
-  } catch {
-    warn("rustup not found (fine if rustc came from a distro package)");
-  }
-}
-
-// 3. Platform prerequisites.
 if (os === "win32") {
-  notes.push("Windows: WebView2 runtime (preinstalled on Windows 11; otherwise Evergreen bootstrapper) is required by the app and by the installer");
-  ok(`windows ${release()}`);
-} else if (os === "darwin") {
-  try {
-    execFileSync("xcode-select", ["-p"], { stdio: "ignore" });
-    ok("xcode command line tools");
-  } catch {
-    bad("xcode command line tools missing", "xcode-select --install");
+  // The MSVC linker is the classic silent failure: rustc is installed, `cargo
+  // build` then dies with "link.exe not found".
+  const link = has("link", ["/?"]) ?? has("lld-link", ["--version"]);
+  if (link) ok("msvc linker reachable");
+  else {
+    const vswhere = join(process.env["ProgramFiles(x86)"] ?? "", "Microsoft Visual Studio", "Installer", "vswhere.exe");
+    const vsPath =
+      existsSync(vswhere)
+        ? execFileSync(vswhere, ["-products", "*", "-latest", "-property", "installationPath"], {
+            encoding: "utf8",
+            // No shell: the path contains spaces ("C:\Program Files (x86)\...").
+          }).trim()
+        : "";
+    if (vsPath) ok(`Visual Studio / Build Tools at ${vsPath} (rustc finds the linker there)`);
+    else bad("no MSVC toolchain", "install Visual Studio Build Tools with the 'Desktop development with C++' workload");
   }
+  // WebView2 is required at runtime by the app and by the installer.
+  const webview = has("reg", [
+    "query",
+    "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+    "/v",
+    "pv",
+  ]);
+  webview ? ok("WebView2 runtime present") : warn("WebView2 runtime not detected in HKLM (usually preinstalled on Windows 11)");
+} else if (os === "darwin") {
+  has("xcode-select", ["-p"]) ? ok("xcode command line tools") : bad("xcode CLT missing", "xcode-select --install");
 } else {
-  const pkgConfig = version("pkg-config");
-  pkgConfig ? ok(`pkg-config ${pkgConfig}`) : bad("pkg-config missing", "apt install pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev");
+  has("pkg-config") ? ok("pkg-config") : bad("pkg-config missing", "apt install pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev");
 }
 
-// 4. Icons.
+// 3. Icons.
 const iconsDir = join(root, "src-tauri", "icons");
-const iconFiles = existsSync(iconsDir) ? readdirSync(iconsDir).filter((f) => /\.(png|ico|icns)$/.test(f)) : [];
-if (iconFiles.length >= 3) ok(`icons (${iconFiles.length} files)`);
-else bad("icon set missing", "npx.cmd tauri icon assets/icon.png   (then re-run this check)");
+const icons = existsSync(iconsDir) ? readdirSync(iconsDir).filter((f) => /\.(png|ico|icns)$/.test(f)) : [];
+icons.length >= 4
+  ? ok(`icon set (${icons.length} files)`)
+  : bad("icon set missing", "npm run desktop:icons   (generates every size from assets/icon.png)");
 
-// 5. Sidecar.
-const sidecar = sidecarPath(triple);
-if (existsSync(sidecar)) ok(`sidecar ${sidecar.replace(root + "\\", "").replace(root + "/", "")}`);
-else bad("sidecar binary missing", "npm run desktop:sidecar   (adds postject if needed; or NOEMA_SIDECAR_MODE=shim for dev)");
+// 4. Bundled runtime.
+const runtime = nodeSidecarPath(triple);
+existsSync(runtime)
+  ? ok(`bundled node runtime (${runtime.split(/[\\/]/).pop()})`)
+  : bad("bundled node runtime missing", "npm run desktop:prepare   (copies the Node runtime into src-tauri/binaries)");
 
-// 6. Next standalone.
-if (existsSync(join(root, ".next", "standalone", "server.js"))) ok("next standalone build");
-else warn("next standalone build missing (npm run desktop:sidecar builds it)");
+// 5. Standalone payload.
+const standalone = join(root, ".next", "standalone");
+const payload = [
+  ["server.js", join(standalone, "server.js")],
+  ["start.cjs (boot wrapper)", join(standalone, "start.cjs")],
+  [".next/static", join(standalone, ".next", "static")],
+  ["public/", join(standalone, "public")],
+  ["prisma/schema.prisma", join(standalone, "prisma", "schema.prisma")],
+];
+const missing = payload.filter(([, path]) => !existsSync(path)).map(([label]) => label);
+missing.length === 0
+  ? ok("standalone payload complete")
+  : bad(`standalone payload incomplete (${missing.join(", ")})`, "npm run desktop:prepare");
+
+// 6. Frontend dist (Tauri needs a directory to bundle).
+existsSync(join(root, "src-tauri", "dist", "index.html"))
+  ? ok("shell frontend dist")
+  : bad("src-tauri/dist/index.html missing", "restore it (it is the shell's placeholder page)");
 
 console.log("");
-if (notes.length > 0) {
+if (notes.length) {
   console.log("Notes:");
   for (const note of notes) console.log(`  - ${note}`);
   console.log("");
 }
-if (problems.length > 0) {
+if (problems.length) {
   console.error(`${problems.length} blocker(s):\n`);
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exit(1);

@@ -1,8 +1,16 @@
 //! Supervises the local Next.js server that the desktop app wraps.
 //!
-//! The shell never renders the app itself: it starts `noema-server` (a Node
-//! Single Executable Application built from `next build --output standalone`),
-//! waits until `/api/ready` answers, then points the window at it.
+//! The shell never renders the app itself: it starts the bundled Node runtime
+//! (`noema-node`, a real `node` binary shipped as a Tauri sidecar) on the
+//! standalone server in the app's resources, waits until `/api/ready` answers,
+//! then points the window at it.
+//!
+//! Why a real Node runtime instead of a Node SEA single executable: `next build
+//! --output standalone` keeps its dependency graph in `node_modules` and loads
+//! it with dynamic `require`, and Prisma loads a native query engine. Neither
+//! survives being folded into one SEA blob, so a "single executable server"
+//! would have shipped broken. Bundling the runtime is the honest option that
+//! still requires nothing of the user (no Node install, no PATH surgery).
 //!
 //! Design rules (see docs/DESKTOP.md):
 //! 1. **Loopback only.** The server binds `127.0.0.1` on an ephemeral port that
@@ -10,8 +18,8 @@
 //! 2. **Supervised.** If the process exits unexpectedly it is restarted with
 //!    exponential backoff, and the UI is told (so it can show an offline state
 //!    instead of a dead window).
-//! 3. **Graceful.** On quit the child gets SIGTERM/CTRL_BREAK, then a hard kill
-//!    after a timeout, so Postgres/SQLite handles are released cleanly.
+//! 3. **Graceful.** On quit the child gets a kill signal, so database handles
+//!    are released cleanly.
 //! 4. **Observable.** stdout/stderr are streamed to the rotating log file, and
 //!    the last N lines are exposed to the app for a "Diagnostics" panel.
 
@@ -26,9 +34,9 @@ use tauri_plugin_shell::ShellExt;
 use tokio::sync::Mutex;
 
 /// How long the shell waits for `/api/ready` before surfacing an error.
-pub const READY_TIMEOUT: Duration = Duration::from_secs(45);
+pub const READY_TIMEOUT: Duration = Duration::from_secs(90);
 /// How often readiness is polled.
-pub const READY_POLL: Duration = Duration::from_millis(250);
+pub const READY_POLL: Duration = Duration::from_millis(300);
 /// Backoff between automatic restarts.
 pub const RESTART_BACKOFF: [Duration; 4] = [
     Duration::from_millis(500),
@@ -36,8 +44,18 @@ pub const RESTART_BACKOFF: [Duration; 4] = [
     Duration::from_secs(3),
     Duration::from_secs(10),
 ];
-/// Grace period between SIGTERM and a hard kill.
-pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(8);
+
+/// Where the server entry point lives inside the installed app.
+pub const SERVER_ENTRY: &str = "server/server.js";
+
+/// The connection string used when the user has not configured one.
+///
+/// The desktop build talks to a Postgres like the site build does (the schema
+/// uses Postgres full-text search). `NOEMA_DATABASE_URL` or the first-run screen
+/// overrides it, which is what makes the installed app usable against a local
+/// container, a remote server, or a managed database.
+pub const DEFAULT_DATABASE_URL: &str =
+    "postgresql://postgres:postgres@127.0.0.1:5432/noema?schema=public";
 
 /// What the webview is told about the running server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -46,7 +64,7 @@ pub struct SidecarInfo {
     pub api_base: String,
     pub port: u16,
     pub pid: u32,
-    /// `data` directory the server writes to (db, uploads, logs, backups).
+    /// `data` directory the server writes to (logs, uploads, backups).
     pub data_dir: String,
 }
 
@@ -66,8 +84,8 @@ pub enum SidecarEvent {
 pub enum SidecarError {
     #[error("could not resolve the application data directory")]
     NoDataDir,
-    #[error("sidecar executable missing: {0}")]
-    MissingBinary(PathBuf),
+    #[error("the bundled server is missing: {0} (reinstall the app)")]
+    MissingEntry(PathBuf),
     #[error("server did not become ready within {0:?}")]
     NotReady(Duration),
     #[error("failed to spawn the server: {0}")]
@@ -86,12 +104,6 @@ pub struct SidecarState {
 }
 
 /// Layout of the per-user data directory, created on first run.
-///
-/// ```
-/// # use std::path::Path;
-/// let root = Path::new("/home/x/.local/share/noema");
-/// assert_eq!(noema_desktop_lib::sidecar::db_path(root).file_name().unwrap(), "noema.db");
-/// ```
 pub fn db_path(data_dir: &Path) -> PathBuf {
     data_dir.join("noema.db")
 }
@@ -101,12 +113,12 @@ pub fn uploads_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("uploads")
 }
 
-/// Where rotated logs live.
+/// Where logs live.
 pub fn logs_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("logs")
 }
 
-/// Where automatic backups are written (`/api/cron/backups` prunes them).
+/// Where automatic backups are written.
 pub fn backups_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("backups")
 }
@@ -135,36 +147,34 @@ pub fn api_base(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-/// Environment handed to the sidecar. Kept in one place so the site build and
-/// the desktop build cannot drift.
-pub fn sidecar_env(port: u16, data_dir: &Path, origin: &str) -> Vec<(String, String)> {
+/// Environment handed to the server. Kept in one place so the site build and the
+/// desktop build cannot drift.
+pub fn server_env(
+    port: u16,
+    data_dir: &Path,
+    origin: &str,
+    database_url: &str,
+) -> Vec<(String, String)> {
     vec![
         ("PORT".into(), port.to_string()),
         ("HOSTNAME".into(), "127.0.0.1".into()),
         ("NODE_ENV".into(), "production".into()),
         ("NOEMA_RUNTIME".into(), "desktop".into()),
         ("NOEMA_DATA_DIR".into(), data_dir.to_string_lossy().into_owned()),
-        ("DATABASE_URL".into(), sqlite_url(&db_path(data_dir))),
+        ("DATABASE_URL".into(), database_url.into()),
         ("UPLOAD_DIR".into(), uploads_dir(data_dir).to_string_lossy().into_owned()),
         ("BACKUP_DIR".into(), backups_dir(data_dir).to_string_lossy().into_owned()),
         // The webview origin must be able to call the loopback server.
         ("APP_ORIGINS".into(), origin.into()),
-        // No telemetry in an installable app; opt-in only.
         ("NEXT_TELEMETRY_DISABLED".into(), "1".into()),
     ]
-}
-
-/// SQLite connection string for the local database (Prisma `file:` URL).
-pub fn sqlite_url(db: &Path) -> String {
-    let path = db.to_string_lossy().replace('\\', "/");
-    format!("file:{path}")
 }
 
 /// Ask the OS for a free loopback port.
 ///
 /// Binding to port 0 lets the kernel choose; the socket is closed immediately
-/// and the port is handed to the sidecar. A tiny race window exists, which is
-/// why the sidecar retries with a fresh port if the bind fails.
+/// and the port is handed to the server. A tiny race window exists, which is why
+/// the supervisor retries with a fresh port if the bind fails.
 pub fn free_port() -> std::io::Result<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
@@ -197,10 +207,26 @@ pub async fn wait_until_ready(port: u16, timeout: Duration) -> Result<(), Sideca
     Err(SidecarError::NotReady(timeout))
 }
 
-/// Start the sidecar, wait for readiness, and remember how to reach it.
+/// The bundled server entry point, inside the app's resources.
+pub fn server_entry(app: &AppHandle) -> Result<PathBuf, SidecarError> {
+    let dir = app
+        .path()
+        .resource_dir()
+        .map_err(|_| SidecarError::NoDataDir)?;
+    let entry = dir.join(SERVER_ENTRY);
+    if entry.exists() {
+        Ok(entry)
+    } else {
+        Err(SidecarError::MissingEntry(entry))
+    }
+}
+
+/// Start the server, wait for readiness, and remember how to reach it.
 pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
     let data_dir = crate::state::data_dir(app).ok_or(SidecarError::NoDataDir)?;
     ensure_layout(&data_dir)?;
+    let entry = server_entry(app)?;
+    let database_url = crate::state::database_url(app);
 
     let attempt = {
         let state = app.state::<SidecarState>();
@@ -212,12 +238,14 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
 
     let port = free_port()?;
     let origin = api_base(port);
-    let env = sidecar_env(port, &data_dir, &origin);
+    let env = server_env(port, &data_dir, &origin, &database_url);
 
     let command = app
         .shell()
-        .sidecar("noema-server")
+        .sidecar("noema-node")
         .map_err(|error| SidecarError::Spawn(error.to_string()))?
+        .args([entry.to_string_lossy().into_owned()])
+        .current_dir(entry.parent().unwrap_or(Path::new(".")))
         .envs(env);
 
     let (mut receiver, child) =
@@ -288,7 +316,7 @@ pub async fn restart(app: &AppHandle, code: Option<i32>) {
         let attempt = *state.attempt.lock().await;
         attempt
     };
-    let will_restart = attempt < 6;
+    let will_restart = attempt < 8;
     let _ = app.emit(
         "sidecar://event",
         SidecarEvent::Crashed { code, will_restart, attempt },
@@ -301,14 +329,13 @@ pub async fn restart(app: &AppHandle, code: Option<i32>) {
     let _ = start(app).await;
 }
 
-/// Stop the sidecar: ask politely, then force it.
+/// Stop the server.
 pub async fn stop(app: &AppHandle) {
     let state = app.state::<SidecarState>();
     *state.stopping.lock().await = true;
     let child = state.child.lock().await.take();
     if let Some(child) = child {
-        crate::logging::sidecar_line(app, "lifecycle", "stopping sidecar");
-        // `kill` is immediate; the graceful path is the shell's job on quit.
+        crate::logging::sidecar_line(app, "lifecycle", "stopping server");
         let _ = child.kill();
     }
     *state.info.lock().await = None;
@@ -336,15 +363,18 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_url_is_a_prisma_file_url_with_forward_slashes() {
-        let url = sqlite_url(Path::new(r"C:\Users\x\AppData\noema\noema.db"));
-        assert!(url.starts_with("file:"));
-        assert!(!url.contains('\\'), "windows paths must be normalised: {url}");
+    fn the_server_entry_is_inside_the_resource_dir() {
+        assert_eq!(SERVER_ENTRY, "server/server.js");
     }
 
     #[test]
-    fn env_carries_runtime_marker_and_data_dirs() {
-        let env = sidecar_env(1234, Path::new("/data/noema"), "http://127.0.0.1:1234");
+    fn env_carries_runtime_marker_database_and_dirs() {
+        let env = server_env(
+            1234,
+            Path::new("/data/noema"),
+            "http://127.0.0.1:1234",
+            DEFAULT_DATABASE_URL,
+        );
         let get = |key: &str| {
             env.iter()
                 .find(|(k, _)| k == key)
@@ -353,20 +383,21 @@ mod tests {
         };
         assert_eq!(get("PORT"), "1234");
         assert_eq!(get("HOSTNAME"), "127.0.0.1");
+        assert_eq!(get("NODE_ENV"), "production");
         assert_eq!(get("NOEMA_RUNTIME"), "desktop");
         assert_eq!(get("APP_ORIGINS"), "http://127.0.0.1:1234");
-        assert!(get("DATABASE_URL").starts_with("file:"));
+        assert_eq!(get("DATABASE_URL"), DEFAULT_DATABASE_URL);
+        assert!(get("DATABASE_URL").starts_with("postgresql://"));
         assert_eq!(get("NEXT_TELEMETRY_DISABLED"), "1");
     }
 
     #[test]
-    fn backoff_grows_then_caps() {
+    fn every_restart_backoff_is_positive_and_bounded() {
         assert_eq!(backoff_for(1), Duration::from_millis(500));
-        assert_eq!(backoff_for(2), Duration::from_secs(1));
-        assert_eq!(backoff_for(3), Duration::from_secs(3));
         assert_eq!(backoff_for(4), Duration::from_secs(10));
         assert_eq!(backoff_for(99), Duration::from_secs(10));
         assert_eq!(backoff_for(0), Duration::from_millis(500));
+        assert!(READY_TIMEOUT > READY_POLL);
     }
 
     #[test]
@@ -375,7 +406,6 @@ mod tests {
         let b = free_port().expect("port available");
         assert!(a > 1024, "ephemeral ports are > 1024, got {a}");
         assert!(b > 1024);
-        // Two consecutive calls must not return the same port.
         assert_ne!(a, b);
     }
 

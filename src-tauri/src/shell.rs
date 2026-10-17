@@ -185,10 +185,7 @@ pub fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .item(&MenuItemBuilder::with_id("quit", "Quit Noema").build(app)?)
         .build()?;
 
-    TrayIconBuilder::with_id("main")
-        .icon(app.default_window_icon().cloned().ok_or_else(|| {
-            tauri::Error::AssetNotFound("default window icon missing".into())
-        })?)
+    let tray = TrayIconBuilder::with_id("main")
         .icon_as_template(true)
         .tooltip("Noema")
         .menu(&menu)
@@ -209,8 +206,13 @@ pub fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                     let _ = window.set_focus();
                 }
             }
-        })
-        .build(app)?;
+        });
+    // A tray without an icon is useless; use the app's own icon when the
+    // runtime has one, and otherwise let the tray menu exist regardless.
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+    tray.build(app)?;
     Ok(())
 }
 

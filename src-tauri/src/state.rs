@@ -17,6 +17,30 @@ pub mod prefs {
     pub const LAST_PORT: &str = "lastPort";
     pub const ONBOARDED: &str = "onboarded";
     pub const ZOOM: &str = "zoom";
+    /// Postgres connection string for the local server (see `sidecar`).
+    pub const DATABASE_URL: &str = "databaseUrl";
+}
+
+/// The database the local server should use.
+///
+/// Resolution order, first match wins:
+///  1. `NOEMA_DATABASE_URL` — for CI, portable installs and support ("try this
+///     connection string");
+///  2. the value saved by the first-run screen / Settings;
+///  3. [`crate::sidecar::DEFAULT_DATABASE_URL`], so a fresh install against a
+///     local Postgres just works.
+pub fn database_url(app: &AppHandle) -> String {
+    if let Ok(explicit) = std::env::var("NOEMA_DATABASE_URL") {
+        if !explicit.trim().is_empty() {
+            return explicit;
+        }
+    }
+    let saved: String = pref(app, prefs::DATABASE_URL, String::new());
+    if saved.trim().is_empty() {
+        crate::sidecar::DEFAULT_DATABASE_URL.to_string()
+    } else {
+        saved
+    }
 }
 
 /// The per-user data directory (`…/Application Support/app.noema.desktop` on

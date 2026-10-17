@@ -24,6 +24,21 @@ pub struct DesktopInfo {
     pub ready: bool,
     pub port: Option<u16>,
     pub log_file: Option<String>,
+    /// Redacted (credentials stripped) so diagnostics can be pasted safely.
+    pub database_url: String,
+}
+
+/// Strip the password from a connection string before it leaves the shell.
+pub fn redact(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(mut parsed) => {
+            if parsed.password().is_some() {
+                let _ = parsed.set_password(Some("***"));
+            }
+            parsed.to_string()
+        }
+        Err(_) => "<unparseable connection string>".to_string(),
+    }
 }
 
 fn platform_triple() -> String {
@@ -44,6 +59,7 @@ pub async fn desktop_info(app: AppHandle) -> Result<DesktopInfo, String> {
         ready: info.is_some(),
         port: info.map(|i| i.port),
         log_file: logging::current_file().map(|p| p.to_string_lossy().into_owned()),
+        database_url: redact(&state::database_url(&app)),
     })
 }
 
@@ -129,30 +145,28 @@ pub fn set_zoom(app: AppHandle, factor: f64) -> Result<(), String> {
 }
 
 /// Check for an update and return its version, if any (no install).
+///
+/// Deliberately absent right now: the updater needs a signing key pair and a
+/// release endpoint, and shipping an updater that cannot verify a signature is
+/// worse than shipping none. See docs/DESKTOP.md §"Deferred".
 #[tauri::command]
-pub async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
-    use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|error| error.to_string())?;
-    match updater.check().await {
-        Ok(Some(update)) => Ok(Some(update.version)),
-        Ok(None) => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
+pub async fn check_update() -> Result<Option<String>, String> {
+    Ok(None)
 }
 
-/// Download + install the pending update, then relaunch.
+/// Save the database connection string and restart the server with it.
 #[tauri::command]
-pub async fn install_update(app: AppHandle) -> Result<(), String> {
-    use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|error| error.to_string())?;
-    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
-        return Ok(());
-    };
-    update
-        .download_and_install(|_chunk, _total| {}, || {})
-        .await
-        .map_err(|error| error.to_string())?;
-    app.restart();
+pub async fn set_database_url(app: AppHandle, url: String) -> Result<SidecarInfo, String> {
+    let trimmed = url.trim().to_string();
+    state::set_pref(&app, state::prefs::DATABASE_URL, serde_json::Value::String(trimmed));
+    sidecar::stop(&app).await;
+    sidecar::start(&app).await.map_err(|error| error.to_string())
+}
+
+/// The connection string currently in use (for the diagnostics panel).
+#[tauri::command]
+pub fn database_url(app: AppHandle) -> String {
+    state::database_url(&app)
 }
 
 /// Toggle the native window decorations (for a "focus mode").
@@ -169,4 +183,29 @@ pub fn set_decorations(app: AppHandle, decorated: bool) -> Result<(), String> {
 pub async fn quit(app: AppHandle) {
     sidecar::stop(&app).await;
     app.exit(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_hides_the_password_but_keeps_the_rest() {
+        let redacted = redact("postgresql://noema:sup3r-secret@db.example.com:5432/noema?schema=public");
+        assert!(!redacted.contains("sup3r-secret"), "password leaked: {redacted}");
+        assert!(redacted.contains("db.example.com:5432"), "host lost: {redacted}");
+        assert!(redacted.contains("noema"), "database name lost: {redacted}");
+    }
+
+    #[test]
+    fn redact_leaves_a_passwordless_url_alone() {
+        let url = "postgresql://postgres@127.0.0.1:5432/noema";
+        assert!(redact(url).contains("127.0.0.1:5432"));
+        assert!(!redact(url).contains("***"));
+    }
+
+    #[test]
+    fn redact_never_echoes_garbage_back() {
+        assert_eq!(redact("not a url"), "<unparseable connection string>");
+    }
 }
