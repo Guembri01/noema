@@ -658,6 +658,20 @@ list marks it as **No access**.
   digest behind it. The image this repository publishes itself is exempt: its
   digest changes with every release, so a digest in the repository would freeze
   every installation on the release the file was written for.
+- The database backup is sealed and access-restricted. A dump is the most
+  secret file this product writes — the `COPY` blocks carry every password
+  hash, 2FA seed, OAuth client secret and provider key in cleartext — and it
+  was written with the default file mode `0644`, so every local user could
+  read it. The dump is now encrypted (AES-256-GCM, the passphrase from
+  `BACKUP_ENCRYPTION_KEY`), written with mode `0600` into a `0700`
+  directory, and the plaintext never touches the disk: the dump is verified
+  and sealed in memory, and only the sealed bytes are written. The script
+  **fails closed** — without a passphrase (or with one shorter than 16
+  characters) it writes no dump at all, never an unencrypted one. The
+  matching restore path is documented and scripted
+  (`npm run backup:restore -- backups/<file>.sql.enc | psql "$DATABASE_URL"`);
+  the seal is opened with the same key, and a wrong key or a tampered file
+  fails instead of restoring garbage.
 
 
 

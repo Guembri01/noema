@@ -95,54 +95,83 @@ client addresses can never reset an exhausted per-user budget.
 ### 2.1 Run a backup
 
 ```bash
-npm run backup                 # → backups/noema-<timestamp>.sql + sibling .manifest.json
+npm run backup                 # → backups/noema-<timestamp>.sql.enc + sibling .manifest.json
 npm run backup -- --keep 7     # retention: keep the newest 7 (default: 5)
 npm run backup -- --dry-run    # print the plan (dumper, target, retained/prunable) and exit — touches nothing
 ```
 
 `npm run backup` = `node --env-file=.env scripts/backup.mjs` (`package.json`).
+
+**The dump is sealed, and the script fails closed.** A `pg_dump` carries every
+password hash, 2FA seed, OAuth client secret and provider key of the
+installation in cleartext, so the dump is written **encrypted** (AES-256-GCM,
+passphrase from `BACKUP_ENCRYPTION_KEY`, at least 16 characters — see
+`.env.example`) and with **mode 0600** inside a **0700** directory. Without a
+passphrase the script exits 1 and writes **nothing** — there is no unencrypted
+fallback:
+
+```bash
+npm run backup
+# BACKUP_ENCRYPTION_KEY is not set — refusing to write an unencrypted dump …
+# → exit 1, no file in ./backups
+```
+
 The script:
 
 1. reads **the local `DATABASE_URL`** — per its own header comment, *“Nothing
    here touches the remote database: it is the local DATABASE_URL”*. A remote
    DB must be backed up with its own tooling/URL.
-2. picks a `pg_dump`: prefers `docker exec noema-db pg_dump -U <user>
+2. **checks the passphrase first** — `BACKUP_ENCRYPTION_KEY` unset or shorter
+   than 16 characters ⇒ exit 1, no dump written (fail closed).
+3. picks a `pg_dump`: prefers `docker exec noema-db pg_dump -U <user>
    --no-owner --no-privileges -d <db>`, falls back to `pg_dump` on `PATH`
    (with `PGPASSWORD`). If neither exists it exits 1 with
    *“Start the database container (`docker compose up -d`) or install
    postgresql-client.”*
-3. **verifies the dump before keeping it** — refuses a file < 1 KiB, refuses a
-   dump missing any of `User`, `Workspace`, `Page`, `Ticket`, `Activity`, and
-   prints the `COPY` block count. Any failure deletes the file and exits 1.
-4. writes a **sibling manifest** `backups/noema-<timestamp>.manifest.json` —
-   timestamp, per-table row counts parsed from the dump (+ `rowCountTotal`),
-   Prisma schema fingerprint, app version, `keep` — so a restore can be
-   checked against exactly what was captured.
-5. applies retention (pure logic in `scripts/backup-lib.mjs`): keeps the newest
+4. **verifies the dump before keeping it** — the plaintext never reaches the
+   disk: it is checked in memory (refuses a dump < 1 KiB, refuses a dump
+   missing any of `User`, `Workspace`, `Page`, `Ticket`, `Activity`, and prints
+   the `COPY` block count), then sealed. Only the sealed bytes are written
+   (mode 0600), and the file is opened again right after the write: it has to
+   decrypt back to the very dump that was verified, otherwise it is deleted and
+   the script exits 1.
+5. writes a **sibling manifest** `backups/noema-<timestamp>.manifest.json`
+   (mode 0600) — timestamp, per-table row counts parsed from the dump
+   (+ `rowCountTotal`), Prisma schema fingerprint, app version, `keep` and
+   `encryption` (`aes-256-gcm`) — so a restore can be checked against exactly
+   what was captured.
+6. applies retention (pure logic in `scripts/backup-lib.mjs`): keeps the newest
    `--keep N` dumps (default **5**) and **never prunes the newest one**; a
    pruned dump takes its manifest with it.
-6. prints the restore and restore-verification commands.
+7. prints the restore and restore-verification commands.
 
 Flags accepted: **`--keep N`** and **`--dry-run`** (read from
-`process.argv`); the retention/manifest/dry-run helpers are unit-tested in
-`scripts/backup-lib.test.mjs`.
+`process.argv`); the retention/manifest/dry-run/seal helpers are unit-tested
+in `scripts/backup-lib.test.mjs`, the whole path end-to-end (with a stub
+`pg_dump`) in `scripts/backup.test.mjs`.
 
-> The dump is **plain SQL text** (no `-F`/`--format` flag is passed), which is
-> why the script’s own restore hint is `psql < file.sql`.
+> The dump itself is **plain SQL text** (no `-F`/`--format` flag is passed) —
+> it is *sealed*, not compressed. That is why the restore goes through
+> `scripts/backup-restore.mjs` and not through `psql < file.sql`.
+>
+> Dumps written **before** the seal are plain `noema-<timestamp>.sql` files.
+> The retention still prunes them, but they are readable by every local user:
+> delete them once a sealed backup exists.
 
 ### 2.2 Restore drill
 
 ```bash
 # 1. Stop writers (app / dockerized app), keep the db container running.
 # 2. Restore — the command the script itself prints at the end of every run:
-psql "$DATABASE_URL" < backups/noema-<timestamp>.sql
+npm run backup:restore -- backups/noema-<timestamp>.sql.enc | psql "$DATABASE_URL"
 
 # Container-only hosts (no psql on PATH) — same dump, psql inside noema-db:
-docker exec -i noema-db psql -U noema -d noema < backups/noema-<timestamp>.sql
+npm run backup:restore -- backups/noema-<timestamp>.sql.enc \
+  | docker exec -i noema-db psql -U noema -d noema
 
 # 3. Verify against the manifest (the script's documented verification hook):
 createdb noema-restore-check
-psql -d noema-restore-check < backups/noema-<timestamp>.sql
+npm run backup:restore -- backups/noema-<timestamp>.sql.enc | psql -d noema-restore-check
 #    → compare restored table row counts against backups/<file>.manifest.json
 dropdb noema-restore-check
 
@@ -150,6 +179,14 @@ dropdb noema-restore-check
 npm run smoke               # authenticated route smoke (needs seeded demo user)
 curl -fsS http://127.0.0.1:3200/api/health   # expect {"ok":true,"db":"up"}
 ```
+
+`npm run backup:restore` = `node --env-file=.env scripts/backup-restore.mjs`
+(`package.json`). It needs the **same** `BACKUP_ENCRYPTION_KEY` the dump was
+sealed with and **refuses** a wrong one (*“The backup could not be opened: wrong
+BACKUP_ENCRYPTION_KEY or a tampered file.”*) instead of restoring garbage. It
+writes the plain SQL to **stdout** (pipe it into `psql`); with
+`--out <file>` it writes a file with mode 0600 — delete it once the restore
+succeeded.
 
 Steps 2–3 come from `backup.mjs`’s own header/exit output (the restore +
 row-count verification hook); the `docker exec -i` variant is the same psql
@@ -633,7 +670,7 @@ write is released all the same. The holes that are known
 | Cron never materializes | 503 = `CRON_SECRET` unset in the *app’s* env; 401 = header/value mismatch; `journalctl -u noema-templates.service`; rate limit is 12/min |
 | Invites never arrive | settings “Email & invitations” → status shows `environment SMTP` / `not configured`; run `npm run check:mail`; delivery log error text (10 s connect / 20 s socket timeouts) |
 | Collaborative editing refuses everything (4401) | `AUTH_SECRET` missing/short in the relay’s env; wrong `NEXT_PUBLIC_COLLAB_URL`; 4403 = page scope/permission, not a secret problem |
-| Backup exits 1 | the script says why: no `pg_dump`, dump < 1 KiB, or missing core tables — it deletes the bad file rather than keeping it. `npm run backup -- --dry-run` shows what a run would do |
+| Backup exits 1 | the script says why: no `BACKUP_ENCRYPTION_KEY` (then **nothing** is written), no `pg_dump`, dump < 1 KiB, or missing core tables — a dump that fails the checks is never kept. `npm run backup -- --dry-run` shows what a run would do |
 | Collaborative socket closed 4400 | the client’s `Origin` is not accepted (checked pre-auth): with `APP_ORIGINS` set it must be on the list (— add the origin), without it only the loopback origin is accepted (— see §5.4) |
 | Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
 | `EADDRINUSE` / weird build output | dev and prod share `.next` and the ports — exactly one writer at a time |
@@ -645,8 +682,8 @@ nothing was executed against live servers):
 
 | Section | Command / fact | Source of truth |
 | --- | --- | --- |
-| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL” | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 23 tests) |
-| 2.2 | `psql "$DATABASE_URL" < backups/<file>.sql` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) |
+| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL”, the seal (AES-256-GCM, `BACKUP_ENCRYPTION_KEY`, fail closed) and the 0600/0700 modes | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 37 tests · `backup.test.mjs`, 8 tests) |
+| 2.2 | `npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) · `scripts/backup-restore.mjs` |
 | 3 | `POST /api/cron/templates`, `x-cron-secret`, 503/401, `12/60_000` limit, `{due,created,skipped,failed}`, fail-closed order | `src/app/api/cron/templates/route.ts` |
 | 3.1 | `CRON_SECRET` key + secret generator one-liner | `.env.example:8,50` |
 | 3.4 | `node --env-file=.env scripts/check-share-cron.mjs [baseUrl]` (no npm alias) | `scripts/check-share-cron.mjs:2` · absent from `package.json` |
@@ -673,8 +710,7 @@ guide did not rebuild).
 **Observed staleness (not fixed here):** `docs/specs/templates.md` refers to a
 `check:share-cron` npm script that does **not** exist in `package.json` — the
 script must be run directly (§3.4); the collab relay’s “residual risk” list
-predates B75 (§5.2); and
-`scripts/backup.mjs:1` says “compressed” while the dump is plain SQL (§2.1).
+predates B75 (§5.2).
 
 **Note on concurrent work:** `scripts/backup.mjs` (B92) and
 `scripts/collab-server.mjs` (B75) both changed *while this guide was being
@@ -1003,7 +1039,7 @@ accepted *in addition to* `CRON_SECRET` there, and nowhere else.
 | Invites never arrive | settings “Email & invitations” → status shows `environment SMTP` / `not configured`; run `npm run check:mail`; delivery log error text (10 s connect / 20 s socket timeouts) |
 | Invitation link refused with “This invitation can no longer be redeemed.” | The role the invitation carries is not one its sender may hand out *now* — an admin invitation an admin minted before the grant rule, or a sender who has since been demoted or removed. Nothing to clean up: the workspace owner sends a new invitation (an admin invitation the owner minted still redeems). |
 | Collaborative editing refuses everything (4401) | `AUTH_SECRET` missing/short in the relay’s env; wrong `NEXT_PUBLIC_COLLAB_URL`; 4403 = page scope/permission, not a secret problem |
-| Backup exits 1 | the script says why: no `pg_dump`, dump < 1 KiB, or missing core tables — it deletes the bad file rather than keeping it. `npm run backup -- --dry-run` shows what a run would do |
+| Backup exits 1 | the script says why: no `BACKUP_ENCRYPTION_KEY` (then **nothing** is written), no `pg_dump`, dump < 1 KiB, or missing core tables — a dump that fails the checks is never kept. `npm run backup -- --dry-run` shows what a run would do |
 | Two-factor codes are rejected after the upgrade | the seed is stored sealed (B05): a `v1:` envelope that does not open means a **different `AUTH_SECRET`** than the one the seed was sealed with, or a tampered row. `npm run backfill:2fa` lists those rows as `UNREADABLE`; the account owner re-enrols, or the operator restores the matching `AUTH_SECRET` |
 | Collaborative socket closed 4400 | the client’s `Origin` is not accepted (checked pre-auth): with `APP_ORIGINS` set it must be on the list (— add the origin), without it only the loopback origin is accepted (— see §5.4) |
 | Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
@@ -1022,8 +1058,8 @@ nothing was executed against live servers):
 | Section | Command / fact | Source of truth |
 | --- | --- | --- |
 | 1.1 | `TRUSTED_PROXY_HOPS`, the hop arithmetic (last / Nth-from-last), the `X-Real-IP` fallback for a chain shorter than N and the `scope:local` fallback, the rejected hop counts above 16, the `ADMIN_IP_ALLOWLIST` fail-closed gate, the Edge-runtime build-time freeze | `src/lib/tenant-guard.ts` (`parseTrustedProxyHops`, `resolveClientIp`) · `src/lib/rate-limit.ts` (`clientKey`, `userKey`) · `src/lib/api-guard.ts` (`rateLimit`) · `src/middleware.ts` (`ipGate`) · `.env.example` |
-| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL” | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 23 tests) |
-| 2.2 | `psql "$DATABASE_URL" < backups/<file>.sql` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) |
+| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL”, the seal (AES-256-GCM, `BACKUP_ENCRYPTION_KEY`, fail closed) and the 0600/0700 modes | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 37 tests · `backup.test.mjs`, 8 tests) |
+| 2.2 | `npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) · `scripts/backup-restore.mjs` |
 | 3 | `POST /api/cron/templates`, `x-cron-secret`, 503/401, `12/60_000` limit, `{due,created,skipped,failed}`, fail-closed order | `src/app/api/cron/templates/route.ts` |
 | 3.1 | `CRON_SECRET` key + secret generator one-liner | `.env.example:8,50` |
 | 3.4 | `node --env-file=.env scripts/check-share-cron.mjs [baseUrl]` (no npm alias) | `scripts/check-share-cron.mjs:2` · absent from `package.json` |
@@ -1067,8 +1103,7 @@ batch boundary (250), and an unknown option (`--dryrun`) was refused with exit
 **Observed staleness (not fixed here):** `docs/specs/templates.md` refers to a
 `check:share-cron` npm script that does **not** exist in `package.json` — the
 script must be run directly (§3.4); the collab relay’s “residual risk” list
-predates B75 (§5.2); and
-`scripts/backup.mjs:1` says “compressed” while the dump is plain SQL (§2.1).
+predates B75 (§5.2).
 
 **Note on concurrent work:** `scripts/backup.mjs` (B92) and
 `scripts/collab-server.mjs` (B75) both changed *while this guide was being
