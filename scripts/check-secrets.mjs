@@ -12,7 +12,9 @@
  * formats real providers actually issue, a connection string that carries a
  * password, a JWT, a private-key block, plus `NAME=<12+ chars>` for the
  * variables this app reads. That keeps false positives near zero, which is what
- * makes the gate trustworthy enough to be a required check. Known-safe
+ * makes the gate worth running in CI: the CI runs it on every push and every
+ * pull request, and whether a red run blocks a merge is the repository's
+ * branch-protection setting, not a property of this script. Known-safe
  * documentation examples are listed in {@link ALLOWED} rather than matched by a
  * looser rule that would hide a real key too.
  *

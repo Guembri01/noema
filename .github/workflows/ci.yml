@@ -167,7 +167,9 @@ jobs:
 
       # ----- Follow-up (CI v2, NOT enabled): e2e with a postgres service -------
       # Uncomment as a SEPARATE job when the suite is CI-stable; keep `check` as
-      # the required status check and start the e2e job as allow-failure:
+      # the status check and start the e2e job as allow-failure — whether a red
+      # run of `check` blocks a merge is the repository's protection setting
+      # (branch protection / ruleset), not a property of this workflow:
       #
       #   e2e:
       #     runs-on: ubuntu-latest
