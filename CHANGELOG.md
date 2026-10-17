@@ -636,6 +636,14 @@ list marks it as **No access**.
   database without an operator step. The write is best-effort: a row that
   cannot be sealed keeps working, and a row that already holds an envelope is
   never touched.
+- The workspace invitation token is persisted as its domain-separated SHA-256
+  digest — the plaintext exists only in the link that is mailed out, and the
+  token is a bearer credential for the workspace. The rows that predate that
+  change are migrated as well: the migration
+  `20261021000000_invite_token_digests` turns the invitation tokens that are
+  still in cleartext into their digest, losslessly and idempotently, so an
+  invitation that was issued before the change and has not expired still
+  works. The migration is a data migration, not a schema change.
 
 
 
