@@ -15,6 +15,8 @@ const db = vi.hoisted(() => ({
   memberUpdate: vi.fn(),
   memberUpdateMany: vi.fn(),
   workspaceFindUnique: vi.fn(),
+  // B138: the owner proves their password — the account row carries the hash.
+  userFindUnique: vi.fn(),
   transaction: vi.fn(),
 }));
 
@@ -30,10 +32,15 @@ vi.mock("@/lib/db", () => ({
       findUnique: db.workspaceFindUnique,
       update: vi.fn(),
     },
+    user: { findUnique: db.userFindUnique },
     $transaction: db.transaction,
   },
 }));
-vi.mock("@/lib/auth", () => ({ requireUser: vi.fn(async () => ({ id: "actor-1" })) }));
+const auth = vi.hoisted(() => ({ verifyPassword: vi.fn() }));
+vi.mock("@/lib/auth", () => ({
+  requireUser: vi.fn(async () => ({ id: "actor-1" })),
+  verifyPassword: auth.verifyPassword,
+}));
 vi.mock("@/lib/activity", () => ({ logActivity: vi.fn(async () => undefined) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -44,41 +51,82 @@ const DENIED = { error: "Only the current owner can transfer this workspace." };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // B138: the owner's password is verified against the stored hash.
+  db.userFindUnique.mockResolvedValue({ passwordHash: "hash-of-the-owner" });
+  // The comparison behaves like the real one: only the owner's password
+  // matches the stored hash — an empty or a wrong one does not.
+  auth.verifyPassword.mockImplementation(
+    async (candidate: string, hash: string) =>
+      candidate === "correct horse" && hash === "hash-of-the-owner",
+  );
 });
 
 describe("transferOwnershipAction — role guards (real permission chain)", () => {
   it("denies a member", async () => {
     db.memberFindUnique.mockResolvedValue({ role: "MEMBER" });
-    await expect(transferOwnershipAction("ws-1", "user-2")).resolves.toEqual(DENIED);
+    await expect(transferOwnershipAction("ws-1", "user-2", "correct horse")).resolves.toEqual(DENIED);
     expect(db.transaction).not.toHaveBeenCalled();
   });
 
   it("denies an admin", async () => {
     db.memberFindUnique.mockResolvedValue({ role: "ADMIN" });
-    await expect(transferOwnershipAction("ws-1", "user-2")).resolves.toEqual(DENIED);
+    await expect(transferOwnershipAction("ws-1", "user-2", "correct horse")).resolves.toEqual(DENIED);
     expect(db.transaction).not.toHaveBeenCalled();
   });
 
   it("denies a guest", async () => {
     db.memberFindUnique.mockResolvedValue({ role: "GUEST" });
-    await expect(transferOwnershipAction("ws-1", "user-2")).resolves.toEqual(DENIED);
+    await expect(transferOwnershipAction("ws-1", "user-2", "correct horse")).resolves.toEqual(DENIED);
     expect(db.transaction).not.toHaveBeenCalled();
   });
 
   it("denies revoked access (no membership, not the owner)", async () => {
     db.memberFindUnique.mockResolvedValue(null);
     db.workspaceFindUnique.mockResolvedValue({ ownerId: "someone-else" });
-    await expect(transferOwnershipAction("ws-1", "user-2")).resolves.toEqual(DENIED);
+    await expect(transferOwnershipAction("ws-1", "user-2", "correct horse")).resolves.toEqual(DENIED);
     expect(db.transaction).not.toHaveBeenCalled();
   });
 
   it("refuses to hand ownership to a guest target", async () => {
     db.memberFindUnique.mockResolvedValue({ role: "OWNER" });
     db.memberFindFirst.mockResolvedValue({ id: "m2", role: "GUEST" });
-    await expect(transferOwnershipAction("ws-1", "guest-2")).resolves.toEqual({
+    await expect(transferOwnershipAction("ws-1", "guest-2", "correct horse")).resolves.toEqual({
       error: "A guest cannot own this workspace — promote them to a member first.",
     });
     expect(db.transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("transferOwnershipAction — the owner proves their password (B138)", () => {
+  it("refuses the transfer without the password", async () => {
+    db.memberFindUnique.mockResolvedValue({ role: "OWNER" });
+    db.memberFindFirst.mockResolvedValue({ id: "m2", role: "MEMBER" });
+
+    await expect(transferOwnershipAction("ws-1", "user-2")).resolves.toEqual({
+      error: "That password is not correct.",
+    });
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses the transfer with a wrong password", async () => {
+    db.memberFindUnique.mockResolvedValue({ role: "OWNER" });
+    db.memberFindFirst.mockResolvedValue({ id: "m2", role: "MEMBER" });
+    auth.verifyPassword.mockResolvedValue(false);
+
+
+    await expect(transferOwnershipAction("ws-1", "user-2", "wrong")).resolves.toEqual({
+      error: "That password is not correct.",
+    });
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it("compares the password with the owner's own hash", async () => {
+    db.memberFindUnique.mockResolvedValue({ role: "OWNER" });
+    db.memberFindFirst.mockResolvedValue({ id: "m2", role: "MEMBER" });
+
+    await transferOwnershipAction("ws-1", "user-2", "correct horse");
+
+    expect(auth.verifyPassword).toHaveBeenCalledWith("correct horse", "hash-of-the-owner");
   });
 });
 
@@ -87,7 +135,7 @@ describe("transferOwnershipAction — owner path", () => {
     db.memberFindUnique.mockResolvedValue({ role: "OWNER" });
     db.memberFindFirst.mockResolvedValue({ id: "m2", role: "MEMBER" });
 
-    await expect(transferOwnershipAction("ws-1", "user-2")).resolves.toEqual({ ok: true });
+    await expect(transferOwnershipAction("ws-1", "user-2", "correct horse")).resolves.toEqual({ ok: true });
 
     expect(db.transaction).toHaveBeenCalledTimes(1);
     expect(db.memberUpdate).toHaveBeenCalledWith({ where: { id: "m2" }, data: { role: "OWNER" } });
@@ -101,7 +149,7 @@ describe("transferOwnershipAction — owner path", () => {
     db.memberFindUnique.mockResolvedValue({ role: "OWNER" });
     db.memberFindFirst.mockResolvedValue({ id: "m2", role: "MEMBER" });
 
-    await transferOwnershipAction("ws-1", "user-2");
+    await transferOwnershipAction("ws-1", "user-2", "correct horse");
 
     const logged = vi.mocked(logActivity).mock.invocationCallOrder[0];
     const committed = db.transaction.mock.invocationCallOrder[0];
