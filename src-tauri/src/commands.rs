@@ -448,7 +448,8 @@ mod tests {
     /// shell.
     #[test]
     fn get_pref_refuses_the_unredacted_connection_string() {
-        let secret = serde_json::json!("postgresql://noema:sup3r-secret@db.example.com:5432/noema");
+        let secret =
+            serde_json::json!("postgresql://noema:sup3r-secret@db.example.com:5432/noema?schema=public");
         let lookup = |key: &str| {
             if key == crate::state::prefs::DATABASE_URL {
                 Some(secret.clone())
@@ -482,7 +483,7 @@ mod tests {
     #[test]
     fn the_connection_string_the_shell_hands_out_is_redacted() {
         let shown =
-            redacted_connection_string("postgresql://noema:sup3r-secret@db.example.com:5432/noema");
+            redacted_connection_string("postgresql://noema:sup3r-secret@db.example.com:5432/noema?schema=public");
         assert!(!shown.contains("sup3r-secret"), "password leaked: {shown}");
         assert!(shown.contains("db.example.com:5432"), "host lost: {shown}");
         // No connection string configured: the shell says so with an empty
