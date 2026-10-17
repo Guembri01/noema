@@ -1,8 +1,9 @@
-import { AbsoluteFill, Audio, Sequence, staticFile } from "remotion";
+import { AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame } from "remotion";
 import type { CamKey } from "../lib/PageCam";
 import { NOEMA } from "../lib/theme";
-import { Caption, Grain, TitleCard } from "../lib/ui";
-import { layout, textureH } from "../textures";
+import { TitleCard } from "../lib/ui";
+import { Rail, type TransitionName } from "../lib/motion";
+import { layout } from "../textures";
 import { BoardDeal, BrandOpen, Claim, HookCut, Outro, PageShot, Readout, Terminal } from "./shots";
 
 /* -------------------------------------------------------------------------- *
@@ -15,77 +16,126 @@ import { BoardDeal, BrandOpen, Claim, HookCut, Outro, PageShot, Readout, Termina
  */
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-export function cam(texture: string, zoom: number, fx: number, fy: number, frame = 0): CamKey {
+/**
+ * The app's sidebar is exactly 240px wide — the `home` layout measures it — and
+ * the rule about it is all-or-nothing. A frame whose left edge lands *inside*
+ * the sidebar slices every label in it mid-word, which reads as a mistake; a
+ * frame that starts at the page edge shows it whole. `chrome` (on for locked-off
+ * shots and snaps) pushes the frame past the sidebar so nothing is sliced; a
+ * pan is allowed to cross it, because the sidebar is moving while it does.
+ */
+const CHROME = 240;
+
+export function cam(texture: string, zoom: number, fx: number, fy: number, frame = 0, chrome = false): CamKey {
   const captured = layout(texture);
   const width = captured.viewport.width;
   const height = captured.fullPage ? captured.page.height : captured.viewport.height;
   const halfW = 960 / zoom;
   const halfH = 540 / zoom;
+  const minX = chrome ? CHROME + halfW : halfW;
   return {
     frame,
-    cx: clamp(fx * width, halfW, Math.max(halfW, width - halfW)),
+    cx: clamp(fx * width, minX, Math.max(minX, width - halfW)),
     cy: clamp(fy * height, halfH, Math.max(halfH, height - halfH)),
     zoom,
   };
 }
 
-/** A two-key move: land, then travel while the shot is on screen. */
-const move = (
+/* -------------------------------------------------------------------------- *
+ * The four moves the camera is allowed to make
+ * -------------------------------------------------------------------------- *
+ * The first cut gave almost every shot the same slow push-in, which is why it
+ * read as one long zoom rather than as thirty beats. The camera is now reserved
+ * for the shots where movement carries meaning, and there are exactly three
+ * moves:
+ *
+ *   · `still` — locked off. The default, and the answer to "why so many zooms".
+ *   · `snap`  — a push that is over in a beat, then holds. A punctuation mark,
+ *               used where something *arrives* rather than as decoration.
+ *   · `drift` — a pan at constant zoom, for a surface wider than the frame.
+ *               Movement without magnification.
+ */
+const still = (texture: string, zoom: number, fx: number, fy: number, chrome = true): CamKey[] => [
+  cam(texture, zoom, fx, fy, 0, chrome),
+];
+
+const snap = (
   texture: string,
-  a: [number, number, number],
-  b: [number, number, number],
+  from: number,
+  to: number,
+  fx: number,
+  fy: number,
+  holdAt = 16,
+  chrome = true,
+): CamKey[] => [
+  cam(texture, from, fx, fy, 0, chrome),
+  cam(texture, to, fx, fy, holdAt, chrome),
+  cam(texture, to, fx, fy, holdAt + 1, chrome),
+];
+
+const drift = (
+  texture: string,
+  zoom: number,
+  from: [number, number],
+  to: [number, number],
   dur: number,
-): CamKey[] => [cam(texture, a[0], a[1], a[2], 0), cam(texture, b[0], b[1], b[2], dur)];
+  chrome = false,
+): CamKey[] => [
+  cam(texture, zoom, from[0], from[1], 0, chrome),
+  cam(texture, zoom, to[0], to[1], dur, chrome),
+];
 
 /* -------------------------------------------------------------------------- *
  * The timeline
- * -------------------------------------------------------------------------- */
-
+ * -------------------------------------------------------------------------- *
+ * One hundred and forty-four seconds was the first cut; this is 116.7. Every
+ * shot lost between a fifth and a third of its length, the chapter cards went
+ * from 84 frames to 72, and the captions now resolve in twelve frames instead of
+ * twenty-two. Perceived speed comes from the density of *events* — cuts,
+ * transitions, landings — not from being short, which is why the shots that kept
+ * their length are the ones that gained motion.
+ */
 type Shot = { id: string; dur: number };
 
 /**
- * Chapter cards are 84 frames (2.8s), not the 56 they started at. The title takes
- * 32 frames to arrive and R1 wants a full second of stillness after that; 56 left
- * the card with 0.8s of hold and no room for its own fade.
+ * A chapter card is 72 frames (2.4s): twelve for the strips to snap down, then
+ * the title and the rule, then a hold. The first cut's cards were 84 and spent
+ * four of those extra frames fading out, so the pause R1 asks for was never
+ * really there.
  */
-const CARD = 84;
+const CARD = 72;
 
-/**
- * Order and duration are the whole edit. Every `from` in the film — including
- * every sound cue — is derived from this list, so retiming a shot moves its
- * sound with it instead of leaving the two out of sync.
- */
 export const ORDER: Shot[] = [
-  { id: "hook", dur: 72 },
-  { id: "brand", dur: 168 },
+  { id: "hook", dur: 78 },
+  { id: "brand", dur: 150 },
   { id: "cardWrite", dur: CARD },
-  { id: "editor", dur: 240 },
-  { id: "slash", dur: 132 },
-  { id: "quickfind", dur: 138 },
+  { id: "editor", dur: 210 },
+  { id: "slash", dur: 102 },
+  { id: "quickfind", dur: 108 },
   { id: "cardStructure", dur: CARD },
-  { id: "views", dur: 288 },
-  { id: "properties", dur: 150 },
-  { id: "rules", dur: 150 },
-  { id: "peek", dur: 130 },
+  { id: "views", dur: 280 },
+  { id: "properties", dur: 108 },
+  { id: "rules", dur: 108 },
+  { id: "peek", dur: 102 },
   { id: "cardShip", dur: CARD },
-  { id: "ticketsList", dur: 162 },
-  { id: "board", dur: 198 },
-  { id: "drawer", dur: 172 },
-  { id: "cycles", dur: 192 },
-  { id: "projects", dur: 150 },
-  { id: "project", dur: 144 },
-  { id: "roadmap", dur: 144 },
+  { id: "ticketsList", dur: 108 },
+  { id: "board", dur: 156 },
+  { id: "drawer", dur: 126 },
+  { id: "cycles", dur: 150 },
+  { id: "projects", dur: 120 },
+  { id: "project", dur: 108 },
+  { id: "roadmap", dur: 108 },
   { id: "cardTogether", dur: CARD },
-  { id: "chat", dur: 176 },
-  { id: "comments", dur: 126 },
-  { id: "versions", dur: 120 },
-  { id: "share", dur: 132 },
-  { id: "public", dur: 108 },
+  { id: "chat", dur: 132 },
+  { id: "comments", dur: 90 },
+  { id: "versions", dur: 90 },
+  { id: "share", dur: 96 },
+  { id: "public", dur: 84 },
   { id: "cardOwn", dur: CARD },
-  { id: "settings", dur: 132 },
-  { id: "dark", dur: 126 },
-  { id: "desktop", dur: 150 },
-  { id: "outro", dur: 186 },
+  { id: "settings", dur: 96 },
+  { id: "dark", dur: 90 },
+  { id: "desktop", dur: 102 },
+  { id: "outro", dur: 240 },
 ];
 
 export const FROM: Record<string, number> = {};
@@ -101,32 +151,6 @@ export const FROM: Record<string, number> = {};
 export const at = (id: string, offset = 0) => FROM[id] + offset;
 
 export const FILM_TOTAL = ORDER.reduce((total, shot) => total + shot.dur, 0);
-
-/** The seven views of one database, in the order the shot cuts through them. */
-const VIEW_TEXTURES = [
-  "db-table",
-  "db-board",
-  "db-timeline",
-  "db-calendar",
-  "db-gallery",
-  "db-chart",
-  "db-list",
-];
-
-/**
- * One caption per beat. A single list caption ("table, board, timeline, …") left
- * the viewer unable to bind any name to any view — at 40 frames a view, the pill
- * has to say which view is on screen.
- */
-const VIEW_LABELS = [
-  "Table view",
-  "Board view",
-  "Timeline view",
-  "Calendar view",
-  "Gallery view",
-  "Chart view",
-  "List view",
-];
 
 /* -------------------------------------------------------------------------- *
  * Copy
@@ -157,11 +181,51 @@ export const CHAPTERS = {
 } as const;
 
 /* -------------------------------------------------------------------------- *
+ * The entry move for every shot
+ * -------------------------------------------------------------------------- *
+ * One table, so the film's rhythm can be read at a glance — and so no two
+ * neighbouring shots enter the same way. Eight variants across thirty beats;
+ * before this every cut was a hard cut onto a push-in.
+ */
+const ENTRY_MOVE: Record<string, TransitionName> = {
+  hook: "none", // three beats, each with its own move inside the shot
+  brand: "blinds",
+  cardWrite: "none",
+  editor: "edgeR",
+  slash: "columns",
+  quickfind: "edgeU",
+  cardStructure: "none",
+  views: "none", // one move per view, inside the shot
+  properties: "edgeR",
+  rules: "edgeD",
+  peek: "slideR",
+  cardShip: "none",
+  ticketsList: "columns",
+  board: "press",
+  drawer: "slideL",
+  cycles: "iris",
+  projects: "edgeR",
+  project: "edgeU",
+  roadmap: "columns",
+  cardTogether: "none",
+  chat: "slideR",
+  comments: "columns",
+  versions: "edgeD",
+  share: "settle",
+  public: "edgeL",
+  cardOwn: "none",
+  settings: "edgeR",
+  dark: "blinds",
+  desktop: "slideR",
+  outro: "none",
+};
+
+/* -------------------------------------------------------------------------- *
  * Sound design
  * -------------------------------------------------------------------------- *
  * S2: every cue is pinned to a frame in a declarative table rather than nudged
- * in a timeline. `every` spreads a sample across a shot on an accelerating
- * interval so a run of identical hits does not machine-gun.
+ * in a timeline. Because every frame here is derived from `ORDER`, retiming a
+ * shot moves its sound with it.
  */
 type Cue = { frame: number; file: string; volume: number };
 
@@ -171,11 +235,15 @@ const cue = (id: string, offset: number, file: string, volume: number): Cue => (
   volume,
 });
 
+/** The seven views of the database, one beat each. 40 frames per view. */
+const VIEW_STEP = 40;
+const VIEW_TRANSITIONS: TransitionName[] = ["columns", "edgeR", "blinds", "edgeU", "iris", "press", "settle"];
+
 export const SFX: Cue[] = [
-  // Cold open: three surfaces, three air moves.
+  // Cold open: three surfaces, three different entrances.
   cue("hook", 0, "whoosh-big.mp3", 0.5),
-  cue("hook", 24, "wind-swoosh-short.mp3", 0.42),
-  cue("hook", 48, "wind-swoosh-short.mp3", 0.42),
+  cue("hook", 26, "wind-swoosh-short.mp3", 0.42),
+  cue("hook", 52, "wind-swoosh-short.mp3", 0.42),
   // The name lands.
   cue("brand", 8, "riser-cine.mp3", 0.34),
   cue("brand", 30, "impact-deep-whoosh.mp3", 0.5),
@@ -190,31 +258,33 @@ export const SFX: Cue[] = [
   cue("slash", 40, "ui-option-select.mp3", 0.34),
   cue("quickfind", 4, "switch-tap.mp3", 0.3),
   cue("quickfind", 44, "whoosh-fast.mp3", 0.36),
-  // Structure.
+  // Structure. One snap per view, landing *on* the cut.
   cue("cardStructure", 2, "paper-page-turn.mp3", 0.3),
   cue("views", 6, "sweep-fast.mp3", 0.34),
-  cue("views", 46, "transition-snap.mp3", 0.36),
-  cue("views", 86, "transition-snap.mp3", 0.36),
-  cue("views", 126, "transition-snap.mp3", 0.36),
-  cue("views", 166, "transition-snap.mp3", 0.36),
-  cue("views", 206, "transition-snap.mp3", 0.36),
-  cue("views", 246, "transition-snap.mp3", 0.36),
+  cue("views", 40, "transition-snap.mp3", 0.36),
+  cue("views", 80, "transition-snap.mp3", 0.36),
+  cue("views", 120, "transition-snap.mp3", 0.36),
+  cue("views", 160, "transition-snap.mp3", 0.36),
+  cue("views", 200, "transition-snap.mp3", 0.36),
+  cue("views", 240, "transition-snap.mp3", 0.36),
   cue("properties", 4, "ui-select-click.mp3", 0.32),
   cue("properties", 40, "ui-confirm-tone.mp3", 0.26),
   cue("rules", 4, "switch-tap.mp3", 0.3),
+  // The rule lands, then a second hit as the camera arrives on the tinted rows.
   cue("rules", 46, "ui-confirm-tone.mp3", 0.3),
+  cue("rules", 74, "shimmer-sparkle-sweep.mp3", 0.2),
   cue("peek", 6, "whoosh-fast.mp3", 0.34),
   cue("peek", 40, "ui-popup-dry.mp3", 0.28),
   // Ship.
   cue("cardShip", 2, "paper-page-turn.mp3", 0.3),
   cue("ticketsList", 6, "whoosh-fast.mp3", 0.32),
   cue("ticketsList", 70, "sweep-fast.mp3", 0.3),
-  cue("board", 6, "whoosh-big.mp3", 0.44),
-  cue("board", 20, "impact-transition.mp3", 0.36),
-  cue("board", 62, "pop.mp3", 0.3),
-  cue("board", 74, "pop.mp3", 0.26),
-  cue("board", 84, "pop.mp3", 0.24),
-  cue("board", 92, "pop.mp3", 0.22),
+  cue("board", 4, "whoosh-big.mp3", 0.44),
+  cue("board", 12, "impact-transition.mp3", 0.36),
+  cue("board", 18, "pop.mp3", 0.3),
+  cue("board", 24, "pop.mp3", 0.26),
+  cue("board", 30, "pop.mp3", 0.24),
+  cue("board", 36, "pop.mp3", 0.22),
   cue("drawer", 6, "whoosh-fast.mp3", 0.34),
   cue("drawer", 44, "ui-select-click.mp3", 0.3),
   cue("drawer", 96, "ui-message-pop.mp3", 0.26),
@@ -232,7 +302,7 @@ export const SFX: Cue[] = [
   cue("chat", 6, "ui-select-click.mp3", 0.3),
   cue("chat", 40, "keyboard.mp3", 0.22),
   cue("chat", 96, "ui-message-pop.mp3", 0.3),
-  cue("chat", 130, "shimmer-sparkle-sweep.mp3", 0.22),
+  cue("chat", 122, "shimmer-sparkle-sweep.mp3", 0.22),
   cue("comments", 6, "switch-tap.mp3", 0.3),
   cue("comments", 44, "ui-message-pop.mp3", 0.28),
   cue("versions", 6, "clock-tick-single.mp3", 0.26),
@@ -253,49 +323,148 @@ export const SFX: Cue[] = [
   cue("outro", 4, "riser-cine.mp3", 0.34),
   cue("outro", 26, "impact-cine-big.mp3", 0.5),
   cue("outro", 34, "sparkle.mp3", 0.24),
+  cue("outro", 150, "sweep-digital.mp3", 0.22),
 ];
+
+/* -------------------------------------------------------------------------- *
+ * The music bed
+ * -------------------------------------------------------------------------- *
+ * The first cut laid `bgm-tech-house.mp3` over the film from its first frame and
+ * let it run, which meant the picture and the music told opposite stories: the
+ * track's drop lands at 0:16 and its *climax* at 2:44–3:20, while the film ended
+ * at 2:23 — so the visual peak (the board, at 1:02) played over the track's
+ * breakdown and the film's finale played over its quiet middle. The loudest
+ * twenty seconds of the track were never used at all.
+ *
+ * So the bed is now cut, not laid. Four segments of the same track, each
+ * measured (a per-second RMS map — `video/README.md` has the method) and placed
+ * so its own shape matches the act it plays under:
+ *
+ *   0:00–0:16  the build   → the cold open and the wordmark
+ *   0:16–1:04  the drop    → the write and structure chapters
+ *   2:34–3:12  the climax  → the ship and together chapters (the board included)
+ *   3:20–end   the outro   → own it, the installer and the close
+ *
+ * Segments overlap by 14 frames on equal-power ramps, so a splice is a musical
+ * crossfade rather than a cut.
+ */
+type BedSegment = { at: number; from: number; dur: number; gain: number };
+
+const XFADE = 14;
+
+const BED: BedSegment[] = [
+  { at: 0, from: 0, dur: 480, gain: 0.36 }, // 0:00 → 0:16, the build
+  { at: 480, from: 480, dur: 1440, gain: 0.34 }, // 0:16 → 1:04, the drop
+  { at: 1920, from: 4620, dur: 1140, gain: 0.33 }, // 2:34 → 3:12, the climax
+  { at: 3060, from: 6000, dur: FILM_TOTAL - 3060, gain: 0.31 }, // 3:20 →, the outro
+];
+
+/** Cues loud enough to be worth ducking the music under. */
+const LOUD = SFX.filter((entry) => entry.volume >= 0.4);
+
+/**
+ * A triangular dip in the bed around each loud cue — a sidechain, done by hand
+ * because the bed is a fixed asset and the cues are a fixed table. 20 frames
+ * either side, 38% deep at the hit: enough to lift an impact off the music
+ * without the bed pumping audibly.
+ */
+function duckAt(globalFrame: number) {
+  let gain = 1;
+  for (const entry of LOUD) {
+    const distance = Math.abs(globalFrame - entry.frame);
+    if (distance < 20) gain = Math.min(gain, 0.62 + (distance / 20) * 0.38);
+  }
+  return gain;
+}
+
+const MusicBed: React.FC = () => (
+  <>
+    {BED.map((segment, index) => {
+      const lead = index === 0 ? 0 : XFADE;
+      const tail = index === BED.length - 1 ? 0 : XFADE;
+      const duration = segment.dur + lead + tail;
+      return (
+        <Sequence key={segment.from} from={segment.at - lead} durationInFrames={duration}>
+          <Audio
+            src={staticFile("audio/bgm.mp3")}
+            startFrom={segment.from - lead}
+            volume={(local) => {
+              // Equal-power ramps: a linear crossfade between two loud sections
+              // dips 3 dB in the middle, which is exactly where the splice is.
+              const inRamp = lead > 0 ? Math.min(1, Math.max(0, local / lead)) : 1;
+              const outRamp = tail > 0 ? Math.min(1, Math.max(0, (duration - local) / tail)) : 1;
+              // The bed fades up from silence over the first twenty frames;
+              // every later splice is handled by the equal-power ramps above.
+              const fadeIn = index === 0 ? Math.min(1, local / 20) : 1;
+              const fadeOut = index === BED.length - 1 ? Math.min(1, (duration - local) / 48) : 1;
+              const global = segment.at - lead + local;
+              return segment.gain * Math.sqrt(inRamp) * Math.sqrt(outRamp) * fadeIn * fadeOut * duckAt(global);
+            }}
+          />
+        </Sequence>
+      );
+    })}
+  </>
+);
 
 /* -------------------------------------------------------------------------- *
  * The shots
  * -------------------------------------------------------------------------- */
 
 const Brand = () => (
-  <BrandOpen total={168} tagline="A local-first workspace for notes, docs and databases." />
+  <BrandOpen total={150} tagline="A local-first workspace for notes, docs and databases." />
 );
 
+/**
+ * Seven views of one database. Every beat is locked off and enters on a
+ * *different* transition, and the rail underneath tells the viewer that this is
+ * one feature being cycled rather than seven unrelated shots — the first cut had
+ * all seven pushing in identically with six frames of white between them.
+ */
+const VIEWS: Array<{ texture: string; label: string; zoom: number; fx: number; fy: number }> = [
+  { texture: "db-table", label: "Table view", zoom: 1.22, fx: 0.5, fy: 0.5 },
+  { texture: "db-board", label: "Board view", zoom: 1.18, fx: 0.5, fy: 0.48 },
+  { texture: "db-timeline", label: "Timeline view", zoom: 1.24, fx: 0.5, fy: 0.5 },
+  { texture: "db-calendar", label: "Calendar view", zoom: 1.2, fx: 0.52, fy: 0.52 },
+  { texture: "db-gallery", label: "Gallery view", zoom: 1.22, fx: 0.5, fy: 0.5 },
+  { texture: "db-chart", label: "Chart view", zoom: 1.24, fx: 0.5, fy: 0.5 },
+  { texture: "db-list", label: "List view", zoom: 1.2, fx: 0.5, fy: 0.52 },
+];
+
 const Views = () => {
-  const step = 40;
+  const frame = useCurrentFrame();
+  const index = Math.min(VIEWS.length - 1, Math.floor(frame / VIEW_STEP));
+  const progress = (frame - index * VIEW_STEP) / VIEW_STEP;
   return (
     <AbsoluteFill>
-      {VIEW_TEXTURES.map((texture, index) => (
-        <Sequence key={texture} from={index * step} durationInFrames={step + 6}>
+      {VIEWS.map((view, beat) => (
+        <Sequence key={view.texture} from={beat * VIEW_STEP} durationInFrames={VIEW_STEP + 2}>
           <PageShot
-            texture={texture}
-            keys={move(texture, [1.24, 0.55, 0.52], [1.1, 0.6, 0.48], step + 6)}
+            texture={view.texture}
+            transition={VIEW_TRANSITIONS[beat]}
+            transitionDuration={beat === 0 ? 14 : 10}
+            keys={still(view.texture, view.zoom, view.fx, view.fy)}
+            caption={view.label}
+            captionDelay={5}
           />
-          <Caption delay={2} duration={10}>
-            {VIEW_LABELS[index]}
-          </Caption>
         </Sequence>
       ))}
-      <Grain />
+      <Rail total={VIEWS.length} index={index} progress={progress} delay={10} top={842} />
     </AbsoluteFill>
   );
 };
 
-const Peek = () => (
-  <PageShot texture="peek" keys={move("peek", [1.06, 0.6, 0.5], [1.3, 0.72, 0.56], 130)} caption="Open any row without leaving the table" />
-);
-
 const Cycles = () => (
   <PageShot
     texture="cycles"
-    keys={move("cycles", [1.16, 0.5, 0.5], [1.34, 0.44, 0.46], 192)}
+    transition={ENTRY_MOVE.cycles}
+    keys={still("cycles", 1.24, 0.52, 0.5)}
     caption="Cycles — commitment, burndown and velocity"
+    captionDelay={26}
     overlay={
       <AbsoluteFill>
-        <Readout label="Velocity" value={34} suffix="pts" x={1360} y={196} delay={64} duration={52} />
-        <Readout label="Committed" value={82} suffix="%" x={1360} y={392} delay={88} duration={48} accent={NOEMA.success} />
+        <Readout label="Velocity" value={34} suffix="pts" x={1360} y={196} delay={44} duration={34} />
+        <Readout label="Committed" value={82} suffix="%" x={1360} y={392} delay={58} duration={32} accent={NOEMA.success} />
       </AbsoluteFill>
     }
   />
@@ -304,12 +473,14 @@ const Cycles = () => (
 const Projects = () => (
   <PageShot
     texture="projects"
-    keys={move("projects", [1.14, 0.5, 0.52], [1.3, 0.46, 0.46], 150)}
+    transition={ENTRY_MOVE.projects}
+    keys={still("projects", 1.22, 0.5, 0.5)}
     caption="Projects — progress, owners and target dates"
+    captionDelay={22}
     overlay={
       <AbsoluteFill>
-        <Readout label="Projects" value={4} x={1360} y={196} delay={40} duration={44} />
-        <Readout label="Milestones" value={6} x={1360} y={392} delay={60} duration={44} accent={NOEMA.warning} />
+        <Readout label="Projects" value={4} x={1360} y={196} delay={34} duration={30} />
+        <Readout label="Milestones" value={6} x={1360} y={392} delay={46} duration={30} accent={NOEMA.warning} />
       </AbsoluteFill>
     }
   />
@@ -317,15 +488,19 @@ const Projects = () => (
 
 const Desktop = () => (
   <AbsoluteFill>
-    <PageShot texture="settings-data" keys={move("settings-data", [1.2, 0.5, 0.52], [1.4, 0.46, 0.46], 150)} />
+    <PageShot
+      texture="settings-data"
+      transition={ENTRY_MOVE.desktop}
+      keys={still("settings-data", 1.28, 0.5, 0.5)}
+    />
     <AbsoluteFill style={{ backgroundColor: "rgba(255,255,255,0.82)" }} />
     <Terminal
       x={510}
       y={300}
       lines={["Noema_1.4.0_x64-setup.exe", "Installed — no database to run", "Workspace restored from backup"]}
-      delay={16}
+      delay={12}
     />
-    <Claim text="One installer. Nothing else to install." delay={30} top={770} />
+    <Claim text="One installer. Nothing else to install." delay={26} top={770} />
   </AbsoluteFill>
 );
 
@@ -355,7 +530,7 @@ const OutroShot = () => {
   ].filter((item): item is NonNullable<typeof item> => item !== null);
   return (
     <Outro
-      total={186}
+      total={240}
       mark="Noema"
       line="Notes, docs, databases — tickets, cycles and projects."
       footer="Bilel Guembri · Wissal Ben Othmen · MIT"
@@ -366,90 +541,179 @@ const OutroShot = () => {
 
 /** Everything that is a surface plus a camera. */
 function Surface({ id }: { id: string }) {
+  const transition = ENTRY_MOVE[id];
   switch (id) {
     case "editor":
       return (
         <PageShot
           texture="editor"
-          keys={move("editor", [1.3, 0.5, 0.12], [1.16, 0.52, 0.62], 240)}
+          transition={transition}
+          // A downward pan at the page's left edge: the shot is about the
+          // document's range of blocks, and panning down keeps the sidebar whole
+          // instead of slicing it on the way past.
+          keys={drift("editor", 1.24, [0.4, 0.32], [0.4, 0.66], 210, false)}
           caption="The block editor — headings, callouts, toggles, code, tables"
-          captionDelay={40}
+          captionDelay={30}
         />
       );
     case "slash":
-      return <PageShot texture="slash" keys={move("slash", [1.3, 0.5, 0.6], [1.5, 0.5, 0.68], 132)} caption="Type / for any block" />;
+      return (
+        <PageShot
+          texture="slash"
+          transition={transition}
+          keys={still("slash", 1.38, 0.46, 0.62)}
+          caption="Type / for any block"
+          captionDelay={18}
+        />
+      );
     case "quickfind":
       return (
-        <PageShot texture="quickfind" keys={move("quickfind", [1.1, 0.5, 0.4], [1.22, 0.5, 0.5], 138)} caption="Ctrl / ⌘ P — jump to any page" />
+        <PageShot
+          texture="quickfind"
+          transition={transition}
+          // A snap, then a full second of hold. The palette is the point; pushing
+          // into it for four seconds would only smear the text.
+          keys={snap("quickfind", 1.18, 1.32, 0.5, 0.44)}
+          caption="Ctrl / ⌘ P — jump to any page"
+          captionDelay={22}
+        />
       );
     case "properties":
       return (
         <PageShot
           texture="db-properties"
-          keys={move("db-properties", [1.1, 0.5, 0.5], [1.3, 0.62, 0.5], 150)}
+          transition={transition}
+          // A snap onto the properties panel: at this zoom the chrome rule leaves
+          // only ~100px of lateral room, so the arrival is carried by the scale
+          // rather than by a pan that would not move.
+          keys={snap("db-properties", 1.18, 1.34, 0.62, 0.5)}
           caption="Typed properties — relations, rollups and computed columns"
+          captionDelay={20}
         />
       );
     case "rules":
       return (
         <PageShot
           texture="db-rules"
-          keys={move("db-rules", [1.12, 0.62, 0.5], [1.3, 0.72, 0.56], 150)}
+          transition={transition}
+          // Rule first, then effect: the frame opens on the colour-rule editor and
+          // travels down onto the rows that rule has tinted. The first cut showed
+          // the editor and *claimed* the rows were coloured without ever being
+          // close enough to see that they were.
+          keys={[
+            cam("db-rules", 1.36, 0.5, 0.36, 0, true),
+            cam("db-rules", 1.8, 0.7, 0.7, 46, true),
+            cam("db-rules", 1.8, 0.7, 0.7, 108, true),
+          ]}
           caption="Conditional formatting — rules colour the rows"
+          captionDelay={56}
+        />
+      );
+    case "peek":
+      return (
+        <PageShot
+          texture="peek"
+          transition={transition}
+          keys={still("peek", 1.24, 0.6, 0.5)}
+          caption="Open any row without leaving the table"
+          captionDelay={20}
         />
       );
     case "ticketsList":
       return (
         <PageShot
           texture="tickets-list"
-          keys={move("tickets-list", [1.14, 0.5, 0.42], [1.28, 0.52, 0.6], 162)}
+          transition={transition}
+          keys={drift("tickets-list", 1.2, [0.4, 0.46], [0.64, 0.56], 108)}
           caption="Tickets — keys, labels, estimates, saved views"
+          captionDelay={22}
         />
       );
     case "drawer":
       return (
         <PageShot
           texture="ticket-drawer"
-          keys={move("ticket-drawer", [1.16, 0.6, 0.5], [1.34, 0.7, 0.6], 172)}
+          transition={transition}
+          keys={still("ticket-drawer", 1.26, 0.62, 0.5)}
           caption="The drawer — sub-tickets, relations, activity"
+          captionDelay={24}
         />
       );
     case "project":
       return (
         <PageShot
           texture="project-detail"
-          keys={move("project-detail", [1.14, 0.5, 0.5], [1.3, 0.54, 0.62], 144)}
-          caption="Milestones — planned → in progress → done"
+          transition={transition}
+          // Down the project page from the timeline to the overview. The caption
+          // claims what the timeline actually draws — the milestone legend is the
+          // app's own text ("grey planned, blue in progress, green done"), not a
+          // section this shot cannot reach.
+          keys={drift("project-detail", 1.3, [0.56, 0.4], [0.56, 0.62], 108)}
+          caption="Milestones on the timeline — planned, in progress, done"
+          captionDelay={24}
         />
       );
     case "roadmap":
       return (
         <PageShot
           texture="roadmap"
-          keys={move("roadmap", [1.18, 0.42, 0.3], [1.44, 0.46, 0.46], 144)}
+          transition={transition}
+          // A downward scan of the timeline: the page is longer than the frame, and
+          // the shot is about how much is on it rather than about one row — a
+          // locked-off frame here spent its top third on the tab bar.
+          keys={drift("roadmap", 1.28, [0.44, 0.3], [0.44, 0.72], 108, true)}
           caption="The workspace roadmap"
+          captionDelay={22}
         />
       );
     case "chat":
       return (
         <PageShot
           texture="chat"
-          keys={move("chat", [1.14, 0.62, 0.5], [1.3, 0.74, 0.58], 176)}
+          transition={transition}
+          keys={still("chat", 1.22, 0.68, 0.5)}
           caption="Ask your workspace — it answers from your own pages"
+          captionDelay={24}
         />
       );
     case "comments":
-      return <PageShot texture="comments" keys={move("comments", [1.16, 0.6, 0.5], [1.32, 0.72, 0.6], 126)} caption="Comment on the text itself" />;
+      return (
+        <PageShot
+          texture="comments"
+          transition={transition}
+          keys={still("comments", 1.22, 0.64, 0.5)}
+          caption="Comment on the text itself"
+          captionDelay={20}
+        />
+      );
     case "versions":
-      return <PageShot texture="versions" keys={move("versions", [1.14, 0.62, 0.5], [1.3, 0.72, 0.56], 120)} caption="Every save, restorable" />;
+      return (
+        <PageShot
+          texture="versions"
+          transition={transition}
+          keys={still("versions", 1.18, 0.6, 0.5)}
+          caption="Every save, restorable"
+          captionDelay={20}
+        />
+      );
     case "share":
-      return <PageShot texture="share" keys={move("share", [1.12, 0.55, 0.5], [1.26, 0.66, 0.52], 132)} caption="Share with a link — or one member at a time" />;
+      return (
+        <PageShot
+          texture="share"
+          transition={transition}
+          keys={still("share", 1.18, 0.58, 0.5)}
+          caption="Share with a link — or one member at a time"
+          captionDelay={22}
+        />
+      );
     case "public":
       return (
         <PageShot
           texture="public"
-          keys={move("public", [1.1, 0.5, 0.16], [1.18, 0.5, 0.5], 108)}
+          transition={transition}
+          keys={still("public", 1.12, 0.5, 0.2, false)}
           caption="What a visitor sees"
+          captionDelay={18}
           background={NOEMA.sidebar}
         />
       );
@@ -457,21 +721,25 @@ function Surface({ id }: { id: string }) {
       return (
         <PageShot
           texture="settings"
-          keys={move("settings", [1.14, 0.62, 0.42], [1.26, 0.66, 0.6], 132)}
+          transition={transition}
+          keys={still("settings", 1.2, 0.6, 0.5)}
           caption="Members, roles and invites"
+          captionDelay={20}
         />
       );
     case "dark":
       return (
         <PageShot
           texture="home-dark"
-          keys={move("home-dark", [1.12, 0.52, 0.5], [1.24, 0.58, 0.54], 126)}
+          transition={transition}
+          keys={still("home-dark", 1.18, 0.54, 0.5)}
           caption="The same workspace, dark"
+          captionDelay={18}
           background={NOEMA.dark.bg}
         />
       );
     case "home":
-      return <PageShot texture="home" keys={move("home", [1.1, 0.5, 0.5], [1.2, 0.56, 0.5], 120)} />;
+      return <PageShot texture="home" keys={still("home", 1.14, 0.5, 0.5)} />;
     default:
       return null;
   }
@@ -481,10 +749,10 @@ function Surface({ id }: { id: string }) {
  * The film
  * -------------------------------------------------------------------------- */
 
-const renderShot = (id: string, dur: number): React.ReactNode => {
+const renderShot = (id: string): React.ReactNode => {
   switch (id) {
     case "hook":
-      return <HookCut textures={["tickets-board", "cycles", "chat"]} />;
+      return <HookCut />;
     case "brand":
       return <Brand />;
     case "cardWrite":
@@ -495,14 +763,15 @@ const renderShot = (id: string, dur: number): React.ReactNode => {
       return <TitleCard {...CHAPTERS[id]} />;
     case "views":
       return <Views />;
-    case "peek":
-      return <Peek />;
     case "board":
       return (
+        // Locked off, because the beat is the deal: thirty-four cards arriving on
+        // an accelerating stagger, which the camera would only fight.
         <BoardDeal
           texture="tickets-board"
-          keys={move("tickets-board", [1.14, 0.5, 0.5], [1.24, 0.56, 0.5], dur)}
+          keys={still("tickets-board", 1.18, 0.5, 0.46)}
           caption="Board — every ticket, in its column"
+          spread={40}
         />
       );
     case "cycles":
@@ -520,7 +789,7 @@ const renderShot = (id: string, dur: number): React.ReactNode => {
 
 export const NoemaFilm: React.FC<{ bgm?: boolean }> = ({ bgm = true }) => (
   <AbsoluteFill style={{ backgroundColor: NOEMA.bg }}>
-    {bgm ? <Audio src={staticFile("audio/bgm.mp3")} volume={0.22} /> : null}
+    {bgm ? <MusicBed /> : null}
     {SFX.map((entry, index) => (
       <Sequence key={`${entry.file}-${index}`} from={entry.frame}>
         <Audio src={staticFile(`audio/${entry.file}`)} volume={entry.volume} />
@@ -528,7 +797,7 @@ export const NoemaFilm: React.FC<{ bgm?: boolean }> = ({ bgm = true }) => (
     ))}
     {ORDER.map((shot) => (
       <Sequence key={shot.id} from={FROM[shot.id]} durationInFrames={shot.dur} name={shot.id}>
-        {renderShot(shot.id, shot.dur)}
+        {renderShot(shot.id)}
       </Sequence>
     ))}
   </AbsoluteFill>

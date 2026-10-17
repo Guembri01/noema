@@ -1,5 +1,6 @@
-import { AbsoluteFill, Easing, Img, interpolate, staticFile, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Easing, Img, interpolate, Sequence, staticFile, useCurrentFrame } from "remotion";
 import { PageCam, type CamKey } from "../lib/PageCam";
+import { Land, Transition, type TransitionName } from "../lib/motion";
 import {
   Caption,
   Card,
@@ -23,6 +24,10 @@ import { layout, textureH } from "../textures";
  * that is *a surface* (a database, the tracker, a cycle, settings) is this shot
  * with different keys — which is what keeps the film feeling like one product
  * rather than a montage of unrelated effects.
+ *
+ * `transition` is the shot's entry move. Every surface carries one, because the
+ * first cut carried none: thirty hard cuts between white-ish screenshots read as
+ * one continuous surface sliding past rather than as thirty separate beats.
  */
 export const PageShot: React.FC<{
   texture: string;
@@ -35,21 +40,36 @@ export const PageShot: React.FC<{
   overlay?: React.ReactNode;
   filter?: string;
   background?: string;
-}> = ({ texture, keys, caption, captionDelay = 8, children, overlay, filter, background }) => (
-  <AbsoluteFill>
-    <PageCam
-      src={layout(texture).texture.file}
-      pageH={textureH(texture)}
-      keys={keys}
-      filter={filter}
-      background={background}
-    >
-      {children}
-    </PageCam>
-    {overlay}
-    {caption ? <Caption delay={captionDelay}>{caption}</Caption> : null}
-    <Grain />
-  </AbsoluteFill>
+  transition?: TransitionName;
+  transitionDuration?: number;
+}> = ({
+  texture,
+  keys,
+  caption,
+  captionDelay = 6,
+  children,
+  overlay,
+  filter,
+  background,
+  transition = "none",
+  transitionDuration,
+}) => (
+  <Transition name={transition} duration={transitionDuration} background={background}>
+    <AbsoluteFill>
+      <PageCam
+        src={layout(texture).texture.file}
+        pageH={textureH(texture)}
+        keys={keys}
+        filter={filter}
+        background={background}
+      >
+        {children}
+      </PageCam>
+      {overlay}
+      {caption ? <Caption delay={captionDelay}>{caption}</Caption> : null}
+      <Grain />
+    </AbsoluteFill>
+  </Transition>
 );
 
 /* -------------------------------------------------------------------------- *
@@ -58,28 +78,58 @@ export const PageShot: React.FC<{
 
 /**
  * `trailer-grammar-moves`: three of the most striking surfaces, one beat each,
- * before the film says its own name. Each cut lands on the app's own white so
- * the flashes read as the product blinking rather than as a hard montage.
+ * before the film says its own name.
+ *
+ * Each beat now enters on its own transition — columns, then an accent-led edge,
+ * then blinds — and drifts sideways instead of pushing in. The first cut pulled
+ * back on all three beats, which is the same move the next twenty shots made;
+ * three *different* entrances in seventy-eight frames is what makes this read as
+ * a cold open rather than as the first item of a slideshow.
  */
-export const HookCut: React.FC<{ textures: string[]; perShot?: number }> = ({ textures, perShot = 24 }) => {
+const HOOK: Array<{
+  texture: string;
+  transition: TransitionName;
+  from: [number, number];
+  to: [number, number];
+}> = [
+  { texture: "tickets-board", transition: "columns", from: [1060, 470], to: [968, 500] },
+  { texture: "cycles", transition: "edgeR", from: [942, 566], to: [1032, 540] },
+  { texture: "chat", transition: "blinds", from: [1188, 500], to: [1092, 516] },
+];
+
+export const HookCut: React.FC<{ perShot?: number }> = ({ perShot = 26 }) => {
   const frame = useCurrentFrame();
-  const index = Math.min(textures.length - 1, Math.floor(frame / perShot));
-  const local = frame - index * perShot;
-  // A 3-frame white lift on each cut: the app's canvas colour, so the transition
-  // is the product's own surface rather than a video effect.
-  const flash = interpolate(local, [0, 3], [0.55, 0], { extrapolateRight: "clamp" });
   return (
     <AbsoluteFill>
-      <PageShot
-        texture={textures[index]}
-        keys={[
-          // Keys are per-beat, not per-shot: a single pair would push in on the
-          // first cut only and leave the other two beats sitting still.
-          { frame: index * perShot, cx: 1120, cy: 520, zoom: 1.34 },
-          { frame: index * perShot + perShot + 4, cx: 1010, cy: 500, zoom: 1.12 },
-        ]}
-      />
-      <AbsoluteFill style={{ backgroundColor: NOEMA.bg, opacity: flash }} />
+      {HOOK.map((beat, index) => {
+        const local = frame - index * perShot;
+        return (
+          <Sequence key={beat.texture} from={index * perShot} durationInFrames={perShot + 1}>
+            <AbsoluteFill style={{ opacity: local >= 0 ? 1 : 0 }}>
+              <PageShot
+                texture={beat.texture}
+                transition={beat.transition}
+                transitionDuration={9}
+                keys={[
+                  { frame: 0, cx: beat.from[0], cy: beat.from[1], zoom: 1.18 },
+                  { frame: perShot + 1, cx: beat.to[0], cy: beat.to[1], zoom: 1.18 },
+                ]}
+              />
+              {/* A 3-frame white lift on each cut: the app's canvas colour, so the
+                  transition is the product's own surface rather than a video effect. */}
+              <AbsoluteFill
+                style={{
+                  backgroundColor: NOEMA.bg,
+                  opacity: interpolate(local, [0, 3], [0.5, 0], {
+                    extrapolateLeft: "clamp",
+                    extrapolateRight: "clamp",
+                  }),
+                }}
+              />
+            </AbsoluteFill>
+          </Sequence>
+        );
+      })}
     </AbsoluteFill>
   );
 };
@@ -168,47 +218,42 @@ export const BrandOpen: React.FC<{ total: number; tagline: string; mark?: string
  * `deck-deal-flyin` over the real board: each captured ticket card lands in its
  * own slot on the board texture (Q9 — a fly-in that ends anywhere other than the
  * slot it belongs to is a decoration, not a demonstration). Cards arrive on a
- * hard accelerating stagger, and the board rests for half a second once full
- * (R2).
+ * hard accelerating stagger, and the board rests once full (R2).
+ *
+ * The slot is blanked in the column's own colour first. The board texture was
+ * photographed with its cards already on it, so without that the cards simply
+ * never left and all thirty-four landings happened underneath an identical
+ * picture — the shot's only animation, invisible. `#f7f7f5` is sampled straight
+ * from the texture, so the blank is the board's own column.
  */
 export const BoardDeal: React.FC<{
   texture: string;
   keys: CamKey[];
   caption?: React.ReactNode;
   cardKeys?: string[];
-}> = ({ texture, keys, caption, cardKeys }) => {
-  const frame = useCurrentFrame();
+  /** Frames the whole deal takes. */
+  spread?: number;
+}> = ({ texture, keys, caption, cardKeys, spread = 40 }) => {
   const elements = layout(texture).elements;
   const names = cardKeys ?? Object.keys(elements).filter((name) => name.startsWith("card-all-"));
   const count = Math.max(1, names.length);
   return (
-    <PageShot texture={texture} keys={keys} caption={caption} captionDelay={14}>
+    <PageShot texture={texture} keys={keys} caption={caption} captionDelay={spread + 8}>
       {names.map((name, index) => {
-        const slot = elements[name];
         // Accelerating stagger: later cards arrive sooner after their
         // predecessor, which is what reads as "a lot of work arriving".
-        const start = 8 + (index / count) ** 0.72 * 52;
-        const progress = interpolate(frame, [start, start + 26], [0, 1], {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-          easing: easeSpring,
-        });
-        const lift = (1 - progress) * (140 + index * 26);
+        const start = 3 + (index / count) ** 0.72 * (spread - 20);
         return (
-          <Img
+          <Land
             key={name}
-            src={staticFile(slot.file)}
-            style={{
-              position: "absolute",
-              left: slot.x,
-              top: slot.y,
-              width: slot.width,
-              height: slot.height,
-              opacity: progress,
-              transform: `translate(${(1 - progress) * -90}px, ${-lift}px) rotate(${(1 - progress) * -4}deg)`,
-              borderRadius: RADIUS.sm,
-              boxShadow: progress > 0.6 ? SHADOW.lifted : undefined,
-            }}
+            texture={texture}
+            element={name}
+            delay={start}
+            duration={20}
+            lift={130 + index * 22}
+            drift={-80}
+            rotate={-4}
+            cover={NOEMA.sidebar}
           />
         );
       })}
