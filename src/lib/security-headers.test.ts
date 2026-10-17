@@ -49,6 +49,17 @@ describe("security headers (next.config.ts)", () => {
     }
   });
 
+  it("does not advertise the framework (B78)", () => {
+    // Next.js answers every HTML response with `X-Powered-By: Next.js` while
+    // `poweredByHeader` is on — and it is on by default. The header map
+    // cannot cover it: `headers()` only *adds* headers, while the server
+    // sets this one itself. The switch therefore lives in the config, and
+    // this asserts the **evaluated** value of it (the gate
+    // `scripts/check-powered-by.mjs` reads the file; this reads the object
+    // Next.js will actually use).
+    expect(nextConfig.poweredByHeader).toBe(false);
+  });
+
   it("CSP enforces the lockdown directives and the compatibility allowances", () => {
     const csp = SECURITY_HEADERS["Content-Security-Policy"];
     expect(csp).toBeTruthy();

@@ -116,6 +116,13 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   the `style` attribute is limited to the ten design tokens and a hex colour —
   the two forms the tree actually writes. An unsafe link keeps its text: the
   anchor is dropped, the label stays.
+- The response no longer names the framework. Next.js sends
+  `X-Powered-By: Next.js` on every HTML response while `poweredByHeader` is
+  on — and it is on by default — so every answer handed the technology stack
+  away. The security-header map could not cover it: `headers()` only *adds*
+  headers, while the server sets this one itself. `next.config.ts` now sets
+  `poweredByHeader: false`, and `npm run check:powered-by` fails when the
+  switch is missing or is not `false`.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
