@@ -11,6 +11,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Database, FileText, Menu, PanelLeftOpen, X } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";
 import { OPEN_CHAT_EVENT } from "@/components/sidebar-chat";
+import { ChatFab } from "@/components/chat-fab";
 import { ChatPanel, type PanelThread } from "@/components/chat-panel";
 import type { CalendarFeedView, MeetingEventView } from "@/components/sidebar-meetings";
 import { CommandPalette } from "@/components/command-palette";
@@ -443,7 +444,12 @@ export function WorkspaceShell({
             {children}
           </div>
         </main>
-        {chatOpen && (
+        {/* One floating entry point to the assistant, bottom-right. It has to be a
+          direct child of the shell: a `transform`/`backdrop-filter` ancestor would
+          re-root its `position: fixed` (see the popover notes in DESIGN_SYSTEM). */}
+      <ChatFab open={chatOpen} onOpen={() => setChatOpen(true)} locale={locale} />
+
+      {chatOpen && (
           <ChatPanel
             workspaceId={workspace.id}
             slug={workspace.slug}

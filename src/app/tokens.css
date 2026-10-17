@@ -68,6 +68,13 @@
   --space-10: 40px;
   --space-12: 48px;
   --space-16: 64px;
+
+  /* Type scale — including the small steps the app actually uses. They were
+     written as arbitrary values (`text-[11px]`) only because no token existed
+     for them, which is exactly the inconsistency the audit flagged. */
+  --text-3xs: 0.625rem; /* 10px — dense chrome */
+  --text-2xs: 0.6875rem; /* 11px — metadata, captions */
+  --text-md: 0.8125rem; /* 13px — secondary body copy */
 }
 
 .dark {
