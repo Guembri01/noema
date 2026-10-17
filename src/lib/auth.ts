@@ -64,6 +64,12 @@ export async function verifyPassword(
  * device and revoke it. If the registry is unavailable the sign-in still
  * succeeds — the session then behaves like a legacy (unlisted) one, because a
  * broken store must not block authentication.
+ *
+ * B129: a session that is not in the registry cannot be revoked, cannot be
+ * listed and does not get the idle window — the request path treats an
+ * unknown sid as a legacy session. Such a session therefore gets the **idle**
+ * lifetime instead of the absolute one: the sign-in still works, and the
+ * exposure is bounded to the idle window instead of the 30 days of the token.
  */
 export async function createSession(userId: string): Promise<void> {
   let record: { sid: string } | null = null;
@@ -80,10 +86,17 @@ export async function createSession(userId: string): Promise<void> {
   const payload: { sub: string; sid?: string } = { sub: userId };
   if (record) payload.sid = record.sid;
 
+  // A session without a registry row is only as good as the idle window:
+  // nothing can revoke it, nothing can list it, and nothing enforces the
+  // idle deadline for it.
+  const seconds = record
+    ? 60 * 60 * 24 * SESSION_DAYS
+    : Math.floor(SESSION_IDLE_MS / 1000);
+
   const token = await new SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime(`${SESSION_DAYS}d`)
+    .setExpirationTime(`${seconds}s`)
     .sign(secretKey());
 
   const store = await cookies();
@@ -92,7 +105,7 @@ export async function createSession(userId: string): Promise<void> {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 60 * 60 * 24 * SESSION_DAYS,
+    maxAge: seconds,
   });
 }
 
