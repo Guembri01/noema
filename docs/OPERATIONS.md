@@ -317,8 +317,8 @@ checks pass. `MOCK_SMTP_PORT` overrides the mock’s port (default 2525).
 npm run collab          # = node scripts/collab-server.mjs
 ```
 
-Optional overrides (defaults `PORT=1234`, `HOST=0.0.0.0`, read from
-`collab-server.mjs` just above the `SESSION_COOKIE` constant):
+Optional overrides (defaults `PORT=1234`, `HOST=127.0.0.1` — the host is
+resolved by `resolveHost` in `scripts/collab-server.mjs`):
 
 ```powershell
 $env:PORT="9000"; $env:HOST="127.0.0.1"; npm run collab   # PowerShell
@@ -337,7 +337,8 @@ $env:PORT="9000"; $env:HOST="127.0.0.1"; npm run collab   # PowerShell
   (`.env.example:12`), then (re)start the app server.
 - Optional `APP_ORIGINS` (comma-separated allow-list, normalized like
   `next.config.ts`) — when set, the relay enforces the upgrade `Origin`
-  against it (see 5.2); when unset the relay is permissive (repo default).
+  against it (see 5.2); when unset the relay accepts **only the loopback
+  origin** (repo default, see 5.2 and 5.4).
 
 ### 5.2 Join authorization (B53) + M1.5 hardening (B75)
 
@@ -359,7 +360,8 @@ The relay authorizes **before** the room exists — fail closed everywhere:
 | Check | Behaviour | On failure |
 | --- | --- | --- |
 | Origin (checked **before** the session check) | if `APP_ORIGINS` is set, the upgrade `Origin` must be on the list — a missing Origin fails closed too | close **4400** `bad-origin` |
-| Origin unset (repo default) | **permissive by design** — `SameSite=lax` already stops cross-site cookie attachment and every join still needs a valid JWT; failing closed would break CLI/test clients | — |
+| Origin unset (repo default) | **fail closed (B64)**: only the **loopback** origin (`localhost`, `127.0.0.1`, `[::1]`) connects; a foreign origin is refused. A **missing** Origin header is accepted (only a native client — the CLI smoke, the desktop sidecar — sends none, and it still has to pass the session check); an **empty** Origin header is refused | close **4400** `bad-origin` |
+| Message size (B64) | one WebSocket message is capped at **4 MiB** (`MAX_PAYLOAD_BYTES`) — the app's own budget for a page's content in one request; `ws` would otherwise take 100 MiB | close **1009** (payload too big) |
 | Connection rate (R9.6) | max **5 concurrent connections per verified user** | overflow close **4429** `rate-limited` |
 | Message rate (R9.6) | max **30 messages per connection per 10 s** sliding window | 31st close **4429** `rate-limited` |
 | Presence identity (R9.16) | the `user: {id,name,color,avatarUrl}` field of **every** inbound awareness update is replaced server-side with the DB-resolved identity (colour = stable hash of the user id) — client claims are never relayed | — |
@@ -370,7 +372,8 @@ created for a rejected join.
 
 **Still open (script header, “Known gaps”):** no mid-session lock/revocation
 re-evaluation (R9.4 — join-time only), no byte-rate cap (512 KiB/s half of
-R9.6), handshake *churn* bounded only by the concurrency cap, and the residual
+R9.6 — the 4 MiB per-*message* cap of B64 does not replace it), handshake
+*churn* bounded only by the concurrency cap, and the residual
 timing side channel from B53. Also: the membership/guest logic is *ported* into
 the script — a change to `src/lib/permissions.ts` / `guest-access.ts` must be
 mirrored here until the planned internal authz endpoint lands (drift fails
@@ -379,12 +382,49 @@ closed for grants, but can over-deny).
 ### 5.3 Tests / health
 
 ```bash
-npx vitest run scripts/collab-server.test.mjs   # 38 it() cases: join auth + B75 rate-limit/origin/presence
+npx vitest run scripts/collab-server.test.mjs   # 53 it() cases: join auth + B75 rate-limit/origin/presence + B64 network posture
 ```
 
 `scripts/check-collab.mjs` (unauthenticated two-client smoke) legitimately gets
-4401 — it needs a real session cookie — and, if `APP_ORIGINS` is set, a valid
-`Origin`; it is **not** a gate.
+4401 — it needs a real session cookie — and, if `APP_ORIGINS` is set, a listed
+`Origin` (otherwise 4400); it is **not** a gate.
+
+### 5.4 Networked deployment (B64)
+
+The relay is a **separate process** (`npm run collab`), started by the
+operator — the app container and the compose stack never start it (there is
+no `collab` service in `docker-compose.yml`, no `collab-server` command in the
+`Dockerfile` and no workflow that runs it). Two settings decide whether it is
+reachable from the network:
+
+| Setting | Default | Networked deployment |
+| --- | --- | --- |
+| `HOST` | `127.0.0.1` (loopback only) | set it **explicitly** to `0.0.0.0` (or the container/proxy address) — the relay then listens on every interface and is only protected by the origin policy and the session check |
+| `APP_ORIGINS` | unset → only the **loopback** origin is accepted | **required**: list every origin the browser may use (`https://noema.example.com`, …). A foreign origin is refused with 4400 **before** the session check |
+| `maxPayload` | 4 MiB per message (`MAX_PAYLOAD_BYTES`, not configurable) | — |
+
+```bash
+# A relay that other machines may reach:
+HOST=0.0.0.0 APP_ORIGINS="noema.example.com" npm run collab
+```
+
+Notes:
+
+- `HOST=0.0.0.0` is **never** the default — an unset, empty or blank `HOST`
+  falls back to `127.0.0.1` (an empty `HOST` would make Node bind to *every*
+  interface).
+- The origin rule is **fail closed in both configurations**. With
+  `APP_ORIGINS` unset, only `http://localhost:<port>`, `http://127.0.0.1:<port>`
+  and `http://[::1]:<port>` connect. Browsing the app through a LAN address
+  (`http://192.168.1.10:3200`) therefore needs `APP_ORIGINS` — that is the
+  documented operating rule for a networked installation.
+- A **missing** `Origin` header is accepted (only a native client sends none —
+  the CLI smoke above, the desktop sidecar; it still has to pass the session
+  check), an **empty** one is refused.
+- Behind a **reverse proxy** the relay stays a plain WebSocket server: it
+  terminates nothing itself. `HOST=0.0.0.0` (or the proxy's address) plus
+  `APP_ORIGINS` with the public origin is the whole configuration — the proxy
+  must forward the WebSocket upgrade and the `Origin` header unchanged.
 
 ## 6. Docker profile ops (`docker-compose.yml`)
 
