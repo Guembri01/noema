@@ -20,7 +20,8 @@
 Requirements: **Node 24**, npm, Docker (README “Quick start”).
 
 Required env: `DATABASE_URL` (must match the docker mapping `localhost:5433`,
-user/db `noema`) and `AUTH_SECRET` (≥ 16 chars — shorter is rejected by the
+user/db `noema`) and `AUTH_SECRET` (≥ 32 characters — shorter values, the
+shipped placeholders and well-known weak values are rejected by the app and the
 collab relay). Full key inventory: `.env.example`.
 
 ### 1.1 Reverse proxy in front of the app (`TRUSTED_PROXY_HOPS`)
@@ -327,7 +328,8 @@ $env:PORT="9000"; $env:HOST="127.0.0.1"; npm run collab   # PowerShell
 - The script **loads the repo `.env` itself** (`process.loadEnvFile`, never
   overriding variables already in the environment) — `npm run collab` passes no
   `--env-file`.
-- It needs **`AUTH_SECRET` (≥ 16 chars)** for session verification and
+- It needs **`AUTH_SECRET` (≥ 32 characters, and not a shipped placeholder or
+  weak value)** for session verification and
   **`DATABASE_URL`** for the Prisma-backed page authorizer. Without a valid
   `AUTH_SECRET` it *starts anyway* but warns at startup and rejects **every**
   connection with 4401.

@@ -413,7 +413,7 @@ npm run dev                 # http://localhost:3000 (Next.js default port)
 
 | Group | Keys | Notes |
 | --- | --- | --- |
-| Required | `DATABASE_URL`, `AUTH_SECRET` | `DATABASE_URL` must match the docker mapping (`localhost:5433`, user/db `noema`) |
+| Required | `DATABASE_URL`, `AUTH_SECRET` | `DATABASE_URL` must match the docker mapping (`localhost:5433`, user/db `noema`); `AUTH_SECRET` must be at least 32 characters, and the shipped placeholders and well-known weak values are refused |
 | AI (optional) | `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_TRANSCRIBE_*` | any OpenAI-compatible provider; see [AI configuration](#ai-configuration) |
 | SSO (optional) | `SSO_ISSUER`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`, `SSO_REDIRECT_URI` | enables *Sign in with SSO*; the local mock IdP used by `npm run check:sso` is pointed at with these |
 | Sign-in strategies (optional) | `AUTH_PASSWORD`, `AUTH_STRATEGIES` | `AUTH_PASSWORD=disabled` turns the local email + password sign-in and sign-up off (single-sign-on only); `AUTH_STRATEGIES` is a comma-separated allow-list (`password,google,saml`) and every strategy outside it is off |

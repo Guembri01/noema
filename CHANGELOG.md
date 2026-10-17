@@ -13,6 +13,20 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ### Security
 
+- `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
+  HMAC, the envelope key for stored provider keys and 2FA seeds, the
+  share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
+  A missing value, a value shorter than **32** characters, a placeholder this
+  repository ships (`.env.example`, the self-hosting examples) or a well-known
+  weak value (`changeme`, `your-secret-here`, …) is refused, case-insensitively
+  and regardless of separators; the error names the reason, never the value.
+  The `.env.example` placeholder was 35 characters, so the old 16-character
+  check accepted it verbatim — every instance that copied it shared a public
+  session-signing key. **This is a breaking change:** a deployment whose
+  `AUTH_SECRET` is shorter than 32 characters now refuses to start. The
+  documented 64-hex-character value and the 43-character generator output are
+  both above the floor, and the compose smoke test now generates a real secret
+  instead of copying the placeholder.
 - A stored bookmark URL is no longer rendered as a link without a scheme check.
   The editor's bookmark card took the stored `attrs.url` straight into an
   anchor `href`, so a document stored before the write-time href gate existed
