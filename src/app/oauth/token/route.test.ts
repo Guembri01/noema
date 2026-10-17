@@ -33,6 +33,7 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/api-guard", () => ({ rateLimit: vi.fn(() => null) }));
 
+import { hashOAuthSecret } from "@/lib/api-auth";
 import { POST } from "./route";
 
 const APP = {
@@ -40,7 +41,9 @@ const APP = {
   userId: "user-1",
   name: "Demo app",
   clientId: "client-1",
-  clientSecret: "secret-1",
+  // The client secret is stored as a digest (B06); the request still carries
+  // the plaintext.
+  clientSecretHash: hashOAuthSecret("secret-1"),
   redirectUris: ["https://app.example.test/cb"],
   requiresPkce: false,
 };
@@ -103,7 +106,7 @@ const post = (params: Record<string, string> = {}) =>
         grant_type: "authorization_code",
         code: CODE.code,
         client_id: APP.clientId,
-        client_secret: APP.clientSecret,
+        client_secret: "secret-1",
         redirect_uri: CODE.redirectUri,
         ...params,
       }).toString(),
@@ -122,12 +125,16 @@ beforeEach(() => {
 
   // The read returns the row as it looked when it was read — the snapshot a
   // concurrent transaction sees before the other one commits.
-  db.codeFindUnique.mockImplementation(async ({ where }: { where: { code: string } }) => {
-    if (where.code !== row.code) return null;
+  // The code is looked up by its digest (B06), so the mock matches on the
+  // digest as well.
+  db.codeFindUnique.mockImplementation(
+    async ({ where }: { where: { codeHash: string } }) => {
+    if (where.codeHash !== hashOAuthSecret(row.code)) return null;
     const snapshot = { ...row };
     await readBarrier.reach();
     return snapshot;
-  });
+    },
+  );
 
   // Postgres semantics: the row is only matched while it is still unused.
   db.codeUpdateMany.mockImplementation(

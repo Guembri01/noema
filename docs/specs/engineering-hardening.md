@@ -134,13 +134,20 @@ list of 32 is in §4.2 / the R28.11 regression guard.
   (`email.ts:285` issue, `:349` lookup), `TeamspaceInvite.tokenHash`
   (`teamspace-invites.ts:103,109,157`), `ApiToken.tokenHash`
   (`schema.prisma:459`).
+- **OAuth secrets hashed at rest**: `OAuthApp.clientSecretHash` and
+  `OAuthCode.codeHash` store the SHA-256 digest; the plaintext client secret
+  is shown once at creation (`oauth-apps.ts:35-47`), the plaintext
+  authorization code only travels in the redirect
+  (`oauth/authorize/complete/route.ts:39-52`). The token endpoint compares
+  the digest in constant time and looks the code up by its digest
+  (`oauth/token/route.ts:25-36`).
 
 **What is not:**
 
 | Secret | Where | State |
 | --- | --- | --- |
 | `User.twoFactorSecret` | `schema.prisma:89`, written sealed `two-factor.ts:27,60` (`encryptTwoFactorSecret`), read through `openTwoFactorSecret` | **Envelope** (B05) — `v1:iv:tag:payload`, shared envelope key (one key for the seed, the provider keys and the SMTP password — §2.4); rows that are still plaintext are re-sealed on the next sign-in/re-enrolment or by `npm run backfill:2fa` |
-| `OAuthApp.clientSecret` | `schema.prisma:872`, `randomToken(24)` written raw `oauth-apps.ts:33` (returned once, stored raw) | Plaintext |
+| `OAuthApp.clientSecretHash` | `schema.prisma:872`, `randomToken(24)` written hashed `oauth-apps.ts:33` (`hashOAuthSecret`, returned once, stored as a digest) | **Digest** (B06) — SHA-256 hex, compared in constant time at the token endpoint; the plaintext is handed out once at creation and never stored |
 | `Webhook.secret` | `schema.prisma:899` | Plaintext |
 | `ShareLink.token` | `schema.prisma:396`, raw `share.ts:101` (a DB dump exposes every share URL) | Plaintext (hashed like `Invite` would fix it) |
 | Vault integration | grep for `vault|KMS|sealed-secret` across code: **zero hits** (only matrix/docs prose, `docs/specs/saml-sso.md:274,360` — *"…an `AUTH_SECRET`-derived key … is better than nothing but not a vault"*) | Not started |
@@ -313,14 +320,15 @@ column name (`email.ts:285`), while `TeamspaceInvite`/`ApiToken` use honest
 ### 4.4 Secret handling — R28.17–R28.21
 
 - **R28.17** — Stored secrets get the envelope: `User.twoFactorSecret`
-  (`schema.prisma:89`), `OAuthApp.clientSecret` (`schema.prisma:872`,
-  raw at `oauth-apps.ts:33`) and `Webhook.secret` (`schema.prisma:899`) are
+  (`schema.prisma:89`) and `Webhook.secret` (`schema.prisma:899`) are
   written via `encryptSecret` (`src/lib/secrets.ts:21-27`) and read via
   `decryptSecret`. Key derivation becomes per-domain —
   `noema:<domain>:v1:<AUTH_SECRET>` generalizing the existing
   `noema:ai-provider:v1` salt (`secrets.ts:18`) — so rotating one domain's
-  scheme cannot disturb another.
-  *Acceptance:* unit — envelope round-trip for each of the three domains; a
+  scheme cannot disturb another. (`OAuthApp.clientSecret` is not part of it:
+  the OAuth client secret is a **digest** (`clientSecretHash`), so there is
+  nothing to encrypt.)
+  *Acceptance:* unit — envelope round-trip for each of the two domains; a
   pre-migration plaintext value is accepted with a warning during the M28.3
   window and rejected after it.
   > **Status — `User.twoFactorSecret` landed (B05).** The TOTP seed is
@@ -348,6 +356,9 @@ column name (`email.ts:285`), while `TeamspaceInvite`/`ApiToken` use honest
   are the rule (`ai-settings.ts:78` `maskSecret`, `email.ts:96` `hasPassword`,
   `share.ts:55` `hasPassword`); no action may return `*Encrypted`,
   `passwordHash`, `twoFactorSecret`, `clientSecret` or an unmasked token.
+  The one exception is the OAuth client secret: it is handed back **once**,
+  in the response of `createOAuthAppAction` — the app has to be able to
+  copy it, and only its digest is ever stored.
   *Acceptance:* unit — a response-shape scan over every exported action's
   declared return type/value fixture fails on a seeded violation.
 - **R28.20** — Process secrets stay env-only with fail-fast validation:
@@ -430,7 +441,7 @@ model User {
 //   Comment.blockId        schema.prisma:336  — now populated (R28.3)
 //   ShareLink.token        schema.prisma:396  — stores hashToken(raw) (R28.18)
 //   User.twoFactorSecret   schema.prisma:89   — a v1 envelope (R28.17, landed in B05)
-//   OAuthApp.clientSecret  schema.prisma:872  — becomes a v1 envelope (R28.17)
+//   OAuthApp.clientSecret  schema.prisma:872  — becomes a v1 envelope (R28.17, landed in B06)
 //   Webhook.secret         schema.prisma:899  — becomes a v1 envelope (R28.17)
 ```
 
@@ -501,7 +512,7 @@ Feasibility: items 1-11 and 7/10 are pure-lib and cheap in the FAST tier;
   forced re-login for everyone at upgrade time. Chosen deliberately (cheap,
   one-line operator note) over a dual-accept window that would keep D28.3 open.
 - **M28.3 — Encrypt-in-place.** One-time script wraps
-  `twoFactorSecret` / `OAuthApp.clientSecret` / `Webhook.secret` values into
+  `twoFactorSecret` / `Webhook.secret` values into
   `v1:` envelopes; readers accept plaintext **only** during the window and log
   a warning, then hard-fail (R28.17). Requires `AUTH_SECRET` present; idempotent
   (already-enveloped values are skipped by the `v1:` prefix check).

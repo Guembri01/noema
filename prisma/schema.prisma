@@ -880,24 +880,29 @@ model CalendarEvent {
   @@index([workspaceId, start])
 }
 
+/// A registered third-party application. The client secret is kept as a
+/// SHA-256 digest only — the plaintext is shown once, at creation, and never
+/// stored.
 model OAuthApp {
-  id           String   @id @default(cuid())
-  userId       String
-  name         String
-  clientId     String   @unique
-  clientSecret String
-  redirectUris String[] @default([])
-  requiresPkce Boolean  @default(false)
-  createdAt    DateTime @default(now())
+  id               String   @id @default(cuid())
+  userId           String
+  name             String
+  clientId         String   @unique
+  clientSecretHash String
+  redirectUris     String[] @default([])
+  requiresPkce     Boolean  @default(false)
+  createdAt        DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
 
+/// A single-use authorization code. The code itself is kept as a SHA-256
+/// digest; the plaintext only travels to the client that asked for it.
 model OAuthCode {
   id          String   @id @default(cuid())
-  code        String   @unique
+  codeHash    String   @unique
   clientId    String
   userId      String
   redirectUri String
@@ -907,7 +912,7 @@ model OAuthCode {
   used        Boolean  @default(false)
   createdAt   DateTime @default(now())
 
-  @@index([code])
+  @@index([codeHash])
 }
 
 model Webhook {

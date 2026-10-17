@@ -44,6 +44,7 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/api-guard", () => ({ rateLimit: vi.fn(() => null) }));
 
 import { API_SCOPE_IDS, hasScope } from "@/lib/api-token-scope";
+import { hashOAuthSecret } from "@/lib/api-auth";
 import { POST } from "./route";
 
 const CLIENT_ID = "noema_client";
@@ -77,7 +78,9 @@ beforeEach(() => {
   db.oAuthAppFindUnique.mockResolvedValue({
     id: "app-1",
     clientId: CLIENT_ID,
-    clientSecret: CLIENT_SECRET,
+    // The client secret is stored as a digest (B06); the request still
+    // carries the plaintext.
+    clientSecretHash: hashOAuthSecret(CLIENT_SECRET),
     name: "Demo app",
     redirectUris: [REDIRECT_URI],
   });
