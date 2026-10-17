@@ -97,7 +97,7 @@
     "check:search": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env scripts/check-search.mjs",
     "setup:search": "node --env-file=.env scripts/setup-search.mjs",
     "check:chat-stream": "node --env-file=.env scripts/check-chat-stream.mjs",
-    "seed:tickets": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env scripts/seed-demo-tickets.mjs",
+    "seed:tickets": "tsx --env-file=.env scripts/seed-demo-tickets.mjs",
     "e2e": "playwright test",
     "e2e:headed": "playwright test --headed",
     "db:push": "prisma db push",
