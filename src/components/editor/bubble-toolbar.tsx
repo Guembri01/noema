@@ -716,7 +716,11 @@ export function BubbleToolbar({
   );
 }
 
-function SwatchButton({
+/**
+ * One swatch cell. Exported so the description toolbar's colour panel is the same
+ * control as the page editor's, down to the clear cell and its label.
+ */
+export function SwatchButton({
   kind,
   choice,
   active,

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { blockChoice, DESCRIPTION_AUTOSAVE_MS } from "./ticket-description";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  TicketDescription,
+  blockChoice,
+  DESCRIPTION_AUTOSAVE_MS,
+} from "./ticket-description";
 
 /**
  * The ticket description's block picker (pure part) plus its autosave cadence.
@@ -34,5 +41,62 @@ describe("blockChoice", () => {
 describe("autosave cadence", () => {
   it("keeps the drawer's 800 ms quiet period", () => {
     expect(DESCRIPTION_AUTOSAVE_MS).toBe(800);
+  });
+});
+
+/*
+ * The two panel controls in the toolbar. Their *contents* need a live editor
+ * (ProseMirror does not mount without a DOM), so what is pinned here is the
+ * contract the panels are opened through: each control is a labelled dialog
+ * trigger that names its own panel, and nothing renders until one is opened.
+ */
+describe("description toolbar panels", () => {
+  const render = (locale = "en") =>
+    renderToStaticMarkup(
+      // The toolbar's buttons carry tooltips, which are Radix-backed and need the
+      // provider the app's layout supplies.
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(TicketDescription, {
+          doc: null,
+          text: "",
+          locale,
+          onSave: () => {},
+        }),
+      ),
+    );
+
+  it("opens the colour panel from a dialog trigger that names it", () => {
+    const html = render();
+    expect(html).toMatch(
+      /aria-label="Text color"[^>]*aria-haspopup="dialog"[^>]*aria-expanded="false"[^>]*aria-controls="[^"]*-description-color"/,
+    );
+  });
+
+  it("opens the link panel from a dialog trigger that names it", () => {
+    const html = render();
+    expect(html).toMatch(
+      /aria-label="Link"[^>]*aria-haspopup="dialog"[^>]*aria-expanded="false"[^>]*aria-controls="[^"]*-description-link"/,
+    );
+  });
+
+  it("is a toggle button when it is not a dialog trigger", () => {
+    // The mark buttons keep `aria-pressed`; only the two panels announce
+    // themselves as dialogs, so nothing is announced as both.
+    const html = render();
+    expect(html).toMatch(/aria-label="Bold"[^>]*aria-pressed="false"/);
+    expect(html).not.toMatch(/aria-label="Text color"[^>]*aria-pressed/);
+    expect(html).not.toMatch(/aria-label="Link"[^>]*aria-pressed/);
+  });
+
+  it("renders no panel until one is opened", () => {
+    expect(render()).not.toContain("ticket-description-panel");
+  });
+
+  it("localises the two triggers", () => {
+    const html = render("fr");
+    expect(html).toContain('aria-label="Couleur du texte"');
+    expect(html).toContain('aria-label="Lien"');
   });
 });

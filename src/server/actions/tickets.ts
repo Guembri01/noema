@@ -358,7 +358,15 @@ export async function updateTicketAction(input: {
     // The editor's own doc: validated against the page-content schema (the same
     // one `Page.content` uses, so a description is a page body in miniature) and
     // capped on its serialised size, since rich text carries marks and blocks.
-    const parsed = parsePageContent(JSON.stringify(input.descriptionDoc));
+    // The editor sends it as JSON *text* — a ProseMirror doc shares one `attrs`
+    // object between marks, and React's action encoder would hand the server a
+    // temporary reference for it — but an object is still accepted, for callers
+    // that build one by hand.
+    const raw =
+      typeof input.descriptionDoc === "string"
+        ? input.descriptionDoc
+        : JSON.stringify(input.descriptionDoc);
+    const parsed = parsePageContent(raw);
     if (!parsed.ok || JSON.stringify(parsed.doc).length > DESCRIPTION_DOC_MAX) {
       return { error: "That description is too large." };
     }

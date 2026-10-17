@@ -10,7 +10,8 @@
  *
  *   blocks   paragraph, heading 1-3, bulleted/ordered/to-do lists, quote,
  *            code block (the lowlight one), horizontal rule, table
- *   marks    bold, italic, underline, strike, inline code, link, highlight
+ *   marks    bold, italic, underline, strike, inline code, link, text colour,
+ *            highlight
  *   typing   markdown input rules (`#`, `-`, `1.`, `1)`, `[] `, `>`, ``` ```,
  *            `---`, `| a | b |` tables, `:smile:`, `H~2~O`, `x^2^`), smart
  *            typography, autolink, undo/redo and a placeholder
@@ -26,6 +27,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { TextStyle } from "@tiptap/extension-text-style";
+import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
 import TextAlign from "@tiptap/extension-text-align";
 import { TableKit } from "@tiptap/extension-table/kit";
@@ -55,6 +57,9 @@ export function richTextExtensions({ locale, placeholder }: RichTextOptions): Ex
     TaskList,
     TaskItem.configure({ nested: true }),
     TextStyle,
+    // Text colour rides on `textStyle` exactly as it does on a page, storing the
+    // same token values (`var(--tag-blue-fg)`) so the palette is one palette.
+    Color,
     Highlight,
     // Alignment survives a paste and stays editable; the description toolbar
     // does not surface it (a side panel is too narrow to justify it).
