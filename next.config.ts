@@ -61,6 +61,14 @@ const nextConfig: NextConfig = {
   // build time from the one place that owns it — `package.json`, which is also
   // what `tauri.conf.json` and `/api/health` report.
   env: { NEXT_PUBLIC_APP_VERSION: packageVersion },
+  // B78: the response must not name the framework. Next.js sends
+  // `X-Powered-By: Next.js` on every HTML response unless this switch is off,
+  // and the default is on (`poweredByHeader: true` in Next's own default
+  // config, next/dist/server/config-shared.js). The header map below cannot
+  // cover it: `headers()` only *adds* headers, while the framework sets this
+  // one itself when it sends the HTML (next/dist/server/send-payload.js) — so
+  // the switch has to live here.
+  poweredByHeader: false,
   // Pin the tracing root so an unrelated lockfile above this project does not
   // change how the standalone output is assembled.
   outputFileTracingRoot: root,

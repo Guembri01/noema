@@ -504,6 +504,7 @@ password: password123
 | `npm run check:chat-stream` | Proves answers stream in chunks, arrive before completion, and persist exactly once |
 | `npm run check:coherence` | **Fails on drift**: orphan actions, native dialogs, unexpected injection sinks, growing action-call drift, shrinking i18n coverage |
 | `npm run check:workflow-permissions` | No workflow grants a publishing scope (`packages: write`, `id-token: write`) outside a job that no pull-request event can reach, every such job spells out its `permissions:`, and no pull-request checkout keeps its token on disk |
+| `npm run check:powered-by` | The Next config switches the framework's own `X-Powered-By` header off, so no response names the framework |
 | `npm run audit` | Static coherence inventory (same rules as `check:coherence`) → `docs/_audit-raw.json` |
 | `npm run check:matrix` | Recount the parity status summary (read-only; add `-- --write` to update the doc) |
 | `node --env-file=.env scripts/check-notion.mjs` | Notion API importer check (uses a local mock Notion server) |
