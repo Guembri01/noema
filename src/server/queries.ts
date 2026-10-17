@@ -1293,30 +1293,57 @@ export async function getLabels(workspaceId: string) {
   });
 }
 
-/** Columns the ticket tracker needs, shared by the list query and its pages. */
-const ticketListSelect = {
-  id: true,
-  key: true,
-  number: true,
-  title: true,
-  description: true,
-  type: true,
-  status: true,
-  priority: true,
-  estimate: true,
-  estimateUnit: true,
-  startDate: true,
-  dueDate: true,
-  completedAt: true,
-  updatedAt: true,
-  parentId: true,
-  cycleId: true,
-  project: { select: { id: true, name: true, icon: true } },
-  milestone: { select: { id: true, name: true } },
-  assignee: { select: { id: true, name: true, email: true } },
-  labels: { select: { label: { select: { id: true, name: true, color: true } } } },
-  _count: { select: { children: true, comments: true } },
-} as const;
+/**
+ * A ticket may only show the name (and the e-mail address) of somebody who
+ * belongs to its own workspace: the assignee picker offers exactly the
+ * workspace's members, so a member of another workspace must not show up in
+ * the tracker. The workspace's owner counts as being in it, even without a
+ * membership row — the same rule `getWorkspaceAccess` applies.
+ */
+const assigneeInWorkspace = (workspaceId: string): Prisma.UserWhereInput => ({
+  OR: [
+    { memberships: { some: { workspaceId } } },
+    { ownedWorkspaces: { some: { id: workspaceId } } },
+  ],
+});
+
+/**
+ * Columns the ticket tracker needs, shared by the list query and its pages.
+ *
+ * The relations are filtered by the workspace of the ticket: a row that points
+ * at another workspace's project, user or parent must not be shown, even when
+ * it was written before the write path checked it.
+ */
+const ticketListSelect = (workspaceId: string) =>
+  ({
+    id: true,
+    key: true,
+    number: true,
+    title: true,
+    description: true,
+    type: true,
+    status: true,
+    priority: true,
+    estimate: true,
+    estimateUnit: true,
+    startDate: true,
+    dueDate: true,
+    completedAt: true,
+    updatedAt: true,
+    parentId: true,
+    cycleId: true,
+    project: { where: { workspaceId }, select: { id: true, name: true, icon: true } },
+    milestone: { select: { id: true, name: true } },
+    assignee: {
+      where: assigneeInWorkspace(workspaceId),
+      select: { id: true, name: true, email: true },
+    },
+    labels: {
+      where: { label: { workspaceId } },
+      select: { label: { select: { id: true, name: true, color: true } } },
+    },
+    _count: { select: { children: { where: { workspaceId } }, comments: true } },
+  }) as const;
 
 export async function getTickets(
   workspaceId: string,
@@ -1326,7 +1353,7 @@ export async function getTickets(
     where: { workspaceId, archived: filters.includeArchived ? undefined : false },
     orderBy: [{ position: "asc" }, { createdAt: "desc" }],
     take: 500,
-    select: ticketListSelect,
+    select: ticketListSelect(workspaceId),
   });
 }
 
@@ -1363,7 +1390,10 @@ export async function getCycles(workspaceId: string) {
           dueDate: true,
           completedAt: true,
           updatedAt: true,
-          assignee: { select: { id: true, name: true } },
+          assignee: {
+            where: assigneeInWorkspace(workspaceId),
+            select: { id: true, name: true },
+          },
         },
       },
     },
@@ -1509,7 +1539,7 @@ export async function getTicketsPage(
     orderBy: [{ position: "asc" }, { id: "asc" }],
     take: take + 1,
     ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
-    select: ticketListSelect,
+    select: ticketListSelect(workspaceId),
   });
   const hasMore = rows.length > take;
   const tickets = hasMore ? rows.slice(0, take) : rows;
@@ -1532,7 +1562,7 @@ export async function getTicketsCursorPage(
   const rows = await prisma.ticket.findMany({
     where: { workspaceId, archived: options.includeArchived ? undefined : false },
     orderBy: [{ id: "asc" }],
-    select: ticketListSelect,
+    select: ticketListSelect(workspaceId),
   });
   return paginateSlice(rows, {
     limit: options.limit,
@@ -1553,7 +1583,7 @@ export async function getTicketsCursorPage(
 export async function getTicketListRow(workspaceId: string, ticketId: string) {
   return prisma.ticket.findFirst({
     where: { id: ticketId, workspaceId, archived: false },
-    select: ticketListSelect,
+    select: ticketListSelect(workspaceId),
   });
 }
 
@@ -1573,15 +1603,25 @@ export async function getTicketListRow(workspaceId: string, ticketId: string) {
       estimateUnit: true,
       startDate: true,
       dueDate: true,
-      assignee: { select: { id: true, name: true } },
+      assignee: {
+        where: assigneeInWorkspace(workspaceId),
+        select: { id: true, name: true },
+      },
       labels: { select: { label: { select: { id: true, name: true, color: true } } } },
     },
   });
 }
 
-export async function getTicketDetail(ticketId: string) {
-  return prisma.ticket.findUnique({
-    where: { id: ticketId },
+/**
+ * One ticket in the tracker's detail shape, scoped to its workspace.
+ *
+ * The relations are filtered by that workspace as well: a project, an assignee
+ * or a child ticket of another workspace must not be shown, even when the row
+ * points at it (a write from before the write path checked it).
+ */
+export async function getTicketDetail(ticketId: string, workspaceId: string) {
+  return prisma.ticket.findFirst({
+    where: { id: ticketId, workspaceId },
     select: {
       id: true,
       key: true,
@@ -1600,12 +1640,21 @@ export async function getTicketDetail(ticketId: string) {
       updatedAt: true,
       archived: true,
       workspaceId: true,
-      project: { select: { id: true, name: true, icon: true } },
+      project: { where: { workspaceId }, select: { id: true, name: true, icon: true } },
       milestone: { select: { id: true, name: true, status: true } },
-      assignee: { select: { id: true, name: true, email: true } },
+      assignee: {
+        where: assigneeInWorkspace(workspaceId),
+        select: { id: true, name: true, email: true },
+      },
       reporter: { select: { id: true, name: true, email: true } },
-      labels: { select: { id: true, label: { select: { id: true, name: true, color: true } } } },
-      children: { select: { id: true, key: true, title: true, status: true } },
+      labels: {
+        where: { label: { workspaceId } },
+        select: { id: true, label: { select: { id: true, name: true, color: true } } },
+      },
+      children: {
+        where: { workspaceId },
+        select: { id: true, key: true, title: true, status: true },
+      },
       relations: {
         select: {
           id: true,

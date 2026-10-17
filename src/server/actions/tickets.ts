@@ -58,6 +58,40 @@ async function authorizeTicket(ticketId: string) {
   return { ok: true as const, user, ticket };
 }
 
+/**
+ * The project a ticket is connected to must live in the ticket's workspace:
+ * by id alone a ticket could be pointed at another workspace's project, and
+ * the tracker would then show that project's name.
+ */
+async function projectInWorkspace(projectId: string, workspaceId: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { workspaceId: true },
+  });
+  return project?.workspaceId === workspaceId;
+}
+
+/**
+ * The ticket a new ticket is nested under must live in the same workspace: a
+ * parent is a ticket of that workspace, not an id from anywhere.
+ */
+async function ticketInWorkspace(ticketId: string, workspaceId: string) {
+  const ticket = await prisma.ticket.findUnique({
+    where: { id: ticketId },
+    select: { workspaceId: true },
+  });
+  return ticket?.workspaceId === workspaceId;
+}
+
+/**
+ * A ticket may only be assigned to somebody of its own workspace: the
+ * assignee picker offers exactly the workspace's members, and the assignment
+ * notice only ever reaches members (`notifyTicketAssigned`).
+ */
+async function assigneeInWorkspace(assigneeId: string, workspaceId: string) {
+  return (await getWorkspaceAccess(assigneeId, workspaceId)) !== null;
+}
+
 async function logActivity(
   ticketId: string,
   actorId: string,
@@ -271,6 +305,19 @@ export async function createTicketAction(input: {
     }
   }
 
+  // The rows a new ticket points at must live in its workspace: a project, an
+  // assignee, a parent and the labels are all workspace rows. By id alone a
+  // ticket could be created against another workspace's rows, and the tracker
+  // would then show that project's name and that person's name and e-mail.
+  if (projectId && !(await projectInWorkspace(projectId, input.workspaceId))) {
+    return { error: "That project is not in this workspace." };
+  }
+  if (input.assigneeId && !(await assigneeInWorkspace(input.assigneeId, input.workspaceId))) {
+    return { error: "That user is not in this workspace." };
+  }
+  if (input.parentId && !(await ticketInWorkspace(input.parentId, input.workspaceId))) {
+    return { error: "That parent ticket is not in this workspace." };
+  }
   // Labels are workspace level, and `TicketLabel` has no workspace column of
   // its own, so the check has to happen on the id list: by id alone a ticket
   // could be created carrying another workspace's label.
@@ -280,8 +327,10 @@ export async function createTicketAction(input: {
       where: { id: { in: input.labelIds }, workspaceId: input.workspaceId },
       select: { id: true },
     });
-    const valid = new Set(labels.map((label) => label.id));
-    labelIds = input.labelIds.filter((id) => valid.has(id));
+    if (labels.length !== new Set(input.labelIds).size) {
+      return { error: "That label is not in this workspace." };
+    }
+    labelIds = input.labelIds;
   }
 
   // Reserve the next number atomically so keys never collide.
@@ -433,6 +482,9 @@ export async function updateTicketAction(input: {
     changes.dueDate = input.dueDate;
   }
   if (input.projectId !== undefined) {
+    if (input.projectId && !(await projectInWorkspace(input.projectId, auth.ticket.workspaceId))) {
+      return { error: "That project is not in this workspace." };
+    }
     data.project = input.projectId ? { connect: { id: input.projectId } } : { disconnect: true };
     changes.projectId = input.projectId;
   }
@@ -462,6 +514,12 @@ export async function updateTicketAction(input: {
     }
   }
   if (input.assigneeId !== undefined) {
+    if (
+      input.assigneeId &&
+      !(await assigneeInWorkspace(input.assigneeId, auth.ticket.workspaceId))
+    ) {
+      return { error: "That user is not in this workspace." };
+    }
     data.assignee = input.assigneeId ? { connect: { id: input.assigneeId } } : { disconnect: true };
     changes.assigneeId = input.assigneeId;
   }
@@ -562,7 +620,7 @@ export async function getTicketActivityAction(
     return { error: "You do not have permission to read tickets." };
   }
 
-  const detail = await getTicketDetail(ticketId);
+  const detail = await getTicketDetail(ticketId, ticket.workspaceId);
   const activity: TicketActivityRow[] = (detail?.activity ?? []).map((entry) => ({
     id: entry.id,
     kind: entry.kind,
@@ -749,6 +807,18 @@ export async function bulkUpdateTicketsAction(input: {
   }
 
   const data: Prisma.TicketUncheckedUpdateManyInput = {};
+  // The rows the bulk write points at must live in the tickets' workspace, like
+  // every other ticket write.
+  if (input.assigneeId !== undefined && input.assigneeId !== null) {
+    if (!(await assigneeInWorkspace(input.assigneeId, first.workspaceId))) {
+      return { error: "That user is not in this workspace." };
+    }
+  }
+  if (input.projectId !== undefined && input.projectId !== null) {
+    if (!(await projectInWorkspace(input.projectId, first.workspaceId))) {
+      return { error: "That project is not in this workspace." };
+    }
+  }
   if (input.status && STATUS_IDS.includes(input.status)) {
     data.status = input.status;
     data.completedAt = isClosed(input.status) ? new Date() : null;
@@ -918,8 +988,14 @@ export async function moveTicketAction(input: {
   if (input.beforeId) {
     const before = await prisma.ticket.findUnique({
       where: { id: input.beforeId },
-      select: { position: true },
+      select: { position: true, workspaceId: true },
     });
+    // The ticket the board places this one before must live in the same
+    // workspace — otherwise the position of another workspace's ticket would
+    // steer this board.
+    if (before && before.workspaceId !== auth.ticket.workspaceId) {
+      return { error: "That ticket is not in this workspace." };
+    }
     if (before) position = before.position - 1;
   } else {
     const last = await prisma.ticket.findFirst({

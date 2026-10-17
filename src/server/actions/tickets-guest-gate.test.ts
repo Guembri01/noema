@@ -118,6 +118,8 @@ describe("getTicketActivityAction", () => {
     const result = await getTicketActivityAction("t1");
 
     expect(result).toMatchObject({ ok: true });
-    expect(h.getTicketDetail).toHaveBeenCalledWith("t1");
+    // The detail is read in the ticket's own workspace, so its relations are
+    // filtered by it as well.
+    expect(h.getTicketDetail).toHaveBeenCalledWith("t1", "ws1");
   });
 });

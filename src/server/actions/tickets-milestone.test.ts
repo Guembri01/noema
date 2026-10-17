@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   ticket: { findUnique: vi.fn(), update: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
   milestone: { findUnique: vi.fn() },
+  project: { findUnique: vi.fn() },
   workspace: { findUnique: vi.fn(), update: vi.fn() },
   ticketActivity: { create: vi.fn() },
 }));
@@ -42,6 +43,8 @@ beforeEach(() => {
   });
   db.ticket.update.mockResolvedValue({ id: "t1" });
   db.ticketActivity.create.mockResolvedValue({ id: "a1" });
+  // The project of `ws1` — the ticket actions check it before they connect it.
+  db.project.findUnique.mockResolvedValue({ workspaceId: "ws1" });
 });
 
 describe("updateTicketAction milestone guard", () => {

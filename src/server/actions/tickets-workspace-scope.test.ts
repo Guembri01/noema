@@ -167,17 +167,18 @@ describe("createTicketAction — the labels are scoped to the workspace", () => 
     db.ticket.create.mockResolvedValue({ id: "t9", key: "NOE-8" });
   });
 
-  it("does not attach a label of another workspace", async () => {
+  it("refuses a label of another workspace", async () => {
     const result = await createTicketAction({
       workspaceId: "ws1",
       title: "Ship it",
       labelIds: ["l-foreign"],
     });
 
-    expect(result).toEqual({ ok: true, id: "t9", key: "NOE-8" });
-    expect(db.ticket.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.not.objectContaining({ labels: expect.anything() }) }),
-    );
+    // The reference is refused instead of being dropped silently: the same
+    // rule the action already applies to the project, the assignee and the
+    // parent ticket (B108), and the rule `toggleTicketLabelAction` applies.
+    expect(result).toEqual({ error: "That label is not in this workspace." });
+    expect(db.ticket.create).not.toHaveBeenCalled();
   });
 
   it("attaches the labels of its own workspace", async () => {
