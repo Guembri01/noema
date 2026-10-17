@@ -17,7 +17,8 @@
  *   blank message falls back to the resolved name, and both message and stack
  *   are truncated so one runaway error cannot blow up a payload.
  * - `redactSecrets` scrubs credentials before anything leaves the process. It
- *   is key-based (a deliberately over-broad substring match, plus caller
+ *   is key-based (the repository's shared secret-key list,
+ *   `src/lib/redaction.ts`, matched by substring on purpose — plus caller
  *   `redactKeys`) AND value-based (Bearer/Basic/JWT/`sk-`/`ghp_`/`xox`/`AKIA`
  *   shapes and credential query params), cycle-safe and depth-capped, and never
  *   mutates its input.
@@ -32,6 +33,8 @@
  * Wiring this into `error.tsx` and a `/api/errors` sink is a follow-up; this
  * module is the additive, unit-pinned core.
  */
+
+import { isSecretKey } from "./redaction";
 
 /** Shape `parseDatabaseJson`-style version tag, stamped on every report. */
 export const REPORT_SCHEMA_VERSION = 1;
@@ -90,15 +93,6 @@ export interface ErrorReport {
   /** Redacted caller context; shape is intentionally open. */
   readonly context: unknown;
 }
-
-/**
- * Keys whose value never leaves the process. Matched by substring on purpose:
- * over-redacting a field called `tokenCount` is preferable to leaking a real
- * `token`, and the rule is trivial to reason about. Mirrors the intent of
- * `SECRET_KEY_PATTERN` in `json-export.ts`.
- */
-const SECRET_KEY_PATTERN =
-  /(password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|authorization|cookie|credential|session[_-]?id)/i;
 
 /**
  * Credential-shaped substrings removed from string VALUES. Ordered so that
@@ -212,8 +206,8 @@ export function normalizeError(value: unknown): NormalizedError {
   };
 }
 
-function isSecretKey(key: string, extra: ReadonlySet<string>): boolean {
-  return SECRET_KEY_PATTERN.test(key) || extra.has(key.toLowerCase());
+function isRedactedKey(key: string, extra: ReadonlySet<string>): boolean {
+  return isSecretKey(key) || extra.has(key.toLowerCase());
 }
 
 /** Remove credential-shaped substrings from a bare string value. */
@@ -244,7 +238,7 @@ function walk(value: unknown, depth: number, context: WalkContext): unknown {
   } else {
     const out: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
-      out[key] = isSecretKey(key, context.redactKeys)
+      out[key] = isRedactedKey(key, context.redactKeys)
         ? REDACTED
         : walk(entry, depth + 1, context);
     }

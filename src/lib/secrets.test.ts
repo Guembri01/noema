@@ -892,6 +892,16 @@ describe("redactObject — deep, non-mutating redaction", () => {
     expect(redacted.databaseUrl).not.toContain("supersecretpw");
   });
 
+  it("masks a dbUrl as a connection string (B35)", () => {
+    // `dbUrl` matched none of the three redaction lists; it is a connection
+    // string, so it is masked like one.
+    const dsn =
+      "postgresql://noema:supersecretpw@localhost:5433/noema?schema=public";
+    const redacted = redactObject({ dbUrl: dsn });
+    expect(redacted.dbUrl).toBe(maskConnString(dsn));
+    expect(redacted.dbUrl).not.toContain("supersecretpw");
+  });
+
   it("leaves benign keys and non-string leaves intact", () => {
     const input = { host: "localhost", port: 5432, secure: true, tags: ["a", "b"] };
     expect(redactObject(input)).toEqual(input);

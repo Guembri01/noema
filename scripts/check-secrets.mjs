@@ -189,6 +189,7 @@ const ALLOWED = new Set([
   "postgresql://user:password@127.0.0.1:5432/noema", // src-tauri/dist/index.html placeholder
   "postgresql://u:p@host:5432/db?schema=public", // src-tauri/src/state.rs fixture
   "postgresql://user:pw@host:5432/db", // src/lib/secrets.ts, the masking example
+  "postgresql://user:pw@host/db", // src/lib/redaction.ts, the connection-string example
   "postgresql://noema:sup3r-secret@db.example.com:5432/noema?schema=public", // src-tauri/src/commands.rs, the redaction fixture
   // The database URL of the embedded engine. The password is a template — the
   // launch's own random one — and the host is the loopback.
