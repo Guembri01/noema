@@ -116,6 +116,18 @@ if (process.env.VITEST) {
       assert.equal(green.code, 0, `the gate must pass\n${green.output}`);
     });
 
+    it("fails when it reads no source at all (B133)", () => {
+      // The walk swallows a directory it cannot read, so a run in the wrong
+      // directory used to end in a green "PASS  0 access helper(s)" — a gate
+      // that saw no code at all. A broken walk is not a clean repository.
+      const red = gateOver({});
+      assert.equal(red.code, 1, `the gate must fail\n${red.output}`);
+      assert.ok(
+        red.output.includes("read no source at all"),
+        `the gate must say that it read nothing\n${red.output}`,
+      );
+    });
+
     it("fails when the only caller is another unwired access helper", () => {
       const red = gateOver({ ...DEAD_CLUSTER });
       assert.equal(red.code, 1, `the gate must fail\n${red.output}`);
