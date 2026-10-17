@@ -238,7 +238,7 @@ describe("acceptOwnershipTransferAction — the password step (B14)", () => {
     expect(db.transaction).not.toHaveBeenCalled();
   });
 
-  it("still accepts a transfer that asks for no password", async () => {
+  it("still requires the recipient password when the start omits the flag", async () => {
     auth.user = { id: "actor-1" };
     const started = await startOwnershipTransferAction({
       workspaceId: "ws-b14-open",
@@ -247,12 +247,19 @@ describe("acceptOwnershipTransferAction — the password step (B14)", () => {
     });
     if (!("ok" in started)) throw new Error(started.error);
 
-    // The server decides whether a password is required — it is always
-    // required now, so the recipient proves their password at accept time.
+    // The client cannot turn the recipient's proof off: even a start that
+    // omitted `requirePassword` now records the server's `true`.
     auth.user = { id: "user-2" };
+    await expect(acceptOwnershipTransferAction(started.id)).resolves.toEqual({
+      error: "A password is required to accept this transfer.",
+    });
+    expect(db.transaction).not.toHaveBeenCalled();
+
     db.workspaceFindUnique.mockResolvedValue({ ownerId: "actor-1" });
-    await expect(acceptOwnershipTransferAction(started.id, { password: RECIPIENT_PASSWORD })).resolves.toEqual({ ok: true });
-    expect(auth.verifyPassword).toHaveBeenCalled();
+    await expect(
+      acceptOwnershipTransferAction(started.id, { password: RECIPIENT_PASSWORD }),
+    ).resolves.toEqual({ ok: true });
+    expect(auth.verifyPassword).toHaveBeenCalledWith(RECIPIENT_PASSWORD, RECIPIENT_HASH);
     expect(db.transaction).toHaveBeenCalledTimes(1);
   });
 });
