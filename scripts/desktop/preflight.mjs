@@ -22,6 +22,7 @@ import { arch, platform, release } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nodeSidecarPath, targetTriple } from "./prepare.mjs";
+import { REQUIRED_PAYLOAD } from "./prepare.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const os = platform();
@@ -115,17 +116,16 @@ existsSync(runtime)
 
 // 5. Standalone payload.
 const standalone = join(root, ".next", "standalone");
-const payload = [
-  ["server.js", join(standalone, "server.js")],
-  ["start.cjs (boot wrapper)", join(standalone, "start.cjs")],
-  [".next/static", join(standalone, ".next", "static")],
-  ["public/", join(standalone, "public")],
-  ["prisma/schema.prisma", join(standalone, "prisma", "schema.prisma")],
-];
-const missing = payload.filter(([, path]) => !existsSync(path)).map(([label]) => label);
+const staged = join(root, "src-tauri", "server");
+// Check the *staged* payload (what the installer ships) and, when it is absent,
+// the standalone output it is copied from.
+const payloadRoot = existsSync(join(staged, "server.js")) ? staged : standalone;
+const missing = REQUIRED_PAYLOAD.filter(([relative]) => !existsSync(join(payloadRoot, relative))).map(
+  ([relative]) => relative,
+);
 missing.length === 0
-  ? ok("standalone payload complete")
-  : bad(`standalone payload incomplete (${missing.join(", ")})`, "npm run desktop:prepare");
+  ? ok(`standalone payload complete (${payloadRoot.replace(root + "\\", "")})`)
+  : bad(`payload incomplete (${missing.join(", ")})`, "npm run desktop:prepare (and never build the site version at the same time — they share .next/)");
 
 // 6. Frontend dist (Tauri needs a directory to bundle).
 existsSync(join(root, "src-tauri", "dist", "index.html"))

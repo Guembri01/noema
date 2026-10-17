@@ -77,6 +77,44 @@ function buildStandalone() {
   }
 }
 
+/** Everything a working server needs. Checked before anything is staged. */
+export const REQUIRED_PAYLOAD = [
+  ["server.js", "the Next standalone server entry"],
+  [".next/static", "the built client assets"],
+  ["node_modules/next", "Next's runtime (traced dependencies)"],
+  ["public", "static files served by the app"],
+  ["prisma/schema.prisma", "the database schema"],
+  ["start.cjs", "the boot wrapper (migrate → serve)"],
+];
+
+/**
+ * Fail loudly if `.next/standalone` is not a complete standalone build.
+ *
+ * This exists because it is easy to produce a *plausible* broken bundle: a
+ * `next build` without `NOEMA_STANDALONE=1` (the site build) rewrites `.next/`
+ * and removes `server.js`, and a desktop build with `NOEMA_SKIP_BUILD=1` will
+ * happily copy the leftovers — producing an installer that boots to nothing.
+ * Measured, not assumed.
+ */
+function assertStandalonePayload() {
+  const missing = REQUIRED_PAYLOAD.filter(([relative]) => !existsSync(join(standalone, relative)));
+  if (missing.length === 0) return;
+  throw new Error(
+    [
+      ".next/standalone is incomplete:",
+      ...missing.map(([relative, why]) => `  - ${relative} (${why})`),
+      "",
+      "Most likely a site build (`next build` without NOEMA_STANDALONE=1) ran",
+      "against this .next and replaced the standalone output. Rebuild with:",
+      "",
+      "    npm run desktop:prepare          # no NOEMA_SKIP_BUILD",
+      "",
+      "Never run the site build and the desktop payload build at the same time:",
+      "they share .next/.",
+    ].join("\n"),
+  );
+}
+
 function copyRuntimeAssets() {
   // Next's own docs are explicit: static assets and `public/` are NOT traced
   // into the standalone output. Without these two copies the app boots and then
@@ -206,8 +244,13 @@ function copyNodeRuntime() {
 
 function main() {
   if (process.env.NOEMA_SKIP_BUILD !== "1") buildStandalone();
+  // Even with NOEMA_SKIP_BUILD=1 the payload must be proven complete: a stale
+  // `.next/standalone` (for example after a site build) must never be shipped.
+  assertStandalonePayload();
   copyRuntimeAssets();
   writeBootScript();
+  // start.cjs is written above, so re-assert the full set before staging.
+  assertStandalonePayload();
   copyNodeRuntime();
   stageIntoTauri();
   console.log(`\nstandalone payload: ${mb(size(standalone))}`);

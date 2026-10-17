@@ -100,7 +100,7 @@ Other deliberate choices:
 | Secrets | a database password can live in the connection string; it is **redacted** before diagnostics leave the shell (unit-tested in `commands.rs`) |
 | Capabilities | `default.json` = least privilege for boot; `desktop-everything.json` = the broad set the product asked for (filesystem, dialogs, shell, opener). Drop it for a hardened build |
 | Telemetry | off (`NEXT_TELEMETRY_DISABLED=1`) |
-| Updates | **deferred on purpose** — see §8 |
+| Updates | **deferred on purpose** — see §9 |
 
 ## 3. Data, backup and portability
 
@@ -158,6 +158,30 @@ before, and the desktop build opts in. `scripts/desktop/prepare.mjs` sets the
 flag; `site.yml` asserts the invariant that a site build never emits
 `standalone/server.js`.
 
+### Build hygiene (learned the hard way)
+
+**Never run the site build and the desktop payload build at the same time.** They
+share `.next/`: a plain `next build` rewrites the directory and removes
+`standalone/server.js`, while `prepare` with `NOEMA_SKIP_BUILD=1` will happily
+copy whatever is left. That produced an installer that built cleanly, weighed
+50 MB, and would have booted to nothing.
+
+Two guards make that class of mistake impossible now:
+
+- `prepare` validates the payload against a required list (`server.js`,
+  `.next/static`, `node_modules/next`, `public`, `prisma/schema.prisma`,
+  `start.cjs`) and refuses to stage an incomplete one, with the fix in the error;
+- `npm run desktop:smoke` boots the staged payload on the bundled runtime and
+  fetches real pages over HTTP, so a broken payload fails before it is bundled.
+
+Recommended order:
+
+```bash
+npm run desktop:prepare     # build the payload (serially)
+npm run desktop:smoke       # prove it boots + migrates + serves
+npm run desktop:bundle      # bundle (prepare re-runs, validated)
+```
+
 ## 5. Release process
 
 1. Bump the version in **both** `package.json` and `src-tauri/tauri.conf.json`.
@@ -185,13 +209,27 @@ what that means for the user (SmartScreen) and what is already wired for signing
 |---|---|---|
 | Window stays on "Noema is starting…" | server not ready | open **Advanced: database connection**, paste a working `DATABASE_URL`, **Save & restart**; **Copy diagnostics** pastes a redacted report |
 | `prisma migrate deploy` fails | database missing or unreachable | create the database (e.g. `docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine`) or point the app at an existing one |
+| `prepare` refuses to stage: "incomplete payload" | a site build replaced `.next/` | rebuild the payload (no `NOEMA_SKIP_BUILD=1`), and never run the two builds together |
 | `link.exe not found` | no MSVC toolchain | install VS Build Tools with "Desktop development with C++" |
 | `cargo` not found | no Rust | <https://rustup.rs> |
 | `binaries/noema-node-…` missing | payload not prepared | `npm run desktop:prepare` |
 | Icon error while bundling | icon set not generated | `npm run desktop:icons` |
 | Two copies fight over state | same data dir | set `NOEMA_DATA_DIR` per install |
 
-## 8. Known limits (honest list)
+## 8. Verified on a real machine (Windows x64, this repo's environment)
+
+Recorded because "it builds in CI" and "it runs" are different claims:
+
+| Step | Result |
+|---|---|
+| `npm run desktop:preflight` | all checks pass (rustc 1.99.1, MSVC Build Tools 2026, WebView2 155, icons, runtime, payload) |
+| `cargo fmt --check` · `cargo clippy -D warnings` | clean |
+| `cargo test --all-features` | 16 tests pass (layout, loopback URLs, env contract incl. the database URL, backoff bounds, free-port behaviour, log ring, connection-string redaction, `Send` guards) |
+| `cargo tauri build --bundles nsis,msi` | `Noema_1.4.0_x64-setup.exe` (50.4 MB) + `Noema_1.4.0_x64_en-US.msi` (93.4 MB) |
+| `npm run desktop:smoke` | the packaged payload boots on the bundled runtime, migrates the database, and serves `/login` over HTTP |
+| site version | `next build` succeeds (40 routes) and emits no `standalone/` output |
+
+## 9. Known limits (honest list)
 
 - **The desktop app currently talks to Postgres.** The schema uses Postgres
   full-text search (`tsvector`, `pg_trgm`), so a self-contained desktop build
@@ -214,7 +252,7 @@ what that means for the user (SmartScreen) and what is already wired for signing
   environment). macOS/Linux installers are produced by `desktop.yml` on native
   runners.
 
-## 9. Deferred, with the design already chosen
+## 10. Deferred, with the design already chosen
 
 - **Embedded database (the big one)** — two options, both already scoped:
   1. **SQLite**: a `schema.desktop.prisma` with `provider = "sqlite"`, replace
