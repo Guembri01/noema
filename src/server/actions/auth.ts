@@ -12,7 +12,8 @@ import {
 } from "@/lib/auth";
 import { loginSchema, signupSchema } from "@/lib/validation";
 import { encryptTwoFactorSecret, openTwoFactorSecret } from "@/lib/secrets";
-import { verifyTotp } from "@/lib/totp";
+import { verifyTotpCounter } from "@/lib/totp";
+import { consumeTotpStep } from "@/lib/totp-replay";
 import { welcomeDoc } from "@/lib/welcome";
 import { uniqueWorkspaceSlug } from "@/server/unique";
 import { passwordStrategyEnabled } from "@/lib/auth-strategies";
@@ -309,17 +310,30 @@ export async function loginAction(
     }
 
     // B05: the stored seed is an ENVELOPE (`v1:iv:tag:payload`), so it is
-    // opened BEFORE the code is checked — `verifyTotp` gets the seed, never the
-    // ciphertext. A value that cannot be opened (tampered ciphertext, a
+    // opened BEFORE the code is checked — the verification gets the seed, never
+    // the ciphertext. A value that cannot be opened (tampered ciphertext, a
     // rotated `AUTH_SECRET`) fails closed: no session.
     const stored = user.twoFactorSecret
       ? openTwoFactorSecret(user.twoFactorSecret)
       : ({ kind: "unreadable" } as const);
-    if (stored.kind === "unreadable" || !verifyTotp(stored.secret, code)) {
+    // B25: the verification answers with the TIME STEP the code belongs to,
+    // not only that it matched — that step is the state a replay is compared
+    // against.
+    const step =
+      stored.kind === "unreadable"
+        ? null
+        : verifyTotpCounter(stored.secret, code);
+    if (step === null) {
       // One text for every failed sign-in: a message of its own would confirm
       // that the password was right (B24). The flag keeps the code field on
       // screen so the user can try again. The separate 2FA budget handles
       // guessing; it must not lock the password account.
+      return { error: LOGIN_FAILED, requiresTwoFactor: true };
+    }
+    // B25: the step is spent BEFORE the session exists. A code that was
+    // already used opens no second session — not even inside the ±1 step
+    // window, which is where an observed code used to be replayable.
+    if (!(await consumeTotpStep(user.id, step))) {
       return { error: LOGIN_FAILED, requiresTwoFactor: true };
     }
     // A pre-B05 cleartext seed has now proved itself: re-seal it in place so

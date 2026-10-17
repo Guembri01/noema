@@ -63,7 +63,9 @@ vi.mock("@/lib/auth", () => ({
   hashPassword: vi.fn(async () => "hashed"),
   verifyPassword: h.verifyPassword,
 }));
-vi.mock("@/lib/totp", () => ({ verifyTotp: vi.fn(() => false) }));
+// B25: the sign-in asks for the time step a code belongs to; the mock refuses
+// every code, like a wrong one.
+vi.mock("@/lib/totp", () => ({ verifyTotpCounter: vi.fn(() => null) }));
 vi.mock("next/headers", () => ({
   headers: vi.fn(async () => new Headers({ "x-forwarded-for": "1.2.3.4" })),
 }));
