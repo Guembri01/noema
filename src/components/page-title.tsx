@@ -41,6 +41,7 @@ import {
 } from "@/server/actions/page-menu";
 import { setPageTeamspaceAction } from "@/server/actions/teamspaces";
 import { WhoHasAccess } from "@/components/who-has-access";
+import { FloatingLayer } from "@/components/ui/floating-layer";
 import { ShareDialog } from "@/components/share-dialog";
 import { NotionImportDialog } from "@/components/notion-import-dialog";
 import {
@@ -1213,10 +1214,15 @@ export function PageTitle({
         onShare={() => setShareOpen(true)}
         iconMenu={
           showEmoji || showCover ? (
+            <FloatingLayer>
             <div
               role="dialog"
               aria-label={showEmoji ? "Pick an icon" : "Pick a cover"}
-              className="surface-raised absolute start-0 top-9 p-2"
+              /* `top-14` clears the icon itself (h-14 = 56px): the row is only h-8,
+                 so the emoji overflows it and anchoring to the row left this panel
+                 sitting on top of the glyph. Portalled so an ancestor cannot clip
+                 or re-root it either. */
+              className="surface-raised absolute start-0 top-14 p-2"
               style={{ zIndex: Z.popover, width: 288 }}
             >
               {showEmoji && (
@@ -1258,6 +1264,7 @@ export function PageTitle({
                 </div>
               )}
             </div>
+            </FloatingLayer>
           ) : null
         }
         undoRedo={

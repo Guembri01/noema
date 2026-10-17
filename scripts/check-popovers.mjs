@@ -74,6 +74,42 @@ function analyse(rawTrigger, rawPanel) {
   return { problems, gapTop, flippedUp, vertical };
 }
 
+
+/**
+ * Sibling controls must not overlap each other: a wrapped flex toolbar whose
+ * children render wider than their wrappers produces controls that are visually
+ * cut off or sitting on top of one another.
+ */
+async function checkNoOverlap(page, label, containerSelector, childSelector = ":scope > *") {
+  const container = page.locator(containerSelector).first();
+  if ((await container.count()) === 0) {
+    console.log(`  skip ${label} — no ${containerSelector}`);
+    return;
+  }
+  const boxes = await container.locator(childSelector).evaluateAll((nodes) =>
+    nodes
+      .map((node) => {
+        const rect = node.getBoundingClientRect();
+        return { tag: node.tagName.toLowerCase(), text: (node.textContent || "").trim().slice(0, 24), ...rect };
+      })
+      .filter((box) => box.width > 1 && box.height > 1),
+  );
+  const clashes = [];
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const a = boxes[i];
+      const b = boxes[j];
+      const overlapX = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+      const overlapY = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+      // A few pixels of rounding is not an overlap; 4+ in both axes is.
+      if (overlapX > 4 && overlapY > 4) {
+        clashes.push(`"${a.text || a.tag}" / "${b.text || b.tag}" overlap ${Math.round(overlapX)}×${Math.round(overlapY)}px`);
+      }
+    }
+  }
+  record(clashes.length === 0, `${label}: no sibling controls overlap`, clashes.join("; "));
+}
+
 async function main() {
   mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch({ channel: "msedge" });
@@ -125,7 +161,16 @@ async function main() {
       record(false, `${label}: measurable box`);
       return;
     }
+    const after = await trigger.boundingBox();
+    const shifted =
+      after && (Math.abs(after.y - before.y) > 4 || Math.abs(after.x - before.x) > 4);
     const verdict = analyse(before, box);
+    if (shifted) {
+      console.log(
+        `       note: the trigger moved when the panel opened (y ${Math.round(before.y)} → ${Math.round(after.y)})`,
+      );
+      verdict.problems.push("opening the panel reflows/scrolls its own trigger");
+    }
     record(verdict.problems.length === 0, `${label}: attached to its trigger`, verdict.problems.join("; "));
     console.log(
       `       trigger ${Math.round(before.x)},${Math.round(before.y)} ${Math.round(before.width)}×${Math.round(before.height)}` +
@@ -142,7 +187,17 @@ async function main() {
   // A real page: the page chrome (icon, title, ⋯) only exists on a page route.
   await page.goto(`${BASE}/w/demo-workspace`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
-  const pageLink = page.locator('a[href^="/w/demo-workspace/"]').first();
+  const STATIC_ROUTES = /\/(projects|tickets|cycles|library|inbox|audit|roadmap|templates|search|settings|home)/;
+  const candidates = await page.locator('a[href^="/w/demo-workspace/"]').all();
+  let pageHref = null;
+  for (const candidate of candidates) {
+    const href = await candidate.getAttribute("href");
+    if (href && !STATIC_ROUTES.test(href) && href.split("/").length === 4) {
+      pageHref = href;
+      break;
+    }
+  }
+  const pageLink = { count: async () => (pageHref ? 1 : 0), getAttribute: async () => pageHref };
   if ((await pageLink.count()) > 0) {
     const href = await pageLink.getAttribute("href");
     if (href) {
@@ -167,7 +222,12 @@ async function main() {
   // 3. A Select from the database toolbar (portalled listbox).
   await page.goto(`${BASE}/w/demo-workspace/tickets`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(2000);
-  await check("tickets toolbar select", 'button[aria-haspopup="listbox"]', '[role="listbox"]');
+  // The popup is `[data-testid="select-menu"]`; `[role="listbox"]` is the list
+  // *inside* it, below the search field — measuring that reported a false 47px gap.
+  await check("tickets toolbar select", 'button[aria-haspopup="listbox"]', '[data-testid="select-menu"]');
+
+  // Layout: siblings in the toolbar rows must not overlap.
+  await checkNoOverlap(page, "tickets toolbar", '[data-testid="tickets-toolbar"]');
 
   if (consoleErrors.length > 0) {
     record(false, "no console errors", consoleErrors.slice(0, 2).join(" | ").slice(0, 200));
