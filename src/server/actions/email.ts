@@ -435,7 +435,18 @@ export async function acceptWorkspaceInviteAction(
     data: { acceptedAt: new Date() },
   });
 
-  revalidatePath("/w", "layout");
+  // No `revalidatePath` here: the only caller is the invite page, which accepts
+  // during render (`/invite/[token]` is the "click the link and you are in"
+  // flow), and Next refuses cache revalidation from a render - it threw
+  // "Route /invite/[token] used \"revalidatePath /w\" during render which is
+  // unsupported" *after* the membership write, so every acceptance showed a 500
+  // and never reached the redirect below. Nothing needs invalidating anyway:
+  // every `/w` page reads cookies, so they are dynamic and hold no route cache,
+  // and the caller redirects straight into a fresh render of the workspace it
+  // just joined.
+  //
+  // Follow-up worth taking separately: accept on a POST (a form or effect) so
+  // this GET stops mutating, and the revalidation can come back legally.
   return {
     ok: true,
     slug: invite.workspace.slug,
