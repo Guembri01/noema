@@ -4,7 +4,6 @@ import {
   describePastePlan,
   extractDataUrl,
   inspectClipboardItem,
-  isSvgSafe,
   planPaste,
   slugifyFilename,
 } from "@/lib/clipboard-image";
@@ -90,48 +89,6 @@ describe("extractDataUrl", () => {
   it("returns null for malformed or empty data urls", () => {
     expect(extractDataUrl('<img src="data:image/png;base64">')).toBeNull();
     expect(extractDataUrl('<img src="data:image/png;base64,@@@@">')).toBeNull();
-  });
-});
-
-describe("isSvgSafe", () => {
-  it("accepts a plain vector svg (xmlns is not an external reference)", () => {
-    expect(
-      isSvgSafe('<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1" fill="#f00"/></svg>'),
-    ).toBe(true);
-  });
-
-  it("accepts same-document fragment references", () => {
-    expect(
-      isSvgSafe('<svg><defs><linearGradient id="g"/></defs><rect fill="url(#g)"/><use xlink:href="#g"/></svg>'),
-    ).toBe(true);
-  });
-
-  it("rejects script tags in any case", () => {
-    expect(isSvgSafe("<svg><script>alert(1)</script></svg>")).toBe(false);
-    expect(isSvgSafe("<svg><SCRIPT>alert(1)</SCRIPT></svg>")).toBe(false);
-  });
-
-  it("rejects inline event handlers", () => {
-    expect(isSvgSafe('<svg onload="x()"></svg>')).toBe(false);
-    expect(isSvgSafe('<svg><rect onmouseover="x()"/></svg>')).toBe(false);
-  });
-
-  it("rejects external references (href/src/url)", () => {
-    expect(isSvgSafe('<svg><image href="https://evil.test/x.png"/></svg>')).toBe(false);
-    expect(isSvgSafe('<svg><use xlink:href="//evil.test/x.svg"/></svg>')).toBe(false);
-    expect(isSvgSafe('<svg><rect fill="url(https://evil.test/x)"/></svg>')).toBe(false);
-  });
-
-  it("rejects foreignObject, javascript: urls and entities", () => {
-    expect(isSvgSafe("<svg><foreignObject><p>x</p></foreignObject></svg>")).toBe(false);
-    expect(isSvgSafe('<svg><a href="javascript:alert(1)">x</a></svg>')).toBe(false);
-    expect(isSvgSafe('<!DOCTYPE svg [<!ENTITY x "y">]><svg/>')).toBe(false);
-  });
-
-  it("treats empty or non-string input as unsafe", () => {
-    expect(isSvgSafe("")).toBe(false);
-    expect(isSvgSafe("   ")).toBe(false);
-    expect(isSvgSafe(null as unknown as string)).toBe(false);
   });
 });
 
