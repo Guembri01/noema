@@ -78,6 +78,30 @@ pub fn log_dir(app: &AppHandle) -> Option<PathBuf> {
     data_dir(app).map(|dir| dir.join("logs"))
 }
 
+/// A remembered port is only worth using if it is a real user port: `0` (never
+/// set), and anything the OS reserves for privileged processes, mean "no
+/// preference".
+pub fn plausible_port(value: u16) -> Option<u16> {
+    (value > 1024).then_some(value)
+}
+
+/// The port this install served on last time, if it is still plausible.
+///
+/// The shell asks for it back so the document origin (`http://127.0.0.1:<port>`)
+/// is stable across launches. Everything the app keeps in the browser — the
+/// theme preference, sidebar width, open tabs, recent pages, and the offline
+/// cache with its pending-mutation queue — is keyed by origin, so a fresh port
+/// every launch silently reset all of it. If the port is taken by the time the
+/// server starts, the sidecar falls back to an ephemeral one.
+pub fn preferred_port(app: &AppHandle) -> Option<u16> {
+    plausible_port(pref::<u16>(app, prefs::LAST_PORT, 0))
+}
+
+/// Remember the port the server actually bound, for the next launch.
+pub fn remember_port(app: &AppHandle, port: u16) {
+    set_pref(app, prefs::LAST_PORT, serde_json::Value::from(port));
+}
+
 /// Read a preference, falling back to a default.
 pub fn pref<T: serde::de::DeserializeOwned>(app: &AppHandle, key: &str, fallback: T) -> T {
     let Ok(store) = app.store(PREFS_FILE) else {
@@ -119,5 +143,16 @@ mod tests {
         );
         assert_eq!(normalise_database_url("\"\""), "");
         assert_eq!(normalise_database_url("   "), "");
+    }
+
+    #[test]
+    fn only_a_real_user_port_counts_as_a_preference() {
+        // `0` is what a missing key reads as, and the privileged range is never
+        // something this app picked — both mean "let the OS choose".
+        assert_eq!(plausible_port(0), None);
+        assert_eq!(plausible_port(80), None);
+        assert_eq!(plausible_port(1024), None);
+        assert_eq!(plausible_port(1025), Some(1025));
+        assert_eq!(plausible_port(51800), Some(51800));
     }
 }

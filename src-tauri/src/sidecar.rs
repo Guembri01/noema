@@ -13,8 +13,12 @@
 //! still requires nothing of the user (no Node install, no PATH surgery).
 //!
 //! Design rules (see docs/DESKTOP.md):
-//! 1. **Loopback only.** The server binds `127.0.0.1` on an ephemeral port that
-//!    the OS picks, so two installs can run side by side and nothing is exposed.
+//! 1. **Loopback only.** The server binds `127.0.0.1`, so nothing is exposed.
+//!    The port is the one this install used last time when it is still free
+//!    (which keeps the document origin stable — browser-side state such as the
+//!    theme preference, open tabs and the offline cache is keyed by origin, so a
+//!    fresh port every launch silently reset all of it), otherwise a fresh
+//!    ephemeral one, so two installs can still run side by side.
 //! 2. **Supervised.** If the process exits unexpectedly it is restarted with
 //!    exponential backoff, and the UI is told (so it can show an offline state
 //!    instead of a dead window).
@@ -266,6 +270,25 @@ pub fn free_port() -> std::io::Result<u16> {
     Ok(port)
 }
 
+/// Can this loopback port be bound right now?
+pub fn port_is_free(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+/// The port to hand the server: the preferred one when it can still be bound,
+/// otherwise a fresh ephemeral one.
+///
+/// The preference is what makes the app's origin stable across launches — see
+/// `state::preferred_port` for why that matters. Both branches keep the server
+/// loopback-only; a port that something else has taken is never fought over, it
+/// is simply not used.
+pub fn choose_port(preferred: Option<u16>) -> std::io::Result<u16> {
+    match preferred {
+        Some(port) if port_is_free(port) => Ok(port),
+        _ => free_port(),
+    }
+}
+
 /// Backoff for a given restart attempt (attempt starts at 1).
 pub fn backoff_for(attempt: u32) -> Duration {
     let index = (attempt.saturating_sub(1) as usize).min(RESTART_BACKOFF.len() - 1);
@@ -372,7 +395,19 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
     };
     let _ = app.emit("sidecar://event", SidecarEvent::Starting { attempt });
 
-    let port = free_port()?;
+    // Prefer the port this install used last time: the document origin stays the
+    // same across launches, so the app's browser-side state survives a restart.
+    // The port is only a preference — this machine may have given it away.
+    let preferred = crate::state::preferred_port(app);
+    let port = choose_port(preferred)?;
+    if let Some(preferred) = preferred.filter(|preferred| *preferred != port) {
+        crate::logging::line(
+            app,
+            "lifecycle",
+            &format!("port {preferred} is in use, serving on {port} instead"),
+        );
+    }
+    crate::state::remember_port(app, port);
     let origin = api_base(port);
     let env = server_env(port, &data_dir, &origin, &database_url);
 
@@ -532,7 +567,10 @@ mod tests {
         // back to the working directory - which for an install is the program
         // folder, where an update or an uninstall takes them.
         let data_dir = Path::new("/data/noema");
-        assert_eq!(get("NOEMA_DATA_DIR"), data_dir.to_string_lossy().to_string());
+        assert_eq!(
+            get("NOEMA_DATA_DIR"),
+            data_dir.to_string_lossy().to_string()
+        );
         assert_eq!(
             get("STORAGE_DIR"),
             uploads_dir(data_dir).to_string_lossy().to_string()
@@ -552,12 +590,7 @@ mod tests {
     /// lets a fresh install run with nothing installed.
     #[test]
     fn an_unconfigured_database_url_is_left_out_entirely() {
-        let env = server_env(
-            1234,
-            Path::new("/data/noema"),
-            "http://127.0.0.1:1234",
-            "",
-        );
+        let env = server_env(1234, Path::new("/data/noema"), "http://127.0.0.1:1234", "");
         assert!(
             !env.iter().any(|(key, _)| key == "DATABASE_URL"),
             "an empty DATABASE_URL must not be passed — unset is what selects the embedded database"
@@ -582,6 +615,32 @@ mod tests {
         assert!(a > 1024, "ephemeral ports are > 1024, got {a}");
         assert!(b > 1024);
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn the_preferred_port_comes_back_when_it_is_free() {
+        // The whole point of the preference: a relaunch serves on the same
+        // origin as the last one, so the app's browser-side state is still there.
+        let free = free_port().expect("port available");
+        assert_eq!(choose_port(Some(free)).expect("chosen"), free);
+    }
+
+    #[test]
+    fn a_taken_preferred_port_falls_back_to_a_fresh_one() {
+        // `listener` keeps the port for the duration, so the kernel cannot hand
+        // the same one back.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let taken = listener.local_addr().expect("address").port();
+        assert!(!port_is_free(taken));
+
+        let chosen = choose_port(Some(taken)).expect("chosen");
+        assert_ne!(chosen, taken);
+        assert!(chosen > 1024);
+    }
+
+    #[test]
+    fn no_preference_still_yields_a_usable_port() {
+        assert!(choose_port(None).expect("chosen") > 1024);
     }
 
     #[test]

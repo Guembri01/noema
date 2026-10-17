@@ -34,7 +34,7 @@ Only four things differ, and they are resolved in **one module**
 │    │                                                          │
 │  ┌─ shell ────────────────────────────────────────────────┐   │
 │  │ sidecar supervisor  (src-tauri/src/sidecar.rs)         │   │
-│  │  · picks a free loopback port                          │   │
+│  │  · keeps this install's port (free if taken)           │   │
 │  │  · spawns `noema-node` (bundled runtime) on start.cjs  │   │
 │  │  · polls /api/health until 200 (90 s budget)            │   │
 │  │  · streams stdout/stderr → logs/noema.log + UI         │   │
@@ -53,6 +53,21 @@ Only four things differ, and they are resolved in **one module**
 │    bound to 127.0.0.1:<port>                                   │
 └───────────────────────────────────────────────────────────────┘
 ```
+
+The port is a **preference, not a constant**: the shell asks for the one this
+install served on last time (remembered as `lastPort` in `preferences.json`) and
+falls back to a fresh ephemeral one when something else has taken it. That is not
+about the port itself — it is about the **origin**. Everything the app keeps in
+the browser (the theme preference, sidebar width, open tabs, recent pages, and
+the offline cache with its pending-mutation queue) is keyed by
+`http://127.0.0.1:<port>`, so a new port every launch silently reset all of it.
+Either way the server stays loopback-only.
+
+The port says nothing about *which* version is running. The server answers that
+separately, by rendering `<html data-noema-runtime="desktop">` into the document
+(`src/lib/runtime-mode.ts` reads it back) — the shell's own
+`window.__NOEMA_DESKTOP__` object is evaluated into the page it then replaces, so
+it is not there by the time the app runs.
 
 ### Why a bundled runtime and not a Node SEA single executable
 
@@ -84,8 +99,11 @@ instead of showing a white window.
 
 Other deliberate choices:
 
-- **Loopback only** — the server binds `127.0.0.1` on an ephemeral port chosen by
-  the kernel. Nothing is exposed to the network, and two installs run side by side.
+- **Loopback only** — the server binds `127.0.0.1`, on the port this install used
+  last time when it is free and an ephemeral one otherwise (see above). Nothing is
+  exposed to the network, and two installs still run side by side. Remembering the
+  port does not widen that: loopback is scannable either way, and authentication is
+  unchanged.
 - **Readiness is `/api/health`, not `/api/ready`.** `/api/ready` is a
   secret-gated ops endpoint that fails closed (401/503) for an unauthenticated
   caller, so a supervisor polling it would never see the app come up. `/api/health`
@@ -142,7 +160,7 @@ Other deliberate choices:
 
 | Concern | Decision |
 |---|---|
-| Server exposure | loopback only, ephemeral port, no `0.0.0.0` |
+| Server exposure | loopback only, no `0.0.0.0`; the port is this install's own (stable origin) or a free ephemeral one when it is taken |
 | Webview ↔ server | explicit `APP_ORIGINS` allow-list (the loopback origin) + CSP in `tauri.conf.json` |
 | Webview ↔ shell | only the commands in `src-tauri/src/commands.rs`; IPC granted to the loopback origin via a capability with `remote.urls` |
 | Secrets | a database password can live in the connection string; it is **redacted** before diagnostics leave the shell (unit-tested in `commands.rs`) |
@@ -466,12 +484,12 @@ what that means for the user (SmartScreen) and what is already wired for signing
 
 | Layer | What runs |
 |---|---|
-| Rust (shell) | `cargo test` — data-dir layout, loopback URL shape, resource path, env contract (incl. the database URL), restart backoff bounds, free-port behaviour, layout creation, log ring buffer, connection-string redaction |
+| Rust (shell) | `cargo test` — data-dir layout, loopback URL shape, resource path, env contract (incl. the database URL), restart backoff bounds, free-port behaviour and the preferred-port fallback, layout creation, log ring buffer, connection-string redaction |
 | Rust (quality) | `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` |
 | Shared TS | the whole existing suite — the app version adds **no** forked logic |
-| Runtime mode | `src/lib/runtime-mode.test.ts` (site vs desktop, API base, data dir, version, capabilities, SSR safety) |
+| Runtime mode | `src/lib/runtime-mode.test.ts` (site vs desktop, the mode the server renders into the document, the Tauri fallback, API base, data dir, version, capabilities, SSR safety) and `src/app/a11y-layout.test.ts` (the attribute the layout renders for the site, `NOEMA_RUNTIME` and `NOEMA_STANDALONE`) |
 | Packaging | `desktop:preflight` on every run; `site.yml` asserts the site build never emits a standalone server |
-| Manual smoke | install → first run → the swap from "starting…" to the workspace → create a note → quit → relaunch (window geometry + theme restored) |
+| Manual smoke | install → first run → the swap from "starting…" to the workspace → create a note → quit → relaunch (same origin, so window geometry, theme and the rest of the browser-side state are still there) |
 
 ## 9. Troubleshooting
 
@@ -498,12 +516,13 @@ below was executed, not inferred.
 |---|---|
 | `npm run desktop:preflight` | all checks pass (rustc 1.99.1, MSVC Build Tools 2026, WebView2 155, icons, bundled runtime, payload) |
 | `cargo fmt --check` · `cargo clippy -D warnings` | clean |
-| `cargo test --all-features` | 18 tests pass (layout, loopback URLs, env contract, backoff bounds, free-port behaviour, log ring, connection-string redaction and quote-normalisation, `Send` guards, readiness messaging) |
-| `npm run desktop:prepare` | 303.5 MB payload staged and validated |
+| `cargo test --all-features` | 26 tests pass (layout, loopback URLs, env contract, backoff bounds, free-port behaviour and the preferred-port fallback, log ring, connection-string redaction and quote-normalisation, preferred-port plausibility, `Send` guards, readiness messaging) |
+| `npm run desktop:prepare` | 368.8 MB payload staged and validated |
 | `npm run desktop:smoke` | boots the packaged payload on the bundled runtime, migrates, serves `/api/health` 200 and `/login` 200 |
-| `cargo tauri build` | `Noema_1.4.0_x64-setup.exe` (62.9 MB) + `Noema_1.4.0_x64_en-US.msi` (112.9 MB) |
+| `cargo tauri build` | `Noema_1.4.0_x64-setup.exe` (73.30 MiB) + `Noema_1.4.0_x64_en-US.msi` (131.31 MiB) |
 | **Installed the NSIS installer** | exit 0, per-user, **no admin prompt** → `%LOCALAPPDATA%\Noema\` + Start Menu shortcut + `uninstall.exe` |
 | **Launched the installed app** | supervised server on a loopback port, `/api/health → 200 {"ok":true,"db":"up"}`, `/login → 200` (16,903 bytes) |
+| **Relaunched the installed app** | same loopback port (61621 → 61621), so the app's browser-side state survives a restart; with that port occupied it logs `port 61621 is in use, serving on 62537 instead` and re-points the preference |
 | **Launched with no env vars at all** | `db: up` from `preferences.json`, and the shell created `logs/ uploads/ backups/` |
 | Failure path | with a bad database URL the app stayed on the bootstrap page and logged "the local server is running but reports unhealthy (HTTP 503)" instead of showing an empty window |
 | site version | `next build` succeeds (40 routes) and emits no `standalone/` output |

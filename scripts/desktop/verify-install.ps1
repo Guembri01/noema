@@ -11,6 +11,8 @@
 #     database up (`/api/health` → 200 `{"ok":true,"db":"up"}`)
 #   · a real page is served with its stylesheets
 #   · a second launch does not start a second server (single-instance)
+#   · a relaunch serves on the same loopback port, so the app's browser-side
+#     state (theme, tabs, the offline cache) survives a restart
 #   · the window renders — captured to a PNG so a human (or a model) can look
 param(
     [string]$Setup,
@@ -36,6 +38,34 @@ function Stop-Noema {
     Get-Process noema-node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Get-Process noema-desktop -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
+}
+
+# Find the loopback port the supervised server answers HTTP on. The child listens
+# twice — the web server, and the database socket when the install provisions its
+# own embedded PostgreSQL — and netstat's order is not stable (it flipped between
+# runs), so "the first listening port" reported a healthy install as broken. Ask
+# each candidate which one speaks HTTP.
+function Find-NoemaPort($Process, [int]$TimeoutSeconds = 180) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds 2
+        if ($Process.HasExited) { return $null }
+        $child = Get-Process noema-node -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $child) { continue }
+        $candidates = netstat -ano |
+            Select-String "127\.0\.0\.1:(\d+)\s+.*LISTENING\s+$($child.Id)\s*$" |
+            ForEach-Object { [regex]::Match($_.Line, "127\.0\.0\.1:(\d+)").Groups[1].Value } |
+            Select-Object -Unique
+        foreach ($candidate in $candidates) {
+            try {
+                $probe = Invoke-WebRequest "http://127.0.0.1:$candidate/api/health" -UseBasicParsing -TimeoutSec 3
+                if ($probe.StatusCode -eq 200) { return $candidate }
+            } catch {
+                # The database socket answers no HTTP: keep looking.
+            }
+        }
+    }
+    return $null
 }
 
 Write-Output "Noema installed-app verification`n"
@@ -69,32 +99,7 @@ Write-Output "`n  launching…"
 $app = Start-Process -FilePath $exe -PassThru
 Step ($app.Id -gt 0) "launched" "pid $($app.Id)"
 
-# Wait for the supervised server: find the loopback port its child answers HTTP
-# on. The child listens twice - the web server, and the database socket when the
-# install provisions its own embedded PostgreSQL - and netstat's order is not
-# stable (it flipped between runs), so "the first listening port" reported a
-# healthy install as broken. Ask each candidate which one speaks HTTP.
-$port = $null
-$deadline = (Get-Date).AddSeconds($ReadyTimeoutSeconds)
-while ((Get-Date) -lt $deadline) {
-    Start-Sleep -Seconds 2
-    if ($app.HasExited) { break }
-    $child = Get-Process noema-node -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $child) { continue }
-    $candidates = netstat -ano |
-        Select-String "127\.0\.0\.1:(\d+)\s+.*LISTENING\s+$($child.Id)\s*$" |
-        ForEach-Object { [regex]::Match($_.Line, "127\.0\.0\.1:(\d+)").Groups[1].Value } |
-        Select-Object -Unique
-    foreach ($candidate in $candidates) {
-        try {
-            $probe = Invoke-WebRequest "http://127.0.0.1:$candidate/api/health" -UseBasicParsing -TimeoutSec 3
-            if ($probe.StatusCode -eq 200) { $port = $candidate; break }
-        } catch {
-            # The database socket answers no HTTP: keep looking.
-        }
-    }
-    if ($port) { break }
-}
+$port = Find-NoemaPort $app $ReadyTimeoutSeconds
 Step (-not $app.HasExited) "shell still running" $(if ($app.HasExited) { "exited $($app.ExitCode)" } else { "" })
 Step ($null -ne $port) "supervised server listening on loopback" $(if ($port) { "port $port" } else { "not found" })
 
@@ -134,6 +139,14 @@ $after = (Get-Process noema-desktop -ErrorAction SilentlyContinue | Measure-Obje
 $servers = (Get-Process noema-node -ErrorAction SilentlyContinue | Measure-Object).Count
 Step ($after -le $before) "second launch does not add an instance" "desktop processes: $before → $after"
 Step ($servers -le 1) "exactly one supervised server" "$servers server process(es)"
+
+# The port is remembered on purpose: the document origin stays the same across
+# launches, so everything the app keeps in the browser — the theme preference,
+# open tabs, recent pages, the offline cache — is still there after a restart.
+Stop-Noema
+$relaunch = Start-Process -FilePath $exe -PassThru
+$portAgain = Find-NoemaPort $relaunch $ReadyTimeoutSeconds
+Step ($null -ne $portAgain -and $portAgain -eq $port) "a relaunch serves on the same port" "port $port → $portAgain"
 
 Step (-not (Test-Path $panicLog)) "no panic recorded" $(if (Test-Path $panicLog) { (Get-Content $panicLog -TotalCount 4) -join " / " } else { "" })
 
