@@ -39,6 +39,12 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- `GET /api/invites` enforced workspace membership only, while its own contract
+  said "admins only": a guest or a plain member received `200` with an empty
+  delivery list instead of a `403`. The route now asks the role matrix
+  (`inviteMember`, i.e. owner/admin) before it lists anything and answers
+  `403 Forbidden` to everyone below admin, so the endpoint no longer relies on
+  the second, weaker gate inside `listEmailDeliveries` to stay closed.
 
 ## [1.4.1] — 2026-10-17
 
