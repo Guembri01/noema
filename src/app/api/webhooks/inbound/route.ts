@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { type Conditions } from "@/lib/automation-engine";
 import { rateLimit } from "@/lib/api-guard";
 import { bodyReadError, readTextBody } from "@/lib/body-limit";
 import { prisma } from "@/lib/db";
@@ -13,10 +12,9 @@ import {
   dedupeKey,
   isDuplicate,
   mapEventToActions,
+  parseActionRules,
   parseEvent,
   verifySignature,
-  type ActionRule,
-  type ActionRuleAction,
   type EventKind,
   type SeenDelivery,
   type WebhookProvider,
@@ -38,9 +36,6 @@ const MAX_BODY_BYTES = 1024 * 1024;
 
 /** Request header that may carry the provider when the query string omits it. */
 const PROVIDER_HEADER = "x-webhook-provider";
-
-/** Request header/query parameter carrying an optional JSON rule list. */
-const RULES_HEADER = "x-noema-rules";
 
 const isKind = (value: unknown): value is EventKind =>
   typeof value === "string" && (EVENT_KINDS as readonly string[]).includes(value);
@@ -66,43 +61,6 @@ function headerRecord(request: Request): Record<string, string> {
 }
 
 /**
- * Parse an optional inbound-rule list for {@link mapEventToActions}. The list is
- * accepted as JSON in the `?rules=` query parameter or the `x-noema-rules`
- * header. Malformed input degrades to `[]` (no actions) rather than throwing,
- * and every entry is shape-checked before it reaches the planner.
- */
-function parseRules(request: Request): ActionRule[] {
-  const raw =
-    new URL(request.url).searchParams.get("rules") ?? request.headers.get(RULES_HEADER);
-  if (raw === null || raw.trim() === "") return [];
-
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(decoded)) return [];
-
-  const rules: ActionRule[] = [];
-  for (const entry of decoded) {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    if (typeof record.id !== "string" || record.id.trim() === "") continue;
-    if (!Array.isArray(record.actions)) continue;
-    const kinds = Array.isArray(record.kinds) ? record.kinds.filter(isKind) : undefined;
-    rules.push({
-      id: record.id,
-      enabled: record.enabled !== false,
-      kinds,
-      conditions: record.conditions as Conditions | undefined,
-      actions: record.actions as readonly ActionRuleAction[],
-    });
-  }
-  return rules;
-}
-
-/**
  * POST /api/webhooks/inbound?endpoint=<id>&provider=<github|slack|generic|zapier>
  *
  * The receive side of an inbound integration. The route resolves the bound
@@ -112,9 +70,10 @@ function parseRules(request: Request): ActionRule[] {
  * `WebhookDelivery` log. Fail-closed: an unknown endpoint, a disabled endpoint,
  * a missing secret or a bad signature never dispatches actions.
  *
- * `?provider=` (or `x-webhook-provider`) selects the provider; an optional
- * `?rules=` / `x-noema-rules` JSON array supplies the {@link ActionRule} list
- * `mapEventToActions` gates on. The route is side-effect free apart from the
+ * `?provider=` (or `x-webhook-provider`) selects the provider. The rule list
+ * `mapEventToActions` gates on belongs to the endpoint: it is read from the
+ * `Webhook` row, never from the request, so a caller cannot choose which
+ * actions the endpoint plans. The route is side-effect free apart from the
  * delivery row: it returns the planned actions for a worker to execute.
  *
  * B63 — the secret of the row is SEALED at rest, so the route opens the
@@ -133,7 +92,14 @@ export async function POST(request: Request) {
 
   const endpoint = await prisma.webhook.findUnique({
     where: { id: endpointId },
-    select: { id: true, workspaceId: true, secret: true, events: true, active: true },
+    select: {
+      id: true,
+      workspaceId: true,
+      secret: true,
+      events: true,
+      rules: true,
+      active: true,
+    },
   });
   if (!endpoint) return NextResponse.json({ error: "Unknown endpoint" }, { status: 404 });
   if (!endpoint.active) {
@@ -214,7 +180,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, duplicate: true, key });
   }
 
-  const actions = mapEventToActions(event, { rules: parseRules(request) });
+  // B18 — the rule list belongs to the endpoint, not to the caller: the
+  // actions are planned from the row the request was authenticated against. A
+  // rule list in the request (`?rules=` / `x-noema-rules`) is ignored.
+  const actions = mapEventToActions(event, { rules: parseActionRules(endpoint.rules) });
 
   await prisma.webhookDelivery
     .create({

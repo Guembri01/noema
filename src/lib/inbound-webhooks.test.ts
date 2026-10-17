@@ -9,6 +9,7 @@ import {
   describeWebhookEndpoint,
   isDuplicate,
   mapEventToActions,
+  parseActionRules,
   parseEvent,
   verifySignature,
   type ActionRule,
@@ -476,6 +477,64 @@ describe("mapEventToActions", () => {
 
   it("returns an empty plan when no rules are supplied", () => {
     expect(mapEventToActions(issueEvent(), { rules: [] })).toEqual([]);
+  });
+});
+
+describe("parseActionRules", () => {
+  it("keeps a well-formed rule and normalises its defaults", () => {
+    expect(
+      parseActionRules([
+        { id: "r1", actions: [{ type: "comment", body: "triage" }] },
+      ]),
+    ).toEqual([
+      {
+        id: "r1",
+        enabled: true,
+        kinds: undefined,
+        conditions: undefined,
+        actions: [{ type: "comment", body: "triage" }],
+      },
+    ]);
+  });
+
+  it("keeps a disabled rule disabled and drops an unknown event kind", () => {
+    const [rule] = parseActionRules([
+      { id: "r1", enabled: false, kinds: ["issue", "nope"], actions: [] },
+    ]);
+    expect(rule.enabled).toBe(false);
+    expect(rule.kinds).toEqual(["issue"]);
+  });
+
+  it("keeps the condition tree of a rule", () => {
+    const [rule] = parseActionRules([
+      {
+        id: "r1",
+        conditions: { all: [{ propertyId: "action", op: "eq", value: "opened" }] },
+        actions: [{ type: "comment", body: "opened" }],
+      },
+    ]);
+    expect(rule.conditions).toEqual({
+      all: [{ propertyId: "action", op: "eq", value: "opened" }],
+    });
+  });
+
+  it("drops entries without an id or without an action list", () => {
+    expect(
+      parseActionRules([
+        { id: "", actions: [] },
+        { id: "r2" },
+        "nope",
+        null,
+        [{ id: "r3", actions: [] }],
+      ]),
+    ).toEqual([]);
+  });
+
+  it("degrades a malformed list to no rules instead of throwing", () => {
+    expect(parseActionRules(null)).toEqual([]);
+    expect(parseActionRules(undefined)).toEqual([]);
+    expect(parseActionRules({})).toEqual([]);
+    expect(parseActionRules("[]")).toEqual([]);
   });
 });
 

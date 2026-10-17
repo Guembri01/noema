@@ -461,6 +461,36 @@ export type ActionRule = {
   actions: readonly ActionRuleAction[];
 };
 
+/**
+ * Validate a stored inbound-rule list.
+ *
+ * The list is data, not code: it is read from the endpoint's own row, and
+ * every entry is shape-checked before it reaches the planner. A malformed list
+ * degrades to `[]` (no actions) instead of throwing, and an entry that carries
+ * no id or no action list is dropped.
+ */
+export function parseActionRules(value: unknown): ActionRule[] {
+  if (!Array.isArray(value)) return [];
+
+  const rules: ActionRule[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    if (typeof entry.id !== "string" || entry.id.trim() === "") continue;
+    if (!Array.isArray(entry.actions)) continue;
+    const kinds = Array.isArray(entry.kinds)
+      ? entry.kinds.filter((kind): kind is EventKind => asEventKind(kind) !== null)
+      : undefined;
+    rules.push({
+      id: entry.id,
+      enabled: entry.enabled !== false,
+      kinds,
+      conditions: entry.conditions as Conditions | undefined,
+      actions: entry.actions as readonly ActionRuleAction[],
+    });
+  }
+  return rules;
+}
+
 export type PlannedCreateRow = {
   type: "createRow";
   ruleId: string;
