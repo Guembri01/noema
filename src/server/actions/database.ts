@@ -12,6 +12,7 @@ import {
   type WorkspaceAccess,
 } from "@/lib/permissions";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
+import { assertScopedParent } from "@/lib/page-parent";
 import { csvToMatrix } from "@/lib/serialize";
 import { coerceCsvValue, type CsvPropertyConfig } from "@/lib/csv-value-coercion";
 import type { ImportCounts } from "@/lib/importers";
@@ -368,7 +369,14 @@ export async function reorderRowsAction(
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
 
   const existing = await prisma.page.findMany({
-    where: { parentId: anchor.parentId, deletedAt: null },
+    // The rows belong to the database's workspace: a row that was linked across
+    // the boundary before the fix (B08) is not this workspace's row, and
+    // reordering must not write its `position` (a cross-tenant write).
+    where: {
+      parentId: anchor.parentId,
+      workspaceId: auth.page.workspaceId,
+      deletedAt: null,
+    },
     orderBy: { position: "asc" },
     select: { id: true },
   });
@@ -466,6 +474,10 @@ export async function createRowAction(
     const row = await tx.page.create({
       data: {
         workspaceId: auth.page.workspaceId,
+        // The parent is the database page `authorizeDatabase` just checked and
+        // the row is written into that very page's workspace — parent and row
+        // share one workspace by construction, so no second lookup is needed
+        // (B08: `assertScopedParent` would be redundant here).
         parentId: databasePageId,
         title: rowTitle,
         createdById: auth.user.id,
@@ -564,7 +576,14 @@ export async function listDeletedRowsAction(
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
   const rows = await prisma.page.findMany({
-    where: { parentId: databasePageId, deletedAt: { not: null } },
+    // The rows belong to the database's workspace: a row that was linked
+    // across the boundary before the fix (B08) is not this workspace's row and
+    // must not show its title in the "Deleted rows" panel.
+    where: {
+      parentId: databasePageId,
+      workspaceId: auth.page.workspaceId,
+      deletedAt: { not: null },
+    },
     orderBy: { deletedAt: "desc" },
     take: 50,
     select: { id: true, title: true, icon: true, deletedAt: true },
@@ -779,6 +798,16 @@ export async function duplicateDatabaseAction(
   });
   if (!source) return { error: "Database not found." };
 
+  // The clone lands as a sibling of the source, so it keeps the source's own
+  // parent. The source row proves that the *database* lives in this
+  // workspace, not that its parent does — check that one link before the
+  // clone is written (B08).
+  const parent = await assertScopedParent({
+    workspaceId: auth.page.workspaceId,
+    parentId: source.parentId,
+  });
+  if ("error" in parent) return parent;
+
   const databaseTitle = `${source.title || "Untitled"} copy`.slice(0, 80);
 
   const [properties, views, rows, templates] = await Promise.all([
@@ -791,7 +820,15 @@ export async function duplicateDatabaseAction(
       orderBy: { position: "asc" },
     }),
     prisma.page.findMany({
-      where: { parentId: databasePageId, deletedAt: null },
+      // The rows belong to the database's workspace. A row that was linked
+      // across the boundary before the fix (B08) is still in the table — the
+      // clone would copy its title, its body and its cell values into another
+      // tenant, so the read is filtered by the workspace (B08).
+      where: {
+        parentId: databasePageId,
+        workspaceId: auth.page.workspaceId,
+        deletedAt: null,
+      },
       orderBy: { position: "asc" },
       include: { propertyValues: { select: { propertyId: true, value: true } } },
     }),
@@ -878,6 +915,9 @@ export async function duplicateDatabaseAction(
     return {
       id: row.id,
       workspaceId: auth.page.workspaceId,
+      // The parent is the clone's own database page, created in this same
+      // transaction with the same workspace id — inside the workspace by
+      // construction (B08: `assertScopedParent` would be redundant here).
       parentId: newPageId,
       title,
       icon: typeof row.icon === "string" ? row.icon : null,
@@ -925,7 +965,7 @@ export async function duplicateDatabaseAction(
 
   await prisma.$transaction(async (tx) => {
     const last = await tx.page.findFirst({
-      where: { parentId: source.parentId, deletedAt: null },
+      where: { parentId: parent.parentId, deletedAt: null },
       orderBy: { position: "desc" },
       select: { position: true },
     });
@@ -933,7 +973,9 @@ export async function duplicateDatabaseAction(
       data: {
         id: newPageId,
         workspaceId: auth.page.workspaceId,
-        parentId: source.parentId,
+        // The clone keeps the (validated) parent of the source database; the
+        // clone's own rows hang under the clone (same workspace).
+        parentId: parent.parentId,
         type: "DATABASE",
         title: databaseTitle,
         icon: source.icon,
@@ -1013,6 +1055,10 @@ export async function createRowFromTemplateAction(
   const row = await prisma.page.create({
     data: {
       workspaceId: auth.page.workspaceId,
+      // The parent is the database page `authorizeDatabase` just checked and
+      // the row is written into that very page's workspace — parent and row
+      // share one workspace by construction (B08: `assertScopedParent` would
+      // be redundant here).
       parentId: databasePageId,
       title: template.name,
       icon: template.icon,
@@ -1233,6 +1279,10 @@ export async function importCsvAction(
         const page = await tx.page.create({
           data: {
             workspaceId: auth.page.workspaceId,
+            // The parent is the database page `authorizeDatabase` just checked
+            // and the row is written into that very page's workspace — parent
+            // and row share one workspace by construction (B08:
+            // `assertScopedParent` would be redundant here).
             parentId: databasePageId,
             title: rowTitle,
             createdById: auth.user.id,

@@ -32,6 +32,12 @@ The central decision is **"everything is a page."**
 - `Page` — a document, a folder, a database, or a database row.
   - `type = PAGE | DATABASE`
   - `parentId` builds the tree; `position` orders siblings (float, insert-between friendly)
+  - **Tenant invariant:** a `parentId` always points inside the *same*
+    workspace. `Page.parentId` is a plain self-foreign key — the schema has no
+    composite `(parentId, workspaceId)` constraint — so the rule is enforced
+    in the application, by `assertScopedParent()`
+    ([`src/lib/page-parent.ts`](../src/lib/page-parent.ts)), the single gate
+    every write path passes a parent through.
   - `content` holds the ProseMirror/TipTap JSON block document
   - `deletedAt` implements soft delete (Trash)
 - `PageVersion` — immutable snapshots written before content overwrites (history).
@@ -76,6 +82,34 @@ membership). Policy helpers:
 - `canDeleteWorkspace(role)` — OWNER only.
 
 This is intentionally centralized so a future public API can reuse it.
+
+A second, separate guard covers the page *tree*: `assertScopedParent()`
+([`src/lib/page-parent.ts`](../src/lib/page-parent.ts)) loads a parent
+**tenant-scoped** (`{ id, workspaceId, deletedAt: null }`) and refuses a parent
+that lives in another workspace or that is in the trash — the foreign page is
+never read and the error never names it. A page therefore never hangs under a
+page of a different workspace, which keeps it out of the foreign workspace's
+database view and CSV/JSON export, and keeps Postgres' `onDelete: Cascade` from
+deleting it together with a foreign parent. Every write path that stores a
+`Page.parentId` goes through that helper — or holds the workspace equality by
+construction and says so, with a reason, in the gate's allow-list; the read
+side filters a database's rows by the database's workspace (eight read sites).
+The rule is **checked mechanically where the
+gate can see it** by
+[`scripts/check-parent-scope.mjs`](../scripts/check-parent-scope.mjs): the gate
+finds the `Page.parentId` writes in `src/` statically — 31 of them, the same
+31 an independent TypeScript-parser inventory finds — and fails when one of
+them stores a value the helper has not proved, without a reasoned allow-list
+entry. It is a safety net over the tests, not a proof: a write it cannot
+recognise is not covered by it. The holes that are known today are listed in
+the gate's own docstring — a raw SQL write, a write outside `src/`, a member
+assignment (`data.parentId = …`), a payload the gate does not follow, the
+callers of an allow-listed helper, a computed receiver (`prisma["page"]`) and
+a payload that arrives through a spread the gate cannot read. That list is a
+safety net, not an enumeration: a new shape of write can open a new hole, and
+the list only grows when somebody measures one. The shapes that *are* closed
+are pinned by the gate's own regression test
+([`scripts/check-parent-scope.test.mjs`](../scripts/check-parent-scope.test.mjs)).
 
 ## Editor
 
