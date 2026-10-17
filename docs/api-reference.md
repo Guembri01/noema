@@ -202,8 +202,12 @@ rate scope `templates` (30/min)
 Source: [`src/app/api/link-preview/route.ts`](../src/app/api/link-preview/route.ts) ·
 cookie session · rate scope `preview` (60/min)
 
-- SSRF guards: `http(s)` only, private/loopback hosts blocked, response capped
-  at 256 KB, 6 s timeout, custom `NoemaBot/1.0` UA.
+- SSRF guard: `http(s)` only; the target is resolved through DNS and every
+  answer must be public; redirects are followed manually and every hop is
+  re-validated, and the URL the response was finally read from is checked
+  again. The card's `image`/`icon` URLs pass the same gate — the victim's
+  browser fetches them. Response capped at 256 KB, 6 s timeout (the DNS
+  lookup included), custom `NoemaBot/1.0` UA.
 - **200**
 
 ```json
@@ -217,7 +221,9 @@ cookie session · rate scope `preview` (60/min)
 
 `null` fields are normal (fetch failure returns the same shape with everything
 but `url`/`host` null). **400** `{"error":"Invalid url"}` or
-`{"error":"Blocked host"}`.
+`{"error":"Blocked host"}` — the latter for a private/loopback/metadata host,
+a host whose DNS answers point into private space, a redirect hop into
+private space, and a host that does not resolve at all.
 
 ### `POST /api/upload` — file upload (multipart)
 
