@@ -194,9 +194,61 @@ the drift (§13).
   (Notion, Docx, Trello, Zip, Markdown, CSV, HTML, PDF), the chat-answer save
   and the page/database duplicate paths. The **invariant** it enforces:
   *a `parentId` always points inside the same workspace*. The read side
-  follows: `getDatabase` and both export routes filter a database's rows by
-  the database's workspace, so a row that was linked across workspaces before
-  the fix no longer surfaces in the foreign workspace's views.
+  follows: `getDatabase`, the relation database, both export routes, the
+  "Deleted rows" panel, the database duplicate and the two chat-context
+  blocks (the database block and the current-page block) filter a database's
+  rows by the database's workspace — eight read sites in all — so a row that
+  was linked across workspaces before the fix no longer surfaces in the
+  foreign workspace's views, and the duplicate no longer copies such a row
+  **with its content**. The invariant
+  is **checked mechanically where the gate can see it**:
+  `scripts/check-parent-scope.mjs` finds the `Page.parentId` writes in `src/`
+  statically — 31 of them, the same 31 an independent TypeScript-parser
+  inventory finds — and fails when one of them stores a value the helper has
+  not proved. The allow-list of the gate is **precise**: every entry names the
+  value it releases **and** the proof that makes that value safe (the
+  authorization the entry relies on), and the gate checks that the proof is
+  still there — an entry whose context is gone releases nothing. The taint of a
+  raw request value is transitive as well: a local that is derived from a
+  tainted local is tainted too, and a read of `.parentId` from a name whose
+  origin the gate cannot see — a parameter, a module-level name, or a local
+  whose initializer the gate cannot resolve (a spread it cannot follow, a
+  call whose result it cannot see into, an interpolation it cannot read) — is
+  a raw value, whatever that receiver is called. The gate follows the taint as
+  far as it can see it: the **unresolvability** is transitive as well (a local
+  that takes the value of an unresolved local is unresolved itself), the read
+  of `.parentId` is seen in every form that names the property directly (the
+  plain read, the optional chain, the non-null assertion, the computed member
+  with the literal key, the indexed member, the result of a call), and the
+  compound assignments (`&&=`, `||=`, `??=`, `+=`, …) are assignments it follows
+  like every other. What it does **not** reach is a value that mixes an
+  unresolved local with the proved one
+  (`const parentId = o ?? checked.parentId`): the gate cannot see into `o`, so
+  the raw value may hide in it — and the write is released all the same. A
+  member whose key is not the literal (`input["parent" + "Id"]`) and a
+  reflective read (`Reflect.get(input, "parentId")`) are not reads the gate
+  sees at all — the write is released all the same. It is
+  a
+  safety net over the tests, not a proof: a write it cannot recognise is not
+  covered by it. The holes that are known today are listed in the gate's own
+  docstring — **eight** of them there, **nine** with the write outside `src/`
+  the gate cannot see: a raw SQL write, a write outside `src/`, a
+  member assignment such as `data.parentId = …`, a computed receiver
+  (`prisma["page"]`), a payload that arrives through a spread the gate cannot
+  read, a value that mixes an unresolved local with the proved one, a computed
+  member whose key is not the literal (`input["parent" + "Id"]`, `input[KEY]`),
+  a reflective read, and a
+  proof that is matched as text (the gate sees that the named authorization is
+  called, not that it still checks the workspace). That list is a safety net,
+  not an enumeration: a new shape of write can open a new hole, and the list
+  only grows when somebody measures one. It is shorter than it was: the
+  precise allow-list closed the two holes of the name-based list — the callers
+  of an allow-listed helper (the gate checks that no caller hands in a raw
+  parent) and the payload whose parent a helper computes (a value the gate
+  cannot attribute is no longer mistaken for the checked one). The shapes that
+  *are* closed are pinned by the gate's own regression test
+  (`scripts/check-parent-scope.test.mjs`), which holds every allow-list entry
+  to the one path it describes.
 - **R80.8** — **Bulk move ships as a pure-logic-first feature.** (a) Selection
   model added to `src/lib/page-tree.ts` (multi-select set, shift-range over
   `flattenVisible` order, "all selected editable" predicate) with unit tests

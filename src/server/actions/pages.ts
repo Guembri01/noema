@@ -400,10 +400,13 @@ export async function movePageAction(
     pageId,
   });
   if ("error" in parent) return parent;
+  // The *checked* parent id from here on — the helper trims the requested
+  // value, so the raw request value is not the id of the row that was proved.
+  const checkedParentId = parent.parentId;
 
   // Guard against cycles: the new parent must not be a descendant.
-  if (parentId) {
-    let cursor: string | null = parentId;
+  if (checkedParentId) {
+    let cursor: string | null = checkedParentId;
     while (cursor) {
       if (cursor === pageId) {
         return { error: "Cannot move a page into one of its own children." };
@@ -420,13 +423,13 @@ export async function movePageAction(
   }
 
   const last = await prisma.page.findFirst({
-    where: { workspaceId: auth.page.workspaceId, parentId },
+    where: { workspaceId: auth.page.workspaceId, parentId: checkedParentId },
     orderBy: { position: "desc" },
     select: { position: true },
   });
   await prisma.page.update({
     where: { id: pageId },
-    data: { parentId, position: (last?.position ?? 0) + 1000 },
+    data: { parentId: checkedParentId, position: (last?.position ?? 0) + 1000 },
   });
   revalidateWorkspace(auth.page.workspaceId);
   return { ok: true };

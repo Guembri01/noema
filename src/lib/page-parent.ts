@@ -16,7 +16,10 @@
  * that it exists somewhere else.
  *
  * Fail-closed by construction: a blank workspace id matches no row, a missing
- * parent matches no row, and a parent that is the page itself is refused.
+ * parent matches no row, a parent that is in the trash matches no row (the
+ * query asks for the live rows — a page under a trashed parent would be
+ * invisible in the tree and would be purged with the parent's own trash), and
+ * a parent that is the page itself is refused.
  */
 
 import { prisma } from "@/lib/db";
@@ -37,10 +40,12 @@ export type ParentScope =
  *
  * - No parent (`null` / `undefined` / blank) → the workspace root; always
  *   allowed and reported back as `null`.
- * - A parent that lives in `workspaceId` → allowed. The returned id is the
- *   *validated* one, so a caller can only ever write the parent it proved.
- * - A parent in another workspace, a parent that does not exist, or the page
- *   itself → refused with an error that never leaks the foreign page.
+ * - A parent that lives in `workspaceId` and is not in the trash → allowed. The
+ *   returned id is the *validated* one, so a caller can only ever write the
+ *   parent it proved.
+ * - A parent in another workspace, a parent that does not exist, a parent in
+ *   the trash, or the page itself → refused with an error that never leaks
+ *   the foreign page.
  */
 export async function assertScopedParent(input: {
   /** The workspace the write is scoped to. */
@@ -56,7 +61,7 @@ export async function assertScopedParent(input: {
     return { error: SELF_PARENT_ERROR };
   }
   const parent = await prisma.page.findFirst({
-    where: { id: parentId, workspaceId: input.workspaceId },
+    where: { id: parentId, workspaceId: input.workspaceId, deletedAt: null },
     select: { id: true },
   });
   if (!parent) return { error: INVALID_PARENT_ERROR };
