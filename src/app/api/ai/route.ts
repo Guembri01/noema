@@ -3,6 +3,11 @@ import { getCurrentUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { searchPagesForPrompt } from "@/server/queries";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfig } from "@/lib/ai-provider";
 import { assembleContext, estimateTokens, type ContextDoc } from "@/lib/ai-context";
 
@@ -54,9 +59,9 @@ export async function POST(request: Request) {
     maxTokens?: number;
   };
   try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    body = await readJsonBody<typeof body>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body");
   }
 
   const mode =

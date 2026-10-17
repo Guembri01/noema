@@ -23,6 +23,27 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   not). The stored URL now passes the shared href allowlist (`http`, `https`,
   `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
   editor as well as in the read-only renderer.
+- **The importers bound their work before it starts.** The PDF importer caps
+  the zlib inflate with `maxOutputLength`, measures the base64 payload before
+  it is decoded and budgets the recovered text layer, so a compressed bomb can
+  no longer exhaust the heap. The Markdown archive import gets an entry-count
+  and an unpacked-size budget — with a hard cap on what a single entry may
+  inflate to, so an archive that under-declares its sizes is refused as well.
+  The archive is read by a budgeted reader of its own: an archive in a format
+  it does not read (ZIP64, split across several files, password-protected) is
+  refused with a message that names the format instead of claiming the file is
+  not an archive.
+- **The route handlers bound the bodies they read.** All 20 routes that read a
+  request body now read it under a byte budget: the declared `Content-Length` is
+  checked first (a request that declares more than the budget is refused before
+  a byte is read), and the body is then streamed and counted, so a missing or
+  lying `Content-Length` cannot buy an unbounded body. Over-sized bodies are
+  answered with `413`.
+- **The idempotency fingerprint trusts the bytes, not the client.** A request
+  body is fingerprinted by a digest over the bytes that arrived plus their
+  number, so a retry is recognised even when it arrives with a different
+  framing, and a key that is reused for a different body is still refused with
+  `422 idempotency_key_reuse`.
 
 ## [1.4.1] — 2026-10-17
 

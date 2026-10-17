@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { authenticateApiRequest, hashApiToken } from "@/lib/api-auth";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_CONTENT_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { prisma } from "@/lib/db";
 import {
   RESOURCE_CATALOG,
@@ -342,9 +347,9 @@ export async function POST(request: Request) {
 
   let body: unknown;
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    body = await readJsonBody<unknown>(request, MAX_CONTENT_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });

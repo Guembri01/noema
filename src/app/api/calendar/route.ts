@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { prisma } from "@/lib/db";
 import { buildCalendar, type CalendarEventInput } from "@/lib/ics";
 import {
@@ -291,9 +296,9 @@ export async function POST(request: Request) {
     apply?: boolean;
   };
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    body = await readJsonBody<typeof body>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
 
   if (body.action === "sync") {
