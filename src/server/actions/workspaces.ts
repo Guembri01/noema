@@ -335,11 +335,16 @@ export async function leaveWorkspaceAction(workspaceId: string): Promise<Workspa
 export async function transferOwnershipAction(
   workspaceId: string,
   userId: string,
+  password?: string,
 ): Promise<WorkspaceResult> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!canPerformWorkspaceAction(access?.role ?? null, "transferOwnership")) {
     return { error: "Only the current owner can transfer this workspace." };
+  }
+  // B138: the owner proves their password. The transfer is permanent.
+  if (!(await verifyAccountPassword(user.id, password))) {
+    return { error: "That password is not correct." };
   }
   if (userId === user.id) return { error: "You already own this workspace." };
 
@@ -591,11 +596,16 @@ export async function startOwnershipTransferAction(input: {
   toUserId: string;
   ttlMs?: number;
   requirePassword?: boolean;
+  password?: string;
 }): Promise<WorkspaceResult<{ id: string }>> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, input.workspaceId);
   if (!canPerformWorkspaceAction(access?.role ?? null, "transferOwnership")) {
     return { error: "Only the current owner can start an ownership transfer." };
+  }
+  // B138: the owner proves their password.
+  if (!(await verifyAccountPassword(user.id, input.password))) {
+    return { error: "That password is not correct." };
   }
 
   const workspace = await prisma.workspace.findUnique({
@@ -615,7 +625,8 @@ export async function startOwnershipTransferAction(input: {
     now,
     ttlMs: input.ttlMs && input.ttlMs > 0 ? input.ttlMs : DEFAULT_TRANSFER_TTL_MS,
     requests: transfersFor(input.workspaceId),
-    requirePassword: input.requirePassword === true,
+    // B138: the client cannot turn the recipient's check off.
+    requirePassword: true,
     idFactory: () =>
       `xfer_${workspace.id}_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
   });

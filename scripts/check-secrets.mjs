@@ -243,6 +243,7 @@ const ALLOWED_IN_TESTS = new Set([
   "b39-unit-secret-0123456789abcdef", // src/lib/auth-session-idle-timeout.test.ts
   "b39-two-factor-test-secret-0123456789", // src/server/actions/two-factor-revoke-sessions.test.ts
   "RECIPIENT_PASSWORD", // src/server/actions/ownership-transfer-actions.test.ts — a constant, not a secret
+  "SENDER_PASSWORD", // src/server/actions/ownership-transfer-actions.test.ts — a constant, not a secret
   "not-the-password", // src/server/actions/ownership-transfer-actions.test.ts — the wrong password
   "sk-live-9f2c7a4b8e1d6205cafebabe", // src/lib/secrets.test.ts
   "sk-ant-api03-DEADBEEFcafe", // src/lib/secrets.test.ts
