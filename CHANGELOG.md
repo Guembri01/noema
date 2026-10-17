@@ -23,6 +23,15 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   not). The stored URL now passes the shared href allowlist (`http`, `https`,
   `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
   editor as well as in the read-only renderer.
+- The desktop shell's broad capability gave the file-system plugin a scope
+  covering the whole user directory (`$HOME/**` plus Desktop, Documents,
+  Downloads, Pictures, Video and Audio) together with `remove`, `rename` and
+  `copy` — a script in the web view could read, overwrite or delete the
+  user's files. Nothing used the plugin's JavaScript face (the shell reads
+  and writes its files server-side, in Rust), so the broad capability now
+  grants no file-system permission at all; the app's own data directories
+  stay covered by the narrow `fs:default` in the local-only `default`
+  capability.
 
 ## [1.4.1] — 2026-10-17
 
