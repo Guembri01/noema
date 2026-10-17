@@ -209,7 +209,46 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   It therefore no longer turns up in that workspace's database view or in its
   CSV/JSON export, and it is no longer swept along by the foreign workspace's
   cascade delete. The database and export views filter their rows by the
-  workspace as well.
+  workspace as well — and so do the "Deleted rows" panel, the database
+  duplicate (which copies a database's rows **with their content**) and the
+  chat context that is sent to the AI, so a row that was linked across
+  workspaces before the check existed no longer surfaces there. The invariant is
+  checked mechanically where the repository gate can see it
+  (`scripts/check-parent-scope.mjs`): the gate finds the `Page.parentId` writes
+  in `src/` statically and fails when one of them stores a value the helper has
+  not proved. The allow-list of that gate is **precise**: every entry names the
+  value it releases **and** the proof that makes that value safe (the
+  authorization the entry relies on), and the gate checks that the proof is
+  still there — an entry whose context is gone releases nothing. The taint of a
+  raw request value is transitive as well: a local that is derived from a
+  tainted local is tainted too, and a read of `.parentId` from a name whose
+  origin the gate cannot see is a raw value, whatever that receiver is called.
+  The gate follows the taint as far as it can see it: the **unresolvability**
+  is transitive as well (a local that takes the value of an unresolved local is
+  unresolved itself), the read of `.parentId` is seen in every form that names
+  the property directly (the plain read, the optional chain, the non-null
+  assertion, the computed member with the literal key, the indexed member, the
+  result of a call), and the compound assignments (`&&=`, `||=`, `??=`, `+=`, …)
+  are assignments it follows like every other. What it does **not** reach is a
+  value that mixes an unresolved local with the proved one
+  (`const parentId = o ?? checked.parentId`): the gate cannot see into `o`, so
+  the raw value may hide in it — and the write is released all the same. A
+  member whose key is not the literal (`input["parent" + "Id"]`, `input[KEY]`)
+  and a reflective read (`Reflect.get(input, "parentId")`) are not reads the gate
+  sees at all — the write is released all the same.
+  It is a safety net over the tests, not a proof — a write it
+  cannot recognise is not covered by it. The holes that are known today are
+  listed in the gate's own docstring — **eight** of them — and that list is a
+  safety net, not an
+  enumeration: a new shape of write can open a new hole, and the list only
+  grows when somebody measures one. It is shorter than it was: the precise
+  allow-list closed the two holes of the name-based list — the callers of an
+  allow-listed helper (the gate checks that no caller hands in a raw parent)
+  and the payload whose parent a helper computes (a value the gate cannot
+  attribute is no longer mistaken for the checked one). The shapes that *are*
+  closed are pinned by the gate's own regression test
+  (`scripts/check-parent-scope.test.mjs`), which holds every allow-list entry
+  to the one path it describes.
 - The workspace export and the trash purge now refuse storage keys that belong
   to another workspace. A page can reference an upload of a different
   workspace — a URL that leaked through a share link, a copied image — and the

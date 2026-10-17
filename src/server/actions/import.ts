@@ -303,6 +303,9 @@ export async function importTrelloAction(input: {
           const row = await tx.page.create({
             data: {
               workspaceId: input.workspaceId,
+              // The parent is the database page this action just created in
+              // `input.workspaceId` — inside the workspace by construction
+              // (B08: `assertScopedParent` would be redundant here).
               parentId: database.id,
               title: card.title,
               createdById: user.id,

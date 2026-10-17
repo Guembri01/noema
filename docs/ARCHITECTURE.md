@@ -91,13 +91,63 @@ This is intentionally centralized so a future public API can reuse it.
 
 A second, separate guard covers the page *tree*: `assertScopedParent()`
 ([`src/lib/page-parent.ts`](../src/lib/page-parent.ts)) loads a parent
-**tenant-scoped** (`{ id, workspaceId }`) and refuses a parent that lives in
-another workspace — the foreign page is never read and the error never names
-it. A page therefore never hangs under a page of a different workspace, which
-keeps it out of the foreign workspace's database view and CSV/JSON export, and
-keeps Postgres' `onDelete: Cascade` from deleting it together with a foreign
-parent. Every write path that stores a `Page.parentId` goes through that
-helper; the read side filters a database's rows by the database's workspace.
+**tenant-scoped** (`{ id, workspaceId, deletedAt: null }`) and refuses a parent
+that lives in another workspace or that is in the trash — the foreign page is
+never read and the error never names it. A page therefore never hangs under a
+page of a different workspace, which keeps it out of the foreign workspace's
+database view and CSV/JSON export, and keeps Postgres' `onDelete: Cascade` from
+deleting it together with a foreign parent. Every write path that stores a
+`Page.parentId` goes through that helper — or holds the workspace equality by
+construction and says so, with a reason **and with the proof it relies on**, in
+the gate's allow-list; the read side filters a database's rows by the database's
+workspace (eight read sites).
+The rule is **checked mechanically where the
+gate can see it** by
+[`scripts/check-parent-scope.mjs`](../scripts/check-parent-scope.mjs): the gate
+finds the `Page.parentId` writes in `src/` statically — 31 of them, the same
+31 an independent TypeScript-parser inventory finds — and fails when one of
+them stores a value the helper has not proved, without a reasoned allow-list
+entry. The allow-list is **precise**: every entry names the value it releases
+**and** the proof that makes that value safe (the authorization the entry
+relies on), and the gate checks that the proof is still there — an entry whose
+context is gone releases nothing. The taint of a raw request value is
+transitive as well: a local that is derived from a tainted local is tainted
+too, and a read of `.parentId` from a name whose origin the gate cannot see
+— a parameter, a module-level name, or a local whose initializer the gate
+cannot resolve (a spread it cannot follow, a call whose result it cannot see
+into, an interpolation it cannot read) — is a raw value, whatever that
+receiver is called. The gate follows the taint as far as it can see it: the
+**unresolvability** is transitive as well (a local that takes the value of
+an unresolved local is unresolved itself), the read of `.parentId` is seen in
+every form that names the property directly (the plain read, the optional
+chain, the non-null assertion, the computed member with the literal key, the
+indexed member, the result of a call), and the compound assignments (`&&=`,
+`||=`, `??=`, `+=`, …) are assignments it follows like every other. What it does **not** reach is a value that mixes
+an unresolved local with the proved one (`const parentId = o ??
+checked.parentId`): the gate cannot see into `o`, so the raw value may hide
+in it — and the write is released all the same. A member whose key is not the
+literal (`input["parent" + "Id"]`, `input[KEY]`) and a reflective read
+(`Reflect.get(input, "parentId")`) are not reads the gate sees at all — the
+write is released all the same. It is a safety net over the
+tests, not a proof: a write it cannot recognise is not covered by it. The
+holes that are known today are listed in the gate's own docstring — **eight** of
+them there, **nine** with the write outside `src/` the gate cannot see: a raw
+SQL write, a write outside `src/`, a member assignment
+(`data.parentId = …`), a computed receiver (`prisma["page"]`), a payload that
+arrives through a spread the gate cannot read, a value that mixes an
+unresolved local with the proved one, a computed member whose key is not the
+literal (`input["parent" + "Id"]`, `input[KEY]`), a reflective read, and a proof that is matched as text
+(the gate sees that the named authorization is called, not that it still
+checks the workspace). That list is
+a safety net, not an enumeration: a new shape of write can open a new hole,
+and the list only grows when somebody measures one. It is shorter than it
+was: the precise allow-list closed the two holes of the name-based list — the
+callers of an allow-listed helper (the gate checks that no caller hands in a
+raw parent) and the payload whose parent a helper computes (a value the gate
+cannot attribute is no longer mistaken for the checked one). The shapes that
+*are* closed are pinned by the gate's own regression test
+([`scripts/check-parent-scope.test.mjs`](../scripts/check-parent-scope.test.mjs)),
+which holds every allow-list entry to the one path it describes.
 
 ## Editor
 

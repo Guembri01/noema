@@ -29,6 +29,7 @@ type FakePage = {
 const WORKSPACE_A = "ws-a";
 const WORKSPACE_B = "ws-b";
 const PAGE_A = "page-a";
+const PAGE_A2 = "page-a2";
 const DATABASE_B = "database-b";
 
 /** Two workspaces: `page-a` in A, `database-b` in B. */
@@ -40,6 +41,14 @@ const PAGES: FakePage[] = [
     deletedAt: null,
     title: "Page in A",
     position: 1000,
+  },
+  {
+    id: PAGE_A2,
+    workspaceId: WORKSPACE_A,
+    parentId: null,
+    deletedAt: null,
+    title: "Second page in A",
+    position: 2000,
   },
   {
     id: DATABASE_B,
@@ -181,5 +190,27 @@ describe("movePageAction — parent scope (B08)", () => {
     // The page may not be its own parent — that check is unchanged.
     expect(result).toEqual({ error: "A page cannot be its own parent." });
     expect(db.pageUpdate).not.toHaveBeenCalled();
+  });
+
+  it("writes the checked parent id, not the raw request value", async () => {
+    // The helper trims the id before it looks the parent up, so the value it
+    // proves is the trimmed one. That is also the value that has to be
+    // written — the raw one would miss the row and blow up as a foreign key
+    // violation.
+    const result = await movePageAction(PAGE_A, ` ${PAGE_A2} `);
+
+    expect(result).toEqual({ ok: true });
+    expect(db.pageUpdate).toHaveBeenCalledTimes(1);
+    expect(db.pageUpdate.mock.calls[0][0].data.parentId).toBe(PAGE_A2);
+  });
+
+  it("positions the moved page under the checked parent id", async () => {
+    await movePageAction(PAGE_A, ` ${PAGE_A2} `);
+
+    const positionQuery = db.pageFindFirst.mock.calls.find((args) => {
+      const where = (args[0] as { where?: { parentId?: unknown } })?.where;
+      return where?.parentId !== undefined && where?.parentId !== null;
+    });
+    expect(positionQuery?.[0]?.where).toMatchObject({ parentId: PAGE_A2 });
   });
 });
