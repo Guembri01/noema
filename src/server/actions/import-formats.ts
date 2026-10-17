@@ -1,6 +1,7 @@
 "use server";
 
 import { constants as zlibConstants, inflateSync } from "node:zlib";
+import { HTML_TOO_COMPLEX_ERROR, underHtmlScanBudget } from "@/lib/html-budget";
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
@@ -168,6 +169,14 @@ export async function importHtmlAction(input: {
   if (!html.trim()) return { error: "No HTML content to import." };
   if (html.length > MAX_DOC_CHARS) {
     return { error: "That HTML document is too large to import (max 5 MB)." };
+  }
+  // B130: the tokenizer's regular expression backtracks at every tag start, so
+  // a document built to make that work would block the event loop for minutes
+  // (measured: 35 KB of "<script" cost 8.3 s before the fix, 35 ms after it).
+  // The budget refuses such a document — with a message that says what
+  // happened, not "that export contained no pages".
+  if (!underHtmlScanBudget(html)) {
+    return { error: HTML_TOO_COMPLEX_ERROR };
   }
 
   const workspaceId = String(input.workspaceId ?? "");
