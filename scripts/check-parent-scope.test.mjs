@@ -17,9 +17,20 @@
 // only follows a raw value when it lands in a **visible** `.parentId` read;
 // the four the round-6 review measured are the shapes whose initializer the
 // gate cannot resolve at all — an object spread, the result of a call, a
-// template literal, a JSON round trip. A last fixture is the *clean* case: a
-// write through the helper has to stay green, because a gate that fails
-// everything is no gate.
+// template literal, a JSON round trip. The round-7 review measured the
+// **twelve** shapes the taint did not close: the unresolvability was not
+// transitive (a chain of two and a chain of three unresolved locals), the
+// read of `.parentId` was invisible in six forms (the optional chain, the
+// computed member, the indexed member, the non-null assertion, the result of
+// a call, the computed member of a spread), and the compound assignments
+// (`&&=`, `||=`, `??=`) were no assignments the gate saw at all. A last
+// fixture is the *clean* case: a write through the helper has to stay green,
+// because a gate that fails everything is no gate.
+//
+// The shapes the gate still does **not** cover have a fixture of their own
+// (`blind: true`): the gate releases them today, the gate's docstring lists
+// them as known holes, and the fixture pins that the list is true. When such
+// a hole is closed, the fixture has to be inverted and the list shortened.
 //
 // The allow-list has a fixture of its own: every entry of it has to hold for
 // the one path it describes and for no other — the entry names the value it
@@ -244,6 +255,252 @@ export async function probeHelper(input: { parentId?: string }, workspaceId: str
     expect: `${RAW} (the local \`parentId\` takes the value from \`o\`, whose origin the gate cannot see)`,
   },
   {
+    name: "the compound assignment — `&&=` (round 7, L1)",
+    file: "probe-compound-and.ts",
+    source: `export async function probeCompoundAnd(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId &&= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    name: "the compound assignment — `||=` (round 7, L1)",
+    file: "probe-compound-or.ts",
+    source: `export async function probeCompoundOr(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId ||= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    name: "the compound assignment — `??=` (round 7, L1)",
+    file: "probe-compound-nullish.ts",
+    source: `export async function probeCompoundNullish(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId ??= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    name: "the unresolvability is transitive — a chain of two (round 7, L1)",
+    file: "probe-unresolved-chain.ts",
+    source: `export async function probeUnresolvedChain(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const o = { ...input };
+  const x = o;
+  const parentId = x.parentId ?? checked.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` takes the value from \`x\`, whose origin the gate cannot see)`,
+  },
+  {
+    name: "the unresolvability is transitive — a chain of three (round 7, L1)",
+    file: "probe-unresolved-chain3.ts",
+    source: `export async function probeUnresolvedChain3(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const o = { ...input };
+  const x = o;
+  const y = x;
+  const parentId = y.parentId ?? checked.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` takes the value from \`y\`, whose origin the gate cannot see)`,
+  },
+  {
+    name: "the read the gate did not see — the optional chain (round 7, L1)",
+    file: "probe-read-optional.ts",
+    source: `export async function probeReadOptional(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  await prisma.page.create({
+    data: { workspaceId, parentId: input?.parentId ?? checked.parentId, title: "probe" },
+  });
+}
+`,
+    expect: `${RAW} (the value is read from \`input\`, whose origin the gate cannot see)`,
+  },
+  {
+    name: "the read the gate did not see — the computed member (round 7, L1)",
+    file: "probe-read-computed.ts",
+    source: `export async function probeReadComputed(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  await prisma.page.create({
+    data: { workspaceId, parentId: input["parentId"] ?? checked.parentId, title: "probe" },
+  });
+}
+`,
+    expect: `${RAW} (the value is read from \`input\`, whose origin the gate cannot see)`,
+  },
+  {
+    name: "the read the gate did not see — the indexed member (round 7, L1)",
+    file: "probe-read-indexed.ts",
+    source: `export async function probeReadIndexed(input: { parentId?: string }, rows: { parentId?: string }[], workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  await prisma.page.create({
+    data: { workspaceId, parentId: rows[0].parentId ?? checked.parentId, title: "probe" },
+  });
+}
+`,
+    expect: `${RAW} (the value is read from \`rows[0]\`, whose origin the gate cannot see)`,
+  },
+  {
+    name: "the read the gate did not see — the non-null assertion (round 7, L1)",
+    file: "probe-read-asserted.ts",
+    source: `export async function probeReadAsserted(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  await prisma.page.create({
+    data: { workspaceId, parentId: input!.parentId ?? checked.parentId, title: "probe" },
+  });
+}
+`,
+    expect: `${RAW} (the value is read from \`input\`, whose origin the gate cannot see)`,
+  },
+  {
+    name: "the read the gate did not see — the result of a call (round 7, L1)",
+    file: "probe-read-call.ts",
+    source: `export async function probeReadCall(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  await prisma.page.create({
+    data: { workspaceId, parentId: getInput().parentId ?? checked.parentId, title: "probe" },
+  });
+}
+`,
+    expect: `${RAW} (the value is read from \`getInput()\`, whose origin the gate cannot see)`,
+  },
+  {
+    name: "the read the gate did not see — the computed member of a spread (round 7, L1)",
+    file: "probe-read-computed-spread.ts",
+    source: `export async function probeReadComputedSpread(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  await prisma.page.create({
+    data: { workspaceId, parentId: ({ ...input })["parentId"] ?? checked.parentId, title: "probe" },
+  });
+}
+`,
+    expect: `${RAW} (the value is read from \`({...input})\`, whose origin the gate cannot see)`,
+  },
+  {
+    name: "the read the gate did not see — the computed member of an unresolved local (round 7, L1)",
+    file: "probe-read-computed-local.ts",
+    source: `export async function probeReadComputedLocal(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const o = { ...input };
+  const parentId = o["parentId"] ?? checked.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` takes the value from \`o\`, whose origin the gate cannot see)`,
+  },
+  {
+    // A **known** hole: the value mixes an unresolved local with the proved
+    // one, and the gate releases it. It is the same shape as the write in
+    // `src/server/actions/notion-import.ts` — the gate cannot close it
+    // without turning that green write red. The docstring lists it.
+    name: "a known hole — the mixed value (round 7, L1)",
+    file: "probe-mixed-unresolved.ts",
+    source: `export async function probeMixedUnresolved(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const o = { ...input };
+  const parentId = o ?? checked.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    blind: true,
+    expect:
+      "PASS  1 Page.parentId write(s): 1 guarded by assertScopedParent(), 0 allow-listed, 0 workspace root",
+  },
+  {
+    // The same hole, written into the payload directly.
+    name: "a known hole — the mixed value, written inline (round 7, L1)",
+    file: "probe-mixed-unresolved-inline.ts",
+    source: `export async function probeMixedUnresolvedInline(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const o = { ...input };
+  await prisma.page.create({
+    data: { workspaceId, parentId: o ?? checked.parentId, title: "probe" },
+  });
+}
+`,
+    blind: true,
+    expect:
+      "PASS  1 Page.parentId write(s): 1 guarded by assertScopedParent(), 0 allow-listed, 0 workspace root",
+  },
+  {
+    // A **known** hole: the member's key is not the literal, so the gate does
+    // not see a read of `parentId` at all. The docstring lists it.
+    name: "a known hole — a computed member whose key is not the literal (round 8, L2)",
+    file: "probe-computed-key.ts",
+    source: `export async function probeComputedKey(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const o = { ...input };
+  await prisma.page.create({
+    data: { workspaceId, parentId: o["parent" + "Id"] ?? checked.parentId, title: "probe" },
+  });
+}
+`,
+    blind: true,
+    expect:
+      "PASS  1 Page.parentId write(s): 1 guarded by assertScopedParent(), 0 allow-listed, 0 workspace root",
+  },
+  {
+    // The same hole with the key in a local.
+    name: "a known hole — a member whose key is a local (round 8, L2)",
+    file: "probe-key-local.ts",
+    source: `export async function probeKeyLocal(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const o = { ...input };
+  const KEY = "parentId";
+  await prisma.page.create({
+    data: { workspaceId, parentId: o[KEY] ?? checked.parentId, title: "probe" },
+  });
+}
+`,
+    blind: true,
+    expect:
+      "PASS  1 Page.parentId write(s): 1 guarded by assertScopedParent(), 0 allow-listed, 0 workspace root",
+  },
+  {
+    // A **known** hole: the reflective read is no read of `parentId` the gate
+    // can see. The docstring lists it.
+    name: "a known hole — the reflective read (round 8, L2)",
+    file: "probe-reflective.ts",
+    source: `export async function probeReflective(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const o = { ...input };
+  await prisma.page.create({
+    data: { workspaceId, parentId: Reflect.get(o, "parentId") ?? checked.parentId, title: "probe" },
+  });
+}
+`,
+    blind: true,
+    expect:
+      "PASS  1 Page.parentId write(s): 1 guarded by assertScopedParent(), 0 allow-listed, 0 workspace root",
+  },
+  {
+    // The compound assignment of the arithmetic family: `+=` assigns as well,
+    // so the raw value of the right-hand side reaches the write.
+    name: "the compound assignment — `+=` (round 8, L2)",
+    file: "probe-compound-plus.ts",
+    source: `export async function probeCompoundPlus(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId += input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
     name: "a write through the helper stays green",
     file: "probe-guarded.ts",
     source: `export async function probeGuarded(input: { parentId?: string }, workspaceId: string) {
@@ -383,6 +640,24 @@ const ALLOW_LIST_CASES = [
     expect: "the allow-list entry toPageCreateData() requires `validateMove(plan)` in the file",
   },
   {
+    name: "the allow-list entry for createRowAction() holds only while the parent is read from the proved local",
+    file: "src/server/actions/database.ts",
+    fn: "createRowAction",
+    from: "  const auth = await authorizeDatabase(databasePageId);",
+    to: "  const o = { ...input };\n  const databasePageId = o[\"parentId\"];\n  const auth = await authorizeDatabase(databasePageId);",
+    expect:
+      "the allow-list entry createRowAction() does not hold any more — `databasePageId` is not a proved value (the local `databasePageId` takes the value from `o`, whose origin the gate cannot see)",
+  },
+  {
+    name: "the allow-list entry for createRowAction() holds only while the parent is read from the proved local — the optional chain",
+    file: "src/server/actions/database.ts",
+    fn: "createRowAction",
+    from: "  const auth = await authorizeDatabase(databasePageId);",
+    to: "  const o = { ...input };\n  const databasePageId = o?.parentId;\n  const auth = await authorizeDatabase(databasePageId);",
+    expect:
+      "the allow-list entry createRowAction() does not hold any more — `databasePageId` is not a proved value (the local `databasePageId` takes the value from `o`, whose origin the gate cannot see)",
+  },
+  {
     name: "the allow-list entry for POST() holds only while the template's database is read by id",
     file: "src/app/api/cron/templates/route.ts",
     fn: "POST",
@@ -443,6 +718,21 @@ function assertReported(testCase) {
 function assertAccepted(testCase) {
   const result = gateOver({ [testCase.file]: testCase.source });
   assert.equal(result.code, 0, `${testCase.name}: the gate must pass\n${result.output}`);
+  assert.ok(
+    result.output.includes(testCase.expect),
+    `${testCase.name}: the gate must say "${testCase.expect}"\n${result.output}`,
+  );
+}
+
+/**
+ * The gate has to **release** the fixture — it is a hole the gate does not
+ * cover, and the gate's docstring lists it as one. The fixture pins that the
+ * list is true: when the hole is closed, the case has to be inverted and the
+ * list shortened.
+ */
+function assertBlindSpot(testCase) {
+  const result = gateOver({ [testCase.file]: testCase.source });
+  assert.equal(result.code, 0, `${testCase.name}: the gate must release the write\n${result.output}`);
   assert.ok(
     result.output.includes(testCase.expect),
     `${testCase.name}: the gate must say "${testCase.expect}"\n${result.output}`,
@@ -534,7 +824,8 @@ function assertAllowList(testCase) {
 }
 
 function run(testCase) {
-  if (testCase.clean) assertAccepted(testCase);
+  if (testCase.blind) assertBlindSpot(testCase);
+  else if (testCase.clean) assertAccepted(testCase);
   else assertReported(testCase);
 }
 

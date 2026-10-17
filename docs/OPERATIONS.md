@@ -537,19 +537,23 @@ What that means for an operator:
   called. The gate follows the taint as far as it can see it: the
   **unresolvability** is transitive as well (a local that takes the value of
   an unresolved local is unresolved itself), the read of `.parentId` is seen in
-  every form the language allows (the plain read, the optional chain, the
-  non-null assertion, the computed and the indexed member, the result of a
-  call), and the compound assignments (`&&=`, `||=`, `??=`) are assignments it
-  follows like every other. What it does **not** reach is a value that mixes
+  every form that names the property directly (the plain read, the optional
+  chain, the non-null assertion, the computed member with the literal key, the
+  indexed member, the result of a call), and the compound assignments (`&&=`,
+  `||=`, `??=`, `+=`, …) are assignments it follows like every other. What it does **not** reach is a value that mixes
   an unresolved local with the proved one (`const parentId = o ??
   checked.parentId`): the gate cannot see into `o`, so the raw value may hide
-  in it — and the write is released all the same. The holes that are known
+  in it — and the write is released all the same. A member whose key is not the
+literal (`input["parent" + "Id"]`) and a reflective read
+(`Reflect.get(input, "parentId")`) are not reads the gate sees at all — the
+write is released all the same. The holes that are known
   today are listed in the gate's
-  own docstring — **six** of them there, **seven** with the write outside
+  own docstring — **eight** of them there, **nine** with the write outside
   `src/` the gate cannot see: a raw SQL write, a write outside `src/`, a
   member assignment such as `data.parentId = …`, a computed receiver
   (`prisma["page"]`), a payload that arrives through a spread the gate cannot
-  read, a value that mixes an unresolved local with the proved one, and a
+  read, a value that mixes an unresolved local with the proved one, a computed
+  member whose key is not the literal, a reflective read, and a
   proof that is matched as text — the gate sees that the named authorization
   is called, not that it still checks the workspace); that list is a
   safety net, not an enumeration — a new shape of write can open a new hole,
@@ -577,6 +581,80 @@ What that means for an operator:
   are sent to the AI — so they no longer surface in the foreign workspace's
   views — but the rows themselves are still there until someone moves or
   deletes them.
+
+## 9. Incident quick reference
+
+| Symptom | First checks |
+| --- | --- |
+| `/api/health` → 503 `db: down` | `docker compose ps` (db healthy?), `DATABASE_URL` reachable, `pg_isready` healthcheck logs |
+| `/api/health` refused / no answer | app process alive? port correct (3000 vs 3200 vs compose app)? `docker compose logs app` |
+| Cron never materializes | 503 = `CRON_SECRET` unset in the *app’s* env; 401 = header/value mismatch; `journalctl -u noema-templates.service`; rate limit is 12/min |
+| Invites never arrive | settings “Email & invitations” → status shows `environment SMTP` / `not configured`; run `npm run check:mail`; delivery log error text (10 s connect / 20 s socket timeouts) |
+| Collaborative editing refuses everything (4401) | `AUTH_SECRET` missing/short in the relay’s env; wrong `NEXT_PUBLIC_COLLAB_URL`; 4403 = page scope/permission, not a secret problem |
+| Backup exits 1 | the script says why: no `pg_dump`, dump < 1 KiB, or missing core tables — it deletes the bad file rather than keeping it. `npm run backup -- --dry-run` shows what a run would do |
+| Collaborative socket closed 4400 | `APP_ORIGINS` is set and the client’s `Origin` isn’t on the list (checked pre-auth) — add the origin or unset `APP_ORIGINS` |
+| Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
+| `EADDRINUSE` / weird build output | dev and prod share `.next` and the ports — exactly one writer at a time |
+
+## 10. Verification appendix
+
+How each command above was cross-checked (this change read the named source;
+nothing was executed against live servers):
+
+| Section | Command / fact | Source of truth |
+| --- | --- | --- |
+| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL” | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 23 tests) |
+| 2.2 | `psql "$DATABASE_URL" < backups/<file>.sql` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) |
+| 3 | `POST /api/cron/templates`, `x-cron-secret`, 503/401, `12/60_000` limit, `{due,created,skipped,failed}`, fail-closed order | `src/app/api/cron/templates/route.ts` |
+| 3.1 | `CRON_SECRET` key + secret generator one-liner | `.env.example:8,50` |
+| 3.4 | `node --env-file=.env scripts/check-share-cron.mjs [baseUrl]` (no npm alias) | `scripts/check-share-cron.mjs:2` · absent from `package.json` |
+| 4.1 | SMTP env names/defaults, precedence, fail-soft, `EmailDelivery`, TLS self-signed switch | `src/lib/mailer.ts` · `src/server/actions/email.ts` · `.env.example:35-44` |
+| 4.2 | “Email & invitations” / “Verify & send test” labels, `testEmailAction` → `verifyMail` | `src/components/email-settings.tsx` · `src/lib/i18n.ts` (`emailHeading`, `verifySendTest`, `smtpVerified`, `recentEmail`) |
+| 4.3 | `npm run check:mail`, mock on 2525, `MOCK_SMTP_PORT`, assertions, cleanup | `package.json` · `scripts/check-mail.mjs` |
+| 5.1 | `npm run collab`, `PORT`/`HOST`, `loadEnvFile`, `AUTH_SECRET` warn, `DATABASE_URL`, `NEXT_PUBLIC_COLLAB_URL` | `package.json` · `scripts/collab-server.mjs` (PORT/HOST, `ensureEnv`, `start()`) · `.env.example:11-12` |
+| 5.2 | 4401/4403 table, read-only drop, no oracle; B75: 4400 Origin (`APP_ORIGINS`), 4429 rate limits (5 conns / 30 msg per 10 s), presence identity binding, current known-gaps list | `scripts/collab-server.mjs` header contract (B53) |
+| 5.3 | collab test count (38 `it()` lines), `check-collab.mjs` → 4401 not a gate | `scripts/collab-server.test.mjs` |
+| 6 | `--profile app`, service names/ports/env/healthchecks, volume behaviour | `docker-compose.yml` |
+| 7 | `/api/health` 200/503 shapes, 2 s ping, `no-store`, no auth/disclosure, compose healthcheck | `src/app/api/health/route.ts` · `docker-compose.yml` |
+| 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
+| 8 | single `20260113000000_init` migration vs push-evolved schema | `prisma/migrations/` · `docs/specs/engineering-hardening.md:149,367-373` |
+| 8.1 | tenant boundary enforced in the application (`assertScopedParent`), no `(parentId, workspaceId)` constraint, refusal message, trashed parent refused, legacy rows not repaired (read side: database view, relation database, both exports, deleted rows, database duplicate, the two chat-context blocks), write paths checked where the gate can see them (`scripts/check-parent-scope.mjs`) | `src/lib/page-parent.ts` · `scripts/check-parent-scope.mjs` · `prisma/schema.prisma` (`Page.parentId`) · `src/server/actions/import-pdf.ts` · `src/server/queries.ts` (`getDatabase`) |
+| all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
+
+**Not verified by execution (be explicit when relying on them):** the backup →
+restore drill (§2.2), the systemd/crontab drivers (§3.2/3.3 — standard tooling,
+not repo code), and `docker compose --profile app up --build` end-to-end (the
+build itself was proven by B74: real build + run on 3202 + health probe; this
+guide did not rebuild).
+
+**Observed staleness (not fixed here):** `docs/specs/templates.md` refers to a
+`check:share-cron` npm script that does **not** exist in `package.json` — the
+script must be run directly (§3.4); the collab relay’s “residual risk” list
+predates B75 (§5.2); and
+`scripts/backup.mjs:1` says “compressed” while the dump is plain SQL (§2.1).
+
+**Note on concurrent work:** `scripts/backup.mjs` (B92) and
+`scripts/collab-server.mjs` (B75) both changed *while this guide was being
+written*; §2 and §5 were re-read and re-verified against the post-landing
+versions. Re-check those two sections if either file changes again.
+
+## 11. Authoring-window policy
+
+The project timeline follows a fixed rhythm: work lands only inside four
+overnight windows, in `Europe/Paris`:
+
+```
+Wed 19:00 → Thu 06:00
+Thu 19:00 → Fri 06:00
+Fri 19:00 → Sat 06:00
+Sat 19:00 → Sun 06:00
+```
+
+A window is **half-open**: `19:00:00` is inside it and `06:00:00` is outside
+it, so the last allowed instant of a night is `05:59:59`. Monday and Tuesday
+have no window. The offset is read from the platform ICU database (summer
+`+02:00`, winter `+01:00`), never hardcoded, so the two yearly transitions are
+handled automatically; both happen to fall inside a Saturday night.
 
 ### 8.2 Seal the stored two-factor seeds (B05)
 

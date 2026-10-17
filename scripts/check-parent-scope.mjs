@@ -36,6 +36,29 @@
 //      it cannot resolve holds a value of an origin nobody can show, so the
 //      taint may hide in it — and the write is reported, not released.
 //
+// The gate follows the taint as far as it can see it, and it says where it
+// stops. What it follows today:
+//   - the **unresolvability** is transitive as well: a local that takes the
+//     value of an unresolved local is unresolved itself (`const o =
+//     { ...input }; const x = o;` leaves `x` just as opaque as `o`),
+//   - the read of `.parentId` is seen in **every** form that names the
+//     property directly: the plain read (`recv.parentId`), the optional chain
+//     (`recv?.parentId`), the non-null assertion (`recv!.parentId`), the
+//     computed member with the literal key (`recv["parentId"]`), the indexed
+//     member (`arr[0].parentId`) and the result of a call
+//     (`getInput().parentId`). A member whose key is **not** the literal and
+//     a reflective read are among the holes below — they are not reads the
+//     gate sees at all,
+//   - the compound assignments (`x &&= y`, `x ||= y`, `x ??= y`, `x += y`, …)
+//     are assignments the gate follows like every other — the value of the
+//     local is the old one **or** the right-hand side, and the taint of the
+//     old one survives with it.
+//
+// What it does **not** reach is a value that **mixes** an unresolved local
+// with the proved one (`const parentId = o ?? checked.parentId`): the gate
+// cannot see into `o`, so the raw value may hide in it — and the write is
+// released all the same. That hole is listed below with the others.
+//
 // It is a **safety net over the tests**, not a proof. What it sees:
 //
 //   - the files under `src/`; a write outside that tree is invisible,
@@ -53,10 +76,11 @@
 //
 // What it does **not** see — a write it cannot recognise is *not* covered by
 // it, and the gate is no proof. The holes below are the ones that are
-// **known today**; the list is a safety net, not an enumeration: a new shape
-// of write can open a new hole, and the list only grows when somebody
-// measures one. `scripts/check-parent-scope.test.mjs` pins the shapes that
-// are closed, so a hole cannot re-open unnoticed.
+// **known today** — **eight** of them; the list is a safety net, not an
+// enumeration: a new shape of write can open a new hole, and the list only
+// grows when somebody measures one. `scripts/check-parent-scope.test.mjs`
+// pins the shapes that are closed — and the holes that are known — so a hole
+// cannot re-open unnoticed.
 //
 // The allow-list below is **precise**: every entry names the value it
 // releases **and** the proof that makes that value safe, and the gate checks
@@ -75,6 +99,17 @@
 //   - a payload that reaches the page through a spread of a value whose
 //     contents the gate cannot see (`data: { ...payload }` with `payload`
 //     coming in as a parameter),
+//   - a value that **mixes** an unresolved local with the proved one
+//     (`const parentId = o ?? checked.parentId`): the gate cannot see into
+//     `o`, so the raw value may hide in it — and the write is released all
+//     the same,
+//   - a **computed member whose key is not the literal** (`input["parent" +
+//     "Id"]`, `input[KEY]`): the gate sees a member read only when the key
+//     is the literal `"parentId"`; a key it cannot fold is not a read it
+//     sees, and the write is released all the same,
+//   - a **reflective read** (`Reflect.get(input, "parentId")`): the gate sees
+//     no `.parentId` read in it at all, and the write is released all the
+//     same,
 //   - the **proof** of an allow-list entry is matched as **text**: the gate
 //     sees that the named authorization is called, not that it still checks
 //     the workspace.
@@ -223,8 +258,41 @@ const TYPE_VALUE =
 /**
  * A read of the `parentId` property — the value of the receiver it is read
  * from is the parent that is written.
+ *
+ * The gate has to see the read in **every** form the language allows. A form
+ * it does not see is a read it cannot hold against the raw request value:
+ *
+ *   - the plain form (`recv.parentId`), the optional chain (`recv?.parentId`)
+ *     and the non-null assertion (`recv!.parentId`) name a receiver the gate
+ *     can look up — a local, or the result of the helper,
+ *   - the parenthesised expression (`(...).parentId`) and the computed member
+ *     (`recv["parentId"]`) name a receiver the gate can only guess,
+ *   - the indexed member (`arr[0].parentId`) and the result of a call
+ *     (`getInput().parentId`) name a receiver the gate cannot resolve at all.
  */
-const PARENT_READ = /([A-Za-z0-9_$]+(?:\s*\.\s*[A-Za-z0-9_$]+)*)\s*\.\s*parentId\b/g;
+const PARENT_READS = [
+  // `recv.parentId`, `recv?.parentId`, `recv!.parentId`
+  {
+    pattern:
+      /([A-Za-z0-9_$][\w$]*(?:\s*!\s*\.\s*[\w$]+|\s*\.\s*[\w$]+)*)\s*(?:\?\.\s*|!\s*\.\s*|\.\s*)parentId\b/g,
+    group: 1,
+  },
+  // `(...).parentId`
+  { pattern: /(\([^()]*\))\s*\.\s*parentId\b/g, group: 1 },
+  // `recv["parentId"]`
+  {
+    pattern: /((?:[A-Za-z0-9_$][\w$]*|\([^()]*\))?)\s*\[\s*(["'`])\s*parentId\s*\2\s*\]/g,
+    group: 1,
+  },
+  // `arr[0].parentId`
+  { pattern: /([A-Za-z0-9_$][\w$]*\s*\[[^\]]*\])\s*\.\s*parentId\b/g, group: 1 },
+  // `getInput().parentId`
+  {
+    pattern:
+      /([A-Za-z0-9_$][\w$]*(?:\s*\.\s*[A-Za-z0-9_$]+)*\s*\([^()]*\))\s*\.\s*parentId\b/g,
+    group: 1,
+  },
+];
 
 /**
  * Words that are never the name of a local — they are keywords, literals or
@@ -772,8 +840,14 @@ function declaredNames(body) {
  * The assignments of a body, in the order they happen: `const x = …`, `x = …`
  * and the destructuring forms. Each event carries the value it assigns — for
  * a destructuring binding, the property it reads.
+ *
+ * Every event carries **two** texts: `init` is the masked one — the shape of
+ * the initializer, with the strings and the comments blanked out — and `text`
+ * is the original one. The gate reads the shape in the masked text (a string
+ * is not a name it may follow) and the reads of the parent id in the original
+ * text (a computed member, `recv["parentId"]`, is a read of it).
  */
-function assignments(body) {
+function assignments(body, source) {
   const events = [];
   const destructured = destructurings(body);
 
@@ -783,10 +857,28 @@ function assignments(body) {
   let match;
   while ((match = annotated.exec(body)) !== null) {
     const start = match.index + match[0].length;
-    events.push({ index: start, name: match[1], init: initializer(body, start) });
+    const init = initializer(body, start);
+    events.push({
+      index: start,
+      name: match[1],
+      init,
+      text: source.slice(start, start + init.length),
+      compound: false,
+    });
   }
 
-  const assign = /(?<![.\w$])([A-Za-z0-9_$]+)\s*=(?!=|>)/g;
+  // The compound assignments (`x &&= y`, `x ||= y`, `x ??= y`, `x += y`, …)
+  // assign as well: the value of the local is the old one **or** the
+  // right-hand side. A gate that does not see them keeps the state the local
+  // had before — and a local that was proved stays proved.
+  //
+  // The operator group holds every compound assignment the language has: the
+  // logical ones (`&&=`, `||=`, `??=`), the arithmetic ones (`+=`, `-=`, `*=`,
+  // `/=`, `%=`, `**=`) and the bitwise ones (`&=`, `|=`, `^=`, `<<=`, `>>=`,
+  // `>>>=`). The two-character forms come before the one-character ones, so
+  // `**=` is not read as `*=` and `>>=` is not read as `>=`.
+  const assign =
+    /(?<![.\w$])([A-Za-z0-9_$]+)\s*((?:\*\*|>>>?|<<|[-+*/%&^]|\|\||&&|\?\?)?)=(?!=|>)/g;
   while ((match = assign.exec(body)) !== null) {
     const name = match[1];
     if (RESERVED.has(name)) continue;
@@ -794,12 +886,20 @@ function assignments(body) {
       continue;
     }
     const start = match.index + match[0].length;
-    events.push({ index: start, name, init: initializer(body, start) });
+    const init = initializer(body, start);
+    events.push({
+      index: start,
+      name,
+      init,
+      text: source.slice(start, start + init.length),
+      compound: match[2].length > 0,
+    });
   }
 
   for (const entry of destructured) {
     const start = entry.end;
     const init = initializer(body, start);
+    const text = source.slice(start, start + init.length);
     // `const { parentId } = await assertScopedParent(…)` takes the checked
     // value out of the helper's result — the binding holds it.
     const helper = new RegExp(`^\\s*await\\s+${HELPER}\\s*\\(`).test(init);
@@ -808,7 +908,9 @@ function assignments(body) {
         index: start,
         name: binding.name,
         init: `${init}.${binding.key}`,
+        text: `${text}.${binding.key}`,
         proved: helper,
+        compound: false,
       });
     }
   }
@@ -843,20 +945,31 @@ function stateOf(events) {
   // resolved again after an unresolved assignment holds the resolved value.
   const kinds = new Map();
   for (const event of events) {
-    kinds.set(event.name, event.kind);
-    if (event.kind === "helper") {
+    let kind = event.kind;
+    let detail = { direct: event.direct, from: event.from, reason: event.reason };
+    // A compound assignment (`x &&= y`, `x ||= y`, `x ??= y`) leaves the old
+    // value behind whenever its condition holds: the value of the local is the
+    // old one **or** the right-hand side. The taint of the old value survives
+    // with it — a local that carried the raw request value keeps carrying it.
+    if (event.compound) {
+      const previous = kinds.get(event.name);
+      if (previous === TAINTED && kind !== TAINTED) {
+        kind = TAINTED;
+        detail = tainted.get(event.name) ?? detail;
+      } else if (previous === UNKNOWN && kind !== TAINTED) {
+        kind = UNKNOWN;
+      }
+    }
+    kinds.set(event.name, kind);
+    if (kind === "helper") {
       receivers.add(event.name);
       continue;
     }
-    if (event.kind === TAINTED) {
-      tainted.set(event.name, {
-        direct: event.direct,
-        from: event.from,
-        reason: event.reason,
-      });
+    if (kind === TAINTED) {
+      tainted.set(event.name, detail);
       continue;
     }
-    if (event.kind === PROVED) proved.add(event.name);
+    if (kind === PROVED) proved.add(event.name);
   }
   for (const [name, kind] of kinds) {
     if (kind === UNKNOWN) unknown.add(name);
@@ -867,10 +980,19 @@ function stateOf(events) {
 }
 
 /**
- * The receivers of the `.parentId` reads in an expression.
+ * The receivers of the `.parentId` reads in an expression — in the order they
+ * appear in it. A receiver the gate cannot look up is one whose origin it
+ * cannot see.
  */
 function parentReceivers(value) {
-  return [...value.matchAll(PARENT_READ)].map((match) => match[1].replace(/\s+/g, ""));
+  const found = [];
+  for (const { pattern, group } of PARENT_READS) {
+    for (const match of value.matchAll(pattern)) {
+      found.push({ index: match.index, receiver: (match[group] ?? "").replace(/\s+/g, "") });
+    }
+  }
+  found.sort((a, b) => a.index - b.index);
+  return found.map((item) => item.receiver);
 }
 
 /**
@@ -884,9 +1006,13 @@ function parentReceivers(value) {
  * gate **can** resolve is not raw on its own: the gate sees where that local
  * comes from, and the taint follows it there. The helper's own result is the
  * proved value.
+ *
+ * A receiver that is not a plain name — a member chain, a parenthesised
+ * expression, an index, the result of a call — is one the gate cannot look up
+ * at all: what it holds is beyond the gate's reach.
  */
 function rawReceiver(receiver, state, locals) {
-  if (receiver.includes(".")) return true;
+  if (!/^[A-Za-z0-9_$]+$/.test(receiver)) return true;
   if (state.receivers.has(receiver)) return false;
   if (state.tainted.has(receiver)) return true;
   if (state.unknown.has(receiver)) return true;
@@ -973,6 +1099,17 @@ function unprovedName(value, state, locals) {
 }
 
 /**
+ * The name an initializer is nothing but — the value of the local is the value
+ * of that name and nothing else (`const x = o;`).
+ */
+function plainName(init) {
+  const text = init.trim();
+  if (!/^[A-Za-z0-9_$]+$/.test(text)) return null;
+  if (RESERVED.has(text)) return null;
+  return text;
+}
+
+/**
  * The names a spread takes its value from — `{ ...input }` spreads `input`.
  */
 function spreadSources(value) {
@@ -997,7 +1134,9 @@ function taintedName(value, tainted) {
 function mentionsProved(value, state) {
   if (mentionsName(value, state.proved)) return true;
   for (const name of state.receivers) {
-    if (new RegExp(`\\b${name}\\s*\\.\\s*parentId\\b`).test(value)) return true;
+    // A read of the parent id in every form the language allows: the plain
+    // one, the optional chain and the non-null assertion.
+    if (new RegExp(`\\b${name}\\s*(?:\\?\\.|!\\s*\\.|\\.)\\s*parentId\\b`).test(value)) return true;
     // A spread of the helper's result carries its fields — `{ ...checked }`
     // holds the checked parent.
     if (new RegExp(`\\.\\.\\.\\s*${name}\\b`).test(value)) return true;
@@ -1036,7 +1175,7 @@ function hidesInterpolation(init) {
  * A local the gate cannot resolve is tainted as well: the gate does not see
  * where that local comes from, so the raw value may hide in it.
  */
-function classify(init, state, locals) {
+function classify(init, text, state, locals) {
   // A call hands in the result of that call — the gate cannot attribute it to
   // the proved value, whatever the arguments mention. A local that is handed
   // such a value loses the state it had: the parent it carried is not the
@@ -1044,7 +1183,22 @@ function classify(init, state, locals) {
   if (isCall(init)) return { kind: UNKNOWN, direct: false, from: null, reason: null };
   const from = taintedName(init, state.tainted);
   if (from) return { kind: TAINTED, direct: false, from, reason: null };
-  for (const receiver of parentReceivers(init)) {
+  // The unresolvability is **transitive**: a local that takes the value of an
+  // unresolved local is unresolved itself — the gate cannot see where that
+  // value comes from, so the taint may hide in it. `const o = { ...input };`
+  // leaves `o` opaque, and `const x = o;` leaves `x` just as opaque.
+  const taken = plainName(init);
+  if (taken && state.unknown.has(taken)) {
+    return { kind: UNKNOWN, direct: false, from: null, reason: null };
+  }
+  // A template literal hides its interpolation: the gate cannot see what the
+  // local is built from, so the raw request value may hide in it. The verdict
+  // comes before the reads: the interpolation is what the gate cannot read,
+  // whatever it holds.
+  if (hidesInterpolation(init)) {
+    return { kind: TAINTED, direct: false, from: null, reason: "hidden" };
+  }
+  for (const receiver of parentReceivers(text)) {
     if (rawReceiver(receiver, state, locals)) {
       // A receiver the gate cannot see into: a parameter, a module-level name
       // or a local whose initializer it could not resolve.
@@ -1053,11 +1207,6 @@ function classify(init, state, locals) {
       }
       return { kind: TAINTED, direct: true, from: null, reason: null };
     }
-  }
-  // A template literal hides its interpolation: the gate cannot see what the
-  // local is built from, so the raw request value may hide in it.
-  if (hidesInterpolation(init)) {
-    return { kind: TAINTED, direct: false, from: null, reason: "hidden" };
   }
   // A spread of a local the gate could not resolve hands over a value of an
   // origin the gate cannot see.
@@ -1078,22 +1227,26 @@ function classify(init, state, locals) {
  *
  * The classification runs until it settles, because the taint is transitive:
  * a local that is derived from a tainted local is tainted as well, however
- * many steps away the raw value is.
+ * many steps away the raw value is. The same holds for the unresolvability:
+ * a local that takes the value of an unresolved local is unresolved itself —
+ * and every step of such a chain needs a round of its own.
+ *
+ * `body` is the masked text of the function, `source` the original one.
  */
-function analyseScope(body) {
+function analyseScope(body, source) {
   const locals = declaredNames(body);
-  const events = assignments(body);
+  const events = assignments(body, source);
   const helper = new RegExp(`^\\s*await\\s+${HELPER}\\s*\\(`);
   for (const event of events) {
     if (event.proved) event.kind = PROVED;
     else if (helper.test(event.init)) event.kind = "helper";
   }
-  for (let round = 0; round < 20; round += 1) {
+  for (let round = 0; round < 40; round += 1) {
     let changed = false;
     const state = stateOf(events);
     for (const event of events) {
       if (event.kind === "helper" || event.proved) continue;
-      const verdict = classify(event.init, state, locals);
+      const verdict = classify(event.init, event.text, state, locals);
       if (
         verdict.kind !== event.kind ||
         verdict.direct !== event.direct ||
@@ -1307,7 +1460,8 @@ for (const path of collectFiles(root)) {
     const fn = enclosingFunction(functions, index);
     const fnName = fn ? fn.name : "<module scope>";
     const body = fn ? masked.slice(fn.start, fn.end) : masked;
-    const scope = analyseScope(body);
+    const origin = fn ? source.slice(fn.start, fn.end) : source;
+    const scope = analyseScope(body, origin);
 
     const entry = ALLOW_LIST.find(
       (item) => item.file === file && item.fn === fnName && item.value === value,
@@ -1415,8 +1569,11 @@ function missingProof(entry, fn, masked) {
  * The calls of an allow-listed helper that hand in a raw parent. The callers
  * are what prove the value the helper writes, so a caller that hands in the
  * raw request value has to turn the gate red.
+ *
+ * `masked` and `source` are the two texts of the file — the shape is read in
+ * the masked one, the reads of the parent id in the original one.
  */
-function rawCallSites(masked, functions, fnName) {
+function rawCallSites(masked, source, functions, fnName) {
   const sites = [];
   const pattern = new RegExp(`\\b${fnName}\\s*\\(`, "g");
   let match;
@@ -1426,10 +1583,11 @@ function rawCallSites(masked, functions, fnName) {
     const paren = masked.indexOf("(", match.index);
     const end = matchingClose(masked, paren);
     if (end < 0) continue;
-    const argument = masked.slice(paren + 1, end);
+    const argument = source.slice(paren + 1, end);
     const fn = enclosingFunction(functions, match.index);
     const body = fn ? masked.slice(fn.start, fn.end) : masked;
-    const scope = analyseScope(body);
+    const origin = fn ? source.slice(fn.start, fn.end) : source;
+    const scope = analyseScope(body, origin);
     for (const receiver of parentReceivers(argument)) {
       if (rawReceiver(receiver, scope.state, scope.locals)) {
         sites.push({ index: match.index, receiver });
@@ -1469,7 +1627,7 @@ for (const entry of ALLOW_LIST) {
 for (const entry of ALLOW_LIST) {
   if (entry.callers !== "checked") continue;
   for (const file of scanned) {
-    for (const site of rawCallSites(file.masked, file.functions, entry.fn)) {
+    for (const site of rawCallSites(file.masked, file.source, file.functions, entry.fn)) {
       problems.push({
         file: file.file,
         line: lineOf(file.source, site.index),

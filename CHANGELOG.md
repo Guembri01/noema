@@ -218,17 +218,20 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   origin the gate cannot see is a raw value, whatever that receiver is called.
   The gate follows the taint as far as it can see it: the **unresolvability**
   is transitive as well (a local that takes the value of an unresolved local is
-  unresolved itself), the read of `.parentId` is seen in every form the
-  language allows (the plain read, the optional chain, the non-null assertion,
-  the computed and the indexed member, the result of a call), and the compound
-  assignments (`&&=`, `||=`, `??=`) are assignments it follows like every
-  other. What it does **not** reach is a value that mixes an unresolved local
-  with the proved one (`const parentId = o ?? checked.parentId`): the gate
-  cannot see into `o`, so the raw value may hide in it — and the write is
-  released all the same.
+  unresolved itself), the read of `.parentId` is seen in every form that names
+  the property directly (the plain read, the optional chain, the non-null
+  assertion, the computed member with the literal key, the indexed member, the
+  result of a call), and the compound assignments (`&&=`, `||=`, `??=`, `+=`, …)
+  are assignments it follows like every other. What it does **not** reach is a
+  value that mixes an unresolved local with the proved one
+  (`const parentId = o ?? checked.parentId`): the gate cannot see into `o`, so
+  the raw value may hide in it — and the write is released all the same. A
+  member whose key is not the literal (`input["parent" + "Id"]`) and a
+  reflective read (`Reflect.get(input, "parentId")`) are not reads the gate
+  sees at all — the write is released all the same.
   It is a safety net over the tests, not a proof — a write it
   cannot recognise is not covered by it. The holes that are known today are
-  listed in the gate's own docstring — **six** of them — and that list is a
+  listed in the gate's own docstring — **eight** of them — and that list is a
   safety net, not an
   enumeration: a new shape of write can open a new hole, and the list only
   grows when somebody measures one. It is shorter than it was: the precise
