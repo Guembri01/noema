@@ -39,6 +39,30 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- The site workflow no longer lets a pull request run with a token that can
+  publish. The `image` job — the one that builds the container image — held
+  `packages: write` (it pushes to GHCR) and `id-token: write` (it mints the
+  OIDC token cosign signs with), and a pull request reached that job, so the
+  pull request's own `Dockerfile` was built with a publishing token in hand.
+  `actions/checkout` also left the token in `.git/config`, where the code the
+  pull request controls could read it — a path from "any pull request" to "a
+  tampered image in GHCR that every user of the published container pulls".
+  The workflow is split in two now: the `image` job is the pull-request path
+  (build linux/amd64, load it, scan it, smoke it) and holds `contents: read`
+  and nothing else, the `publish` job is the only one that may push and sign,
+  and its gate names the events that may publish — `push` and
+  `workflow_dispatch` — so that no pull-request event can reach it, not even
+  `pull_request_target`. Every checkout in the workflow uses
+  `persist-credentials: false`, so the token does not outlive the checkout.
+- A new gate, `npm run check:workflow-permissions` (and the test CI runs),
+  keeps that from coming back. It fails when a workflow grants a publishing
+  scope (`packages: write`, `id-token: write`) outside a job that no
+  pull-request event can reach — the gate is evaluated, not matched, so
+  `github.event_name != 'pull_request'` does not count: a
+  `pull_request_target` event satisfies it — when a job a pull request can
+  reach does not spell out its `permissions:` block, or when the checkout of
+  such a job keeps its token on disk. `contents: write` is tracked separately
+  as issue #65.
 
 ## [1.4.1] — 2026-10-17
 

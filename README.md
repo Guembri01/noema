@@ -499,6 +499,7 @@ password: password123
 | `npm run check:storage` | Storage round trip through the API: upload, byte-for-byte read, guards (auth, traversal, missing, bad type) |
 | `npm run check:chat-stream` | Proves answers stream in chunks, arrive before completion, and persist exactly once |
 | `npm run check:coherence` | **Fails on drift**: orphan actions, native dialogs, unexpected injection sinks, growing action-call drift, shrinking i18n coverage |
+| `npm run check:workflow-permissions` | No workflow grants a publishing scope (`packages: write`, `id-token: write`) outside a job that no pull-request event can reach, every such job spells out its `permissions:`, and no pull-request checkout keeps its token on disk |
 | `npm run audit` | Static coherence inventory (same rules as `check:coherence`) → `docs/_audit-raw.json` |
 | `npm run check:matrix` | Recount the parity status summary (read-only; add `-- --write` to update the doc) |
 | `node --env-file=.env scripts/check-notion.mjs` | Notion API importer check (uses a local mock Notion server) |
@@ -556,6 +557,13 @@ Found a vulnerability? Please **do not open a public issue** — follow
   on the server rather than trusting the URL.
 - No credential belongs in the tree: `npm run check:secrets` fails on any
   committed key-shaped value, and `.env` is git-ignored.
+- CI tokens are least-privilege: `npm run check:workflow-permissions` fails if a
+  workflow grants a publishing scope (`packages: write`, `id-token: write`)
+  outside a job that no pull-request event can reach — the gate is evaluated,
+  so `github.event_name != 'pull_request'` does not count, because a
+  `pull_request_target` event satisfies it — if a job a pull request can reach
+  does not spell out its `permissions:` block, or if a checkout such a job
+  runs keeps its token on disk.
 
 ## Where to read next
 

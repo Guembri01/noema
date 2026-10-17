@@ -67,6 +67,7 @@
     "audit": "node scripts/audit-inventory.mjs",
     "check:coherence": "node scripts/check-coherence.mjs",
     "check:secrets": "node scripts/check-secrets.mjs",
+    "check:workflow-permissions": "node scripts/check-workflow-permissions.mjs",
     "check:use-server": "node scripts/check-use-server.mjs",
     "check:design": "node scripts/check-design-system.mjs --check",
     "design:report": "node scripts/check-design-system.mjs",
