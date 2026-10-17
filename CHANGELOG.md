@@ -486,12 +486,6 @@ list marks it as **No access**.
   may grant, and `POST /api/invites` refuses an unknown role (`Unknown role.`)
   instead of silently downgrading it to `MEMBER`.
 
-
-
-
-
-
-
 ### Changed
 
 - The app's own write path accepts only the app's own `/api/files/...` asset
