@@ -15,6 +15,7 @@ import {
 } from "@/lib/share-page";
 import { Z } from "@/lib/design-tokens";
 import { isEmoji, pageIconToCss, parsePageIcon } from "@/lib/page-icon";
+import { shareUnlockCookieName, verifyShareUnlockToken } from "@/lib/secrets";
 import { cn } from "@/lib/utils";
 
 /** Public, read-only page reached through a share link. No authentication. */
@@ -94,8 +95,13 @@ export default async function PublicSharedPage({
     return <UnavailableState />;
   }
 
-  // Password-protected links require a verified unlock cookie.
-  const unlocked = (await cookies()).get(`share_${token}`)?.value === "1";
+  // Password-protected links require a verified unlock cookie: the value is an
+  // HMAC over the share token and an expiry, keyed by the server secret, so a
+  // forged `share_<token>=1` header unlocks nothing (B01).
+  const unlocked = verifyShareUnlockToken(
+    token,
+    (await cookies()).get(shareUnlockCookieName(token))?.value,
+  );
   if (link.passwordHash && !unlocked) {
     return (
       <main className="animate-fade grid min-h-screen place-items-center bg-bg px-6">
