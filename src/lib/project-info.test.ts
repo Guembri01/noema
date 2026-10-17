@@ -51,10 +51,11 @@ describe("project info", () => {
     expect(projectAuthorLine()).toBe("Bilel Guembri and Wissal Ben Othmen");
   });
 
-  it("keeps the repository URL in the placeholder form the README documents", () => {
-    // `your-org` is deliberate: the tree ships with a placeholder rather than an
-    // invented organisation, and the README says to replace it. A test cannot
-    // know the real URL, but it can insist this stays a well-formed repo link.
+  it("keeps the repository URL a well-formed GitHub link", () => {
+    // The URL is canonical (README, package.json, CITATION.cff and the Tauri
+    // bundle all point at it), so this pins its shape rather than the account:
+    // a fork may repoint it, but it must stay a real, mutable link.
     expect(PROJECT_REPOSITORY).toMatch(/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/);
+    expect(PROJECT_REPOSITORY).toBe("https://github.com/Guembri01/noema");
   });
 });

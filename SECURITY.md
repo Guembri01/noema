@@ -7,7 +7,7 @@ indexed within minutes, and a report that is already public cannot be fixed
 quietly.
 
 Report it privately through GitHub's
-[private vulnerability reporting](https://github.com/your-org/noema/security/advisories/new)
+[private vulnerability reporting](https://github.com/Guembri01/noema/security/advisories/new)
 (Repository → Security → Report a vulnerability). If that is unavailable, open a
 minimal issue asking for a private channel — with no details — and a maintainer
 will follow up.

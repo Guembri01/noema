@@ -69,5 +69,5 @@ The first public release: the site, the desktop app, and the parity tracker.
 - `npm run check:secrets` fails on any credential-shaped value in a tracked
   file, and on any tracked `.env`.
 
-[Unreleased]: https://github.com/your-org/noema/compare/v1.4.0...HEAD
-[1.4.0]: https://github.com/your-org/noema/releases/tag/v1.4.0
+[Unreleased]: https://github.com/Guembri01/noema/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/Guembri01/noema/releases/tag/v1.4.0
