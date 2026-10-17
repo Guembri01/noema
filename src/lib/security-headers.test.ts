@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import nextConfig, { SECURITY_HEADERS } from "../../next.config";
+import nextConfig, { SECURITY_HEADERS, SHARE_SECURITY_HEADERS } from "../../next.config";
 import { buildCsp, cspNonce, insideDesktopShell, THEME_SCRIPT_SHA256 } from "./security-headers";
 
 /**
@@ -38,6 +38,15 @@ describe("security headers (next.config.ts)", () => {
     expect(SECURITY_HEADERS["Permissions-Policy"]).toBe(
       "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
     );
+  });
+
+  it("keeps the share map on the site's map but with `no-referrer` (B69)", () => {
+    expect(Object.keys(SHARE_SECURITY_HEADERS).sort()).toEqual([...HEADER_NAMES].sort());
+    expect(SHARE_SECURITY_HEADERS["Referrer-Policy"]).toBe("no-referrer");
+    for (const key of HEADER_NAMES) {
+      if (key === "Referrer-Policy") continue;
+      expect(SHARE_SECURITY_HEADERS[key], key).toBe(SECURITY_HEADERS[key]);
+    }
   });
 
   it("CSP enforces the lockdown directives and the compatibility allowances", () => {
@@ -139,11 +148,33 @@ describe("security headers (next.config.ts)", () => {
     const entries = await nextConfig.headers!();
     expect(entries.length).toBeGreaterThan(0);
     const expected = Object.entries(SECURITY_HEADERS).map(([key, value]) => ({ key, value }));
-    for (const entry of entries) {
-      expect(entry.headers, `entry ${entry.source}`).toEqual(expected);
-    }
     // Catch-all source -> covers static, dynamic, API and /s/<token> pages.
-    expect(entries.some((entry) => entry.source === "/:path*")).toBe(true);
+    const catchAll = entries.find((entry) => entry.source === "/:path*");
+    expect(catchAll?.headers).toEqual(expected);
+  });
+
+  it("answers the public share pages with `Referrer-Policy: no-referrer` (B69)", async () => {
+    const entries = await nextConfig.headers!();
+    // The share entry comes AFTER the catch-all, and Next applies the matching
+    // entries in order, so it is the one that decides the `Referrer-Policy` on
+    // a share page.
+    const order = entries.map((entry) => entry.source);
+    expect(order.indexOf("/:path*")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("/s/:path*")).toBeGreaterThan(order.indexOf("/:path*"));
+
+    const share = entries.find((entry) => entry.source === "/s/:path*");
+    const referrer = share?.headers.find((header) => header.key === "Referrer-Policy");
+    expect(referrer?.value).toBe("no-referrer");
+    // Every other header is the site's map, unchanged.
+    const expected = Object.entries(SECURITY_HEADERS)
+      .filter(([key]) => key !== "Referrer-Policy")
+      .map(([key, value]) => ({ key, value }));
+    expect(share?.headers.filter((header) => header.key !== "Referrer-Policy")).toEqual(expected);
+    // The site's own pages keep the looser policy.
+    const catchAll = entries.find((entry) => entry.source === "/:path*");
+    expect(
+      catchAll?.headers.find((header) => header.key === "Referrer-Policy")?.value,
+    ).toBe("strict-origin-when-cross-origin");
   });
 
   it("serves B61's map on a real dev-server response (live fetch)", async () => {

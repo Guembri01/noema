@@ -3,6 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatCaption, numberLines } from "@/lib/code-block";
 import { tagClass, tagStyle, type TagHue } from "@/lib/design-tokens";
 import { embedMeta, resolveEmbed } from "@/lib/embeds";
+import { externalImageSrc } from "@/lib/external-image";
 import { t } from "@/lib/i18n";
 import { alignOf, alignStyle } from "@/lib/media";
 import {
@@ -800,6 +801,14 @@ function renderBlock(
       const caption = String(node.attrs?.caption ?? "").trim();
       const width = typeof node.attrs?.width === "number" ? node.attrs.width : null;
       const align = alignOf(node.attrs?.align);
+      // B69: a picture that lives on another host is fetched by the SERVER
+      // (the proxy route), never by the visitor's browser. Otherwise opening a
+      // shared page tells that host the visitor's IP address - and the
+      // `Referer` of the share page, which names the instance. An upload (a
+      // relative path) is untouched, and a reference that cannot be served at
+      // all renders nothing.
+      const src = externalImageSrc(node.attrs?.src);
+      if (src === "") return null;
       return (
         <figure
           key={key}
@@ -810,7 +819,7 @@ function renderBlock(
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={String(node.attrs?.src ?? "")}
+            src={src}
             alt={String(node.attrs?.alt ?? "")}
             className="noema-image"
             style={{ borderRadius: "var(--radius-md)" }}
@@ -888,6 +897,11 @@ function renderBlock(
       const title = String(node.attrs?.title ?? host ?? url);
       const description = node.attrs?.description ? String(node.attrs.description) : "";
       const image = node.attrs?.image ? String(node.attrs.image) : null;
+      // B69: the favicon and the og:image of a bookmark are third-party
+      // pictures too - they go through the server's proxy like every other
+      // external picture.
+      const iconSrc = externalImageSrc(icon);
+      const imageSrc = externalImageSrc(image);
       return (
         <div key={key} className="noema-bookmark-card print:break-inside-avoid" data-bookmark="">
           <a
@@ -897,17 +911,17 @@ function renderBlock(
             rel="noreferrer noopener"
           >
             <span className="noema-bookmark-text">
-              {icon && (
+              {iconSrc !== "" && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={icon} alt="" className="noema-bookmark-favicon" />
+                <img src={iconSrc} alt="" className="noema-bookmark-favicon" />
               )}
               <span className="noema-bookmark-title">{title}</span>
               {description && <span className="noema-bookmark-desc">{description}</span>}
               {host && <span className="noema-bookmark-host">{host}</span>}
             </span>
-            {image && (
+            {imageSrc !== "" && (
               // eslint-disable-next-line @next/next/no-img-element -- og:image thumbnail
-              <img src={image} alt="" className="noema-bookmark-image" />
+              <img src={imageSrc} alt="" className="noema-bookmark-image" />
             )}
           </a>
         </div>

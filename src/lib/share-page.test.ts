@@ -5,8 +5,10 @@ import {
   WIDE_MEASURE,
   coverBannerStyle,
   documentHasDatabase,
+  isSharePath,
   isSharedPageUnavailable,
   readingMeasure,
+  shareIcon,
   usesWideMeasure,
 } from "./share-page";
 
@@ -100,15 +102,19 @@ describe("coverBannerStyle", () => {
   });
 
   it("decodes an image cover and its stored focal point", () => {
+    // B69: the cover is a picture like any other - on this public surface it
+    // is fetched by the server's proxy, so the host never sees the visitor.
     expect(coverBannerStyle('url("https://images.test/cover.png") 30% 70%')).toEqual({
-      backgroundImage: 'url("https://images.test/cover.png")',
+      backgroundImage:
+        'url("/api/external-image?url=https%3A%2F%2Fimages.test%2Fcover.png")',
       backgroundPosition: "30% 70%",
     });
   });
 
   it("accepts a bare image URL without a focal point", () => {
     expect(coverBannerStyle("https://images.test/cover.png")).toEqual({
-      backgroundImage: 'url("https://images.test/cover.png")',
+      backgroundImage:
+        'url("/api/external-image?url=https%3A%2F%2Fimages.test%2Fcover.png")',
       backgroundPosition: "50% 50%",
     });
   });
@@ -117,5 +123,34 @@ describe("coverBannerStyle", () => {
     expect(coverBannerStyle(null)).toBeNull();
     expect(coverBannerStyle("   ")).toBeNull();
     expect(coverBannerStyle("javascript:alert(1)")).toBeNull();
+  });
+});
+
+describe("isSharePath", () => {
+  it("is true for the public share surface only", () => {
+    expect(isSharePath("/s/abc123")).toBe(true);
+    expect(isSharePath("/s/abc123/unlock")).toBe(true);
+    expect(isSharePath("/s")).toBe(true);
+    expect(isSharePath("/login")).toBe(false);
+    expect(isSharePath("/w/demo/page")).toBe(false);
+    expect(isSharePath("/settings")).toBe(false);
+  });
+});
+
+describe("shareIcon", () => {
+  it("keeps an emoji icon", () => {
+    expect(shareIcon("📄")).toEqual({ kind: "emoji", value: "📄" });
+  });
+
+  it("points an image icon at the server's proxy", () => {
+    expect(shareIcon("https://images.test/icon.png")).toEqual({
+      kind: "image",
+      value: "/api/external-image?url=https%3A%2F%2Fimages.test%2Ficon.png",
+    });
+  });
+
+  it("reads an unusable icon as none", () => {
+    expect(shareIcon(null)).toEqual({ kind: "none", value: "" });
+    expect(shareIcon("javascript:alert(1)")).toEqual({ kind: "none", value: "" });
   });
 });

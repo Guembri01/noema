@@ -16,6 +16,12 @@ import { PrismaClient } from "@prisma/client";
 
 const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
 
+/** A one-pixel PNG - the answer the mocked image proxy serves. */
+const PNG_1PX = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
 const prisma = new PrismaClient();
 
 // A cold dev server compiles routes on demand and other suites share it (it
@@ -385,6 +391,13 @@ test.describe("media & embeds parity", () => {
     page,
   }) => {
     const stamp = Date.now();
+    // B69: the read-only renderer points a picture that lives on another host
+    // at the server's proxy route, so the visitor's browser never contacts
+    // that host. The proxy is mocked at the API boundary, like the fetch
+    // layer above.
+    await page.route("**/api/external-image*", (route) =>
+      route.fulfill({ contentType: "image/png", body: PNG_1PX }),
+    );
     const sourceId = await createPage(`B20 source ${stamp}`, {
       type: "doc",
       content: [
@@ -426,9 +439,13 @@ test.describe("media & embeds parity", () => {
 
       const thumb = body.locator(".noema-bookmark-image").first();
       await expect(thumb).toBeVisible();
-      await expect(thumb).toHaveAttribute("src", "https://cdn.example.com/thumb.png");
+      await expect(thumb).toHaveAttribute(
+        "src",
+        "/api/external-image?url=https%3A%2F%2Fcdn.example.com%2Fthumb.png",
+      );
       await expect(body.locator(".noema-bookmark-title").first()).toHaveText("Source card");
     } finally {
+      await page.unroute("**/api/external-image*").catch(() => {});
       await removePages([sourceId, hostId]);
     }
   });
