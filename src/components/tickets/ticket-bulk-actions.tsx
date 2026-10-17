@@ -6,12 +6,23 @@ import {
   bulkArchiveTicketsAction,
   bulkDeleteTicketsAction,
   bulkUpdateTicketsAction,
+  restoreTicketAction,
 } from "@/server/actions/tickets";
 import { ESTIMATE_UNITS, TICKET_PRIORITIES, TICKET_STATUSES } from "@/lib/tickets";
-import { safeAction } from "@/lib/actions-client";
-import { bulkArchiveConfirmLabel, bulkDeleteConfirmLabel } from "@/lib/ticket-delete";
+import { safeAction, useAction } from "@/lib/actions-client";
+import {
+  bulkArchiveConfirmLabel,
+  bulkDeleteConfirmLabel,
+  ticketNoun,
+} from "@/lib/ticket-delete";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog, type ConfirmTone } from "@/components/ui/confirm-dialog";
+import { Select, type SelectOption } from "@/components/ui/select";
+import { Stepper } from "@/components/ui/stepper";
+import { Switch } from "@/components/ui/switch";
 import type { LabelRow } from "./ticket-types";
 import type { RunAction } from "./tickets-toolbar";
 
@@ -30,16 +41,60 @@ type BulkPatch = {
 /** Sentinel option value meaning "clear this relation" (→ `null`). */
 const CLEAR = "__clear__";
 
-const selectClass =
-  "h-7 rounded border border-border bg-bg px-1.5 text-xs text-fg outline-none";
-const chipButtonClass =
-  "flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2";
+/* -------------------------------------------------------------------------- *
+ * Pure mappings — property → control and bulk action → confirm copy
+ * -------------------------------------------------------------------------- */
+
+/**
+ * The two destructive bulk actions, each with its own confirm surface. `tone`
+ * feeds `ConfirmDialog` so a permanent delete always reads `danger` while a
+ * reversible archive stays neutral.
+ */
+export type BulkDestructiveAction = "archive" | "delete";
+
+export type BulkConfirmCopy = {
+  tone: ConfirmTone;
+  title: string;
+  /** The count-aware sentence the user reads before committing. */
+  description: string;
+  confirmLabel: string;
+};
+
+/**
+ * The copy for a destructive bulk confirmation. Pure and total, and built on
+ * `@/lib/ticket-delete` so the drawer's single-ticket delete and the board's
+ * bulk delete keep one source of truth for the count sentence.
+ */
+export function bulkConfirmCopy(
+  action: BulkDestructiveAction,
+  count: number,
+  locale = "en",
+): BulkConfirmCopy {
+  if (action === "delete") {
+    return {
+      tone: "danger",
+      title: count === 1 ? "Delete this ticket" : `Delete ${count} ${ticketNoun(count)}`,
+      description: bulkDeleteConfirmLabel(count),
+      confirmLabel: "Delete permanently",
+    };
+  }
+  return {
+    tone: "default",
+    title: `Archive ${count} ${ticketNoun(count)}`,
+    description: bulkArchiveConfirmLabel(count),
+    confirmLabel: t(locale, "archiveTicket"),
+  };
+}
 
 /**
  * The board/list bulk action bar. Appears only while tickets are selected and
  * covers every bulk capability the user asked for: status, priority, assignee,
  * labels (add/remove), estimate (+ unit), project, plus archive and a permanent
- * delete that confirms exactly how many tickets it will remove.
+ * delete behind a `danger` `ConfirmDialog`.
+ *
+ * ds08: rebuilt on the design-system primitives — `Badge` counts, `Button`
+ * variants, `Select`/`Stepper` controls, a `Switch` select-all and the shared
+ * `ConfirmDialog`. No native `<select>`, no raw `red-500`/`amber-500` classes.
  */
 export function TicketBulkActions({
   checked,
@@ -49,6 +104,7 @@ export function TicketBulkActions({
   projects,
   run,
   locale = "en",
+  allIds,
 }: {
   checked: string[];
   setChecked: Dispatch<SetStateAction<string[]>>;
@@ -57,10 +113,16 @@ export function TicketBulkActions({
   projects: { id: string; name: string; icon: string | null }[];
   run: RunAction;
   locale?: string;
+  /**
+   * Every selectable id on screen. When supplied the bar shows a "Select all"
+   * `Switch`; omitted (the current toolbar wiring) leaves it out.
+   */
+  allIds?: string[];
 }) {
-  const [estimate, setEstimate] = useState("");
+  const [estimate, setEstimate] = useState("0");
   const [unit, setUnit] = useState<string>("points");
-  const [confirm, setConfirm] = useState<null | "archive" | "delete">(null);
+  const [confirm, setConfirm] = useState<BulkDestructiveAction | null>(null);
+  const { run: runDestructive, pending } = useAction(locale);
 
   const applyUpdate = (data: BulkPatch, label: string) =>
     run(label, async () => {
@@ -70,243 +132,229 @@ export function TicketBulkActions({
       if (!outcome.ok) return { ok: false, message: outcome.error };
       const result = outcome.value;
       if ("error" in result) return { ok: false, message: result.error };
-      setConfirm(null);
       return { ok: true };
     });
 
   const applyEstimate = () => {
-    const raw = estimate.trim();
-    const value = raw === "" ? null : Number(raw);
+    const value = estimate.trim() === "" ? null : Number(estimate);
     if (value !== null && !Number.isFinite(value)) return;
     applyUpdate({ estimate: value, estimateUnit: unit }, "Estimate updated");
-    setEstimate("");
+    setEstimate("0");
   };
 
-  const doArchive = () =>
-    run("Tickets archived", async () => {
-      const outcome = await safeAction(() => bulkArchiveTicketsAction({ ticketIds: checked }));
-      if (!outcome.ok) return { ok: false, message: outcome.error };
-      const result = outcome.value;
-      if ("error" in result) return { ok: false, message: result.error };
-      setConfirm(null);
-      setChecked([]);
-      return { ok: true };
+  const doArchive = () => {
+    const ids = checked.slice();
+    runDestructive(() => bulkArchiveTicketsAction({ ticketIds: ids }), {
+      success: "Tickets archived",
+      undo: {
+        label: t(locale, "archiveTicket"),
+        undo: async () => {
+          for (const id of ids) await restoreTicketAction(id);
+        },
+      },
+      onSuccess: () => {
+        setConfirm(null);
+        setChecked((current) => current.filter((id) => !ids.includes(id)));
+      },
     });
+  };
 
-  const doDelete = () =>
-    run("Tickets deleted", async () => {
-      const outcome = await safeAction(() => bulkDeleteTicketsAction({ ticketIds: checked }));
-      if (!outcome.ok) return { ok: false, message: outcome.error };
-      const result = outcome.value;
-      if ("error" in result) return { ok: false, message: result.error };
-      setConfirm(null);
-      setChecked([]);
-      return { ok: true };
+  const doDelete = () => {
+    const ids = checked.slice();
+    runDestructive(() => bulkDeleteTicketsAction({ ticketIds: ids }), {
+      success: "Tickets deleted",
+      onSuccess: () => {
+        setConfirm(null);
+        setChecked((current) => current.filter((id) => !ids.includes(id)));
+      },
     });
+  };
+
+  const statusOptions: SelectOption[] = TICKET_STATUSES.map((status) => ({
+    value: status.id,
+    label: status.label,
+    tag: status.color,
+  }));
+  const priorityOptions: SelectOption[] = TICKET_PRIORITIES.map((priority) => ({
+    value: priority.id,
+    label: priority.label,
+    tag: priority.color,
+  }));
+  const memberOptions: SelectOption[] = [
+    { value: CLEAR, label: t(locale, "unassigned") },
+    ...members.map((member) => ({ value: member.id, label: member.name })),
+  ];
+  const projectOptions: SelectOption[] = [
+    { value: CLEAR, label: t(locale, "noProject") },
+    ...projects.map((project) => ({ value: project.id, label: project.name })),
+  ];
+  const labelOptions: SelectOption[] = labels.map((label) => ({
+    value: label.id,
+    label: label.name,
+    tag: label.color,
+  }));
+
+  const total = allIds?.length ?? 0;
+  const allSelected = total > 0 && checked.length === total;
+  const copy = confirm ? bulkConfirmCopy(confirm, checked.length, locale) : null;
 
   return (
     <div
-      className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs"
       data-testid="ticket-bulk-actions"
+      className="animate-rise mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs"
     >
-      <strong className="text-fg">
-        {checked.length} selected
-      </strong>
-
-      <select
-        aria-label="Bulk set status"
-        value=""
-        className={selectClass}
-        onChange={(event) => {
-          const value = event.target.value;
-          if (value) applyUpdate({ status: value }, "Status updated");
-        }}
-      >
-        <option value="">{t(locale, "statusWord")}…</option>
-        {TICKET_STATUSES.map((status) => (
-          <option key={status.id} value={status.id}>
-            {status.label}
-          </option>
-        ))}
-      </select>
-
-      <select
-        aria-label="Bulk set priority"
-        value=""
-        className={selectClass}
-        onChange={(event) => {
-          const value = event.target.value;
-          if (value) applyUpdate({ priority: value }, "Priority updated");
-        }}
-      >
-        <option value="">{t(locale, "priorityWord")}…</option>
-        {TICKET_PRIORITIES.map((priority) => (
-          <option key={priority.id} value={priority.id}>
-            {priority.label}
-          </option>
-        ))}
-      </select>
-
-      <select
-        aria-label="Bulk set assignee"
-        value=""
-        className={selectClass}
-        onChange={(event) => {
-          const value = event.target.value;
-          if (!value) return;
-          applyUpdate(
-            { assigneeId: value === CLEAR ? null : value },
-            t(locale, "assigneeUpdated"),
-          );
-        }}
-      >
-        <option value="">{t(locale, "assigneeWord")}…</option>
-        <option value={CLEAR}>{t(locale, "unassigned")}</option>
-        {members.map((member) => (
-          <option key={member.id} value={member.id}>
-            {member.name}
-          </option>
-        ))}
-      </select>
-
-      <select
-        aria-label="Bulk set project"
-        value=""
-        className={selectClass}
-        onChange={(event) => {
-          const value = event.target.value;
-          if (!value) return;
-          applyUpdate(
-            { projectId: value === CLEAR ? null : value },
-            t(locale, "projectUpdated"),
-          );
-        }}
-      >
-        <option value="">{t(locale, "projectWord")}…</option>
-        <option value={CLEAR}>{t(locale, "noProject")}</option>
-        {projects.map((project) => (
-          <option key={project.id} value={project.id}>
-            {project.icon ? `${project.icon} ` : ""}
-            {project.name}
-          </option>
-        ))}
-      </select>
-
-      <select
-        aria-label="Bulk add label"
-        value=""
-        className={selectClass}
-        disabled={labels.length === 0}
-        onChange={(event) => {
-          const value = event.target.value;
-          if (value) applyUpdate({ addLabelIds: [value] }, "Label added");
-        }}
-      >
-        <option value="">Add label…</option>
-        {labels.map((label) => (
-          <option key={label.id} value={label.id}>
-            {label.name}
-          </option>
-        ))}
-      </select>
-
-      <select
-        aria-label="Bulk remove label"
-        value=""
-        className={selectClass}
-        disabled={labels.length === 0}
-        onChange={(event) => {
-          const value = event.target.value;
-          if (value) applyUpdate({ removeLabelIds: [value] }, "Label removed");
-        }}
-      >
-        <option value="">Remove label…</option>
-        {labels.map((label) => (
-          <option key={label.id} value={label.id}>
-            {label.name}
-          </option>
-        ))}
-      </select>
-
-      <span className="flex items-center gap-1">
-        <input
-          type="number"
-          step="0.5"
-          min="0"
-          value={estimate}
-          aria-label={t(locale, "ticketEstimateAria")}
-          placeholder={t(locale, "estimateWord")}
-          onChange={(event) => setEstimate(event.target.value)}
-          className="h-7 w-20 rounded border border-border bg-bg px-1.5 text-xs outline-none focus:border-accent"
-        />
-        <select
-          value={unit}
-          aria-label={t(locale, "estimateUnitAria")}
-          onChange={(event) => setUnit(event.target.value)}
-          className={selectClass}
-        >
-          {ESTIMATE_UNITS.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-        <button type="button" className={chipButtonClass} onClick={applyEstimate}>
-          {t(locale, "estimateWord")}
-        </button>
+      <span className="flex items-center gap-1.5 text-fg">
+        <Badge tone="accent" count={checked.length} />
+        <span>{checked.length === 1 ? "ticket selected" : "tickets selected"}</span>
       </span>
 
-      {confirm === "archive" ? (
-        <span className="flex items-center gap-2">
-          <span className="text-muted">{bulkArchiveConfirmLabel(checked.length)}</span>
-          <button
-            type="button"
-            className={cn(chipButtonClass, "border-amber-500/40 text-amber-600")}
-            onClick={doArchive}
-          >
-            <Archive className="h-3.5 w-3.5" /> Confirm
-          </button>
-          <button type="button" className={chipButtonClass} onClick={() => setConfirm(null)}>
-            {t(locale, "cancel")}
-          </button>
-        </span>
-      ) : (
-        <button type="button" className={chipButtonClass} onClick={() => setConfirm("archive")}>
-          <Archive className="h-3.5 w-3.5" /> {t(locale, "archiveTicket")}
-        </button>
-      )}
+      {total > 0 ? (
+        <Switch
+          size="sm"
+          checked={allSelected}
+          onCheckedChange={(on) => setChecked(on ? (allIds ?? []).slice() : [])}
+          label="Select all"
+          className="me-1"
+        />
+      ) : null}
 
-      {confirm === "delete" ? (
-        <span className="flex items-center gap-2">
-          <span className="text-red-500">{bulkDeleteConfirmLabel(checked.length)}</span>
-          <button
-            type="button"
-            className={cn(chipButtonClass, "border-red-500/40 text-red-500")}
-            onClick={doDelete}
-          >
-            <Trash2 className="h-3.5 w-3.5" /> Delete permanently
-          </button>
-          <button type="button" className={chipButtonClass} onClick={() => setConfirm(null)}>
-            {t(locale, "cancel")}
-          </button>
-        </span>
-      ) : (
-        <button
-          type="button"
-          className={cn(chipButtonClass, "text-red-500")}
-          onClick={() => setConfirm("delete")}
-        >
-          <Trash2 className="h-3.5 w-3.5" /> {t(locale, "delete")}
-        </button>
-      )}
+      <Select
+        aria-label="Bulk set status"
+        className="w-36"
+        size="sm"
+        value=""
+        options={statusOptions}
+        placeholder={`${t(locale, "statusWord")}…`}
+        onChange={(value) => value && applyUpdate({ status: value }, "Status updated")}
+      />
 
-      <button
+      <Select
+        aria-label="Bulk set priority"
+        className="w-36"
+        size="sm"
+        value=""
+        options={priorityOptions}
+        placeholder={`${t(locale, "priorityWord")}…`}
+        onChange={(value) => value && applyUpdate({ priority: value }, "Priority updated")}
+      />
+
+      <Select
+        aria-label="Bulk set assignee"
+        className="w-40"
+        size="sm"
+        value=""
+        options={memberOptions}
+        placeholder={`${t(locale, "assigneeWord")}…`}
+        onChange={(value) =>
+          value && applyUpdate({ assigneeId: value === CLEAR ? null : value }, t(locale, "assigneeUpdated"))
+        }
+      />
+
+      <Select
+        aria-label="Bulk set project"
+        className="w-40"
+        size="sm"
+        value=""
+        options={projectOptions}
+        placeholder={`${t(locale, "projectWord")}…`}
+        onChange={(value) =>
+          value && applyUpdate({ projectId: value === CLEAR ? null : value }, t(locale, "projectUpdated"))
+        }
+      />
+
+      <Select
+        aria-label="Bulk add label"
+        className="w-36"
+        size="sm"
+        value=""
+        disabled={labels.length === 0}
+        options={labelOptions}
+        placeholder="Add label…"
+        onChange={(value) => value && applyUpdate({ addLabelIds: [value] }, "Label added")}
+      />
+
+      <Select
+        aria-label="Bulk remove label"
+        className="w-36"
+        size="sm"
+        value=""
+        disabled={labels.length === 0}
+        options={labelOptions}
+        placeholder="Remove label…"
+        onChange={(value) => value && applyUpdate({ removeLabelIds: [value] }, "Label removed")}
+      />
+
+      <span className="flex items-center gap-1">
+        <Stepper
+          value={estimate.trim() === "" ? 0 : Number(estimate)}
+          min={0}
+          step={0.5}
+          onValueChange={(value) => setEstimate(String(value))}
+          className="w-28"
+          inputClassName="text-xs"
+        />
+        <Select
+          aria-label={t(locale, "estimateUnitAria")}
+          className="w-24"
+          size="sm"
+          value={unit}
+          options={ESTIMATE_UNITS.map((option) => ({ value: option, label: option }))}
+          onChange={setUnit}
+        />
+        <Button type="button" size="sm" variant="subtle" onClick={applyEstimate}>
+          {t(locale, "estimateWord")}
+        </Button>
+      </span>
+
+      <Button
         type="button"
-        className={cn(chipButtonClass, "ml-auto")}
+        size="sm"
+        variant="secondary"
+        leftIcon={<Archive className="h-3.5 w-3.5" aria-hidden />}
+        onClick={() => setConfirm("archive")}
+      >
+        {t(locale, "archiveTicket")}
+      </Button>
+
+      <Button
+        type="button"
+        size="sm"
+        variant="danger"
+        tone="soft"
+        leftIcon={<Trash2 className="h-3.5 w-3.5" aria-hidden />}
+        onClick={() => setConfirm("delete")}
+      >
+        {t(locale, "delete")}
+      </Button>
+
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="ms-auto"
         onClick={() => setChecked([])}
       >
         Clear
-      </button>
+      </Button>
+
+      <ConfirmDialog
+        open={confirm !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirm(null);
+        }}
+        tone={copy?.tone ?? "default"}
+        title={copy?.title ?? ""}
+        description={copy?.description}
+        confirmLabel={copy?.confirmLabel}
+        pending={pending}
+        onConfirm={confirm === "delete" ? doDelete : doArchive}
+      >
+        <p className="text-muted">
+          {`${checked.length} ${ticketNoun(checked.length)} ${
+            confirm === "delete" ? "will be removed" : "will move to the archive"
+          }.`}
+        </p>
+      </ConfirmDialog>
     </div>
   );
 }

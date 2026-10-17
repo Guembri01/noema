@@ -8,7 +8,14 @@ import { restoreTicketAction } from "@/server/actions/tickets";
 import { safeAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
 import { formatRelativeTime } from "@/lib/i18n-format";
-import { StatusPill } from "./ticket-bits";
+import { statusMeta } from "@/lib/tickets";
+import { cn } from "@/lib/utils";
+import { Avatar } from "@/components/ui/avatar";
+import { Badge, type BadgeTone } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 
 /**
  * One archived ticket as the archive page serialises it (dates as ISO strings,
@@ -25,11 +32,90 @@ export type ArchivedTicketRow = {
   archivedByName: string | null;
 };
 
+/** Ticket status → design-system `Badge` tone (no raw palette classes). */
+const STATUS_TONE: Record<string, BadgeTone> = {
+  backlog: "neutral",
+  todo: "accent",
+  in_progress: "warning",
+  in_review: "accent",
+  done: "success",
+  cancelled: "danger",
+};
+
+/** Pure mapping from a status id to a `Badge` tone, defaulting to neutral. */
+export function archiveStatusTone(status: string | null | undefined): BadgeTone {
+  return (status ? STATUS_TONE[status] : undefined) ?? "neutral";
+}
+
 /**
- * The archived-ticket list: client-side search over key + title and a per-row
- * Restore control. Restoring runs `restoreTicketAction` (same role gate as every
- * other ticket write) and refreshes the server component, so the row drops off
- * the list without a full reload.
+ * One archived row: a `Switch` selection toggle, the status `Badge`, the
+ * archiver `Avatar` and a `Button` restore. Split out so it can be rendered
+ * statically (SSR test) without the surrounding list chrome.
+ */
+export function ArchiveRow({
+  ticket,
+  locale,
+  selected = false,
+  pending = false,
+  onSelectedChange,
+  onRestore,
+}: {
+  ticket: ArchivedTicketRow;
+  locale: string;
+  selected?: boolean;
+  pending?: boolean;
+  onSelectedChange?: (selected: boolean) => void;
+  onRestore: () => void;
+}) {
+  return (
+    <li
+      data-testid={`archive-row-${ticket.id}`}
+      data-selected={selected ? "true" : undefined}
+      className={cn(
+        "u-colors flex items-center gap-3 px-3 py-2.5",
+        selected ? "bg-surface-2" : "hover:bg-surface-2",
+      )}
+    >
+      <Switch
+        size="sm"
+        checked={selected}
+        onCheckedChange={onSelectedChange}
+        aria-label={`${t(locale, "restore")} ${ticket.key}`}
+      />
+      <span className="font-mono text-xs text-muted">{ticket.key}</span>
+      <span className="min-w-0 flex-1 truncate text-sm">{ticket.title}</span>
+      <Badge tone={archiveStatusTone(ticket.status)}>{statusMeta(ticket.status).label}</Badge>
+      {ticket.archivedByName ? (
+        <Avatar
+          user={{ id: ticket.archivedByName, name: ticket.archivedByName }}
+          size={20}
+          className="hidden sm:inline-flex"
+        />
+      ) : null}
+      <span className="hidden shrink-0 text-xs text-muted sm:inline" title={ticket.archivedAt}>
+        {formatRelativeTime(ticket.archivedAt, { locale })}
+      </span>
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        disabled={pending}
+        data-testid={`restore-ticket-${ticket.id}`}
+        leftIcon={<ArchiveRestore className="h-3.5 w-3.5" aria-hidden />}
+        onClick={onRestore}
+      >
+        {t(locale, "restore")}
+      </Button>
+    </li>
+  );
+}
+
+/**
+ * The archived-ticket list: client-side search over key + title, per-row
+ * `Switch` selection with a bulk restore, and a per-row Restore control.
+ * Restoring runs `restoreTicketAction` (same role gate as every other ticket
+ * write) and refreshes the server component, so the row drops off the list
+ * without a full reload.
  */
 export function TicketArchiveView({
   tickets,
@@ -41,6 +127,7 @@ export function TicketArchiveView({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -50,59 +137,99 @@ export function TicketArchiveView({
     );
   }, [tickets, query]);
 
-  const restore = (ticketId: string) =>
+  const restoreMany = (ids: string[]) =>
     startTransition(async () => {
-      const outcome = await safeAction(() => restoreTicketAction(ticketId), { locale });
-      if (!outcome.ok) {
-        toast.error(outcome.error);
-        return;
+      for (const id of ids) {
+        const outcome = await safeAction(() => restoreTicketAction(id), { locale });
+        if (!outcome.ok) {
+          toast.error(outcome.error);
+          return;
+        }
+        if ("error" in outcome.value) {
+          toast.error(outcome.value.error);
+          return;
+        }
       }
-      if ("error" in outcome.value) {
-        toast.error(outcome.value.error);
-        return;
-      }
-      toast.success("Ticket restored");
+      setSelected((current) => current.filter((id) => !ids.includes(id)));
+      toast.success(ids.length === 1 ? "Ticket restored" : `${ids.length} tickets restored`);
       router.refresh();
     });
 
+  const toggleSelected = (id: string, on: boolean) =>
+    setSelected((current) =>
+      on ? (current.includes(id) ? current : [...current, id]) : current.filter((entry) => entry !== id),
+    );
+
   return (
-    <div>
-      <label className="mb-4 flex max-w-sm items-center gap-2 rounded border border-border bg-bg px-2">
-        <Search className="h-3.5 w-3.5 text-muted" aria-hidden />
-        <input
+    <div className="animate-fade">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Input
+          clearable
+          onClear={() => setQuery("")}
           value={query}
+          leading={<Search className="h-3.5 w-3.5" aria-hidden />}
           aria-label={t(locale, "searchTickets")}
           placeholder={t(locale, "searchTickets")}
           onChange={(event) => setQuery(event.target.value)}
-          className="h-9 w-full bg-transparent text-sm outline-none"
+          className="max-w-sm"
         />
-      </label>
+        <Badge tone="neutral" count={tickets.length} title="Archived tickets" />
+        {selected.length > 0 ? (
+          <div className="flex items-center gap-2" data-testid="archive-bulk">
+            <Badge tone="accent" count={selected.length} />
+            <Button
+              type="button"
+              size="sm"
+              variant="primary"
+              disabled={pending}
+              leftIcon={<ArchiveRestore className="h-3.5 w-3.5" aria-hidden />}
+              onClick={() => restoreMany(selected)}
+            >
+              Restore selected
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setSelected([])}>
+              Clear
+            </Button>
+          </div>
+        ) : null}
+      </div>
 
       {filtered.length === 0 ? (
-        <p className="rounded border border-dashed border-border px-4 py-8 text-center text-sm text-muted">
-          {tickets.length === 0 ? "No archived tickets." : "No tickets match your search."}
-        </p>
+        <div className="rounded-lg border border-dashed border-border">
+          <EmptyState
+            variant="full"
+            icon={<ArchiveRestore className="h-5 w-5" aria-hidden />}
+            title={tickets.length === 0 ? "No archived tickets" : "No tickets match your search"}
+            description={
+              tickets.length === 0
+                ? "Tickets you archive will appear here, ready to restore."
+                : "Try a different key or title."
+            }
+            primaryAction={
+              tickets.length === 0 ? (
+                <Button type="button" variant="secondary" onClick={() => router.refresh()}>
+                  Refresh
+                </Button>
+              ) : (
+                <Button type="button" variant="secondary" onClick={() => setQuery("")}>
+                  Clear search
+                </Button>
+              )
+            }
+          />
+        </div>
       ) : (
         <ul className="divide-y divide-border rounded-lg border border-border">
           {filtered.map((ticket) => (
-            <li key={ticket.id} className="flex items-center gap-3 px-3 py-2.5">
-              <span className="font-mono text-xs text-muted">{ticket.key}</span>
-              <span className="min-w-0 flex-1 truncate text-sm">{ticket.title}</span>
-              <StatusPill status={ticket.status} />
-              <span className="shrink-0 text-xs text-muted" title={ticket.archivedAt}>
-                {ticket.archivedByName ? `${ticket.archivedByName} · ` : ""}
-                {formatRelativeTime(ticket.archivedAt, { locale })}
-              </span>
-              <button
-                type="button"
-                data-testid={`restore-ticket-${ticket.id}`}
-                disabled={pending}
-                onClick={() => restore(ticket.id)}
-                className="flex h-7 shrink-0 items-center gap-1 rounded border border-border px-2 text-xs hover:bg-surface-2 disabled:opacity-50"
-              >
-                <ArchiveRestore className="h-3.5 w-3.5" /> {t(locale, "restore")}
-              </button>
-            </li>
+            <ArchiveRow
+              key={ticket.id}
+              ticket={ticket}
+              locale={locale}
+              pending={pending}
+              selected={selected.includes(ticket.id)}
+              onSelectedChange={(on) => toggleSelected(ticket.id, on)}
+              onRestore={() => restoreMany([ticket.id])}
+            />
           ))}
         </ul>
       )}

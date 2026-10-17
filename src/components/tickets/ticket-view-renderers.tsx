@@ -1,5 +1,5 @@
-import type { Dispatch, SetStateAction } from "react";
-import { Ban, CircleDot } from "lucide-react";
+import { useState, type Dispatch, type SetStateAction } from "react";
+import { Ban, CircleDot, Inbox } from "lucide-react";
 import { addBusinessHours, type WorkingHours } from "@/lib/business-hours";
 import {
   blockersOf,
@@ -13,6 +13,7 @@ import {
 import { t } from "@/lib/i18n";
 import { slaStatus, type SlaClock, type SlaStatusResult } from "@/lib/sla-timer";
 import { applySort, type SortSpec } from "@/lib/sort-compare";
+import { tagStyle, Z } from "@/lib/design-tokens";
 import {
   capacityStatus,
   formatEstimate,
@@ -30,26 +31,52 @@ import {
   type WorkloadBucket,
 } from "@/lib/tickets";
 import { cn } from "@/lib/utils";
+import { Avatar } from "@/components/ui/avatar";
+import { Badge, type BadgeTone } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tag } from "@/components/ui/tag";
 import {
   CountChip,
   KeyListChip,
-  LabelChip,
   RelativeDateChip,
   SlaChip,
   StatusPill,
 } from "./ticket-bits";
-import { LABEL_TONES, type TicketRow } from "./ticket-types";
+import { type TicketRow } from "./ticket-types";
 
 /** `TicketRelation`-shaped rows accepted as an optional dependency source. */
 type RelationInput = { fromId: string; toId: string; type: string };
 
-/** Capacity-state tones, deliberately matching the status palette. */
-const CAPACITY_TONES: Record<CapacityState, string> = {
-  over: "bg-red-500/10 text-red-500",
-  near: "bg-amber-500/10 text-amber-600",
-  under: "bg-emerald-500/10 text-emerald-600",
-  unknown: "bg-surface-2 text-muted",
+/** Ticket colour name → design-system `Badge` tone (tokens only, no palette classes). */
+const COLOR_BADGE_TONE: Record<string, BadgeTone> = {
+  gray: "neutral",
+  brown: "neutral",
+  blue: "accent",
+  teal: "accent",
+  purple: "accent",
+  pink: "accent",
+  yellow: "warning",
+  orange: "warning",
+  green: "success",
+  red: "danger",
 };
+
+/** Pure mapping from a ticket colour (`statusMeta`/`priorityMeta`) to a `Badge` tone. */
+export function statusBadgeTone(color: string | null | undefined): BadgeTone {
+  return (color ? COLOR_BADGE_TONE[color] : undefined) ?? "neutral";
+}
+
+/** A ticket label rendered as a token-coloured `Tag`. */
+function LabelTag({ name, color }: { name: string; color: string }) {
+  return (
+    <Tag hue={color} size="sm">
+      {name}
+    </Tag>
+  );
+}
+
 
 /**
  * Edges to draw: the explicit `edges` prop wins; otherwise derive them from the
@@ -247,11 +274,19 @@ function sortTicketRows(
   return applySort(wrapped, known).map((entry) => entry.ticket);
 }
 
+/** The `Badge` tone for a capacity state (tokens only). */
+const CAPACITY_TONE: Record<CapacityState, BadgeTone> = {
+  over: "danger",
+  near: "warning",
+  under: "success",
+  unknown: "neutral",
+};
+
 /** Dev-only flag when the supplied relations close a loop. */
 function DevCycleNotice({ cycle }: { cycle: string[] | null }) {
   if (!cycle) return null;
   return (
-    <p className="mb-2 rounded border border-dashed border-amber-500/40 px-2 py-1 text-[11px] text-amber-600">
+    <p className="mb-2 rounded-sm border border-dashed border-warning bg-warning-soft px-2 py-1 text-[11px] text-warning">
       Dependency cycle: {cycle.join(" → ")}
     </p>
   );
@@ -260,30 +295,34 @@ function DevCycleNotice({ cycle }: { cycle: string[] | null }) {
 /** "blocked by N" badge listing the blocker keys in its tooltip. */
 function DependencyBadge({ blockers, locale }: { blockers: TicketRow[]; locale: string }) {
   return (
-    <span
-      className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600"
+    <Badge
+      tone="warning"
+      size="sm"
+      className="shrink-0"
+      icon={<Ban className="h-3 w-3" aria-hidden />}
       title={`${t(locale, "relationBlockedBy")}: ${blockers
         .map((blocker) => blocker.key)
         .join(", ")}`}
     >
-      <Ban className="h-3 w-3" aria-hidden />
       {t(locale, "relationBlockedBy")} {blockers.length}
-    </span>
+    </Badge>
   );
 }
 
 /** "blocks N" badge listing the held-up keys in its tooltip. */
 function BlockingBadge({ dependents, locale }: { dependents: TicketRow[]; locale: string }) {
   return (
-    <span
-      className="inline-flex shrink-0 items-center gap-1 rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-600"
+    <Badge
+      tone="accent"
+      size="sm"
+      className="shrink-0"
+      icon={<Ban className="h-3 w-3 -scale-x-100" aria-hidden />}
       title={`${t(locale, "relationBlocks")}: ${dependents
         .map((dependent) => dependent.key)
         .join(", ")}`}
     >
-      <Ban className="h-3 w-3 -scale-x-100" aria-hidden />
       {dependents.length} {t(locale, "relationBlocks")}
-    </span>
+    </Badge>
   );
 }
 
@@ -304,12 +343,10 @@ function WorkloadChip({
   const estimate = formatEstimate(bucket.points, bucket.unit);
   const load = `${bucket.openCount} open · ${estimate}`;
   return (
-    <span
-      className={cn(
-        "shrink-0 rounded px-1.5 py-0.5 text-[10px]",
-        capacity ? CAPACITY_TONES[capacity.state] : "bg-surface-2 text-muted",
-        className,
-      )}
+    <Badge
+      tone={capacity ? CAPACITY_TONE[capacity.state] : "neutral"}
+      size="sm"
+      className={cn("shrink-0", className)}
       title={capacity && capacity.limit !== null ? `${load} / ${capacity.limit}` : load}
     >
       <CountChip
@@ -320,7 +357,106 @@ function WorkloadChip({
         className="rounded-none p-0 text-inherit"
       />
       {` · ${estimate}`}
-    </span>
+    </Badge>
+  );
+}
+
+/**
+ * One board card. Extracted from the board column so it can be rendered
+ * statically (SSR test) and so the column stays a thin map.
+ *
+ * ds08: labels render as token `Tag`s, the priority as a `Badge`, the assignee
+ * as an `Avatar`, and the surface carries the design-system hover lift —
+ * `.u-interactive` + `.u-surface` (border/shadow/background only, never size).
+ * The drag class contract (`cursor-grab` / `active:cursor-grabbing`) is kept.
+ */
+export function BoardCard({
+  ticket,
+  locale = "en",
+  blockers,
+  dependents,
+  bucket,
+  capacity,
+  slaRow,
+  onSelect,
+}: {
+  ticket: TicketRow;
+  locale?: string;
+  blockers?: TicketRow[];
+  dependents?: TicketRow[];
+  bucket?: WorkloadBucket;
+  capacity?: CapacityRow;
+  slaRow?: SlaStatusResult;
+  onSelect?: (id: string) => void;
+}) {
+  const assignee = ticket.assigneeName
+    ? {
+        id: ticket.assigneeId ?? ticket.assigneeName,
+        name: ticket.assigneeName,
+        email: ticket.assigneeEmail,
+      }
+    : null;
+
+  return (
+    <article
+      data-testid="ticket-board-card"
+      data-ticket={ticket.key}
+      className={cn(
+        "cursor-grab rounded-lg border border-border bg-bg p-2 shadow-1",
+        "u-interactive u-surface hover:border-border-strong hover:bg-surface hover:shadow-2",
+        "active:cursor-grabbing",
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => onSelect?.(ticket.id)}
+        className="focus-ring block w-full rounded-sm text-left"
+      >
+        <span className="flex items-center gap-1.5 text-[11px] text-muted">
+          <span aria-hidden>{typeMeta(ticket.type).icon}</span>
+          <span className="font-mono">{ticket.key}</span>
+          <Badge
+            tone={statusBadgeTone(priorityMeta(ticket.priority).color)}
+            size="sm"
+            className="ms-auto"
+          >
+            {priorityMeta(ticket.priority).label}
+          </Badge>
+          {assignee ? <Avatar user={assignee} size={20} /> : null}
+        </span>
+        <span className="mt-0.5 block text-sm">{ticket.title}</span>
+        <span className="mt-1 flex flex-wrap items-center gap-1">
+          {ticket.labels.map((label) => (
+            <LabelTag key={label.id} name={label.name} color={label.color} />
+          ))}
+          {ticket.estimate !== null && (
+            <Badge tone="neutral" size="sm">
+              {formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")}
+            </Badge>
+          )}
+          <RelativeDateChip date={ticket.dueDate} locale={locale} />
+          {slaRow && <SlaChip status={slaRow.status} remainingMs={slaRow.remainingMs} />}
+        </span>
+        {blockers && (
+          <span className="mt-1 flex flex-wrap items-center gap-1">
+            <DependencyBadge blockers={blockers} locale={locale} />
+            <KeyListChip keys={blockers.map((blocker) => blocker.key)} locale={locale} />
+          </span>
+        )}
+        {dependents && (
+          <span className="mt-1 flex flex-wrap items-center gap-1">
+            <BlockingBadge dependents={dependents} locale={locale} />
+            <KeyListChip keys={dependents.map((dependent) => dependent.key)} locale={locale} />
+          </span>
+        )}
+        {bucket && (
+          <span className="mt-1 flex items-center gap-1 text-[10px] text-muted">
+            <span className="max-w-24 truncate">{ticket.assigneeName}</span>
+            <WorkloadChip bucket={bucket} capacity={capacity} locale={locale} />
+          </span>
+        )}
+      </button>
+    </article>
   );
 }
 
@@ -379,104 +515,121 @@ export function TicketListView({
         </p>
       )}
 
-      <ul className="divide-y divide-border rounded-xl border border-border">
-        {rows.length === 0 && <li className="px-3 py-6 text-sm text-muted">No tickets match.</li>}
-        {rows.map((ticket) => {
-          const blockers = dependencies.blockersByTicket.get(ticket.id);
-          const dependents = dependencies.dependentsByTicket.get(ticket.id);
-          const bucket = ticket.assigneeId
-            ? workload.bucketsById.get(ticket.assigneeId)
-            : undefined;
-          const capacity = ticket.assigneeId
-            ? workload.capacityById.get(ticket.assigneeId)
-            : undefined;
-          const slaRow = sla.get(ticket.id);
-          return (
-            <li key={ticket.id} className="flex items-center gap-3 px-3 py-2 hover:bg-surface-2">
-              <input
-                type="checkbox"
-                aria-label={`Select ${ticket.key}`}
-                checked={checked.includes(ticket.id)}
-                onChange={(event) =>
-                  setChecked((current) =>
-                    event.target.checked
-                      ? [...current, ticket.id]
-                      : current.filter((id) => id !== ticket.id),
-                  )
-                }
-              />
-              <button
-                type="button"
-                onClick={() => onSelect(ticket.id)}
-                className="flex min-w-0 flex-1 items-center gap-2 text-left"
-              >
-                <span aria-hidden>{typeMeta(ticket.type).icon}</span>
-                <span className="w-16 shrink-0 font-mono text-[11px] text-muted">{ticket.key}</span>
-                <span className="min-w-0 flex-1 truncate text-sm">{ticket.title}</span>
-                {ticket.labels.map((label) => (
-                  <LabelChip key={label.id} name={label.name} color={label.color} />
-                ))}
-                {ticket.childCount > 0 && (
-                  <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
-                    {ticket.childCount} sub
-                  </span>
+      {rows.length === 0 ? (
+        pending ? (
+          <Skeleton variant="table" rows={6} cols={4} data-testid="ticket-list-loading" />
+        ) : (
+          <div className="rounded-xl border border-dashed border-border">
+            <EmptyState
+              variant="compact"
+              icon={<Inbox className="h-5 w-5" aria-hidden />}
+              title="No tickets match"
+              description="Adjust the filters or search to see more."
+            />
+          </div>
+        )
+      ) : (
+        <ul className="divide-y divide-border rounded-xl border border-border">
+          {rows.map((ticket) => {
+            const blockers = dependencies.blockersByTicket.get(ticket.id);
+            const dependents = dependencies.dependentsByTicket.get(ticket.id);
+            const bucket = ticket.assigneeId
+              ? workload.bucketsById.get(ticket.assigneeId)
+              : undefined;
+            const capacity = ticket.assigneeId
+              ? workload.capacityById.get(ticket.assigneeId)
+              : undefined;
+            const slaRow = sla.get(ticket.id);
+            const selected = checked.includes(ticket.id);
+            return (
+              <li
+                key={ticket.id}
+                data-selected={selected ? "true" : undefined}
+                className={cn(
+                  "u-colors flex items-center gap-3 px-3 py-2",
+                  selected ? "bg-surface-2" : "hover:bg-surface-2",
                 )}
-              </button>
-              {blockers && <DependencyBadge blockers={blockers} locale={locale} />}
-              {blockers && (
-                <KeyListChip
-                  keys={blockers.map((blocker) => blocker.key)}
-                  locale={locale}
-                  className="hidden lg:inline-flex"
+              >
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${ticket.key}`}
+                  checked={selected}
+                  onChange={(event) =>
+                    setChecked((current) =>
+                      event.target.checked
+                        ? [...current, ticket.id]
+                        : current.filter((id) => id !== ticket.id),
+                    )
+                  }
                 />
-              )}
-              {dependents && <BlockingBadge dependents={dependents} locale={locale} />}
-              {dependents && (
-                <KeyListChip
-                  keys={dependents.map((dependent) => dependent.key)}
+                <button
+                  type="button"
+                  onClick={() => onSelect(ticket.id)}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                >
+                  <span aria-hidden>{typeMeta(ticket.type).icon}</span>
+                  <span className="w-16 shrink-0 font-mono text-[11px] text-muted">{ticket.key}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">{ticket.title}</span>
+                  {ticket.labels.map((label) => (
+                    <LabelTag key={label.id} name={label.name} color={label.color} />
+                  ))}
+                  {ticket.childCount > 0 && (
+                    <Badge tone="neutral" size="sm">
+                      {`${ticket.childCount} sub`}
+                    </Badge>
+                  )}
+                </button>
+                {blockers && <DependencyBadge blockers={blockers} locale={locale} />}
+                {blockers && (
+                  <KeyListChip
+                    keys={blockers.map((blocker) => blocker.key)}
+                    locale={locale}
+                    className="hidden lg:inline-flex"
+                  />
+                )}
+                {dependents && <BlockingBadge dependents={dependents} locale={locale} />}
+                {dependents && (
+                  <KeyListChip
+                    keys={dependents.map((dependent) => dependent.key)}
+                    locale={locale}
+                    className="hidden lg:inline-flex"
+                  />
+                )}
+                {bucket && (
+                  <WorkloadChip
+                    bucket={bucket}
+                    capacity={capacity}
+                    locale={locale}
+                    className="hidden lg:inline-flex"
+                  />
+                )}
+                <span className="hidden w-20 text-right text-xs text-muted sm:block">
+                  {formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")}
+                </span>
+                <span className="hidden w-24 truncate text-xs text-muted md:block">
+                  {ticket.assigneeName ?? "Unassigned"}
+                </span>
+                <span className="hidden w-20 text-xs text-muted lg:block">
+                  {priorityMeta(ticket.priority).label}
+                </span>
+                <RelativeDateChip
+                  date={ticket.dueDate}
                   locale={locale}
-                  className="hidden lg:inline-flex"
+                  className="hidden sm:inline-flex"
                 />
-              )}
-              {bucket && (
-                <WorkloadChip
-                  bucket={bucket}
-                  capacity={capacity}
-                  locale={locale}
-                  className="hidden lg:inline-flex"
-                />
-              )}
-              <span className="hidden w-20 text-right text-xs text-muted sm:block">
-                {formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")}
-              </span>
-              <span className="hidden w-24 truncate text-xs text-muted md:block">
-                {ticket.assigneeName ?? "Unassigned"}
-              </span>
-              <span className="hidden w-20 text-xs text-muted lg:block">
-                {priorityMeta(ticket.priority).label}
-              </span>
-              <RelativeDateChip
-                date={ticket.dueDate}
-                locale={locale}
-                className="hidden sm:inline-flex"
-              />
-              {slaRow && <SlaChip status={slaRow.status} remainingMs={slaRow.remainingMs} />}
-              <StatusPill status={ticket.status} />
-            </li>
-          );
-        })}
-      </ul>
+                {slaRow && <SlaChip status={slaRow.status} remainingMs={slaRow.remainingMs} />}
+                <StatusPill status={ticket.status} />
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
       {cursor && (
         <div className="mt-3 flex items-center gap-2 text-xs text-muted">
-          <button
-            type="button"
-            disabled={pending}
-            onClick={onLoadMore}
-            className="h-8 rounded border border-border px-3 text-sm hover:bg-surface-2 disabled:opacity-50"
-          >
+          <Button type="button" size="sm" variant="secondary" disabled={pending} onClick={onLoadMore}>
             {t(locale, "loadMore")}
-          </button>
+          </Button>
           <span>showing {rowsCount} of the workspace&apos;s tickets</span>
         </div>
       )}
@@ -494,6 +647,7 @@ export function TicketBoardView({
   relations,
   capacityByUser,
   slaPolicy,
+  pending = false,
 }: {
   filtered: TicketRow[];
   onSelect: (id: string) => void;
@@ -508,10 +662,13 @@ export function TicketBoardView({
   capacityByUser?: Partial<Record<string, CapacityLimits>>;
   /** Optional SLA budget that adds a per-ticket `ok`/`warning`/`overdue` chip. */
   slaPolicy?: TicketSlaPolicy;
+  /** Loading flag: empty columns render a matching card skeleton. */
+  pending?: boolean;
 }) {
   const dependencies = buildDependencyView(filtered, edges, relations);
   const workload = buildWorkloadView(filtered, capacityByUser);
   const sla = buildSlaView(filtered, slaPolicy);
+  const [dragging, setDragging] = useState<string | null>(null);
   const assigneeNames = new Map(
     filtered
       .filter((ticket) => ticket.assigneeId)
@@ -556,79 +713,59 @@ export function TicketBoardView({
             }}
           >
             <p className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted">
-              <CircleDot className="h-3 w-3" /> {column.label}
-              <span className="ml-auto">
-                {column.tickets.length} · {column.estimate}
-              </span>
+              <CircleDot className="h-3 w-3" aria-hidden /> {column.label}
+              <Badge tone="neutral" size="sm" count={column.tickets.length} className="ms-auto" />
+              <span className="tabular-nums">{column.estimate}</span>
             </p>
             <ul className="flex-1 space-y-2 p-2">
-              {column.tickets.map((ticket) => {
-                const blockers = dependencies.blockersByTicket.get(ticket.id);
-                const dependents = dependencies.dependentsByTicket.get(ticket.id);
-                const bucket = ticket.assigneeId
-                  ? workload.bucketsById.get(ticket.assigneeId)
-                  : undefined;
-                const capacity = ticket.assigneeId
-                  ? workload.capacityById.get(ticket.assigneeId)
-                  : undefined;
-                const slaRow = sla.get(ticket.id);
-                return (
-                  <li
-                    key={ticket.id}
-                    draggable
-                    onDragStart={(event) => event.dataTransfer.setData("text/ticket", ticket.id)}
-                    className="cursor-grab rounded-lg border border-border bg-bg p-2 active:cursor-grabbing"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onSelect(ticket.id)}
-                      className="block w-full text-left"
+              {pending && column.tickets.length === 0 ? (
+                <li className="list-none">
+                  <Skeleton variant="card" data-testid="ticket-board-loading" />
+                </li>
+              ) : column.tickets.length === 0 ? (
+                <li className="list-none">
+                  <EmptyState
+                    variant="compact"
+                    title="No tickets"
+                    description="Drop a ticket here."
+                  />
+                </li>
+              ) : (
+                column.tickets.map((ticket) => {
+                  const blockers = dependencies.blockersByTicket.get(ticket.id);
+                  const dependents = dependencies.dependentsByTicket.get(ticket.id);
+                  const bucket = ticket.assigneeId
+                    ? workload.bucketsById.get(ticket.assigneeId)
+                    : undefined;
+                  const capacity = ticket.assigneeId
+                    ? workload.capacityById.get(ticket.assigneeId)
+                    : undefined;
+                  const slaRow = sla.get(ticket.id);
+                  return (
+                    <li
+                      key={ticket.id}
+                      draggable
+                      onDragStart={(event) => {
+                        setDragging(ticket.id);
+                        event.dataTransfer.setData("text/ticket", ticket.id);
+                      }}
+                      onDragEnd={() => setDragging(null)}
+                      className={cn("list-none", dragging === ticket.id && "u-no-transition")}
                     >
-                      <span className="flex items-center gap-1.5 text-[11px] text-muted">
-                        {typeMeta(ticket.type).icon} {ticket.key}
-                        <span className="ml-auto">{priorityMeta(ticket.priority).label}</span>
-                      </span>
-                      <span className="mt-0.5 block text-sm">{ticket.title}</span>
-                      <span className="mt-1 flex flex-wrap items-center gap-1">
-                        {ticket.labels.map((label) => (
-                          <LabelChip key={label.id} name={label.name} color={label.color} />
-                        ))}
-                        {ticket.estimate !== null && (
-                          <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
-                            {formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")}
-                          </span>
-                        )}
-                        <RelativeDateChip date={ticket.dueDate} locale={locale} />
-                        {slaRow && <SlaChip status={slaRow.status} remainingMs={slaRow.remainingMs} />}
-                      </span>
-                      {blockers && (
-                        <span className="mt-1 flex flex-wrap items-center gap-1">
-                          <DependencyBadge blockers={blockers} locale={locale} />
-                          <KeyListChip
-                            keys={blockers.map((blocker) => blocker.key)}
-                            locale={locale}
-                          />
-                        </span>
-                      )}
-                      {dependents && (
-                        <span className="mt-1 flex flex-wrap items-center gap-1">
-                          <BlockingBadge dependents={dependents} locale={locale} />
-                          <KeyListChip
-                            keys={dependents.map((dependent) => dependent.key)}
-                            locale={locale}
-                          />
-                        </span>
-                      )}
-                      {bucket && (
-                        <span className="mt-1 flex items-center gap-1 text-[10px] text-muted">
-                          <span className="max-w-24 truncate">{ticket.assigneeName}</span>
-                          <WorkloadChip bucket={bucket} capacity={capacity} locale={locale} />
-                        </span>
-                      )}
-                    </button>
-                  </li>
-                );
-              })}
+                      <BoardCard
+                        ticket={ticket}
+                        locale={locale}
+                        blockers={blockers}
+                        dependents={dependents}
+                        bucket={bucket}
+                        capacity={capacity}
+                        slaRow={slaRow}
+                        onSelect={onSelect}
+                      />
+                    </li>
+                  );
+                })
+              )}
             </ul>
           </div>
         ))}
@@ -641,9 +778,12 @@ export function TicketBoardView({
 export function TicketTimeline({
   tickets,
   onOpen,
+  pending = false,
 }: {
   tickets: TicketRow[];
   onOpen: (id: string) => void;
+  /** Loading flag: renders a timeline-shaped skeleton instead of rows. */
+  pending?: boolean;
 }) {
   const layout = timelineLayout(
     tickets.map((ticket) => ({
@@ -661,6 +801,32 @@ export function TicketTimeline({
   );
   const byId = new Map(tickets.map((ticket) => [ticket.id, ticket]));
 
+  if (pending) {
+    return (
+      <div className="rounded-xl border border-border p-4">
+        <Skeleton variant="block" height={16} width="40%" />
+        <div className="mt-3 space-y-1.5">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <Skeleton key={index} variant="block" height={24} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (layout.rows.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-border">
+        <EmptyState
+          variant="full"
+          icon={<Inbox className="h-5 w-5" aria-hidden />}
+          title="Nothing on the timeline"
+          description="Give a ticket a start or due date to plot it here."
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-xl border border-border p-4">
       <div className="mb-3 flex items-center justify-between text-xs text-muted">
@@ -671,14 +837,15 @@ export function TicketTimeline({
       </div>
       <div className="relative">
         <div
-          className="absolute -top-1 bottom-0 z-10 border-l border-dashed border-accent"
-          style={{ left: `${layout.todayOffset}%` }}
+          className="absolute -top-1 bottom-0 border-l border-dashed border-accent"
+          style={{ left: `${layout.todayOffset}%`, zIndex: Z.sticky }}
           aria-hidden
         />
         <ul className="space-y-1.5">
           {layout.rows.map((row) => {
             const ticket = byId.get(row.ticket.id)!;
             const meta = statusMeta(ticket.status);
+            const accent = tagStyle(meta.color);
             return (
               <li key={row.ticket.id} className="flex items-center gap-2">
                 <button
@@ -688,17 +855,20 @@ export function TicketTimeline({
                 >
                   <span className="font-mono">{ticket.key}</span> {ticket.title}
                 </button>
-                <div className="relative h-6 flex-1 rounded bg-surface-2/60">
+                <div className="relative h-6 flex-1 rounded-sm bg-surface-2/60">
                   <button
                     type="button"
                     onClick={() => onOpen(ticket.id)}
                     title={`${ticket.key} · ${formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")}`}
                     className={cn(
-                      "absolute inset-y-1 flex items-center gap-1 overflow-hidden rounded px-1.5 text-[10px] font-medium",
-                      LABEL_TONES[meta.color] ?? LABEL_TONES.gray,
+                      "focus-ring u-colors absolute inset-y-1 flex items-center gap-1 overflow-hidden rounded-sm border px-1.5 text-[10px] font-medium",
                       !row.hasDates && "opacity-60",
                     )}
-                    style={{ left: `${row.left}%`, width: `${Math.max(row.width, 3)}%` }}
+                    style={{
+                      left: `${row.left}%`,
+                      width: `${Math.max(row.width, 3)}%`,
+                      ...accent,
+                    }}
                   >
                     {typeMeta(ticket.type).icon}
                     <span className="truncate">
