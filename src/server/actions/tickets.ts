@@ -220,6 +220,8 @@ export async function createTicketAction(input: {
   }
   const title = input.title.trim().slice(0, 300);
   if (!title) return { error: "Give the ticket a title." };
+  const projectId = input.projectId ?? null;
+  const milestoneId = input.milestoneId ?? null;
   const status = STATUS_IDS.includes(input.status ?? "todo") ? input.status ?? "todo" : "todo";
   const priority = PRIORITY_IDS.includes(input.priority ?? "none") ? input.priority ?? "none" : "none";
   const type = TYPE_IDS.includes(input.type ?? "task") ? input.type ?? "task" : "task";
@@ -234,6 +236,23 @@ export async function createTicketAction(input: {
     select: { name: true, ticketCounter: true },
   });
   if (!workspace) return { error: "Workspace not found." };
+
+  // The composer can create a ticket already in a milestone, so creation needs the
+  // same guard `updateTicketAction` has: a milestone is a project's milestone, and
+  // a project belongs to a workspace. By id alone a ticket could be created
+  // pointing at another workspace's milestone, or at one its project does not own.
+  if (milestoneId) {
+    const milestone = await prisma.milestone.findUnique({
+      where: { id: milestoneId },
+      select: { projectId: true, project: { select: { workspaceId: true } } },
+    });
+    if (!milestone || milestone.project.workspaceId !== input.workspaceId) {
+      return { error: "That milestone is not in this workspace." };
+    }
+    if (projectId && milestone.projectId !== projectId) {
+      return { error: "That milestone belongs to another project." };
+    }
+  }
 
   // Reserve the next number atomically so keys never collide.
   const bumped = await prisma.workspace.update({
@@ -266,8 +285,8 @@ export async function createTicketAction(input: {
       estimateUnit: input.estimateUnit ?? "points",
       startDate: input.startDate ? new Date(input.startDate) : null,
       dueDate: slaDue ?? (input.dueDate ? new Date(input.dueDate) : null),
-      projectId: input.projectId ?? null,
-      milestoneId: input.milestoneId ?? null,
+      projectId,
+      milestoneId,
       assigneeId: input.assigneeId ?? null,
       reporterId: user.id,
       parentId: input.parentId ?? null,
@@ -287,7 +306,7 @@ export async function createTicketAction(input: {
       workspaceId: input.workspaceId,
       assigneeId: input.assigneeId,
       ticketIds: [ticket.id],
-      projectId: input.projectId ?? null,
+      projectId,
     });
   }
   return { ok: true, id: ticket.id, key: ticket.key };

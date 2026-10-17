@@ -161,6 +161,7 @@ export function TicketsWorkspace({
         startDate: String(form.get("startDate") ?? "") || null,
         dueDate: String(form.get("dueDate") ?? "") || null,
         projectId: String(form.get("projectId") ?? "") || null,
+        milestoneId: String(form.get("milestoneId") ?? "") || null,
         assigneeId: String(form.get("assigneeId") ?? "") || null,
       });
 

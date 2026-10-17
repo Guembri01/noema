@@ -19,7 +19,7 @@ type FormProps = ComponentProps<typeof TicketComposerForm>;
 const BASE_PROPS: FormProps = {
   onSubmit: () => {},
   pending: false,
-  projects: [{ id: "p1", name: "Apollo", icon: "🚀" }],
+  projects: [{ id: "p1", name: "Apollo", icon: "🚀", milestones: [{ id: "m1", name: "Launch" }] }],
   members: [{ id: "u1", name: "Ada" }],
   labels: [{ id: "l1", name: "Bug", color: "red", count: 2 }],
   locale: "en",
@@ -136,6 +136,19 @@ describe("TicketComposerForm render", () => {
     const html = render({ variant: "dialog" });
     expect(html).toContain('data-variant="dialog"');
     expect(html).toContain('data-testid="ticket-composer"');
+  });
+
+  it("renders the milestone picker with nothing preselected", () => {
+    const html = render();
+    expect(html).toContain('aria-label="Ticket milestone"');
+    expect(html).toMatch(/name="milestoneId" value=""/);
+    // The option labels themselves (a bare name inside a project, project-qualified
+    // while unscoped) come from `milestoneChoices`, pinned in src/lib/tickets.test.ts.
+  });
+
+  it("omits the milestone field when nothing owns a milestone", () => {
+    const html = render({ projects: [{ id: "p1", name: "Apollo", icon: null }] });
+    expect(html).not.toContain('name="milestoneId"');
   });
 
   it("renders an inline validation error per field", () => {

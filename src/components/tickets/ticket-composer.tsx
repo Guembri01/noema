@@ -9,7 +9,7 @@ import { Field, Input, Textarea } from "@/components/ui/input";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Stepper } from "@/components/ui/stepper";
 import { Tag } from "@/components/ui/tag";
-import { ESTIMATE_UNITS, TICKET_PRIORITIES, TICKET_STATUSES, TICKET_TYPES } from "@/lib/tickets";
+import { ESTIMATE_UNITS, TICKET_PRIORITIES, TICKET_STATUSES, TICKET_TYPES, milestoneAfterProjectChange, milestoneChoices } from "@/lib/tickets";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { LabelRow } from "./ticket-types";
@@ -103,7 +103,13 @@ export type TicketComposerVariant = "inline" | "dialog";
 export type TicketComposerProps = {
   onSubmit: (form: FormData) => void;
   pending: boolean;
-  projects: { id: string; name: string; icon: string | null }[];
+  /** The projects a ticket can be filed into, each with the milestones it owns. */
+  projects: {
+    id: string;
+    name: string;
+    icon: string | null;
+    milestones?: { id: string; name: string }[];
+  }[];
   members: { id: string; name: string }[];
   /** Workspace labels, offered as selectable `Tag` chips. */
   labels?: LabelRow[];
@@ -217,7 +223,23 @@ export function TicketComposerForm({
   const [dueDate, setDueDate] = useState("");
   const [estimate, setEstimate] = useState<number | null>(null);
   const [labelIds, setLabelIds] = useState<string[]>([]);
+  // Project and milestone are the one dependent pair in the form: a milestone
+  // belongs to a project, so the picker follows the project above it and the
+  // milestone is dropped when the new project does not own it.
+  const [projectId, setProjectId] = useState("");
+  const [milestoneId, setMilestoneId] = useState("");
   const [errors, setErrors] = useState<TicketDraftErrors>(defaultErrors ?? {});
+
+  const milestoneOptions: SelectOption[] = milestoneChoices(projects, projectId || null).map(
+    (choice) => ({ value: choice.id, label: choice.label }),
+  );
+
+  const chooseProject = (value: string) => {
+    setProjectId(value);
+    // `milestoneAfterProjectChange` owns the rule: keep the milestone only when the
+    // new project offers it, otherwise clear the field entirely.
+    setMilestoneId(milestoneAfterProjectChange(milestoneId || null, milestoneChoices(projects, value || null)) ?? "");
+  };
 
   const clearError = (key: keyof TicketDraftErrors) =>
     setErrors((previous) => (previous[key] ? { ...previous, [key]: undefined } : previous));
@@ -371,7 +393,7 @@ export function TicketComposerForm({
       <ControlField label={t(locale, "ticketProjectAria")}>
         <Select
           name="projectId"
-          defaultValue=""
+          value={projectId}
           options={projects.map((project) => ({
             value: project.id,
             label: project.name,
@@ -380,8 +402,25 @@ export function TicketComposerForm({
           placeholder={t(locale, "noProject")}
           disabled={pending}
           aria-label={t(locale, "ticketProjectAria")}
+          onChange={chooseProject}
         />
       </ControlField>
+
+      {/* Only when there is something to pick: an empty milestone select on every
+          composer would be noise in a workspace that plans no milestones. */}
+      {milestoneOptions.length > 0 ? (
+        <ControlField label={t(locale, "milestoneWord")}>
+          <Select
+            name="milestoneId"
+            value={milestoneId}
+            options={milestoneOptions}
+            placeholder={t(locale, "noMilestone")}
+            disabled={pending}
+            aria-label={t(locale, "ticketMilestoneAria")}
+            onChange={setMilestoneId}
+          />
+        </ControlField>
+      ) : null}
 
       <ControlField label={t(locale, "ticketAssigneeAria")}>
         <Select
