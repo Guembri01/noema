@@ -75,7 +75,19 @@ const writes = () => [
 beforeEach(() => {
   vi.clearAllMocks();
   h.requireUser.mockResolvedValue(INVITEE);
-  h.inviteFindUnique.mockResolvedValue(inviteFixture());
+  // The mock honours the query's `select`: the redemption reads the
+  // invitation's **sender**, so a query that stops asking for it must fail
+  // the test rather than pass on a fixture that always carries it.
+  h.inviteFindUnique.mockImplementation(async (args: { select?: Record<string, boolean> }) => {
+    const row = inviteFixture();
+    const select = args?.select;
+    if (!select) return row;
+    const picked: Record<string, unknown> = {};
+    for (const [key, wanted] of Object.entries(select)) {
+      if (wanted) picked[key] = (row as Record<string, unknown>)[key];
+    }
+    return picked;
+  });
   h.inviteUpdate.mockResolvedValue({ id: "inv-1" });
   // The sender's access: a member row with the admin role.
   h.memberFindUnique.mockResolvedValue({ role: "ADMIN" });
