@@ -13,15 +13,23 @@
 // This gate checks the write paths:
 //
 //   1. Every write of a `Page.parentId` must carry the value that
-//      `assertScopedParent()` proved — or be listed in the ALLOW_LIST below
-//      with the reason why the workspace equality holds by construction.
+//      `assertScopedParent()` proved — or be listed in the ALLOW_LIST below.
+//      An entry of that list is **not** a name that is trusted: it names the
+//      **value** that is written **and** the **context** that makes it safe
+//      (its `proof` — the authorization the entry relies on). The gate
+//      checks that the proof is still there, so an entry whose context is
+//      gone stops releasing its write.
 //   2. The value that is written may never be the raw request value
 //      (`input.parentId`, `body.parentId`, …): the checked one is the only
 //      one that is known to live in the caller's workspace. That holds for
 //      the value as it is written **and** for the local it comes from: a
 //      local that mixes the raw value into the checked one
 //      (`const parentId = input.parentId ?? checked.parentId`) carries the
-//      raw value, whatever its name says.
+//      raw value, whatever its name says. The taint is **transitive**: a
+//      local that is derived from a tainted local is tainted as well, and a
+//      read of `.parentId` from a name whose origin the gate cannot see (a
+//      parameter, a module-level name) is a raw value, whatever the name
+//      of that receiver is.
 //
 // It is a **safety net over the tests**, not a proof. What it sees:
 //
@@ -45,20 +53,26 @@
 // measures one. `scripts/check-parent-scope.test.mjs` pins the shapes that
 // are closed, so a hole cannot re-open unnoticed.
 //
+// The allow-list below is **precise**: every entry names the value it
+// releases **and** the proof that makes that value safe, and the gate checks
+// that the proof is still there. Two of the holes of the name-based list are
+// closed by that — the callers of an allow-listed helper (the gate checks
+// that no caller hands in a raw parent) and the payload whose parent a
+// helper computes (a value the gate cannot attribute is no longer mistaken
+// for the checked one) — so the list of known holes below is shorter than
+// it was.
+//
 //   - a raw SQL write (`prisma.$executeRaw`); the repo has none,
 //   - a member assignment (`data.parentId = …`), which is not an object
 //     literal property,
-//   - a payload whose `parentId` is computed by a helper the gate does not
-//     follow (a value it cannot attribute to `assertScopedParent()` counts as
-//     unguarded, which is the safe direction),
-//   - the **callers** of an allow-listed helper: the gate matches a write by
-//     file, function and value, so a future caller that hands the helper a raw
-//     parent stays green (the helper itself is what rejects it),
 //   - a write through a **computed receiver** (`prisma["page"].create`),
 //     which the gate does not recognise as a page write at all,
 //   - a payload that reaches the page through a spread of a value whose
 //     contents the gate cannot see (`data: { ...payload }` with `payload`
-//     coming in as a parameter).
+//     coming in as a parameter),
+//   - the **proof** of an allow-list entry is matched as **text**: the gate
+//     sees that the named authorization is called, not that it still checks
+//     the workspace.
 //
 // The gate reads the source statically; it needs no database, no build and no
 // running server. It is the mechanical counterpart of the tests in
@@ -71,15 +85,32 @@ import { join, relative } from "node:path";
 
 /**
  * The write paths where the parent and the row provably share one workspace
- * without a second lookup. Every entry names the file, the function, the
- * written value **and** the reason — the gate exists because a comment alone
- * was not enough, so an entry without a reason is a bug in the gate.
+ * without a second lookup.
+ *
+ * Every entry names the file, the function, the written **value** **and** the
+ * **proof** that makes the value safe — the authorization the entry relies on.
+ * The gate exists because a comment alone was not enough, so an entry
+ * without a reason is a bug in the gate; and because a *name* alone was not
+ * enough either, the gate checks the proof: an entry whose proof is gone
+ * stops releasing its write, and an entry whose value is no longer a proved
+ * one stops releasing it as well.
+ *
+ *   - `proof`: the snippet that has to be in the function (or, with
+ *     `scope: "file"`, in the file) for the entry to hold.
+ *   - `scope`: where the proof is looked for — the function (default) or the
+ *     whole file, for the two entries whose proof is in the caller.
+ *   - `vouches`: the entry vouches that the value it releases is a raw read
+ *     whose safety is the proof's business — the gate cannot see through the
+ *     call that hands the value in.
+ *   - `callers`: `"checked"` — every call of the function in the file must
+ *     hand in no raw parent.
  */
 const ALLOW_LIST = [
   {
     file: "src/server/actions/database.ts",
     fn: "createRowAction",
     value: "databasePageId",
+    proof: ["authorizeDatabase(databasePageId)"],
     reason:
       "the parent is the database page `authorizeDatabase` just checked, and the row is written into that very page's workspace",
   },
@@ -87,6 +118,7 @@ const ALLOW_LIST = [
     file: "src/server/actions/database.ts",
     fn: "duplicateDatabaseAction",
     value: "newPageId",
+    proof: ["id: newPageId, workspaceId: auth.page.workspaceId"],
     reason:
       "the parent is the clone's own database page, created in this same transaction with the same workspace id",
   },
@@ -94,30 +126,35 @@ const ALLOW_LIST = [
     file: "src/server/actions/database.ts",
     fn: "createRowFromTemplateAction",
     value: "databasePageId",
+    proof: ["authorizeDatabase(databasePageId)"],
     reason: "the parent is the authorized database the row template belongs to",
   },
   {
     file: "src/server/actions/database.ts",
     fn: "importCsvAction",
     value: "databasePageId",
+    proof: ["authorizeDatabase(databasePageId)"],
     reason: "the parent is the database the caller authorized",
   },
   {
     file: "src/server/actions/pages.ts",
     fn: "seedDatabaseStructure",
     value: "databasePageId",
+    proof: ["id: databasePageId"],
     reason: "the parent is the database page the owner was read from",
   },
   {
     file: "src/server/actions/home-templates.ts",
     fn: "createGalleryTemplateAction",
     value: "database.id",
+    proof: ["const database = await prisma.page.create", "workspaceId: input.workspaceId"],
     reason: "the parent is the database page this action just created in the same workspace",
   },
   {
     file: "src/server/actions/home-templates.ts",
     fn: "instantiateWorkspaceTemplateAction",
     value: "database.id",
+    proof: ["database.workspaceId !== input.workspaceId"],
     reason:
       "the parent is the template's database page, whose workspace was checked against the request workspace",
   },
@@ -125,12 +162,17 @@ const ALLOW_LIST = [
     file: "src/server/actions/import.ts",
     fn: "importTrelloAction",
     value: "database.id",
+    proof: ["const database = await tx.page.create", "workspaceId: input.workspaceId"],
     reason: "the parent is the database page this action just created in the same transaction",
   },
   {
     file: "src/server/actions/import-formats.ts",
     fn: "createPage",
     value: "input.parentId",
+    proof: ["assertScopedParent({ workspaceId, parentId: input.parentId })"],
+    scope: "file",
+    vouches: true,
+    callers: "checked",
     reason:
       "the importers resolve the parent with `assertScopedParent` before they call this helper — the value handed in is the checked one",
   },
@@ -138,6 +180,10 @@ const ALLOW_LIST = [
     file: "src/server/actions/move-workspace.ts",
     fn: "toPageCreateData",
     value: 'typeof page.parentId === "string" && page.parentId.length > 0 ? page.parentId : null',
+    proof: ["validateMove(plan)"],
+    scope: "file",
+    vouches: true,
+    callers: "checked",
     reason:
       "the move planner remaps the parent into the moved set (or drops it to null); `validateMove` rejects an orphaned parent",
   },
@@ -145,6 +191,7 @@ const ALLOW_LIST = [
     file: "src/app/api/cron/templates/route.ts",
     fn: "POST",
     value: "template.databasePageId",
+    proof: ["id: template.databasePageId", "workspaceId: database.workspaceId"],
     reason: "the parent is the template's own database page, read by id in the same request",
   },
 ];
@@ -168,9 +215,69 @@ const READ_KEYS = new Set([
 const TYPE_VALUE =
   /^(string|number|boolean|Date|undefined|void|bigint|symbol|unknown|any|never|object)\b/;
 
-/** A parent id taken straight from the request — never the checked value. */
-const RAW_REQUEST_VALUE =
-  /\b(input|body|args|params|payload|request|req|formData|form)\s*\.\s*parentId\b/;
+/**
+ * A read of the `parentId` property — the value of the receiver it is read
+ * from is the parent that is written.
+ */
+const PARENT_READ = /([A-Za-z0-9_$]+(?:\s*\.\s*[A-Za-z0-9_$]+)*)\s*\.\s*parentId\b/g;
+
+/**
+ * Words that are never the name of a local — they are keywords, literals or
+ * the words of the language, not a name the gate can follow.
+ */
+const RESERVED = new Set([
+  "as",
+  "await",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "declare",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "from",
+  "function",
+  "if",
+  "implements",
+  "import",
+  "in",
+  "infer",
+  "instanceof",
+  "interface",
+  "keyof",
+  "let",
+  "namespace",
+  "new",
+  "null",
+  "of",
+  "package",
+  "readonly",
+  "return",
+  "satisfies",
+  "static",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "type",
+  "typeof",
+  "undefined",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+]);
 
 const PAGE_WRITE = /\bpage\.(create|createMany|update|updateMany|upsert)$/;
 const PRISMA_PAGE_INPUT = /Prisma\.Page(?:Unchecked)?(?:Create|Update)(?:Many)?Input/;
@@ -584,74 +691,325 @@ function initializer(masked, start) {
   return masked.slice(start);
 }
 
+/* ------------------------------------------------------------------- the scope */
+
+/** What a local holds: the checked parent id, a raw one, or nothing. */
+const PROVED = "proved";
+const TAINTED = "tainted";
+const UNKNOWN = "unknown";
+
 /**
- * The names that carry the parent the helper proved: the helper's own result
- * field and every local that was assigned from it — and, separately, the
- * locals whose assignment carries the **raw** request value.
- *
- * The two are different things. `const parentId = checked.parentId` carries
- * the proved value; `const parentId = input.parentId ?? checked.parentId`
- * carries the raw one — the name is the same, the value is not. A local that
- * mentions the raw request value is therefore **tainted**: it must never be
- * mistaken for the checked one, or the gate would call a raw write
- * "guarded".
+ * The bindings of a destructuring pattern — `const { parentId: raw } = input`
+ * binds `raw` to `input.parentId`.
  */
-function checkedNames(body) {
-  const names = new Set();
-  const tainted = new Set();
-  const call = new RegExp(
-    `(?:const|let|var)\\s+([A-Za-z0-9_$]+)\\s*=\\s*await\\s*${HELPER}\\(`,
-    "g",
-  );
-  let match;
-  while ((match = call.exec(body)) !== null) {
-    const result = match[1];
-    names.add(`${result}.parentId`);
-    const field = new RegExp(`\\b${result}\\.parentId\\b`);
-    const helperCall = new RegExp(`await\\s+${HELPER}\\(`);
-    // Every local of the function — the declaration is read, not guessed.
-    const local = /(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*=\s*/g;
-    let found;
-    while ((found = local.exec(body)) !== null) {
-      const name = found[1];
-      const init = initializer(body, found.index + found[0].length);
-      // The result of the helper *takes* the raw request value as its
-      // argument — it is the proved value, so it is never tainted by it.
-      if (helperCall.test(init)) continue;
-      if (RAW_REQUEST_VALUE.test(init)) {
-        tainted.add(name);
-        continue;
-      }
-      if (field.test(init)) names.add(name);
+function parsePattern(pattern) {
+  const bindings = [];
+  const inner = pattern.trim();
+  if (!inner.startsWith("{")) return bindings;
+  for (const part of inner.slice(1, -1).split(",")) {
+    const piece = part.trim();
+    if (!piece) continue;
+    const colon = piece.indexOf(":");
+    if (colon >= 0) {
+      const key = piece.slice(0, colon).trim();
+      const target = piece.slice(colon + 1).split("=")[0].trim();
+      if (target) bindings.push({ name: target, key });
+      continue;
     }
+    const equals = piece.indexOf("=");
+    const name = (equals >= 0 ? piece.slice(0, equals) : piece).trim();
+    if (name) bindings.push({ name, key: name });
   }
-  return { names, tainted };
+  return bindings;
 }
 
-/** Whether the expression mentions one of the checked names. */
-function mentionsChecked(value, names) {
-  for (const name of names) {
-    // A plain name only counts when it stands on its own — `input.parentId`
-    // is the request value, not the checked one.
-    const token = name.includes(".") ? name.replace(".", "\\.") : name;
-    const pattern = name.includes(".")
-      ? new RegExp(`\\b${token}\\b`)
-      : new RegExp(`(?<![.\\w$])${token}\\b`);
-    if (pattern.test(value)) return true;
+/**
+ * The destructuring declarations of a body: where they are and what they bind.
+ */
+function destructurings(body) {
+  const found = [];
+  const pattern = /(?:const|let|var)\s*(\{[^}]*\}|\[[^\]]*\])\s*=/g;
+  let match;
+  while ((match = pattern.exec(body)) !== null) {
+    found.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      bindings: parsePattern(match[1]),
+    });
+  }
+  return found;
+}
+
+/**
+ * The names a body declares — the locals whose origin the gate can see. A
+ * name that is **not** declared here (a parameter, a module-level name) has
+ * an origin the gate cannot see: a read of `.parentId` from such a name is a
+ * raw value, because nobody can show where it came from.
+ */
+function declaredNames(body) {
+  const names = new Set();
+  const declaration = /(?:const|let|var)\s+([A-Za-z0-9_$]+)\b/g;
+  let match;
+  while ((match = declaration.exec(body)) !== null) names.add(match[1]);
+  const loop = /for\s*\(\s*(?:const|let|var)\s+([A-Za-z0-9_$]+)\b/g;
+  while ((match = loop.exec(body)) !== null) names.add(match[1]);
+  for (const entry of destructurings(body)) {
+    for (const binding of entry.bindings) names.add(binding.name);
+  }
+  return names;
+}
+
+/**
+ * The assignments of a body, in the order they happen: `const x = …`, `x = …`
+ * and the destructuring forms. Each event carries the value it assigns — for
+ * a destructuring binding, the property it reads.
+ */
+function assignments(body) {
+  const events = [];
+  const destructured = destructurings(body);
+
+  // A declaration with a type annotation (`const x: string | null = …`) is no
+  // plain assignment — the pattern below would stop at the colon.
+  const annotated = /(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*:[^=;]*=(?!=|>)/g;
+  let match;
+  while ((match = annotated.exec(body)) !== null) {
+    const start = match.index + match[0].length;
+    events.push({ index: start, name: match[1], init: initializer(body, start) });
+  }
+
+  const assign = /(?<![.\w$])([A-Za-z0-9_$]+)\s*=(?!=|>)/g;
+  while ((match = assign.exec(body)) !== null) {
+    const name = match[1];
+    if (RESERVED.has(name)) continue;
+    if (destructured.some((entry) => match.index >= entry.start && match.index < entry.end)) {
+      continue;
+    }
+    const start = match.index + match[0].length;
+    events.push({ index: start, name, init: initializer(body, start) });
+  }
+
+  for (const entry of destructured) {
+    const start = entry.end;
+    const init = initializer(body, start);
+    // `const { parentId } = await assertScopedParent(…)` takes the checked
+    // value out of the helper's result — the binding holds it.
+    const helper = new RegExp(`^\\s*await\\s+${HELPER}\\s*\\(`).test(init);
+    for (const binding of entry.bindings) {
+      events.push({
+        index: start,
+        name: binding.name,
+        init: `${init}.${binding.key}`,
+        proved: helper,
+      });
+    }
+  }
+
+  events.sort((a, b) => a.index - b.index);
+  for (const event of events) {
+    event.kind = null;
+    event.direct = false;
+    event.from = null;
+  }
+  return events;
+}
+
+/**
+ * The state of the locals of a function: the names that carry the parent the
+ * helper proved, the names whose `.parentId` **is** the proved value, and the
+ * names that carry a **raw** parent.
+ */
+function stateOf(events) {
+  const proved = new Set();
+  const receivers = new Set();
+  const tainted = new Map();
+  const unknown = new Set();
+  for (const event of events) {
+    if (event.kind === "helper") {
+      receivers.add(event.name);
+      continue;
+    }
+    if (event.kind === TAINTED) {
+      tainted.set(event.name, { direct: event.direct, from: event.from });
+      continue;
+    }
+    if (event.kind === UNKNOWN) {
+      unknown.add(event.name);
+      continue;
+    }
+    if (event.kind === PROVED) proved.add(event.name);
+  }
+  for (const name of unknown) proved.delete(name);
+  for (const name of tainted.keys()) proved.delete(name);
+  return { proved, receivers, tainted };
+}
+
+/**
+ * The receivers of the `.parentId` reads in an expression.
+ */
+function parentReceivers(value) {
+  return [...value.matchAll(PARENT_READ)].map((match) => match[1].replace(/\s+/g, ""));
+}
+
+/**
+ * Whether a read of `.parentId` from the given receiver is a raw value.
+ *
+ * A receiver whose origin the gate cannot see — a parameter, a module-level
+ * name — is raw: nobody can show where the value came from. A receiver that
+ * is a local of the function is not raw on its own: the gate sees where that
+ * local comes from, and the taint follows it there. The helper's own result
+ * is the proved value.
+ */
+function rawReceiver(receiver, state, locals) {
+  if (receiver.includes(".")) return true;
+  if (state.receivers.has(receiver)) return false;
+  if (state.tainted.has(receiver)) return true;
+  if (locals.has(receiver)) return false;
+  return true;
+}
+
+/**
+ * The names an expression mentions on its own — a property name is not a
+ * name of its own (`checked.parentId` mentions `checked`, not `parentId`).
+ */
+function ownNames(value) {
+  return [...value.matchAll(/(?<![.\w$])([A-Za-z0-9_$]+)/g)].map((match) => match[1]);
+}
+
+/**
+ * Whether the expression is a call — the value it holds is the **result** of
+ * that call, not its arguments. A helper that returns a page id hands in no
+ * raw parent, whatever its arguments mention.
+ */
+function isCall(value) {
+  return /^\s*(?:await\s+)?[A-Za-z0-9_$.]+\s*\(/.test(value);
+}
+
+/**
+ * Whether the expression mentions a name whose origin the gate cannot see.
+ */
+function unprovedName(value, state, locals) {
+  if (isCall(value)) return false;
+  for (const name of ownNames(value)) {
+    if (RESERVED.has(name)) continue;
+    if (locals.has(name)) continue;
+    if (state.proved.has(name)) continue;
+    if (state.receivers.has(name)) continue;
+    if (state.tainted.has(name)) continue;
+    return true;
   }
   return false;
 }
 
 /**
- * The tainted local the written value mentions — the raw request value hides
- * in it. A plain name only counts when it stands on its own: `checked.parentId`
- * is the checked field, `parentId` is the local.
+ * The tainted local the expression mentions — the raw value hides in it. A
+ * plain name only counts when it stands on its own: `checked.parentId` is the
+ * checked field, `parentId` is the local.
  */
 function taintedName(value, tainted) {
-  for (const name of tainted) {
+  for (const name of tainted.keys()) {
     if (new RegExp(`(?<![.\\w$])${name}\\b`).test(value)) return name;
   }
   return null;
+}
+
+/** Whether the expression mentions one of the proved names. */
+function mentionsProved(value, state) {
+  for (const name of state.proved) {
+    // A plain name only counts when it stands on its own — `input.parentId`
+    // is the request value, not the checked one.
+    if (new RegExp(`(?<![.\\w$])${name}\\b`).test(value)) return true;
+  }
+  for (const name of state.receivers) {
+    if (new RegExp(`\\b${name}\\s*\\.\\s*parentId\\b`).test(value)) return true;
+  }
+  return false;
+}
+
+/**
+ * What an assignment hands to its local.
+ *
+ * The taint is **transitive**: a local that is derived from a tainted local
+ * carries the raw value as well, and the derivation does not have to be a
+ * `.parentId` read (`const parentId = raw ?? checked.parentId`).
+ */
+function classify(init, state, locals) {
+  // A call hands in the result of that call — the gate cannot attribute it to
+  // the proved value, whatever the arguments mention. A local that is handed
+  // such a value loses the state it had: the parent it carried is not the
+  // one that is written any more.
+  if (isCall(init)) return { kind: UNKNOWN, direct: false, from: null };
+  const from = taintedName(init, state.tainted);
+  if (from) return { kind: TAINTED, direct: false, from };
+  for (const receiver of parentReceivers(init)) {
+    if (rawReceiver(receiver, state, locals)) {
+      return { kind: TAINTED, direct: true, from: null };
+    }
+  }
+  if (unprovedName(init, state, locals)) return { kind: UNKNOWN, direct: false, from: null };
+  if (mentionsProved(init, state)) return { kind: PROVED, direct: false, from: null };
+  return { kind: null, direct: false, from: null };
+}
+
+/**
+ * The scope of a function: the locals it declares and what they hold.
+ *
+ * The classification runs until it settles, because the taint is transitive:
+ * a local that is derived from a tainted local is tainted as well, however
+ * many steps away the raw value is.
+ */
+function analyseScope(body) {
+  const locals = declaredNames(body);
+  const events = assignments(body);
+  const helper = new RegExp(`^\\s*await\\s+${HELPER}\\s*\\(`);
+  for (const event of events) {
+    if (event.proved) event.kind = PROVED;
+    else if (helper.test(event.init)) event.kind = "helper";
+  }
+  for (let round = 0; round < 20; round += 1) {
+    let changed = false;
+    const state = stateOf(events);
+    for (const event of events) {
+      if (event.kind === "helper" || event.proved) continue;
+      const verdict = classify(event.init, state, locals);
+      if (
+        verdict.kind !== event.kind ||
+        verdict.direct !== event.direct ||
+        verdict.from !== event.from
+      ) {
+        event.kind = verdict.kind;
+        event.direct = verdict.direct;
+        event.from = verdict.from;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return { locals, state: stateOf(events) };
+}
+
+/**
+ * What the written value is: a raw parent, the checked one, or a value the
+ * gate cannot attribute.
+ */
+function valueVerdict(value, state, locals) {
+  const from = taintedName(value, state.tainted);
+  if (from) {
+    const taint = state.tainted.get(from);
+    const hint = taint.direct
+      ? `the local \`${from}\` is assigned from the raw request value`
+      : `the local \`${from}\` carries the raw request value from \`${taint.from}\``;
+    return { verdict: "raw", hint: ` (${hint})` };
+  }
+  for (const receiver of parentReceivers(value)) {
+    if (rawReceiver(receiver, state, locals)) {
+      return {
+        verdict: "raw",
+        hint: ` (the value is read from \`${receiver}\`, whose origin the gate cannot see)`,
+      };
+    }
+  }
+  if (mentionsProved(value, state)) return { verdict: "guarded", hint: "" };
+  return { verdict: "unguarded", hint: "" };
 }
 
 /**
@@ -743,12 +1101,14 @@ const problems = [];
 const checked = [];
 const usedEntries = new Set();
 const root = "src";
+const scanned = [];
 
 for (const path of collectFiles(root)) {
   const source = readFileSync(path, "utf8");
   const masked = mask(source);
   const functions = namedFunctions(masked);
   const file = relative(".", path);
+  scanned.push({ file, source, masked, functions });
 
   // The candidates: `parentId: …` (key/value), `parentId,` (the shorthand)
   // and `parent: { connect: { id } }` (the Prisma relation form).
@@ -817,46 +1177,59 @@ for (const path of collectFiles(root)) {
     const fn = enclosingFunction(functions, index);
     const fnName = fn ? fn.name : "<module scope>";
     const body = fn ? masked.slice(fn.start, fn.end) : masked;
-    const { names, tainted } = checkedNames(body);
+    const scope = analyseScope(body);
 
     const entry = ALLOW_LIST.find(
       (item) => item.file === file && item.fn === fnName && item.value === value,
     );
-    // A local that carries the raw request value is the raw value, whatever
-    // its name says (`const parentId = input.parentId ?? checked.parentId`).
-    const taintedLocal = taintedName(value, tainted);
-    let verdict;
-    let raw = false;
+    // The written value is the raw request value whenever it carries one —
+    // directly (`input.parentId`) or through a local that carries it
+    // (`const parentId = input.parentId ?? checked.parentId`).
+    const verdict = valueVerdict(value, scope.state, scope.locals);
+    let kind = verdict.verdict;
+    let reported = false;
+
     if (entry) {
       usedEntries.add(entry);
-      verdict = "allow-listed";
+      // The entry hangs on the value **and** on the context that makes it
+      // safe: the proof has to be there, or the entry releases nothing.
+      const missing = missingProof(entry, fn, masked);
+      if (missing) {
+        problems.push({
+          file,
+          line: lineOf(source, index),
+          text:
+            `the allow-list entry ${fnName}() requires \`${missing}\` in the ` +
+            `${entry.scope === "file" ? "file" : "function"} — the parent is no longer proved there`,
+        });
+        kind = "unguarded";
+        reported = true;
+      } else if (kind === "raw" && !entry.vouches) {
+        problems.push({
+          file,
+          line: lineOf(source, index),
+          text:
+            `the allow-list entry ${fnName}() does not hold any more — ` +
+            `\`${value}\` is not a proved value${verdict.hint}`,
+        });
+        kind = "unguarded";
+        reported = true;
+      } else {
+        kind = "allow-listed";
+      }
     } else if (value === "null") {
-      verdict = "root";
-    } else if (RAW_REQUEST_VALUE.test(value)) {
-      // A raw request value in the expression — even next to a checked one
-      // (`parent.parentId ?? input.parentId`) — is a raw request value.
-      verdict = "unguarded";
-      raw = true;
-    } else if (taintedLocal) {
-      verdict = "unguarded";
-      raw = true;
-    } else if (names.size > 0 && mentionsChecked(value, names)) {
-      verdict = "guarded";
-    } else {
-      verdict = "unguarded";
+      kind = "root";
     }
 
-    checked.push({ file, line: lineOf(source, index), fn: fnName, value, verdict });
+    checked.push({ file, line: lineOf(source, index), fn: fnName, value, verdict: kind });
 
-    if (verdict !== "unguarded") continue;
-    if (raw) {
-      const hint = taintedLocal
-        ? ` (the local \`${taintedLocal}\` is assigned from the raw request value)`
-        : "";
+    if (kind === "guarded" || kind === "allow-listed" || kind === "root") continue;
+    if (reported) continue;
+    if (kind === "raw") {
       problems.push({
         file,
         line: lineOf(source, index),
-        text: `parentId: ${value} — write the value ${HELPER}() returned, not the raw request value${hint}`,
+        text: `parentId: ${value} — write the value ${HELPER}() returned, not the raw request value${verdict.hint}`,
       });
       continue;
     }
@@ -882,6 +1255,61 @@ function inScope(entry, root) {
   return existsSync(join(root, inside));
 }
 
+/**
+ * The text a proof is matched against: the whitespace is collapsed, so a
+ * proof survives a reformat of the code around it.
+ */
+function normalize(text) {
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/\s*([,)\]}])/g, "$1")
+    .replace(/([([])\s*/g, "$1")
+    .replace(/,\s*([)\]}])/g, "$1");
+}
+
+/**
+ * The proof an allow-list entry needs — the snippet that has to be there for
+ * the entry to hold. The snippet is matched as **text**, with the whitespace
+ * collapsed on both sides.
+ */
+function missingProof(entry, fn, masked) {
+  const scope = entry.scope === "file" || !fn ? masked : masked.slice(fn.start, fn.end);
+  const text = normalize(scope);
+  for (const snippet of entry.proof) {
+    if (!text.includes(normalize(snippet))) return snippet;
+  }
+  return null;
+}
+
+/**
+ * The calls of an allow-listed helper that hand in a raw parent. The callers
+ * are what prove the value the helper writes, so a caller that hands in the
+ * raw request value has to turn the gate red.
+ */
+function rawCallSites(masked, functions, fnName) {
+  const sites = [];
+  const pattern = new RegExp(`\\b${fnName}\\s*\\(`, "g");
+  let match;
+  while ((match = pattern.exec(masked)) !== null) {
+    const before = masked.slice(Math.max(0, match.index - 40), match.index);
+    if (/\bfunction\s*$/.test(before)) continue; // the declaration itself
+    const paren = masked.indexOf("(", match.index);
+    const end = matchingClose(masked, paren);
+    if (end < 0) continue;
+    const argument = masked.slice(paren + 1, end);
+    const fn = enclosingFunction(functions, match.index);
+    const body = fn ? masked.slice(fn.start, fn.end) : masked;
+    const scope = analyseScope(body);
+    for (const receiver of parentReceivers(argument)) {
+      if (rawReceiver(receiver, scope.state, scope.locals)) {
+        sites.push({ index: match.index, receiver });
+        break;
+      }
+    }
+  }
+  return sites;
+}
+
 for (const entry of ALLOW_LIST) {
   if (!inScope(entry, root)) continue;
   if (!usedEntries.has(entry)) {
@@ -897,6 +1325,29 @@ for (const entry of ALLOW_LIST) {
       line: 0,
       text: `allow-list entry ${entry.fn}() has no reason — every entry must say why the workspace equality holds`,
     });
+  }
+  if (!entry.proof || entry.proof.length === 0) {
+    problems.push({
+      file: entry.file,
+      line: 0,
+      text: `allow-list entry ${entry.fn}() has no proof — every entry must name the context that makes the value safe`,
+    });
+  }
+}
+
+// The allow-listed helpers: every caller must hand in no raw parent.
+for (const entry of ALLOW_LIST) {
+  if (entry.callers !== "checked") continue;
+  for (const file of scanned) {
+    for (const site of rawCallSites(file.masked, file.functions, entry.fn)) {
+      problems.push({
+        file: file.file,
+        line: lineOf(file.source, site.index),
+        text:
+          `the allow-list entry ${entry.fn}() is handed a raw parent ` +
+          `(\`${site.receiver}.parentId\`) — the callers must pass the checked value`,
+      });
+    }
   }
 }
 

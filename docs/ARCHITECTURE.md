@@ -98,24 +98,34 @@ page of a different workspace, which keeps it out of the foreign workspace's
 database view and CSV/JSON export, and keeps Postgres' `onDelete: Cascade` from
 deleting it together with a foreign parent. Every write path that stores a
 `Page.parentId` goes through that helper — or holds the workspace equality by
-construction and says so, with a reason, in the gate's allow-list; the read
-side filters a database's rows by the database's workspace (eight read sites).
+construction and says so, with a reason **and with the proof it relies on**, in
+the gate's allow-list; the read side filters a database's rows by the database's
+workspace (eight read sites).
 The rule is **checked mechanically where the
 gate can see it** by
 [`scripts/check-parent-scope.mjs`](../scripts/check-parent-scope.mjs): the gate
 finds the `Page.parentId` writes in `src/` statically — 31 of them, the same
 31 an independent TypeScript-parser inventory finds — and fails when one of
 them stores a value the helper has not proved, without a reasoned allow-list
-entry. It is a safety net over the tests, not a proof: a write it cannot
-recognise is not covered by it. The holes that are known today are listed in
-the gate's own docstring — a raw SQL write, a write outside `src/`, a member
-assignment (`data.parentId = …`), a payload the gate does not follow, the
-callers of an allow-listed helper, a computed receiver (`prisma["page"]`) and
-a payload that arrives through a spread the gate cannot read. That list is a
-safety net, not an enumeration: a new shape of write can open a new hole, and
-the list only grows when somebody measures one. The shapes that *are* closed
-are pinned by the gate's own regression test
-([`scripts/check-parent-scope.test.mjs`](../scripts/check-parent-scope.test.mjs)).
+entry. The allow-list is **precise**: every entry names the value it releases
+**and** the proof that makes that value safe (the authorization the entry
+relies on), and the gate checks that the proof is still there — an entry whose
+context is gone releases nothing. It is a safety net over the tests, not a
+proof: a write it cannot recognise is not covered by it. The holes that are
+known today are listed in the gate's own docstring — a raw SQL write, a write
+outside `src/`, a member assignment (`data.parentId = …`), a computed receiver
+(`prisma["page"]`), a payload that arrives through a spread the gate cannot
+read, and a proof that is matched as text (the gate sees that the named
+authorization is called, not that it still checks the workspace). That list is
+a safety net, not an enumeration: a new shape of write can open a new hole,
+and the list only grows when somebody measures one. It is shorter than it
+was: the precise allow-list closed the two holes of the name-based list — the
+callers of an allow-listed helper (the gate checks that no caller hands in a
+raw parent) and the payload whose parent a helper computes (a value the gate
+cannot attribute is no longer mistaken for the checked one). The shapes that
+*are* closed are pinned by the gate's own regression test
+([`scripts/check-parent-scope.test.mjs`](../scripts/check-parent-scope.test.mjs)),
+which holds every allow-list entry to the one path it describes.
 
 ## Editor
 

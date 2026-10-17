@@ -705,65 +705,28 @@ What that means for an operator:
   `Page.parentId` writes in `src/` statically and fails when one of them
   stores a value the helper has not proved (the paths where the workspace
   equality holds *by construction* are listed there with their reason), and
-  `node scripts/check-parent-scope.mjs --list` shows every write it found. It
-  is a safety net over the tests, not a proof — a write it cannot recognise is
+  `node scripts/check-parent-scope.mjs --list` shows every write it found. The
+  allow-list of the gate is **precise**: every entry names the value it
+  releases **and** the proof that makes that value safe (the authorization the
+  entry relies on), and the gate checks that the proof is still there — an
+  entry whose context is gone releases nothing, so a path that loses its
+  authorization turns the gate red instead of staying green.
+  It is a safety net over the tests, not a proof — a write it cannot recognise is
   not covered by it. The holes that are known today are listed in the gate's
   own docstring (a raw SQL write, a write outside `src/`, a member assignment
-  such as `data.parentId = …`, a payload the gate does not follow, the callers
-  of an allow-listed helper, a computed receiver (`prisma["page"]`) and a
-  payload that arrives through a spread the gate cannot read); that list is a
+  such as `data.parentId = …`, a computed receiver (`prisma["page"]`), a
+  payload that arrives through a spread the gate cannot read, and a proof that
+  is matched as text — the gate sees that the named authorization is called,
+  not that it still checks the workspace); that list is a
   safety net, not an enumeration — a new shape of write can open a new hole,
-  and the list only grows when somebody measures one. The shapes that *are*
-  closed are pinned by the gate's own regression test
-  (`scripts/check-parent-scope.test.mjs`).
-- **What a refusal looks like:** the write is refused with `That parent page
-  does not exist in this workspace.` (HTTP 400 on the REST routes, an
-  `{error}` on the server actions). If a *legitimate* parent is refused, the
-  page it names is not in the workspace the write was scoped to — check the
-  ids, not the helper. A parent in the **trash** is refused as well: a page
-  under a trashed parent would be invisible in the tree and would be purged
-  with the parent's own trash.
-- **Old rows are not repaired by the deploy.** Pages that were linked across
-  workspaces before the check existed stay in the database; every read filters
-  rows by the workspace of the database they hang under — the database view, the
-  relation database, the CSV/JSON export (both the single database and the
-  workspace archive), the "Deleted rows" panel, the database duplicate (which
-  copies the rows **with their content**) and the two chat-context blocks that
-  are sent to the AI — so they no longer surface in the foreign workspace's
-  views — but the rows themselves are still there until someone moves or
-  deletes them.
-`Page.parentId` is a plain self-foreign key. The schema carries **no**
-composite constraint on `(parentId, workspaceId)`, and none is planned — the
-rule *"a `parentId` always points inside the same workspace"* is enforced in
-the code, not by Postgres.
-
-What that means for an operator:
-
-- **The database will happily store a cross-workspace parent.** No
-  `prisma db push` and no `prisma migrate` changes that, and the hardening
-  spec for this rule deliberately proposes no constraint — the check is
-  application-side.
-- **Every write path has to opt in.** The single gate is `assertScopedParent()`
-  in [`src/lib/page-parent.ts`](../src/lib/page-parent.ts): it loads the parent
-  **tenant-scoped** (`{ id, workspaceId, deletedAt: null }`), so a foreign parent
-  is never read and the refusal never names it. **That file is the place to pull
-  in when a new write path stores a `Page.parentId`** — a path that skips the
-  helper re-opens the hole. The rule is **checked mechanically where the gate
-  can see it**: `node scripts/check-parent-scope.mjs` finds the
-  `Page.parentId` writes in `src/` statically and fails when one of them
-  stores a value the helper has not proved (the paths where the workspace
-  equality holds *by construction* are listed there with their reason), and
-  `node scripts/check-parent-scope.mjs --list` shows every write it found. It
-  is a safety net over the tests, not a proof — a write it cannot recognise is
-  not covered by it. The holes that are known today are listed in the gate's
-  own docstring (a raw SQL write, a write outside `src/`, a member assignment
-  such as `data.parentId = …`, a payload the gate does not follow, the callers
-  of an allow-listed helper, a computed receiver (`prisma["page"]`) and a
-  payload that arrives through a spread the gate cannot read); that list is a
-  safety net, not an enumeration — a new shape of write can open a new hole,
-  and the list only grows when somebody measures one. The shapes that *are*
-  closed are pinned by the gate's own regression test
-  (`scripts/check-parent-scope.test.mjs`).
+  and the list only grows when somebody measures one. It is shorter than it
+  was: the precise allow-list closed the two holes of the name-based list —
+  the callers of an allow-listed helper (the gate checks that no caller hands
+  in a raw parent) and the payload whose parent a helper computes (a value
+  the gate cannot attribute is no longer mistaken for the checked one). The
+  shapes that *are* closed are pinned by the gate's own regression test
+  (`scripts/check-parent-scope.test.mjs`), which holds every allow-list entry
+  to the one path it describes.
 - **What a refusal looks like:** the write is refused with `That parent page
   does not exist in this workspace.` (HTTP 400 on the REST routes, an
   `{error}` on the server actions). If a *legitimate* parent is refused, the
@@ -832,6 +795,8 @@ accepted *in addition to* `CRON_SECRET` there, and nowhere else.
   routes' 12/min.
 - Rotation of `CRON_SECRET` changes the rate-limit key of the action surface
   (it is hashed into the key) — the new secret starts with a fresh budget.## 9. Incident quick reference
+
+## 9. Incident quick reference
 
 | Symptom | First checks |
 | --- | --- |
