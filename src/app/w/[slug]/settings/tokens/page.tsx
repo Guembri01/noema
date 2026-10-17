@@ -5,6 +5,7 @@ import { getWorkspaceAccess } from "@/lib/permissions";
 import { getWorkspaceBySlug } from "@/server/queries";
 import { listApiTokensAction } from "@/server/actions/api-tokens";
 import { ApiTokensPanel } from "@/components/api-tokens-panel";
+import { SettingsNav } from "../settings-nav";
 import { t } from "@/lib/i18n";
 
 export const metadata = { title: "API tokens" };
@@ -45,6 +46,8 @@ export default async function ApiTokensSettingsPage({
         Tokens authenticate the REST API as you. Each token carries its own
         scopes; revoke it here the moment it is no longer needed.
       </p>
+
+      <SettingsNav slug={workspace.slug} locale={locale} className="mb-10" />
 
       <ApiTokensPanel initialTokens={tokens} locale={locale} />
     </div>

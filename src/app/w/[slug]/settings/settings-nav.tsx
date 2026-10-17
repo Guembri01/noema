@@ -1,0 +1,139 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { t } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
+
+/**
+ * The one settings navigation.
+ *
+ * Every settings screen renders the same nav so the section list, ordering and
+ * rhythm never drift (docs/DESIGN_SYSTEM.md §4). The active section is marked
+ * with `aria-current="page"` (docs/TEST_PLAN.md C9), which is why this is a
+ * client component: it reads the live pathname.
+ *
+ * It lists the sections every member of a workspace can open. The manager-only
+ * audit log is linked from the Activity block on the settings index instead, so
+ * the nav never advertises a surface a non-manager would 404 on.
+ *
+ * The item list and the active test are pure functions so the mapping can be
+ * unit-tested without a browser.
+ */
+
+export type SettingsNavItem = {
+  href: string;
+  label: string;
+  description: string;
+  /** True for the settings index, whose href prefixes every other section. */
+  exact: boolean;
+};
+
+/** Canonical path for the settings index (`/w/[slug]/settings`). */
+export function settingsPath(slug: string): string {
+  return `/w/${slug}/settings`;
+}
+
+/** Canonical path for one settings section. */
+export function settingsSectionPath(slug: string, section: string): string {
+  return `${settingsPath(slug)}/${section}`;
+}
+
+/** Whether `pathname` is inside `href`; `exact` pins the index to itself. */
+export function isActiveSettingsPath(
+  pathname: string,
+  href: string,
+  exact = false,
+): boolean {
+  if (!href) return false;
+  return exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/** The sections of settings every member can reach, in render order. */
+export function settingsNavItems(slug: string, locale: string): SettingsNavItem[] {
+  return [
+    {
+      href: settingsPath(slug),
+      label: t(locale, "general"),
+      description: "This workspace's name, icon and your role.",
+      exact: true,
+    },
+    {
+      href: settingsSectionPath(slug, "notifications"),
+      label: t(locale, "notifications"),
+      description: "Choose which events reach you and how they are batched.",
+      exact: false,
+    },
+    {
+      href: settingsSectionPath(slug, "tokens"),
+      label: t(locale, "apiTokens"),
+      description: "Create and revoke scoped REST API tokens.",
+      exact: false,
+    },
+    {
+      href: settingsSectionPath(slug, "billing"),
+      label: "Plan & billing",
+      description: "The current plan, its limits and an upgrade preview.",
+      exact: false,
+    },
+    {
+      href: settingsSectionPath(slug, "prompts"),
+      label: "Prompt library",
+      description: "Reusable prompts with {{variable}} placeholders.",
+      exact: false,
+    },
+    {
+      href: settingsSectionPath(slug, "data"),
+      label: "Data & privacy",
+      description: "Export or erase your personal data (GDPR).",
+      exact: false,
+    },
+    {
+      href: settingsSectionPath(slug, "move"),
+      label: "Move pages",
+      description: "Move a page subtree into another workspace.",
+      exact: false,
+    },
+  ];
+}
+
+export function SettingsNav({
+  slug,
+  locale,
+  className,
+}: {
+  slug: string;
+  locale: string;
+  className?: string;
+}) {
+  const pathname = usePathname();
+  const items = settingsNavItems(slug, locale);
+
+  return (
+    <nav
+      aria-label={t(locale, "settings")}
+      data-testid="settings-nav"
+      className={cn("grid gap-2 sm:grid-cols-2", className)}
+    >
+      {items.map((item) => {
+        const active = isActiveSettingsPath(pathname, item.href, item.exact);
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            aria-current={active ? "page" : undefined}
+            className={cn(
+              "rounded-lg border px-4 py-3 text-sm u-colors focus-ring hover:bg-surface-2",
+              active
+                ? "border-border-strong bg-surface-2 text-fg"
+                : "border-border text-fg",
+            )}
+          >
+            {item.label}
+            <span className="mt-0.5 block text-xs text-muted">{item.description}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}

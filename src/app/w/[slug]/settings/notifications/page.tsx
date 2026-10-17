@@ -5,6 +5,7 @@ import { getWorkspaceAccess } from "@/lib/permissions";
 import { getWorkspaceBySlug } from "@/server/queries";
 import { getNotificationPrefs } from "@/server/actions/notifications";
 import { NotificationPreferencesForm } from "@/components/notification-preferences-form";
+import { SettingsNav } from "../settings-nav";
 import { t } from "@/lib/i18n";
 
 export const metadata = { title: "Notifications" };
@@ -45,6 +46,8 @@ export default async function NotificationSettingsPage({
         Choose which events reach you and how they are batched. These preferences
         apply to your account.
       </p>
+
+      <SettingsNav slug={workspace.slug} locale={locale} className="mb-2" />
 
       <NotificationPreferencesForm initialPrefs={prefs} locale={locale} />
     </div>
