@@ -148,7 +148,14 @@ export async function addCommentAction(input: {
           data: {
             userId: parent.authorId,
             type: "comment.reply",
-            payload: { pageId: parsed.data.pageId, commentId: comment.id },
+            // B136: the payload names the workspace, like the other two
+            // notification types do — without it the row cannot be attributed
+            // to a workspace at all.
+            payload: {
+              workspaceId: page.workspaceId,
+              pageId: parsed.data.pageId,
+              commentId: comment.id,
+            },
           },
         });
       }
@@ -173,7 +180,14 @@ export async function addCommentAction(input: {
         data: targets.map((target) => ({
           userId: target.userId,
           type: "page.mention",
-          payload: { pageId: parsed.data.pageId, commentId: comment.id },
+          // B136: the payload names the workspace, like the other two
+          // notification types do — without it the row cannot be attributed
+          // to a workspace at all.
+          payload: {
+            workspaceId: page.workspaceId,
+            pageId: parsed.data.pageId,
+            commentId: comment.id,
+          },
         })),
       });
     }
