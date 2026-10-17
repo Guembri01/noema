@@ -23,7 +23,17 @@ import {
   clientKeyFromHeaders,
 } from "@/lib/rate-limit";
 
+import { passwordStrategyEnabled } from "@/lib/auth-strategies";
+
 export type AuthState = { error?: string; requiresTwoFactor?: boolean };
+
+/**
+ * Shown when the deployment has switched the password strategy off
+ * (`AUTH_PASSWORD=disabled` or an `AUTH_STRATEGIES` allow-list without
+ * `password`). The same message is returned for every input, so it discloses
+ * nothing about the submitted account.
+ */
+const PASSWORD_DISABLED_ERROR = "Password sign-in is disabled on this deployment.";
 
 /* ------------------------------------------------------------------ *
  * B03 — the budgets and the account lock.
@@ -150,6 +160,13 @@ export async function signupAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
+  // The strategy gate comes first: with the password strategy disabled the
+  // deployment is single-sign-on only, so no local account may be created.
+  if (!passwordStrategyEnabled(process.env)) {
+    return { error: PASSWORD_DISABLED_ERROR };
+  }
+
+
   // B27 puts the password-strategy gate here — as the first statement of the
   // action, before a budget slot is spent. The place is kept for it; the gate
   // itself is not part of this merge.
@@ -218,6 +235,13 @@ export async function loginAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
+  // The strategy gate comes first: with the password strategy disabled the
+  // deployment is single-sign-on only, so no password may be accepted.
+  if (!passwordStrategyEnabled(process.env)) {
+    return { error: PASSWORD_DISABLED_ERROR };
+  }
+
+
   // B27 puts the password-strategy gate here — as the first statement of the
   // action, before a budget slot is spent. The place is kept for it; the gate
   // itself is not part of this merge.

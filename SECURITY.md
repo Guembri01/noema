@@ -73,6 +73,11 @@ Out of scope:
   already allow (a proxy or a tunnel). Server Actions refuse a mismatched
   `Origin`, and that is deliberate.
 - Set `CRON_SECRET` if you expose the cron route.
+- **Turn the local password sign-in off for an SSO-only deployment** — set
+  `AUTH_PASSWORD=disabled`, or drop `password` from the `AUTH_STRATEGIES`
+  allow-list. Both switches are enforced by the sign-in and sign-up actions
+  themselves, not by the sign-in page alone, so a direct POST cannot bypass
+  them.
 - Keep dependencies current — Dependabot opens grouped weekly updates.
 
 The sign-in, the sign-up and the 2FA check carry their own budgets (per client
