@@ -725,14 +725,30 @@ Source: [`src/app/api/ai/route.ts`](../src/app/api/ai/route.ts)
 { "mode": "ask" | "summarize" | "autofill",   // default "ask"
   "prompt": "…",      // ≤4000 chars, required for ask/autofill
   "context": "…",     // ≤8000 chars, required for summarize
-  "workspaceId": "…" } // optional: grounds "ask" with 5 workspace search hits
+  "maxTokens": 2000,  // optional, clamped to 64…8000
+  "workspaceId": "…" } // optional: a workspace id
 ```
 
 - Modes: `ask` (grounded Q&A), `summarize` (context → Markdown summary),
   `autofill` (single database cell value, temperature 0.1, ≤60 tokens).
+- The body is validated against a schema (`src/lib/validation.ts`): `mode` is
+  one of `ask` / `summarize` / `autofill`, `workspaceId` is a workspace id
+  (or absent / `null` for the environment configuration) and `maxTokens` an
+  integer. A body that does not fit is refused with **400**
+  `Invalid request body`; a body that fits but is longer than the caps above
+  is trimmed, not refused. The schema's own free-text bound sits far above
+  those caps (200 000 characters) on purpose: the route trims, so a long
+  editor selection must become an answer and not an error. The body is
+  buffered before the schema runs, so the bound is not a request-size limit.
+- `workspaceId` also selects the provider: the workspace's own endpoint and
+  API key are used **only** when the caller has access to that workspace.
+  Otherwise the environment configuration (`AI_API_KEY` / `AI_BASE_URL` /
+  `AI_MODEL`) applies, and the other workspace's provider is never read. The
+  same rule grounds "ask" in the workspace search (5 hits).
 - **200** `{"text":"…"}`
-- Errors: **400** `Invalid JSON body` / `prompt is required` /
-  `context is required to summarize` / `prompt is required to autofill` ·
+- Errors: **400** `Invalid JSON body` / `Invalid request body` /
+  `prompt is required` / `context is required to summarize` /
+  `prompt is required to autofill` ·
   **401** · **503** `AI is not configured. Add a provider in workspace
   settings (AI) or set AI_API_KEY / AI_BASE_URL / AI_MODEL.` ·
   provider failures returned as `{error}` with the upstream status · 429.
@@ -750,8 +766,16 @@ Skill ids: `improve`, `proofread`, `reformat`, `shorten`, `explain`,
 ```json
 { "skill": "improve", "replacesSelection": true, "text": "the sentence…" }
 ```
-Errors: 400 (`Invalid JSON body.` / `Unknown skill.` / `text is required.`,
-text capped at 8000) · 401 · 503 (AI unconfigured) · 429.
+- The body is validated against a schema (`src/lib/validation.ts`): a body
+  that does not fit is refused with **400** `Invalid request body.`. A
+  `workspaceId` is a workspace id, or absent / `null` for the environment
+  configuration.
+- `workspaceId` selects the provider under the same rule as `/api/ai`: the
+  workspace's own endpoint and API key are used only when the caller has
+  access to that workspace, the environment configuration applies otherwise.
+- Errors: 400 (`Invalid JSON body.` / `Invalid request body.` /
+  `Unknown skill.` / `text is required.`,
+  text capped at 8000) · 401 · 503 (AI unconfigured) · 429.
 
 ### `POST /api/ai/transcribe` — speech-to-text — scope `transcribe` (10/min)
 Source: [`src/app/api/ai/transcribe/route.ts`](../src/app/api/ai/transcribe/route.ts)
