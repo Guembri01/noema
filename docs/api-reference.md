@@ -254,8 +254,19 @@ cookie session · **no rate limit**
   (`^[A-Za-z0-9_-]+$` / `^[A-Za-z0-9._-]+$`, no `..`, plus
   `isValidAssetKey`).
 - **200** raw bytes with `content-type` and `cache-control: private, max-age=3600`.
+- Reserved for full members: a `GUEST` is refused with `403` before the
+  storage driver is asked, so the refusal carries no bytes, no asset
+  `content-type`, no `etag` and no `cache-control`; a missing asset is
+  refused the same way, so the route is not an existence oracle for a guest.
+  An asset cannot be scoped to a page (`Asset.pageId` is never populated), so
+  the route applies a role gate rather than a page scope. **Consequence: a
+  guest reads the text of a page shared with them, but none of its media —
+  every image block, the page cover, the page icon and every database
+  attachment answers `403` for a guest**, in the app and on the public share
+  page `/s/[token]`. This is deliberate and fail-closed until an asset can be
+  linked to a page.
 - **400** `Bad path` · **401** `Unauthorized` · **403** `Forbidden` (not a
-  workspace member) · **404** `Not found`.
+  workspace member **or role `GUEST`**) · **404** `Not found`.
 
 ---
 
