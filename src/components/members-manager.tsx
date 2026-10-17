@@ -30,8 +30,10 @@ import {
 import { t } from "@/lib/i18n";
 import type { TagHue } from "@/lib/design-tokens";
 import {
+  ROLE_LABEL_KEYS,
   membersCapabilities,
   roleChangeMessage,
+  roleLabelKey,
   toPersistedRole,
   validatePersistedRoleChange,
   type PersistedWorkspaceRole,
@@ -75,14 +77,6 @@ export type PendingInviteRow = {
   expiresAt?: string | null;
 };
 
-/** Workspace roles map onto catalogue keys for translation. */
-export const ROLE_KEYS: Record<PersistedWorkspaceRole, "owner" | "admin" | "member" | "guest"> = {
-  OWNER: "owner",
-  ADMIN: "admin",
-  MEMBER: "member",
-  GUEST: "guest",
-};
-
 /** Tag-palette hue per persisted role (gray guest → purple owner). */
 export const ROLE_HUES: Record<PersistedWorkspaceRole, TagHue> = {
   OWNER: "purple",
@@ -97,12 +91,6 @@ export function roleHue(role: unknown): TagHue {
   return persisted ? ROLE_HUES[persisted] : "gray";
 }
 
-/** The i18n key for a role, defaulting to `member` for unknown input. */
-export function roleLabelKey(role: unknown): "owner" | "admin" | "member" | "guest" {
-  const persisted = toPersistedRole(role);
-  return persisted ? ROLE_KEYS[persisted] : "member";
-}
-
 /**
  * The persisted roles an actor may grant — the engine's decision, never a
  * hand-rolled comparison. Unknown/non-managing actors get an empty list.
@@ -115,7 +103,7 @@ export function assignableRolesFor(actorRole: unknown): PersistedWorkspaceRole[]
 export function roleSelectOptions(actorRole: unknown, locale: string): SelectOption[] {
   return assignableRolesFor(actorRole).map((role) => ({
     value: role,
-    label: t(locale, ROLE_KEYS[role]),
+    label: t(locale, ROLE_LABEL_KEYS[role]),
   }));
 }
 
@@ -424,7 +412,7 @@ export function MembersManager({
       return;
     }
     run(() => setMemberRoleAction(workspaceId, member.userId, nextRole), {
-      success: `${member.name} is now ${t(locale, ROLE_KEYS[nextRole])}`,
+      success: `${member.name} is now ${t(locale, ROLE_LABEL_KEYS[nextRole])}`,
       onSuccess: refresh,
     });
   };

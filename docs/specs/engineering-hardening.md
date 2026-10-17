@@ -74,8 +74,8 @@ Highest-risk ad-hoc multi-writes (writes → lines):
 | `createGalleryTemplateAction` (`home-templates.ts:36`) | 5 | `page.create@55,:112`, `property.create@72`, `databaseView.createMany@108`, `propertyValue.createMany@137` |
 | `signupAction` (`auth.ts:19`) | 3 | `user.create@38`, `workspace.create@42`, `page.create@51` |
 | `addCommentAction` (`comments.ts:14`) | 3 | `comment.create@43`, `notification.create@61`, `notification.createMany@85` |
-| `acceptWorkspaceInviteAction` (`email.ts:344`) | 3 | `workspaceMember.upsert@367`, `projectMember.upsert@374`, `invite.update@380` |
-| `acceptTeamspaceInviteAction` (`teamspace-invites.ts:152`) | 3 | `workspaceMember.upsert@176`, `teamspaceMember.upsert@183`, `teamspaceInvite.update@188` |
+| `acceptWorkspaceInviteAction` (`email.ts:492`) | 3 | `workspaceMember.upsert@500`, `projectMember.upsert@507`, `invite.update@513` |
+| `acceptTeamspaceInviteAction` (`teamspace-invites.ts:230`) | 3 | `workspaceMember.upsert@239`, `teamspaceMember.upsert@246`, `teamspaceInvite.update@251` |
 | `updatePageAction` (`pages.ts:200`) | 2 | `pageVersion.create@237` **then** `page.update@253` |
 | `restorePageVersionAction` (`page-versions.ts:16`) | 2 | `pageVersion.create@36` **then** `page.update@48` |
 | `createRowAction` (`database.ts:223`) | 2 | `page.create@236`, `propertyValue.create@253` |

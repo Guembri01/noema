@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { WorkspaceRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
@@ -146,11 +147,31 @@ export async function revokeTeamspaceInviteAction(inviteId: string): Promise<Inv
   return { ok: true };
 }
 
-/** Accept an invitation for the signed-in user (called by the invite page). */
-export async function acceptTeamspaceInviteAction(
+/** A teamspace invitation as the invitee sees it, before they redeem it. */
+export type TeamspaceInvitePreview = {
+  teamspaceName: string;
+  workspaceSlug: string;
+  role: string;
+};
+
+/** The invitation a token names, once it has been cleared for this user. */
+type ResolvedTeamspaceInvite = {
+  id: string;
+  role: WorkspaceRole;
+  teamspaceId: string;
+  teamspace: { name: string; workspace: { id: string; slug: string } };
+};
+
+/**
+ * The read half of redemption — look the token up by digest and decide whether
+ * this user may redeem it. Writes nothing, so the preview the invite page renders
+ * (a GET that link previews and email scanners also fetch) can never consume an
+ * invitation; only the POST the page's form makes does that.
+ */
+async function resolveTeamspaceInvite(
   token: string,
-): Promise<InviteResult<{ slug: string; teamspaceName: string }>> {
-  const user = await requireUser();
+  userEmail: string,
+): Promise<{ ok: false; error: string } | { ok: true; invite: ResolvedTeamspaceInvite }> {
   const invite = await prisma.teamspaceInvite.findUnique({
     where: { tokenHash: hashToken(token) },
     select: {
@@ -163,12 +184,56 @@ export async function acceptTeamspaceInviteAction(
       teamspace: { select: { name: true, workspace: { select: { slug: true, id: true } } } },
     },
   });
-  if (!invite) return { error: "That invitation link is not valid." };
-  if (invite.acceptedAt) return { error: "That invitation has already been used." };
-  if (invite.expiresAt.getTime() < Date.now()) return { error: "That invitation has expired." };
-  if (invite.email.toLowerCase() !== user.email.toLowerCase()) {
-    return { error: `This invitation is for ${invite.email}. Sign in with that address.` };
+  if (!invite) return { ok: false, error: "That invitation link is not valid." };
+  if (invite.acceptedAt) return { ok: false, error: "That invitation has already been used." };
+  if (invite.expiresAt.getTime() < Date.now()) {
+    return { ok: false, error: "That invitation has expired." };
   }
+  if (invite.email.toLowerCase() !== userEmail.toLowerCase()) {
+    return {
+      ok: false,
+      error: `This invitation is for ${invite.email}. Sign in with that address.`,
+    };
+  }
+
+  return {
+    ok: true,
+    invite: {
+      id: invite.id,
+      role: invite.role,
+      teamspaceId: invite.teamspaceId,
+      teamspace: invite.teamspace,
+    },
+  };
+}
+
+/** What the teamspace invitation link shows before the invitee commits. */
+export async function previewTeamspaceInviteAction(
+  token: string,
+): Promise<InviteResult<TeamspaceInvitePreview>> {
+  const user = await requireUser();
+  const resolved = await resolveTeamspaceInvite(token, user.email);
+  if (!resolved.ok) return { error: resolved.error };
+  return {
+    ok: true,
+    teamspaceName: resolved.invite.teamspace.name,
+    workspaceSlug: resolved.invite.teamspace.workspace.slug,
+    role: resolved.invite.role,
+  };
+}
+
+/**
+ * Accept an invitation for the signed-in user, from the POST the invite page's
+ * form makes (never during a render — which is what makes the revalidation below
+ * legal, and what stops a prefetch from consuming the invite).
+ */
+export async function acceptTeamspaceInviteAction(
+  token: string,
+): Promise<InviteResult<{ slug: string; teamspaceName: string }>> {
+  const user = await requireUser();
+  const resolved = await resolveTeamspaceInvite(token, user.email);
+  if (!resolved.ok) return { error: resolved.error };
+  const { invite } = resolved;
 
   // Joining a teamspace implies workspace membership for the invitee.
   await prisma.workspaceMember.upsert({

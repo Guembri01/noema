@@ -373,16 +373,43 @@ export async function listWorkspaceInvites(workspaceId: string): Promise<Workspa
   });
 }
 
-/** Accept a workspace invitation for the signed-in user. */
-export async function acceptWorkspaceInviteAction(
+/** A workspace invitation as the invitee sees it, before they redeem it. */
+export type WorkspaceInvitePreview = {
+  workspaceName: string;
+  workspaceSlug: string;
+  role: string;
+  /** The project a client invitation is scoped to, when it is scoped to one. */
+  projectName: string | null;
+};
+
+/** The invitation a token names, once it has been cleared for this user. */
+type ResolvedWorkspaceInvite = {
+  id: string;
+  role: WorkspaceRole;
+  projectId: string | null;
+  projectName: string | null;
+  workspace: { id: string; name: string; slug: string };
+};
+
+/**
+ * The read half of redemption: verify a presented token and decide whether the
+ * signed-in user may redeem it.
+ *
+ * Both halves go through here — the read the invite page renders from, and the
+ * write its form posts to — so invalidity, expiry, reuse and the address check
+ * are decided once, by the same rules. Nothing in this function writes: a GET of
+ * an invitation link has to be safe to serve, because link previews, email
+ * scanners and prefetches fetch it too.
+ */
+async function resolveWorkspaceInvite(
   token: string,
-): Promise<EmailResult<{ slug: string; workspaceName: string; role: string }>> {
-  const user = await requireUser();
+  userEmail: string,
+): Promise<{ ok: false; error: string } | { ok: true; invite: ResolvedWorkspaceInvite }> {
   // Verification goes through the invite-token module: a token that is not a
   // well-formed minted value can never match a stored digest, so reject it
   // before the lookup rather than relying on a miss.
   if (!isWellFormedToken(token)) {
-    return { error: "That invitation link is not valid." };
+    return { ok: false, error: "That invitation link is not valid." };
   }
   const invite = await prisma.invite.findUnique({
     where: { token: hashToken(token) },
@@ -393,10 +420,11 @@ export async function acceptWorkspaceInviteAction(
       projectId: true,
       acceptedAt: true,
       expiresAt: true,
+      project: { select: { name: true } },
       workspace: { select: { id: true, name: true, slug: true } },
     },
   });
-  if (!invite) return { error: "That invitation link is not valid." };
+  if (!invite) return { ok: false, error: "That invitation link is not valid." };
   // Expiry + already-used are decided by the invite-token module (`canRedeem`),
   // so the precedence and boundary semantics stay in one place.
   const decision = canRedeem({
@@ -407,15 +435,67 @@ export async function acceptWorkspaceInviteAction(
   });
   if (!decision.ok) {
     return {
+      ok: false,
       error:
         decision.reason === "expired"
           ? "That invitation has expired."
           : "That invitation has already been used.",
     };
   }
-  if (invite.email.toLowerCase() !== user.email.toLowerCase()) {
-    return { error: `This invitation is for ${invite.email}. Sign in with that address.` };
+  if (invite.email.toLowerCase() !== userEmail.toLowerCase()) {
+    return {
+      ok: false,
+      error: `This invitation is for ${invite.email}. Sign in with that address.`,
+    };
   }
+
+  return {
+    ok: true,
+    invite: {
+      id: invite.id,
+      role: invite.role,
+      projectId: invite.projectId,
+      projectName: invite.project?.name ?? null,
+      workspace: invite.workspace,
+    },
+  };
+}
+
+/**
+ * What the invitation link shows before the invitee commits to joining.
+ *
+ * Read-only by construction (it shares `resolveWorkspaceInvite` with the accept
+ * below and performs no write of its own), which is what lets the invite page be
+ * a plain GET: the invite is only ever consumed by the POST that follows.
+ */
+export async function previewWorkspaceInviteAction(
+  token: string,
+): Promise<EmailResult<WorkspaceInvitePreview>> {
+  const user = await requireUser();
+  const resolved = await resolveWorkspaceInvite(token, user.email);
+  if (!resolved.ok) return { error: resolved.error };
+  return {
+    ok: true,
+    workspaceName: resolved.invite.workspace.name,
+    workspaceSlug: resolved.invite.workspace.slug,
+    role: resolved.invite.role,
+    projectName: resolved.invite.projectName,
+  };
+}
+
+/**
+ * Accept a workspace invitation for the signed-in user.
+ *
+ * Called by the POST the invite page's form makes — never during a render, which
+ * is also what makes the revalidation at the end of this function legal.
+ */
+export async function acceptWorkspaceInviteAction(
+  token: string,
+): Promise<EmailResult<{ slug: string; workspaceName: string; role: string }>> {
+  const user = await requireUser();
+  const resolved = await resolveWorkspaceInvite(token, user.email);
+  if (!resolved.ok) return { error: resolved.error };
+  const { invite } = resolved;
 
   await prisma.workspaceMember.upsert({
     where: { workspaceId_userId: { workspaceId: invite.workspace.id, userId: user.id } },
@@ -435,18 +515,13 @@ export async function acceptWorkspaceInviteAction(
     data: { acceptedAt: new Date() },
   });
 
-  // No `revalidatePath` here: the only caller is the invite page, which accepts
-  // during render (`/invite/[token]` is the "click the link and you are in"
-  // flow), and Next refuses cache revalidation from a render - it threw
-  // "Route /invite/[token] used \"revalidatePath /w\" during render which is
-  // unsupported" *after* the membership write, so every acceptance showed a 500
-  // and never reached the redirect below. Nothing needs invalidating anyway:
-  // every `/w` page reads cookies, so they are dynamic and hold no route cache,
-  // and the caller redirects straight into a fresh render of the workspace it
-  // just joined.
-  //
-  // Follow-up worth taking separately: accept on a POST (a form or effect) so
-  // this GET stops mutating, and the revalidation can come back legally.
+  // Legal here, and only here: acceptance is a POST (the invite page's form
+  // action), not a render. The page used to accept during render, and Next
+  // throws "used revalidatePath during render" *after* the membership write, so
+  // every acceptance answered 500 and the redirect was never reached. Nothing is
+  // stale by the time this runs either: every `/w` page reads cookies, so it is
+  // dynamic and holds no route cache.
+  revalidatePath("/w", "layout");
   return {
     ok: true,
     slug: invite.workspace.slug,

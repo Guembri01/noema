@@ -182,6 +182,29 @@ const ROLE_CHANGE_MESSAGES: Readonly<Record<RoleChangeErrorCode, string>> = {
   self_demotion: "Transfer ownership before changing your own role.",
 };
 
+/**
+ * Catalogue keys for the one-word role names, keyed by persisted role.
+ *
+ * The member list, the pending-invite rows and the invitation-acceptance card
+ * all name a role, and they must name it the same way — so the mapping lives
+ * here, in a module with no client boundary, rather than in whichever component
+ * happened to need it first.
+ */
+export const ROLE_LABEL_KEYS: Readonly<
+  Record<PersistedWorkspaceRole, "owner" | "admin" | "member" | "guest">
+> = {
+  OWNER: "owner",
+  ADMIN: "admin",
+  MEMBER: "member",
+  GUEST: "guest",
+};
+
+/** The i18n key for a role, defaulting to `member` for unknown input. */
+export function roleLabelKey(role: unknown): "owner" | "admin" | "member" | "guest" {
+  const persisted = toPersistedRole(role);
+  return persisted ? ROLE_LABEL_KEYS[persisted] : "member";
+}
+
 /** The first readable issue, or a generic fallback for an empty list. */
 export function roleChangeMessage(issues: readonly RoleChangeIssue[]): string {
   const first = issues[0];

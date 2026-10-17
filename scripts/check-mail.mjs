@@ -9,7 +9,15 @@ import { SignJWT } from "jose";
 
 const base = process.argv[2] ?? "http://localhost:3200";
 const SMTP_PORT = Number(process.env.MOCK_SMTP_PORT ?? 2525);
-const prisma = new PrismaClient();
+// The documented invocation (`node --env-file=.env scripts/check-mail.mjs`) loads
+// the repo's `DATABASE_URL`; pass it explicitly so the checker reads the same
+// database the app under test does. `node_modules/.prisma/client` can be generated
+// inside another worktree, in which case its baked-in schema env path points at a
+// different database and a bare `new PrismaClient()` would contradict every
+// assertion below.
+const prisma = new PrismaClient(
+  process.env.DATABASE_URL ? { datasources: { db: { url: process.env.DATABASE_URL } } } : undefined,
+);
 
 /** Minimal SMTP server: enough of the protocol to receive one message. */
 const received = [];
@@ -155,6 +163,16 @@ check(
   "accepting with a different address is refused",
   /different|not valid|invitation is for/i.test(wrongUser) || wrongUser.length > 0,
 );
+
+// Opening the link only reads it. Acceptance is the POST the page's form makes,
+// so a fetch the invitee never asked for — a mail scanner, a link preview, a
+// prefetch — cannot spend the single-use token. Fetched twice here, deliberately.
+await fetch(`${base}/invite/${acceptToken}`, { headers: { cookie: json.cookie } });
+const readOnly = await prisma.invite.findFirst({
+  where: { id: stored.id },
+  select: { acceptedAt: true },
+});
+check("reading the invitation link does not spend it", readOnly?.acceptedAt === null);
 
 await cleanup();
 await prisma.$disconnect();

@@ -29,13 +29,13 @@ vi.mock("@/server/actions/email", () => ({
 }));
 
 import { TAG_HUES, isTagHue } from "@/lib/design-tokens";
+import { roleLabelKey } from "@/lib/workspace-role-map";
 import {
   MembersManager,
   ROLE_HUES,
   assignableRolesFor,
   groupMembers,
   roleHue,
-  roleLabelKey,
   roleSelectOptions,
   type MemberRow,
 } from "./members-manager";
