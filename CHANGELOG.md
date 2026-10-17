@@ -39,6 +39,43 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- A failed AI call handed the workspace's provider key to the client. On a
+  non-2xx answer the provider's error body was sliced to 200 characters and
+  returned verbatim in the `error` field, and several OpenAI-compatible
+  gateways (vLLM, LiteLLM, Ollama, Azure API Management) fill that body with
+  the API key the request was sent with — "Incorrect API key provided:
+  sk-live-…" — so anyone who could trigger a failed call saw the workspace's
+  own key. A provider failure is now reduced to a class: the upstream status
+  plus a stable code (`invalid_api_key`, `rate_limited`, …), and only a code
+  that looks like an identifier is taken over, so a code can never be free
+  text or markup. A code that carries the key we sent is refused as well — not
+  only the whole key, but a run of eight of its characters in any spelling
+  (masked, truncated, re-cased or a piece of it), because a provider does not
+  choose such a spelling freely. The chat, skills and transcription routes answer
+  with that class, the streamed chat answer carries it in-band, and the body
+  itself reaches neither the client nor the server-side log — the log keeps the
+  status and the same code as its anchor, plus the workspace, the provider and
+  the model the call went to, so that a failure is attributable in an
+  installation with several workspaces. A value is written only when it is
+  safe to write: one that carries the key we sent is left out — the model can
+  *be* the key when a deployment points it there — and so is a workspace id
+  that is not an id of the app's own shape, because two of the AI routes take
+  that id from the request body. Nothing else of the failure is written.
+- A transport failure is a class as well. The runtime's own message can carry
+  the request header — an invalid header value is reported as
+  `Headers.append: "Bearer <key>" is an invalid header value.` — and that
+  header carries the workspace's key. Scrubbing the message is not enough
+  here: the scrubber knows a fixed set of credential shapes, and the tail of a
+  key with an interior newline (`…def`) is no shape at all, so it survived
+  every form-based scrubber and reached the client and the database. The model
+  list, the chat call, the transcription and the streamed chat answer report
+  "could not reach the provider" instead of the runtime's text; the streamed
+  answer carries that class in-band *and* in the persisted assistant row.
+  In that path neither the key nor any part of it leaves the server — not in
+  the answer, not in the persisted chat row, not in the log. The log keeps the
+  status and the code of a provider failure and the class of a transport
+  failure, together with the workspace, the provider and the model the call
+  went to, and nothing else.
 
 ## [1.4.1] — 2026-10-17
 
