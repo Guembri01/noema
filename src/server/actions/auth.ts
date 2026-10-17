@@ -25,6 +25,10 @@ import {
 
 export type AuthState = { error?: string; requiresTwoFactor?: boolean };
 
+/* ------------------------------------------------------------------ *
+ * B03 — the budgets and the account lock.
+ * ------------------------------------------------------------------ */
+
 /**
  * The address the attempt came from. A server action never sees a
  * `Request`, so the forwarding headers are read from the request headers
@@ -68,10 +72,88 @@ async function clearFailedLogins(userId: string): Promise<void> {
   });
 }
 
+/* ------------------------------------------------------------------ *
+ * B24 — the neutral texts and the constant-time comparison.
+ * ------------------------------------------------------------------ */
+
+/**
+ * B24 — the one sign-in failure text. Every failed sign-in (unknown address,
+ * wrong password, wrong two-factor code) answers with this same string: a
+ * message that differs per cause tells an attacker which half they got right.
+ */
+const LOGIN_FAILED = "Incorrect email or password.";
+
+/**
+ * B24 — the one sign-up failure text. It names neither the reason nor an
+ * e-mail that will never arrive: the app sends no confirmation mail on
+ * sign-up, and a message that says "this address is taken" is a free
+ * enumeration oracle. The same text answers every way a sign-up can fail to
+ * create the account, so the reply never tells "already registered" apart
+ * from "lost the race against another sign-up for the same address".
+ */
+const SIGNUP_FAILED =
+  "We could not create the account for this address. If you already have an account, sign in instead.";
+
+/**
+ * B24 — a real bcrypt hash (cost 12, the cost `hashPassword` uses) of a
+ * value nobody can guess. `verifyPassword` against it costs exactly as much
+ * as a real comparison, so the sign-in path can do the same work when no
+ * account exists and the response time stops revealing whether the address
+ * is registered. The cost must stay in step with `hashPassword` (cost 12) —
+ * a cheaper hash would reintroduce the timing oracle.
+ */
+const DUMMY_PASSWORD_HASH =
+  "$2b$12$DDATzCAs4idfq89J5AQgj.xDjyjiwPleCbBHhzWDH1HywDCLKgoYi";
+
+/**
+ * The shape of a hash that `bcrypt.compare` can actually work with: the
+ * variant must be one bcrypt knows (`a`, `b`, `y`), the cost must be inside
+ * bcrypt's range (4–31), and the rest is base64. Anything else — an SSO
+ * account's `sso:<token>`, an erased account's tombstone, a legacy or
+ * truncated value — can never match a password, and `bcrypt.compare` either
+ * rejects it without doing any work (a value that is not 60 characters long)
+ * or throws on it (a variant or a cost bcrypt does not know), which would
+ * open a hole of its own. Such a value is compared against the dummy hash
+ * instead, so the sign-in costs the same and fails closed.
+ */
+const BCRYPT_HASH = /^\$2[aby]\$(?:0[4-9]|[12]\d|3[01])\$[./A-Za-z0-9]{53}$/;
+
+/** A Prisma unique-constraint violation (`P2002`). */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "P2002"
+  );
+}
+
+/**
+ * Create the user row. A unique-constraint violation means another sign-up
+ * for the same address won the race; it is reported as `null` so the caller
+ * can answer with the very same neutral text as the "address is taken" case
+ * (B24). Every other failure propagates untouched.
+ */
+async function createUser(
+  name: string,
+  email: string,
+  passwordHash: string,
+): Promise<{ id: string } | null> {
+  try {
+    return await prisma.user.create({ data: { name, email, passwordHash } });
+  } catch (error) {
+    if (isUniqueViolation(error)) return null;
+    throw error;
+  }
+}
+
 export async function signupAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
+  // B27 puts the password-strategy gate here — as the first statement of the
+  // action, before a budget slot is spent. The place is kept for it; the gate
+  // itself is not part of this merge.
+
   const parsed = signupSchema.safeParse({
     name: formData.get("name"),
     email: formData.get("email"),
@@ -82,22 +164,32 @@ export async function signupAction(
   }
   const { name, email, password } = parsed.data;
 
-  // Budgets first: a sign-up costs a slot before it touches the database,
-  // so the "this e-mail already exists" answer cannot be harvested and
-  // accounts cannot be created in bulk.
+  // Budgets first (B03): a sign-up costs a slot before it touches the
+  // database, so the answer cannot be harvested and accounts cannot be
+  // created in bulk. The slot is charged above the bcrypt work below, so a
+  // flood of sign-ups cannot outrun the limiter either. The account budget
+  // is keyed on the address the schema just normalised, which the client
+  // cannot forge.
   const limit = checkAuthLimit({ email, ip: await clientAddress() });
   if (!limit.allowed) {
     return { error: authLimitMessage(limit) };
   }
 
+  // Hash next (B24): the bcrypt cost dominates the request, so paying it on
+  // every path keeps the answer from arriving measurably faster for an
+  // address that is already registered.
+  const passwordHash = await hashPassword(password);
+
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
-    return { error: "An account with that email already exists." };
+    return { error: SIGNUP_FAILED };
   }
 
-  const user = await prisma.user.create({
-    data: { name, email, passwordHash: await hashPassword(password) },
-  });
+  const user = await createUser(name, email, passwordHash);
+  if (!user) {
+    // Another sign-up for that address won the race — same neutral answer.
+    return { error: SIGNUP_FAILED };
+  }
 
   const workspace = await prisma.workspace.create({
     data: {
@@ -126,6 +218,10 @@ export async function loginAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
+  // B27 puts the password-strategy gate here — as the first statement of the
+  // action, before a budget slot is spent. The place is kept for it; the gate
+  // itself is not part of this merge.
+
   const parsed = loginSchema.safeParse({
     email: formData.get("email"),
     password: formData.get("password"),
@@ -136,12 +232,16 @@ export async function loginAction(
   }
   const { email, password, code } = parsed.data;
 
-  // Budgets first: an attempt costs a slot before any password work
+  // Budgets first (B03): an attempt costs a slot before any password work
   // happens, so a flood of guesses cannot outrun the limiter. The
   // account budget is keyed on the e-mail address, which the client
   // cannot forge.
   const now = new Date();
-  const limit = checkAuthLimit({ email, ip: await clientAddress(), now: now.getTime() });
+  const limit = checkAuthLimit({
+    email,
+    ip: await clientAddress(),
+    now: now.getTime(),
+  });
   if (!limit.allowed) {
     return { error: authLimitMessage(limit) };
   }
@@ -157,18 +257,34 @@ export async function loginAction(
       lockedUntil: true,
     },
   });
-  if (!user) {
-    return { error: "Incorrect email or password." };
-  }
 
-  // A locked account is refused before the password is even checked.
-  if (user.lockedUntil && user.lockedUntil.getTime() > now.getTime()) {
+  // B24 — always run a bcrypt comparison, never skip it. When there is no
+  // account (or the stored value is not a bcrypt hash, e.g. an SSO account's
+  // `sso:<token>`) the dummy hash is compared instead, so the sign-in costs
+  // the same whether or not the address is registered. A stored value that is
+  // not a bcrypt hash can never match a password, so it is also rejected
+  // below — the dummy comparison only pays the bill, it never grants access.
+  const storedHash = user?.passwordHash ?? "";
+  const hasBcryptHash = BCRYPT_HASH.test(storedHash);
+  const passwordOk = await verifyPassword(
+    password,
+    hasBcryptHash ? storedHash : DUMMY_PASSWORD_HASH,
+  );
+
+  // B03 — a locked account is refused. The check sits behind the comparison
+  // (B24) on purpose: a locked account still pays the bcrypt cost, so the
+  // answer never reveals that the address is registered.
+  if (user?.lockedUntil && user.lockedUntil.getTime() > now.getTime()) {
     return { error: authLockoutMessage(user.lockedUntil, now) };
   }
 
-  if (!(await verifyPassword(password, user.passwordHash))) {
-    await registerFailedLogin(user.id, now);
-    return { error: "Incorrect email or password." };
+  if (!user || !hasBcryptHash || !passwordOk) {
+    // B03 — a failed password counts towards the lock. There is no row to
+    // count on for an unknown address, and an account without a bcrypt hash
+    // (an SSO account) has no password to fail.
+    if (user && hasBcryptHash) await registerFailedLogin(user.id, now);
+    // B24 — one text for every failed sign-in.
+    return { error: LOGIN_FAILED };
   }
 
   // Two-factor gate: ask for a code, then verify it before issuing a session.
@@ -181,8 +297,12 @@ export async function loginAction(
       return { error: authLimitMessage(guess), requiresTwoFactor: true };
     }
     if (!user.twoFactorSecret || !verifyTotp(user.twoFactorSecret, code)) {
+      // B03 — a wrong code is a failed sign-in and counts towards the lock.
       await registerFailedLogin(user.id, now);
-      return { error: "Invalid two-factor code.", requiresTwoFactor: true };
+      // B24 — the same text as every other failed sign-in: a message of its
+      // own would confirm that the password was right. The flag keeps the
+      // code field on screen so the user can try again.
+      return { error: LOGIN_FAILED, requiresTwoFactor: true };
     }
   }
 
