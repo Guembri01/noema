@@ -238,8 +238,10 @@
   is now used only when the caller actually has access to that workspace; the
   environment configuration applies otherwise, and the foreign provider row is
   not even read. Both routes validate their request body with Zod as well, so
-  a `workspaceId` that is not an id, or a `mode` outside `ask` / `summarize` /
-  `autofill`, is refused with 400 before the request reaches the provider.
+  a `mode` outside `ask` / `summarize` / `autofill`, or a body that does not
+  fit the schema, is refused with 400 before the request reaches the provider.
+  The id format is deliberately not part of that check: a foreign or malformed
+  workspace id is answered by the access check, not by a 400.
 
 - The sign-in, the sign-up and the 2FA check are now rate-limited, counted
   and locked out. They are server actions, so they never reached the API rate
@@ -267,6 +269,53 @@
   CI and needs a running application and a database, but it is a documented
   gate of the repository — the budgets have to be raised for it, or the suite
   has to use more than one account, before `npm run e2e` is green again.
+
+- An OAuth authorization code could be exchanged more than once. The token
+  endpoint read the code, checked the `used` flag and only afterwards marked
+  the code as used with a second statement, so requests that ran in parallel
+  all passed that check and every one of them received its own access token —
+  one captured code, many live API tokens. The code is now consumed with a
+  conditional update (`UPDATE … WHERE used = false`), and a token is minted
+  only when that update matched exactly one row; the loser of the race is
+  answered with `invalid_grant`, as RFC 6749 §4.1.2 requires. A refused
+  exchange — a wrong client, a wrong redirect URI, a wrong PKCE verifier —
+  still leaves the code untouched and usable.
+
+- The sign-up and the sign-in no longer disclose whether an address is
+  registered. The sign-up named the situation outright ("An account with that
+  email already exists."), the sign-in skipped the password comparison
+  altogether when no account existed and so answered in a fraction of the time,
+  and a wrong two-factor code carried a message of its own — three channels
+  that turned the login form into an account-existence oracle. A sign-up now
+  answers with one neutral text for every way it can fail: an address that is
+  already taken answers exactly like a sign-up that loses the race against a
+  concurrent sign-up for the same address. The sign-in always runs a bcrypt
+  comparison — against a dummy cost-12 hash when the address is unknown or
+  the stored value is not a bcrypt hash — so it costs the same whether or not
+  the account exists, and every failed sign-in answers with the same text, a
+  wrong two-factor code included.
+
+- The sign-in and sign-up actions never consulted the strategy registry, so
+  `AUTH_PASSWORD=disabled` and the `AUTH_STRATEGIES` allow-list were enforced
+  by the two SSO routes only: a deployment that had switched the local password
+  strategy off still accepted a direct POST to `/login` and `/signup` with the
+  credentials of a local account. Both switches are now enforced by the
+  actions themselves — with the password strategy off, every sign-in and every
+  sign-up is refused before an account is looked up — and `AUTH_PASSWORD` and
+  `AUTH_STRATEGIES` are documented in `.env.example`, the README and
+  `SECURITY.md`.
+
+- An admin could invite further admins. The role matrix grants an actor only
+  the roles strictly below their own — an admin hands out member and guest,
+  and only the owner grants the admin role — but the invitation path never
+  consulted it: it checked the role against a hard-coded list, persisted it
+  unchanged, and `POST /api/invites` had the same gap. An admin could
+  therefore mint an invitation that turned its recipient into a workspace
+  admin, exactly the escalation the role change path refuses. The role an
+  invitation carries is now a grant like any other: `sendWorkspaceInviteAction`
+  asks the matrix (`canGrantRole`) before it writes anything, so only the
+  workspace owner can invite an admin and an admin is refused with `Only the
+  workspace owner can invite an admin.`
 
 ### Changed
 
