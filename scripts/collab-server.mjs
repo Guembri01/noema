@@ -148,23 +148,60 @@ function canonicalSecret(value) {
   return String(value).trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-/** The placeholder this repository ships in `.env.example` — public. */
-const SHIPPED_AUTH_SECRET_PLACEHOLDER = canonicalSecret(
-  "replace-me-with-a-32-byte-hex-secret",
+/**
+ * Every placeholder this repository ships, mirrored from
+ * `SHIPPED_AUTH_SECRET_PLACEHOLDERS` in `src/lib/auth-secret.ts`.
+ *
+ * `scripts/collab-server.test.mjs` reads the TypeScript list and fails if these
+ * two drift apart. The `.env.example` value is the one an operator is most
+ * likely to copy, but it is not the only public example: the self-hosting
+ * documentation also ships a 32-character hex string, which would pass a
+ * length-only check.
+ */
+export const SHIPPED_AUTH_SECRET_PLACEHOLDERS = [
+  "replace-me-with-a-32-byte-hex-secret", // .env.example
+  "0123456789abcdef0123456789abcdef", // src/lib/self-hosting.ts (AUTH_SECRET example)
+  "sk-example-0000000000000000", // src/lib/self-hosting.ts (AI_API_KEY example)
+  "sso-client-secret-value", // src/lib/self-hosting.ts (SSO_CLIENT_SECRET example)
+  "smtp-password-value", // src/lib/self-hosting.ts (SMTP_PASSWORD example)
+  "cron-secret-value", // src/lib/self-hosting.ts (CRON_SECRET example)
+];
+
+/** Well-known weak values, mirrored from `WEAK_AUTH_SECRETS`. */
+export const WEAK_AUTH_SECRETS = [
+  "changeme",
+  "change-me",
+  "your-secret-here",
+  "example",
+  "secret",
+  "password",
+  "placeholder",
+  "replace-me",
+  "todo",
+  "tbd",
+  "xxx",
+];
+
+const CANONICAL_PLACEHOLDERS = new Set(
+  SHIPPED_AUTH_SECRET_PLACEHOLDERS.map(canonicalSecret),
 );
+const CANONICAL_WEAK = new Set(WEAK_AUTH_SECRETS.map(canonicalSecret));
 
 /** Minimum length of an AUTH_SECRET that may verify a session cookie. */
 const MIN_AUTH_SECRET_LENGTH = 32;
 
 /**
  * Whether a candidate AUTH_SECRET may be used to verify a session cookie.
- * A missing, too short or shipped-placeholder value is refused.
+ * A missing, too short, shipped-placeholder or well-known weak value is
+ * refused. The application rule refuses the same set; the test below keeps the
+ * two lists in step.
  */
 export function isUsableAuthSecret(secret) {
   if (typeof secret !== "string") return false;
   const trimmed = secret.trim();
   if (trimmed.length < MIN_AUTH_SECRET_LENGTH) return false;
-  return canonicalSecret(trimmed) !== SHIPPED_AUTH_SECRET_PLACEHOLDER;
+  const folded = canonicalSecret(trimmed);
+  return !CANONICAL_PLACEHOLDERS.has(folded) && !CANONICAL_WEAK.has(folded);
 }
 
 /**
