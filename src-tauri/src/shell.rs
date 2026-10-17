@@ -143,7 +143,7 @@ pub fn on_shell_command(app: &AppHandle, id: &str) {
         "docs" => {
             let _ = app
                 .opener()
-                .open_url("https://noema.app/docs", None::<&str>);
+                .open_url("https://github.com/your-org/noema/tree/main/docs", None::<&str>);
         }
         "open-data" => {
             tauri::async_runtime::spawn({

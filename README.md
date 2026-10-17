@@ -9,9 +9,10 @@ individuals. Everything is a page: documents, folders and database rows share
 one model. It runs on your machine, it is yours to extend, and it also ships as
 a desktop app that needs nothing else installed.
 
-<!-- Publishing: replace `your-org` in the badge URLs below, and in
-     package.json, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md and
-     CITATION.cff. Everything else is ready. -->
+<!-- Publishing: replace `your-org` with your GitHub org or username. Run
+     `git grep -n your-org` — it lists every place: the badge URLs below,
+     package.json, SECURITY.md, CODE_OF_CONDUCT.md, CITATION.cff, CHANGELOG.md,
+     .editorconfig, .github/ and src-tauri/. Nothing else needs editing. -->
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![CI](https://github.com/your-org/noema/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/noema/actions/workflows/ci.yml)
