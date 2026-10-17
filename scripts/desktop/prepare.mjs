@@ -95,22 +95,30 @@ export const REQUIRED_PAYLOAD = [
  * and removes `server.js`, and a desktop build with `NOEMA_SKIP_BUILD=1` will
  * happily copy the leftovers — producing an installer that boots to nothing.
  * Measured, not assumed.
+ *
+ * Two call sites, two expectations:
+ *  · `["server.js"]` right after the build — that is all the build must produce;
+ *  · the full list after the copy steps — that is what ships.
  */
-function assertStandalonePayload() {
-  const missing = REQUIRED_PAYLOAD.filter(([relative]) => !existsSync(join(standalone, relative)));
+function assertPayload(required = REQUIRED_PAYLOAD) {
+  const missing = required.filter(([relative]) => !existsSync(join(standalone, relative)));
   if (missing.length === 0) return;
+  const nothingBuilt = !existsSync(join(standalone, "server.js"));
   throw new Error(
     [
-      ".next/standalone is incomplete:",
-      ...missing.map(([relative, why]) => `  - ${relative} (${why})`),
+      nothingBuilt
+        ? ".next/standalone has no server.js — the standalone build has not run."
+        : ".next/standalone is incomplete:",
+      ...(nothingBuilt ? [] : missing.map(([relative, why]) => `  - ${relative} (${why})`)),
       "",
-      "Most likely a site build (`next build` without NOEMA_STANDALONE=1) ran",
-      "against this .next and replaced the standalone output. Rebuild with:",
+      "Most likely one of:",
+      "  · a site build (`next build` without NOEMA_STANDALONE=1) replaced the",
+      "    standalone output — the two builds share .next/ and must not overlap;",
+      "  · `NOEMA_SKIP_BUILD=1` reused a `.next` that had been wiped or replaced.",
       "",
-      "    npm run desktop:prepare          # no NOEMA_SKIP_BUILD",
+      "Fix: rebuild the payload, without skipping the build:",
       "",
-      "Never run the site build and the desktop payload build at the same time:",
-      "they share .next/.",
+      "    npm run desktop:prepare",
     ].join("\n"),
   );
 }
@@ -244,13 +252,12 @@ function copyNodeRuntime() {
 
 function main() {
   if (process.env.NOEMA_SKIP_BUILD !== "1") buildStandalone();
-  // Even with NOEMA_SKIP_BUILD=1 the payload must be proven complete: a stale
-  // `.next/standalone` (for example after a site build) must never be shipped.
-  assertStandalonePayload();
+  // After the build, only the build's own output must exist…
+  assertPayload([["server.js", "the Next standalone server entry"]]);
   copyRuntimeAssets();
   writeBootScript();
-  // start.cjs is written above, so re-assert the full set before staging.
-  assertStandalonePayload();
+  // …and after the copies, everything the installer ships must be present.
+  assertPayload();
   copyNodeRuntime();
   stageIntoTauri();
   console.log(`\nstandalone payload: ${mb(size(standalone))}`);

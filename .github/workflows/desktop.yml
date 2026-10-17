@@ -164,3 +164,43 @@ jobs:
             src-tauri/target/${{ matrix.rust-target }}/release/bundle/dmg/*.dmg
           if-no-files-found: warn
           retention-days: 7
+
+  payload-smoke:
+    # The check that catches a *plausible* but broken installer: it boots the
+    # packaged payload (bundled runtime + staged server + migrations) and fetches
+    # real pages over HTTP. Linux plus a Postgres service is the cheapest place to
+    # run it, and it needs no Rust toolchain.
+    #
+    # It exists because a 50 MB installer was once produced that would have booted
+    # to nothing: a site build had replaced `.next/`, and the desktop build reused
+    # it. Booting the payload is the only thing that catches that.
+    name: payload boots and serves
+    runs-on: ubuntu-22.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: noema
+          POSTGRES_PASSWORD: noema
+          POSTGRES_DB: noema
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U noema" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://noema:noema@127.0.0.1:5432/noema?schema=public
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Build the payload (standalone server + static + Prisma CLI + runtime)
+        run: npm run desktop:prepare
+      - name: Create the schema
+        run: npx prisma db push --skip-generate
+      - name: Smoke-test the payload (boots, migrates, serves HTTP)
+        run: npm run desktop:smoke
+      - name: Assert the staged payload is complete
+        run: node scripts/desktop/preflight.mjs
+        continue-on-error: true # rust/tauri checks are informational in this job
