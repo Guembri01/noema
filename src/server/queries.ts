@@ -332,7 +332,25 @@ export type RelationData = {
   properties: { id: string; name: string; type: string }[];
 };
 
-export async function getDatabase(databasePageId: string) {
+/**
+ * Read a database: its schema, its views, its rows, its templates and the
+ * data of the databases its relations point at.
+ *
+ * `readablePageIds` is the **read scope** of the viewer — the pages they may
+ * read (the pages shared with them plus their whole subtree, never an
+ * ancestor; `lib/guest-access.ts` → `guestReadablePageIds`). `null` means "no
+ * scope": the viewer may read the whole workspace (every role but `GUEST`), so
+ * nothing is filtered.
+ *
+ * A relation target outside the scope delivers nothing — no rows, no cell
+ * values and no schema — the same empty answer a target outside the workspace
+ * gets. The check stands in front of the target's content query, so a target
+ * the viewer may not read is never read at all.
+ */
+export async function getDatabase(
+  databasePageId: string,
+  readablePageIds: ReadonlySet<string> | null = null,
+) {
   // A database's rows are the pages that hang under it, and they belong to the
   // database's own workspace. `Page.parentId` is a plain foreign key, so a row
   // that was linked across workspaces (the unchecked `parentId` hole, B08)
@@ -424,6 +442,26 @@ export async function getDatabase(databasePageId: string) {
         select: { id: true, workspaceId: true },
       });
       if (!target || target.workspaceId !== workspaceId) {
+        relationData[property.id] = { options: [], valuesByRow: {}, properties: [] };
+        return;
+      }
+      /**
+       * B100 — the relation target must lie inside the viewer's **read**
+       * scope.
+       *
+       * The read scope is the set of pages the viewer may read: the pages
+       * shared with them plus their whole subtree, never an ancestor — the
+       * canonical inheritance rule of `lib/access-inheritance.ts`. So a guest
+       * who was given a single row of the target database does **not** get the
+       * database above it, while a guest who was given a parent page does get
+       * the database below it.
+       *
+       * The scope is checked **before** the target's content is read, so a target
+       * the viewer may not read is never read, and the answer is the same
+       * empty one a target outside the workspace gets — a refusal must not
+       * confirm that the target exists (no existence oracle).
+       */
+      if (readablePageIds && !readablePageIds.has(target.id)) {
         relationData[property.id] = { options: [], valuesByRow: {}, properties: [] };
         return;
       }

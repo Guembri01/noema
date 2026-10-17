@@ -72,6 +72,10 @@ export default async function PageRoute({
    * row of a database must not open the database above it (that was the
    * finding), and a guest who was given a parent page may open the database
    * below it.
+   *
+   * The scope decides which relation *targets* of this database may be
+   * resolved: a target outside it delivers no rows, no cell values and no
+   * schema.
    */
   const isDatabase = page.type === "DATABASE";
   const guestReadScope =
@@ -103,7 +107,7 @@ export default async function PageRoute({
   );
 
   const [database, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces, versionLabels] = await Promise.all([
-    page.type === "DATABASE" ? getDatabase(page.id) : Promise.resolve(null),
+    page.type === "DATABASE" ? getDatabase(page.id, guestReadScope) : Promise.resolve(null),
     getAncestorTrail(workspace.id, page.id),
     prisma.pageFollow.findUnique({
       where: { userId_pageId: { userId: user.id, pageId: page.id } },
