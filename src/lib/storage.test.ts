@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -109,5 +109,23 @@ describe("localDriver", () => {
   it("refuses to escape its root", async () => {
     await expect(driver.put("../escape.txt", new Uint8Array([1]), "text/plain")).rejects.toThrow();
     expect(await driver.get("../escape.txt")).toBeNull();
+  });
+
+  it("refuses a sibling whose name begins with the root's name", async () => {
+    // The prefix comparison said "inside the root" for every path that
+    // *begins* with the root's name — the sibling `noema-storage-xyz` of the
+    // root `noema-storage-abc` is outside it, and its file is writable
+    // through this driver.
+    const sibling = `${root}-evil`;
+    const key = `../${path.basename(sibling)}/secret.txt`;
+    await expect(driver.put(key, new Uint8Array([7]), "text/plain")).rejects.toThrow();
+    expect(await driver.get(key)).toBeNull();
+    // Nothing was written next to the root.
+    await expect(readFile(path.join(sibling, "secret.txt"))).rejects.toThrow();
+  });
+
+  it("refuses an absolute path and the root itself", async () => {
+    await expect(driver.put("/etc/passwd", new Uint8Array([1]), "text/plain")).rejects.toThrow();
+    await expect(driver.put(".", new Uint8Array([1]), "text/plain")).rejects.toThrow();
   });
 });
