@@ -47,7 +47,8 @@ workflow-permission gate runs there as part of `npm test`.
 | `npm run lint` | ESLint |
 | `npm test` | The full Vitest unit suite |
 | `npm run check:coherence` | No drift: orphan actions, native dialogs, unexpected injection sinks, shrinking i18n coverage |
-| `npm run check:secrets` | No credential-shaped value is committed, and no `.env` is tracked |
+| `npm run check:secrets` | No credential-shaped value is committed, and no `.env` is tracked — the test files included |
+| `npm run check:secrets:history` | The same, over the history of the ref under review: a credential that was committed and removed again is still public |
 | `npm run check:workflow-permissions` | No workflow grants a publishing scope (`packages: write`, `id-token: write`) outside a job that no pull-request event can reach, every such job spells out its `permissions:`, and no pull-request checkout keeps its token on disk |
 | `npm run check:design` | No raw colours or ad-hoc spacing — design tokens only |
 | `npm run check:i18n` | Every `t(locale, "key")` exists in the catalogue |
