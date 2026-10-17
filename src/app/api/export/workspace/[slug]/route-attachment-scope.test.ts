@@ -39,6 +39,10 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/auth", () => ({ getCurrentUser: edge.getCurrentUser }));
 vi.mock("@/lib/permissions", () => ({
   getWorkspaceAccess: edge.getWorkspaceAccess,
+  // The export route also asks whether the caller may edit content (a guest
+  // may not export a workspace at all). The mock offers the answer so the
+  // suite does not depend on the order in which the two fixes are merged.
+  canEditContent: () => true,
 }));
 vi.mock("@/server/queries", () => ({ getWorkspaceBySlug: edge.getWorkspaceBySlug }));
 vi.mock("@/lib/storage", async (importOriginal) => {
