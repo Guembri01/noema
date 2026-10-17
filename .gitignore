@@ -62,3 +62,6 @@ docs/_audit-raw.json
 # Local verification artefacts (screenshots captured by scripts/_capture.cjs)
 docs/screenshots/
 scripts/_capture.cjs
+
+# Scratch/debug files an agent or a human leaves behind: never commit these.
+scripts/_*
