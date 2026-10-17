@@ -1,0 +1,24 @@
+# Normalise line endings in the repository: text files are stored with LF, so a
+# Windows checkout and a Linux one produce identical blobs and no pull request
+# turns into a wall of line-ending changes.
+* text=auto
+
+# Binary assets: never converted, never diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+*.zip binary
+*.exe binary
+*.msi binary
+*.dll binary
+
+# Generated files: keep them out of language statistics and collapse them in
+# diffs on GitHub.
+package-lock.json linguist-generated

@@ -64,8 +64,14 @@ next-env.d.ts
 docs/_audit-raw.json
 /backups/
 
-# Local verification artefacts (screenshots captured by scripts/_capture.cjs)
-docs/screenshots/
+# Local verification artefacts (screenshots captured by scripts/_capture.cjs).
+# The handful the README showcases are re-included below. The pattern is `*`
+# rather than a bare directory: ignoring `docs/screenshots/` would ignore the
+# directory itself, and no negation can reach inside an ignored directory.
+docs/screenshots/*
+!docs/screenshots/01-landing.png
+!docs/screenshots/03-workspace-home.png
+!docs/screenshots/07-settings.png
 scripts/_capture.cjs
 
 # Scratch/debug files an agent or a human leaves behind: never commit these.

@@ -1,7 +1,45 @@
 {
-  "name": "notion-clone",
-  "version": "0.1.0",
+  "name": "noema",
+  "version": "1.4.0",
   "private": true,
+  "description": "An original, open-source, self-hosted workspace for notes, docs and databases — and an installable desktop app that needs nothing else installed.",
+  "license": "MIT",
+  "author": "Bilel Guembri and Wissal Ben Othmen",
+  "contributors": [
+    {
+      "name": "Bilel Guembri"
+    },
+    {
+      "name": "Wissal Ben Othmen"
+    }
+  ],
+  "homepage": "https://github.com/your-org/noema#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/noema.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/noema/issues"
+  },
+  "keywords": [
+    "notion-alternative",
+    "notes",
+    "docs",
+    "wiki",
+    "database",
+    "knowledge-base",
+    "self-hosted",
+    "local-first",
+    "nextjs",
+    "react",
+    "prisma",
+    "postgresql",
+    "tauri",
+    "open-source"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
@@ -28,6 +66,7 @@
     "docs:counts": "node scripts/feature-matrix-counts.mjs --write",
     "audit": "node scripts/audit-inventory.mjs",
     "check:coherence": "node scripts/check-coherence.mjs",
+    "check:secrets": "node scripts/check-secrets.mjs",
     "check:use-server": "node scripts/check-use-server.mjs",
     "check:design": "node scripts/check-design-system.mjs --check",
     "design:report": "node scripts/check-design-system.mjs",

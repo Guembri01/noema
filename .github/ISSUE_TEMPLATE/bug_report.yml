@@ -1,0 +1,82 @@
+name: Bug report
+description: Report something that is not working as expected.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you file, search existing issues to avoid duplicates, and redact
+        any secrets, tokens or personal data from logs and screenshots.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the actual behaviour.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Describe what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact steps, in order.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - self-hosted
+        - desktop app
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: noema-version
+    attributes:
+      label: Noema version
+      placeholder: "0.1.0"
+    validations:
+      required: false
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      placeholder: "24"
+    validations:
+      required: false
+
+  - type: input
+    id: os-browser
+    attributes:
+      label: OS and browser
+      placeholder: "Windows 11, Firefox 130"
+    validations:
+      required: false
+
+  - type: input
+    id: database
+    attributes:
+      label: Database
+      description: PostgreSQL or the embedded PGlite, and its version if known.
+    validations:
+      required: false

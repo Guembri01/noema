@@ -1,8 +1,9 @@
-# CI v1 — lite gate (B64). Mirrors the local FAST tier: tsc + eslint + unit
-# (changed) + coherence. Deliberately NO e2e: Playwright needs a real postgres
-# (prisma db push + seed) and the suite runs serially (workers: 1, shared demo
-# workspace) — see the commented follow-up at the bottom of this file.
-# The same two checks ship as a plain git hook: scripts/pre-commit.sample.md.
+# CI v1 — lite gate (B64). Mirrors the local FAST tier: tsc + eslint + full unit
+# suite + coherence, plus the static design/i18n/boundary gates and the secret
+# gate. Deliberately NO e2e: Playwright needs a real postgres (prisma db push +
+# seed) and the suite runs serially (workers: 1, shared demo workspace) — see the
+# commented follow-up at the bottom of this file.
+# The same checks ship as a plain git hook: scripts/pre-commit.sample.md.
 name: CI
 
 on:
@@ -18,7 +19,7 @@ concurrency:
 
 jobs:
   check:
-    name: check:fast + coherence
+    name: check:fast + static gates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +49,25 @@ jobs:
 
       - name: Coherence gate
         run: node scripts/check-coherence.mjs
+
+      # The repository is published as-is, so a committed credential is public the
+      # moment it lands. Value-shaped patterns — see the script for the reasoning.
+      - name: Secret gate
+        run: node scripts/check-secrets.mjs
+
+      # The remaining static gates. All are offline and take seconds; they are
+      # required locally, so a pull request that fails one fails here too.
+      - name: Design tokens
+        run: node scripts/check-design-system.mjs --check
+
+      - name: i18n keys
+        run: node scripts/check-i18n-keys.mjs
+
+      - name: Server boundaries
+        run: node scripts/check-use-server.mjs
+
+      - name: Client bundle
+        run: node scripts/check-client-bundle.mjs
 
       # ----- Follow-up (CI v2, NOT enabled): e2e with a postgres service -------
       # Uncomment as a SEPARATE job when the suite is CI-stable; keep `check` as

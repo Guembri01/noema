@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest an idea or improvement for Noema.
+title: "[feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem you are trying to solve
+      description: Describe the need, not just the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - editor
+        - databases
+        - tickets/projects
+        - chat/AI
+        - sharing/permissions
+        - desktop app
+        - other
+    validations:
+      required: true

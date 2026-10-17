@@ -2,11 +2,11 @@
 name = "noema-desktop"
 version = "1.4.0"
 description = "Noema — local-first workspace, as an installable desktop app"
-authors = ["Noema"]
+authors = ["Bilel Guembri", "Wissal Ben Othmen"]
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
-repository = "https://github.com/noema/noema"
+repository = "https://github.com/your-org/noema"
 default-run = "noema-desktop"
 
 # The shipped app is a thin Rust shell around a supervised local server:

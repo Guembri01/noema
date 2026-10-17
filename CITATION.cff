@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use Noema in academic or technical work, please cite it as below."
+title: Noema
+abstract: >-
+  An original, open-source, self-hosted workspace for notes, docs and databases.
+  Everything is a page: documents, folders and database rows share one model,
+  with typed databases, a block editor, comments, version history, tickets,
+  projects and AI on your own key. It runs as a hosted site, or as a desktop app
+  that bundles its own runtime and embedded database.
+type: software
+authors:
+  - family-names: Guembri
+    given-names: Bilel
+  - family-names: Ben Othmen
+    given-names: Wissal
+version: 1.4.0
+date-released: "2026-10-16"
+license: MIT
+repository-code: "https://github.com/your-org/noema"
+url: "https://github.com/your-org/noema"
+keywords:
+  - notion-alternative
+  - note-taking
+  - knowledge-base
+  - databases
+  - wiki
+  - self-hosted
+  - local-first
+  - open-source

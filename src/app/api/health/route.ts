@@ -35,7 +35,7 @@ const DB_SLOW_MS = 500;
  * when neither is present.
  */
 const APP_VERSION =
-  process.env.APP_VERSION ?? process.env.npm_package_version ?? "0.1.0";
+  process.env.APP_VERSION ?? process.env.npm_package_version ?? "1.4.0";
 
 /** Per-check outcome. */
 type CheckStatus = "up" | "down";

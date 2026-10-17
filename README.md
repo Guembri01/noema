@@ -1,28 +1,65 @@
+<div align="center">
+
 # Noema
 
-An **original, open-source, self-hosted** workspace for notes, docs and
-databases — built as a clean-room implementation inspired by the public feature
-surface of Notion.
+**A local-first workspace for notes, docs and databases.**
 
-> This project is **not** affiliated with, endorsed by, or derived from Notion's
-> source code, assets or trademarks. It implements the same *category* of
-> product from publicly documented behaviour only. See [NOTICE](#notice).
+An original, open-source, self-hosted alternative to Notion — for teams and
+individuals. Everything is a page: documents, folders and database rows share
+one model. It runs on your machine, it is yours to extend, and it also ships as
+a desktop app that needs nothing else installed.
 
-- **Stack:** Next.js 15 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · Prisma 6 · PostgreSQL (docker container `noema-db`, port **5433**) · TipTap
+<!-- Publishing: replace `your-org` in the badge URLs below, and in
+     package.json, SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md and
+     CITATION.cff. Everything else is ready. -->
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![CI](https://github.com/your-org/noema/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/noema/actions/workflows/ci.yml)
+[![Next.js 15](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org)
+[![Node 24](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](./.nvmrc)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
+
+[![The Noema landing page](./docs/screenshots/01-landing.png)](./docs/screenshots/01-landing.png)
+
+</div>
+
+> **Notion is a trademark of its respective owner.** Noema is not affiliated
+> with, endorsed by, or derived from Notion's source code, assets or
+> trademarks. It implements the same *category* of product from publicly
+> documented behaviour only. See [Notice](#notice).
+
+- **Stack:** Next.js 15 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · Prisma 6 · PostgreSQL (docker container `noema-db`, port **5433**) · TipTap · Tauri 2 for the desktop app
 - **Runs locally:** one `docker compose up` for the database, one `npm run dev` for the app.
-- **License:** MIT
+- **Runs as an app:** one installer — no Postgres, no Docker, no account. See [Desktop app](#desktop-app).
+- **License:** MIT · **Built by** [Bilel Guembri and Wissal Ben Othmen](#authors)
 
 ---
 
+## Contents
+
+| Start here | Go deeper |
+| --- | --- |
+| [Status](#status) — what this repository is today | [Architecture](#architecture) — how it is put together |
+| [Implemented today](#implemented-today) — what works, area by area | [Project layout](#project-layout) — where the files live |
+| [Desktop app](#desktop-app) — the installable build | [Scripts](#scripts) — every gate and check |
+| [Quick start](#quick-start) — Docker, `.env`, `npm run dev` | [Where to read next](#where-to-read-next) — the full docs set |
+| [Screenshots](#screenshots) — the interface at a glance | [Contributing](#contributing) · [Security](#security) |
+| | [Authors](#authors) · [License](#license) |
+
 ## Status
 
-This repository is a **working foundation plus a complete parity tracker**.
+This repository is a **working application plus a complete parity tracker**.
 
 - The app runs and implements the core workspace loop (auth → workspaces →
-  nested pages → block editor → databases → search → comments → history).
-- Every Notion feature area is tracked in **[`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md)**
-  (563 feature rows: 161 implemented · 101 partial · 287 planned · 14 deliberately
-  out of scope) with a status per feature, so nothing is dropped.
+  nested pages → block editor → databases → search → comments → history) and
+  well beyond it: tickets, projects and cycles, workspace chat, AI, sharing and
+  SSO, signed webhooks, and the desktop build.
+- Every feature area is tracked in **[`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md)**
+  — 563 rows, each with a status and a note explaining the current state. Today:
+  **454 implemented · 87 partial · 0 planned · 22 deliberately out of scope**.
+- Nothing is dropped silently. What is unfinished is enumerated in
+  **[`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md)**, generated from the
+  matrix by `npm run docs:gaps`, so the two cannot disagree.
 
 ## Implemented today
 
@@ -78,6 +115,35 @@ This repository is a **working foundation plus a complete parity tracker**.
 Everything not yet implemented is enumerated in the feature matrix with a
 🧭 Planned status.
 
+## Desktop app
+
+The same codebase also builds into a per-user Windows installer: a **Tauri 2**
+shell around a **bundled Node runtime** and an **embedded PostgreSQL (PGlite)**.
+It needs nothing else on the machine — no Docker, no external database, no
+account.
+
+| | |
+| --- | --- |
+| **Install** | The NSIS installer (`Noema_1.4.0_x64-setup.exe`) installs per user into `%LOCALAPPDATA%\Noema`, and uninstalls from Add/Remove programs. WebView2 is bootstrapped by the installer itself |
+| **Your data** | `%APPDATA%\app.noema.desktop` — the database, uploads, the session secret and preferences. Uninstalling keeps it unless you tick *delete application data* |
+| **Build it** | `npm run desktop:bundle` → `src-tauri/target/release/bundle/{nsis,msi}` |
+| **How it boots** | The shell starts the bundled server on a free loopback port and opens the window on it. The port is a preference, not a contract: it survives a port change because nothing outside the shell depends on the number |
+| **One codebase** | The desktop build is the site build with `NOEMA_STANDALONE=1` — the embedded database replaces Postgres and the shell owns the lifecycle. Nothing is forked |
+
+Packaging, security posture and the install verification harness are documented
+in [`docs/DESKTOP.md`](./docs/DESKTOP.md).
+
+## Screenshots
+
+| Home, templates and recent activity | Workspace settings and members |
+| --- | --- |
+| ![The workspace home](./docs/screenshots/03-workspace-home.png) | ![Workspace settings](./docs/screenshots/07-settings.png) |
+
+The landing page sits at the top of this file. The rest of the interface —
+search, databases, tickets, chat, the editor, sharing — is specified in
+[`docs/specs/`](./docs/specs/), reviewed in [`docs/AUDIT.md`](./docs/AUDIT.md),
+and tracked row by row in [`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md).
+
 ## AI configuration
 
 Any OpenAI-compatible provider works. Example (DeepSeek):
@@ -120,8 +186,9 @@ Diagnostics: `npm run check:routes` prints a Server Action origin matrix (same o
 | Roles | Owner · admin · member · **guest** — enforced on the server, never only in the UI |
 | **Guest page-scoping** | A guest opens **only** the pages shared with them: an explicit `PagePermission`, a page in a teamspace they belong to, or a page they created — plus ancestors so the tree still renders. Applied to the sidebar tree, search and **the page route** (a direct URL to an unshared page is a 404, not a leak). Guests cannot edit, invite or upload |
 | Teamspaces | Members see and search only their teamspaces; invites are emailed |
-| Page shares | Per-member levels (inherit · view · comment · edit · full) and public links with an optional password and expiry |
-## Storage & backups
+| Page shares | Per-member levels (inherit · view · comment · edit · full) and public links with an optional password and expiry 
+
+Storage & backups
 
 | Capability | Detail |
 | --- | --- |
@@ -129,8 +196,9 @@ Diagnostics: `npm run check:routes` prints a Server Action origin matrix (same o
 | **No SDK** | The S3 driver signs requests with **Signature V4** (`signS3Request`, unit-tested for determinism, key encoding and presigned GETs) over `fetch` |
 | **Authorised reads** | Files are never public: `/api/files/<workspace>/<name>` re-checks the session and workspace membership, validates the key (no traversal) and streams from whichever driver holds the bytes |
 | **Uploads** | Type allow-list + 10 MB cap + `Asset` row; `npm run check:storage` asserts the byte-for-byte round trip, the content type, the 404 for a missing key, the traversal refusal, the anonymous refusal and the 415 for a bad type |
-| **Backups** | `npm run backup` writes `backups/noema-<timestamp>.sql` (via the database container or a local `pg_dump`), refuses to keep a suspiciously small file, verifies the core tables are in the dump, keeps the newest 5 and prints the restore command |
-## Cycles (sprints)
+| **Backups** | `npm run backup` writes `backups/noema-<timestamp>.sql` (via the database container or a local `pg_dump`), refuses to keep a suspiciously small file, verifies the core tables are in the dump, keeps the newest 5 and prints the restore command 
+
+Cycles (sprints)
 
 `/w/<slug>/cycles` turns estimates into a plan:
 
@@ -141,8 +209,9 @@ Diagnostics: `npm run check:routes` prints a Server Action origin matrix (same o
 | **Commitment** | Each cycle shows completed vs committed estimate, remaining points and a percentage, with a progress bar |
 | **Burndown** | Daily remaining points against the ideal straight line, drawn inline (SVG), out of the maths in `src/lib/cycles.ts` |
 | **Velocity** | The average completed estimate over the last six finished cycles, shown in the header |
-| Delete | Deleting a cycle unschedules its tickets — it never deletes them |
-## Collaboration depth
+| Delete | Deleting a cycle unschedules its tickets — it never deletes them 
+
+Collaboration depth
 
 | Capability | Detail |
 | --- | --- |
@@ -150,8 +219,9 @@ Diagnostics: `npm run check:routes` prints a Server Action origin matrix (same o
 | **Reactions** | 👍🎉❤️😄🙌👀❓ picker with optimistic chips and per-person counts (`CommentReaction`) |
 | **Mentions** | `@Ada`, `@ada`, `@ada@example.com` create a `page.mention` notification for the matching member (never the author); matching lives in a tested pure helper |
 | **Activity trail** | Every workspace, member, page, share and comment mutation writes an `Activity` row; Settings → Activity shows who did what, human-labelled |
-| **Sound dates** | `<LocalTime>` renders a deterministic UTC string on the server and the reader's locale after mount, so no page hydrates with mismatched text (React #418 used to detach every handler) |
-## Search
+| **Sound dates** | `<LocalTime>` renders a deterministic UTC string on the server and the reader's locale after mount, so no page hydrates with mismatched text (React #418 used to detach every handler) 
+
+Search
 
 Content search is **Postgres full-text**, not a JavaScript scan: every page keeps a
 plain-text mirror (`Page.searchText`) updated on write, indexed with a GIN index over
@@ -159,8 +229,9 @@ plain-text mirror (`Page.searchText`) updated on write, indexed with a GIN index
 a `to_tsquery` **prefix pass** so typing "road" finds "roadmap", and `ts_headline`
 snippets. Trashed pages are excluded; pages whose mirror predates the feature fall back
 to a substring match. Run `npm run setup:search` after a fresh database (the index is an
-expression index, so it lives in SQL rather than in the Prisma schema).
-## Workspaces
+expression index, so it lives in SQL rather than in the Prisma schema)
+
+Workspaces
 
 Create, switch and administer workspaces without leaving the sidebar.
 
@@ -172,8 +243,9 @@ Create, switch and administer workspaces without leaving the sidebar.
 | **Members & roles** | Promote/demote (admin · member · guest), remove a member (their page permissions are cleared too); owner/admin hierarchy is enforced on the server |
 | **Leave** | Members can leave; the owner is told to transfer or delete instead |
 | **Transfer ownership** | Owner-only, atomic: new owner becomes OWNER, the previous owner becomes ADMIN |
-| **Entry point** | `/app` redirects to your first workspace, or offers creation when you have none |
-## Tickets (issues)
+| **Entry point** | `/app` redirects to your first workspace, or offers creation when you have none 
+
+Tickets (issues)
 
 `/w/<slug>/tickets` — a Linear-style tracker on top of the workspace:
 
@@ -227,9 +299,9 @@ dark variants under `.dark`).
 | Feedback | Optimistic sends, skeleton "thinking" row, auto-scroll to the newest exchange, `notion-empty` / `notion-skeleton` helpers |
 
 **Remaining work** is enumerated in [`docs/MISSING_FEATURES.md`](docs/MISSING_FEATURES.md)
-(generated from the feature matrix by `npm run docs:gaps`): 388 of 563 tracked
-rows are still partial or planned (plus 14 deliberately out of scope), with a
-15-item priority shortlist at the top.
+(generated from the feature matrix by `npm run docs:gaps`): of 563 tracked rows,
+87 are still partial and 22 are deliberately out of scope — the rest are
+implemented — with a priority shortlist at the top.
 
 
 ## LaTeX
@@ -378,7 +450,7 @@ password: password123
 ## Project layout
 
 ```
-notion-clone/
+noema/
 ├─ prisma/
 │  ├─ schema.prisma        # full domain model
 │  └─ seed.ts              # demo workspace, database and rows
@@ -425,12 +497,17 @@ auth-gated, so the parity tracker is built from publicly documented behaviour.
 
 ## Security
 
+Found a vulnerability? Please **do not open a public issue** — follow
+[`SECURITY.md`](./SECURITY.md) so it can be handled privately first.
+
 - Passwords hashed with bcrypt (cost 12); sessions are HS256 JWTs in httpOnly cookies.
 - Every server action re-derives workspace access from the session; guests are read-only.
 - Set a strong `AUTH_SECRET` and use `secure` cookies + HTTPS in production.
 - Share links are live: `/s/<token>` (optional password + expiry) and the
   single-use, hashed `/invite/<token>` invitation links — both re-check access
   on the server rather than trusting the URL.
+- No credential belongs in the tree: `npm run check:secrets` fails on any
+  committed key-shaped value, and `.env` is git-ignored.
 
 ## Where to read next
 
@@ -454,6 +531,28 @@ Noema is an independent project. "Notion" is a trademark of its respective
 owner and is referenced only descriptively for interoperability/education. No
 Notion source code, assets, copy or branding is included or redistributed.
 
+## Contributing
+
+Contributions are welcome — bug reports, fixes, documentation and translations
+alike. Start with [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup, the gate
+list and commit style, and read [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)
+before opening a pull request.
+
+The honest list of what is missing lives in
+[`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md) — it is generated from
+the feature matrix, so it never drifts from reality. That is the best place to
+find something worth building.
+
+## Authors
+
+Noema is built by:
+
+- **Bilel Guembri**
+- **Wissal Ben Othmen**
+
+See [`AUTHORS.md`](./AUTHORS.md) for the full list, and
+[`CHANGELOG.md`](./CHANGELOG.md) for what changed when.
+
 ## License
 
-[MIT](./LICENSE).
+[MIT](./LICENSE) © 2026 Bilel Guembri, Wissal Ben Othmen.
