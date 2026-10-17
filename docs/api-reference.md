@@ -134,7 +134,9 @@ Begins the OIDC login. Requires `SSO_ISSUER` + `SSO_CLIENT_ID`
 
 Query: `?code=…&state=…`. Verifies `state` against the cookie, exchanges the
 code at the provider's `token_endpoint` (client-secret post), verifies the
-`id_token` via JWKS (`issuer` + `audience`), checks `nonce`, then:
+`id_token` via JWKS (`issuer` + `audience`), checks `nonce` (a token without the
+claim, or with a claim that differs from the `sso_nonce` cookie, is refused),
+then:
 
 - looks the user up by lowercased email, reading `emailVerified` — an account
   may only be linked when it proved its own address (SSO-created users get
@@ -147,7 +149,7 @@ code at the provider's `token_endpoint` (client-secret post), verifies the
 | Case | Response |
 |---|---|
 | Env not configured | `404 {"error":"SSO is not configured."}` |
-| Missing/mismatched `state`/`code`, discovery failure, token exchange failure, bad id_token, nonce mismatch, no email in token | `307` → `/login?error=sso` (redirect, no JSON body) |
+| Missing/mismatched `state`/`code`, discovery failure, token exchange failure, bad id_token, missing/mismatched `nonce`, no email in token | `307` → `/login?error=sso` (redirect, no JSON body) |
 | The address belongs to an account that never verified it | `307` → `/login?error=sso_email_taken` (redirect, no JSON body) |
 | OK | `307` → `/app` |
 

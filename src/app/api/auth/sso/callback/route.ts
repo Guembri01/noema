@@ -152,8 +152,11 @@ export async function GET(request: Request) {
     return ssoFailure(origin);
   }
   // OIDC binds the id_token to the request with `nonce` (the `state` check above
-  // already bound the callback itself).
-  if (nonce && payload.nonce && payload.nonce !== nonce) {
+  // already bound the callback itself). The binding is mandatory: an id_token
+  // without the claim, an id_token whose claim differs from the remembered
+  // nonce and a missing hand-off cookie all fail closed — the check may not
+  // skip itself when the provider stays silent.
+  if (!nonce || payload.nonce !== nonce) {
     return ssoFailure(origin);
   }
 

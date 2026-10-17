@@ -354,6 +354,56 @@ describe("GET /api/auth/sso/callback", () => {
     expect(authMock.createSession).not.toHaveBeenCalled();
   });
 
+  it("refuses an id_token that carries no nonce claim", async () => {
+    // B26: the `nonce` binds the id_token to this request. A token without the
+    // claim must not be accepted — the check may not fail open.
+    joseMock.jwtVerify.mockResolvedValue({
+      payload: {
+        sub: "sso-user-7",
+        email: "no-nonce@noema.local",
+        name: "No Nonce",
+        email_verified: true,
+      },
+    });
+
+    const response = await ssoCallback(
+      new Request(`${CALLBACK_URL}?code=code-1&state=state-1`),
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?error=sso",
+    );
+    expect(authMock.createSession).not.toHaveBeenCalled();
+    expect(prismaMock.user.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the hand-off nonce cookie is gone", async () => {
+    // Without the remembered nonce there is nothing to bind the id_token to —
+    // the sign-in may not be accepted unbound.
+    jar.delete("sso_nonce");
+    joseMock.jwtVerify.mockResolvedValue({
+      payload: {
+        sub: "sso-user-8",
+        email: "no-cookie@noema.local",
+        name: "No Cookie",
+        nonce: "nonce-1",
+        email_verified: true,
+      },
+    });
+
+    const response = await ssoCallback(
+      new Request(`${CALLBACK_URL}?code=code-1&state=state-1`),
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?error=sso",
+    );
+    expect(authMock.createSession).not.toHaveBeenCalled();
+    expect(prismaMock.user.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
+  });
+
   it("fails closed when the identity carries no email", async () => {
     joseMock.jwtVerify.mockResolvedValue({ payload: { sub: "sso-user-4" } });
 
