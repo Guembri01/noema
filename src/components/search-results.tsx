@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { SearchX } from "lucide-react";
 import { loadMoreSearchAction } from "@/server/actions/search";
 import { useAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
@@ -10,6 +11,10 @@ import { nextIndex, rovingTabIndex } from "@/lib/keyboard-nav";
 import { refineByRelevance } from "@/lib/search-ranking";
 import { offsetForIndex, scrollToIndex, totalHeight, visibleRange } from "@/lib/virtual-list";
 import { cn } from "@/lib/utils";
+import { type TagHue } from "@/lib/design-tokens";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Tag } from "@/components/ui/tag";
 import {
   DEFAULT_SUMMARY_LENGTH,
   extractDescription,
@@ -55,14 +60,28 @@ const VIRTUAL_THRESHOLD = 40;
 export const SEARCH_RESULT_TYPES = ["PAGE", "DATABASE"] as const;
 
 /** Chip label for a result type; matches the Library page's section wording. */
-function resultTypeLabel(type: string): string {
+export function resultTypeLabel(type: string): string {
   if (type === "PAGE") return "Pages";
   if (type === "DATABASE") return "Databases";
   return type;
 }
 
+/**
+ * Tag hue for a result type, so the filter chips read from the shared tag
+ * palette. Unknown types fall back to `gray` (the same fallback `tagClass`
+ * applies), so a new engine type can never render an unstyled chip. Pure.
+ */
+const RESULT_TYPE_HUES: Record<string, TagHue> = {
+  PAGE: "blue",
+  DATABASE: "purple",
+};
+
+export function resultTypeHue(type: string): TagHue {
+  return RESULT_TYPE_HUES[type] ?? "gray";
+}
+
 /** Estimated rendered height of one result row, from its (possibly empty) teaser. */
-function heightFromTeaser(teaser: string): number {
+export function heightFromTeaser(teaser: string): number {
   if (!teaser) return ROW_BASE_HEIGHT;
   const lines = Math.min(
     MAX_TEASER_LINES,
@@ -89,7 +108,7 @@ export type SearchRow = {
  * the page than the teaser reaches), the snippet is read as a paragraph with
  * `extractDescription` and truncated at a word boundary. Pure and total.
  */
-function pageTeaser(
+export function pageTeaser(
   content: { snippet?: string; blocks?: readonly SummaryBlock[] },
   maxLength: number,
   query: string,
@@ -126,7 +145,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   return (
     <>
       {excerpt.slice(0, matchStart)}
-      <mark className="rounded-sm bg-accent/20 text-inherit">
+      <mark className="rounded-xs bg-accent-soft text-accent">
         {excerpt.slice(matchStart, matchEnd)}
       </mark>
       {excerpt.slice(matchEnd)}
@@ -314,7 +333,9 @@ export function SearchResults({
   };
 
   // Shared row body so the plain and windowed lists stay byte-identical in what
-  // they render (only the positioning wrapper differs).
+  // they render (only the positioning wrapper differs). The active row carries
+  // the `--accent-soft` tint so the keyboard cursor is visible without hover;
+  // the shared `.focus-ring` tracks DOM focus.
   const resultBody = (page: SearchRow, teaser: string, index: number) => (
     <Link
       href={`/w/${slug}/${page.id}`}
@@ -323,8 +344,12 @@ export function SearchResults({
         else rowRefs.current.delete(index);
       }}
       tabIndex={index === activeRow ? 0 : -1}
+      data-active={index === activeRow ? "true" : undefined}
       onFocus={() => setActiveIndex(index)}
-      className="block px-4 py-3 hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+      className={cn(
+        "block px-4 py-3 u-colors focus-ring",
+        index === activeRow ? "bg-accent-soft" : "hover:bg-surface-2",
+      )}
     >
       <p className="flex items-center gap-2 text-sm font-medium">
         <span>{page.icon ?? (page.type === "DATABASE" ? "🗂️" : "📄")}</span>
@@ -350,29 +375,30 @@ export function SearchResults({
           aria-label="Filter results by type"
           className="mt-3 flex flex-wrap items-center gap-2"
         >
-          {types.map((type) => {
-            const active = selectedTypes.includes(type);
-            return (
-              <button
-                key={type}
-                type="button"
-                aria-pressed={active}
-                onClick={() => toggleType(type)}
-                className={cn(
-                  "h-7 rounded-full border px-3 text-xs font-medium transition",
-                  active
-                    ? "border-accent bg-accent/15 text-fg"
-                    : "border-border text-muted hover:bg-surface-2 hover:text-fg",
-                )}
-              >
-                {resultTypeLabel(type)}
-              </button>
-            );
-          })}
+          {types.map((type) => (
+            <Tag
+              key={type}
+              hue={resultTypeHue(type)}
+              size="md"
+              selected={selectedTypes.includes(type)}
+              onSelectedChange={() => toggleType(type)}
+            >
+              {resultTypeLabel(type)}
+            </Tag>
+          ))}
         </div>
       )}
 
-      {windowed ? (
+      {filteredRows.length === 0 ? (
+        <div className="mt-4 rounded-lg border border-dashed border-border">
+          <EmptyState
+            variant="compact"
+            icon={<SearchX className="h-4 w-4" aria-hidden />}
+            title={t(locale, "noResults")}
+            description="Try a different search or clear the type filters."
+          />
+        </div>
+      ) : windowed ? (
         <div
           ref={scrollerRef}
           role="region"
@@ -411,26 +437,22 @@ export function SearchResults({
           {filteredRows.map((page, index) => (
             <li key={page.id}>{resultBody(page, teasers[index] ?? "", index)}</li>
           ))}
-          {filteredRows.length === 0 && (
-            <li className="px-4 py-6 text-center text-sm text-muted">
-              {t(locale, "noResults")}
-            </li>
-          )}
         </ul>
       )}
 
       {offset !== null && (
         <div className="mt-3 flex items-center gap-2">
-          <button
+          <Button
             type="button"
-            disabled={pending}
+            variant="secondary"
+            size="sm"
+            loading={pending}
             onClick={loadMore}
-            className="h-8 rounded border border-border px-3 text-sm hover:bg-surface-2 disabled:opacity-50"
           >
             {t(locale, "loadMore")}
-          </button>
+          </Button>
           {error && (
-            <span role="alert" className="text-sm text-red-600 dark:text-red-400">
+            <span role="alert" className="text-sm text-danger">
               {error}
             </span>
           )}
