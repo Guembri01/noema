@@ -34,7 +34,7 @@ protocol.
 
 | Area | Evidence | State |
 | --- | --- | --- |
-| Password auth + 2FA | `src/server/actions/auth.ts:19-114`, `src/lib/auth.ts`, `src/lib/totp.ts` (+ `totp.test.ts`), `src/server/actions/two-factor.ts` | Signup/login/logout server actions; TOTP gate before session issue (`auth.ts:85-90`); sessions = HS256 JWT cookie `noema_session`, 30 days, signed with `AUTH_SECRET` (`src/lib/auth.ts:31-47`). |
+| Password auth + 2FA | `src/server/actions/auth.ts:20-144`, `src/lib/auth.ts`, `src/lib/totp.ts` (+ `totp.test.ts`), `src/server/actions/two-factor.ts` | Signup/login/logout server actions; TOTP gate before session issue (`auth.ts:86-120`); sessions = HS256 JWT cookie `noema_session`, 30 days, signed with `AUTH_SECRET` (`src/lib/auth.ts:47-76`). |
 | OIDC SSO (env-level) | `src/app/api/auth/sso/start/route.ts`, `.../callback/route.ts`, `.env.example:30-33` | Discovery via `/.well-known/openid-configuration` (`start:14-21`), state+nonce in httpOnly cookies (`start:38-39`), code exchange + `jose` JWKS verification with issuer/audience/nonce (`callback:42-72`), JIT user create keyed by lowercased email with sentinel password `sso:<random>` (`callback:82-87`), then `createSession` (`callback:89`). **Global for the whole deployment; not per-workspace; no role/group mapping** (JIT user lands in no workspace). |
 | Login surface | `src/app/login/page.tsx:26` | Renders a "Sign in with SSO" link only when `process.env.SSO_ISSUER` is set. |
 | Settings UI | `src/app/w/[slug]/settings/page.tsx` | Single scrolling settings page of sections (General, Members, Activity, 2FA, API tokens, OAuth apps, Webhooks, AI, Labels, Email, Teamspaces); admin gate `canManageMembers` (`:62,164`). **No SSO section** — SSO config exists only as env. |
@@ -295,7 +295,7 @@ model SamlAssertionSeen {
    (R10.13).
 3. Assertion-ID cache prune logic (R10.16).
 4. RelayState validation (same-site relative only — reuse the login page's
-   open-redirect guard, `src/server/actions/auth.ts:105-107`).
+   open-redirect guard, `src/server/actions/auth.ts:135-137`).
 
 **Integration / e2e**
 

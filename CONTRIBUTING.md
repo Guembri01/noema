@@ -60,6 +60,30 @@ Some checks need a running server and are not part of the static set:
 `check:chat-stream`, `check:tickets`, `check:mail`, `check:providers` and the
 Playwright suite (`npm run e2e`, which expects the production server on `:3200`).
 
+### Commit metadata
+
+`npm run check:dates` (`scripts/check-commit-dates.mjs`) checks two things about
+every commit of the ref under review: that the author and the committer date
+fall into one of the authoring windows, and that the e-mail address belongs to
+a project human — the `HUMANS` map in that script.
+
+**Registering an identity is a maintainer decision, not a side effect of a
+change.** The map is the only thing that lets a contributor's commits pass the
+identity check, so a commit that adds its own address to it authorises itself
+— that is why it has to be named in the commit message and reviewed like any
+other governance change. The procedure:
+
+1. a maintainer adds the address (the key) and the display name (the value) to
+   `HUMANS` in `scripts/check-commit-dates.mjs`;
+2. the commit that does it names the line in its message — e.g. *"the address
+   `<mail>` is registered in the `HUMANS` map"* — and the pull request says the
+   same, so the reviewer sees the second change in the diff;
+3. the name is credited in [`AUTHORS.md`](./AUTHORS.md).
+
+Nobody adds their own address to `HUMANS` in a pull request that is not about
+that registration, and a feature commit never carries the registration along
+unmentioned.
+
 ### Tests
 
 - **Unit tests are the default.** Vitest, colocated as `*.test.ts` next to the
