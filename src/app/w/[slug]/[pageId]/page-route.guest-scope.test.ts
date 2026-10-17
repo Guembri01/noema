@@ -75,9 +75,8 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/auth", () => ({ requireUser: auth.requireUser }));
 // The module is mocked partially: the workspace access is the seam of the
-// test, the role predicates stay real — a mock that leaves
-// `canPerformWorkspaceAction` out would make the route under test throw
-// instead of answering.
+// test, everything else stays real — a full mock would answer the role
+// questions the route asks with a fixed value.
 vi.mock("@/lib/permissions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/permissions")>();
   return { ...actual, getWorkspaceAccess: perm.getWorkspaceAccess };
@@ -112,8 +111,9 @@ type Fixture = {
 };
 
 /**
- * The workspace's tree — the same fixture the action test uses
- * (`src/server/actions/linked-database.guest-scope.test.ts`):
+ * The workspace's tree — the same shape the action test uses
+ * (`src/server/actions/linked-database.guest-scope.test.ts`), with one page
+ * more: the route reads the whole tree, the action only the database:
  *
  *   parent-1            (an ordinary page)
  *   └── db-3           (a database below it)
