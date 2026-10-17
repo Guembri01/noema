@@ -145,13 +145,38 @@ function isInlineElement(el: ElementNode): boolean {
   return !BLOCK_TAGS.has(el.tag) || el.tag === "div";
 }
 
-/* ------------------------------------------------------------ mark mapping */
+/* -------------------------------------------------------------------- urls */
 
+/**
+ * A URL as a browser reads it: control characters removed and lower-cased, so
+ * `java\nscript:` reads as `javascript:`. The same strip set the editor's own
+ * paste gate uses (`src/lib/paste-cleanup.ts`).
+ */
+function urlProbe(value: string): string {
+  return value.replace(/[\u0000-\u0020\u007f]+/g, "").toLowerCase();
+}
+
+/** True for URLs that execute code (scheme-obfuscation tolerant). */
+function unsafeUrl(value: string): boolean {
+  return /^(javascript|vbscript|data:text\/html)/.test(urlProbe(value));
+}
+
+/**
+ * The link gate of the paste normaliser.
+ *
+ * The scheme is read the way a browser reads it — control characters removed
+ * first — so `java\nscript:` cannot hide behind a newline, and a `data:`
+ * document is never a valid target: its payload can carry markup.
+ */
 function safeHref(href: string | undefined): string | null {
   if (!href) return null;
   const value = href.trim();
-  return /^(javascript|vbscript|data:text\/html)/i.test(value) ? null : value;
+  if (unsafeUrl(value)) return null;
+  if (urlProbe(value).startsWith("data:")) return null;
+  return value;
 }
+
+/* ------------------------------------------------------------ mark mapping */
 
 function styleMarks(style: string | undefined): Mark[] {
   if (!style || /expression\s*\(|javascript:/i.test(style)) return [];
@@ -552,12 +577,6 @@ const PLAIN_BLOCK_TAGS = new Set([
   "figure", "figcaption", "details", "summary", "dl", "dt", "dd",
   "form", "fieldset",
 ]);
-
-/** True for URLs that execute code (scheme-obfuscation tolerant). */
-function unsafeUrl(value: string): boolean {
-  const probe = value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
-  return /^(javascript|vbscript|data:text\/html)/.test(probe);
-}
 
 function escapeAttr(value: string): string {
   return value

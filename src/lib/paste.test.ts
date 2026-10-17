@@ -273,6 +273,49 @@ describe("normalizePasteHtml", () => {
   });
 });
 
+describe("normalizePasteHtml link targets (B71)", () => {
+  /** The href the normaliser keeps for `<a href>`, or `null` when it drops it. */
+  const hrefOf = (href: string): string | null => {
+    const [para] = parse(`<p><a href="${href}">x</a></p>`).blocks;
+    const mark = para?.content?.[0]?.marks?.find((m) => m.type === "link");
+    const value = mark?.attrs?.href;
+    return typeof value === "string" ? value : null;
+  };
+
+  it("drops a javascript: target whose scheme hides behind a control character", () => {
+    expect(hrefOf("java\nscript:alert(1)")).toBeNull();
+    expect(hrefOf("java\tscript:alert(1)")).toBeNull();
+    expect(hrefOf("java\rscript:alert(1)")).toBeNull();
+    expect(hrefOf("\u0001javascript:alert(1)")).toBeNull();
+    expect(hrefOf(" javascript:alert(1)")).toBeNull();
+  });
+
+  it("drops every data: target, whatever the payload claims to be", () => {
+    expect(hrefOf("DATA:text/html,PHN2Zz4=")).toBeNull();
+    expect(hrefOf("data:text/html;base64,PHN2Zz4=")).toBeNull();
+    expect(hrefOf("data:application/xhtml+xml,PGh0bWw+")).toBeNull();
+    expect(hrefOf("data:image/png;base64,QUJD")).toBeNull();
+  });
+
+  it("keeps the ordinary link targets", () => {
+    expect(hrefOf("https://example.test/a")).toBe("https://example.test/a");
+    expect(hrefOf("http://example.test/a")).toBe("http://example.test/a");
+    expect(hrefOf("mailto:a@b.test")).toBe("mailto:a@b.test");
+    expect(hrefOf("tel:+1234")).toBe("tel:+1234");
+    expect(hrefOf("/w/demo/page")).toBe("/w/demo/page");
+    expect(hrefOf("#section")).toBe("#section");
+  });
+
+  it("leaves an embedded image alone — a src is not a link target", () => {
+    expect(parse('<img src="data:image/png;base64,QUJD" alt="a">').blocks).toEqual([
+      { type: "image", attrs: { src: "data:image/png;base64,QUJD", alt: "a" } },
+    ]);
+    expect(sanitizePastedHtml('<img src="data:image/png;base64,QUJD">')).toBe(
+      '<img src="data:image/png;base64,QUJD">',
+    );
+  });
+});
+
 describe("pastePlan", () => {
   const heading = parse('<h2 data-pm-slice="1 1 []">Title</h2>');
   const wholeHeading = parse('<h2 data-pm-slice="0 0 []">Title</h2>');

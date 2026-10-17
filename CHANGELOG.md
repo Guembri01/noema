@@ -13,6 +13,16 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ### Security
 
+- The link gate of the paste module reads the scheme the way a browser reads
+  it. Two URL gates stood in one module with different strictness: `safeHref`
+  only tested for a **literal** `javascript:`/`vbscript:`/`data:text/html`
+  prefix, while `unsafeUrl` right next to it removed the control characters
+  first — so `safeHref("java\nscript:alert(1)")` passed, and a browser strips
+  the newline inside the scheme. Both gates now share one probe (the control
+  characters removed, the value lower-cased), and `safeHref` refuses **every**
+  `data:` target, because a `data:` document is never a valid link target: its
+  payload can carry markup. The embedded images (`<img src="data:image/…">`)
+  are untouched — they do not run through this gate.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
