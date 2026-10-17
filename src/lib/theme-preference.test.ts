@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   normalizeTheme,
   THEME_COOKIE,
@@ -7,6 +7,10 @@ import {
   THEME_NAMES,
   themeHandoff,
 } from "./theme-preference";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("normalizeTheme", () => {
   it("accepts exactly the three preferences next-themes understands", () => {
@@ -70,5 +74,21 @@ describe("the cookie", () => {
     expect(THEME_COOKIE_OPTIONS.sameSite).toBe("lax");
     expect(THEME_COOKIE_MAX_AGE).toBe(60 * 60 * 24 * 365);
     expect(THEME_COOKIE_OPTIONS.maxAge).toBe(THEME_COOKIE_MAX_AGE);
+  });
+
+  // B31: the cookie carries `Secure` in production, like every other cookie
+  // of the app. The attributes are read once, when the module is loaded, so
+  // the production case needs a fresh import.
+  it("is marked secure in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.resetModules();
+
+    const production = await import("./theme-preference");
+
+    expect(production.THEME_COOKIE_OPTIONS.secure).toBe(true);
+  });
+
+  it("is not marked secure outside production", () => {
+    expect(THEME_COOKIE_OPTIONS.secure).toBe(false);
   });
 });
