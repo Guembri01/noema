@@ -1,5 +1,6 @@
 import { WorkspaceRole } from "@prisma/client";
 import { prisma } from "./db";
+import { API_SCOPE_IDS } from "./api-token-scope";
 
 export type WorkspaceAccess = { role: WorkspaceRole } | null;
 
@@ -35,6 +36,24 @@ export function canManageMembers(role: WorkspaceRole): boolean {
 
 export function canDeleteWorkspace(role: WorkspaceRole): boolean {
   return role === WorkspaceRole.OWNER;
+}
+
+/** Every read scope of the catalogue — the ceiling of a read-only role. */
+const READ_ONLY_API_SCOPES: readonly string[] = API_SCOPE_IDS.filter((id) =>
+  id.startsWith("read:"),
+);
+
+/**
+ * The API scopes a role may exercise, whatever the caller's token asks for.
+ *
+ * A guest is an external collaborator: they may read, never write and never
+ * administer. The list is a *ceiling*, not a grant — the token still decides
+ * which of these scopes the caller actually holds, and the request's workspace
+ * role is what caps the token, because a token belongs to a user while a role
+ * belongs to a workspace.
+ */
+export function apiScopesForRole(role: WorkspaceRole): readonly string[] {
+  return role === WorkspaceRole.GUEST ? READ_ONLY_API_SCOPES : API_SCOPE_IDS;
 }
 
 /**

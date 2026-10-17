@@ -681,6 +681,12 @@ async function substringHits(
  * content-derived teaser. It defaults off: the teaser payload is only wanted by
  * the search page, while the palette/API/cursor walks would otherwise read the
  * JSON of every hit.
+ *
+ * `visiblePageIds` narrows the result to the pages the caller may open; `null`
+ * means "the whole workspace". It applies to a blank query as well: the
+ * branch that lists the most recent pages is a window on the *visible* set,
+ * not on the workspace — otherwise a guest could enumerate the titles of the
+ * pages they may not open.
  */
 export async function searchPages(
     workspaceId: string,
@@ -703,8 +709,15 @@ export async function searchPages(
   } as const;
 
   if (!q) {
+    // A blank query still lists pages (the UI shows the most recent ones), so
+    // the window is drawn from the caller's visible set: an unscoped caller
+    // must not be able to enumerate the pages they may not open.
     const pages = await prisma.page.findMany({
-      where: { workspaceId, deletedAt: null },
+      where: {
+        workspaceId,
+        deletedAt: null,
+        ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+      },
       orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
       take,
       skip: offset,
