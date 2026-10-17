@@ -24,8 +24,6 @@
         "center": true,
         "decorations": true,
         "transparent": false,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
         "acceptFirstMouse": true,
         "dragDropEnabled": true,
         "zoomHotkeysEnabled": true
@@ -35,18 +33,9 @@
       "csp": "default-src 'self' tauri: asset: ipc: http://ipc.localhost http://127.0.0.1:*; img-src 'self' data: blob: asset: http://127.0.0.1:* https:; media-src 'self' blob: asset: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* https: wss:; font-src 'self' data:; frame-src 'self' http://127.0.0.1:* https:; object-src 'none'; base-uri 'self'",
       "assetProtocol": {
         "enable": true,
-        "scope": [
-          "$APPDATA/**",
-          "$APPLOCALDATA/**",
-          "$HOME/**",
-          "$TEMP/**"
-        ]
+        "scope": ["$APPDATA/**", "$APPLOCALDATA/**", "$HOME/**", "$TEMP/**"]
       },
-      "freezePrototype": false,
-      "capabilities": [
-        "default",
-        "desktop-everything"
-      ]
+      "capabilities": ["default", "desktop-everything"]
     },
     "trayIcon": {
       "id": "main",
@@ -58,10 +47,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "nsis",
-      "msi"
-    ],
+    "targets": "all",
     "publisher": "Noema",
     "homepage": "https://noema.app",
     "copyright": "© Noema",
@@ -75,40 +61,28 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "server/"
-    ],
-    "externalBin": [
-      "binaries/noema-node"
-    ],
+    "resources": ["server/"],
+    "externalBin": ["binaries/noema-node"],
     "windows": {
       "digestAlgorithm": "sha256",
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
       "wix": {
-        "language": [
-          "en-US"
-        ]
+        "language": ["en-US"]
       },
       "nsis": {
         "installMode": "currentUser",
-        "languages": [
-          "English"
-        ],
+        "languages": ["English"],
         "displayLanguageSelector": false,
         "compression": "lzma",
         "startMenuFolder": "Noema",
         "installerIcon": "icons/icon.ico"
       }
     },
-    "macOS": {
-      "minimumSystemVersion": "11.0"
-    },
     "linux": {
       "deb": {
-        "depends": [
-          "libwebkit2gtk-4.1-0",
-          "libgtk-3-0",
-          "libayatana-appindicator3-1"
-        ]
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1"]
       }
     }
   },

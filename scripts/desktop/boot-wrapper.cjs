@@ -15,7 +15,46 @@ const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
 
+// The managed-database helper is copied next to this file by prepare.mjs.
+// Required defensively: an older payload without it should still boot (falling
+// back to a configured or conventional database) rather than crash on start.
+let ensureManagedDatabase = async () => null;
+try {
+  ({ ensureManagedDatabase } = require("./docker-db.cjs"));
+} catch (error) {
+  console.warn("[noema] managed-database helper unavailable:", error && error.message);
+}
+
 const root = __dirname;
+
+/**
+ * Which database to use.
+ *
+ *  1. an explicit `DATABASE_URL` (from the environment or the app's settings)
+ *     always wins — that is how a shared server, a CI run, or a support session
+ *     points the app somewhere specific;
+ *  2. otherwise, a Postgres this app manages with Docker (see docker-db.cjs):
+ *     created once, reused afterwards, credentials kept in the data directory;
+ *  3. otherwise the conventional local URL, so an existing Postgres still works
+ *     and the app's bootstrap page can take over.
+ */
+async function resolveDatabaseUrl() {
+  const configured = process.env.DATABASE_URL;
+  if (configured && configured.trim() !== "") {
+    console.log("[noema] using the configured DATABASE_URL");
+    return configured;
+  }
+
+  const managed = await ensureManagedDatabase({ dataDir: process.env.NOEMA_DATA_DIR });
+  if (managed) {
+    console.log(`[noema] using the managed Docker database on port ${managed.port}`);
+    return managed.url;
+  }
+
+  const fallback = "postgresql://postgres:postgres@127.0.0.1:5432/noema?schema=public";
+  console.log("[noema] Docker is unavailable — falling back to a local Postgres URL");
+  return fallback;
+}
 
 function prismaCli() {
   const cli = path.join(root, "node_modules", "prisma", "build", "index.js");
@@ -70,8 +109,19 @@ function migrate() {
 }
 
 function main() {
-  migrate();
-  require(path.join(root, "server.js"));
+  resolveDatabaseUrl()
+    .then((url) => {
+      process.env.DATABASE_URL = url;
+      migrate();
+      require(path.join(root, "server.js"));
+    })
+    .catch((error) => {
+      // The server still starts (with whatever DATABASE_URL says) so /api/health
+      // can report the problem and the app's bootstrap page can offer the fix.
+      console.error("[noema] database setup failed:", error && error.message);
+      migrate();
+      require(path.join(root, "server.js"));
+    });
 }
 
 main();

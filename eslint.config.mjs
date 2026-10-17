@@ -12,10 +12,11 @@ const compat = new FlatCompat({
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
-    // The desktop boot wrapper must be CommonJS: it is copied into the Next
-    // standalone output and has to `require("./server.js")` — that server is CJS
-    // and there is no bundler at that point, so ESM is not an option there.
-    files: ["scripts/desktop/boot-wrapper.cjs"],
+    // The desktop scripts that run *inside the packaged payload* must be
+    // CommonJS: `start.cjs` is copied into the Next standalone output and has to
+    // `require("./server.js")` (CJS, no bundler at that point), and its helper is
+    // required from there. ESM is not an option for them.
+    files: ["scripts/desktop/*.cjs"],
     rules: { "@typescript-eslint/no-require-imports": "off" },
   },
   {

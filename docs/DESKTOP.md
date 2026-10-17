@@ -6,7 +6,7 @@ One codebase, two shipped products:
 |---|---|---|
 | What | the hosted web app | the installable desktop app |
 | Runtime | Next.js server + Postgres | Tauri 2 (Rust) shell + a bundled Node runtime running the same Next server |
-| Database | Postgres | Postgres (same schema; connection string configurable on first run) |
+| Database | Postgres | Postgres (same schema) — **provisioned by Docker** on first run, or pointed anywhere via a connection string |
 | Build | `npm run site:build` → `next start`, or `docker compose up --build` | `npm run desktop:bundle` → `Noema_x.y.z_x64-setup.exe` (NSIS) + `.msi` |
 | Users | many accounts, workspaces, SSO | one local user, no account required |
 | Entry | `npm run dev` | `npm run desktop:dev` / `npm run desktop:build` |
@@ -193,7 +193,40 @@ npm run desktop:smoke       # prove it boots + migrates + serves
 npm run desktop:bundle      # bundle (prepare re-runs, validated)
 ```
 
-## 5. Installing what you built
+## 5. The database (Docker-provisioned)
+
+The schema is Postgres (full-text search, `pg_trgm`), so a desktop install needs a
+Postgres. Rather than asking you to install one, the desktop build provisions its
+own **on first run**:
+
+1. **A configured URL always wins** — `NOEMA_DATABASE_URL`, or the value saved in
+   the app's settings / pasted on the bootstrap page. That is how you point the app
+   at a shared server, or at the compose stack you already run.
+2. **Otherwise the app manages a container**: `noema-postgres`
+   (`postgres:16-alpine`) with its own named volume `noema-pgdata`. Docker is
+   started automatically if the engine is not running (Windows: Docker Desktop).
+3. **Otherwise** it falls back to `postgresql://postgres:postgres@127.0.0.1:5432/noema`,
+   so an existing local Postgres still works, and the bootstrap page can take over.
+
+Why it is built that way:
+
+| Decision | Reason |
+|---|---|
+| Container `noema-postgres`, volume `noema-pgdata` | **never** the project's own `noema-db`: a desktop install must not adopt, restart or delete the developer's database |
+| Docker chooses the host port (`-p 127.0.0.1::5432`) | any fixed port can collide — the compose stack publishes 5433, the first candidate — and the install would fail with "port is already allocated" |
+| A **generated** password, stored in the data directory | a local database with `postgres/postgres` is a habit worth not having |
+| The volume is never removed; a stopped container is started, a broken one recreated | the user's data outlives the app's lifecycle decisions |
+| `--restart unless-stopped` | the database comes back with the machine, without the app running |
+
+Inspect or pre-provision it without launching the app:
+
+```bash
+npm run desktop:db          # docker? engine up? container? credentials? port?
+npm run desktop:db:ensure   # create/start it now and print the URL
+npm run desktop:smoke:fresh # empty database → Docker → migrate → serve (end to end)
+```
+
+## 6. Installing what you built
 
 The build produces two installers in `src-tauri/target/release/bundle/`:
 
@@ -238,7 +271,7 @@ docker run -d --name noema-db -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgre
 Then the app's default `postgresql://postgres:postgres@127.0.0.1:5432/noema`
 works as-is once the `noema` database exists (`docker exec noema-db createdb -U postgres noema`).
 
-## 6. Release process
+## 7. Release process
 
 1. Bump the version in **both** `package.json` and `src-tauri/tauri.conf.json`.
 2. `npm run desktop:bundle` (or the `desktop.yml` matrix, which does this on
@@ -248,7 +281,7 @@ works as-is once the `noema` database exists (`docker exec noema-db createdb -U 
 The app intentionally ships **unsigned** until certificates exist; §8 explains
 what that means for the user (SmartScreen) and what is already wired for signing.
 
-## 7. Testing
+## 8. Testing
 
 | Layer | What runs |
 |---|---|
@@ -259,7 +292,7 @@ what that means for the user (SmartScreen) and what is already wired for signing
 | Packaging | `desktop:preflight` on every run; `site.yml` asserts the site build never emits a standalone server |
 | Manual smoke | install → first run → the swap from "starting…" to the workspace → create a note → quit → relaunch (window geometry + theme restored) |
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -275,7 +308,7 @@ what that means for the user (SmartScreen) and what is already wired for signing
 | Icon error while bundling | icon set not generated | `npm run desktop:icons` |
 | Two copies fight over state | same data dir | set `NOEMA_DATA_DIR` per install |
 
-## 9. Verified on a real machine (Windows x64, this repo's environment)
+## 10. Verified on a real machine (Windows x64, this repo's environment)
 
 Recorded because "it builds in CI" and "it runs" are different claims. Every row
 below was executed, not inferred.
@@ -302,7 +335,7 @@ Two environment notes worth keeping:
 - **`panic = "abort"` hides everything.** The panic hook exists because the first
   installed run died with `0xC0000409` and wrote no log at all.
 
-## 10. Known limits (honest list)
+## 11. Known limits (honest list)
 
 - **The desktop app currently talks to Postgres.** The schema uses Postgres
   full-text search (`tsvector`, `pg_trgm`), so a self-contained desktop build
@@ -325,7 +358,7 @@ Two environment notes worth keeping:
   environment). macOS/Linux installers are produced by `desktop.yml` on native
   runners.
 
-## 11. Deferred, with the design already chosen
+## 12. Deferred, with the design already chosen
 
 - **Embedded database (the big one)** — two options, both already scoped:
   1. **SQLite**: a `schema.desktop.prisma` with `provider = "sqlite"`, replace

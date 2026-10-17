@@ -35,7 +35,12 @@ use tauri_plugin_shell::ShellExt;
 use tokio::sync::Mutex;
 
 /// How long the shell waits for `/api/health` before surfacing an error.
-pub const READY_TIMEOUT: Duration = Duration::from_secs(90);
+///
+/// Generous on purpose: the very first run may have to start Docker Desktop, pull
+/// the Postgres image and initialise a cluster before the server can listen. A
+/// short budget here would show the "unhealthy" page on a perfectly healthy
+/// first run, which is exactly the impression an installer must not make.
+pub const READY_TIMEOUT: Duration = Duration::from_secs(300);
 /// How often readiness is polled.
 pub const READY_POLL: Duration = Duration::from_millis(300);
 /// Backoff between automatic restarts.

@@ -12,9 +12,14 @@
  * version uses. `DATABASE_URL` from `.env` is used unless `NOEMA_DATABASE_URL`
  * is set.
  *
+ * Two modes:
+ *   npm run desktop:smoke              configured database (DATABASE_URL / .env)
+ *   npm run desktop:smoke -- --managed the Docker-provisioned database, from an
+ *                                      empty schema — the fresh-install path
+ *
  *   npm run desktop:smoke
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
@@ -25,7 +30,14 @@ import { nodeSidecarPath, targetTriple } from "./prepare.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const payload = join(root, "src-tauri", "server");
 const runtime = nodeSidecarPath(targetTriple());
-const READY_TIMEOUT_MS = 120_000;
+const READY_TIMEOUT_MS = 300_000;
+/** `--managed`: use the Docker-provisioned database instead of a configured one. */
+const MANAGED = process.argv.includes("--managed");
+/** `--fresh`: drop and recreate the managed database first (empty schema). */
+const FRESH = process.argv.includes("--fresh");
+const MANAGED_CONTAINER = "noema-postgres";
+const MANAGED_USER = "noema";
+const MANAGED_DB = "noema";
 
 function databaseUrl() {
   if (process.env.NOEMA_DATABASE_URL) return process.env.NOEMA_DATABASE_URL;
@@ -74,12 +86,22 @@ async function main() {
   }
   check(true, "payload staged (server.js + start.cjs)");
 
-  const url = databaseUrl();
-  if (!url) {
-    console.error("No DATABASE_URL found (.env, NOEMA_DATABASE_URL or DATABASE_URL).");
-    process.exit(1);
+  let url = "";
+  if (MANAGED) {
+    check(true, "managed mode: the app provisions Postgres with Docker");
+    if (FRESH) {
+      const dropped = spawnSync("docker", ["exec", MANAGED_CONTAINER, "dropdb", "-U", MANAGED_USER, "--if-exists", MANAGED_DB], { encoding: "utf8" });
+      const created = spawnSync("docker", ["exec", MANAGED_CONTAINER, "createdb", "-U", MANAGED_USER, MANAGED_DB], { encoding: "utf8" });
+      check(created.status === 0, "recreated an empty database", dropped.status === 0 ? "dropped first" : "created fresh");
+    }
+  } else {
+    url = databaseUrl();
+    if (!url) {
+      console.error("No DATABASE_URL found (.env, NOEMA_DATABASE_URL or DATABASE_URL).");
+      process.exit(1);
+    }
+    check(true, "database URL resolved", url.replace(/\/\/[^@]*@/, "//***@"));
   }
-  check(true, "database URL resolved", url.replace(/\/\/[^@]*@/, "//***@"));
 
   const dataDir = mkdtempSync(join(tmpdir(), "noema-smoke-"));
   const port = await freePort();
@@ -94,7 +116,7 @@ async function main() {
       NODE_ENV: "production",
       NOEMA_RUNTIME: "desktop",
       NOEMA_DATA_DIR: dataDir,
-      DATABASE_URL: url,
+      ...(url ? { DATABASE_URL: url } : {}),
       NEXT_TELEMETRY_DISABLED: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -142,6 +164,18 @@ async function main() {
 
     const css = await fetch(`http://127.0.0.1:${port}/login`).then((r) => r.text());
     check(/<link[^>]+\.css|styles/i.test(css), "stylesheets are linked (static assets copied)");
+
+    if (MANAGED) {
+      // The wrapper must have created the schema inside the container it provisions.
+      const tables = spawnSync(
+        "docker",
+        ["exec", MANAGED_CONTAINER, "psql", "-U", MANAGED_USER, "-d", MANAGED_DB, "-tAc",
+         "select count(*) from information_schema.tables where table_schema = 'public'"],
+        { encoding: "utf8" },
+      );
+      const count = Number((tables.stdout || "0").trim());
+      check(count > 10, "migrations created the schema in the managed container", `${count} tables`);
+    }
   }
 
   child.kill();

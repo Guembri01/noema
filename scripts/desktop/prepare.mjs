@@ -84,7 +84,8 @@ export const REQUIRED_PAYLOAD = [
   ["node_modules/next", "Next's runtime (traced dependencies)"],
   ["public", "static files served by the app"],
   ["prisma/schema.prisma", "the database schema"],
-  ["start.cjs", "the boot wrapper (migrate → serve)"],
+  ["start.cjs", "the boot wrapper (database → migrate → serve)"],
+  ["docker-db.cjs", "the managed-database helper"],
 ];
 
 /**
@@ -185,7 +186,12 @@ function writeBootScript() {
   }
   const boot = join(standalone, "start.cjs");
   copyFileSync(source, boot);
-  console.log("· copied boot wrapper → start.cjs (migrate → serve)");
+  // The boot wrapper requires this next to itself.
+  copyFileSync(
+    join(root, "scripts", "desktop", "docker-db.cjs"),
+    join(standalone, "docker-db.cjs"),
+  );
+  console.log("· copied boot wrapper → start.cjs (managed database → migrate → serve)");
 }
 
 function copyNodeRuntime() {
