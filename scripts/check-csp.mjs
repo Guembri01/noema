@@ -20,6 +20,7 @@
  *   npm run check:csp                       # against a running production server
  *   npm run check:csp -- --base http://127.0.0.1:3210
  *   npm run check:csp -- --fix-print        # just print the pins it would need
+ *   npm run check:csp -- --browser chromium # the bundled Playwright Chromium
  */
 import { createHash } from "node:crypto";
 import { chromium } from "@playwright/test";
@@ -30,6 +31,15 @@ const argValue = (flag, fallback) => {
   return at >= 0 && argv[at + 1] ? argv[at + 1] : fallback;
 };
 const BASE = argValue("--base", "http://127.0.0.1:3210");
+/**
+ * The browser the check drives.
+ *
+ * `msedge` is the default, because that is what the check has always used and
+ * what the installed desktop app ships with. `chromium` is the Playwright
+ * browser the repository already installs (`npx playwright install chromium`):
+ * a CI runner has no Edge, so the gate there asks for the bundled Chromium.
+ */
+const BROWSER = argValue("--browser", process.env.CSP_BROWSER ?? "msedge");
 const PRINT_ONLY = argv.includes("--fix-print");
 const DEMO_EMAIL = "demo@noema.local";
 const DEMO_PASSWORD = "password123";
@@ -62,7 +72,7 @@ async function probe(page, path) {
 }
 
 async function main() {
-  const browser = await chromium.launch({ channel: "msedge" });
+  const browser = await chromium.launch(BROWSER === "chromium" ? {} : { channel: BROWSER });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
   const violations = [];
