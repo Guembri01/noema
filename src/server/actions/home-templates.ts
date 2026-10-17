@@ -6,6 +6,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { templateContent, type TemplateId } from "@/lib/templates";
 import { galleryTemplate, type GalleryProperty } from "@/lib/workflow-templates";
 import { pageSearchText } from "@/lib/search";
@@ -384,9 +385,19 @@ export async function listWorkspaceTemplatesAction(input: {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, input.workspaceId);
   if (!access) return { error: "You do not have access to this workspace." };
+  // The gallery lists the templates of the workspace's databases, and a
+  // template carries the text of the row it was saved from — so the databases
+  // carry the guest scope: a guest never receives a template of a database
+  // they may not open.
+  const visiblePageIds = await pageScopeFor(user.id, input.workspaceId, access.role);
 
   const databases = await prisma.page.findMany({
-    where: { workspaceId: input.workspaceId, type: "DATABASE", deletedAt: null },
+    where: {
+      workspaceId: input.workspaceId,
+      type: "DATABASE",
+      deletedAt: null,
+      ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+    },
     orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: { id: true, title: true },
   });

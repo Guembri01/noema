@@ -314,6 +314,31 @@ All five routes: `rateLimit(request, "v1")` (120/min), then
 `getWorkspaceAccess()`. Source files under
 [`src/app/api/v1/`](../src/app/api/v1).
 
+#### The guest scope
+
+A workspace role is `OWNER`, `ADMIN`, `MEMBER` or `GUEST`. A `GUEST` is an
+external collaborator: they may only open the pages that were shared with
+them, the pages of their teamspaces and their own pages. The scope is resolved
+per request by `pageScopeFor()`
+([`src/lib/guest-access.ts`](../src/lib/guest-access.ts)) and applied to every
+read that returns pages — with one exception named below (the **empty**-`q`
+branch of the search):
+
+- the scope lands in the query, **before** the limit — a window never shrinks
+  because a hidden page took a slot;
+- a page **outside** the scope answers **404**, like a page that does not
+  exist — the route never confirms that it does;
+- a full member (`OWNER`/`ADMIN`/`MEMBER`) keeps the whole workspace;
+- an unknown role yields an **empty** scope, never the whole workspace.
+
+The scope covers **pages only**. The datasets that are not page-scoped —
+tickets, discussions, calendar events — are **role-gated** instead: on those
+routes a `GUEST` gets a **403** (§11, §12, §14). The same rule holds behind
+the UI: the workspace pages that render those datasets (tickets, archived
+tickets, cycles, roadmap, projects) answer **404** for a `GUEST`, and the
+member directory needs the `viewMemberDirectory` permission, which a `GUEST`
+does not hold.
+
 ### `GET /api/v1/workspaces` — list caller's workspaces
 [`route.ts`](../src/app/api/v1/workspaces/route.ts)
 
@@ -329,7 +354,8 @@ Owned or member workspaces, ordered by `createdAt`. Errors: 401, 429.
 { "pages": [ { "id": "…", "parentId": null, "title": "Roadmap",
                "icon": "🗺️", "type": "PAGE", "updatedAt": "…" } ] }
 ```
-Non-trashed pages, ordered by `position` then `createdAt`.
+Non-trashed pages, ordered by `position` then `createdAt`. A `GUEST` only
+receives the pages in their scope (*The guest scope* above).
 Errors: **400** `workspaceId is required` · **403** `Forbidden` · 401 · 429.
 
 ### `POST /api/v1/pages` — create a page
@@ -379,9 +405,10 @@ to this contract.
             "type":"PAGE", "content": { "type":"doc","content":[…] },
             "updatedAt":"…" } }
 ```
-`workspaceId`/`deletedAt` are stripped from the payload.
-Errors: **404** `Not found` (missing **or trashed**) · **403** `Forbidden`
-(no workspace access) · 401 · 429.
+`workspaceId`/`deletedAt` are stripped from the payload. A page outside the
+caller's guest scope answers **404**, like a page that does not exist.
+Errors: **404** `Not found` (missing, **trashed** or **outside the guest
+scope**) · **403** `Forbidden` (no workspace access) · 401 · 429.
 
 ### `GET /api/v1/search?workspaceId=…&q=…`
 [`route.ts`](../src/app/api/v1/search/route.ts)
@@ -391,7 +418,11 @@ Errors: **404** `Not found` (missing **or trashed**) · **403** `Forbidden`
                  "snippet":"…matched excerpt…", "updatedAt":"…" } ] }
 ```
 `q` may be empty; title + body search via `searchPages()` in
-`src/server/queries.ts`. Errors: 400 (`workspaceId is required`) · 403 · 401 · 429.
+`src/server/queries.ts`. A `GUEST` only hits the pages in their scope — with
+one exception still open: the **empty** `q` branch returns the workspace's
+most recent pages **without** the scope. This branch does not close it; the
+B88 branch does (#105 — whose body describes the MCP route, not this branch).
+Errors: 400 (`workspaceId is required`) · 403 · 401 · 429.
 
 ---
 
@@ -406,6 +437,12 @@ HTTP-addressable.
 
 ## 8. Export / import
 
+An export is a **full-text copy** of the workspace, so it is reserved for full
+members: a `GUEST` — an external collaborator with access to a few shared pages
+— gets a **403** `Forbidden`, and that check comes **first**. The scope check
+behind it is belt and braces: a page outside the caller's scope would be a
+**404**, never a leak.
+
 ### `GET /api/export/page/[pageId]?format=md|json|html|pdf`
 Source: [`src/app/api/export/page/[pageId]/route.ts`](../src/app/api/export/page/[pageId]/route.ts) ·
 cookie session · no rate limit
@@ -419,7 +456,9 @@ cookie session · no rate limit
 
 All success responses carry
 `content-disposition: attachment; filename="<sanitized-title>.<ext>"`.
-Errors: **401** `Unauthorized` · **404** `Not found` · **403** `Forbidden`.
+Errors: **401** `Unauthorized` · **404** `Not found` (missing **or outside the
+caller's scope**) · **403** `Forbidden` (no workspace access **or role
+`GUEST`**).
 
 ### `GET /api/export/database/[pageId]` — CSV
 Source: [`route.ts`](../src/app/api/export/database/[pageId]/route.ts) ·
@@ -429,8 +468,9 @@ Header row = property names (position order), one line per non-trashed row;
 the primary property renders the row title, other cells via `formatCell`.
 **200** `text/csv; charset=utf-8` +
 `content-disposition: attachment; filename="<title>.csv"`.
-Errors: **404** `Not found` — page missing **or `type !== "DATABASE"`** ·
-401 · 403.
+Errors: **404** `Not found` — page missing, **or `type !== "DATABASE"`**, **or
+outside the caller's scope** · 401 · 403 `Forbidden` (no workspace access **or
+role `GUEST`**).
 
 ### `GET /api/export/workspace/[slug]` — bulk zip
 Source: [`route.ts`](../src/app/api/export/workspace/[slug]/route.ts) ·
@@ -441,7 +481,8 @@ Walks every non-trashed page: `type: "DATABASE"` → `<path>.csv`, otherwise
 depth-guarded at 50), plus a `README.md`.
 **200** `application/zip` +
 `content-disposition: attachment; filename="<workspace>.zip"`.
-Errors: **404** `Not found` (unknown slug) · 401 · 403.
+Errors: **404** `Not found` (unknown slug) · 401 · 403 `Forbidden` (no
+workspace access **or role `GUEST`**).
 
 ### `POST /api/import/notion` — import a Notion page tree
 Source: [`src/app/api/import/notion/route.ts`](../src/app/api/import/notion/route.ts) ·
@@ -584,8 +625,10 @@ Rate scope `tickets-read` (120/min).
 }
 ```
 - Non-archived unless `archived=true`; capped at 500 rows.
-- Errors: **401** `Unauthorized` · **404** `Workspace not found` (no access)
-  · **429**.
+- Tickets are **not page-scoped**, so the listing is a full-member view: a
+  `GUEST` gets a **403** `Forbidden` and no rows are read.
+- Errors: **401** `Unauthorized` · **403** `Forbidden` (no workspace access
+  **or role `GUEST`**) · **404** `Workspace not found` (no access) · **429**.
 
 ### `POST /api/tickets` — one dispatch endpoint, 13 actions
 Rate scope `tickets-write` (60/min). Body `{ "action": "…", … }`.
@@ -637,7 +680,10 @@ cookie session · backing actions `src/server/actions/calendar.ts`.
                 "feed": { "name":"Team", "color":"#3b82f6" } } ]
 }
 ```
-Upcoming events: top 25. Errors: **401** · **404** `Workspace not found` · 429.
+Upcoming events: top 25. Calendar events are **not page-scoped**, so the
+listing is a full-member view: a `GUEST` gets a **403** `Forbidden` and no
+event is read. Errors: **401** · **403** `Forbidden` (no workspace access **or
+role `GUEST`**) · **404** `Workspace not found` · 429.
 
 `url` is the event's `URL:` property from the feed. Only an `http`, `https`,
 `mailto` or `tel` URL is imported and rendered — every other scheme, a
@@ -720,8 +766,10 @@ Source: [`src/app/api/chat/route.ts`](../src/app/api/chat/route.ts)
                                  "meta":null, "createdAt":"…",
                                  "user":{"name":"Ada","email":"ada@…"} } ] } ] }
 ```
-Latest 20 threads with their messages. Errors: 401 · 404
-`Workspace not found` · 429.
+Latest 20 threads with their messages. Discussions are **not page-scoped**, so
+the listing is a full-member view: a `GUEST` gets a **403** `Forbidden` and no
+thread is read. Errors: 401 · 403 `Forbidden` (no workspace access **or role
+`GUEST`**) · 404 `Workspace not found` · 429.
 
 ### `POST /api/chat` — scope `chat-write` (60/min)
 

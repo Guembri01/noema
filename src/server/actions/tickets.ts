@@ -471,7 +471,14 @@ export async function updateTicketAction(input: {
   return { ok: true };
 }
 
-/** Next page of tickets for the tracker's "Load more" (keyset pagination). */
+/**
+ * Next page of tickets for the tracker's "Load more" (keyset pagination).
+ *
+ * Tickets are not page-scoped, so the read asks the same question the route
+ * asks (`GET /api/tickets`): a `GUEST` — an external collaborator with access to
+ * a few shared pages — may not read the workspace's tracker at all. Without the
+ * gate here the route's 403 would be bypassable with one server-action call.
+ */
 export async function loadMoreTicketsAction(input: {
   workspaceId: string;
   cursor: string;
@@ -481,6 +488,9 @@ export async function loadMoreTicketsAction(input: {
     const user = await requireUser();
     const access = await getWorkspaceAccess(user.id, input.workspaceId);
     if (!access) return { error: "Workspace not found." };
+    if (!canEditContent(access.role)) {
+      return { error: "You do not have permission to read tickets." };
+    }
     const page = await getTicketsPage(input.workspaceId, {
       take: input.take,
       cursor: input.cursor,
@@ -503,6 +513,9 @@ export async function loadMoreTicketsAction(input: {
  * `getTicketDetail` selection — `activity` is already newest-first and capped —
  * and returns exactly the shape the drawer's optional `activity` prop expects,
  * after checking the caller can read the ticket's workspace.
+ *
+ * Tickets are not page-scoped, so the read carries the same role gate as
+ * `GET /api/tickets`: a `GUEST` may not read the workspace's tracker at all.
  */
 export async function getTicketActivityAction(
   ticketId: string,
@@ -515,6 +528,9 @@ export async function getTicketActivityAction(
   if (!ticket) return { error: "Ticket not found." };
   const access = await getWorkspaceAccess(user.id, ticket.workspaceId);
   if (!access) return { error: "You do not have access to this ticket." };
+  if (!canEditContent(access.role)) {
+    return { error: "You do not have permission to read tickets." };
+  }
 
   const detail = await getTicketDetail(ticketId);
   const activity: TicketActivityRow[] = (detail?.activity ?? []).map((entry) => ({

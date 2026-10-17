@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { requireUser } from "@/lib/auth";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { getCycles, getWorkspaceBySlug } from "@/server/queries";
 import { CyclesBoard, type CycleRow } from "@/components/cycles-board";
 
@@ -16,6 +16,9 @@ export default async function CyclesPage({ params }: { params: Promise<{ slug: s
   if (!workspace) notFound();
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) notFound();
+  // Cycles carry the workspace's tickets: not page-scoped, so a `GUEST` is
+  // refused here exactly like on `GET /api/tickets`.
+  if (!canEditContent(access.role)) notFound();
 
   const cycles = await getCycles(workspace.id);
   const rows: CycleRow[] = cycles.map((cycle) => ({

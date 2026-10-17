@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { prisma } from "@/lib/db";
 import { PAGE_EXPORT_FORMATS, parseExportFormat } from "@/lib/export-format";
 import { documentToHtml } from "@/lib/html-export";
@@ -31,6 +32,9 @@ export const runtime = "nodejs";
  * Unknown formats → 400 (R23.16); 30 exports/min (R23.22). The plan's page and
  * block counts and the engines' fidelity findings are exposed as `x-export-*`
  * headers, so the work a `?format=` request performed is inspectable.
+ *
+ * An export is a full-text copy, so it is reserved for full members: a `GUEST`
+ * gets a 403. A page outside the caller's scope is a 404, never a leak.
  */
 export async function GET(
   request: Request,
@@ -51,6 +55,15 @@ export async function GET(
 
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Guests may not export (R23.21) — an export is a full-text copy.
+  if (!canEditContent(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  // Belt and braces: a page outside the caller's scope is a 404.
+  const visiblePageIds = await pageScopeFor(user.id, page.workspaceId, access.role);
+  if (visiblePageIds && !visiblePageIds.has(pageId)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   const url = new URL(request.url);
   const parsedFormat = parseExportFormat(

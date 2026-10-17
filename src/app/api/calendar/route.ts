@@ -189,12 +189,14 @@ async function handleSync(body: {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  // Calendar events are not page-scoped, so a `GUEST` — an external
+  // collaborator with access to a few shared pages — may not read them at all.
+  if (!canEditContent(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const direction = parseDirection(body.direction);
   const apply = body.apply === true;
-  if (apply && !canEditContent(access.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
 
   const rows = await prisma.calendarEvent.findMany({
     where: { workspaceId },
@@ -242,6 +244,8 @@ async function handleSync(body: {
  * Pass `?format=ics` to instead download the workspace's dated rows as an
  * `text/calendar` (RFC 5545) document. The feed *import* path is unaffected;
  * export reuses the same auth, rate limit and workspace-access checks.
+ *
+ * Calendar events are not page-scoped, so a `GUEST` gets a 403.
  */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "calendar-read", 120, 60_000);
@@ -253,6 +257,11 @@ export async function GET(request: Request) {
   const workspaceId = params.get("workspaceId") ?? "";
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  // Calendar events are not page-scoped, so a `GUEST` — an external
+  // collaborator with access to a few shared pages — may not read them at all.
+  if (!canEditContent(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   if (params.get("format") === "ics") {
     const events = await getUpcomingEvents(workspaceId);

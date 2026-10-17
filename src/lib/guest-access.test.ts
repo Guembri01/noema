@@ -12,6 +12,7 @@ import {
   isGrantRevoked,
   isVisibleToGuest,
   normalizeGuestEmail,
+  pageScopeFor,
   revokeGrant,
   toGuestSession,
   visiblePageIdsForGuest,
@@ -57,6 +58,28 @@ describe("isVisibleToGuest", () => {
     const visible = withAncestors(["leaf"], pages);
     expect(isVisibleToGuest("leaf", visible)).toBe(true);
     expect(isVisibleToGuest("other", visible)).toBe(false);
+  });
+});
+
+/**
+ * B02 — the scope every API and export route resolves before it queries.
+ *
+ * `null` means "the whole workspace", so the unknown-role case must never
+ * produce it: a role that is not a known workspace role gets an *empty* scope
+ * (fail closed) instead of the whole workspace.
+ */
+describe("pageScopeFor", () => {
+  it("gives a full member the whole workspace", async () => {
+    await expect(pageScopeFor("u1", "ws1", "OWNER")).resolves.toBeNull();
+    await expect(pageScopeFor("u1", "ws1", "ADMIN")).resolves.toBeNull();
+    await expect(pageScopeFor("u1", "ws1", "MEMBER")).resolves.toBeNull();
+  });
+
+  it("fails closed for an unknown role — never the whole workspace", async () => {
+    const scope = await pageScopeFor("u1", "ws1", "SUPERUSER");
+
+    expect(scope).not.toBeNull();
+    expect((scope as Set<string>).size).toBe(0);
   });
 });
 

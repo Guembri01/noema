@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { prisma } from "@/lib/db";
 import { getWorkspaceBySlug } from "@/server/queries";
 import {
@@ -31,6 +32,10 @@ const safeName = (value: string) =>
  * the uploaded attachments of every exported page (MISSING_FEATURES §12).
  * `?includeSubpages=false` exports top-level pages only; unknown `?format`
  * → 400 (R23.16); 5 exports/min (R23.22).
+ *
+ * A workspace archive is a full-text copy of the whole workspace, so it is
+ * reserved for full members: a `GUEST` is an external collaborator with access
+ * to a few shared pages and gets a 403 (R23.21).
  */
 export async function GET(
   request: Request,
@@ -47,6 +52,14 @@ export async function GET(
   if (!workspace) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Guests may not export a workspace at all (R23.21).
+  if (!canEditContent(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  // Belt and braces: the page scope is applied to the exported pages as well,
+  // so a role that is not a known workspace role yields an empty archive
+  // instead of the whole workspace.
+  const visiblePageIds = await pageScopeFor(user.id, workspace.id, access.role);
 
   const searchParams = new URL(request.url).searchParams;
   const parsedFormat = parseExportFormat(
@@ -63,7 +76,11 @@ export async function GET(
   const includeSubpages = parseIncludeSubpages(searchParams.get("includeSubpages"));
 
   const pages = await prisma.page.findMany({
-    where: { workspaceId: workspace.id, deletedAt: null },
+    where: {
+      workspaceId: workspace.id,
+      deletedAt: null,
+      ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+    },
     orderBy: { position: "asc" },
     select: { id: true, parentId: true, title: true, type: true, content: true, coverUrl: true },
   });
