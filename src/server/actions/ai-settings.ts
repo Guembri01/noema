@@ -40,13 +40,19 @@ async function authorizeAdmin(workspaceId: string): Promise<AdminAuth> {
   return { ok: true, user, access };
 }
 
-/** Read the current AI configuration for the settings screen. */
+/**
+ * Read the current AI configuration for the settings screen.
+ *
+ * The provider, its base URL and the model are workspace management data:
+ * the settings screen only shows them to an admin, so the read asks the same
+ * question — a `GUEST` (an external collaborator) never receives them.
+ */
 export async function getAiProviderSummary(
   workspaceId: string,
 ): Promise<AiProviderSummary | null> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
-  if (!access) return null;
+  if (!access || !canManageMembers(access.role)) return null;
 
   const stored = await prisma.aiProviderConfig.findUnique({
     where: { workspaceId },

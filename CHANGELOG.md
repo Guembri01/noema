@@ -39,6 +39,32 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- The guest scope is now applied to every surface that hands workspace content
+  to a `GUEST`, not only to the API routes. A guest could list, search, read
+  and export every page and database of the workspace, including the ones
+  never shared with them; the API and export routes resolve the role scope and
+  filter on it, a page outside the scope answers 404, and a guest's export
+  answers 403. The same question is now asked behind the UI: the server
+  actions behind the page-content read, the page-snapshot list and restore
+  plan, the page menu, the template gallery, the library and move page trees
+  and the ticket pagination and activity trail refuse a page outside the
+  scope; the library, trash and home pages list only the pages in it; the page
+  route hands out neither the member directory nor a foreign database title;
+  and the tracker pages (tickets, archived tickets, cycles, roadmap, projects)
+  answer 404 for a guest, exactly like `GET /api/tickets` answers 403. The
+  member directory and the workspace management reads (the member roster, the
+  SMTP and AI configuration, the automations, the recurring schedules, the
+  ownership history) ask the permission their write path already required. The
+  datasets the page scope cannot narrow — tickets, discussions, calendar
+  events — are role-gated on their routes. Still open (not covered by this
+  branch): the MCP read tools (#105), the empty-`q` branch of the v1 search
+  (#105's body describes the MCP route; the branch that closes the empty-`q`
+  branch is B88), the AI grounding (#104), the workspace layout's chat and
+  calendar payload (#69), the linked-database server actions (#107) and the
+  asset route `/api/files/**` (#117). The workspace layout (#69) still hands a
+  guest its chat threads, its calendar feeds and their private `icsUrl`, the
+  open-ticket count, the project list and the teamspace names; that payload is
+  a finding of its own.
 
 ## [1.4.1] — 2026-10-17
 

@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { getProjects, getWorkspaceBySlug } from "@/server/queries";
 import { ProjectsBoard } from "@/components/projects-board";
 import { updateProjectAction, type ProjectStatus } from "@/server/actions/projects";
@@ -21,6 +21,9 @@ export default async function ProjectsPage({
   if (!workspace) notFound();
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) notFound();
+  // Projects are the tracker, not pages: not page-scoped, so a `GUEST` is
+  // refused here exactly like on `GET /api/tickets`.
+  if (!canEditContent(access.role)) notFound();
 
   const projects = await getProjects(workspace.id);
 

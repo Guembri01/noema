@@ -17,6 +17,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { pageSearchText } from "@/lib/search";
 import { prosemirrorToText } from "@/lib/blocks";
@@ -57,20 +58,31 @@ type ReadAccess =
   | {
       ok: true;
       user: Awaited<ReturnType<typeof requireUser>>;
-      page: { workspaceId: string; deletedAt: Date | null };
+      page: { id: string; workspaceId: string; deletedAt: Date | null };
+      /** The caller's page scope: `null` = the whole workspace. */
+      visiblePageIds: Set<string> | null;
     }
   | { error: string };
 
+/**
+ * Load a page for a read, honouring the guest page scope: a page outside the
+ * caller's scope is refused exactly like the page route (404 / "Page not
+ * found."), so the menu cannot describe a page the caller may not open.
+ */
 async function loadPageForRead(pageId: string): Promise<ReadAccess> {
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { workspaceId: true, deletedAt: true },
+    select: { id: true, workspaceId: true, deletedAt: true },
   });
   if (!page || page.deletedAt) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return { error: "No access." };
-  return { ok: true, user, page };
+  const visiblePageIds = await pageScopeFor(user.id, page.workspaceId, access.role);
+  if (visiblePageIds && !visiblePageIds.has(page.id)) {
+    return { error: "Page not found." };
+  }
+  return { ok: true, user, page, visiblePageIds };
 }
 
 /** Relative topbar label: last edited timestamp + author name. */
@@ -114,7 +126,7 @@ export async function getPageMenuDataAction(
 ): Promise<Result<PageMenuData>> {
   const loaded = await loadPageForRead(pageId);
   if ("error" in loaded) return loaded;
-  const { user, page } = loaded;
+  const { user, page, visiblePageIds } = loaded;
 
   const [detail, versions, webhooks, oauthApps, allPages] = await Promise.all([
     prisma.page.findUnique({
@@ -147,7 +159,13 @@ export async function getPageMenuDataAction(
       select: { id: true, name: true },
     }),
     prisma.page.findMany({
-      where: { workspaceId: page.workspaceId, deletedAt: null },
+      // The move targets are a page list, so they carry the guest scope: a
+      // guest never receives the title of a page they may not open.
+      where: {
+        workspaceId: page.workspaceId,
+        deletedAt: null,
+        ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+      },
       select: { id: true, parentId: true, title: true, icon: true, type: true },
     }),
   ]);

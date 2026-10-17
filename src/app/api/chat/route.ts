@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { rateLimit } from "@/lib/api-guard";
 import { getChatThreadsWithMessages } from "@/server/queries";
 import {
@@ -12,7 +12,13 @@ import {
 
 export const runtime = "nodejs";
 
-/** List the workspace's discussions with their recent messages. */
+/**
+ * List the workspace's discussions with their recent messages.
+ *
+ * Discussions are not page-scoped, so a `GUEST` — an external collaborator
+ * with access to a few shared pages — may not read them at all (the write path
+ * enforces the same rule in the server actions).
+ */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "chat-read", 120, 60_000);
   if (limited) return limited;
@@ -22,13 +28,18 @@ export async function GET(request: Request) {
   const workspaceId = new URL(request.url).searchParams.get("workspaceId") ?? "";
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  if (!canEditContent(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   return NextResponse.json({ threads: await getChatThreadsWithMessages(workspaceId) });
 }
 
 /**
  * Discussion mutations. Body: { action: "create" | "post" | "rename" | "delete", … }
- * The same server actions back the sidebar UI.
+ * The same server actions back the sidebar UI; every action resolves the
+ * thread's workspace itself and refuses a `GUEST` (discussions are not
+ * page-scoped), so the transport needs no extra role check.
  */
 export async function POST(request: Request) {
   const limited = rateLimit(request, "chat-write", 60, 60_000);

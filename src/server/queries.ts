@@ -94,8 +94,12 @@ export async function getWorkspaceBySlug(slug: string) {
 /** Live (non-trashed) pages in a workspace, ordered for tree rendering. */
 export async function getPageTree(
   workspaceId: string,
-  /** Guest scoping: only these page ids (plus ancestors) are returned. */
-  visiblePageIds: Set<string> | null = null,
+  /**
+   * Guest scoping: only these page ids (plus ancestors) are returned; `null`
+   * returns the whole workspace. Required — like `getPagesPage` — so a caller
+   * can never forget the filter and silently widen the tree.
+   */
+  visiblePageIds: Set<string> | null,
 ): Promise<PageTreeNode[]> {
   return prisma.page.findMany({
     where: {
@@ -132,13 +136,23 @@ export type ApiPageRow = {
  * `(position, createdAt, id)`. The opaque cursor carries `position` as its key
  * and a `createdAt|id` composite tiebreaker, so pages that share a position
  * (`Page.position` defaults to `0`) never overlap or get skipped between calls.
+ *
+ * `visiblePageIds` is the guest scope (see `pageScopeFor`): `null` returns the
+ * whole workspace, a set returns only those pages. It is a required argument
+ * so a caller can never forget the filter and silently widen the listing.
  */
 export async function getPagesPage(
   workspaceId: string,
+  /** Guest scoping: only these page ids are returned; `null` = the whole workspace. */
+  visiblePageIds: Set<string> | null,
   options: { limit?: number; cursor?: string | null } = {},
 ): Promise<PaginateResult<ApiPageRow>> {
   const rows = await prisma.page.findMany({
-    where: { workspaceId, deletedAt: null },
+    where: {
+      workspaceId,
+      deletedAt: null,
+      ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+    },
     orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
@@ -196,9 +210,25 @@ export function childrenOf(tree: PageTreeNode[], parentId: string): PageTreeNode
   return tree.filter((p) => p.parentId === parentId);
 }
 
-export async function getTrash(workspaceId: string) {
+/**
+ * The workspace trash: the pages that were archived, with restore and
+ * permanent delete.
+ *
+ * `visiblePageIds` is the guest scope (see `pageScopeFor`): `null` returns the
+ * whole trash, a set returns only the trashed pages the caller may see. It is
+ * a required argument — like `getPageTree` — so a caller can never forget the
+ * filter and list a title the guest was never given.
+ */
+export async function getTrash(
+  workspaceId: string,
+  visiblePageIds: Set<string> | null,
+) {
   return prisma.page.findMany({
-    where: { workspaceId, deletedAt: { not: null } },
+    where: {
+      workspaceId,
+      deletedAt: { not: null },
+      ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+    },
     orderBy: [{ deletedAt: "desc" }, { id: "asc" }],
     select: { id: true, title: true, icon: true, deletedAt: true, parentId: true },
   });
