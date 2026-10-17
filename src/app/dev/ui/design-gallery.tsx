@@ -80,6 +80,8 @@ import { Spinner, type SpinnerSize } from "@/components/ui/spinner";
 import { Progress, ProgressRing, type ProgressTone } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { VirtualList } from "@/components/ui/virtual-list";
+import { ResizablePanel } from "@/components/ui/resizable-panel";
 import { Kbd, type KbdSize } from "@/components/ui/kbd";
 import { ToastView, type ToastVariant } from "@/components/ui/toaster";
 import {
@@ -470,6 +472,59 @@ function ConfirmDemo() {
         confirmLabel="Confirm delete"
         onConfirm={() => {}}
       />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------------- *
+ * Primitive demos — virtual list + resizable panel
+ * ------------------------------------------------------------------------- */
+
+/** Stable rows for the virtual-list demo (module scope: identical every render). */
+const VIRTUAL_LIST_ROWS = Array.from({ length: 500 }, (_, index) => `Row ${index + 1}`);
+
+function VirtualListDemo() {
+  const [scrollTop, setScrollTop] = useState(0);
+  return (
+    <div className="w-80">
+      <VirtualList
+        items={VIRTUAL_LIST_ROWS}
+        scrollTop={scrollTop}
+        onScrollTopChange={setScrollTop}
+        viewportHeight={240}
+        itemHeight={32}
+        overscan={4}
+        getKey={(row) => row}
+        renderItem={(row) => <span className="block px-3 py-1.5 text-sm">{row}</span>}
+        scrollerProps={{ role: "region", "aria-label": "Virtual list demo" }}
+        className="overflow-y-auto rounded-md border border-border"
+        rowClassName="absolute inset-x-0 border-b border-border"
+        rowStyle={{ height: 32 }}
+      />
+      <Note>500 rows; only the window mounts. Scroll to move it.</Note>
+    </div>
+  );
+}
+
+function ResizablePanelDemo() {
+  return (
+    <div className="flex w-full max-w-xl overflow-hidden rounded-md border border-border">
+      <ResizablePanel
+        defaultWidth={240}
+        min={160}
+        max={420}
+        label="Resize panel demo"
+        handleTitle="Drag to resize · double-click to reset"
+        className="flex h-40 shrink-0 flex-col bg-surface-2 p-3"
+      >
+        <span className="text-sm font-medium">Resizable panel</span>
+        <span className="mt-1 text-xs text-muted">
+          Drag the handle, use ← / →, Home/End, or double-click to reset.
+        </span>
+      </ResizablePanel>
+      <div className="flex h-40 flex-1 items-center justify-center bg-surface text-sm text-muted">
+        Content
+      </div>
     </div>
   );
 }
@@ -1202,6 +1257,10 @@ export function DesignGallery() {
         </Group>
       </>
     ),
+
+    "virtual-list": <VirtualListDemo />,
+
+    "resizable-panel": <ResizablePanelDemo />,
 
     separator: (
       <>

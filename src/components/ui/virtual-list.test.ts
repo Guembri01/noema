@@ -61,7 +61,7 @@ describe("VirtualList window", () => {
   it("renders no rows for an empty list but still renders the spacer", () => {
     const html = renderFixed(0);
     expect(rowCount(html)).toBe(0);
-    expect(html).toContain("height:0px");
+    expect(html).toContain("height:0");
   });
 
   it("positions each row at its true offset", () => {

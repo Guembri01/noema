@@ -219,17 +219,18 @@ one-off control.
 | Numeric | `Slider` (single + range), `Stepper` | `ui/slider.tsx`, `ui/stepper.tsx` |
 | Choice views | `Segmented` (2–6 way sliding pill) | `ui/segmented.tsx` |
 | Overlays | `DropdownMenu`, `ContextMenu`, `Popover`, `Tooltip`, `Dialog` + `DialogContent`, `ConfirmDialog` | `ui/dropdown-menu.tsx`, `ui/context-menu.tsx`, `ui/popover.tsx`, `ui/tooltip.tsx`, `ui/dialog.tsx`, `ui/confirm-dialog.tsx` |
-| Panels | `Sheet` (left/right/bottom drawer, focus trap + scroll lock) | `ui/sheet.tsx` |
+| Panels | `Sheet` (left/right/bottom drawer, focus trap + scroll lock), `ResizablePanel` (drag/keyboard-resizable, separator handle) | `ui/sheet.tsx`, `ui/resizable-panel.tsx` |
 | Dates | `DatePicker` (date/range/time/datetime + presets), `CalendarGrid` | `ui/date-picker.tsx`, `ui/calendar-grid.tsx` |
 | Picking | `EmojiPicker` (catalog + frecency) | `ui/emoji-picker.tsx` |
 | Containers | `Card` (+ Media/Title/Description/Header/Body/Footer), `Section` (settings block) | `ui/card.tsx`, `ui/section.tsx` |
 | Metadata | `Badge` (tones, count caps), `Tag` (selectable/removable + hues), `Avatar` / `AvatarGroup`, `Kbd` | `ui/badge.tsx`, `ui/tag.tsx`, `ui/avatar.tsx`, `ui/kbd.tsx` |
 | Feedback | `EmptyState` (full/compact), `Skeleton`, `Spinner`, `Progress` / `ProgressRing`, `RouteProgress`, `Toaster` | `ui/empty-state.tsx`, `ui/skeleton.tsx`, `ui/spinner.tsx`, `ui/progress.tsx`, `ui/route-progress.tsx`, `ui/toaster.tsx` |
-| Scrolling | `ScrollArea` (thin scrollbars + edge fades), `Separator` | `ui/scroll-area.tsx`, `ui/separator.tsx` |
+| Scrolling | `ScrollArea` (thin scrollbars + edge fades), `VirtualList` (windowed row rendering), `Separator` | `ui/scroll-area.tsx`, `ui/virtual-list.tsx`, `ui/separator.tsx` |
 
 Token values are exposed to TSX by `src/lib/design-tokens.ts` (`Z`, `DUR`, `EASE`,
 `RADIUS`, `SHADOW`, `SPACE`, `BREAKPOINT`, `TAG_HUES`, `tagClass`, `tagStyle`).
-Popup maths is in `src/lib/floating.ts` (§7.1).
+Popup maths is in `src/lib/floating.ts` (§7.1); per-surface scroll remembering is
+`useScrollRestore` in `src/lib/scroll-restore.ts`.
 
 ---
 

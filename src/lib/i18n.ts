@@ -4607,6 +4607,7 @@ const DICTS: Record<LocaleCode, Dict> = {
     language: "اللغة",
     quickFind: "بحث سريع",
     chat: "محادثة",
+    resizePanelHint: "اسحب لتغيير الحجم · انقر نقرًا مزدوجًا لإعادة الضبط",
     fontStyle: "نمط الخط",
     lineSpacing: "تباعد الأسطر",
     coverPosition: "موضع الغلاف",

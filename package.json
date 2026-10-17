@@ -73,7 +73,8 @@
     "audit:parity": "node scripts/audit-notion-parity.mjs",
     "audit:spec": "node scripts/audit-spec-coverage.mjs",
     "check:i18n": "node scripts/check-i18n-keys.mjs",
-    "desktop:smoke:embedded": "node scripts/desktop/smoke.mjs --embedded"
+    "desktop:smoke:embedded": "node scripts/desktop/smoke.mjs --embedded",
+    "check:schema": "node scripts/check-schema-drift.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

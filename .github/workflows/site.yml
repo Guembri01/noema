@@ -68,6 +68,10 @@ jobs:
       # refactor this failed as 29 cryptic `tsc` "not assignable" errors; the
       # gate names the missing keys and the files that reference them.
       - run: npm run check:i18n
+      # The migrations must describe the schema. A database built by `migrate deploy`
+      # (which is what the desktop app runs) once had 17 of 45 tables and four
+      # features silently broken.
+      - run: npm run check:schema
       # Design-system + motion ratchets. Both are pure file scans (no DB, no
       # browser) and their baselines are 0, so any new raw hex, magic z-index,
       # ad-hoc duration, legacy palette class or literal easing fails the build.

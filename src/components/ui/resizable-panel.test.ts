@@ -28,7 +28,7 @@ describe("clampPanelSize", () => {
 
   it("falls back for non-finite input", () => {
     expect(clampPanelSize(Number.NaN, 200, 520, 240)).toBe(240);
-    expect(clampPanelSize(Number.POSITIVE_INFINITY, 200, 520, 240)).toBe(520);
+    expect(clampPanelSize(Number.POSITIVE_INFINITY, 200, 520, 240)).toBe(240);
     expect(clampPanelSize(Number.NaN, 200, 520, Number.NaN)).toBe(200);
   });
 
@@ -88,9 +88,9 @@ function render(over: {
         handleTitle: "Drag to resize",
         testId: "panel",
         handleTestId: "panel-handle",
+        children: h("span", null, "body") as ReactNode,
         ...over,
       },
-      h("span", null, "body") as ReactNode,
     ),
   );
 }

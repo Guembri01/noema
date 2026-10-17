@@ -291,3 +291,22 @@ describe("TrashList — loading and empty states", () => {
     expectTokensOnly(html);
   });
 });
+
+describe("TrashList — windowed (VirtualList) path", () => {
+  it("virtualises a long trash and keeps the region semantics and row markers", () => {
+    const pages = Array.from({ length: 60 }, (_, index) =>
+      row(1, { id: `p${index}`, title: `Page ${index}` }),
+    );
+    const html = renderList(pages);
+    expect(html).toContain('role="region"');
+    expect(html).toContain('aria-label="Trash"');
+    // Fixed-height viewport and a spacer sized to every row (60 × 64px).
+    expect(html).toContain("height:480px");
+    expect(html).toContain("height:3840px");
+    // Only the visible window mounts, never all sixty rows.
+    const mounted = html.match(/data-trash-row=""/g) ?? [];
+    expect(mounted.length).toBeGreaterThan(0);
+    expect(mounted.length).toBeLessThan(pages.length);
+    expectTokensOnly(html);
+  });
+});

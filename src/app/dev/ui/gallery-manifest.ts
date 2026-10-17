@@ -244,6 +244,26 @@ export const GALLERY_SECTIONS = [
     tokens: ["--border", "--border-strong", "--space-6", "--bg"],
   },
   {
+    id: "virtual-list",
+    title: "Virtual list",
+    files: ["virtual-list"],
+    tokens: ["--border", "--border-strong", "--surface-2", "--muted"],
+  },
+  {
+    id: "resizable-panel",
+    title: "Resizable panel",
+    files: ["resizable-panel"],
+    tokens: [
+      "--accent",
+      "--border",
+      "--surface-2",
+      "--z-sidebar",
+      "--dur-2",
+      "--ease-smooth",
+      "--shadow-focus",
+    ],
+  },
+  {
     id: "separator",
     title: "Separator",
     files: ["separator"],
