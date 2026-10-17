@@ -40,6 +40,7 @@ const h = vi.hoisted(() => {
     favorite: [],
     projectMember: [],
     project: [],
+    notification: [],
   };
   /** Every call the mock received — the queries the code under test ran. */
   const calls: { model: string; op: string; args: Row }[] = [];
@@ -183,6 +184,9 @@ vi.mock("@/lib/db", () => {
       project: { findMany: (args: Record<string, unknown>) => findMany("project", args) },
       projectMember: {
         deleteMany: (args: Record<string, unknown>) => deleteMany("projectMember", args),
+      },
+      notification: {
+        deleteMany: (args: Record<string, unknown>) => deleteMany("notification", args),
       },
     },
   };

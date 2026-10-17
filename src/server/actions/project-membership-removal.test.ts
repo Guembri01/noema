@@ -102,6 +102,8 @@ vi.mock("@/lib/db", () => ({
     pageFollow: { deleteMany: async () => ({ count: 0 }) },
     favorite: { deleteMany: async () => ({ count: 0 }) },
     teamspaceMember: { deleteMany: async () => ({ count: 0 }) },
+    // The notification rows the removal deletes as well (the finding B113).
+    notification: { deleteMany: async () => ({ count: 0 }) },
   },
 }));
 vi.mock("@/lib/auth", () => ({ requireUser: async () => ({ id: auth.userId }) }));

@@ -23,6 +23,7 @@ const h = vi.hoisted(() => ({
   favoriteDeleteMany: vi.fn(),
   teamspaceMemberDeleteMany: vi.fn(),
   projectMemberDeleteMany: vi.fn(),
+  notificationDeleteMany: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -39,6 +40,7 @@ vi.mock("@/lib/db", () => ({
     // B115 and B116) — the mock has to offer them.
     teamspaceMember: { deleteMany: h.teamspaceMemberDeleteMany },
     projectMember: { deleteMany: h.projectMemberDeleteMany },
+    notification: { deleteMany: h.notificationDeleteMany },
   },
 }));
 vi.mock("@/lib/auth", () => ({ requireUser: h.requireUser }));
