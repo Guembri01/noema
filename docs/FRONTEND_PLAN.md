@@ -3,28 +3,35 @@
 > Status legend: **✅ have** · **🟡 partial / needs polish** · **⬜ to add**
 > Reference: Notion's web app. Goal: **smooth** (60 fps, no layout shift, everything
 > reversible) and **predictable** (same interaction everywhere).
+>
+> Companion doc: [`DESIGN_SYSTEM.md`](./DESIGN_SYSTEM.md) — the tokens, the rules,
+> the primitive kit (§11) and the design report (§12). This file tracks status;
+> that file defines *how things look and move*.
 
 ---
 
 ## 0. Design foundations (tokens) — do this FIRST
 
-Everything else is cheaper once the tokens exist. Today only colours + fonts are
-tokenised (`src/app/globals.css`).
+Everything else is cheaper once the tokens exist. Colour, spacing, radius,
+elevation, motion and layering live in `src/app/globals.css` +
+`src/app/tokens.css` (declared for light / dark / high-contrast) and are exposed
+to TSX by `src/lib/design-tokens.ts` (`Z`, `DUR`, `EASE`, `RADIUS`, `SHADOW`,
+`SPACE`, `BREAKPOINT`, `TAG_HUES`).
 
 | # | Feature | Status | Design spec |
 |---|---|---|---|
-| 0.1 | Colour tokens (light / dark / high-contrast) | ✅ have | `--bg --sidebar --surface --border --fg --muted --accent --accent-fg --selection`. Add: `--surface-2/3`, `--fg-subtle`, `--danger`, `--success`, `--warning`, `--accent-soft` (10% tint), per-tag palette (10 hues × text/bg/border) |
-| 0.2 | Typography scale | 🟡 | Tokens `--text-xs 12 / sm 13 / base 14 / lg 16 / xl 20 / 2xl 24 / 3xl 30`, `--leading-tight 1.2 / snug 1.35 / normal 1.5`, `--tracking-tight -0.02em`. Notion body = 16px prose, 14px UI |
-| 0.3 | Spacing scale | ⬜ | 4px base: `--space-1..12` (4,8,12,16,20,24,32,40,48,64,80,96). Ban ad-hoc `p-[13px]` |
-| 0.4 | Radius scale | ⬜ | `--radius-sm 4 / md 6 / lg 10 / xl 14 / full 999`. Notion = 3–6px, never 16 |
-| 0.5 | Elevation | ⬜ | `--shadow-1` (cards) `--shadow-2` (popover) `--shadow-3` (modal) — soft, low-opacity, never black |
-| 0.6 | **Motion tokens** | ⬜ | durations `--dur-1 120ms / 2 180ms / 3 240ms / 4 320ms`; easings `--ease-out cubic-bezier(.2,0,0,1)` (default), `--ease-in-out`, `--ease-spring cubic-bezier(.34,1.4,.64,1)` for popovers/drag settle |
-| 0.7 | Iconography | 🟡 | lucide-react at 14/16/20px, `stroke-width 1.75`. Standardise sizes + always pair with a text label or `aria-label` |
-| 0.8 | Z-index scale | ⬜ | `--z-base 0 / sticky 10 / sidebar 30 / overlay 40 / popover 50 / modal 60 / toast 70 / tooltip 80 / drag 90` — no magic numbers |
-| 0.9 | Breakpoints | 🟡 | sm 640 / md 768 / lg 1024 / xl 1280 / 2xl 1536. Sidebar: drawer < md, resizable ≥ md |
+| 0.1 | Colour tokens (light / dark / high-contrast) | ✅ | All landed in `tokens.css`: `--bg --sidebar --surface --surface-2/3 --border/-strong --fg --fg-subtle --muted --accent --accent-fg --accent-soft --ring --selection --danger(-fg/-soft) --success(-soft) --warning(-soft) --overlay` + the 10-hue tag palette (text/bg/border). See DESIGN_SYSTEM §2 |
+| 0.2 | Typography scale | ✅ | Canonical scale is codified as Tailwind classes in DESIGN_SYSTEM §3 (`text-xs` … `text-[28px]`, tighter heading tracking). No numeric `--text-*` vars — the class names are the contract |
+| 0.3 | Spacing scale | ✅ | `--space-*` in `tokens.css` (2,4,8,12,16,20,24,32,40,48,64); 4px grid. Ad-hoc `p-[13px]` is banned by §1/§10 |
+| 0.4 | Radius scale | ✅ | `--radius-xs 3 / sm 4 / md 6 / lg 10 / xl 14` (+ `RADIUS.full`). Mapped in `globals.css` |
+| 0.5 | Elevation | ✅ | `--shadow-1` (cards) `--shadow-2` (popover) `--shadow-3` (modal) `--shadow-focus`; soft, low-opacity, never pure black |
+| 0.6 | **Motion tokens** | ✅ | durations `--dur-1 120ms / 2 180ms / 3 240ms / 4 320ms`; easings `--ease-smooth` (default), `--ease-in-out-soft`, `--ease-spring` (popovers/drag settle); named `--animate-*` utilities. Mirrored in `design-tokens.ts` (`DUR`, `EASE`) |
+| 0.7 | Iconography | 🟡 | lucide-react at 14/16/20px, `stroke-width 1.75`. Sizes not yet centrally enforced; always pair with a text label or `aria-label` |
+| 0.8 | Z-index scale | ✅ | `--z-base 0 / sticky 10 / sidebar 30 / overlay 40 / popover 50 / modal 60 / toast 70 / tooltip 80 / drag 90` + `Z.*` in `design-tokens.ts` — no magic numbers |
+| 0.9 | Breakpoints | ✅ | `BREAKPOINT` in `design-tokens.ts` (sm 640 / md 768 / lg 1024 / xl 1280 / 2xl 1536). Sidebar: drawer < md, resizable ≥ md |
 | 0.10 | Density modes | ⬜ | Comfortable / compact (row height 32/28px, font 14/13px) persisted per user |
-| 0.11 | Theming API | 🟡 | light/dark/system ✅, high contrast ✅; add accent picker, cover gradient set, page font (sans/serif/mono) ✅ partially, page width (default/wide) ✅ per page |
-| 0.12 | Reduced motion | ✅ | global `prefers-reduced-motion` neutraliser exists — keep it and never regress |
+| 0.11 | Theming API | 🟡 | light/dark/system ✅, high contrast ✅; cover gradient set ✅, page font (sans/serif/mono) ✅ partially, page width (default/wide) ✅ per page; accent picker still ⬜ |
+| 0.12 | Reduced motion | ✅ | global `prefers-reduced-motion` neutraliser in `globals.css` — keep it and never regress |
 
 ---
 
@@ -32,29 +39,29 @@ tokenised (`src/app/globals.css`).
 
 | # | Component | Status | Notes |
 |---|---|---|---|
-| 1.1 | Button (primary/secondary/ghost/danger, sm/md, loading) | ✅ | add `loading` + `iconOnly` variants |
-| 1.2 | Input / Textarea / Field wrapper with label+error+help | 🟡 | need consistent Field + inline validation styling |
-| 1.3 | Select / Combobox (searchable) | ⬜ | Notion uses a searchable combobox everywhere — highest-value primitive |
-| 1.4 | Checkbox / Radio / Switch | ⬜ | needed for settings + filters |
-| 1.5 | Dialog / Sheet (side panel) / Confirm dialog | 🟡 | Dialog ✅; add Sheet (right drawer) for peeks + a `ConfirmDialog` built on it |
-| 1.6 | Popover / Dropdown menu / Context menu | ✅ | unify hover/selected/disabled states |
-| 1.7 | Tooltip | ✅ | add delay 500ms + instant on repeat |
-| 1.8 | Tabs / Segmented control | 🟡 | segmented control missing (view switcher uses buttons) |
-| 1.9 | Avatar + AvatarGroup | 🟡 | engine exists (`lib/avatars`); extract a primitive |
-| 1.10 | Badge / Chip / Tag (selectable, closable) | ⬜ | tags appear in rows, filters, statuses |
-| 1.11 | Card / Panel / Section header | ⬜ | for settings, gallery, dashboards |
-| 1.12 | Skeleton / Spinner / Progress bar / Progress ring | 🟡 | skeleton keyframes ✅; extract primitive + spinner |
-| 1.13 | Toast (success/error/info/undo action) | 🟡 | sonner ✅; add **undo action** in toasts |
-| 1.14 | Empty state (icon + title + hint + action) | ⬜ | reusable component; used by every list |
-| 1.15 | Scroll area with custom scrollbars + edge fades | ⬜ | Notion's thin overlay scrollbars are a signature detail |
-| 1.16 | Date picker / Calendar popover / Time picker | ⬜ | needed by date properties + reminders |
-| 1.17 | Slider / Stepper (number) | ⬜ | estimate, zoom, opacity |
-| 1.18 | Color picker (swatches + custom) | 🟡 | bubble toolbar has swatches; extract |
+| 1.1 | Button (primary/secondary/ghost/danger, sm/md, loading) | ✅ | `ui/button.tsx` — `loading` + `iconOnly` landed |
+| 1.2 | Input / Textarea / Field wrapper with label+error+help | ✅ | `ui/input.tsx` — `Field` ships consistent label + inline error + help |
+| 1.3 | Select / Combobox (searchable) | ✅ | `ui/select.tsx` — single/multi, grouped, virtualized, tags, full keyboard |
+| 1.4 | Checkbox / Radio / Switch | ✅ | `ui/checkbox.tsx` (tri-state), `ui/radio.tsx`, `ui/switch.tsx` (optimistic) |
+| 1.5 | Dialog / Sheet (side panel) / Confirm dialog | ✅ | `ui/dialog.tsx`, `ui/sheet.tsx` (left/right/bottom), `ui/confirm-dialog.tsx` (type-to-confirm + two-step) |
+| 1.6 | Popover / Dropdown menu / Context menu | ✅ | `ui/popover.tsx`, `ui/dropdown-menu.tsx`, `ui/context-menu.tsx` — shared item/hover/selected classes |
+| 1.7 | Tooltip | ✅ | `ui/tooltip.tsx` — 500 ms delay, instant on repeat |
+| 1.8 | Tabs / Segmented control | 🟡 | `ui/segmented.tsx` landed (2–6 way); a generic `Tabs` primitive is still missing |
+| 1.9 | Avatar + AvatarGroup | ✅ | `ui/avatar.tsx` on `lib/avatars` (presence stack, `+N`, status ring) |
+| 1.10 | Badge / Chip / Tag (selectable, closable) | ✅ | `ui/badge.tsx` (tones, count caps), `ui/tag.tsx` (removable + hues) |
+| 1.11 | Card / Panel / Section header | ✅ | `ui/card.tsx`, `ui/section.tsx` |
+| 1.12 | Skeleton / Spinner / Progress bar / Progress ring | ✅ | `ui/skeleton.tsx`, `ui/spinner.tsx`, `ui/progress.tsx` (bar + ring) |
+| 1.13 | Toast (success/error/info/undo action) | 🟡 | `ui/toaster.tsx` has the `undo` variant + action slot; still to wire to reversible actions |
+| 1.14 | Empty state (icon + title + hint + action) | ✅ | `ui/empty-state.tsx` (full/compact) |
+| 1.15 | Scroll area with custom scrollbars + edge fades | ✅ | `ui/scroll-area.tsx` + `.edge-fade-*` |
+| 1.16 | Date picker / Calendar popover / Time picker | ✅ | `ui/date-picker.tsx` (date/range/time/datetime + presets), `ui/calendar-grid.tsx` |
+| 1.17 | Slider / Stepper (number) | ✅ | `ui/slider.tsx` (single + range), `ui/stepper.tsx` |
+| 1.18 | Color picker (swatches + custom) | 🟡 | bubble toolbar has swatches; extract a primitive |
 | 1.19 | Emoji picker with frecency | ✅ | `ui/emoji-picker` |
 | 1.20 | Command palette | ✅ | extend with context-aware sections |
 | 1.21 | Resizable split / drag handles | 🟡 | sidebar ✅; generalize for columns/panels |
 | 1.22 | Virtualized list/grid | 🟡 | `lib/virtual-list`, page tree ✅; unify into a primitive |
-| 1.23 | Kbd chips | ✅ | |
+| 1.23 | Kbd chips | ✅ | `ui/kbd.tsx` |
 | 1.24 | File drop zone + upload progress | 🟡 | upload works; add progress + per-file retry |
 | 1.25 | Chart primitives (bar/line/pie/donut) | 🟡 | database chart view exists; extract + add hover tooltips |
 
@@ -75,7 +82,7 @@ tokenised (`src/app/globals.css`).
 | 2.9 | Split view (two pages side by side) | ⬜ | drag a page to the right edge |
 | 2.10 | Mobile top bar + drawer nav | ✅ | |
 | 2.11 | Bottom status bar (sync state, word count, block count) | ⬜ | |
-| 2.12 | Global loading bar for route transitions | ⬜ | 2px accent bar; never a full-page spinner |
+| 2.12 | Global loading bar for route transitions | ✅ | `ui/route-progress.tsx` (2px accent bar) mounted in `workspace-shell.tsx`; never a full-page spinner |
 | 2.13 | Offline / sync indicator | ✅ | `offline-indicator` |
 | 2.14 | Multi-window / pop-out page | ⬜ | low priority |
 
@@ -164,7 +171,7 @@ tokenised (`src/app/globals.css`).
 | 5.38 | Page lock (read-only) + schema lock | ✅ | |
 | 5.39 | Backlinks panel (linked / unlinked mentions) | ✅ | |
 | 5.40 | Word/block count + reading time in footer | ⬜ | |
-| 5.41 | Find in page (Ctrl+F overlay with highlight + next/prev) | ⬜ | important, missing |
+| 5.41 | Find in page (Ctrl+F overlay with highlight + next/prev) | 🟡 | engine `lib/find-in-page.ts` + bar `editor/find-bar.tsx` shipped; mounting it in `page-editor.tsx` + binding Ctrl+F/Ctrl+Shift+F is the remaining wiring |
 | 5.42 | Editor focus mode / zen (dim other blocks) | ⬜ | |
 | 5.43 | Placeholder / last-edited-by footer | ✅ (last-edited) | |
 | 5.44 | Scroll to top / "jump to block" affordances | ⬜ | |
@@ -403,16 +410,16 @@ tokenised (`src/app/globals.css`).
 
 | # | Pattern | Status | Spec |
 |---|---|---|---|
-| 17.1 | Loading: skeletons matching final layout | 🟡 | never spinners for lists |
-| 17.2 | Optimistic updates + rollback on error | 🟡 | standardise via `useAction` |
+| 17.1 | Loading: skeletons matching final layout | ✅ | `ui/skeleton.tsx` (sized to the real layout) adopted by lists/panels; never spinners for lists |
+| 17.2 | Optimistic updates + rollback on error | ✅ | `useAction()` (`actions-client.ts`) + `ActionErrorGuard`; migrate the remaining unwrapped call sites |
 | 17.3 | Error boundaries per pane (not whole app) | 🟡 | |
-| 17.4 | Inline field validation (error under field, red ring) | 🟡 | |
-| 17.5 | Destructive confirmations (non-blocking, two-step or dialog) | ✅ | |
-| 17.6 | Undo in toast for reversible actions (delete/archive/move) | ⬜ | `lib/undo-redo` exists — wire toasts |
-| 17.7 | Disabled + pending buttons (no double submit) | 🟡 | |
+| 17.4 | Inline field validation (error under field, red ring) | ✅ | `Field` renders the error under the field with a danger ring |
+| 17.5 | Destructive confirmations (non-blocking, two-step or dialog) | ✅ | `ui/confirm-dialog.tsx` (two-step + type-to-confirm) |
+| 17.6 | Undo in toast for reversible actions (delete/archive/move) | ⬜ | `lib/undo-redo` + the toast `undo` variant exist — wire them together |
+| 17.7 | Disabled + pending buttons (no double submit) | ✅ | `Button loading`, `Switch`/`ConfirmDialog` pending guards |
 | 17.8 | Offline state + queued mutations banner | ✅ | |
 | 17.9 | Retry with backoff for failed fetches | 🟡 | |
-| 17.10 | "Saving…/Saved" indicator | 🟡 | editor autosave is silent |
+| 17.10 | "Saving…/Saved" indicator | ✅ | `page-editor.tsx` footer shows saving / saved / error |
 | 17.11 | Long-op progress (import/export/AI) | 🟡 | |
 | 17.12 | No layout shift (reserve space, CLS ≈ 0) | 🟡 | audit required |
 
@@ -483,25 +490,65 @@ tokenised (`src/app/globals.css`).
 | # | Item | Status |
 |---|---|---|
 | 21.1 | Unit tests for every pure UI mapping | ✅ |
-| 21.2 | Live check scripts (11 suites) | ✅ |
-| 21.3 | a11y audit in CI | ✅ |
+| 21.2 | Live check scripts (24 `scripts/check-*.mjs`: a11y, design-system, coherence, use-server, routes, search, tickets, …) | ✅ |
+| 21.3 | a11y audit in CI (`check:a11y`) | ✅ |
 | 21.4 | Coherence/lint ratchets (no blocking dialogs, no orphan actions, i18n coverage) | ✅ |
 | 21.5 | **Visual regression screenshots** (Playwright + baseline diff) | ⬜ |
-| 21.6 | **Storybook / component gallery** for the UI kit | ⬜ |
-| 21.7 | Interaction tests for drag & drop, resize, keyboard | ⬜ |
-| 21.8 | Design-token linting (no raw hex / arbitrary px in components) | ⬜ |
-| 21.9 | Motion audit (all animations use tokens, reduced-motion safe) | ⬜ |
+| 21.6 | **Storybook / `/dev/ui` component gallery** for the UI kit | ⬜ |
+| 21.7 | Interaction tests for drag & drop, resize, keyboard | 🟡 — Playwright `e2e/` covers drag/resize/keyboard (`media-parity`, `properties-parity`, `focus`); no dedicated design-interaction suite |
+| 21.8 | Design-token linting (no raw hex / arbitrary px in components) | ✅ — `scripts/check-design-system.mjs` (`check:design` / `design:report`); not yet wired into CI |
+| 21.9 | Motion audit (all animations use tokens, reduced-motion safe) | ⬜ — `check:motion` not yet written |
 | 21.10 | i18n string extraction workflow | ✅ |
+
+### How we verify design work
+
+1. **Unit + SSR tests** (`npm test`) — every primitive carries a `*.test.ts` that
+   pins its pure mapping; components that render markup are exercised with
+   `renderToStaticMarkup` in the node environment (`vitest.config.mts`), so a raw
+   hex or a bad class fails without a browser.
+2. **`npm run check:design`** (`design:report`) — the token-conformance ratchet:
+   raw hex, magic z-index, ad-hoc duration/radius/shadow and the legacy palette
+   are counted per file and must stay at or below the baseline. `npm run design:report`
+   prints the per-file detail (quoted in DESIGN_SYSTEM §12).
+3. **`npm run check:coherence`** — the "don't regress the feel" gate: no blocking
+   dialogs, no orphan server actions, no `window.alert`/`prompt`, i18n coverage.
+4. **`check:motion`** *(planned — does not exist yet)* — assert every animation
+   uses a `--dur-*` / `--ease-*` token and is neutralised by `prefers-reduced-motion`.
+5. **`visual:check`** *(planned — does not exist yet)* — Playwright screenshot +
+   baseline diff for the primitive kit and the key surfaces.
+6. **`/dev/ui` gallery** *(planned — does not exist yet)* — a live route rendering
+   every primitive in every state (light / dark / high-contrast) to eyeball and
+   screenshot.
+
+Until 4–6 land, the manual pass is: run `npm run design:report` → open the app →
+check light/dark/high-contrast at 200 % zoom + reduced motion → reuse a primitive
+from the DESIGN_SYSTEM §11 kit before adding a one-off control.
 
 ---
 
 ## 22. Suggested build order (highest impact first)
 
-**P0 — foundations + feel (1–2 weeks of agent work)**
-1. Token pass: spacing / radius / elevation / **motion** / z-index (0.3–0.8) — biggest "smoothness" win.
-2. Primitives: Select/Combobox, Checkbox/Switch, Sheet, ConfirmDialog, EmptyState, Skeleton/Spinner, Progress, Badge/Chip, DatePicker (1.3–1.16).
-3. Motion pass across existing surfaces (19.1–19.14): hover/press/menu/dialog/drawer/drag/skeleton.
-4. Find-in-page (5.41) + undo-in-toast (17.6) + saving indicator (17.10).
+Ordered by what the design report still flags (`npm run design:report`, quoted in
+DESIGN_SYSTEM §12) plus the wires the primitives still need.
+
+**P0 — finish the design-system adoption**
+1. **Drive every flagged file below baseline.** 29 files still carry a hit;
+   worst first: `auth-form.tsx`, `database/view-renderers.tsx`,
+   `editor/page-editor.tsx`, `audit-feed.tsx`, `database/database-types.ts`,
+   `database/database-view.tsx`, `database/property-options-editor.tsx`,
+   `database/view-settings.tsx`, `editor/block-context-menu.tsx`,
+   `editor/equation-editor.tsx`, `editor/extensions/block-colors.ts`,
+   `editor/extensions/bookmark.tsx`, `editor/extensions/custom-blocks.tsx`,
+   `editor/extensions/suggestions.ts`, `editor/formula-editor.tsx`,
+   `email-settings.tsx`, `notification-preferences-form.tsx`, `page-title.tsx`,
+   `search-results.tsx`, `sidebar/page-tree.tsx`. The two "arbitrary duration"
+   hits (`page-title.tsx`, `sidebar/page-tree.tsx`) are the cheapest wins.
+2. **Wire find-in-page** (5.41): mount `editor/find-bar.tsx` in `page-editor.tsx`
+   and bind Ctrl+F / Ctrl+Shift+F.
+3. **Wire undo-in-toast** (17.6): connect `lib/undo-redo` to the toast `undo`
+   variant for delete / archive / move.
+4. **Remaining primitives**: `Tabs` (1.8), ColorPicker (1.18), Chart primitives
+   (1.25, + hover tooltips).
 
 **P1 — parity gaps users notice**
 5. Sidebar hover-peek + icon rail (2.3–2.4), topbar scroll-shrink (2.7), split view (2.9).
@@ -509,12 +556,12 @@ tokenised (`src/app/globals.css`).
 7. Calendar drag-reschedule (7.1.5), timeline drag/resize (7.1.6), chart tooltips (7.1.7), view sharing (7.2.11).
 8. Live cursors paint (9.2), desktop notifications (10.5).
 9. Chat action confirmations (12.3 — in flight).
-10. Visual regression + Storybook (21.5–21.6).
+10. **Design tooling**: `/dev/ui` gallery + `visual:check` + `check:motion` (21.5–21.6, 21.8–21.9).
 
 **P2 — depth & delight**
 11. Map view, dashboard view (7.1.9–7.1.10), public DB views (14.3).
 12. Density modes (0.10), accent theming (0.11), coach marks (16.4), what's-new (16.6).
-13. Bundle/vitals budgets, token linting, motion audit (20.7–20.8, 21.8–21.9).
+13. Bundle/vitals budgets (20.7–20.8), CI wiring for `check:design` (21.8).
 
 ---
 
