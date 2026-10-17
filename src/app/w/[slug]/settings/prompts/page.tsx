@@ -282,7 +282,7 @@ export default function PromptLibraryPage() {
               <EmptyState
                 variant="compact"
                 icon={<FileText className="h-4 w-4" aria-hidden />}
-                title={hasAnyPrompt ? "No matching prompts" : "No prompts yet"}
+                title={hasAnyPrompt ? t(locale, "noMatchingPrompts") : t(locale, "noPromptsYet")}
                 description={
                   hasAnyPrompt
                     ? "No prompt matches the current search, tag or scope."

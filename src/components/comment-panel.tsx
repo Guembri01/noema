@@ -906,7 +906,7 @@ export function CommentPanel({
                 submit(body, null);
               }
             }}
-            placeholder={quote ? "Comment on the selected text…" : "Add a comment…"}
+            placeholder={quote ? t(locale, "commentOnSelection") : t(locale, "addAComment")}
             className="resize-none"
           />
           <MentionHints body={body} />

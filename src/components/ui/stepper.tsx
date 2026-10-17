@@ -325,7 +325,7 @@ export function Stepper({
             aria-valuemin={min}
             aria-valuemax={max}
             aria-valuenow={current}
-            aria-label={ariaLabel ?? (label ? undefined : "Value")}
+            aria-label={ariaLabel ?? (label ? undefined : t(locale, "valuePlaceholder"))}
             aria-labelledby={ariaLabelledby ?? (label ? labelId : undefined)}
             aria-invalid={showInvalid || undefined}
             aria-describedby={

@@ -199,7 +199,7 @@ export function TicketArchiveView({
           <EmptyState
             variant="full"
             icon={<ArchiveRestore className="h-5 w-5" aria-hidden />}
-            title={tickets.length === 0 ? "No archived tickets" : "No tickets match your search"}
+            title={tickets.length === 0 ? t(locale, "noArchivedTickets") : t(locale, "noMatchingTickets")}
             description={
               tickets.length === 0
                 ? "Tickets you archive will appear here, ready to restore."

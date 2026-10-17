@@ -585,6 +585,7 @@ export function TimelineView({
   rows,
   edges,
   loading = false,
+  editable = true,
 }: {
   workspaceSlug: string;
   properties: DBProperty[];
@@ -599,6 +600,13 @@ export function TimelineView({
   edges?: TimelineEdge[];
   /** Render the loading skeleton (matching the final layout). */
   loading?: boolean;
+  /**
+   * Whether this view may be changed. Read-only databases still *render* the bars
+   * (and keep the handles visible for layout stability) but nothing is draggable,
+   * nothing is focusable and nothing calls the mutation — previously a drag was
+   * attempted and then reverted by the permission error, which looked like a bug.
+   */
+  editable?: boolean;
 }) {
   const [zoom, setZoom] = useState<number>(TIMELINE_ZOOM_LEVELS[0]);
   const [overrides, setOverrides] = useState<Record<string, DragRange>>({});
@@ -903,6 +911,7 @@ export function TimelineView({
 
   /** Arrow keys move the whole bar one unit; Home/End pin it to a bound. */
   const moveBarKeys = (event: ReactKeyboardEvent<HTMLElement>, bar: TimelineBar) => {
+    if (!editable) return;
     const range = currentRange(bar);
     let next: DragRange | null = null;
     if (event.key === "ArrowRight" || event.key === "ArrowDown") {
@@ -1042,7 +1051,8 @@ export function TimelineView({
                   href={`/w/${workspaceSlug}/${bar.rowId}`}
                   draggable={false}
                   role="slider"
-                  tabIndex={0}
+                  tabIndex={editable ? 0 : -1}
+                  aria-disabled={!editable}
                   aria-orientation="horizontal"
                   aria-label={`${t(locale, "timelineMoveItem")}: ${bar.title}`}
                   aria-valuemin={boundMinDay}
@@ -1050,8 +1060,8 @@ export function TimelineView({
                   aria-valuenow={startDay}
                   aria-valuetext={rangeLabel}
                   data-testid={`timeline-bar-${bar.rowId}`}
-                  onPointerDown={(event) => beginDrag(event, bar, "move")}
-                  onKeyDown={(event) => moveBarKeys(event, bar)}
+                  onPointerDown={editable ? (event) => beginDrag(event, bar, "move") : undefined}
+                  onKeyDown={editable ? (event) => moveBarKeys(event, bar) : undefined}
                   className={cn(
                     "focus-ring u-interactive flex h-full cursor-grab touch-none select-none items-center truncate rounded-sm bg-accent/70 px-2 text-xs text-accent-fg hover:-translate-y-0.5 hover:bg-accent active:cursor-grabbing",
                     dragging && "u-no-transition",
@@ -1071,6 +1081,7 @@ export function TimelineView({
                 <button
                   type="button"
                   role="slider"
+                  aria-disabled={!editable}
                   aria-orientation="horizontal"
                   aria-label={`${t(locale, "timelineResizeStart")}: ${bar.title}`}
                   aria-valuemin={boundMinDay}
@@ -1078,8 +1089,8 @@ export function TimelineView({
                   aria-valuenow={startDay}
                   aria-valuetext={rangeLabel}
                   data-testid={`timeline-resize-start-${bar.rowId}`}
-                  onPointerDown={(event) => beginDrag(event, bar, "start")}
-                  onKeyDown={(event) => resizeBarKeys(event, bar, "start")}
+                  onPointerDown={editable ? (event) => beginDrag(event, bar, "start") : undefined}
+                  onKeyDown={editable ? (event) => resizeBarKeys(event, bar, "start") : undefined}
                   className={cn(
                     "focus-ring absolute inset-y-0 cursor-ew-resize touch-none rounded-s-sm bg-transparent hover:bg-accent-fg/40",
                     dragging && "u-no-transition",
@@ -1097,6 +1108,7 @@ export function TimelineView({
                 <button
                   type="button"
                   role="slider"
+                  aria-disabled={!editable}
                   aria-orientation="horizontal"
                   aria-label={`${t(locale, "timelineResizeEnd")}: ${bar.title}`}
                   aria-valuemin={startDay}
@@ -1104,8 +1116,8 @@ export function TimelineView({
                   aria-valuenow={endDay}
                   aria-valuetext={rangeLabel}
                   data-testid={`timeline-resize-end-${bar.rowId}`}
-                  onPointerDown={(event) => beginDrag(event, bar, "end")}
-                  onKeyDown={(event) => resizeBarKeys(event, bar, "end")}
+                  onPointerDown={editable ? (event) => beginDrag(event, bar, "end") : undefined}
+                  onKeyDown={editable ? (event) => resizeBarKeys(event, bar, "end") : undefined}
                   className={cn(
                     "focus-ring absolute inset-y-0 cursor-ew-resize touch-none rounded-e-sm bg-transparent hover:bg-accent-fg/40",
                     dragging && "u-no-transition",

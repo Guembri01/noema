@@ -2250,6 +2250,7 @@ export function DatabaseView({
           workspaceSlug={workspaceSlug}
           properties={properties}
           rows={viewRows}
+          editable={editable}
         />
       ) : activeView.type === "CHART" ? (
         <ChartView

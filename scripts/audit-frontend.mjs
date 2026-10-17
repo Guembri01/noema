@@ -35,7 +35,14 @@ const rel = (f) => relative(ROOT, f).replace(/\\/g, "/");
 /** Dev-only surfaces are not user-facing; they are reported separately. */
 const isDevOnly = (f) => /^src\/app\/dev\//.test(rel(f)) || /design-gallery/.test(rel(f));
 const stripComments = (t) =>
-  t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+  // Blank the comment *bodies* rather than deleting them, so every newline survives and
+  // the line numbers in the report point at the real file. Deleting the spans (the
+  // previous behaviour) shifted every line after a comment, which is why findings were
+  // reported a few lines off — close enough to look right, far enough to waste time.
+  t
+    .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "))
+    .replace(/^\s*\/\/.*$/gm, (comment) => comment.replace(/[^\n]/g, " "))
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, (comment) => comment.replace(/[^\n]/g, " "));
 
 /**
  * Local class constants, resolved per file.
@@ -122,12 +129,25 @@ const rule = (bucket, title, why) => {
 {
   const g = rule("DEFECT", "User-facing copy that is not translated", "fr/es/de/ar users read English");
   const attr = /(placeholder|aria-label|alt)\s*=\s*"([A-Za-z][^"{}]{2,60})"/g;
+  // The same attribute written as a JSX expression — `aria-label={cond ? "Pick an icon"
+  // : "Pick a cover"}` — is invisible to the pattern above, and that blind spot let 11
+  // English labels sit in the tree while this rule reported zero. (One of them was a
+  // page's own cover hint; another was the cover dialog's title.)
+  const exprAttr = /(placeholder|aria-label|alt|title)=\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g;
   for (const file of tsx) {
     if (isDevOnly(file)) continue;
     stripComments(readFileSync(file, "utf8"))
       .split("\n")
       .forEach((line, i) => {
         for (const m of line.matchAll(attr)) g.hit(file, i + 1, `${m[1]}="${m[2]}"`);
+        for (const m of line.matchAll(exprAttr)) {
+          const expression = m[2];
+          // Translated copy is fine, and so is a value that comes from data (a user's
+          // page title, a variable) — only a bare English literal is a defect.
+          if (/\bt\(/.test(expression)) continue;
+          const literal = expression.match(/"([A-Z][A-Za-z][^"]{2,70})"/);
+          if (literal) g.hit(file, i + 1, `${m[1]}={… ${literal[1]} …}`);
+        }
       });
   }
 }

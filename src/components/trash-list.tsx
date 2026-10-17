@@ -587,7 +587,7 @@ export function TrashList({
             }}
             tone="danger"
             className="animate-scale-in"
-            title={confirmItem ? `Delete “${confirmItem.title}” forever?` : "Delete forever?"}
+            title={confirmItem ? `${t(locale, "deleteForever")} “${confirmItem.title}”?` : t(locale, "deleteForever")}
             description={confirmItem ? deleteImpactCopy(items, confirmItem) : ""}
             confirmLabel={t(locale, "deleteForever")}
             cancelLabel="Cancel"

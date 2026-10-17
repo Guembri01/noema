@@ -1202,7 +1202,7 @@ export function ChatPanel({
           ) : !hasConversation ? (
             <ChatEmptyState locale={locale} onPrompt={(prompt) => send(prompt)} />
           ) : (
-            <ul className="space-y-4" aria-label={active?.title || "Conversation"}>
+            <ul className="space-y-4" aria-label={active?.title || t(locale, "conversation")}>
               {messages.map((message, index) => {
                 const meta = asMeta(message.meta);
                 const spec = messageBubble(message.role);

@@ -1240,7 +1240,7 @@ export function PageTitle({
           showEmoji || showCover ? (
             <div
               role="dialog"
-              aria-label={showEmoji ? "Pick an icon" : "Pick a cover"}
+              aria-label={showEmoji ? t(locale, "pickAnIcon") : t(locale, "pickACover")}
               /* `top-14` clears the icon itself (h-14 = 56px): the row is only h-8,
                  so the emoji overflows it and anchoring to the row left this panel
                  sitting on top of the glyph. Portalled so an ancestor cannot clip
@@ -1320,7 +1320,7 @@ export function PageTitle({
         actions={
           <ActionsMenu
             pageId={pageId}
-            title={title || "Untitled"}
+            title={title || t(locale, "untitled")}
             editable={editable}
             locale={locale}
             font={font}
@@ -1374,7 +1374,7 @@ export function PageTitle({
                   backgroundImage: coverCss(storedCover.value),
                   backgroundPosition: formatObjectPosition(coverPosition),
                 }}
-                aria-label={canEdit ? "Page cover — drag to reposition" : "Page cover"}
+                aria-label={canEdit ? t(locale, "pageCoverDragHint") : t(locale, "pageCover")}
                 onPointerDown={onCoverPointerDown}
                 onPointerMove={onCoverPointerMove}
                 onPointerUp={endCoverDrag}

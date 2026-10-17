@@ -413,7 +413,7 @@ export function BookmarkCardSurface({
         <SandboxedFrame
           className="noema-bookmark-embed bg-overlay"
           src={embedUrl}
-          title={`${host || "Link"} preview`}
+          title={`${host || t(locale, "link")} ${t(locale, "previewWord")}`}
           sandbox={SANDBOX_PREVIEW}
         />
       ) : null}
@@ -664,7 +664,7 @@ function EmbedView({ node, updateAttributes, deleteNode, locale }: NodeViewProps
         <SandboxedFrame
           className="noema-embed-frame bg-overlay"
           src={resolved.embedUrl}
-          title={meta?.title ?? "Embedded content"}
+          title={meta?.title ?? t(locale, "embeddedContent")}
           sandbox={resolved.sandbox}
           allow={resolved.allow}
           provider={resolved.provider}
@@ -810,7 +810,7 @@ function PdfPreviewView({ node, updateAttributes, deleteNode, locale }: NodeView
           <SandboxedFrame
             className="noema-pdf-frame"
             src={safeUrl}
-            title={String(node.attrs.title ?? "PDF preview")}
+            title={String(node.attrs.title ?? t(locale, "pdfPreview"))}
             sandbox={SANDBOX_PREVIEW}
           />
         </div>
@@ -999,7 +999,7 @@ function MapBlockView({ node, updateAttributes, deleteNode, locale }: NodeViewPr
           <SandboxedFrame
             className="noema-map-frame"
             src={embedUrl}
-            title={label ? `Map: ${label}` : "Embedded map"}
+            title={label ? `${t(locale, "mapWord")}: ${label}` : t(locale, "embeddedMap")}
             sandbox={SANDBOX_PREVIEW}
           />
         </div>
