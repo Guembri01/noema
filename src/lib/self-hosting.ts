@@ -26,7 +26,18 @@
  * mere non-emptiness, and the shared placeholder list rejects the values
  * operators copy from examples (`changeme`, `xxx`, …) — both are exactly the
  * mistakes that turn a green deploy into a plaintext-secret incident.
+ *
+ * B55: the placeholders this repository *ships* (`.env.example` and the
+ * examples below) are in the list as well, and `AUTH_SECRET` carries the
+ * stricter length floor of the runtime rule (`src/lib/auth-secret.ts`) — the
+ * readiness verdict must not say "ready" for a deployment the app then
+ * refuses to sign a session with.
  */
+
+import {
+  MIN_AUTH_SECRET_LENGTH,
+  SHIPPED_AUTH_SECRET_PLACEHOLDERS,
+} from "./auth-secret";
 
 /** Manifest format version; bump when the emitted shape changes. */
 export const SELF_HOSTING_MANIFEST_VERSION = 1;
@@ -44,8 +55,12 @@ export const MIN_SECRET_LENGTH = 16;
  * Values that look configured but are not. Compared case-insensitively against
  * the trimmed value; `<...>`-wrapped values are matched separately. Empty
  * strings are treated as placeholders by {@link isPlaceholder} too.
+ *
+ * The first entries are the literals this repository ships (B55) — copying one
+ * of them into `.env` is exactly what must not pass as a configured secret.
  */
 export const PLACEHOLDER_VALUES: readonly string[] = [
+  ...SHIPPED_AUTH_SECRET_PLACEHOLDERS,
   "changeme",
   "change-me",
   "change_me",
@@ -82,6 +97,12 @@ export type EnvDescriptor = {
   scope: EnvScope;
   /** True when the value must be treated as sensitive (length rule applies). */
   secret: boolean;
+  /**
+   * Minimum length of a usable value (secrets only). Defaults to
+   * {@link MIN_SECRET_LENGTH}; `AUTH_SECRET` overrides it with the floor of
+   * the runtime rule (`src/lib/auth-secret.ts`).
+   */
+  minLength?: number;
   /** A safe, non-sensitive illustrative value. */
   example: string;
   /** Human-readable explanation of what the variable is for. */
@@ -103,6 +124,7 @@ export const REQUIRED_ENV: readonly EnvDescriptor[] = [
     required: true,
     scope: "auth",
     secret: true,
+    minLength: MIN_AUTH_SECRET_LENGTH,
     example: "0123456789abcdef0123456789abcdef",
     description: "HS256 key that signs session cookies and derives envelope keys.",
   },
@@ -438,10 +460,11 @@ function classifyEnvValue(
   if (isPlaceholder(value)) {
     return { name: descriptor.name, reason: `placeholder value "${value}"` };
   }
-  if (descriptor.secret && value.length < MIN_SECRET_LENGTH) {
+  const minLength = descriptor.minLength ?? MIN_SECRET_LENGTH;
+  if (descriptor.secret && value.length < minLength) {
     return {
       name: descriptor.name,
-      reason: `too short (${value.length} < ${MIN_SECRET_LENGTH})`,
+      reason: `too short (${value.length} < ${minLength})`,
     };
   }
   return null;
@@ -613,13 +636,16 @@ export function validateEnvFile(text: string): EnvFileReport {
       issues.push({ key, kind: "placeholder", reason: `placeholder value "${value}"`, line });
       return;
     }
-    if (descriptor?.secret && value.length < MIN_SECRET_LENGTH) {
-      issues.push({
-        key,
-        kind: "weak",
-        reason: `too short (${value.length} < ${MIN_SECRET_LENGTH})`,
-        line,
-      });
+    if (descriptor?.secret) {
+      const minLength = descriptor.minLength ?? MIN_SECRET_LENGTH;
+      if (value.length < minLength) {
+        issues.push({
+          key,
+          kind: "weak",
+          reason: `too short (${value.length} < ${minLength})`,
+          line,
+        });
+      }
     }
   });
 

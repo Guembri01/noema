@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *    of the token has to be dead too).
  */
 
-process.env.AUTH_SECRET = "b54-unit-secret-0123456789";
+process.env.AUTH_SECRET = "b54-unit-secret-0123456789abcdef";
 
 const jar = vi.hoisted(() => new Map<string, string>());
 

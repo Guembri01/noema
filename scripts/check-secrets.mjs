@@ -53,7 +53,6 @@ const PATTERNS = [
 const ALLOWED = new Set([
   "AKIAIOSFODNN7EXAMPLE", // AWS's own docs example, used by src/lib/self-hosting.ts
   "sk-example-0000000000000000", // src/lib/self-hosting.ts placeholder
-  "replace-me-with-a-32-byte-hex-secret", // .env.example
   "ci-only-secret-not-used-in-production-000000", // .github/workflows/site.yml
   "b74-build-time-dummy-secret-not-a-real-key", // Dockerfile build-time dummy
 ]);

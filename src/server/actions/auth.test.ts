@@ -112,7 +112,7 @@ beforeEach(() => {
   resetAuthLimits();
   // B05 seals the TOTP seed with AUTH_SECRET; the legacy fixture is re-sealed
   // on the successful sign-in.
-  process.env.AUTH_SECRET = "auth-test-secret-for-two-factor";
+  process.env.AUTH_SECRET = "auth-test-secret-for-two-factor-0123";
   db.userUpdate.mockResolvedValue({ failedLoginCount: 0 });
   auth.hashPassword.mockImplementation(async (password: string) =>
     bcrypt.hashSync(password, 4),

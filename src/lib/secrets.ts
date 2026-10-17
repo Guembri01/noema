@@ -6,6 +6,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
+import { MIN_AUTH_SECRET_LENGTH, resolveAuthSecret } from "./auth-secret";
 
 /**
  * Envelope encryption for stored provider keys (AES-256-GCM).
@@ -14,13 +15,15 @@ import {
  * to read a stored API key. Ciphertext is versioned (`v1:iv:tag:payload`) so the
  * scheme can be rotated later. Secrets are never sent back to the client — the
  * UI only ever sees a masked form.
+ *
+ * B55: the envelope key is only as strong as `AUTH_SECRET`, so it goes
+ * through the same rule as the session key (`src/lib/auth-secret.ts`) — the
+ * placeholder this repository ships is public, and a public envelope key
+ * decrypts every stored provider key and 2FA seed.
  */
 
 function encryptionKey(): Buffer {
-  const secret = process.env.AUTH_SECRET ?? "";
-  if (!secret) {
-    throw new Error("AUTH_SECRET is required to store provider keys.");
-  }
+  const secret = resolveAuthSecret();
   // Fixed, domain-separated salt: the secret is the entropy source.
   return createHash("sha256").update(`noema:ai-provider:v1:${secret}`).digest();
 }
@@ -412,7 +415,13 @@ export type SecretScope =
   | "sso"
   | "cron";
 
-/** Minimum acceptable length for a strong secret (mirrors `auth.ts`). */
+/**
+ * Minimum acceptable length for a strong env secret.
+ *
+ * The generic floor for the operator diagnostics; `AUTH_SECRET` has its own,
+ * stricter floor ({@link MIN_AUTH_SECRET_LENGTH}, the rule in
+ * `src/lib/auth-secret.ts`) and carries it in the registry below.
+ */
 export const MIN_SECRET_LENGTH = 16;
 
 /** Classification of a single env secret; never carries the value. */
@@ -675,7 +684,13 @@ export interface SecretRegistryEntry {
 /** Known env secrets documented in `.env.example` / `README.md`. */
 export const SECRET_REGISTRY: readonly SecretRegistryEntry[] = [
   { name: "DATABASE_URL", required: true, scope: "database", rotationDays: 365 },
-  { name: "AUTH_SECRET", required: true, scope: "auth", rotationDays: 90 },
+  {
+    name: "AUTH_SECRET",
+    required: true,
+    scope: "auth",
+    rotationDays: 90,
+    minLength: MIN_AUTH_SECRET_LENGTH,
+  },
   { name: "AI_API_KEY", required: false, scope: "ai", rotationDays: 180 },
   {
     name: "AI_TRANSCRIBE_API_KEY",
@@ -809,17 +824,12 @@ export function shareUnlockCookieName(token: string): string {
 
 /**
  * The HMAC key for share unlock cookies: AUTH_SECRET, domain-separated so it
- * can never collide with another use of the same secret. A missing or too
- * short secret is fatal — a cookie that cannot be verified must never be
+ * can never collide with another use of the same secret. A missing or
+ * unusable secret is fatal — a cookie that cannot be verified must never be
  * trusted.
  */
 function shareUnlockKey(): Buffer {
-  const secret = process.env.AUTH_SECRET ?? "";
-  if (secret.length < MIN_SECRET_LENGTH) {
-    throw new Error(
-      "AUTH_SECRET is missing or too short. Set a strong value in .env (see .env.example).",
-    );
-  }
+  const secret = resolveAuthSecret();
   return createHash("sha256").update(`noema:share-unlock:v1:${secret}`).digest();
 }
 
