@@ -229,6 +229,15 @@ const SVG_FORBIDDEN: readonly RegExp[] = Object.freeze([
 const SVG_REF_RE = /\b(?:xlink:href|href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
 
 /**
+ * Control characters (NUL, tab, LF, CR, …) — the same class `safeHref`
+ * strips before it reads a scheme (`src/lib/markdown.ts`, B59/H2). A browser
+ * removes them from a URL *before* it parses the scheme, so `java\nscript:`
+ * is `javascript:` for it; the document gate has to read the source the same
+ * way, otherwise a scheme that hides behind a line break walks past it.
+ */
+const SVG_CONTROL_CHARS_RE = /[\u0000-\u001f\u007f]/g;
+
+/**
  * Whether an SVG document is safe to upload and render. Rejects scripting
  * (`<script>`, `on*` handlers, `javascript:`/`vbscript:` URLs, `data:text/html`),
  * foreign content (`<foreignObject>`, `<iframe>`), XML entities/stylesheet PIs,
@@ -240,7 +249,15 @@ export function isSvgSafe(svg: string): boolean {
   if (typeof svg !== "string") return false;
   const source = svg.trim();
   if (source === "") return false;
-  if (SVG_FORBIDDEN.some((re) => re.test(source))) return false;
+  // B112: the blocklist is tested against the raw source *and* against the
+  // source without its control characters. A browser strips those out of a URL
+  // before it parses the scheme, so the scheme pattern has to see the source
+  // the browser sees — otherwise `java\nscript:` is not `javascript:` for the
+  // gate and slips through. The raw source stays in the test because the
+  // markup patterns anchor on the whitespace in front of an `on*` handler,
+  // which the stripped source would swallow (`<svg\nonload="…">`).
+  const normalized = source.replace(SVG_CONTROL_CHARS_RE, "");
+  if (SVG_FORBIDDEN.some((re) => re.test(source) || re.test(normalized))) return false;
   SVG_REF_RE.lastIndex = 0;
   let ref = SVG_REF_RE.exec(source);
   while (ref !== null) {

@@ -135,3 +135,51 @@ describe("GET /api/files/[...path] — the guest scope (B91)", () => {
     expect(edge.storageGet).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * B112 — an uploaded SVG must not be served inline.
+ *
+ * An SVG is an active document: the upload endpoint accepts `image/svg+xml`,
+ * stores the bytes unexamined and the file route hands them back with the
+ * `image/svg+xml` content type, so a member who opens the asset URL gets a
+ * document in the app's own origin. The route set no `Content-Disposition`, so
+ * nothing stopped that navigation.
+ *
+ * The delivery is what is pinned here: an SVG is handed out as a download
+ * (`Content-Disposition: attachment`), the raster images stay inline — they
+ * are what the editor renders in an `<img>`.
+ */
+describe("GET /api/files/[...path] — an SVG is delivered as an attachment (B112)", () => {
+  const SVG_BYTES = new Uint8Array([0x3c, 0x73, 0x76, 0x67, 0x3e]); // "<svg>"
+
+  it("delivers an SVG with Content-Disposition: attachment", async () => {
+    edge.storageGet.mockResolvedValue({ body: SVG_BYTES, contentType: "image/svg+xml" });
+
+    const res = await call(["ws_1", "asset.svg"]);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/svg+xml");
+    expect(res.headers.get("content-disposition")).toContain("attachment");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(SVG_BYTES);
+  });
+
+  it("recognises the SVG from the file name when the driver has no content type", async () => {
+    // The local driver answers with the content type of the stored name, the
+    // S3 driver with the one the bucket holds — both have to end up as an
+    // attachment.
+    edge.storageGet.mockResolvedValue({ body: SVG_BYTES, contentType: "" });
+
+    const res = await call(["ws_1", "asset.svg"]);
+
+    expect(res.headers.get("content-type")).toBe("image/svg+xml");
+    expect(res.headers.get("content-disposition")).toContain("attachment");
+  });
+
+  it("leaves a raster image inline", async () => {
+    const res = await call(["ws_1", "asset.png"]);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("content-disposition")).toBeNull();
+  });
+});
