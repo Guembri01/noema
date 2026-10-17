@@ -38,13 +38,16 @@ export function startProgress(): ProgressState {
 
 /**
  * Ease the bar toward {@link PROGRESS_TRICKLE_CAP} without ever overshooting it.
- * Idempotent once completing; started on demand from idle.
+ * Idempotent once completing, and a no-op from idle: a trickle only advances a
+ * bar that is already showing. *Starting* one is the navigation effect's job
+ * (`startProgress`), which is what keeps a late tick from resurrecting a bar
+ * that has already settled back to idle.
  */
 export function trickleProgress(
   state: ProgressState,
   cap: number = PROGRESS_TRICKLE_CAP,
 ): ProgressState {
-  if (state.phase === "idle") return startProgress();
+  if (state.phase === "idle") return state;
   if (state.phase === "completing") return state;
   const ceiling = Math.min(PROGRESS_TRICKLE_CAP, Math.max(PROGRESS_START, cap));
   const next = state.value + (ceiling - state.value) * 0.4;
@@ -147,10 +150,13 @@ export function RouteProgress() {
       () => setState((prev) => trickleProgress(prev)),
       DUR.fast,
     );
-    const finish = window.setTimeout(
-      () => setState((prev) => completeProgress(prev)),
-      DUR.slow + DUR.base,
-    );
+    // Stop trickling the moment the bar completes: there is nothing left to
+    // ease, and an interval that outlived the bar would keep waking the
+    // component for the whole life of the route.
+    const finish = window.setTimeout(() => {
+      window.clearInterval(tick);
+      setState((prev) => completeProgress(prev));
+    }, DUR.slow + DUR.base);
     const hide = window.setTimeout(
       () => setState(settleProgress()),
       DUR.slow + DUR.base + DUR.slow,

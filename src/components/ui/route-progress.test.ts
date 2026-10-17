@@ -49,8 +49,12 @@ describe("route progress state machine", () => {
     expect(last).toBeGreaterThan(PROGRESS_TRICKLE_CAP - 1);
   });
 
-  it("starts a trickle from idle and freezes while completing", () => {
-    expect(trickleProgress(IDLE_PROGRESS).phase).toBe("loading");
+  it("never starts a bar from idle, and freezes while completing", () => {
+    // A trickle only advances a bar that is already showing; `startProgress`
+    // owns starting one. That is what keeps a tick that lands after the bar
+    // settled from resurrecting it and creeping it back to the cap — where it
+    // would sit forever, because `complete`/`settle` are one-shot.
+    expect(trickleProgress(IDLE_PROGRESS)).toEqual(IDLE_PROGRESS);
     const completing: ProgressState = { phase: "completing", value: 100 };
     expect(trickleProgress(completing)).toEqual(completing);
   });
