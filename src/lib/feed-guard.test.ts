@@ -4,6 +4,7 @@ import {
   isBlockedFeedTarget,
   isBlockedIpLiteral,
   safeFetchFeed,
+  safeFetchGuarded,
 } from "./feed-guard";
 
 /**
@@ -221,6 +222,57 @@ describe("safeFetchFeed - guarded fetch with redirect re-validation", () => {
 });
 
 /**
+ * `safeFetchGuarded` is the shared entry point (B10): the calendar path uses
+ * `safeFetchFeed`, the link-preview route uses the guarded result directly so
+ * it can tell a refused target from a broken one.
+ */
+describe("safeFetchGuarded - result shape and re-validation", () => {
+  it("reports a refused target as blocked, before any fetch", async () => {
+    dns.lookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+    const fetchFn = vi.fn();
+    const result = await safeFetchGuarded("http://evil.test/feed", undefined, { fetchFn });
+    expect(result).toEqual({ ok: false, reason: "blocked" });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("reports a network failure as failed, not as blocked", async () => {
+    resolvePublic();
+    const fetchFn = vi.fn();
+    fetchFn.mockRejectedValue(new Error("connect ETIMEDOUT"));
+    const result = await safeFetchGuarded("https://example.com/feed", undefined, { fetchFn });
+    expect(result).toEqual({ ok: false, reason: "failed" });
+  });
+
+  it("returns the final URL of a followed redirect", async () => {
+    resolvePublic();
+    const fetchFn = vi.fn();
+    fetchFn
+      .mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: { location: "https://www.example.org/x" } }),
+      )
+      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+    const result = await safeFetchGuarded("https://example.com/feed", undefined, { fetchFn });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.finalUrl).toBe("https://www.example.org/x");
+    expect(result.response.status).toBe(200);
+  });
+
+  it("re-checks a response.url that points somewhere else", async () => {
+    resolvePublic();
+    const fetchFn = vi.fn();
+    fetchFn.mockImplementation(async () => {
+      const response = new Response("ok", { status: 200 });
+      // A `fetch` that followed the redirect on its own reports the final URL.
+      Object.defineProperty(response, "url", { value: "http://169.254.169.254/secret" });
+      return response;
+    });
+    const result = await safeFetchGuarded("https://example.com/feed", undefined, { fetchFn });
+    expect(result).toEqual({ ok: false, reason: "blocked" });
+  });
+});
+
+/**
  * The end-to-end check (`scripts/check-workspace-ui.mjs`) subscribes to a mock
  * ICS feed on loopback while the app runs under `next dev`. That is the only
  * place the guard relaxes, and only for loopback hosts; every deployment
@@ -251,5 +303,23 @@ describe("isBlockedFeedTarget - development-only loopback exemption", () => {
     await expect(isBlockedFeedTarget("http://localhost:4323/cal.ics")).resolves.toBe(true);
     vi.stubEnv("NODE_ENV", "production");
     await expect(isBlockedFeedTarget("http://127.0.0.1:4323/cal.ics")).resolves.toBe(true);
+  });
+
+  it("lets a caller opt out of the exemption entirely (link preview)", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const fetchFn = vi.fn();
+    fetchFn.mockResolvedValue(new Response("ok", { status: 200 }));
+
+    await expect(
+      safeFetchGuarded("http://localhost:4323/cal.ics", undefined, {
+        fetchFn,
+        allowDevLoopback: false,
+      }),
+    ).resolves.toEqual({ ok: false, reason: "blocked" });
+    expect(fetchFn).not.toHaveBeenCalled();
+
+    // The default keeps the calendar's exemption.
+    const allowed = await safeFetchGuarded("http://localhost:4323/cal.ics", undefined, { fetchFn });
+    expect(allowed.ok).toBe(true);
   });
 });

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  isPreviewable,
   parseLinkMeta,
   resolveUrl,
   truncateMeta,
@@ -163,24 +162,6 @@ describe("resolveUrl", () => {
     expect(resolveUrl("", "img.png")).toBeNull();
     expect(resolveUrl("not a url", "/x")).toBeNull();
     expect(resolveUrl("https://a.com", "   ")).toBeNull();
-  });
-});
-
-describe("isPreviewable", () => {
-  it("accepts public http(s) URLs (whitespace tolerated)", () => {
-    expect(isPreviewable("https://example.com/a")).toBe(true);
-    expect(isPreviewable("http://example.com")).toBe(true);
-    expect(isPreviewable("  https://example.com/x  ")).toBe(true);
-  });
-
-  it("rejects scheme-less, non-http and SSRF-adjacent hosts", () => {
-    expect(isPreviewable("example.com/a")).toBe(false);
-    expect(isPreviewable("mailto:a@b.com")).toBe(false);
-    expect(isPreviewable("javascript:alert(1)")).toBe(false);
-    expect(isPreviewable("https://localhost/x")).toBe(false);
-    expect(isPreviewable("http://127.0.0.1")).toBe(false);
-    expect(isPreviewable("http://10.0.0.5/admin")).toBe(false);
-    expect(isPreviewable("")).toBe(false);
   });
 });
 

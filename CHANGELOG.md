@@ -39,6 +39,19 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- The link preview no longer follows a redirect into an internal service, and
+  no longer believes a hostname that points at one. The route checked only the
+  literal hostname of the requested URL and then fetched it with
+  `redirect: "follow"`, so a name like `169.254.169.254.nip.io` and a `302`
+  to `169.254.169.254` both reached the cloud metadata address; the fetched
+  title and description were reflected into the preview card, and the internal
+  URL became the card's image — a request the victim's own browser then made.
+  The route now uses the shared guard (`safeFetchGuarded` in
+  `src/lib/feed-guard.ts`): the target is resolved through DNS and every
+  answer must be public, redirects are followed manually with every hop
+  re-validated, and the URL the response was finally read from is checked
+  again. The card's image and icon go through the same gate, because the
+  browser fetches them. A refused target answers `400 "Blocked host"`.
 
 ## [1.4.1] — 2026-10-17
 
