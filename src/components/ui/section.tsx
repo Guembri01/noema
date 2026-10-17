@@ -23,7 +23,17 @@ export const SECTION_HEADING_CLASS =
   "text-xl font-semibold tracking-[-0.01em]";
 
 export type SectionProps = {
+  /**
+   * Section heading. `ReactNode` (not the DOM `title` string attribute) so a
+   * caller can pass an icon + text row; we therefore omit the DOM attribute.
+   */
   title: ReactNode;
+  description?: ReactNode;
+  action?: ReactNode;
+  tone?: "default" | "danger";
+  level?: 2 | 3 | 4;
+  className?: string;
+} & Omit<HTMLAttributes<HTMLElement>, "title" | "children">;
   description?: ReactNode;
   /** Right-aligned control(s), e.g. a "Reset" button or a switch. */
   action?: ReactNode;
