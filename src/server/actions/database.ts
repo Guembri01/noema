@@ -108,34 +108,55 @@ async function authorizeDatabase(
 }
 
 /**
- * The relation target named by an untrusted property config.
+ * The relation target named by an untrusted property config — and the config
+ * as it has to be stored.
  *
- * `undefined` — the config names no target at all (`targetDatabaseId` absent,
- * `null` or blank: the relation is empty and nothing has to be resolved).
- * `null` — the config names a target that is not a database id (a number, an
- * object, …); it can never be resolved, so it is refused like a missing one.
- * Otherwise the trimmed id of the target.
+ * `target` —
+ * `undefined`: the config names no target at all (`targetDatabaseId` absent,
+ *   `null` or blank: the relation is empty and nothing has to be resolved);
+ * `null`: the config names a target that is not a database id (a number, an
+ *   object, …); it can never be resolved, so it is refused like a missing one;
+ * otherwise the trimmed id of the target.
+ *
+ * `config` — the config with its `targetDatabaseId` normalized: the **trimmed**
+ * id (a blank id becomes `null`, an id that is not an id becomes `null` too).
+ *
+ * This is the one place the id is normalized. The target that is checked and
+ * the target that is stored are the same string, so a configuration can never
+ * be checked against one id and stored with another — the read path resolves
+ * exactly the id the write path checked.
  */
-function relationTargetOf(config: unknown): string | null | undefined {
+function relationTargetOf(config: unknown): {
+  target: string | null | undefined;
+  config: unknown;
+} {
   if (typeof config !== "object" || config === null || Array.isArray(config)) {
-    return undefined;
+    return { target: undefined, config };
   }
-  const raw = (config as { targetDatabaseId?: unknown }).targetDatabaseId;
-  if (raw === undefined || raw === null) return undefined;
-  if (typeof raw !== "string") return null;
+  const record = config as Record<string, unknown>;
+  const raw = record.targetDatabaseId;
+  if (raw === undefined || raw === null) return { target: undefined, config };
+  if (typeof raw !== "string") {
+    // Not a database id — it can never be resolved.
+    return { target: null, config: { ...record, targetDatabaseId: null } };
+  }
   const id = raw.trim();
-  return id === "" ? undefined : id;
+  if (id === "") {
+    // A blank id names no target.
+    return { target: undefined, config: { ...record, targetDatabaseId: null } };
+  }
+  return { target: id, config: { ...record, targetDatabaseId: id } };
 }
 
 /**
  * B98 — a relation property may only point at a database of the *same*
- * workspace. `Property.config` is untrusted stored JSON and
- * `updatePropertyAction` persists it verbatim, so a `config.targetDatabaseId`
- * is resolved before it is written: the target must be a live
- * (`deletedAt: null`) database of the property's own workspace. A target that
- * is missing, deleted, not a database or belongs to another workspace is
- * answered with the module's own "Database not found." — the same answer for
- * a foreign and for a missing target, so the response is no existence oracle.
+ * workspace. `Property.config` is untrusted stored JSON, so a
+ * `config.targetDatabaseId` is resolved before it is written: the target must
+ * be a live (`deletedAt: null`) database of the property's own workspace. A
+ * target that is missing, deleted, not a database or belongs to another
+ * workspace is answered with the module's own "Database not found." — the same
+ * answer for a foreign and for a missing target, so the response is no
+ * existence oracle.
  */
 async function relationTargetAllowed(
   targetDatabaseId: string,
@@ -151,6 +172,31 @@ async function relationTargetAllowed(
     select: { id: true },
   });
   return target !== null;
+}
+
+/**
+ * B98 — the relation target a **copied** property may carry.
+ *
+ * A copy lives in the workspace of its source, so a target of that workspace
+ * stays valid and is carried over. A target that does not pass the check — a
+ * foreign database, a deleted one, a missing one, an id that is not an id — is
+ * **cleared**: the copy must not carry a relation that the write side would
+ * refuse.
+ *
+ * Cleared means `targetDatabaseId: null`, the module's own wording for "a
+ * relation without a target" (`createPropertyAction` writes exactly that) and
+ * the value the spec gives the field (`relations-rollups.md` R21.1): the key
+ * stays in the config, the relation is empty and can be pointed at a target of
+ * this workspace again.
+ */
+async function relationConfigForWorkspace(
+  config: unknown,
+  workspaceId: string,
+): Promise<unknown> {
+  const { target, config: normalized } = relationTargetOf(config);
+  if (target === undefined || target === null) return normalized;
+  if (await relationTargetAllowed(target, workspaceId)) return normalized;
+  return { ...(normalized as Record<string, unknown>), targetDatabaseId: null };
 }
 
 /**
@@ -359,8 +405,10 @@ export async function updatePropertyAction(
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
-  // B98 — the relation target must be a database of this workspace.
-  const target = relationTargetOf(patch.config);
+  // B98 — the relation target must be a database of this workspace. The id is
+  // normalized once (in `relationTargetOf`), so the id that is checked here is
+  // the id that is stored below.
+  const { target, config: relationConfig } = relationTargetOf(patch.config);
   if (target !== undefined) {
     const allowed =
       target !== null && (await relationTargetAllowed(target, auth.page.workspaceId));
@@ -372,7 +420,7 @@ export async function updatePropertyAction(
     data: {
       ...(patch.name !== undefined ? { name: patch.name.slice(0, 80) } : {}),
       ...(patch.config !== undefined
-        ? { config: patch.config as Prisma.InputJsonValue }
+        ? { config: relationConfig as Prisma.InputJsonValue }
         : {}),
     },
   });
@@ -882,6 +930,12 @@ function copiedIdMap(
  * preserved verbatim, and `validateCopy` is the safety net before anything is
  * written.
  *
+ * B98 — one exception: a **relation target** is only carried over when it still
+ * passes the target check (`relationConfigForWorkspace`). The copy lives in the
+ * workspace of its source, so a target of that workspace is kept; a target of
+ * another workspace (or a deleted or missing one) is cleared instead of copied,
+ * so a copy never stores a relation that the write side would refuse.
+ *
  * The new page, its properties, views, rows, their cell values and its templates
  * commit or roll back as one transaction; row bodies (`content`) and template
  * bodies, recurrence and schedule are carried over too.
@@ -986,9 +1040,15 @@ export async function duplicateDatabaseAction(
   const asJson = (value: unknown): Prisma.InputJsonValue | undefined =>
     value == null ? undefined : (value as Prisma.InputJsonValue);
 
-  const propertyRows: Prisma.PropertyCreateManyInput[] = copy.properties.map(
-    (property) => {
-      const config = asJson(property.config);
+  const propertyRows: Prisma.PropertyCreateManyInput[] = await Promise.all(
+    copy.properties.map(async (property) => {
+      // B98 — the copy may only carry a relation target that passes the same
+      // check as a written one. The copy lives in the workspace of its
+      // source, so a target of that workspace stays valid; a foreign (or
+      // deleted, or missing) target is cleared instead of copied over.
+      const config = asJson(
+        await relationConfigForWorkspace(property.config, auth.page.workspaceId),
+      );
       return {
         id: property.id,
         databasePageId: newPageId,
@@ -997,7 +1057,7 @@ export async function duplicateDatabaseAction(
         position: typeof property.position === "number" ? property.position : 0,
         ...(config !== undefined ? { config } : {}),
       };
-    },
+    }),
   );
 
   const viewRows: Prisma.DatabaseViewCreateManyInput[] = copy.views.map((view) => {

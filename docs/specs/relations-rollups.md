@@ -162,8 +162,9 @@ map — the exact pattern already used for `lastEditedBy`
 - **R21.2** — Target validation: `updatePropertyAction` rejects a
   `targetDatabaseId` that is not an existing, non-trashed `type = DATABASE` page
   **in the same workspace** as the source database, with the generic error
-  `"No access to this database."` (no existence oracle — mirrors realtime spec
-  R9.7). Today any id is accepted (`database.ts:101-125`).
+  `"Database not found."` — the module's own answer for a missing database and
+  the same for a foreign, a deleted and a non-database target, so the refusal
+  is no existence oracle (mirrors realtime spec R9.7).
   *Acceptance:* red action tests: cross-workspace id → error + config
   unchanged; foreign-workspace attacker id → same generic message; valid
   same-workspace id → saved.

@@ -8,7 +8,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * - the **write** side (`updatePropertyAction`): `Property.config` is untrusted
  *   stored JSON and was persisted verbatim, so a `config.targetDatabaseId` that
  *   names a database of another workspace must be refused — with the same
- *   answer a missing target gets, so the response is no existence oracle;
+ *   answer a missing target gets, so the response is no existence oracle. The
+ *   id is normalized before it is stored, so the stored configuration names
+ *   exactly the target that was checked (and the read path resolves it);
+ * - the **copy** side (`duplicateDatabaseAction`): a copy may not carry a
+ *   relation target that the write side would refuse;
  * - the **read** side (`getDatabase`): a relation that points outside the
  *   workspace (an old revision, an import, a direct database edit) must not
  *   deliver the foreign rows, their cell values or the foreign schema.
@@ -225,30 +229,57 @@ vi.mock("@/lib/db", () => {
     return rows[0] ?? null;
   };
 
-  const prisma = {
+  /** Insert one row (`create`). */
+  const create = async (model: Model, args: Record<string, unknown> = {}) => {
+    const row = { ...((args.data ?? {}) as Row) };
+    TABLES[model].push(row);
+    return { ...row };
+  };
+
+  /** Insert many rows (`createMany`). */
+  const createMany = async (model: Model, args: Record<string, unknown> = {}) => {
+    const rows = (args.data as Row[]) ?? [];
+    for (const row of rows) TABLES[model].push({ ...row });
+    return { count: rows.length };
+  };
+
+  const models = {
     page: {
       findMany: (args: Record<string, unknown>) => findMany("page", args),
       findFirst: (args: Record<string, unknown>) => findFirst("page", args),
       findUnique: (args: Record<string, unknown>) => findUnique("page", args),
+      create: (args: Record<string, unknown>) => create("page", args),
+      createMany: (args: Record<string, unknown>) => createMany("page", args),
     },
     property: {
       findMany: (args: Record<string, unknown>) => findMany("property", args),
       findFirst: (args: Record<string, unknown>) => findFirst("property", args),
       findUnique: (args: Record<string, unknown>) => findUnique("property", args),
       update: h.propertyUpdate,
+      create: (args: Record<string, unknown>) => create("property", args),
+      createMany: (args: Record<string, unknown>) => createMany("property", args),
     },
     propertyValue: {
       findMany: (args: Record<string, unknown>) => findMany("propertyValue", args),
+      createMany: (args: Record<string, unknown>) => createMany("propertyValue", args),
     },
     databaseView: {
       findMany: (args: Record<string, unknown>) => findMany("databaseView", args),
+      createMany: (args: Record<string, unknown>) => createMany("databaseView", args),
     },
     template: {
       findMany: (args: Record<string, unknown>) => findMany("template", args),
+      createMany: (args: Record<string, unknown>) => createMany("template", args),
     },
     activity: {
       findMany: (args: Record<string, unknown>) => findMany("activity", args),
     },
+  };
+
+  const prisma = {
+    ...models,
+    /** The interactive transaction — the callback gets the same client. */
+    $transaction: async (fn: (tx: typeof models) => Promise<unknown>) => fn(models),
   };
 
   return { prisma };
@@ -263,7 +294,7 @@ vi.mock("@/lib/permissions", () => ({
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { updatePropertyAction } from "./database";
+import { updatePropertyAction, duplicateDatabaseAction } from "./database";
 import { getDatabase } from "@/server/queries";
 
 const WS_A = "ws-a";
@@ -563,6 +594,51 @@ describe("updatePropertyAction — the relation target must stay in the workspac
     expect(database.relationData["rel-write"].options).toEqual([
       { id: "row-a-2", title: "A's second row", icon: null },
     ]);
+  });
+
+  it("stores the trimmed target id, so the read path resolves the relation", async () => {
+    const result = await updatePropertyAction("rel-write", {
+      config: { targetDatabaseId: " db-a-2 " },
+    });
+
+    expect(result).toEqual({ ok: true });
+    // The stored config carries the trimmed id — the very id that was checked.
+    expect(h.propertyUpdate).toHaveBeenCalledWith({
+      where: { id: "rel-write" },
+      data: { config: { targetDatabaseId: "db-a-2" } },
+    });
+
+    // And the read path resolves it: the relation is not empty.
+    const database = await getDatabase("db-a");
+    expect(database.relationData["rel-write"].options).toEqual([
+      { id: "row-a-2", title: "A's second row", icon: null },
+    ]);
+    expect(database.relationData["rel-write"].valuesByRow["row-a-2"]).toEqual({
+      "p-a-2": { number: 42 },
+    });
+  });
+});
+
+describe("duplicateDatabaseAction — a copy carries only a target of this workspace", () => {
+  it("clears a foreign target and keeps a target of the own workspace", async () => {
+    const result = await duplicateDatabaseAction("db-a");
+    if ("error" in result) throw new Error(`duplicate failed: ${result.error}`);
+
+    const copied = h.tables.property.filter((row) => row.databasePageId === result.id);
+
+    // The legacy relation of another workspace is not carried over: the copy
+    // stores an empty relation instead of a target the write side refuses.
+    const legacy = copied.find((row) => row.name === "Legacy relation");
+    expect(legacy?.config).toEqual({ targetDatabaseId: null });
+
+    // A target of the own workspace stays valid — the copy lives in that
+    // workspace, too.
+    const same = copied.find((row) => row.name === "Relation to A's second database");
+    expect(same?.config).toEqual({ targetDatabaseId: "db-a-2" });
+
+    // The source itself is untouched.
+    const source = h.tables.property.find((row) => row.id === "rel-legacy");
+    expect(source?.config).toEqual({ targetDatabaseId: "db-b" });
   });
 });
 
