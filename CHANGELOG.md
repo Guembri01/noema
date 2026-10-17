@@ -11,6 +11,21 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Security
+
+- An OAuth authorization code could be exchanged more than once. The token
+  endpoint read the code, checked the `used` flag and only afterwards marked
+  the code as used with a second statement, so requests that ran in parallel
+  all passed that check and every one of them received its own access token —
+  one captured code, many live API tokens. The code is now consumed with a
+  conditional update (`UPDATE … WHERE used = false`), and a token is minted
+  only when that update matched exactly one row; the loser of the race is
+  answered with `invalid_grant`, as RFC 6749 §4.1.2 requires. A refused
+  exchange — a wrong client, a wrong redirect URI, a wrong PKCE verifier —
+  still leaves the code untouched and usable.
+
+
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour
