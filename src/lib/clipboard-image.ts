@@ -116,7 +116,13 @@ function decodeBase64ToText(base64: string): string | null {
     const binary = atob(base64);
     const raw = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) raw[i] = binary.charCodeAt(i);
-    return new TextDecoder().decode(raw);
+    // Strictly: a lenient decoder replaces the invalid bytes with U+FFFD, and
+    // the rule would read the replacement characters instead of the markup. A
+    // UTF-16 document interleaves a NUL after every ASCII character — the
+    // scan would find no tag at all, and a browser would decode the file as
+    // UTF-16 and find the script the scan never saw. A document that is not
+    // valid UTF-8 is refused. (This path is only used for SVGs.)
+    return new TextDecoder("utf-8", { fatal: true }).decode(raw);
   } catch {
     return null;
   }
