@@ -119,7 +119,7 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "db:seed": "prisma db seed",
-    "backfill:2fa": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/backfill-2fa-secrets.mjs",
+    "backfill:2fa": "tsx scripts/backfill-2fa-secrets.mjs",
     "collab": "node scripts/collab-server.mjs",
     "postinstall": "prisma generate",
     "check:popovers": "node scripts/check-popovers.mjs",
