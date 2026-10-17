@@ -13,6 +13,7 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ### Security
 
+<<<<<<< HEAD
 - The dependency tree is audited in CI, and one advisory chain is gone. The
   lockfile carried `mammoth` → `argparse` 1.0.10 → `sprintf-js` 1.0.3, and
   `sprintf-js` 1.0.3 carries GHSA-hp3w-g68c-fv3c (a denial of service through
@@ -40,6 +41,23 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   distrusted emSign intermediate whose private key is public. Every other
   advisory fails the job.
 
+=======
+- Every action the workflows use is now pinned to a commit SHA, and a new gate
+  keeps it that way. A tag is a name, not a version: `uses: actions/checkout@v4`
+  resolves to whatever the tag points to when the job starts, so a moved tag
+  changes the code that runs in the CI — and `tauri-apps/tauri-action` is the
+  action that receives `GITHUB_TOKEN` plus the Apple and Windows signing
+  secrets. The 17 references in `ci.yml` and `desktop.yml` that floated on tags
+  are pinned to the commit the tag resolves to today, with the version behind
+  them as a comment. The tool of the release job (`cargo install tauri-cli`) is
+  pinned to an exact version, and the cache key carries it as well: a cached
+  binary of another version would satisfy `command -v cargo-tauri`, the pinned
+  install would be skipped, and the pin would name a version nobody runs. The
+  new gate (`npm run check:action-pins`) reads every `uses:` of the three
+  workflows and fails when a reference carries no SHA, when a tool is
+  installed without an exact version, or when a cache key caches that tool
+  without its version.
+>>>>>>> 7c28508 (fix(ci): every action is pinned to a commit SHA)
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
