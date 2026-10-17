@@ -17,15 +17,51 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * a row that does not exist (no existence oracle).
  *
  * Only the transport edges are mocked (`@/lib/db`, `@/lib/auth`,
- * `getWorkspaceAccess`, `next/cache`); the action logic runs for real. The
- * fake database applies the filters the real one would apply — a `where` with
- * a `workspaceId` filters by it, and the `select` is applied faithfully — so
- * a missing check in the action shows up here instead of passing silently.
+ * `getWorkspaceAccess`, `next/cache`); the action logic runs for real.
+ *
+ * **What the fake database does — measured, not assumed:**
+ *
+ *   - `where.id` is applied exactly: the two kinds of lookup of the suite (the
+ *     row and the database) ask for it and get exactly that row.
+ *   - `where.workspaceId` is applied only when a caller asks for one — and
+ *     for this suite that branch is **inert**: measured, every `findUnique`
+ *     of the suite asks for `{ id }` alone (the action reads the row with
+ *     `where: { id: rowPageId }`, `authorizeDatabase` the database with
+ *     `where: { id: databasePageId }`).
+ *   - `select` decides which fields come back — that is why `row.workspaceId`
+ *     is defined for the action.
+ *   - **No** filter-ignoring variant of the mock produces a false green:
+ *     six variants were measured (ignore `where.workspaceId`; ignore
+ *     `select`; ignore `select` and answer `{}`; ignore `where.id`; ignore
+ *     every filter; the scope query ignoring `where.workspaceId`) — without
+ *     the fix every one of them is red. Three of them (ignore `select` and
+ *     answer `{}`, ignore `where.id`, ignore every filter) are red **with**
+ *     the fix as well: a degraded mock is loud, never silent.
+ *   ⇒ The red-first effect comes from the **fixture**, not from the fidelity
+ *     of the mock's filters: `row-legacy` hangs under the database of
+ *     workspace A but still carries the `workspaceId` of workspace B — the
+ *     row the production query finds.
+ *
+ * **The guest and the scope.** The guest case needs the guest to *see* the
+ * database. The scope check of the database actions — a guest may only touch
+ * a database inside their read scope — runs **before** the row check and
+ * answers `Database not found.` for a database outside the scope. A guest
+ * without a grant would therefore never reach the row check, and the case
+ * would measure the scope check instead of the order of the two checks. So the
+ * fixture gives the guest a **read grant on the database** (`db-a`), and the
+ * fake answers the scope query (`page.findMany` + `teamspaceMember.findMany`)
+ * the way the real database would: the pages of the workspace, each with the
+ * grants of the asked-for guest. The **real** scope computation then decides:
+ * the database lies in the guest's read scope, the scope check lets the guest
+ * through, and the row check answers. On a branch without that scope check
+ * the question is never asked — the same fixture, the same behaviour.
  */
 
 const WORKSPACE_A = "ws-a";
 const WORKSPACE_B = "ws-b";
 const DATABASE_A = "db-a";
+/** The caller: the member in most cases, the guest in the guest cases. */
+const USER_ID = "user-1";
 
 /** The columns of the fake database — `prop-1` belongs to `db-a`. */
 const PROPERTIES = [{ id: "prop-1", databasePageId: DATABASE_A }];
@@ -73,10 +109,26 @@ const PAGES: FakePage[] = [
   },
 ];
 
+/**
+ * The read grants of the fixture: page id → the user ids a `PagePermission`
+ * gives read access on that page.
+ *
+ * The grant sits on the **database** (`db-a`), not on a row: a guest who was
+ * given a single row of a database does not get the database above it (the
+ * inheritance rule covers the page itself and its descendants, never its
+ * ancestors) — such a guest would be refused with `Database not found.` and
+ * the row check would never be reached.
+ */
+const GRANTS: Record<string, readonly string[]> = {
+  [DATABASE_A]: [USER_ID],
+};
+
 const h = vi.hoisted(() => ({
   pageFindUnique: vi.fn(),
+  pageFindMany: vi.fn(),
   pageUpdate: vi.fn(),
   propertyFindFirst: vi.fn(),
+  teamspaceMemberFindMany: vi.fn(),
   propertyValueUpsert: vi.fn(),
   activityCreate: vi.fn(),
   requireUser: vi.fn(),
@@ -88,9 +140,11 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     page: {
       findUnique: h.pageFindUnique,
+      findMany: h.pageFindMany,
       update: h.pageUpdate,
     },
     property: { findFirst: h.propertyFindFirst },
+    teamspaceMember: { findMany: h.teamspaceMemberFindMany },
     propertyValue: { upsert: h.propertyValueUpsert },
     activity: { create: h.activityCreate },
   },
@@ -127,7 +181,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 
   h.requireUser.mockResolvedValue({
-    id: "user-1",
+    id: USER_ID,
     email: "member@example.test",
     name: "Member",
     avatarUrl: null,
@@ -166,6 +220,36 @@ beforeEach(() => {
       return selected;
     },
   );
+
+  // The scope query of the guest check: the pages of the workspace, each with
+  // the grants of the asked-for guest (the relation filter of the real query
+  // is applied by the database). The `deletedAt` filter is not modelled —
+  // every page of the fixture is alive. The teamspaces of the guest are empty.
+  h.pageFindMany.mockImplementation(
+    async (args: {
+      where?: { workspaceId?: string };
+      select?: { permissions?: { where?: { userId?: string } } };
+    }) => {
+      const where = args.where ?? {};
+      const askedFor = args.select?.permissions?.where?.userId;
+      return PAGES.filter(
+        (page) =>
+          where.workspaceId === undefined ||
+          page.workspaceId === where.workspaceId,
+      ).map((page) => ({
+        id: page.id,
+        parentId: page.parentId,
+        teamspaceId: null,
+        // The pages belong to the owner, not to the guest: the guest reaches
+        // them through the grant alone.
+        createdById: "owner-1",
+        permissions: (GRANTS[page.id] ?? [])
+          .filter((userId) => userId === askedFor)
+          .map(() => ({ level: "READ" })),
+      }));
+    },
+  );
+  h.teamspaceMemberFindMany.mockResolvedValue([]);
 
   h.pageUpdate.mockResolvedValue({ id: "row-a" });
   h.propertyValueUpsert.mockResolvedValue({ id: "cell-1" });
@@ -239,6 +323,44 @@ describe("setPropertyValueAction — row scope (B96)", () => {
     expect(activityWorkspaces()).not.toContain(WORKSPACE_B);
     expect(activityWorkspaces().every((id) => id === WORKSPACE_A)).toBe(true);
   });
+
+  /**
+   * The order of the two checks is the point of the fix. A guest may not
+   * write into a cell at all, so the role check would answer "No permission."
+   * — but only *after* the row scope check has answered for the legacy row.
+   * If the scope check ran second, the legacy row would answer "No
+   * permission." while a row that does not exist answers "Row not found.":
+   * the two answers would tell the guest which row exists. So the legacy row
+   * must answer character-for-character like the missing row — and nothing
+   * may be written.
+   *
+   * The guest **sees** the database (the fixture gives them the read grant on
+   * it), so the scope check lets them through and the row check is reached —
+   * the case measures the order of the two checks and not the scope check.
+   */
+  it("answers a legacy row exactly like a row that does not exist — for a guest too", async () => {
+    h.getWorkspaceAccess.mockResolvedValue({ role: "GUEST" });
+
+    const legacy = await setPropertyValueAction("row-legacy", "prop-1", {
+      text: "written from A",
+    });
+    const missing = await setPropertyValueAction("row-missing", "prop-1", {
+      text: "written from A",
+    });
+
+    // The reference: a row that does not exist is answered by the row lookup
+    // itself, before any check — the same on every branch.
+    expect(errorOf(missing)).toBe("Row not found.");
+    // The legacy row answers character-for-character like the missing row.
+    expect(errorOf(legacy)).toBe(errorOf(missing));
+    // … and neither answer is the role refusal — that one would tell the guest
+    // which of the two rows exists.
+    expect(errorOf(legacy)).not.toBe("No permission.");
+    expect(errorOf(missing)).not.toBe("No permission.");
+    expect(h.propertyValueUpsert).not.toHaveBeenCalled();
+    expect(h.activityCreate).not.toHaveBeenCalled();
+    expect(h.pageUpdate).not.toHaveBeenCalled();
+  });
 });
 
 describe("deleteRowAction — row scope (B96)", () => {
@@ -270,5 +392,28 @@ describe("deleteRowAction — row scope (B96)", () => {
     expect(update.where.id).toBe("row-a");
     expect(update.data.deletedAt).toBeInstanceOf(Date);
     expect(update.data.isArchived).toBe(true);
+  });
+
+  /**
+   * The same order of the checks as in `setPropertyValueAction`: the row
+   * scope check runs before the role check, so a guest gets the answer of the
+   * missing row for the legacy row — character-for-character the answer for a
+   * row that does not exist — and the row is not soft-deleted. The guest sees
+   * the database (the fixture gives them the read grant on it), so the scope
+   * check lets them through and the row check is reached.
+   */
+  it("answers a legacy row exactly like a row that does not exist — for a guest too", async () => {
+    h.getWorkspaceAccess.mockResolvedValue({ role: "GUEST" });
+
+    const legacy = await deleteRowAction("row-legacy");
+    const missing = await deleteRowAction("row-missing");
+
+    expect(errorOf(missing)).toBe("Row not found.");
+    expect(errorOf(legacy)).toBe(errorOf(missing));
+    expect(errorOf(legacy)).not.toBe("No permission.");
+    expect(errorOf(missing)).not.toBe("No permission.");
+    expect(h.pageUpdate).not.toHaveBeenCalled();
+    expect(h.propertyValueUpsert).not.toHaveBeenCalled();
+    expect(h.activityCreate).not.toHaveBeenCalled();
   });
 });
