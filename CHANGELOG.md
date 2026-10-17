@@ -13,6 +13,16 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ### Security
 
+- The ticket actions only reference their own workspace. `createTicketAction` wrote
+  `projectId`, `assigneeId` and `parentId` as they arrived, `updateTicketAction`
+  and `bulkUpdateTicketsAction` connected a project and an assignee unchecked, and
+  `moveTicketAction` read the position of `beforeId` without asking which
+  workspace that ticket belongs to — a foreign ticket's position steered the
+  board. The read side selected the relations without a workspace filter, so the
+  name and the e-mail address of a user who is not a member of this workspace
+  appeared in the tracker and in `GET /api/tickets`. Every reference is now
+  validated against the ticket's workspace before it is written, and the selects
+  are scoped to the workspace column.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
