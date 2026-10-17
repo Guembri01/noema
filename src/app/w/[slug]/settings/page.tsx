@@ -164,7 +164,14 @@ export default async function SettingsPage({
     prisma.apiToken.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
-      select: { id: true, name: true, scopes: true, createdAt: true, lastUsedAt: true },
+      select: {
+        id: true,
+        name: true,
+        scopes: true,
+        createdAt: true,
+        lastUsedAt: true,
+        expiresAt: true,
+      },
     }),
     manage
       ? prisma.webhook.findMany({
@@ -287,6 +294,9 @@ export default async function SettingsPage({
     scopes: token.scopes,
     createdAt: token.createdAt.toISOString(),
     lastUsedAt: token.lastUsedAt?.toISOString() ?? null,
+    // B29: the row carries the deadline the token dies at; the list shows it
+    // as a badge (expired / how long it still lives).
+    expiresAt: token.expiresAt?.toISOString() ?? null,
   }));
 
   // Invitations that are sent but not yet accepted: the pending-invite rows the

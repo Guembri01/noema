@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { randomToken } from "@/lib/slug";
-import { hashApiToken, hashOAuthSecret, oauthSecretMatches } from "@/lib/api-auth";
+import {
+  hashApiToken,
+  hashOAuthSecret,
+  oauthSecretMatches,
+  apiTokenExpiry,
+  API_TOKEN_LIFETIME_MS,
+} from "@/lib/api-auth";
 import { rateLimit } from "@/lib/api-guard";
 import { bodyReadError, readFormDataBody } from "@/lib/body-limit";
 import { verifyChallenge } from "@/lib/oauth-pkce";
@@ -114,6 +120,10 @@ export async function POST(request: Request) {
       name: `OAuth: ${app.name}`,
       tokenHash: hashApiToken(accessToken),
       scopes: [...OAUTH_TOKEN_SCOPES],
+      // B29: the minted access token carries the same deadline as a token the
+      // settings UI mints — a leaked third-party credential dies on its own
+      // instead of working until somebody deletes the row by hand.
+      expiresAt: apiTokenExpiry(),
     },
   });
 
@@ -121,5 +131,7 @@ export async function POST(request: Request) {
     access_token: accessToken,
     token_type: "Bearer",
     scope: OAUTH_TOKEN_SCOPES.join(" "),
+    // RFC 6749 §5.1: the lifetime of the access token in seconds.
+    expires_in: Math.round(API_TOKEN_LIFETIME_MS / 1000),
   });
 }

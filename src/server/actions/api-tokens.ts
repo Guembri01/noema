@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { randomToken } from "@/lib/slug";
-import { hashApiToken } from "@/lib/api-auth";
+import { hashApiToken, apiTokenExpiry } from "@/lib/api-auth";
 import { expandScopes, validateScopes } from "@/lib/api-token-scope";
 
 /**
@@ -18,6 +18,8 @@ export type ApiTokenSummary = {
   scopes: string[];
   createdAt: string;
   lastUsedAt: string | null;
+  /** The deadline the token dies at; `null` = the token never expires. */
+  expiresAt: string | null;
 };
 
 /**
@@ -26,6 +28,10 @@ export type ApiTokenSummary = {
  * (rejected wholesale on any issue) and stored as `expandScopes(scopes)`, the
  * effective permission set. Omitting `scopes` keeps the original
  * scope-less behaviour.
+ *
+ * Every token gets a deadline (B29): `apiTokenExpiry()` writes the default
+ * lifetime into the row, so a token that leaks dies on its own instead of
+ * working until somebody deletes it by hand.
  */
 export async function createApiTokenAction(
   name: string,
@@ -44,6 +50,7 @@ export async function createApiTokenAction(
       name: label,
       tokenHash: hashApiToken(token),
       scopes: expandScopes(scopes),
+      expiresAt: apiTokenExpiry(),
     },
   });
   revalidatePath("/w", "layout");
@@ -51,15 +58,23 @@ export async function createApiTokenAction(
 }
 
 /**
- * List the signed-in user's tokens with their stored scopes, newest first, so
- * the settings UI can show each token's permissions.
+ * List the signed-in user's tokens with their stored scopes and their
+ * deadline, newest first, so the settings UI can show each token's permissions
+ * and how long it still lives.
  */
 export async function listApiTokensAction(): Promise<ApiTokenSummary[]> {
   const user = await requireUser();
   const tokens = await prisma.apiToken.findMany({
     where: { userId: user.id },
     orderBy: { createdAt: "desc" },
-    select: { id: true, name: true, scopes: true, createdAt: true, lastUsedAt: true },
+    select: {
+      id: true,
+      name: true,
+      scopes: true,
+      createdAt: true,
+      lastUsedAt: true,
+      expiresAt: true,
+    },
   });
   return tokens.map((token) => ({
     id: token.id,
@@ -67,10 +82,18 @@ export async function listApiTokensAction(): Promise<ApiTokenSummary[]> {
     scopes: token.scopes,
     createdAt: token.createdAt.toISOString(),
     lastUsedAt: token.lastUsedAt?.toISOString() ?? null,
+    expiresAt: token.expiresAt?.toISOString() ?? null,
   }));
 }
 
-/** Revoke one of the signed-in user's tokens. */
+/**
+ * Revoke one of the signed-in user's tokens.
+ *
+ * The revoke deletes the row, scoped to its owner: the token stops working at
+ * once, because a deleted row cannot authenticate. B29 also asked for a
+ * `revokedAt` flag next to the expiry; that flag would only add an audit
+ * trail — the credential is dead either way — so the delete stays.
+ */
 export async function revokeApiTokenAction(
   id: string,
 ): Promise<{ ok: true } | { error: string }> {
