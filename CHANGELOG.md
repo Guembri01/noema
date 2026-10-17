@@ -39,6 +39,15 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- The sign-in and sign-up actions never consulted the strategy registry, so
+  `AUTH_PASSWORD=disabled` and the `AUTH_STRATEGIES` allow-list were enforced
+  by the two SSO routes only: a deployment that had switched the local password
+  strategy off still accepted a direct POST to `/login` and `/signup` with the
+  credentials of a local account. Both switches are now enforced by the
+  actions themselves — with the password strategy off, every sign-in and every
+  sign-up is refused before an account is looked up — and `AUTH_PASSWORD` and
+  `AUTH_STRATEGIES` are documented in `.env.example`, the README and
+  `SECURITY.md`.
 
 ## [1.4.1] — 2026-10-17
 

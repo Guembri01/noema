@@ -862,3 +862,20 @@ export function enabledStrategies(env: AuthEnv = {}): StrategyDefinition[] {
     return isStrategyAvailable(strategy, env);
   });
 }
+
+/**
+ * Whether the password strategy is enabled for a given environment.
+ *
+ * The local password sign-in and sign-up are gated by the same registry as
+ * every other strategy: `AUTH_PASSWORD` set to a falsy value (`disabled`,
+ * `off`, `no`, `0`, `false`) turns it off, and an `AUTH_STRATEGIES` allow-list
+ * that does not contain `password` excludes it. Fails closed — an unexpected
+ * error while reading the registry leaves the strategy disabled.
+ */
+export function passwordStrategyEnabled(env: AuthEnv = {}): boolean {
+  try {
+    return enabledStrategies(env).some((strategy) => strategy.kind === "password");
+  } catch {
+    return false;
+  }
+}
