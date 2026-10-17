@@ -11,20 +11,18 @@ import {
   verifyPassword,
 } from "@/lib/auth";
 import { loginSchema, signupSchema } from "@/lib/validation";
-import { verifyTotp } from "@/lib/totp";
 import { encryptTwoFactorSecret, openTwoFactorSecret } from "@/lib/secrets";
+import { verifyTotp } from "@/lib/totp";
 import { welcomeDoc } from "@/lib/welcome";
 import { uniqueWorkspaceSlug } from "@/server/unique";
+import { passwordStrategyEnabled } from "@/lib/auth-strategies";
 import {
   authLimitMessage,
-  authLockoutMessage,
   authLockoutMs,
   checkAuthLimit,
   checkTwoFactorLimit,
   clientKeyFromHeaders,
 } from "@/lib/rate-limit";
-
-import { passwordStrategyEnabled } from "@/lib/auth-strategies";
 
 export type AuthState = { error?: string; requiresTwoFactor?: boolean };
 
@@ -35,57 +33,6 @@ export type AuthState = { error?: string; requiresTwoFactor?: boolean };
  * nothing about the submitted account.
  */
 const PASSWORD_DISABLED_ERROR = "Password sign-in is disabled on this deployment.";
-
-/* ------------------------------------------------------------------ *
- * B03 — the budgets and the account lock.
- * ------------------------------------------------------------------ */
-
-/**
- * The address the attempt came from. A server action never sees a
- * `Request`, so the forwarding headers are read from the request headers
- * instead. When they cannot be read every caller shares one bucket,
- * which is the stricter direction.
- */
-async function clientAddress(): Promise<string> {
-  try {
-    return clientKeyFromHeaders(await headers(), "auth");
-  } catch {
-    return "auth:unknown";
-  }
-}
-
-/**
- * Record a failed sign-in and (re)arm the account lock. The counter is
- * persisted on the user row, so the lock survives a restart of the app;
- * the backoff grows with every consecutive failure and is reset by the
- * next successful sign-in.
- */
-async function registerFailedLogin(userId: string, now: Date): Promise<void> {
-  const updated = await prisma.user.update({
-    where: { id: userId },
-    data: { failedLoginCount: { increment: 1 } },
-    select: { failedLoginCount: true },
-  });
-  const backoff = authLockoutMs(updated.failedLoginCount);
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      lockedUntil: backoff > 0 ? new Date(now.getTime() + backoff) : null,
-    },
-  });
-}
-
-/** A successful sign-in clears the failure counter and the lock. */
-async function clearFailedLogins(userId: string): Promise<void> {
-  await prisma.user.update({
-    where: { id: userId },
-    data: { failedLoginCount: 0, lockedUntil: null },
-  });
-}
-
-/* ------------------------------------------------------------------ *
- * B24 — the neutral texts and the constant-time comparison.
- * ------------------------------------------------------------------ */
 
 /**
  * B24 — the one sign-in failure text. Every failed sign-in (unknown address,
@@ -154,18 +101,61 @@ async function createUser(
       data: {
         name,
         email,
-        passwordHash,
         // A local signup proves nothing about the address it registers (B07):
         // the account stays unverified until the owner proves it, so a later
-        // provider sign-in may not link it silently — the address may have
-        // been registered by somebody else before the real owner showed up.
+        // provider sign-in may not link it silently.
         emailVerified: false,
+        passwordHash,
       },
     });
   } catch (error) {
     if (isUniqueViolation(error)) return null;
     throw error;
   }
+}
+
+
+/**
+ * The address the attempt came from. A server action never sees a
+ * `Request`, so the forwarding headers are read from the request headers
+ * instead. When they cannot be read every caller shares one bucket,
+ * which is the stricter direction.
+ */
+async function clientAddress(): Promise<string> {
+  try {
+    return clientKeyFromHeaders(await headers(), "auth");
+  } catch {
+    return "auth:unknown";
+  }
+}
+
+/**
+ * Record a failed sign-in and (re)arm the account lock. The counter is
+ * persisted on the user row, so the lock survives a restart of the app;
+ * the backoff grows with every consecutive failure and is reset by the
+ * next successful sign-in.
+ */
+async function registerFailedLogin(userId: string, now: Date): Promise<void> {
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { failedLoginCount: { increment: 1 } },
+    select: { failedLoginCount: true },
+  });
+  const backoff = authLockoutMs(updated.failedLoginCount);
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      lockedUntil: backoff > 0 ? new Date(now.getTime() + backoff) : null,
+    },
+  });
+}
+
+/** A successful sign-in clears the failure counter and the lock. */
+async function clearFailedLogins(userId: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { failedLoginCount: 0, lockedUntil: null },
+  });
 }
 
 export async function signupAction(
@@ -188,18 +178,15 @@ export async function signupAction(
   }
   const { name, email, password } = parsed.data;
 
-  // Budgets first (B03): a sign-up costs a slot before it touches the
-  // database, so the answer cannot be harvested and accounts cannot be
-  // created in bulk. The slot is charged above the bcrypt work below, so a
-  // flood of sign-ups cannot outrun the limiter either. The account budget
-  // is keyed on the address the schema just normalised, which the client
-  // cannot forge.
+  // Budgets first: a sign-up costs a slot before it touches the database,
+  // so the "this e-mail already exists" answer cannot be harvested and
+  // accounts cannot be created in bulk.
   const limit = checkAuthLimit({ email, ip: await clientAddress() });
   if (!limit.allowed) {
     return { error: authLimitMessage(limit) };
   }
 
-  // Hash next (B24): the bcrypt cost dominates the request, so paying it on
+  // Hash first (B24): the bcrypt cost dominates the request, so paying it on
   // every path keeps the answer from arriving measurably faster for an
   // address that is already registered.
   const passwordHash = await hashPassword(password);
@@ -211,7 +198,7 @@ export async function signupAction(
 
   const user = await createUser(name, email, passwordHash);
   if (!user) {
-    // Another sign-up for that address won the race — same neutral answer.
+    // Another sign-up for this address won the race — same neutral answer.
     return { error: SIGNUP_FAILED };
   }
 
@@ -258,7 +245,7 @@ export async function loginAction(
   }
   const { email, password, code } = parsed.data;
 
-  // Budgets first (B03): an attempt costs a slot before any password work
+  // Budgets first: an attempt costs a slot before any password work
   // happens, so a flood of guesses cannot outrun the limiter. The
   // account budget is keyed on the e-mail address, which the client
   // cannot forge.
@@ -297,19 +284,17 @@ export async function loginAction(
     hasBcryptHash ? storedHash : DUMMY_PASSWORD_HASH,
   );
 
-  // B03 — a locked account is refused. The check sits behind the comparison
-  // (B24) on purpose: a locked account still pays the bcrypt cost, so the
-  // answer never reveals that the address is registered.
+  // A locked account is refused before it can sign in, but only *after* the
+  // comparison above, and with the same text as every other failure: a
+  // distinct "temporarily locked" reply would confirm that the address exists.
   if (user?.lockedUntil && user.lockedUntil.getTime() > now.getTime()) {
-    return { error: authLockoutMessage(user.lockedUntil, now) };
+    return { error: LOGIN_FAILED };
   }
 
   if (!user || !hasBcryptHash || !passwordOk) {
-    // B03 — a failed password counts towards the lock. There is no row to
-    // count on for an unknown address, and an account without a bcrypt hash
-    // (an SSO account) has no password to fail.
+    // Only a real password account can be locked. An SSO row must not become
+    // a denial-of-service target for the password form.
     if (user && hasBcryptHash) await registerFailedLogin(user.id, now);
-    // B24 — one text for every failed sign-in.
     return { error: LOGIN_FAILED };
   }
 
@@ -322,21 +307,19 @@ export async function loginAction(
     if (!guess.allowed) {
       return { error: authLimitMessage(guess), requiresTwoFactor: true };
     }
+
     // B05: the stored seed is an ENVELOPE (`v1:iv:tag:payload`), so it is
     // opened BEFORE the code is checked — `verifyTotp` gets the seed, never the
     // ciphertext. A value that cannot be opened (tampered ciphertext, a
     // rotated `AUTH_SECRET`) fails closed: no session.
-    const stored = openTwoFactorSecret(user.twoFactorSecret);
-    if (
-      stored.kind === "unreadable" ||
-      !stored.secret ||
-      !verifyTotp(stored.secret, code)
-    ) {
-      // B03 — a wrong code is a failed sign-in and counts towards the lock.
-      await registerFailedLogin(user.id, now);
-      // B24 — the same text as every other failed sign-in: a message of its
-      // own would confirm that the password was right. The flag keeps the
-      // code field on screen so the user can try again.
+    const stored = user.twoFactorSecret
+      ? openTwoFactorSecret(user.twoFactorSecret)
+      : ({ kind: "unreadable" } as const);
+    if (stored.kind === "unreadable" || !verifyTotp(stored.secret, code)) {
+      // One text for every failed sign-in: a message of its own would confirm
+      // that the password was right (B24). The flag keeps the code field on
+      // screen so the user can try again. The separate 2FA budget handles
+      // guessing; it must not lock the password account.
       return { error: LOGIN_FAILED, requiresTwoFactor: true };
     }
     // A pre-B05 cleartext seed has now proved itself: re-seal it in place so

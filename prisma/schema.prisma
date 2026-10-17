@@ -918,8 +918,6 @@ model OAuthCode {
   expiresAt   DateTime
   used        Boolean  @default(false)
   createdAt   DateTime @default(now())
-
-  @@index([codeHash])
 }
 
 model Webhook {

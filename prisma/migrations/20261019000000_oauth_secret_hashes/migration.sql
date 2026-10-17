@@ -20,7 +20,7 @@
 -- old build has to be replaced right after it — the old client queries
 -- "clientSecret", the new one queries "clientSecretHash". The `SET NOT NULL`
 -- and the unique index take an ACCESS EXCLUSIVE lock and scan the table, so
--- run this while the OAuth tables are small; `docs/OPERATIONS.md` §8.2 has the
+-- run this while the OAuth tables are small; `docs/OPERATIONS.md` §8.4 has the
 -- operator note. `prisma db push` cannot do this change (it does not
 -- backfill); use `prisma migrate deploy`.
 
@@ -49,9 +49,6 @@ ALTER TABLE "OAuthCode" ALTER COLUMN "codeHash" SET NOT NULL;
 
 -- CreateIndex
 CREATE UNIQUE INDEX "OAuthCode_codeHash_key" ON "OAuthCode"("codeHash");
-
--- CreateIndex
-CREATE INDEX "OAuthCode_codeHash_idx" ON "OAuthCode"("codeHash");
 
 -- DropIndex
 DROP INDEX "OAuthCode_code_key";

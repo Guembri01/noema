@@ -39,13 +39,11 @@ function parseSearchType(raw: string | null): "PAGE" | "DATABASE" | null {
  * unchanged and a scoped walk neither skips nor repeats a hit.
  *
  * A `GUEST` hits only the pages shared with them (the same scope the
- * workspace UI applies); a full member keeps the whole workspace. The scope
- * covers the ranked search — the **empty**-`q` branch ("recent pages") is
- * not scoped yet (tracked in #105).
- *
- * The bearer token must hold the `read:pages` scope; a token without it is
- * refused with 403 `insufficient_scope` before the workspace is even looked
- * up. */
+ * workspace UI applies); a full member keeps the whole workspace. The bearer
+ * token must also hold the `read:pages` scope; a token without it is refused
+ * with 403 `insufficient_scope` before the workspace is even looked up. The
+ * scope covers ranked search and the empty-`q` "recent pages" branch (#111).
+ */
 export async function GET(request: Request) {
   const auth = await authenticateApiRequest(request);
   const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });

@@ -470,7 +470,7 @@ reproduces today's schema exactly — `npx prisma migrate diff --from-url … --
 reports no difference. But the live schema has been evolved with
 **`prisma db push`** in the dev loop, and such a database carries no
 migration history: `npx prisma migrate deploy` refuses it with `P3005` until
-the existing migrations are baselined (§8.3 has the commands). Until that:
+the existing migrations are baselined (§8.1 has the commands). Until that:
 
 - **Dev / this loop:** `npm run db:push` (Tier HEAVY: build serialization,
   stop `:3200`, restart after, restart dev `:3201`).
@@ -490,7 +490,7 @@ npm run backup                       # 1. fresh, verified dump FIRST
 npm ci                              # 3. deps + `prisma generate` (postinstall)
 npm run db:push                     # 4a. schema, dev path — OR —
 npx prisma migrate deploy           # 4b. schema, prod path (see note above)
-npm run backfill:2fa                # 4c. optional: seal the TOTP seeds that are still cleartext (§8.2)
+npm run backfill:2fa                # 4c. optional: seal the TOTP seeds that are still cleartext (§8.1)
 npm run db:seed                     # 5. only if seed data is missing
 npm run build                       # 6. prod build (stop `next dev` first — shared .next!)
 npm start -- --port 3200            # 7. serve
@@ -498,25 +498,85 @@ curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 # 9. restart the cron driver + `npm run collab` so they pick up new code/env
 ```
 
-### 8.1 API token scopes — existing tokens keep their grant
+### 8.1 The tenant boundary is enforced in the application, not in the schema
 
-The REST API (`/api/v1/*`) enforces the scope grant of the bearer token: a
-token without `read:pages` (respectively `write:pages`) is refused with
-`403 {"error":"insufficient_scope","required":"read:pages"}`.
+`Page.parentId` is a plain self-foreign key. The schema carries **no**
+composite constraint on `(parentId, workspaceId)`, and none is planned — the
+rule *"a `parentId` always points inside the same workspace"* is enforced in
+the code, not by Postgres.
 
-**There is deliberately no migration for this.** A token that was created
-without a scope keeps its **empty** grant — a fail-closed system must not hand
-out permissions silently during an upgrade. Such a token has to be re-created
-in the workspace settings (**API tokens** card) with the scopes it needs; until
-then every `/api/v1/*` route refuses it. The token list marks a scope-less
-token as **No access**.
+What that means for an operator:
 
-OAuth-minted tokens are unaffected: `/oauth/token` stores an explicit scope
-list with every token it mints, and returns that list in the response.
-
-Note the order of the checks: the scope check runs **before** the workspace
-check, so a token without the scope gets `403 insufficient_scope` and learns
-nothing about the workspace it was aimed at.
+- **The database will happily store a cross-workspace parent.** No
+  `prisma db push` and no `prisma migrate` changes that, and the hardening
+  spec for this rule deliberately proposes no constraint — the check is
+  application-side.
+- **Every write path has to opt in.** The single gate is `assertScopedParent()`
+  in [`src/lib/page-parent.ts`](../src/lib/page-parent.ts): it loads the parent
+  **tenant-scoped** (`{ id, workspaceId, deletedAt: null }`), so a foreign parent
+  is never read and the refusal never names it. **That file is the place to pull
+  in when a new write path stores a `Page.parentId`** — a path that skips the
+  helper re-opens the hole. The rule is **checked mechanically where the gate
+  can see it**: `node scripts/check-parent-scope.mjs` finds the
+  `Page.parentId` writes in `src/` statically and fails when one of them
+  stores a value the helper has not proved (the paths where the workspace
+  equality holds *by construction* are listed there with their reason), and
+  `node scripts/check-parent-scope.mjs --list` shows every write it found. The
+  allow-list of the gate is **precise**: every entry names the value it
+  releases **and** the proof that makes that value safe (the authorization the
+  entry relies on), and the gate checks that the proof is still there — an
+  entry whose context is gone releases nothing, so a path that loses its
+  authorization turns the gate red instead of staying green.
+  It is a safety net over the tests, not a proof — a write it cannot recognise is
+  not covered by it. The taint of a raw request value is transitive as well: a
+  local that is derived from a tainted local is tainted too, and a read of
+  `.parentId` from a name whose origin the gate cannot see — a parameter, a
+  module-level name, or a local whose initializer the gate cannot resolve (a
+  spread it cannot follow, a call whose result it cannot see into, an
+  interpolation it cannot read) — is a raw value, whatever that receiver is
+  called. The gate follows the taint as far as it can see it: the
+  **unresolvability** is transitive as well (a local that takes the value of
+  an unresolved local is unresolved itself), the read of `.parentId` is seen in
+  every form the language allows (the plain read, the optional chain, the
+  non-null assertion, the computed and the indexed member, the result of a
+  call), and the compound assignments (`&&=`, `||=`, `??=`) are assignments it
+  follows like every other. What it does **not** reach is a value that mixes
+  an unresolved local with the proved one (`const parentId = o ??
+  checked.parentId`): the gate cannot see into `o`, so the raw value may hide
+  in it — and the write is released all the same. The holes that are known
+  today are listed in the gate's
+  own docstring — **six** of them there, **seven** with the write outside
+  `src/` the gate cannot see: a raw SQL write, a write outside `src/`, a
+  member assignment such as `data.parentId = …`, a computed receiver
+  (`prisma["page"]`), a payload that arrives through a spread the gate cannot
+  read, a value that mixes an unresolved local with the proved one, and a
+  proof that is matched as text — the gate sees that the named authorization
+  is called, not that it still checks the workspace); that list is a
+  safety net, not an enumeration — a new shape of write can open a new hole,
+  and the list only grows when somebody measures one. It is shorter than it
+  was: the precise allow-list closed the two holes of the name-based list —
+  the callers of an allow-listed helper (the gate checks that no caller hands
+  in a raw parent) and the payload whose parent a helper computes (a value
+  the gate cannot attribute is no longer mistaken for the checked one). The
+  shapes that *are* closed are pinned by the gate's own regression test
+  (`scripts/check-parent-scope.test.mjs`), which holds every allow-list entry
+  to the one path it describes.
+- **What a refusal looks like:** the write is refused with `That parent page
+  does not exist in this workspace.` (HTTP 400 on the REST routes, an
+  `{error}` on the server actions). If a *legitimate* parent is refused, the
+  page it names is not in the workspace the write was scoped to — check the
+  ids, not the helper. A parent in the **trash** is refused as well: a page
+  under a trashed parent would be invisible in the tree and would be purged
+  with the parent's own trash.
+- **Old rows are not repaired by the deploy.** Pages that were linked across
+  workspaces before the check existed stay in the database; every read filters
+  rows by the workspace of the database they hang under — the database view, the
+  relation database, the CSV/JSON export (both the single database and the
+  workspace archive), the "Deleted rows" panel, the database duplicate (which
+  copies the rows **with their content**) and the two chat-context blocks that
+  are sent to the AI — so they no longer surface in the foreign workspace's
+  views — but the rows themselves are still there until someone moves or
+  deletes them.
 
 ### 8.2 Seal the stored two-factor seeds (B05)
 
@@ -608,12 +668,56 @@ whoever learns the key opens all three at once. Rotating `AUTH_SECRET`
 therefore breaks every envelope in the database at the same time — re-seal the
 seeds with this script and re-enter the provider keys and the SMTP password.
 
+**If `AUTH_SECRET` is rotated or lost.** There is no automatic re-key: the
+backfill seals *cleartext* legacy seeds, it does not open a `v1:` envelope with
+an old key and re-seal it with a new one. Treat the secret as a backup-critical
+item, not as a value to rotate on a schedule while the app is running.
+
+1. **Stop the app.** Rotating the key invalidates every session cookie (users
+   sign in again) and makes every existing envelope unreadable.
+2. **If the old value still exists** (secret manager, backup, sealed env file),
+   restore it first and start the app. Do not "fix" the data with a new key.
+   Rotate only in a maintenance window with a tested, out-of-band re-encryption
+   procedure: decrypt the 2FA seeds, AI provider keys and SMTP password with
+   the old key, write them back under the new one, and keep the old key until
+   the verification pass has opened every row.
+3. **If the old value is gone for good**, generate a new secret and start the
+   app. Sessions are already invalid. Every account with a 2FA seed is now
+   `UNREADABLE` and cannot sign in — reset those accounts deliberately, after a
+   database backup:
+
+   ```sql
+   UPDATE "User"
+      SET "twoFactorSecret" = NULL,
+          "twoFactorEnabled" = false
+    WHERE "twoFactorSecret" IS NOT NULL;
+   ```
+
+   The owners then re-enrol 2FA on their next sign-in. Re-enter the AI provider
+   keys (**Settings → AI**) and the SMTP password (**Settings → Email**); the
+   old ciphertext is unrecoverable.
+4. **Back up the new value** before restarting production. `AUTH_SECRET` is
+   deliberately not read from an env file by the backfill (see above), so keep
+   the running process's value and the offline backup identical.
+
 The script is `scripts/backfill-2fa-secrets.mjs`; the decisions (the key
 proof, the per-row plan, the state of the run and the report) live in
 `scripts/backfill-2fa-secrets-lib.mjs` and are unit-tested by
 `scripts/backfill-2fa-secrets-lib.test.mjs`.
 
-### 8.3 Schema before app — the OAuth secret migration (breaking, both ways)
+### 8.3 The SSO link guard migration (B07)
+
+It **adds** the column `User.emailVerified` and backfills it for the accounts
+the SSO callback created (`passwordHash LIKE 'sso:%'`); every other account
+keeps the default `false` — an address nobody proved. The upgrade order is
+one-directional: the **old build keeps working** on the migrated database (an
+added column is invisible to it), but the **new build needs the column to
+exist** — its SSO callback reads it, and a missing column is a query error,
+not a fallback. So apply the migration *before* the new build starts serving.
+`npm run db:push` does the same thing without the migration history.
+
+
+### 8.4 Schema before app — the OAuth secret migration (breaking, both ways)
 
 `prisma/migrations/20261019000000_oauth_secret_hashes/` replaces the OAuth
 client secret and the authorization code with their SHA-256 digests:
@@ -669,86 +773,25 @@ npx prisma migrate deploy      # now applies only 20261019000000_oauth_secret_ha
 npx prisma migrate status      # expect: Database schema is up to date!
 ```
 
-### 8.4 The SSO link guard migration
+### 8.5 API token scopes — existing tokens keep their grant
 
-**Migration `20261019000000_user_email_verified` (the SSO link guard):**
+The REST API (`/api/v1/*`) enforces the scope grant of the bearer token: a
+token without `read:pages` (respectively `write:pages`) is refused with
+`403 {"error":"insufficient_scope","required":"read:pages"}`.
 
-It **adds** the column `User.emailVerified` and backfills it for the accounts
-the SSO callback created (`passwordHash LIKE 'sso:%'`); every other account
-keeps the default `false` — an address nobody proved. The upgrade order is
-one-directional: the **old build keeps working** on the migrated database (an
-added column is invisible to it), but the **new build needs the column to
-exist** — its SSO callback reads it, and a missing column is a query error,
-not a fallback. So apply the migration *before* the new build starts serving.
-`npm run db:push` does the same thing without the migration history.
+**There is deliberately no migration for this.** A token that was created
+without a scope keeps its **empty** grant — a fail-closed system must not hand
+out permissions silently during an upgrade. Such a token has to be re-created
+in the workspace settings (**API tokens** card) with the scopes it needs; until
+then every `/api/v1/*` route refuses it. The token list marks a scope-less
+token as **No access**.
 
-### 8.5 The tenant boundary is enforced in the application, not in the schema
+OAuth-minted tokens are unaffected: `/oauth/token` stores an explicit scope
+list with every token it mints, and returns that list in the response.
 
-`Page.parentId` is a plain self-foreign key. The schema carries **no**
-composite constraint on `(parentId, workspaceId)`, and none is planned — the
-rule *"a `parentId` always points inside the same workspace"* is enforced in
-the code, not by Postgres.
-
-What that means for an operator:
-
-- **The database will happily store a cross-workspace parent.** No
-  `prisma db push` and no `prisma migrate` changes that, and the hardening
-  spec for this rule deliberately proposes no constraint — the check is
-  application-side.
-- **Every write path has to opt in.** The single gate is `assertScopedParent()`
-  in [`src/lib/page-parent.ts`](../src/lib/page-parent.ts): it loads the parent
-  **tenant-scoped** (`{ id, workspaceId, deletedAt: null }`), so a foreign parent
-  is never read and the refusal never names it. **That file is the place to pull
-  in when a new write path stores a `Page.parentId`** — a path that skips the
-  helper re-opens the hole. The rule is **checked mechanically where the gate
-  can see it**: `node scripts/check-parent-scope.mjs` finds the
-  `Page.parentId` writes in `src/` statically and fails when one of them
-  stores a value the helper has not proved (the paths where the workspace
-  equality holds *by construction* are listed there with their reason), and
-  `node scripts/check-parent-scope.mjs --list` shows every write it found. The
-  allow-list of the gate is **precise**: every entry names the value it
-  releases **and** the proof that makes that value safe (the authorization the
-  entry relies on), and the gate checks that the proof is still there — an
-  entry whose context is gone releases nothing, so a path that loses its
-  authorization turns the gate red instead of staying green.
-  It is a safety net over the tests, not a proof — a write it cannot recognise is
-  not covered by it. The taint of a raw request value is transitive as well: a
-  local that is derived from a tainted local is tainted too, and a read of
-  `.parentId` from a name whose origin the gate cannot see — a parameter, a
-  module-level name, or a local whose initializer the gate cannot resolve (a
-  spread it cannot follow, a call whose result it cannot see into, an
-  interpolation it cannot read) — is a raw value, whatever that receiver is
-  called. The holes that are known today are listed in the gate's
-  own docstring (a raw SQL write, a write outside `src/`, a member assignment
-  such as `data.parentId = …`, a computed receiver (`prisma["page"]`), a
-  payload that arrives through a spread the gate cannot read, and a proof that
-  is matched as text — the gate sees that the named authorization is called,
-  not that it still checks the workspace); that list is a
-  safety net, not an enumeration — a new shape of write can open a new hole,
-  and the list only grows when somebody measures one. It is shorter than it
-  was: the precise allow-list closed the two holes of the name-based list —
-  the callers of an allow-listed helper (the gate checks that no caller hands
-  in a raw parent) and the payload whose parent a helper computes (a value
-  the gate cannot attribute is no longer mistaken for the checked one). The
-  shapes that *are* closed are pinned by the gate's own regression test
-  (`scripts/check-parent-scope.test.mjs`), which holds every allow-list entry
-  to the one path it describes.
-- **What a refusal looks like:** the write is refused with `That parent page
-  does not exist in this workspace.` (HTTP 400 on the REST routes, an
-  `{error}` on the server actions). If a *legitimate* parent is refused, the
-  page it names is not in the workspace the write was scoped to — check the
-  ids, not the helper. A parent in the **trash** is refused as well: a page
-  under a trashed parent would be invisible in the tree and would be purged
-  with the parent's own trash.
-- **Old rows are not repaired by the deploy.** Pages that were linked across
-  workspaces before the check existed stay in the database; every read filters
-  rows by the workspace of the database they hang under — the database view, the
-  relation database, the CSV/JSON export (both the single database and the
-  workspace archive), the "Deleted rows" panel, the database duplicate (which
-  copies the rows **with their content**) and the two chat-context blocks that
-  are sent to the AI — so they no longer surface in the foreign workspace's
-  views — but the rows themselves are still there until someone moves or
-  deletes them.
+Note the order of the checks: the scope check runs **before** the workspace
+check, so a token without the scope gets `403 insufficient_scope` and learns
+nothing about the workspace it was aimed at.
 
 ### 8.6 Ops gates: the shared secret, the rate limit, the order
 
@@ -846,9 +889,9 @@ accepted *in addition to* `CRON_SECRET` there, and nowhere else.
 | Sign-in answers "Too many attempts" / "This account is temporarily locked" | a budget is spent (30/min per client address, 10/min per account, 5 2FA guesses / 15 min) or the account is locked (5 consecutive failures); wait for the quoted time — an operator can release the lock with `UPDATE "User" SET "failedLoginCount" = 0, "lockedUntil" = NULL WHERE email = '…'` |
 | Everyone hits the rate limit at once (429) | no `TRUSTED_PROXY_HOPS` → all clients of a scope share the `scope:local` budget; declare the proxy hops (see §1.1) |
 | Admin surface answers 403 for everybody | `ADMIN_IP_ALLOWLIST` is set but `TRUSTED_PROXY_HOPS` is not → the allowlist fails closed; declare the proxy hops (see §1.1) |
-| A single caller suddenly gets a fresh allowance | a bucket store was full (> 10 000 live keys): the coldest live bucket is sacrificed and that caller's window starts over (see §1.1)
+| A single caller suddenly gets a fresh allowance | a bucket store was full (> 10 000 live keys): the coldest live bucket is sacrificed and that caller's window starts over (see §1.1) |
 | `EADDRINUSE` / weird build output | dev and prod share `.next` and the ports — exactly one writer at a time |
-| `/api/v1/*` answers `403 insufficient_scope` | the token's grant does not cover the call (`read:pages` / `write:pages`); a token created without a scope has an empty grant and has to be re-created — see §8.1 |
+| `/api/v1/*` answers `403 insufficient_scope` | the token's grant does not cover the call (`read:pages` / `write:pages`); a token created without a scope has an empty grant and has to be re-created — see §8.5 |
 
 ## 10. Verification appendix
 
@@ -873,13 +916,13 @@ nothing was executed against live servers):
 | 7 | `/api/health` 200/503 shapes, 2 s ping, `no-store`, no auth/disclosure, compose healthcheck | `src/app/api/health/route.ts` · `docker-compose.yml` |
 | 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
 | 8 | single `20260113000000_init` migration vs push-evolved schema | `prisma/migrations/` · `docs/specs/engineering-hardening.md:149,367-373` |
-| 8.1 | scope grant enforced on `/api/v1/*`, no migration for existing tokens, scope check before workspace check | `src/app/api/v1/*/route.ts` · `src/lib/api-token-scope.ts` · `src/server/actions/api-tokens.ts` |
-| 8.2 | `npm run backfill:2fa`, `--dry-run`, `--confirm-key`, `--help`, idempotence (`v1:`/`v2:` rows skipped), fail-closed (unsealable rows left untouched, exit 1), the key proof (no envelope opens ⇒ nothing is written, exit 1; `--confirm-key` overrides it) | `package.json` · `scripts/backfill-2fa-secrets.mjs` · `scripts/backfill-2fa-secrets-lib.mjs` (+ `scripts/backfill-2fa-secrets-lib.test.mjs`) · `src/lib/env-files.ts` |
-| 8.3 | OAuth secrets hashed at rest (`clientSecretHash`/`codeHash`), the SQL digest byte-identical to the Node one, the code consumed atomically, the migration before the app | `prisma/migrations/20261019000000_oauth_secret_hashes/` · `src/lib/api-auth.ts` · `src/app/oauth/token/route.ts` |
-| 8.4 | the SSO link guard migration (`User.emailVerified`), the backfill marks only the provider-created accounts, the new build needs the column | `prisma/migrations/20261019000000_user_email_verified/` · `src/lib/auth-strategies.ts` |
-| 8.5 | tenant boundary enforced in the application (`assertScopedParent`), no `(parentId, workspaceId)` constraint, refusal message, trashed parent refused, legacy rows not repaired (read side: database view, relation database, both exports, deleted rows, database duplicate, the two chat-context blocks), write paths checked where the gate can see them (`scripts/check-parent-scope.mjs`) | `src/lib/page-parent.ts` · `scripts/check-parent-scope.mjs` · `prisma/schema.prisma` (`Page.parentId`) · `src/server/actions/import-pdf.ts` · `src/server/queries.ts` (`getDatabase`) |
-| 8.6 | ops-gate order (503 → 429 → 401; `/api/metrics` answers 401 without a configured secret), constant-time comparison, per-route secret/limit table, action-surface budget | `src/lib/ops-guard.ts` · `src/app/api/ready/route.ts` · `src/app/api/cron/*/route.ts` · `src/app/api/metrics/route.ts` · `src/server/actions/automations.ts` |
-| 8.6 | ops-gate order (503 → 429 → 401; `/api/metrics` answers 401 without a configured secret, the server actions `{"error":"Unauthorized"}`), constant-time comparison, per-route secret/limit table, action-surface budget | `src/lib/ops-guard.ts` · `src/app/api/ready/route.ts` · `src/app/api/cron/*/route.ts` · `src/app/api/metrics/route.ts` · `src/server/actions/automations.ts` |
+| 8.1 | tenant boundary enforced in the application (`assertScopedParent`), no `(parentId, workspaceId)` constraint, refusal message, legacy rows not repaired | `src/lib/page-parent.ts` · `prisma/schema.prisma` (`Page.parentId`) · `src/server/actions/import-pdf.ts` · `src/server/queries.ts` (`getDatabase`) |
+| 8.2 | `npm run backfill:2fa`, `--dry-run`, `--confirm-key`, `--help`, idempotence (`v1:`/`v2:` rows skipped), fail-closed (unsealable rows left untouched, exit 1), the key proof (no envelope opens ⇒ nothing is written, exit 1; `--confirm-key` overrides it) | `package.json` · `scripts/backfill-2fa-secrets.mjs` · `scripts/backfill-2fa-secrets-lib.mjs` (+ `scripts/backfill-2fa-secrets-lib.test.mjs`) |
+| 8.5 | scope grant enforced on `/api/v1/*`, no migration for existing tokens, scope check before workspace check | `src/app/api/v1/*/route.ts` · `src/lib/api-token-scope.ts` · `src/server/actions/api-tokens.ts` |
+| 8.6 | ops-gate order (503 → 429 → 401), constant-time comparison, per-route secret/limit table, action-surface budget | `src/lib/ops-guard.ts` · `src/app/api/ready/route.ts` · `src/app/api/cron/*/route.ts` · `src/app/api/metrics/route.ts` · `src/server/actions/automations.ts` |
+| 9 | `413 Request body too large.`, the per-route byte budgets, the `Content-Length` fast path vs. the counted body, hard-coded (not configurable) | `src/lib/body-limit.ts` · `docs/api-reference.md` §3 · the route modules (the limit sits next to what it protects) |
+| 9 | the content limits of the importers (10 MB PDF, 4 MB per archive entry, 32 MB unpacked, 5 000 archive entries) | `src/server/actions/import-formats.ts` · `src/server/actions/import.ts` · `src/lib/zip-archive.ts` |
+| 9 | the archive formats the importer refuses and the message each one gets (ZIP64, split, password-protected, unsupported compression method, damaged) | `src/lib/zip-archive.ts` · `src/server/actions/import.ts` (`zipArchiveError` / `zipEntryError`) |
 | all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
 
 **Not verified by execution (be explicit when relying on them):** the backup →
@@ -888,7 +931,7 @@ not repo code), and `docker compose --profile app up --build` end-to-end (the
 build itself was proven by B74: real build + run on 3202 + health probe; this
 guide did not rebuild).
 
-**Verified by execution (§8.2):** the two-factor backfill was run against a
+**Verified by execution (§8.1):** the two-factor backfill was run against a
 throwaway Postgres 16 container that carried the app's `User` table (the other
 tables are not touched by the script). A cleartext seed was re-sealed — the
 envelope was opened back to the very same seed before it was written — an

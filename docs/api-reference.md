@@ -237,7 +237,8 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000, { userId }): NextRespo
 | `preview` | 60/min | `GET /api/link-preview` |
 | `upload` | 60/min | `POST /api/upload` |
 | `ai` / `ai-skills` / `transcribe` | 30 / 30 / 10 per min | `POST /api/ai*` |
-| `notion-import` / `pdf-import` | 30 / 30 per min | `POST /api/import/*` |
+| `notion-import` | 30/min | `POST /api/import/notion` |
+| `pdf-import` | 30/min | `POST /api/import/pdf` |
 | `export-page` / `export-database` / `export-workspace` | 30 / 30 / 5 per min | `GET /api/export/*` |
 | `inbound-webhook` | 60/min | `POST /api/webhooks/inbound` |
 | `mcp` | 120/min | `GET` / `POST /api/mcp` |
@@ -246,11 +247,9 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000, { userId }): NextRespo
 | `cron` | 12/min | `POST /api/cron/templates` (before the secret check) |
 | `share-unlock-<token>` | 5/min | `POST /s/[token]/unlock` (per share link) |
 
-Every scope above is spent **per client IP**; the scopes whose routes know
-their caller additionally spend the per-user budget (see above).
-
 **Not rate-limited:** `files/[...path]`, `auth/sso/start`,
-`auth/sso/callback`, `oauth/authorize/complete`, `s/[token]/unlock`.
+`auth/sso/callback`, `oauth/authorize/complete`.
+
 
 ### 3.1 Auth surface (server actions)
 
@@ -358,13 +357,6 @@ rate scope `templates` (30/min)
   template id, …)
 - **401** unauthenticated · **429** rate limited
 - **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
-- `parentId`, when given, must name a page **of the same workspace** — a
-  foreign parent (or one that does not exist, or one that is in the trash) is
-  refused with **400** `That parent page does not exist in this workspace.`,
-  the same refusal a page of the caller's own workspace would get. The check
-  runs **after** the workspace-membership check of the backing action, so a
-  caller who is not a member of the workspace learns nothing about the page
-  ids of that workspace.
 
 ### `GET /api/link-preview?url=` — OpenGraph metadata for bookmark blocks
 
@@ -496,8 +488,8 @@ external collaborator: they may only open the pages that were shared with
 them, the pages of their teamspaces and their own pages. The scope is resolved
 per request by `pageScopeFor()`
 ([`src/lib/guest-access.ts`](../src/lib/guest-access.ts)) and applied to every
-read that returns pages — with one exception named below (the **empty**-`q`
-branch of the search):
+read that returns pages — including the **empty**-`q` "recent pages" branch
+(B88/#111):
 
 - the scope lands in the query, **before** the limit — a window never shrinks
   because a hidden page took a slot;
@@ -568,8 +560,9 @@ Errors: **400** `workspaceId is required` · **403** `insufficient_scope`
 
 **201** `{"page":{"id":"…","title":"New doc","type":"PAGE"}}`
 Errors: 400 (`Invalid JSON body`, `workspaceId is required`, `That parent page
-does not exist in this workspace.`) · **403** `insufficient_scope`
-(missing `write:pages`) · 401 · 403 · **413** `Request body too large.` — the body is over the 4 MiB budget (§3) · · 429.
+does not exist in this workspace.`) · 401 · **403** `insufficient_scope`
+(missing `write:pages`) · **403** `Forbidden` · **413** `Request body too
+large.` — the body is over the 4 MiB budget (§3) · 429.
 
 #### Retrying safely — `Idempotency-Key`
 
@@ -623,12 +616,10 @@ scope**) · **403** `insufficient_scope` (missing `read:pages`) · **403**
                  "snippet":"…matched excerpt…", "updatedAt":"…" } ] }
 ```
 `q` may be empty; title + body search via `searchPages()` in
-`src/server/queries.ts`. A `GUEST` only hits the pages in their scope — with
-one exception still open: the **empty** `q` branch returns the workspace's
-most recent pages **without** the scope. This branch does not close it; the
-B88 branch does (#105 — whose body describes the MCP route, not this branch).
-Errors: 400 (`workspaceId is required`) · **403** `insufficient_scope`
-(missing `read:pages`) · 403 · 401 · 429.
+`src/server/queries.ts`. A `GUEST` only hits the pages in their scope — the
+ranked results and the **empty** `q` "recent pages" branch are both scoped
+(B88/#111). Errors: 400 (`workspaceId is required`) · **403**
+`insufficient_scope` (missing `read:pages`) · 403 · 401 · 429.
 
 ### `POST /api/mcp` — MCP (Model Context Protocol) server
 
@@ -744,120 +735,6 @@ from a binary PDF itself.
 - **200** `{"ok":true,…}` · **400** `Invalid JSON body.` or any action
   `{error}` · **401** · **429**
 - **413** `Request body too large.` — the body is over the 8 MiB budget (§3)
-
-### `POST /api/import/pdf` — import a PDF text layer
-Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
-cookie session · rate scope `pdf-import` (30/min)
-
-```json
-{ "workspaceId": "…", "parentId": null, "filename": "notes.pdf", "text": "…" }
-```
-
-Delegates to `importPdfTextAction`
-([`src/server/actions/import-pdf.ts`](../src/server/actions/import-pdf.ts)),
-which runs the `pdf-import` engine over the extracted text layer and stores the
-recovered blocks as one page.
-
-- `parentId`, when given, must name a page **of the same workspace** — a
-  foreign parent is refused with **400** `That parent page does not exist in
-  this workspace.` and **nothing is written**.
-- **200** `{"ok":true,"id":"…","slug":"…","format":"pdf","title":"…","pages":1,…}`
-- **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
-
-### `POST /api/import/pdf` — import a PDF text layer
-Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
-cookie session · rate scope `pdf-import` (30/min)
-
-```json
-{ "workspaceId": "…", "parentId": null, "filename": "notes.pdf", "text": "…" }
-```
-
-Delegates to `importPdfTextAction`
-([`src/server/actions/import-pdf.ts`](../src/server/actions/import-pdf.ts)),
-which runs the `pdf-import` engine over the extracted text layer and stores the
-recovered blocks as one page.
-
-- `parentId`, when given, must name a page **of the same workspace** — a
-  foreign parent is refused with **400** `That parent page does not exist in
-  this workspace.` and **nothing is written**.
-- **200** `{"ok":true,"id":"…","slug":"…","format":"pdf","title":"…","pages":1,…}`
-- **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
-
-### `POST /api/import/pdf` — import a PDF text layer
-Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
-cookie session · rate scope `pdf-import` (30/min)
-
-```json
-{ "workspaceId": "…", "parentId": null, "filename": "notes.pdf", "text": "…" }
-```
-
-Delegates to `importPdfTextAction`
-([`src/server/actions/import-pdf.ts`](../src/server/actions/import-pdf.ts)),
-which runs the `pdf-import` engine over the extracted text layer and stores the
-recovered blocks as one page.
-
-- `parentId`, when given, must name a page **of the same workspace** — a
-  foreign parent is refused with **400** `That parent page does not exist in
-  this workspace.` and **nothing is written**.
-- **200** `{"ok":true,"id":"…","slug":"…","format":"pdf","title":"…","pages":1,…}`
-- **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
-
-### `POST /api/import/pdf` — import a PDF text layer
-Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
-cookie session · rate scope `pdf-import` (30/min)
-
-```json
-{ "workspaceId": "…", "parentId": null, "filename": "notes.pdf", "text": "…" }
-```
-
-Delegates to `importPdfTextAction`
-([`src/server/actions/import-pdf.ts`](../src/server/actions/import-pdf.ts)),
-which runs the `pdf-import` engine over the extracted text layer and stores the
-recovered blocks as one page.
-
-- `parentId`, when given, must name a page **of the same workspace** — a
-  foreign parent is refused with **400** `That parent page does not exist in
-  this workspace.` and **nothing is written**.
-- **200** `{"ok":true,"id":"…","slug":"…","format":"pdf","title":"…","pages":1,…}`
-- **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
-
-### `POST /api/import/pdf` — import a PDF text layer
-Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
-cookie session · rate scope `pdf-import` (30/min)
-
-```json
-{ "workspaceId": "…", "parentId": null, "filename": "notes.pdf", "text": "…" }
-```
-
-Delegates to `importPdfTextAction`
-([`src/server/actions/import-pdf.ts`](../src/server/actions/import-pdf.ts)),
-which runs the `pdf-import` engine over the extracted text layer and stores the
-recovered blocks as one page.
-
-- `parentId`, when given, must name a page **of the same workspace** — a
-  foreign parent is refused with **400** `That parent page does not exist in
-  this workspace.` and **nothing is written**.
-- **200** `{"ok":true,"id":"…","slug":"…","format":"pdf","title":"…","pages":1,…}`
-- **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
-
-### `POST /api/import/pdf` — import a PDF text layer
-Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
-cookie session · rate scope `pdf-import` (30/min)
-
-```json
-{ "workspaceId": "…", "parentId": null, "filename": "notes.pdf", "text": "…" }
-```
-
-Delegates to `importPdfTextAction`
-([`src/server/actions/import-pdf.ts`](../src/server/actions/import-pdf.ts)),
-which runs the `pdf-import` engine over the extracted text layer and stores the
-recovered blocks as one page.
-
-- `parentId`, when given, must name a page **of the same workspace** — a
-  foreign parent is refused with **400** `That parent page does not exist in
-  this workspace.` and **nothing is written**.
-- **200** `{"ok":true,"id":"…","slug":"…","format":"pdf","title":"…","pages":1,…}`
-- **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
 
 ### `POST /api/import/pdf` — import a PDF text layer
 Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
@@ -1132,6 +1009,11 @@ listing is a full-member view: a `GUEST` gets a **403** `Forbidden` and no
 event is read. Errors: **401** · **403** `Forbidden` (no workspace access **or
 role `GUEST`**) · **404** `Workspace not found` · 429.
 
+The subscription's own URL (`icsUrl`) is not part of the response: it is the
+private address of a personal calendar and often carries a secret token in its
+path, so it stays on the server, which reads the feed itself. A feed is
+connected with `{"action":"connect", …}` and its events are listed here.
+
 `url` is the event's `URL:` property from the feed. Only an `http`, `https`,
 `mailto` or `tel` URL is imported and rendered — every other scheme, a
 `javascript:` URL for instance, is dropped and the field is `null` for it. A
@@ -1139,11 +1021,6 @@ relative path (`/w/acme/page`) and a same-document target (`?q=1`, `#section`)
 are kept. The stored value is checked again on the way out: this response
 and the ICS export (`?format=ics`) leave out a URL that is not on the
 allowlist, so an event stored before the fix cannot leak one either.
-
-The subscription's own URL (`icsUrl`) is not part of the response: it is the
-private address of a personal calendar and often carries a secret token in its
-path, so it stays on the server, which reads the feed itself. A feed is
-connected with `{"action":"connect", …}` and its events are listed here.
 
 ### `POST /api/calendar` — scope `calendar-write` (30/min)
 
@@ -1216,8 +1093,8 @@ own member-managing check as the second line of defence. Errors: 401 · 403
 - Teamspace invite → **200**
   `{"ok":true,"invited":true,"added":false,"link":"…","email":"…","emailed":true}`.
 - Errors: 400 (`Invalid JSON body.` / action `{error}` such as unknown
-  - **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
-  workspace, invalid email, no permission, unknown role) · 401 · 429.
+  workspace, invalid email, no permission, unknown role) · 401 · **413**
+  `Request body too large.` — the body is over the 256 KiB budget (§3) · 429.
 
 ---
 
@@ -1317,14 +1194,11 @@ Source: [`src/app/api/ai/route.ts`](../src/app/api/ai/route.ts)
   `prompt is required` / `context is required to summarize` /
   `prompt is required to autofill` ·
   **401** · **413** `Request body too large.` — the body is over the 256 KiB
-  budget (§3) ·
-  **503** `AI is not configured. Add a provider in workspace
+  budget (§3) · **503** `AI is not configured. Add a provider in workspace
   settings (AI) or set AI_API_KEY / AI_BASE_URL / AI_MODEL.` ·
-  **502** `AI provider error (<upstatus>): <code>` — the classified failure
-  (the upstream status plus a stable code), never the provider's body — or
-  `Could not reach the provider.`, a class for the transport failure, never the
-  runtime's message (it can carry the request header, and the header carries
-  the key) · 429.
+  **502** `AI provider error (<upstatus>): <code>` (the classified failure,
+  never the provider's body) or `Could not reach the provider.` (a transport
+  failure — a class, never the runtime's message) · 429.
 
 ### `POST /api/ai/skills` — editor AI skills — scope `ai-skills` (30/min)
 Source: [`src/app/api/ai/skills/route.ts`](../src/app/api/ai/skills/route.ts)
@@ -1346,11 +1220,13 @@ Skill ids: `improve`, `proofread`, `reformat`, `shorten`, `explain`,
 - `workspaceId` selects the provider under the same rule as `/api/ai`: the
   workspace's own endpoint and API key are used only when the caller has
   access to that workspace, the environment configuration applies otherwise.
-- Errors: 400 (`Invalid JSON body.` / `Unknown skill.` / `text is required.`,
-text capped at 8000) · 401 · 503 (AI unconfigured) · **502** `AI provider
-error (<upstatus>): <code>` (the classified failure, never the provider's
-body) or `Could not reach the provider.` (a transport failure — a class,
-never the runtime's message) · text capped at 8000) · 401 · **413** `Request body too large.` — the body is · 429.
+- Errors: 400 (`Invalid JSON body.` / `Invalid request body.` /
+  `Unknown skill.` / `text is required.`,
+  text capped at 8000) · 401 · **413** `Request body too large.` — the body is
+  over the 256 KiB budget (§3) · 503 (AI unconfigured) · **502** `AI provider
+  error (<upstatus>): <code>` (the classified failure, never the provider's
+  body) or `Could not reach the provider.` (a transport failure — a class,
+  never the runtime's message) · 429.
 
 ### `POST /api/ai/transcribe` — speech-to-text — scope `transcribe` (10/min)
 Source: [`src/app/api/ai/transcribe/route.ts`](../src/app/api/ai/transcribe/route.ts)
@@ -1379,6 +1255,15 @@ public · rate scope `share-unlock-<token>` (5/min) · attempt brake per share l
 Form body: `password`. Delegates to `attemptShareUnlock(token, password)`
 (`src/server/actions/share.ts`).
 
+- Success → sets cookie `share_<token>` (`httpOnly`, `lax`, `secure` in
+  production, 7 days) and **303** → `/s/<token>`. The cookie value is an
+  HMAC-SHA256 over the share token and an expiry, keyed by `AUTH_SECRET`; it is
+  verified server-side, so a forged value (including the old `1`) unlocks
+  nothing.
+- Wrong password → **303** → `/s/<token>?error=1`.
+- No JSON body in either direction.
+- **413** `Request body too large.` — the body is over the 16 KiB budget (§3).
+
 Two brakes guard the password: the rate limit's **scope** names the share
 link, the attempt counter is **keyed** by it.
 
@@ -1396,17 +1281,11 @@ link, the attempt counter is **keyed** by it.
 | Over 5 requests/min for the link | **429** `{"error":"Rate limit exceeded"}` with `retry-after` (seconds) |
 | Link locked (10 failed attempts) | **429** `{"error":"Too many unlock attempts"}` with `retry-after` (seconds, until the lock expires) |
 | Wrong password | **303** → `/s/<token>?error=1` (no JSON body) |
-| Correct password | **303** → `/s/<token>`, cookie `share_<token>` (`httpOnly`, `lax`, `secure` in production, 7 days) |
-
-The cookie value is an HMAC-SHA256 over the share token and an expiry, keyed
-by `AUTH_SECRET`; it is verified server-side, so a forged value unlocks
-nothing — the constant `"1"` that the route used to hand out is never
-issued.
+| Correct password | **303** → `/s/<token>`, cookie `share_<token>=<HMAC>` (`httpOnly`, `lax`, 7 days) |
 
 The rate limit and the attempt counter are in-process (like every other
 limiter in §3): a multi-instance deployment needs a shared store.
 
-- **413** `Request body too large.` — the body is over the 16 KiB budget (§3).
 ---
 
 ## 16. Admin / cron
@@ -1432,9 +1311,9 @@ rescheduled.
 
 | Case | Response |
 |---|---|
-| `CRON_SECRET` unset | `503 {"error":"CRON_SECRET is not configured. …"}` (fail-closed: the *not-configured* check runs before the rate limit; the secret comparison runs after it) |
-| Over 12 calls/min | `429 {"error":"Rate limit exceeded"}` — **also for a correct secret** |
-| Wrong/missing header | `401 {"error":"Unauthorized"}` — the rate limit runs **before** the comparison, so once the budget is spent a wrong secret is answered `429` instead |
+| `CRON_SECRET` unset | `503 {"error":"CRON_SECRET is not configured. …"}` (fail-closed, checked before rate limit) |
+| Wrong/missing header | `401 {"error":"Unauthorized"}` |
+| Over 12 calls/min | `429 {"error":"Rate limit exceeded"}` |
 
 ### `POST /api/cron/jobs` — enqueue a background job
 Source: [`src/app/api/cron/jobs/route.ts`](../src/app/api/cron/jobs/route.ts) ·
@@ -1502,7 +1381,7 @@ answers **503**.
 | 29 | POST | `/api/ai/skills` | cookie | `ai-skills` | `src/app/api/ai/skills/route.ts` |
 | 30 | POST | `/api/ai/transcribe` | cookie | `transcribe` | `src/app/api/ai/transcribe/route.ts` |
 | 31 | POST | `/api/cron/templates` | `x-cron-secret` | `cron` | `src/app/api/cron/templates/route.ts` |
-| 32 | POST | `/s/[token]/unlock` | share password | — | `src/app/s/[token]/unlock/route.ts` |
+| 32 | POST | `/s/[token]/unlock` | share password | `share-unlock-<token>` | `src/app/s/[token]/unlock/route.ts` |
 | 33 | GET | `/api/mcp` | Bearer | `mcp` | `src/app/api/mcp/route.ts` |
 | 34 | POST | `/api/mcp` | Bearer | `mcp` | `src/app/api/mcp/route.ts` |
 | 35 | GET | `/api/ready` | `x-cron-secret` | — | `src/app/api/ready/route.ts` |

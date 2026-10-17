@@ -147,7 +147,8 @@ list of 32 is in §4.2 / the R28.11 regression guard.
 | Secret | Where | State |
 | --- | --- | --- |
 | `User.twoFactorSecret` | `schema.prisma:89`, written sealed `two-factor.ts:27,60` (`encryptTwoFactorSecret`), read through `openTwoFactorSecret` | **Envelope** (B05) — `v1:iv:tag:payload`, shared envelope key (one key for the seed, the provider keys and the SMTP password — §2.4); rows that are still plaintext are re-sealed on the next sign-in/re-enrolment or by `npm run backfill:2fa` |
-| `OAuthApp.clientSecretHash` | `schema.prisma:872`, `randomToken(24)` written hashed `oauth-apps.ts:33` (`hashOAuthSecret`, returned once, stored as a digest) | **Digest** (B06) — SHA-256 hex, compared in constant time at the token endpoint; the plaintext is handed out once at creation and never stored |
+| `OAuthApp.clientSecretHash` | `schema.prisma:898`, written as a SHA-256 digest `oauth-apps.ts` (the plaintext is returned once at creation and never stored) | **Digest**, not an envelope: there is nothing to encrypt |
+| `OAuthCode.codeHash` | `schema.prisma:912`, the digest of the short-lived code | **Digest**, unique |
 | `Webhook.secret` | `schema.prisma:899` | Plaintext |
 | `ShareLink.token` | `schema.prisma:396`, raw `share.ts:101` (a DB dump exposes every share URL) | Plaintext (hashed like `Invite` would fix it) |
 | Vault integration | grep for `vault|KMS|sealed-secret` across code: **zero hits** (only matrix/docs prose, `docs/specs/saml-sso.md:274,360` — *"…an `AUTH_SECRET`-derived key … is better than nothing but not a vault"*) | Not started |
@@ -320,7 +321,8 @@ column name (`email.ts:285`), while `TeamspaceInvite`/`ApiToken` use honest
 ### 4.4 Secret handling — R28.17–R28.21
 
 - **R28.17** — Stored secrets get the envelope: `User.twoFactorSecret`
-  (`schema.prisma:89`) and `Webhook.secret` (`schema.prisma:899`) are
+  (`schema.prisma:89`), `OAuthApp.clientSecretHash` (`schema.prisma:898`,
+  a SHA-256 digest written at `oauth-apps.ts`) and `Webhook.secret` (`schema.prisma:899`) are
   written via `encryptSecret` (`src/lib/secrets.ts:21-27`) and read via
   `decryptSecret`. Key derivation becomes per-domain —
   `noema:<domain>:v1:<AUTH_SECRET>` generalizing the existing
@@ -441,7 +443,7 @@ model User {
 //   Comment.blockId        schema.prisma:336  — now populated (R28.3)
 //   ShareLink.token        schema.prisma:396  — stores hashToken(raw) (R28.18)
 //   User.twoFactorSecret   schema.prisma:89   — a v1 envelope (R28.17, landed in B05)
-//   OAuthApp.clientSecret  schema.prisma:872  — becomes a v1 envelope (R28.17, landed in B06)
+//   OAuthApp.clientSecretHash schema.prisma:898 — a SHA-256 digest; no envelope to add
 //   Webhook.secret         schema.prisma:899  — becomes a v1 envelope (R28.17)
 ```
 

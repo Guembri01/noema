@@ -135,22 +135,6 @@ function checkBucket(
 }
 
 /**
- * The same derivation for a `Headers` object — server actions never see a
- * `Request`, they read the request headers through `next/headers`.
- *
- * The forwarding headers are only read when the deployment declares how many
- * proxies stand in front of the app (`TRUSTED_PROXY_HOPS`); without that
- * declaration they are ignored, exactly as in {@link clientKey}. The account
- * budget of the sign-in path is the one that cannot be dodged by rotating a
- * header, but the address budget must not be dodgeable either.
- */
-export function clientKeyFromHeaders(headers: Headers, scope: string): string {
-  const ip = resolveClientIp((name) => headers.get(name), trustedProxyHops());
-  const canonical = ip === null ? null : normalizeIp(ip);
-  if (canonical === null) return `${scope}:local`;
-  return `${scope}:${canonical}`;
-}
-/**
  * Charge the **client-address** budget of `key` (see `clientKey`). The bucket
  * lives in the address store, whose key space a flood of forged addresses can
  * fill — see {@link checkUserRateLimit} for the budget that a flood cannot
@@ -194,27 +178,40 @@ export function trustedProxyHops(): number {
 }
 
 /**
- * Derive a stable client key from the request.
+ * Derive a stable client key from a `Headers` object.
  *
- * The client IP is only read from `X-Forwarded-For`/`X-Real-IP` when a
- * trusted proxy is configured (`TRUSTED_PROXY_HOPS`); otherwise those headers
- * are written by the client itself and are ignored — every direct caller
- * shares the `"local"` bucket, so a spoofed header cannot buy a fresh
- * allowance.
+ * Server actions never see a `Request`, they read the request headers through
+ * `next/headers`. The client IP is only read from `X-Forwarded-For` /
+ * `X-Real-IP` when a trusted proxy is configured (`TRUSTED_PROXY_HOPS`);
+ * otherwise those headers are written by the client itself and are ignored —
+ * every direct caller shares the `"local"` bucket, so a spoofed header cannot
+ * buy a fresh allowance.
  *
  * The address is canonicalized before it becomes a key. A value that is not an
  * IP literal cannot be attributed and falls back to the shared bucket, so a
  * proxy that forwards garbage cannot mint one bucket per garbage value.
+ */
+export function clientKeyFromHeaders(
+  headers: Headers,
+  scope: string,
+  hops: number = trustedProxyHops(),
+): string {
+  const ip = resolveClientIp((name) => headers.get(name), hops);
+  const canonical = ip === null ? null : normalizeIp(ip);
+  return `${scope}:${canonical ?? "local"}`;
+}
+
+/**
+ * Derive a stable client key from the request. See
+ * {@link clientKeyFromHeaders}; this is the `Request`-shaped convenience
+ * wrapper used by the route helpers.
  */
 export function clientKey(
   request: Request,
   scope: string,
   hops: number = trustedProxyHops(),
 ): string {
-  const ip = resolveClientIp((name) => request.headers.get(name), hops);
-  const canonical = ip === null ? null : normalizeIp(ip);
-  if (canonical === null) return `${scope}:local`;
-  return `${scope}:${canonical}`;
+  return clientKeyFromHeaders(request.headers, scope, hops);
 }
 
 /**
@@ -234,7 +231,8 @@ export function rateLimitBucketCount(): number {
 
 /** Number of per-user buckets currently tracked (test/ops helper). */
 export function userRateLimitBucketCount(): number {
-  return userBuckets.size();}
+  return userBuckets.size();
+}
 
 /** Test/ops helper. */
 export function resetRateLimits(): void {

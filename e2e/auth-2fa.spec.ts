@@ -438,9 +438,8 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
     ).toBeVisible({ timeout: UI_TIMEOUT });
     await codeInput.fill(staleTotp(secret));
     await page.getByRole("button", { name: "Sign in" }).click();
-    // One text for every failed sign-in (B24): a wrong code answers with the
-    // same text as a wrong password, so the reply never confirms that the
-    // password was right.
+    // B24 — a wrong code answers with the same text as a wrong password, so
+    // the reply never confirms that the password was right.
     await expect(page.getByRole("alert").first()).toHaveText(
       "Incorrect email or password.",
       { timeout: UI_TIMEOUT },

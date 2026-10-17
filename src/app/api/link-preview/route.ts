@@ -6,7 +6,7 @@ import { parseLinkMeta, resolveUrl } from "@/lib/link-preview-meta";
 import { rateLimit } from "@/lib/api-guard";
 import {
   defaultHostResolver,
-  isBlockedOutboundTarget,
+  isBlockedFeedTarget,
   safeFetchGuarded,
   type HostResolver,
 } from "@/lib/feed-guard";
@@ -110,10 +110,7 @@ async function safeAssetUrl(
     return null;
   }
   if (checkedHosts.has(host)) return asset;
-  // The strict flavour of the one gate: the preview route asks for NO
-  // exemption - neither the development one nor the operator opt-in - so it
-  // stays strict in every environment.
-  if (await isBlockedOutboundTarget(asset, { resolve })) return null;
+  if (await isBlockedFeedTarget(asset, { resolve, allowLoopbackInDevelopment: false })) return null;
   checkedHosts.add(host);
   return asset;
 }
@@ -166,9 +163,8 @@ export async function GET(request: Request) {
         headers: { "user-agent": "NoemaBot/1.0 (+link-preview)", accept: "text/html" },
       },
       // No development exemption here: the preview route has no hermetic mock
-      // to serve, so it stays strict in every environment. The guarded fetch
-      // never asks for the operator opt-in either.
-      { resolve },
+      // to serve, so it stays strict in every environment.
+      { resolve, allowDevLoopback: false },
     );
     if (!result.ok) {
       if (result.reason === "blocked") {

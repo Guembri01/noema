@@ -146,9 +146,10 @@ pub fn on_shell_command(app: &AppHandle, id: &str) {
         "shortcuts" => emit(app, "shell://shortcuts"),
         "about" => emit(app, "shell://about"),
         "docs" => {
-            let _ = app
-                .opener()
-                .open_url("https://github.com/Guembri01/noema/tree/main/docs", None::<&str>);
+            let _ = app.opener().open_url(
+                "https://github.com/Guembri01/noema/tree/main/docs",
+                None::<&str>,
+            );
         }
         "open-data" => {
             tauri::async_runtime::spawn({

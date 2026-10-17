@@ -41,6 +41,9 @@ services:
         VERSION: ${NOEMA_VERSION:-dev}
         REVISION: ${NOEMA_REVISION:-unknown}
         BUILD_DATE: ${NOEMA_BUILD_DATE:-1970-01-01T00:00:00Z}
+        # Edge middleware reads this at build time. Set it in .env to the
+        # number of trusted reverse proxies (1 for a single nginx/Caddy).
+        TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-}
     container_name: noema-app
     restart: unless-stopped
     # The image already handles SIGTERM; init reaps any child the Prisma CLI
@@ -58,6 +61,9 @@ services:
       # Server Action allowlist from this at run time (reverse proxy, tunnel,
       # LAN address) — build-time interfaces are never baked into the image.
       APP_ORIGINS: ${APP_ORIGINS:-http://localhost:3202}
+      # Must match the build arg above: the Edge middleware copy is baked at
+      # build time, the Node-side guards read this at run time.
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-}
       # Writable state. Mounted as a named volume below.
       NOEMA_DATA_DIR: /data
       STORAGE_DIR: /data/uploads

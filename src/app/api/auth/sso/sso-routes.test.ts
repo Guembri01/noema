@@ -177,6 +177,7 @@ describe("GET /api/auth/sso/callback", () => {
         email: "sso-user@noema.local",
         name: "SSO User",
         nonce: "nonce-1",
+        email_verified: true,
       },
     });
     prismaMock.user.findMany.mockResolvedValue([
@@ -201,6 +202,7 @@ describe("GET /api/auth/sso/callback", () => {
         email: "sso-user@noema.local",
         name: "SSO User",
         nonce: "nonce-1",
+        email_verified: true,
       },
     });
     prismaMock.user.findMany.mockResolvedValue([
@@ -224,6 +226,7 @@ describe("GET /api/auth/sso/callback", () => {
         email: "pre-registered@noema.local",
         name: "Pre Registered",
         nonce: "nonce-1",
+        email_verified: true,
       },
     });
     prismaMock.user.findMany.mockResolvedValue([
@@ -241,6 +244,31 @@ describe("GET /api/auth/sso/callback", () => {
     expect(prismaMock.user.create).not.toHaveBeenCalled();
   });
 
+  it("refuses an id_token whose provider has not verified the address", async () => {
+    // B07: `email` alone is a claim. Without the provider's `email_verified`
+    // assertion the callback must not create or link a verified account.
+    joseMock.jwtVerify.mockResolvedValue({
+      payload: {
+        sub: "sso-user-6",
+        email: "unverified@noema.local",
+        name: "Unverified",
+        nonce: "nonce-1",
+        email_verified: false,
+      },
+    });
+
+    const response = await ssoCallback(
+      new Request(`${CALLBACK_URL}?code=code-1&state=state-1`),
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?error=sso_email_unverified",
+    );
+    expect(prismaMock.user.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
+    expect(authMock.createSession).not.toHaveBeenCalled();
+  });
+
   it("just-in-time creates a user when no account matches", async () => {
     joseMock.jwtVerify.mockResolvedValue({
       payload: {
@@ -248,6 +276,7 @@ describe("GET /api/auth/sso/callback", () => {
         email: "new-user@noema.local",
         name: "New User",
         nonce: "nonce-1",
+        email_verified: true,
       },
     });
     prismaMock.user.findMany.mockResolvedValue([]);

@@ -105,6 +105,32 @@ describe("readBodyBytes()", () => {
     await expect(readBodyBytes(request, LIMIT)).rejects.toBeInstanceOf(BodyTooLargeError);
   });
 
+  it("cancels the source when the body exceeds the budget", async () => {
+    // The budget must stop the read *and* release the stream: leaving it open
+    // keeps a connection (and a server-side producer) alive for a request that
+    // can never succeed.
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(LIMIT + 1));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    // Hand the stream to the reader directly. Wrapping it in a `Request`
+    // puts undici's own pump in between; cancelling through that wrapper
+    // races the pump and leaves a test-only rejection behind, which is not
+    // what the production route exercises.
+    const request = {
+      headers: new Headers({ "content-type": "application/json" }),
+      body: stream,
+    } as unknown as Request;
+
+    await expect(readBodyBytes(request, LIMIT)).rejects.toBeInstanceOf(BodyTooLargeError);
+    expect(cancelled).toBe(true);
+  });
+
   it("refuses on the declared length alone, without waiting for the body", async () => {
     // The stream stays open: if the implementation read the body instead of
     // refusing on the header, this test would hang instead of failing.
@@ -183,9 +209,19 @@ describe("readFormDataBody()", () => {
   });
 
   it("refuses an oversized multipart body", async () => {
-    const form = new FormData();
-    form.append("file", new File([new Uint8Array(LIMIT + 1)], "a.bin"));
-    const request = new Request("http://localhost/api/x", { method: "POST", body: form });
+    // The budget is checked before the platform's multipart parser runs, so
+    // the bytes only need the multipart content type. The stream is handed
+    // to the reader directly because wrapping it in a `Request` puts
+    // undici's pump in between, and cancelling that wrapper is a test-only
+    // race (the real route receives its body from the HTTP server).
+    const request = {
+      headers: new Headers({ "content-type": "multipart/form-data; boundary=x" }),
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(LIMIT + 1));
+        },
+      }),
+    } as unknown as Request;
     await expect(readFormDataBody(request, LIMIT)).rejects.toBeInstanceOf(BodyTooLargeError);
   });
 });

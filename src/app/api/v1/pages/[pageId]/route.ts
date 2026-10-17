@@ -13,9 +13,9 @@ export const runtime = "nodejs";
  *
  * A `GUEST` may only read the pages shared with them (the same scope the
  * workspace UI applies); a page outside the scope is a 404, never a leak.
- *
- * The bearer token must hold the `read:pages` scope; a token without it is
- * refused with 403 `insufficient_scope`. */
+ * The bearer token must also hold the `read:pages` scope; a token without it
+ * is refused with 403 `insufficient_scope`.
+ */
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ pageId: string }> },

@@ -1,8 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { hashSync } from "bcryptjs";
-
-/** A usable bcrypt hash for the fixture (cost 4 keeps the test fast). */
-const BCRYPT_HASH = hashSync("correct-horse", 4);
 
 /**
  * The password strategy gate (B27).
@@ -19,8 +15,8 @@ const BCRYPT_HASH = hashSync("correct-horse", 4);
  */
 
 const h = vi.hoisted(() => ({
-  userUpdate: vi.fn(),
   userFindUnique: vi.fn(),
+  userUpdate: vi.fn(),
   userCreate: vi.fn(),
   workspaceFindFirst: vi.fn(),
   workspaceFindUnique: vi.fn(),
@@ -35,9 +31,11 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    // `user.update` is mocked too: the merged action clears the failure
-    // counter and the lock on a successful sign-in (B03).
-    user: { findUnique: h.userFindUnique, create: h.userCreate, update: h.userUpdate },
+    user: {
+      findUnique: h.userFindUnique,
+      update: h.userUpdate,
+      create: h.userCreate,
+    },
     workspace: {
       findFirst: h.workspaceFindFirst,
       findUnique: h.workspaceFindUnique,
@@ -97,15 +95,13 @@ beforeEach(() => {
       ? {
           id: "user-1",
           email: "local@corp.com",
-          // A real bcrypt hash: the merged action compares the stored value
-          // only when it is a usable bcrypt hash (B24), and falls back to the
-          // dummy comparison otherwise.
-          passwordHash: BCRYPT_HASH,
+          // #127 validates the stored value's bcrypt shape before comparing;
+          // a placeholder like "hash" now (correctly) fails closed.
+          passwordHash: "$2b$12$DDATzCAs4idfq89J5AQgj.xDjyjiwPleCbBHhzWDH1HywDCLKgoYi",
           twoFactorEnabled: false,
         }
       : null,
   );
-  h.userUpdate.mockResolvedValue({ id: "user-1", failedLoginCount: 0 });
   h.userCreate.mockResolvedValue({ id: "user-2" });
   h.workspaceCreate.mockResolvedValue({ id: "ws-1" });
   h.workspaceFindFirst.mockResolvedValue(null);
@@ -113,6 +109,7 @@ beforeEach(() => {
   h.workspaceMemberFindFirst.mockResolvedValue({ workspace: { slug: "demo" } });
   h.pageCreate.mockResolvedValue({ id: "page-1" });
   h.hashPassword.mockResolvedValue("hashed");
+  h.userUpdate.mockResolvedValue({ failedLoginCount: 0 });
   h.verifyPassword.mockResolvedValue(true);
   h.createSession.mockResolvedValue(undefined);
 });

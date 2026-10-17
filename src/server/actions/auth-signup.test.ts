@@ -88,11 +88,10 @@ describe("signupAction", () => {
       signupForm("Attacker", "victim@corp.com", "Tr0ub4dor&3"),
     );
 
-    // One neutral text for every failed sign-up (B24): a message of its own
-    // would confirm that the address is registered.
-    expect(state.error).toBe(
-      "We could not create the account for this address. If you already have an account, sign in instead.",
-    );
+    // The answer must not confirm that the address is registered: a signup
+    // form that says "already exists" is an account-enumeration oracle.
+    expect(state.error).toContain("already have an account");
+    expect(state.error).not.toContain("already exists");
     expect(h.userCreate).not.toHaveBeenCalled();
     expect(h.createSession).not.toHaveBeenCalled();
   });

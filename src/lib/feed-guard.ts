@@ -8,41 +8,47 @@
  * (rebind-style answers are rejected), and re-validation of every redirect
  * hop (`redirect: "manual"`).
  *
- * `isBlockedOutboundTarget` is the ONE network gate for every outbound
- * request to a user-supplied URL: scheme, hostname ranges, then DNS - every
- * answer must be public. `isBlockedFeedTarget` is the feed flavour of it
- * (identical rules plus the development-only loopback exemption) and
- * `safeFetchGuarded` adds the redirect re-validation on top, so the calendar
- * path and the link-preview path cannot drift apart.
- *
  * `safeFetchGuarded()` is the single entry point for every outbound fetch
  * that follows untrusted URLs: the calendar feed path (`safeFetchFeed()`,
  * which is a thin wrapper around it) and the link-preview route
- * (`src/app/api/link-preview/route.ts`) both go through it.
+ * (`src/app/api/link-preview/route.ts`) both go through it, so the two
+ * cannot drift apart.
+ *
+ * `isBlockedOutboundTarget` is the ONE network gate for every outbound
+ * request to a user-supplied URL; `isBlockedFeedTarget` is the feed flavour
+ * of it (identical rules plus the development-only loopback exemption) and
+ * `safeFetchFeed` adds the redirect re-validation on top.
  *
  * Two exemptions open the loopback range - and nothing else. The
- * `NODE_ENV === "development"` rule (for the hermetic local receivers of a
- * dev server) and the explicit operator opt-in
+ * `NODE_ENV === "development"` rule (unchanged, for the hermetic local
+ * receivers of a dev server) and the explicit operator opt-in
  * `NOEMA_ALLOW_LOOPBACK_TARGETS=1` (B11). The opt-in has to be asked for by
  * the caller (`allowLoopbackWithOptIn`) AND granted by the operator, so the
  * shipped production payload refuses a loopback target unless the operator
  * says so explicitly. Either way the exemption covers the loopback range
  * ONLY: RFC1918, link-local, the cloud metadata addresses and every
- * `.internal` name stay refused. The `NODE_ENV` check lives INSIDE the gate,
- * so a caller alone can never open the loopback range.
+ * `.internal` name stay refused.
  *
  * Everything fails closed: an unparseable URL, a non-http(s) scheme, a DNS
  * error or an exhausted redirect budget all answer `null`/`true`/`blocked`,
  * and callers surface one uniform error so a connector cannot be used as a
  * status oracle.
  *
- * Unit-pinned by `src/lib/feed-guard.test.ts` (ranges, rebinding, redirects,
- * the operator opt-in) and `src/server/actions/calendar.test.ts` (through the
- * real action).
+ * Unit-pinned by `src/lib/feed-guard.test.ts` (ranges, rebinding, redirects)
+ * and `src/server/actions/calendar.test.ts` (through the real action).
  */
 import { lookup } from "node:dns/promises";
+import { request as httpRequest, type RequestOptions } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
+import { Readable } from "node:stream";
 import { isPrivateHost } from "@/lib/embeds";
+
+/**
+ * The transport present when this module loaded. Tests replace `globalThis.fetch`
+ * with an offline double; production keeps the native implementation.
+ */
+const nativeFetch = globalThis.fetch;
 
 export type HostResolver = (hostname: string) => Promise<string[]>;
 
@@ -177,8 +183,7 @@ export type OutboundTargetOptions = {
 /**
  * The two loopback exemptions in one place. Both are limited to the loopback
  * range - the caller decides which one may apply, the guard decides whether
- * the conditions are met. The `NODE_ENV` check stays HERE, inside the gate:
- * a caller alone can never open the loopback range.
+ * the conditions are met.
  */
 function loopbackExempted(options: OutboundTargetOptions): boolean {
   if (options.allowLoopbackInDevelopment && process.env.NODE_ENV === "development") {
@@ -193,36 +198,78 @@ function loopbackExempted(options: OutboundTargetOptions): boolean {
  * Returns true when the target must NOT be contacted. Fails closed on
  * unparseable URLs, non-http(s) schemes and resolver errors.
  *
- * This is the ONE implementation of the range/DNS rules (B11): the feed path
- * and the outbound-webhook path share it instead of duplicating the rules.
+ * This is the network part of the guard, extracted so that the feed path and
+ * the outbound-webhook path share ONE implementation (B11) instead of
+ * duplicating the range/DNS rules.
+ *
+ * `next dev` (NODE_ENV `development`) is the one feed exception: the end-to-end
+ * check subscribes to a hermetic mock calendar served on loopback (`:4323`,
+ * see docs/TEST_PLAN.md), which the shipped guard would otherwise refuse. Only
+ * loopback hosts are exempt, and only when the caller asks for that exemption;
+ * vitest runs as `test` and deployments as `production`, so the security suite
+ * and the shipped guard still fail closed on every private range. The
+ * link-preview route passes no loopback exemption at all.
  */
-export async function isBlockedOutboundTarget(
+type OutboundResolution =
+  | { blocked: true; address: null; transient: false }
+  | { blocked: true; address: null; transient: true }
+  | { blocked: false; address: string; transient: false };
+
+/**
+ * Resolve a target to the **one address the request must use**.
+ *
+ * Checking a hostname and then fetching it again is a DNS-rebinding race: the
+ * second lookup can answer with an internal address after the first one
+ * passed. The caller therefore fetches the address returned here, not the
+ * hostname. Every DNS answer is validated; the first public answer is pinned
+ * for the connection (TLS still uses the URL hostname for SNI and certificate
+ * verification).
+ *
+ * `transient` distinguishes a resolver failure from a policy refusal. Both
+ * fail closed, but a caller that retries can keep retrying a resolver outage
+ * instead of treating it as a permanently blocked target.
+ */
+export async function resolveOutboundTarget(
   rawUrl: string,
   options: OutboundTargetOptions = {},
-): Promise<boolean> {
+): Promise<OutboundResolution> {
   const resolve = options.resolve ?? defaultHostResolver;
   let url: URL;
   try {
     url = new URL(rawUrl);
   } catch {
-    return true;
+    return { blocked: true, address: null, transient: false };
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return true;
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return { blocked: true, address: null, transient: false };
+  }
   const hostname = normalizeHost(url.hostname);
   if (isBlockedFeedHost(hostname)) {
     if (isLoopbackHost(hostname) && loopbackExempted(options)) {
-      return false;
+      // A loopback *literal* is already the address. `localhost` is not, and
+      // the pinned connection cannot look it up again; use the IPv4 loopback,
+      // which is what a development server bound to localhost answers on.
+      return {
+        blocked: false,
+        address: isIP(hostname) ? hostname : "127.0.0.1",
+        transient: false,
+      };
     }
-    return true;
+    return { blocked: true, address: null, transient: false };
   }
-  if (isIP(hostname)) return false; // a public literal - nothing to resolve
+  if (isIP(hostname)) {
+    return { blocked: false, address: hostname, transient: false }; // a public literal
+  }
   let addresses: string[];
   try {
     addresses = await resolve(hostname);
   } catch {
-    return true; // a DNS failure must not open the gate
+    return { blocked: true, address: null, transient: true };
   }
-  if (addresses.length === 0) return true;
+  if (addresses.length === 0) {
+    // An empty answer is a resolver failure, not a policy decision.
+    return { blocked: true, address: null, transient: true };
+  }
   // B11 — with an exemption in force, a name whose EVERY answer is a
   // loopback address is a local target and may pass. A mixed answer
   // (loopback + anything else) stays refused.
@@ -230,9 +277,19 @@ export async function isBlockedOutboundTarget(
     loopbackExempted(options) &&
     addresses.every((address) => isLoopbackAddress(address))
   ) {
-    return false;
+    return { blocked: false, address: addresses[0], transient: false };
   }
-  return addresses.some((address) => isBlockedIpLiteral(address));
+  if (addresses.some((address) => isBlockedIpLiteral(address))) {
+    return { blocked: true, address: null, transient: false };
+  }
+  return { blocked: false, address: addresses[0], transient: false };
+}
+
+export async function isBlockedOutboundTarget(
+  rawUrl: string,
+  options: OutboundTargetOptions = {},
+): Promise<boolean> {
+  return (await resolveOutboundTarget(rawUrl, options)).blocked;
 }
 
 /**
@@ -252,11 +309,13 @@ export async function isBlockedOutboundTarget(
  */
 export async function isBlockedFeedTarget(
   rawUrl: string,
-  resolve: HostResolver = defaultHostResolver,
+  options: OutboundTargetOptions = {},
 ): Promise<boolean> {
   return isBlockedOutboundTarget(rawUrl, {
-    resolve,
-    allowLoopbackInDevelopment: true,
+    ...options,
+    // The feed path keeps its development-only exemption unless the caller
+    // explicitly turns it off (the link-preview route does).
+    allowLoopbackInDevelopment: options.allowLoopbackInDevelopment ?? true,
   });
 }
 
@@ -269,15 +328,166 @@ export type FeedFetchOptions = {
   maxRedirects?: number;
   /** Injected by tests; defaults to the system resolver at call time. */
   resolve?: HostResolver;
-  /**
-   * Ask for the development-only loopback exemption - see
-   * {@link OutboundTargetOptions}. It is OFF by default: the guarded fetch
-   * never opens the loopback range on its own. Only the calendar feed path
-   * (`safeFetchFeed`) asks for it; the link-preview route stays strict in
-   * every environment. The guarded fetch never asks for the operator opt-in.
-   */
-  allowLoopbackInDevelopment?: boolean;
+  /** Loopback exemption in `development` - see {@link OutboundTargetOptions}. */
+  allowDevLoopback?: boolean;
 };
+
+/**
+ * Serialize the request body the guard supports. Every outbound call in the
+ * app sends a string (the webhook JSON) or no body (the feed and preview
+ * GETs), so a stream/FormData body is refused rather than silently fetched
+ * without pinning.
+ */
+function requestBody(body: RequestInit["body"]): string | Buffer | null {
+  if (body == null) return null;
+  if (typeof body === "string") return body;
+  if (body instanceof URLSearchParams) return body.toString();
+  if (Buffer.isBuffer(body)) return body;
+  if (body instanceof ArrayBuffer) return Buffer.from(body);
+  if (ArrayBuffer.isView(body)) {
+    return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
+  }
+  throw new Error("Unsupported request body.");
+}
+
+/**
+ * Fetch one URL with the DNS answer **pinned** to `address`.
+ *
+ * The normal `fetch` resolves the hostname itself, after the guard looked at
+ * a different answer — the rebinding window. This request connects to the
+ * address that was validated, while keeping the URL's hostname for the Host
+ * header, TLS SNI and certificate verification. Redirects are never followed
+ * here; `safeFetchGuarded` validates each hop.
+ */
+async function fetchPinnedAddress(
+  rawUrl: string,
+  init: RequestInit,
+  address: string,
+): Promise<Response> {
+  const url = new URL(rawUrl);
+  const headers = new Headers(init.headers);
+  const body = requestBody(init.body);
+  if (body !== null && !headers.has("content-length")) {
+    headers.set("content-length", String(Buffer.byteLength(body)));
+  }
+  const hostname = normalizeHost(url.hostname);
+  const family = isIP(address) === 6 ? 6 : 4;
+  const requestOptions: RequestOptions & { servername?: string } = {
+    protocol: url.protocol,
+    hostname,
+    port: url.port || undefined,
+    path: `${url.pathname}${url.search}`,
+    method: init.method ?? "GET",
+    headers: Object.fromEntries(headers.entries()),
+    // This callback is the pin: net.connect asks for an address once and we
+    // always answer with the one the guard validated. `all: true` asks for
+    // the array form; both forms carry the same single answer.
+    lookup: ((
+      _host: string,
+      lookupOptions: unknown,
+      callback: (...args: never[]) => void,
+    ) => {
+      const wantsAll =
+        typeof lookupOptions === "object" &&
+        lookupOptions !== null &&
+        (lookupOptions as { all?: boolean }).all === true;
+      if (wantsAll) {
+        (
+          callback as unknown as (
+            error: null,
+            addresses: { address: string; family: number }[],
+          ) => void
+        )(null, [{ address, family }]);
+        return;
+      }
+      (callback as unknown as (error: null, address: string, family: number) => void)(
+        null,
+        address,
+        family,
+      );
+    }) as RequestOptions["lookup"],
+  };
+  if (url.protocol === "https:") requestOptions.servername = hostname;
+
+  return new Promise<Response>((resolve, reject) => {
+    const send = url.protocol === "https:" ? httpsRequest : httpRequest;
+    const request = send(requestOptions, (incoming) => {
+      const responseHeaders = new Headers();
+      for (const [name, value] of Object.entries(incoming.headers)) {
+        if (value === undefined) continue;
+        for (const entry of Array.isArray(value) ? value : [value]) {
+          responseHeaders.append(name, entry);
+        }
+      }
+      const response = new Response(
+        Readable.toWeb(incoming) as ReadableStream<Uint8Array>,
+        {
+          status: incoming.statusCode ?? 500,
+          statusText: incoming.statusMessage ?? "",
+          headers: responseHeaders,
+        },
+      );
+      // `Response` built from a stream has an empty `url`; the caller uses it
+      // to resolve relative redirects and to re-check the final host.
+      Object.defineProperty(response, "url", {
+        value: url.toString(),
+        configurable: true,
+      });
+      resolve(response);
+    });
+    request.on("error", reject);
+    if (init.signal) {
+      if (init.signal.aborted) {
+        request.destroy();
+        reject(new Error("Aborted."));
+        return;
+      }
+      init.signal.addEventListener("abort", () => request.destroy(), { once: true });
+    }
+    if (body !== null) request.write(body);
+    request.end();
+  });
+}
+
+/**
+ * Guarded outbound fetch with DNS pinning. The target is resolved once, every
+ * answer is validated by {@link resolveOutboundTarget}, and the connection is
+ * made to that validated address. Throws on a blocked or unresolvable target;
+ * callers that want the uniform "blocked / failed" result use
+ * {@link safeFetchGuarded}.
+ */
+export async function fetchPinned(
+  rawUrl: string,
+  init: RequestInit = {},
+  options: OutboundTargetOptions = {},
+): Promise<Response> {
+  const target = await resolveOutboundTarget(rawUrl, options);
+  if (target.blocked) throw new Error("Blocked target.");
+  return fetchPinnedTarget(rawUrl, init, target.address);
+}
+
+/**
+ * Fetch a URL whose target address the caller has already validated.
+ *
+ * This is the second half of {@link fetchPinned}, exported so a caller that
+ * must check every redirect hop or every delivery attempt does not repeat the
+ * DNS lookup (which would reopen the rebinding window between the two
+ * answers).
+ */
+export async function fetchPinnedTarget(
+  rawUrl: string,
+  init: RequestInit,
+  address: string,
+): Promise<Response> {
+  // A replaced global transport is an offline test double (or an operator's
+  // instrumentation). Honour it, but only after the caller let the target
+  // through the guard; the shipped process keeps the native fetch and uses the
+  // pinned connection below.
+  if (globalThis.fetch !== nativeFetch) {
+    return globalThis.fetch(rawUrl, init);
+  }
+  return fetchPinnedAddress(rawUrl, init, address);
+}
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
@@ -287,12 +497,10 @@ export type GuardedFetchFailure = "blocked" | "failed";
 /**
  * Outcome of a guarded fetch: the response plus the URL it was finally
  * requested from, or the reason there is none. `blocked` means the target
- * (or a redirect hop) was refused by the SSRF guard - including a DNS
- * failure, which the guard cannot tell apart from a refusal and therefore
- * fails closed on. `failed` means the request itself went wrong (network
- * error, timeout, redirect budget exhausted) - the two are never conflated,
- * so a caller can answer a refused target with a block and a broken one with
- * a neutral fallback.
+ * (or a redirect hop) was refused by the SSRF guard; `failed` means the
+ * request itself went wrong (network error, timeout, redirect budget
+ * exhausted) - the two are never conflated, so a caller can answer a refused
+ * target with a block and a broken one with a neutral fallback.
  */
 export type GuardedFetchResult =
   | { ok: true; response: Response; finalUrl: string }
@@ -309,15 +517,10 @@ function sameHost(a: string, b: string): boolean {
 
 /**
  * Fetch a URL only when the initial target AND every redirect hop pass
- * the one network gate (`isBlockedOutboundTarget`). Redirects are requested
- * with `redirect: "manual"` and each `Location` is re-validated before it is
- * followed. Returns `blocked` when the guard refuses a target, `failed` on a
- * network error, an unusable `Location` or an exhausted redirect budget.
- *
- * The loopback range is NOT opened here: the guarded fetch asks for neither
- * the development exemption nor the operator opt-in unless the caller passes
- * `allowLoopbackInDevelopment` (the calendar feed path does), and even then
- * the gate itself decides - a caller alone can never open the range.
+ * the guard. Redirects are requested with `redirect: "manual"` and each
+ * `Location` is re-validated before it is followed. Returns `blocked` when
+ * the guard refuses a target, `failed` on a network error, an unusable
+ * `Location` or an exhausted redirect budget.
  *
  * The URL the response was finally read from is returned as `finalUrl` so
  * callers can resolve relative references against the page that answered -
@@ -328,24 +531,28 @@ export async function safeFetchGuarded(
   init?: RequestInit,
   options: FeedFetchOptions = {},
 ): Promise<GuardedFetchResult> {
-  const fetchFn: FeedFetchFn =
-    options.fetchFn ?? ((url, requestInit) => globalThis.fetch(url, requestInit));
   const maxRedirects = options.maxRedirects ?? 3;
-  // ONE network gate - the range and DNS rules live in `isBlockedOutboundTarget`
-  // and nowhere else. The operator opt-in (`allowLoopbackWithOptIn`) is
-  // deliberately NOT requested here: only the webhook path asks for it.
+  const resolve = options.resolve ?? defaultHostResolver;
   const targetOptions: OutboundTargetOptions = {
-    resolve: options.resolve ?? defaultHostResolver,
-    allowLoopbackInDevelopment: options.allowLoopbackInDevelopment ?? false,
+    resolve,
+    allowLoopbackInDevelopment: options.allowDevLoopback ?? true,
   };
   let current = rawUrl;
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
-    if (await isBlockedOutboundTarget(current, targetOptions)) {
+    // One resolution per hop: the address that passes is the address the
+    // transport connects to, so a second lookup cannot answer something else.
+    const target = await resolveOutboundTarget(current, targetOptions);
+    if (target.blocked) {
+      // A DNS outage and a private answer both stay closed here. The webhook
+      // dispatcher uses `resolveOutboundTarget` directly so it can retry an
+      // outage instead of treating the host as permanently forbidden.
       return { ok: false, reason: "blocked" };
     }
     let response: Response;
     try {
-      response = await fetchFn(current, { ...init, redirect: "manual" });
+      response = options.fetchFn
+        ? await options.fetchFn(current, { ...init, redirect: "manual" })
+        : await fetchPinnedTarget(current, { ...init, redirect: "manual" }, target.address);
     } catch {
       return { ok: false, reason: "failed" };
     }
@@ -356,7 +563,8 @@ export async function safeFetchGuarded(
       // already.
       const finalUrl = response.url !== "" ? response.url : current;
       if (finalUrl !== current && !sameHost(current, finalUrl)) {
-        if (await isBlockedOutboundTarget(finalUrl, targetOptions)) {
+        const finalTarget = await resolveOutboundTarget(finalUrl, targetOptions);
+        if (finalTarget.blocked) {
           return { ok: false, reason: "blocked" };
         }
       }
@@ -377,19 +585,12 @@ export async function safeFetchGuarded(
  * Fetch a feed URL only when the initial target AND every redirect hop pass
  * the guard. Returns `null` on block, redirect-budget exhaustion or network
  * failure - callers report one uniform error either way.
- *
- * The calendar path keeps its development-only loopback exemption (the
- * hermetic mock ICS feed on `:4323`); the gate still decides whether the
- * conditions are met, and the operator opt-in is never requested here.
  */
 export async function safeFetchFeed(
   rawUrl: string,
   init?: RequestInit,
   options: FeedFetchOptions = {},
 ): Promise<Response | null> {
-  const result = await safeFetchGuarded(rawUrl, init, {
-    ...options,
-    allowLoopbackInDevelopment: options.allowLoopbackInDevelopment ?? true,
-  });
+  const result = await safeFetchGuarded(rawUrl, init, options);
   return result.ok ? result.response : null;
 }

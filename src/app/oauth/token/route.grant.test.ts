@@ -3,10 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 /**
  * B04 — OAuth-issued tokens must carry an explicit grant.
  *
- * (Its own file: the single-use suite of B23 drives the same route with a
- * different mock set, and two `vi.mock` blocks for one module cannot live in
- * one file.)
- *
  * The token endpoint minted an `ApiToken` row without scopes at all
  * (`scopes: []`), so the grant was "whatever the API does not check". The
  * endpoint now stores a fixed, explicit scope list on the row and echoes the
@@ -23,7 +19,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   oAuthAppFindUnique: vi.fn(),
   oAuthCodeFindUnique: vi.fn(),
-  oAuthCodeUpdate: vi.fn(),
   oAuthCodeUpdateMany: vi.fn(),
   apiTokenCreate: vi.fn(),
 }));
@@ -33,9 +28,6 @@ vi.mock("@/lib/db", () => ({
     oAuthApp: { findUnique: db.oAuthAppFindUnique },
     oAuthCode: {
       findUnique: db.oAuthCodeFindUnique,
-      update: db.oAuthCodeUpdate,
-      // The code is consumed atomically (B23): the token is only issued when
-      // the conditional update matched exactly one row.
       updateMany: db.oAuthCodeUpdateMany,
     },
     apiToken: { create: db.apiTokenCreate },
@@ -43,8 +35,8 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/api-guard", () => ({ rateLimit: vi.fn(() => null) }));
 
-import { API_SCOPE_IDS, hasScope } from "@/lib/api-token-scope";
 import { hashOAuthSecret } from "@/lib/api-auth";
+import { API_SCOPE_IDS, hasScope } from "@/lib/api-token-scope";
 import { POST } from "./route";
 
 const CLIENT_ID = "noema_client";
@@ -78,15 +70,13 @@ beforeEach(() => {
   db.oAuthAppFindUnique.mockResolvedValue({
     id: "app-1",
     clientId: CLIENT_ID,
-    // The client secret is stored as a digest (B06); the request still
-    // carries the plaintext.
     clientSecretHash: hashOAuthSecret(CLIENT_SECRET),
     name: "Demo app",
     redirectUris: [REDIRECT_URI],
   });
   db.oAuthCodeFindUnique.mockResolvedValue({
     id: "code-1",
-    code: "code-1",
+    codeHash: hashOAuthSecret("code-1"),
     clientId: CLIENT_ID,
     userId: "user-1",
     redirectUri: REDIRECT_URI,
@@ -95,7 +85,6 @@ beforeEach(() => {
     codeChallenge: null,
     codeChallengeMethod: null,
   });
-  db.oAuthCodeUpdate.mockResolvedValue({ id: "code-1" });
   db.oAuthCodeUpdateMany.mockResolvedValue({ count: 1 });
   db.apiTokenCreate.mockResolvedValue({ id: "token-1" });
 });

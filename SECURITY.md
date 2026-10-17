@@ -84,7 +84,21 @@ The sign-in, the sign-up and the 2FA check carry their own budgets (per client
 address and per account), and five consecutive failures lock the account for a
 while. The lock belongs to the account and not to the client address, so a
 deliberate run of failed sign-ins can lock a legitimate user out — that is a
-property of the model, not a misconfiguration.
+property of the model, not a misconfiguration. The reply stays the neutral
+"Incorrect email or password." text, so the lockout cannot be used to confirm
+that an address exists.
+
+A single sign-on only links an account that proved its own address
+(`User.emailVerified`): a local sign-up never proves one, and an account
+created by the SSO callback is stored as verified only when the id_token says
+`email_verified: true`. The identity provider is therefore the trust root for
+the addresses it hands out — an IdP that lets users type an arbitrary,
+unverified address weakens the guarantee. A sign-in that meets an account
+whose address was never proven is refused (`?error=sso_email_taken`) instead
+of taking the account over; an id_token without `email_verified: true` is
+refused (`?error=sso_email_unverified`).
+
+### `NOEMA_ALLOW_LOOPBACK_TARGETS`
 
 ### `NOEMA_ALLOW_LOOPBACK_TARGETS`
 
@@ -101,17 +115,6 @@ loopback target — and it never opens more than the loopback range: RFC1918
 metadata addresses and every `.internal`/`.local` name stay refused. It
 applies to the webhook path only; calendar feeds keep refusing a loopback
 feed in production.
-
-A single sign-on only links an account that proved its own address
-(`User.emailVerified`): a local sign-up never proves one, and an account
-created by the SSO callback inherits the provider's proof. The identity
-provider is therefore the trust root for the addresses it hands out — an IdP
-that lets users type an arbitrary, unverified address weakens the guarantee.
-The `email_verified` claim of the id_token is **not** read: the callback
-trusts the address the provider hands out, so the guarantee rests entirely on
-the provider's address policy, not on the claim. A sign-in that meets an
-account whose address was never proven is refused (`?error=sso_email_taken`)
-instead of taking the account over.
 
 ## Secrets in the repository
 

@@ -1,8 +1,3 @@
-/**
- * (Its own file: the single-use suite of B23 drives the same route with a
- * different mock set, and two `vi.mock` blocks for one module cannot live in
- * one file. The scope suite of B04 lives in `route.scopes.test.ts`.)
- */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 

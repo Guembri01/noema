@@ -110,13 +110,7 @@ const renderCell = (value: unknown) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // The resolver hands back the granted scopes as well (B04): the MCP route
-  // enforces them, so a token without `read:pages` is refused before the
-  // tool is even looked at.
-  auth.authenticateApiRequest.mockResolvedValue({
-    userId: "u1",
-    scopes: ["read:pages", "admin:workspace"],
-  });
+  auth.authenticateApiRequest.mockResolvedValue({ userId: "u1", scopes: ["write:databases"] });
   perm.getWorkspaceAccess.mockResolvedValue({ role: "MEMBER" });
   perm.canEditContent.mockReturnValue(true);
   db.apiTokenFindUnique.mockResolvedValue({ scopes: ["write:databases"] });

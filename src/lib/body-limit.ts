@@ -98,11 +98,18 @@ export async function readBodyBytes(request: Request, limit: number): Promise<Ui
       if (!value || value.byteLength === 0) continue;
       total += value.byteLength;
       if (total > limit) {
-        // The request is refused: the rest of the body is not read. The
-        // stream is deliberately *not* cancelled — cancelling a multipart
-        // body while the platform is still filling it leaves an unhandled
-        // rejection behind — and it is not drained either: draining an
-        // unbounded body is exactly the work this budget is there to avoid.
+        // The request is refused: the rest of the body is neither read nor
+        // drained (draining an unbounded body is exactly the work this budget
+        // exists to avoid). Cancel the source so the connection is not left
+        // open waiting for bytes nobody will consume. A source may reject the
+        // cancel (for example a multipart body the platform is still
+        // filling); that must not replace the 413 with a 500, so the error is
+        // swallowed and `BodyTooLargeError` is still what the route sees.
+        try {
+          await reader.cancel();
+        } catch {
+          /* the source was already errored or closed */
+        }
         throw new BodyTooLargeError(limit);
       }
       chunks.push(value);
