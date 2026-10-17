@@ -232,8 +232,28 @@ The build produces two installers in `src-tauri/target/release/bundle/`:
 
 | Artifact | Size | Notes |
 |---|---|---|
-| `nsis/Noema_1.4.0_x64-setup.exe` | ~63 MB | Per-user install — **no admin prompt**, no UAC |
-| `msi/Noema_1.4.0_x64_en-US.msi` | ~113 MB | For managed deployment (MSI/GPO) |
+| `nsis/Noema_1.4.0_x64-setup.exe` | 64.5 MB | Per-user install — **no admin prompt**, no UAC |
+| `msi/Noema_1.4.0_x64_en-US.msi` | 114.7 MB | For managed deployment (MSI/GPO) |
+
+Verify the *installed* result rather than the build output — they are not the same
+thing, and every failure this project has had in the installer only ever appeared in
+the installed app:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop/verify-install.ps1 `
+  -Setup src-tauri\target\release\bundle\nsis\Noema_1.4.0_x64-setup.exe -UninstallFirst
+```
+
+It installs silently, starts the shell, finds the supervised server's loopback port,
+checks `/api/health`, serves a real page with its stylesheets, proves a second launch
+does not start a second server, refuses to pass if a panic was logged, and captures the
+window to `%TEMP%\noema-verify\noema-window.png` so the design can be *looked at*.
+
+> **Windows PowerShell 5.1 note.** These scripts are UTF-8 and contain em-dashes, so
+> they must keep a **UTF-8 BOM**. Without it, `powershell` (5.1, the only interpreter
+> on a stock Windows box — there is no `pwsh`) decodes them as ANSI and fails at
+> *parse* time with a wall of "missing string terminator" errors. That happened; the
+> BOM is the fix and a `.ps1` added here should get one too.
 
 Both contain the whole app: the Rust shell, the Next standalone server, the Prisma
 CLI, and a Node runtime. **Nothing has to be installed first.**
