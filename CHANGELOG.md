@@ -11,6 +11,22 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Security
+
+- The desktop workflow no longer runs pull-request code with a write token. It
+  declared `contents: write` at the workflow level, so every job — the ones a
+  pull request reaches included — held a token that `actions/checkout` kept in
+  `.git/config` while `npm ci` ran the repository's own `postinstall`, with the
+  Apple and Windows signing secrets in the same job's environment. A pull
+  request opened from a branch of this repository that touched `package.json`
+  could read the token and the signing keys (a pull request from a fork gets a
+  read-only token and no repository secrets from GitHub in any case). The token
+  is read-only everywhere a pull request can reach now, the write scope and the
+  signing secrets live in a release job that only a tag push runs, and no
+  checkout keeps its credentials.
+
+
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour
