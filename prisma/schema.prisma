@@ -482,6 +482,10 @@ model ApiToken {
   tokenHash  String    @unique
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
+  // B29: the deadline the token dies at. `null` = the token never expires —
+  // nothing in the app mints such a token, the column only stays nullable so
+  // the migration can add it without a default.
+  expiresAt  DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

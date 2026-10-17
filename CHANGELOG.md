@@ -13,6 +13,23 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ### Security
 
+- An API token now dies on its own. The `ApiToken` row had no deadline: a
+  token that leaked — into a CI log, a screenshot, the laptop of a former
+  employee — kept working on `/api/v1/*` until somebody happened to delete it
+  by hand, and nothing in the row said how long the credential was meant to
+  live. The row carries `expiresAt` now. The bearer resolver reads the
+  deadline in the same query that verifies the token and refuses a token past
+  it with the same `401 {"error":"Unauthorized"}` an unknown token gets — the
+  answer does not tell the caller that the token once existed, and the
+  refused token's `lastUsedAt` is not touched. A minted token gets the
+  default lifetime of **90 days** (`API_TOKEN_LIFETIME_MS`), the OAuth flow
+  mints its access tokens with the same deadline (`expires_in` in the token
+  response), and the token list shows the deadline as a badge. The migration
+  (`prisma/migrations/20261021000000_api_token_expiry/`) gives every existing
+  token the same lifetime, counted from its creation — a token that is older
+  than 90 days stops working at once. **This is a breaking change** for a
+  deployment whose API tokens are older than that: the client gets `401` and
+  has to mint a new token in the workspace settings.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
