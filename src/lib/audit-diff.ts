@@ -21,6 +21,8 @@
  *    only the emitted before/after are passed through `redactValue`. Two
  *    different secrets therefore still read as `changed` even when their masks
  *    coincide.
+ *  - COMPLETE MASK: a redacted value is masked outright — the mask neither
+ *    shows a character of the secret nor its length.
  *  - GRACEFUL: anything that is not a plain record is treated as `{}`, so the
  *    helpers never throw on `null`/`undefined`/scalar input.
  *
@@ -58,25 +60,57 @@ export type DiffOptions = {
 export type AuditRecord = Readonly<Record<string, unknown>>;
 
 /**
- * Normalised secret-field fragments. The field (whole dotted path) is
- * lower-cased and stripped of non-alphanumerics before matching, so `apiKey`,
- * `api_key` and `access-token` all normalise onto their fragment.
+ * Secret words, matched as a substring of the normalised key (lower-cased,
+ * separators stripped), so `apiKey`, `api_key` and `access-token` all
+ * normalise onto their fragment.
+ *
+ * This is the repository's shared secret-name list, kept next to the matcher
+ * that consumes it: the logger, the error reporter and the env diagnostics
+ * all mask the same names (`src/lib/redaction.ts` of the B35 fix owns that
+ * list; this module carries its own copy until the two are merged). `salt` and
+ * `bearer` are the two names the audit diff masked and the shared list does
+ * not carry.
  */
-const SENSITIVE_FRAGMENTS: readonly string[] = [
+const SECRET_KEY_FRAGMENTS: readonly string[] = [
   "password",
   "passwd",
-  "pwd",
+  "passphrase",
+  "passcode",
   "secret",
   "token",
   "apikey",
-  "authorization",
-  "credential",
-  "privatekey",
   "accesskey",
-  "clientsecret",
+  "privatekey",
+  "authorization",
   "cookie",
+  "credential",
+  "sessionid",
+  "dburl",
+  "databaseurl",
+  "connectionstring",
   "salt",
   "bearer",
+];
+
+/**
+ * Names that are secret on their own and are matched as a whole key: they are
+ * too short or too ambiguous to be matched inside a longer name (`auth` must
+ * not mask `author`, `pass` must not mask `bypass`, `pwd` must not mask
+ * `pwdReset`), while the compound names are already covered by the fragments
+ * `token`/`secret`/`cookie`/`credential`.
+ */
+const SECRET_KEY_NAMES: readonly string[] = [
+  "auth",
+  "pass",
+  "pwd",
+  "dsn",
+  "setcookie",
+  "credentials",
+  "signature",
+  "accesstoken",
+  "refreshtoken",
+  "sessiontoken",
+  "clientsecret",
 ];
 
 /** Mask for a redacted value; `[redacted]` for anything that is not a string. */
@@ -88,23 +122,26 @@ function normalizeKey(field: string): string {
   return field.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+const SECRET_KEY_NAME_SET = new Set(SECRET_KEY_NAMES);
+
 /**
  * True when `field` names something that should not be shown verbatim:
  * `password`, `apiKey`, `access_token`, `user.password`, `x-client-secret`, …
- * Deliberately conservative — `author`/`authorId`/`publicKey` are NOT secret.
+ * Deliberately conservative — `author`/`authorId`/`publicKey` are NOT secret:
+ * a fragment matches inside a longer name, a whole name only matches itself.
  */
 export function isSensitiveKey(field: string): boolean {
   const normalized = normalizeKey(field);
-  return SENSITIVE_FRAGMENTS.some((fragment) => normalized.includes(fragment));
+  if (SECRET_KEY_NAME_SET.has(normalized)) return true;
+  return SECRET_KEY_FRAGMENTS.some((fragment) => normalized.includes(fragment));
 }
 
-/** Mask a value: strings keep a small shape hint, everything else is opaque. */
+/**
+ * Mask a value outright — not one character of the secret stays readable.
+ * A string is masked as such, everything else as an opaque placeholder.
+ */
 function maskValue(value: unknown): unknown {
-  if (typeof value === "string") {
-    if (value.length <= 8) return STRING_MASK;
-    return `${value.slice(0, 4)}\u2026${value.slice(-2)}`;
-  }
-  return NON_STRING_MASK;
+  return typeof value === "string" ? STRING_MASK : NON_STRING_MASK;
 }
 
 /**
@@ -160,9 +197,13 @@ type WalkContext = {
   readonly maxDepth: number;
 };
 
-/** True when `path` (or its leaf) is sensitive or explicitly listed. */
+/**
+ * True when `path` (or its leaf) is sensitive or explicitly listed. The leaf
+ * is matched on its own as well, because a whole name (`auth`, `dsn`,
+ * `signature`, …) must not be swallowed by the dotted path in front of it.
+ */
 function isRedacted(path: string, leaf: string, context: WalkContext): boolean {
-  if (isSensitiveKey(path)) return true;
+  if (isSensitiveKey(path) || isSensitiveKey(leaf)) return true;
   return context.redactKeys.has(normalizeKey(path)) || context.redactKeys.has(normalizeKey(leaf));
 }
 
