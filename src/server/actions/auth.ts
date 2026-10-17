@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth";
 import { loginSchema, signupSchema } from "@/lib/validation";
 import { verifyTotp } from "@/lib/totp";
+import { encryptTwoFactorSecret, openTwoFactorSecret } from "@/lib/secrets";
 import { welcomeDoc } from "@/lib/welcome";
 import { uniqueWorkspaceSlug } from "@/server/unique";
 
@@ -84,8 +85,37 @@ export async function loginAction(
   // Two-factor gate: ask for a code, then verify it before issuing a session.
   if (user.twoFactorEnabled) {
     if (!code) return { requiresTwoFactor: true };
-    if (!user.twoFactorSecret || !verifyTotp(user.twoFactorSecret, code)) {
-      return { error: "Invalid two-factor code.", requiresTwoFactor: true };
+    // B05: the stored seed is an ENVELOPE (`v1:iv:tag:payload`), so it is
+    // opened BEFORE the code is checked — `verifyTotp` gets the seed, never the
+    // ciphertext. A value that cannot be opened (tampered ciphertext, a
+    // rotated `AUTH_SECRET`) fails closed: no session.
+    const stored = openTwoFactorSecret(user.twoFactorSecret);
+    if (stored.kind === "unreadable" || !verifyTotp(stored.secret, code)) {
+      // One text for every failed sign-in: a message of its own would confirm
+      // that the password was right (B24). The flag keeps the code field on
+      // screen so the user can try again.
+      return { error: "Incorrect email or password.", requiresTwoFactor: true };
+    }
+    // A pre-B05 cleartext seed has now proved itself: re-seal it in place so
+    // the migration completes without a re-enrolment. A failed write denies
+    // the login — the row must not stay in the cleartext state.
+    if (stored.kind === "legacy") {
+      try {
+        const sealed = encryptTwoFactorSecret(stored.secret);
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { twoFactorSecret: sealed },
+        });
+      } catch (error) {
+        // No AUTH_SECRET (nothing can be sealed) or a write that did not land:
+        // the seed stays cleartext, so the sign-in does not go through. The
+        // reason goes to the log; the answer stays the neutral one above.
+        console.error(
+          "[2fa] could not re-seal a legacy TOTP seed; the sign-in was denied.",
+          error,
+        );
+        return { error: "Incorrect email or password.", requiresTwoFactor: true };
+      }
     }
   }
 

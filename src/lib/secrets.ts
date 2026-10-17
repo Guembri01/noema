@@ -42,6 +42,58 @@ export function decryptSecret(envelope: string | null | undefined): string | nul
   }
 }
 
+/* ------------------------------------------------------------------------- *
+ * B05 — the 2FA seed is sealed at rest.
+ *
+ * A TOTP seed is a bearer credential: whoever holds it can mint valid codes
+ * for the account, so a database dump must not hand it out. The seed is
+ * therefore stored in the same AES-256-GCM envelope used for provider keys.
+ * ------------------------------------------------------------------------- */
+
+/** Version prefix of an envelope written by `encryptSecret`. */
+const ENVELOPE_PREFIX = "v1:";
+
+/**
+ * How a stored TOTP seed resolved.
+ *
+ * - `sealed` — an envelope that opened successfully.
+ * - `legacy` — a pre-B05 PLAINTEXT seed (base32, no envelope prefix). It is
+ *   returned as-is so an account that enrolled before B05 is not locked out;
+ *   the caller re-seals it on the next successful write.
+ * - `unreadable` — an envelope that could not be opened (tampered ciphertext
+ *   or a rotated `AUTH_SECRET`). Fail-closed: no code can ever match it.
+ */
+export type StoredTwoFactorSecret =
+  | { readonly kind: "sealed"; readonly secret: string }
+  | { readonly kind: "legacy"; readonly secret: string }
+  | { readonly kind: "unreadable"; readonly secret: null };
+
+/** Seal a TOTP seed for storage (B05). */
+export function encryptTwoFactorSecret(secret: string): string {
+  return encryptSecret(secret);
+}
+
+/**
+ * Open a stored TOTP seed (B05). Never throws.
+ *
+ * A base32 seed can never look like an envelope — the alphabet has no `:` and
+ * no lowercase letters — so the `v1:` prefix is an unambiguous marker.
+ */
+export function openTwoFactorSecret(
+  stored: string | null | undefined,
+): StoredTwoFactorSecret {
+  if (!stored) return { kind: "unreadable", secret: null };
+  if (!stored.startsWith(ENVELOPE_PREFIX)) {
+    console.warn(
+      "[2fa] the stored TOTP seed is not sealed; it is re-sealed on the next successful write.",
+    );
+    return { kind: "legacy", secret: stored };
+  }
+  const opened = decryptSecret(stored);
+  if (opened === null) return { kind: "unreadable", secret: null };
+  return { kind: "sealed", secret: opened };
+}
+
 /**
  * Versioned keyring & key rotation (docs/MISSING_FEATURES.md §17) — additive
  * to the legacy `v1:` envelope above.

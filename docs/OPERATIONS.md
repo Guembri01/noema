@@ -416,12 +416,108 @@ npm run backup                       # 1. fresh, verified dump FIRST
 npm ci                              # 3. deps + `prisma generate` (postinstall)
 npm run db:push                     # 4a. schema, dev path — OR —
 npx prisma migrate deploy           # 4b. schema, prod path (see note above)
+npm run backfill:2fa                # 4c. optional: seal the TOTP seeds that are still cleartext (§8.1)
 npm run db:seed                     # 5. only if seed data is missing
 npm run build                       # 6. prod build (stop `next dev` first — shared .next!)
 npm start -- --port 3200            # 7. serve
 curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 # 9. restart the cron driver + `npm run collab` so they pick up new code/env
 ```
+
+### 8.1 Seal the stored two-factor seeds (B05)
+
+Since B05 the column `User.twoFactorSecret` holds an AES-256-GCM envelope
+(`v1:<iv>:<tag>:<payload>`, key derived from `AUTH_SECRET`) instead of the raw
+base32 seed — a database dump no longer yields a usable 2FA seed. Rows written
+before that change still hold the raw seed. They are re-sealed on the next
+successful sign-in or re-enrolment, but an account that has not signed in since
+the upgrade keeps its cleartext seed; this one-off pass closes that window.
+
+```bash
+npm run backfill:2fa                 # seal every cleartext seed
+npm run backfill:2fa -- --dry-run    # report only, write nothing
+npm run backfill:2fa -- --confirm-key  # seal without key evidence (operator verified the key)
+npm run backfill:2fa -- --help       # the usage text
+```
+
+What it needs and what it does:
+
+| | |
+| --- | --- |
+| Needs | the **database** (not the app server) and the app's `AUTH_SECRET` — the very key the envelope key is derived from. `AUTH_SECRET` is read from the **environment of the process** and never from a file (see below) |
+| Mode | the other variables (above all `DATABASE_URL`) are read from the env files in the order Next.js resolves them: `.env.<mode>.local` > `.env.local` > `.env.<mode>` > `.env`, the first file that sets a variable wins. The **mode** is `production` unless `NODE_ENV` is `development` — the same rule Next.js applies to `next build` / `next start`, so the script reads the files of the running app |
+| Reads | every `User` row with a non-null `twoFactorSecret`, in batches of 250. The plan of a batch is applied and **dropped** before the next batch is read, so the memory use does not depend on the number of accounts — of the rows that need a human the run keeps the **first 100** of each kind and only **counts** the rest |
+| Writes | only the rows that hold a **cleartext** seed: each is re-sealed, then the new envelope is opened again and compared with the original seed before it is written |
+| Skips | rows that already carry an envelope (`v1:` **or** `v2:`) — the run is **idempotent**, run it as often as you like. A `v2:` envelope belongs to the keyring and is never touched |
+| Never | deletes a row, overwrites a seed it could not re-seal, or treats one account differently from another |
+
+**The key has to be proven before a row is written.** Sealing a cleartext row
+with a key the app does not use leaves that account unable to open its own
+seed — for good, because there is no recovery-code login. So the run writes
+**nothing** until it can prove that the `AUTH_SECRET` of this environment is
+the key the app uses:
+
+| Evidence | Meaning |
+| --- | --- |
+| a sealed row in `User.twoFactorSecret` opens | the key is the app's key |
+| a value in `AiProviderConfig.apiKeyEncrypted` opens | the key is the app's key — the same `AUTH_SECRET` seals the provider keys |
+| a value in `EmailConfig.passwordEncrypted` opens | the key is the app's key — the same `AUTH_SECRET` seals the SMTP password |
+
+Those three columns are all the evidence there is: a deployment whose two
+factor table holds nothing but legacy cleartext rows (a fresh rollout, or a
+secret rotated before the rollout) cannot prove anything about the key on its
+own. If none of them opens, the run prints what it checked, writes nothing
+and exits 1. `--confirm-key` is the way out for an operator who has verified
+the key by hand (out of band, against the running app) — it is the only way to
+seal without evidence, and it is recorded in the output.
+
+`AUTH_SECRET` is deliberately **not** read from an env file. Next.js loads four
+of them (`.env.<NODE_ENV>.local`, `.env.local`, `.env.<NODE_ENV>`, `.env`) and
+the first one that sets the variable wins — a deployment that keeps a
+different secret in `.env.production` than in `.env` is exactly how a backfill
+seals rows with a key the app cannot open. Export the app's `AUTH_SECRET`
+(`export AUTH_SECRET=…`) before running the script; `DATABASE_URL` may still
+come from a file.
+
+The script loads those files **in the order Next.js resolves them** — the
+highest priority first (`.env.<NODE_ENV>.local` > `.env.local` >
+`.env.<NODE_ENV>` > `.env`), because a loader that never overrides an
+already-set variable lets the *first* file it loads win. It therefore reads
+the same `DATABASE_URL` as the app. The order lives in one place
+(`src/lib/env-files.ts`), which the 2FA e2e fixture uses as well — the two
+cannot drift apart.
+
+Exit code and failure modes:
+
+| Case | What happens |
+| --- | --- |
+| `AUTH_SECRET` missing from the environment | the script stops **before** touching a single row and exits 1 |
+| `AUTH_SECRET` only in an env file | the script stops **before** touching a single row and exits 1 — it never takes the key from a file |
+| Database unreachable | the script prints the reason and exits 1 — no row is touched |
+| No envelope in the database opens with the `AUTH_SECRET` of this environment | **pre-flight**: the run prints the columns it checked, writes nothing and exits 1 — sealing the cleartext rows with a key the app does not use would leave those accounts unable to open their own seed. Run the script with the app's `AUTH_SECRET`, or with `--confirm-key` if you have verified the key by hand |
+| A row cannot be re-sealed (sealing error, or an envelope that does not open back to the same seed) | the row stays **exactly as it is** — never deleted, never overwritten — is listed in the report, and the run exits 1 |
+| A row holds a `v1:` envelope that does not open (rotated `AUTH_SECRET`, tampered row) | the row is left untouched and reported as `UNREADABLE`; the account owner has to re-enrol two-factor authentication, or the operator has to restore the matching `AUTH_SECRET` |
+| An unknown option (`--dryrun` instead of `--dry-run`) | the script refuses the option and exits 1 — a typo must never fall through to a writing run |
+
+The report lists the rows that need a human — at most **100** of each kind
+(`UNREADABLE`, `FAILED`) — and then the **total**: a table with a problem on
+every row produces a report with a hundred lines and a count, not one line per
+account. Nothing is lost by that: the rows stay in the database exactly as
+they are, and the run exits 1.
+
+A dry run ends with `Nothing was written (dry run).` — never with the line
+that says the migration is done.
+
+**One key, three secrets.** The envelope key is derived from `AUTH_SECRET`
+alone, so the TOTP seed, the AI provider keys and the SMTP password share it:
+whoever learns the key opens all three at once. Rotating `AUTH_SECRET`
+therefore breaks every envelope in the database at the same time — re-seal the
+seeds with this script and re-enter the provider keys and the SMTP password.
+
+The script is `scripts/backfill-2fa-secrets.mjs`; the decisions (the key
+proof, the per-row plan, the state of the run and the report) live in
+`scripts/backfill-2fa-secrets-lib.mjs` and are unit-tested by
+`scripts/backfill-2fa-secrets-lib.test.mjs`.
 
 ## 9. Incident quick reference
 
@@ -433,6 +529,7 @@ curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 | Invites never arrive | settings “Email & invitations” → status shows `environment SMTP` / `not configured`; run `npm run check:mail`; delivery log error text (10 s connect / 20 s socket timeouts) |
 | Collaborative editing refuses everything (4401) | `AUTH_SECRET` missing/short in the relay’s env; wrong `NEXT_PUBLIC_COLLAB_URL`; 4403 = page scope/permission, not a secret problem |
 | Backup exits 1 | the script says why: no `pg_dump`, dump < 1 KiB, or missing core tables — it deletes the bad file rather than keeping it. `npm run backup -- --dry-run` shows what a run would do |
+| Two-factor codes are rejected after the upgrade | the seed is stored sealed (B05): a `v1:` envelope that does not open means a **different `AUTH_SECRET`** than the one the seed was sealed with, or a tampered row. `npm run backfill:2fa` lists those rows as `UNREADABLE`; the account owner re-enrols, or the operator restores the matching `AUTH_SECRET` |
 | Collaborative socket closed 4400 | `APP_ORIGINS` is set and the client’s `Origin` isn’t on the list (checked pre-auth) — add the origin or unset `APP_ORIGINS` |
 | Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
 | `EADDRINUSE` / weird build output | dev and prod share `.next` and the ports — exactly one writer at a time |
@@ -459,6 +556,7 @@ nothing was executed against live servers):
 | 7 | `/api/health` 200/503 shapes, 2 s ping, `no-store`, no auth/disclosure, compose healthcheck | `src/app/api/health/route.ts` · `docker-compose.yml` |
 | 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
 | 8 | single `20260113000000_init` migration vs push-evolved schema | `prisma/migrations/` · `docs/specs/engineering-hardening.md:149,367-373` |
+| 8.1 | `npm run backfill:2fa`, `--dry-run`, `--confirm-key`, `--help`, idempotence (`v1:`/`v2:` rows skipped), fail-closed (unsealable rows left untouched, exit 1), the key proof (no envelope opens ⇒ nothing is written, exit 1; `--confirm-key` overrides it) | `package.json` · `scripts/backfill-2fa-secrets.mjs` · `scripts/backfill-2fa-secrets-lib.mjs` (+ `scripts/backfill-2fa-secrets-lib.test.mjs`) |
 | all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
 
 **Not verified by execution (be explicit when relying on them):** the backup →
@@ -466,6 +564,17 @@ restore drill (§2.2), the systemd/crontab drivers (§3.2/3.3 — standard tooli
 not repo code), and `docker compose --profile app up --build` end-to-end (the
 build itself was proven by B74: real build + run on 3202 + health probe; this
 guide did not rebuild).
+
+**Verified by execution (§8.1):** the two-factor backfill was run against a
+throwaway Postgres 16 container that carried the app's `User` table (the other
+tables are not touched by the script). A cleartext seed was re-sealed — the
+envelope was opened back to the very same seed before it was written — an
+already-sealed row was skipped, a tampered envelope was reported as
+`UNREADABLE` and left untouched, a run with a **rotated `AUTH_SECRET` touched
+nothing** (the pre-flight stopped it), `--dry-run` wrote nothing, a second run
+sealed nothing (idempotent), 304 rows were sealed in one run across the
+batch boundary (250), and an unknown option (`--dryrun`) was refused with exit
+1. The app server was not involved: the script needs the database only.
 
 **Observed staleness (not fixed here):** `docs/specs/templates.md` refers to a
 `check:share-cron` npm script that does **not** exist in `package.json` — the

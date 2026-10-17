@@ -13,12 +13,14 @@ import {
   describeSecretStatus,
   encrypt,
   encryptSecret,
+  encryptTwoFactorSecret,
   generateSecret,
   hashToken,
   maskConnString,
   maskSecret,
   missingSecrets,
   needsRotation,
+  openTwoFactorSecret,
   parseEnvSecret,
   randomToken,
   redact,
@@ -244,6 +246,97 @@ describe("secrets envelope — empty / missing AUTH_SECRET", () => {
     const envelope = encryptSecret("");
     expect(envelope).toMatch(/^v1:[^:]+:[^:]+:$/);
     expect(decryptSecret(envelope)).toBeNull();
+  });
+});
+
+/**
+ * B05 — the 2FA seed is sealed at rest (`encryptTwoFactorSecret` /
+ * `openTwoFactorSecret`).
+ *
+ * The seed is a bearer credential: whoever holds it can mint valid codes. The
+ * stored value must therefore be an envelope, never the raw base32 seed, while
+ * rows written before the fix (a raw seed) keep working.
+ */
+describe("two-factor secret — sealed at rest", () => {
+  const SEED = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+
+  it("seals a seed into an envelope that never contains the raw seed", () => {
+    const sealed = encryptTwoFactorSecret(SEED);
+    expect(sealed).toMatch(/^v1:[^:]+:[^:]+:[^:]+$/);
+    expect(sealed).not.toContain(SEED);
+  });
+
+  it("opens a sealed seed back to the raw seed", () => {
+    expect(openTwoFactorSecret(encryptTwoFactorSecret(SEED))).toEqual({
+      kind: "sealed",
+      secret: SEED,
+    });
+  });
+
+  it("uses a fresh IV per seal (the same seed seals to different envelopes)", () => {
+    const first = encryptTwoFactorSecret(SEED);
+    const second = encryptTwoFactorSecret(SEED);
+    expect(first).not.toBe(second);
+    expect(openTwoFactorSecret(first).secret).toBe(SEED);
+    expect(openTwoFactorSecret(second).secret).toBe(SEED);
+  });
+
+  it("treats a pre-B05 cleartext seed as legacy instead of locking the user out", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(openTwoFactorSecret(SEED)).toEqual({
+      kind: "legacy",
+      secret: SEED,
+    });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("fails closed on a corrupt envelope (no seed, no code can match)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sealed = encryptTwoFactorSecret(SEED);
+    const parts = sealed.split(":");
+    parts[3] = Buffer.from("tampered").toString("base64");
+    expect(openTwoFactorSecret(parts.join(":"))).toEqual({
+      kind: "unreadable",
+      secret: null,
+    });
+    warn.mockRestore();
+  });
+
+  it("fails closed on an envelope sealed with another AUTH_SECRET", () => {
+    const sealed = encryptTwoFactorSecret(SEED);
+    process.env.AUTH_SECRET = SECRET_B;
+    expect(openTwoFactorSecret(sealed)).toEqual({
+      kind: "unreadable",
+      secret: null,
+    });
+  });
+
+  it("fails closed on a missing value", () => {
+    expect(openTwoFactorSecret(null)).toEqual({
+      kind: "unreadable",
+      secret: null,
+    });
+    expect(openTwoFactorSecret(undefined)).toEqual({
+      kind: "unreadable",
+      secret: null,
+    });
+    expect(openTwoFactorSecret("")).toEqual({
+      kind: "unreadable",
+      secret: null,
+    });
+  });
+
+  it("fails closed (and never throws) when AUTH_SECRET is missing", () => {
+    const sealed = encryptTwoFactorSecret(SEED);
+    delete process.env.AUTH_SECRET;
+    // The key cannot be derived, so the envelope cannot be opened — the seed
+    // stays unreachable instead of leaking through an exception.
+    expect(() => openTwoFactorSecret(sealed)).not.toThrow();
+    expect(openTwoFactorSecret(sealed)).toEqual({
+      kind: "unreadable",
+      secret: null,
+    });
   });
 });
 
