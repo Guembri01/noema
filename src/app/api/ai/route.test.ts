@@ -127,6 +127,7 @@ const permissions = vi.hoisted(() => ({
   >(),
 }));
 const provider = vi.hoisted(() => ({
+  resolveAiConfigForUser: vi.fn(),
   resolveAiConfig: vi.fn<(workspaceId?: string | null) => Promise<unknown>>(),
   chatComplete: vi.fn<(input: ChatInput, config: unknown) => Promise<unknown>>(),
 }));
@@ -145,6 +146,10 @@ vi.mock("@/lib/ai-provider", () => ({
   AI_NOT_CONFIGURED: "AI is not configured.",
   chatComplete: provider.chatComplete,
   resolveAiConfig: provider.resolveAiConfig,
+  // The route resolves the provider through the workspace-scoped helper
+  // (B13); the mock has to offer it, or the route gets a function that is
+  // not there.
+  resolveAiConfigForUser: provider.resolveAiConfigForUser,
 }));
 
 import { POST } from "./route";
@@ -180,6 +185,8 @@ beforeEach(() => {
   guard.rateLimit.mockReturnValue(null);
   permissions.getWorkspaceAccess.mockResolvedValue({ role: "GUEST" });
   provider.resolveAiConfig.mockResolvedValue(CONFIG);
+  // The route resolves the provider through the workspace-scoped helper.
+  provider.resolveAiConfigForUser.mockResolvedValue(CONFIG);
   provider.chatComplete.mockResolvedValue({ ok: true, text: "MODEL OUTPUT" });
 });
 
