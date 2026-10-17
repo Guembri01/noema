@@ -99,6 +99,13 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   and the response is capped in size. **A picture from a host that is not on
   the allowlist is no longer shown** — add the host to `EXTERNAL_IMAGE_ALLOWLIST`
   to have it back.
+- The HTML serializer checks the scheme of the href and the colour. The
+  serializer of the documents escaped the **text** of an href, not its
+  **scheme** — a `javascript:` href survived, unlike in the live export, which
+  uses the shared allowlist. The serializer now uses the same allowlist, and
+  the `style` attribute is limited to the ten design tokens and a hex colour —
+  the two forms the tree actually writes. An unsafe link keeps its text: the
+  anchor is dropped, the label stays.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.

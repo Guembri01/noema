@@ -7,7 +7,9 @@
 
 import { docToMarkdown, type BlockDoc, type RichNode } from "./blocks";
 import { formatCaption } from "./code-block";
+import { HUE_NAMES } from "./palette";
 import { DEFAULT_PULL_QUOTE_SIZE, isPullQuoteSize } from "./pull-quote";
+import { sanitizeHref } from "./validation";
 
 /**
  * Recognise the optional `{lineNumbers caption="…"}` fence options the editor
@@ -261,6 +263,29 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * The colours a `style` attribute may carry: the design system's tag
+ * foreground tokens (`var(--tag-<hue>-fg)`) the editor writes, and a plain
+ * hex value for a document stored before the token migration.
+ */
+const ALLOWED_STYLE_COLORS = new Set(HUE_NAMES.map((hue) => `var(--tag-${hue}-fg)`));
+
+/** `#rgb`, `#rgba`, `#rrggbb` or `#rrggbbaa` - the legacy stored colour form. */
+const HEX_COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+/**
+ * The colour a `textStyle` mark may render, or `null` when the value is not
+ * on the allowlist. A stored mark can therefore never push a second CSS
+ * declaration (or a `url()`) into the exported `style` attribute.
+ */
+function styleColor(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim();
+  if (!value) return null;
+  if (ALLOWED_STYLE_COLORS.has(value) || HEX_COLOR.test(value)) return value;
+  return null;
+}
+
 function inlineHtml(nodes: RichNode[] = []): string {
   return nodes
     .map((node) => {
@@ -279,10 +304,18 @@ function inlineHtml(nodes: RichNode[] = []): string {
         else if (mark.type === "strike") html = `<s>${html}</s>`;
         else if (mark.type === "code") html = `<code>${html}</code>`;
         else if (mark.type === "highlight") html = `<mark>${html}</mark>`;
-        else if (mark.type === "textStyle" && mark.attrs?.color)
-          html = `<span style="color:${escapeHtml(String(mark.attrs.color))}">${html}</span>`;
-        else if (mark.type === "link" && mark.attrs?.href)
-          html = `<a href="${escapeHtml(String(mark.attrs.href))}" target="_blank" rel="noreferrer noopener">${html}</a>`;
+        else if (mark.type === "textStyle" && mark.attrs?.color) {
+          // Only an allowlisted colour reaches the `style` attribute; the text
+          // itself always survives.
+          const color = styleColor(mark.attrs.color);
+          if (color) html = `<span style="color:${escapeHtml(color)}">${html}</span>`;
+        } else if (mark.type === "link" && mark.attrs?.href) {
+          // `sanitizeHref` is the shared scheme allowlist: a `javascript:`
+          // (or `data:`, protocol-relative, encoded-colon) target loses its
+          // anchor, the label survives - the rule `html-export.ts` uses.
+          const href = sanitizeHref(mark.attrs.href);
+          if (href) html = `<a href="${escapeHtml(href)}" target="_blank" rel="noreferrer noopener">${html}</a>`;
+        }
       }
       return html;
     })
@@ -352,7 +385,13 @@ function blockHtml(node: RichNode): string {
     case "bookmark":
     case "embed": {
       const url = String(node.attrs?.url ?? "#");
-      return `<p><a href="${escapeHtml(url)}">${escapeHtml(String(node.attrs?.title ?? url))}</a></p>`;
+      // The same scheme allowlist as the inline link: an unsafe target keeps
+      // its title and loses the anchor.
+      const href = sanitizeHref(url);
+      const title = String(node.attrs?.title ?? url);
+      return href
+        ? `<p><a href="${escapeHtml(href)}">${escapeHtml(title)}</a></p>`
+        : `<p>${escapeHtml(title)}</p>`;
     }
     case "pageEmbed":
       return `<p><em>Synced view: ${escapeHtml(String(node.attrs?.title ?? ""))}</em></p>`;
