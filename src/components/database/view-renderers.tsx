@@ -107,7 +107,7 @@ import {
   type FormIssue,
   type FormSchema,
 } from "@/lib/form-view";
-import { OPTION_COLORS, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
+import { optionEdge, optionInk, optionSurface, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
 
 /* ---------------------------------------------------------------------------
    View class & motion maps (design system §5/§6)
@@ -851,7 +851,7 @@ export function TableView({
   const renderRow = (row: DBRow, rowIndex: number) => {
     const rowStripe = (() => {
       const color = colorOf(row);
-      return color ? `3px solid ${OPTION_COLORS[color] ?? color}` : undefined;
+      return color ? `3px solid ${optionEdge(color)}` : undefined;
     })();
     // Conditional formatting from the view's colour rules: the engine
     // picks the first matching "row" rule and returns palette names.
@@ -862,10 +862,10 @@ export function TableView({
     );
     const rowColors: { backgroundColor?: string; color?: string } = {};
     if (resolved.backgroundColor) {
-      rowColors.backgroundColor = `${OPTION_COLORS[resolved.backgroundColor] ?? "#8a8a85"}22`;
+      rowColors.backgroundColor = optionSurface(resolved.backgroundColor);
     }
     if (resolved.textColor) {
-      rowColors.color = OPTION_COLORS[resolved.textColor];
+      rowColors.color = optionInk(resolved.textColor);
     }
     return (
       <tr
@@ -1009,7 +1009,7 @@ export function TableView({
                 type="button"
                 title={t(locale, "deleteRow")}
                 onClick={() => removeRow(row.id)}
-                className="flex h-6 w-6 items-center justify-center rounded text-muted hover:text-red-500"
+                className="flex h-6 w-6 items-center justify-center rounded text-muted hover:text-danger"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
@@ -1409,8 +1409,8 @@ export function ListView({
                   <span
                     className="rounded px-1.5 py-0.5 text-xs"
                     style={{
-                      backgroundColor: `${OPTION_COLORS[option.color] ?? "#8a8a85"}22`,
-                      color: OPTION_COLORS[option.color] ?? "#8a8a85",
+                      backgroundColor: optionSurface(option.color),
+                      color: optionInk(option.color),
                     }}
                   >
                     {option.name}
@@ -1881,7 +1881,7 @@ export function BoardView({
           borderLeft: (() => {
             const color = colorOf(row);
             return color
-              ? `3px solid ${OPTION_COLORS[color] ?? color}`
+              ? `3px solid ${optionEdge(color)}`
               : undefined;
           })(),
         }}
@@ -1975,7 +1975,7 @@ export function BoardView({
           <span
             className="inline-block h-2.5 w-2.5 rounded-sm"
             style={{
-              backgroundColor: OPTION_COLORS[column.color] ?? "#8a8a85",
+              backgroundColor: optionInk(column.color),
             }}
           />
           <span className="font-medium" data-testid={`board-column-${column.key}`}>
@@ -2610,7 +2610,7 @@ export function FormView({
             <div className="flex items-center gap-1 text-sm font-medium">
               <span>{field.label}</span>
               {field.required && (
-                <span className="text-red-500" aria-hidden="true">
+                <span className="text-danger" aria-hidden="true">
                   *
                 </span>
               )}
@@ -2627,7 +2627,7 @@ export function FormView({
             {issue && (
               <ul
                 data-testid={`form-issue-${field.propertyId}`}
-                className="space-y-0.5 text-xs text-red-500"
+                className="space-y-0.5 text-xs text-danger"
               >
                 {issue.errors.map((error) => (
                   <li key={error.code}>{error.message}</li>

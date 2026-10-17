@@ -2,6 +2,7 @@ import type { PropertyType } from "@prisma/client";
 import type { RelationData } from "@/server/queries";
 import type { GeoValue } from "@/lib/geo";
 import type { UniqueIdConfig } from "@/lib/unique-id";
+import { isTagHue, type TagHue } from "@/lib/design-tokens";
 
 /**
  * The database shape shared by the view renderers.
@@ -93,15 +94,52 @@ export const COLOR_CHOICES = [
 export const CONTROL_CLASS =
   "h-8 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent";
 
-/** Option chip colours, shared by the table/board cells and the chart series. */
+/**
+ * Resolve a persisted colour id to a hue in the shared tag palette
+ * (`@/lib/design-tokens`). The stored ids are exactly `COLOR_CHOICES`; anything
+ * else — a stale id, a future hue, `null` — reads as `gray`, so a swatch is
+ * never left unstyled. This is the single normaliser every option accessor
+ * below calls, so a chip, a board dot and a chart series all agree.
+ */
+export function optionHue(color: string | null | undefined): TagHue {
+  return isTagHue(color) ? color : "gray";
+}
+
+/** The tag ink (`--tag-<hue>-fg`) for a persisted option colour id. */
+export function optionInk(color: string | null | undefined): string {
+  return `var(--tag-${optionHue(color)}-fg)`;
+}
+
+/** The tag surface (`--tag-<hue>-bg`) for a persisted option colour id. */
+export function optionSurface(color: string | null | undefined): string {
+  return `var(--tag-${optionHue(color)}-bg)`;
+}
+
+/** The tag edge (`--tag-<hue>-bd`) for a persisted option colour id. */
+export function optionEdge(color: string | null | undefined): string {
+  return `var(--tag-${optionHue(color)}-bd)`;
+}
+
+/**
+ * Option colour catalogue, shared by the table/board cells, the list chips and
+ * the chart series.
+ *
+ * The keys are the persisted colour ids (`COLOR_CHOICES`) and are frozen: a
+ * stored option `color` round-trips through the DB as one of these names, so
+ * renaming a key would orphan every option that already uses it. The values used
+ * to be raw hex and are now `var(--tag-<hue>-fg)` expressions resolved by
+ * `tokens.css`, so light, dark and high-contrast stay in sync without a second
+ * colour source. Reach for this map when a solid hue paint is wanted; use
+ * `optionSurface` / `optionEdge` for the softer `-bg` / `-bd` tokens.
+ */
 export const OPTION_COLORS: Record<string, string> = {
-  gray: "#8a8a85",
-  blue: "#2563eb",
-  green: "#16a34a",
-  red: "#dc2626",
-  yellow: "#ca8a04",
-  orange: "#ea580c",
-  purple: "#7c3aed",
-  pink: "#db2777",
-  brown: "#9f6b53",
+  gray: "var(--tag-gray-fg)",
+  blue: "var(--tag-blue-fg)",
+  green: "var(--tag-green-fg)",
+  red: "var(--tag-red-fg)",
+  yellow: "var(--tag-yellow-fg)",
+  orange: "var(--tag-orange-fg)",
+  purple: "var(--tag-purple-fg)",
+  pink: "var(--tag-pink-fg)",
+  brown: "var(--tag-brown-fg)",
 };

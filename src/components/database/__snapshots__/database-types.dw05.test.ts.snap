@@ -1,0 +1,15 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`option colour catalogue > keeps the persisted option-colour id list frozen (snapshot) 1`] = `
+[
+  "gray",
+  "blue",
+  "green",
+  "red",
+  "yellow",
+  "orange",
+  "purple",
+  "pink",
+  "brown",
+]
+`;
