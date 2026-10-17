@@ -75,39 +75,79 @@ export interface McpResource {
   readonly mimeType: string;
 }
 
+/**
+ * A resource of the catalogue together with the scope a caller needs to read
+ * it. The scope is the one the equivalent read tool requires — the templates
+ * are the same reads in a different dress.
+ */
+interface McpResourceSpec extends McpResource {
+  /** Scope ids a caller must hold to read the resource. */
+  readonly requiredScopes: readonly string[];
+}
+
 const JSON_MIME = "application/json";
 
 /**
- * The resources the server exposes, in presentation order. Each template uses
- * a single `{var}` placeholder per path segment so a concrete URI maps back to
- * exactly one template.
+ * The resources the server exposes, in presentation order, each with the scope
+ * it needs. Every template uses a single `{var}` placeholder per path segment
+ * so a concrete URI maps back to exactly one template.
+ *
+ * The scope lives *here*, next to the template, so the catalogue and the
+ * authorization gate cannot drift apart: there is exactly one list, and a
+ * template without a scope does not exist in it — {@link authCheckResource}
+ * fails closed on a template it does not know.
  */
-export const RESOURCE_CATALOG: readonly McpResource[] = [
+const RESOURCE_SPECS: readonly McpResourceSpec[] = [
   {
     uriTemplate: "notion://pages/{pageId}",
     name: "Page",
     description: "A page and its blocks.",
     mimeType: JSON_MIME,
+    requiredScopes: ["read:pages"],
   },
   {
     uriTemplate: "notion://pages/{pageId}/comments",
     name: "Page comments",
     description: "The comment threads attached to a page.",
     mimeType: JSON_MIME,
+    requiredScopes: ["read:comments"],
   },
   {
     uriTemplate: "notion://databases/{databaseId}",
     name: "Database",
     description: "A database and its property schema.",
     mimeType: JSON_MIME,
+    requiredScopes: ["read:databases"],
   },
   {
     uriTemplate: "notion://databases/{databaseId}/rows",
     name: "Database rows",
     description: "The rows stored in a database.",
     mimeType: JSON_MIME,
+    requiredScopes: ["read:databases"],
   },
 ];
+
+/**
+ * The resources the server exposes, in presentation order — the descriptor a
+ * client sees.
+ */
+export const RESOURCE_CATALOG: readonly McpResource[] = RESOURCE_SPECS.map(
+  ({ uriTemplate, name, description, mimeType }) => ({
+    uriTemplate,
+    name,
+    description,
+    mimeType,
+  }),
+);
+
+/**
+ * The scope a resource template needs — the same one its read tool needs.
+ * `undefined` for a template the catalogue does not know.
+ */
+export function resourceScopes(template: string): readonly string[] | undefined {
+  return RESOURCE_SPECS.find((spec) => spec.uriTemplate === template)?.requiredScopes;
+}
 
 /**
  * The tool catalogue, in presentation order: the read tools first, then the
@@ -614,7 +654,7 @@ export interface AuthDecision {
   readonly allowed: boolean;
   /** Required scopes the caller does not effectively hold. */
   readonly missing: string[];
-  readonly reason?: "unknown_tool" | "missing_scope";
+  readonly reason?: "unknown_tool" | "unknown_resource" | "missing_scope";
 }
 
 /**
@@ -629,6 +669,30 @@ export function authCheck(tool: McpTool | string, context: AuthContext): AuthDec
 
   const effective = new Set(expandScopes(context.scopes));
   const missing = resolved.requiredScopes.filter((scope) => !effective.has(scope));
+  if (missing.length === 0) return { allowed: true, missing: [] };
+  return { allowed: false, missing, reason: "missing_scope" };
+}
+
+/**
+ * Authorize a resource read against the caller's granted scopes.
+ *
+ * A resource is a read path like a tool, so it needs the scope of the read
+ * tool it mirrors — `notion://pages/{pageId}` needs `read:pages`,
+ * `notion://pages/{pageId}/comments` needs `read:comments`, the two database
+ * templates need `read:databases`. The granted list is expanded through the
+ * shared scope hierarchy first, so a `write:pages` scope also satisfies
+ * `read:pages`. An unknown template fails closed.
+ */
+export function authCheckResource(template: string, context: AuthContext): AuthDecision {
+  const required = resourceScopes(template);
+  // Fail closed: a template without a scope is readable by nobody — it is a
+  // template the catalogue does not know.
+  if (!required || required.length === 0) {
+    return { allowed: false, missing: [], reason: "unknown_resource" };
+  }
+
+  const effective = new Set(expandScopes(context.scopes));
+  const missing = required.filter((scope) => !effective.has(scope));
   if (missing.length === 0) return { allowed: true, missing: [] };
   return { allowed: false, missing, reason: "missing_scope" };
 }
