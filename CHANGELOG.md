@@ -11,6 +11,18 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-10-17
+
+Repository housekeeping after the first public release. No product behaviour
+changed, and the desktop build is the same code as 1.4.0.
+
+### Changed
+
+- Sample URLs in the `src/lib` link fixtures and their JSDoc examples no longer
+  name `noema.app`, a domain the project does not own. They use
+  `https://noema.example.com`, which RFC 2606 reserves for documentation and
+  which the rest of the suite already used.
+
 ## [1.4.0] — 2026-10-16
 
 The first public release: the site, the desktop app, and the parity tracker.
@@ -69,5 +81,6 @@ The first public release: the site, the desktop app, and the parity tracker.
 - `npm run check:secrets` fails on any credential-shaped value in a tracked
   file, and on any tracked `.env`.
 
-[Unreleased]: https://github.com/Guembri01/noema/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/Guembri01/noema/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/Guembri01/noema/releases/tag/v1.4.1
 [1.4.0]: https://github.com/Guembri01/noema/releases/tag/v1.4.0

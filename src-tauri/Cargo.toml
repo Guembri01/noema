@@ -1,6 +1,6 @@
 [package]
 name = "noema-desktop"
-version = "1.4.0"
+version = "1.4.1"
 description = "Noema — local-first workspace, as an installable desktop app"
 authors = ["Bilel Guembri", "Wissal Ben Othmen"]
 edition = "2021"

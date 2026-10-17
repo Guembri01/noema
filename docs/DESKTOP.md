@@ -412,8 +412,8 @@ The build produces two installers in `src-tauri/target/release/bundle/`:
 
 | Artifact | Size | Notes |
 |---|---|---|
-| `nsis/Noema_1.4.0_x64-setup.exe` | 64.5 MB | Per-user install — **no admin prompt**, no UAC |
-| `msi/Noema_1.4.0_x64_en-US.msi` | 114.7 MB | For managed deployment (MSI/GPO) |
+| `nsis/Noema_1.4.1_x64-setup.exe` | 73.36 MiB | Per-user install — **no admin prompt**, no UAC |
+| `msi/Noema_1.4.1_x64_en-US.msi` | 131.35 MiB | For managed deployment (MSI/GPO) |
 
 Verify the *installed* result rather than the build output — they are not the same
 thing, and every failure this project has had in the installer only ever appeared in
@@ -421,7 +421,7 @@ the installed app:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/desktop/verify-install.ps1 `
-  -Setup src-tauri\target\release\bundle\nsis\Noema_1.4.0_x64-setup.exe -UninstallFirst
+  -Setup src-tauri\target\release\bundle\nsis\Noema_1.4.1_x64-setup.exe -UninstallFirst
 ```
 
 It installs silently, starts the shell, finds the supervised server's loopback port,
@@ -534,9 +534,9 @@ below was executed, not inferred.
 | `npm run desktop:preflight` | all checks pass (rustc 1.99.1, MSVC Build Tools 2026, WebView2 155, icons, bundled runtime, payload) |
 | `cargo fmt --check` · `cargo clippy -D warnings` | clean |
 | `cargo test --all-features` | 26 tests pass (layout, loopback URLs, env contract, backoff bounds, free-port behaviour and the preferred-port fallback, log ring, connection-string redaction and quote-normalisation, preferred-port plausibility, `Send` guards, readiness messaging) |
-| `npm run desktop:prepare` | 368.8 MB payload staged and validated |
+| `npm run desktop:prepare` | 369.0 MB payload staged and validated |
 | `npm run desktop:smoke` | boots the packaged payload on the bundled runtime, migrates, serves `/api/health` 200 and `/login` 200 |
-| `cargo tauri build` | `Noema_1.4.0_x64-setup.exe` (73.30 MiB) + `Noema_1.4.0_x64_en-US.msi` (131.31 MiB) |
+| `cargo tauri build` | `Noema_1.4.1_x64-setup.exe` (73.36 MiB) + `Noema_1.4.1_x64_en-US.msi` (131.35 MiB) |
 | **Installed the NSIS installer** | exit 0, per-user, **no admin prompt** → `%LOCALAPPDATA%\Noema\` + Start Menu shortcut + `uninstall.exe` |
 | **Launched the installed app** | supervised server on a loopback port, `/api/health → 200 {"ok":true,"db":"up"}`, `/login → 200` (16,903 bytes) |
 | **Relaunched the installed app** | same loopback port (61621 → 61621), so the app's browser-side state survives a restart; with that port occupied it logs `port 61621 is in use, serving on 62537 instead` and re-points the preference |
