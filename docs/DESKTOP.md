@@ -277,16 +277,30 @@ what that means for the user (SmartScreen) and what is already wired for signing
 
 ## 9. Verified on a real machine (Windows x64, this repo's environment)
 
-Recorded because "it builds in CI" and "it runs" are different claims:
+Recorded because "it builds in CI" and "it runs" are different claims. Every row
+below was executed, not inferred.
 
 | Step | Result |
 |---|---|
-| `npm run desktop:preflight` | all checks pass (rustc 1.99.1, MSVC Build Tools 2026, WebView2 155, icons, runtime, payload) |
+| `npm run desktop:preflight` | all checks pass (rustc 1.99.1, MSVC Build Tools 2026, WebView2 155, icons, bundled runtime, payload) |
 | `cargo fmt --check` · `cargo clippy -D warnings` | clean |
-| `cargo test --all-features` | 16 tests pass (layout, loopback URLs, env contract incl. the database URL, backoff bounds, free-port behaviour, log ring, connection-string redaction, `Send` guards) |
-| `cargo tauri build --bundles nsis,msi` | `Noema_1.4.0_x64-setup.exe` (50.4 MB) + `Noema_1.4.0_x64_en-US.msi` (93.4 MB) |
-| `npm run desktop:smoke` | the packaged payload boots on the bundled runtime, migrates the database, and serves `/login` over HTTP |
+| `cargo test --all-features` | 18 tests pass (layout, loopback URLs, env contract, backoff bounds, free-port behaviour, log ring, connection-string redaction and quote-normalisation, `Send` guards, readiness messaging) |
+| `npm run desktop:prepare` | 303.5 MB payload staged and validated |
+| `npm run desktop:smoke` | boots the packaged payload on the bundled runtime, migrates, serves `/api/health` 200 and `/login` 200 |
+| `cargo tauri build` | `Noema_1.4.0_x64-setup.exe` (62.9 MB) + `Noema_1.4.0_x64_en-US.msi` (112.9 MB) |
+| **Installed the NSIS installer** | exit 0, per-user, **no admin prompt** → `%LOCALAPPDATA%\Noema\` + Start Menu shortcut + `uninstall.exe` |
+| **Launched the installed app** | supervised server on a loopback port, `/api/health → 200 {"ok":true,"db":"up"}`, `/login → 200` (16,903 bytes) |
+| **Launched with no env vars at all** | `db: up` from `preferences.json`, and the shell created `logs/ uploads/ backups/` |
+| Failure path | with a bad database URL the app stayed on the bootstrap page and logged "the local server is running but reports unhealthy (HTTP 503)" instead of showing an empty window |
 | site version | `next build` succeeds (40 routes) and emits no `standalone/` output |
+
+Two environment notes worth keeping:
+
+- **Running the app is the only way to find boot bugs.** Compilation, `clippy` and
+  the test suite were all green while the installed app crashed instantly three
+  separate times (invalid plugin config, duplicate window label, quoted URL).
+- **`panic = "abort"` hides everything.** The panic hook exists because the first
+  installed run died with `0xC0000409` and wrote no log at all.
 
 ## 10. Known limits (honest list)
 
