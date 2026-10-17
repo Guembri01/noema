@@ -52,10 +52,9 @@ function textStream(body: string): Response {
  * proposal through the real server actions (the only path that changes data).
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "chat-stream", 20, 60_000);
-  if (limited) return limited;
-
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "chat-stream", 20, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let payload: {

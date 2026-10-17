@@ -36,10 +36,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
-  const limited = rateLimit(request, "export-workspace", 5, 60_000);
-  if (limited) return limited;
-
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "export-workspace", 5, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { slug } = await params;
