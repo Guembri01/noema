@@ -241,6 +241,19 @@ export function formatCombo(combo: string, options: PlatformOptions = {}): strin
 }
 
 /**
+ * The display combo for a binding id, or `""` when no such binding exists.
+ *
+ * The one way to put a chord on screen: a surface names the binding it mirrors
+ * and the registry decides the text. Hardcoding `"Ctrl K"` next to a button is
+ * how a hint drifts from the key that actually fires — and how it ends up wrong
+ * on macOS.
+ */
+export function formatShortcut(id: string, options: PlatformOptions = {}): string {
+  const binding = DEFAULT_SHORTCUTS.find((entry) => entry.id === id);
+  return binding ? formatCombo(binding.combo, options) : "";
+}
+
+/**
  * Does an event exactly satisfy a combo? All of the combo's modifiers must be
  * held and no others — so `"Mod+K"` rejects ⌘⇧K. Mod resolves to Meta on macOS
  * and Ctrl elsewhere via `options.isMac`. Letters compare case-insensitively

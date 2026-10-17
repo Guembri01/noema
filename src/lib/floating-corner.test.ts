@@ -44,19 +44,22 @@ describe("floating corner arithmetic", () => {
     expect(bottomRem(FLOATING_CORNER.fab)).toBe(floatingSlotOffsetRem(0));
     expect(bottomRem(FLOATING_CORNER.bar)).toBe(floatingSlotOffsetRem(1));
     expect(bottomRem(FLOATING_CORNER.notice)).toBe(floatingSlotOffsetRem(2));
+    expect(bottomRem(FLOATING_CORNER.suggest)).toBe(floatingSlotOffsetRem(3));
   });
 
   it("gives every stacked control its own slot, so two transient bars cannot collide", () => {
-    const slots = [FLOATING_CORNER.bar, FLOATING_CORNER.notice].map((className) =>
-      cornerBox(className, bottomRem(className) * 16, 36, 320),
+    const slots = [FLOATING_CORNER.bar, FLOATING_CORNER.notice, FLOATING_CORNER.suggest].map(
+      (className) => cornerBox(className, bottomRem(className) * 16, 36, 320),
     );
     expect(findFloatingOverlaps([...slots, cornerBox("fab", floatingSlotOffsetRem(0) * 16, 40, 40)])).toEqual([]);
   });
 
-  it("anchors the stack to the same inline end as the button", () => {
+  it("anchors the whole stack to the same inline end as the button", () => {
     const edge = (className: string) => /(?:^|\s)(end-\d+)(?:\s|$)/.exec(className)?.[1];
     expect(edge(FLOATING_CORNER.fab)).toBe("end-5");
-    expect(edge(FLOATING_CORNER.bar)).toBe(edge(FLOATING_CORNER.fab));
+    for (const slot of [FLOATING_CORNER.bar, FLOATING_CORNER.notice, FLOATING_CORNER.suggest]) {
+      expect(edge(slot)).toBe(edge(FLOATING_CORNER.fab));
+    }
   });
 });
 

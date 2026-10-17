@@ -21,7 +21,8 @@ import {
   typeaheadIndex,
   type NavKey,
 } from "@/lib/keyboard-nav";
-import { DEFAULT_SHORTCUTS, formatCombo } from "@/lib/keyboard-shortcuts";
+import { formatShortcut } from "@/lib/keyboard-shortcuts";
+import { useIsMac } from "@/lib/use-is-mac";
 import {
   MAX_RECENT_PAGES,
   recentPages,
@@ -386,8 +387,7 @@ const COMMAND_SHORTCUT_IDS: Readonly<Record<string, string>> = {
 export function commandShortcutHints(isMac: boolean): Record<string, string> {
   const hints: Record<string, string> = {};
   for (const [itemKey, id] of Object.entries(COMMAND_SHORTCUT_IDS)) {
-    const binding = DEFAULT_SHORTCUTS.find((entry) => entry.id === id);
-    if (binding) hints[itemKey] = formatCombo(binding.combo, { isMac });
+    hints[itemKey] = formatShortcut(id, { isMac });
   }
   return hints;
 }
@@ -437,15 +437,6 @@ function saveRecentPages(storageKey: string, list: readonly RecentPage[]): void 
   } catch {
     // No storage — the in-memory history still ranks this session.
   }
-}
-
-/** macOS detection for shortcut glyphs; false during SSR to avoid a mismatch. */
-function useIsMac(): boolean {
-  const [isMac, setIsMac] = useState(false);
-  useEffect(() => {
-    setIsMac(/mac|iphone|ipad|ipod/i.test(navigator.userAgent));
-  }, []);
-  return isMac;
 }
 
 /**

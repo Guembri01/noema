@@ -52,7 +52,7 @@ const overlaps = (a, b) =>
  * they are *meant* to cover the corner, and flagging them would make the check
  * noise. Everything else in the corner band has to keep to itself.
  */
-const collectFloatingBoxes = () =>
+const collectFloatingBoxes = (cornerBand) =>
   Array.from(document.querySelectorAll("body *"))
     .filter((node) => {
       const style = getComputedStyle(node);
@@ -63,7 +63,7 @@ const collectFloatingBoxes = () =>
       const rect = node.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return false;
       // Bottom band only, and never a full-bleed surface.
-      if (rect.bottom < window.innerHeight - 400) return false;
+      if (rect.bottom < window.innerHeight - cornerBand) return false;
       if (rect.width >= window.innerWidth - 8) return false;
       return true;
     })
@@ -81,6 +81,31 @@ const collectFloatingBoxes = () =>
       };
     })
     .filter((box) => box.top < window.innerHeight);
+
+/**
+ * The app chrome a fixed control must never land on.
+ *
+ * The first version of this check only compared floating controls with each
+ * other, so the editor's "Suggesting" toggle passed while it sat on top of the
+ * sidebar's footer: it was `fixed` at the bottom-*left*, and nothing in the
+ * bottom-right contract covered that corner. A control dodging a collision by
+ * moving somewhere the check does not look is the same bug, so the chrome is
+ * measured too.
+ */
+const collectChromeBoxes = () =>
+  ["sidebar", "workspace-sidebar", "workspace-tabs"]
+    .flatMap((testid) => Array.from(document.querySelectorAll(`[data-testid="${testid}"]`)))
+    .map((node) => {
+      const rect = node.getBoundingClientRect();
+      return {
+        name: node.getAttribute("data-testid"),
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        top: Math.round(rect.top),
+        bottom: Math.round(rect.bottom),
+      };
+    })
+    .filter((box) => box.right > box.left && box.bottom > box.top);
 
 async function signIn(page) {
   await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -133,7 +158,7 @@ async function main() {
     const fabCount = await page.locator('[data-testid="chat-fab"]').count();
     record(fabCount === 1, "the Ask-AI button is mounted", `found ${fabCount}`);
 
-    const boxes = await page.evaluate(collectFloatingBoxes);
+    const boxes = await page.evaluate(collectFloatingBoxes, CORNER_BAND);
     for (const box of boxes) {
       console.log(
         `  measured ${box.name.padEnd(28)} x ${box.left}…${box.right}  y ${box.top}…${box.bottom}`,
@@ -149,6 +174,17 @@ async function main() {
       }
     }
     record(clashes.length === 0, "no two corner controls overlap", clashes.join(", "));
+
+    // A floating control must not sit on the app chrome either — the sidebar
+    // footer is where the "Suggesting" toggle used to land.
+    const chrome = await page.evaluate(collectChromeBoxes);
+    const onChrome = [];
+    for (const box of boxes) {
+      for (const surface of chrome) {
+        if (overlaps(box, surface)) onChrome.push(`${box.name} ✕ ${surface.name}`);
+      }
+    }
+    record(onChrome.length === 0, "no corner control lands on the sidebar", onChrome.join(", "));
 
     // Everything must sit inside the viewport: the offline notice is 20rem wide.
     const offScreen = boxes.filter((box) => box.left < 0 || box.right > VIEWPORT.width + 1);

@@ -22,7 +22,7 @@ export type QuickFindResult = {
 };
 
 /**
- * Quick-find search (⌘K). Scoped for guests exactly like the search page, so the
+ * Quick-find search (⌘P). Scoped for guests exactly like the search page, so the
  * palette can never surface a page the viewer may not open.
  */
 export async function quickFindAction(

@@ -1,10 +1,17 @@
 /**
  * The floating bottom-right corner.
  *
- * Three controls used to claim the same 1rem/1.25rem inset — the Ask-AI button,
- * the editor's undo/redo bar and the sync notice — so they drew on top of each
- * other. The corner is now a single contract: the Ask-AI button owns it, and any
- * transient bar stacks *above* it, sharing its inline-end edge.
+ * Four controls used to claim the same 1rem/1.25rem inset — the Ask-AI button,
+ * the editor's undo/redo bar, the sync notice and the editor's "Suggesting"
+ * toggle — so they drew on top of each other. The corner is now a single
+ * contract: the Ask-AI button owns it, and any other bar stacks *above* it,
+ * sharing its inline-end edge.
+ *
+ * The "Suggesting" toggle used to sit in the bottom-**left** corner to stay out
+ * of this stack's way, which put it on top of the sidebar's footer — a fixed
+ * control cannot dodge the app chrome by picking a corner the contract does not
+ * cover. It has a slot here now, and `npm run check:floating` fails if any fixed
+ * control lands on the sidebar.
  *
  * Stacking (rather than sitting side by side) is what keeps the contract usable
  * on a narrow window: the sync notice is 20rem wide, and a horizontal offset
@@ -35,14 +42,17 @@ export function floatingSlotOffsetRem(slot: number): number {
  * The slot classes. Kept as whole class strings (not composed at runtime) so
  * Tailwind can see them and the design audit can read them.
  *
- * - `fab`    slot 0 · 1.25rem — the Ask-AI button.
- * - `bar`    slot 1 · 5rem    — transient bars (the editor's undo/redo).
- * - `notice` slot 2 · 8.75rem — the sync notice, which can be up while a bar is.
+ * - `fab`     slot 0 · 1.25rem  — the Ask-AI button.
+ * - `bar`     slot 1 · 5rem     — transient bars (the editor's undo/redo).
+ * - `notice`  slot 2 · 8.75rem  — the sync notice, which can be up while a bar is.
+ * - `suggest` slot 3 · 12.5rem  — the editor's Suggesting toggle, which is up
+ *   whenever the editor is, i.e. at the same time as the undo/redo bar.
  */
 export const FLOATING_CORNER = {
   fab: "bottom-5 end-5",
   bar: "bottom-20 end-5",
   notice: "bottom-35 end-5",
+  suggest: "bottom-50 end-5",
 } as const;
 
 /** A bottom-anchored box's geometry, as measured in the browser. */

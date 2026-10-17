@@ -26,6 +26,8 @@ type SidebarFooterProps = {
   user: { name: string; email: string };
   workspace: { slug: string };
   onOpenQuickFind: () => void;
+  /** Platform-aware chord for Quick find, from `@/lib/keyboard-shortcuts`. */
+  quickFindHint: string;
   startTransition: StartTransition;
 };
 
@@ -34,6 +36,7 @@ export function SidebarFooter({
   user,
   workspace,
   onOpenQuickFind,
+  quickFindHint,
   startTransition,
 }: SidebarFooterProps) {
   const router = useRouter();
@@ -86,7 +89,7 @@ export function SidebarFooter({
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={onOpenQuickFind}>
             <Search className="h-4 w-4 text-muted" /> {t(locale, "quickFind")}
-            <Kbd>Ctrl K</Kbd>
+            <Kbd>{quickFindHint || "Ctrl+P"}</Kbd>
           </DropdownMenuItem>
           <DropdownMenuItem asChild>
             <Link href={`/w/${workspace.slug}/library`}>

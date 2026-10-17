@@ -33,6 +33,8 @@ import { safeAction } from "@/lib/actions-client";
 import { NotionImportDialog } from "@/components/notion-import-dialog";
 import { WorkspaceDialog } from "@/components/workspace-dialog";
 import { Kbd } from "@/components/ui/kbd";
+import { formatShortcut } from "@/lib/keyboard-shortcuts";
+import { useIsMac } from "@/lib/use-is-mac";
 import { WorkspaceSwitcher } from "@/components/sidebar/workspace-switcher";
 import { HomeQuickLinks, FavoritesList } from "@/components/sidebar/home-links";
 import { PageTree } from "@/components/sidebar/page-tree";
@@ -123,6 +125,9 @@ export function Sidebar({
     }
   }, []);
 
+  // Platform-aware chord hints for the footer's "Quick find" affordances.
+  const isMac = useIsMac();
+
   const discuss = (pageId: string) =>
     startTransition(async () => {
       const outcome = await safeAction(() => discussPageAction(pageId));
@@ -197,13 +202,17 @@ export function Sidebar({
         >
           <Search className="h-4 w-4 shrink-0" />
           <span className="flex-1 truncate text-left">{t(locale, "quickFind")}</span>
-          <Kbd>Ctrl K</Kbd>
+          {/* The chord comes from the registry, not a literal: this chip used to
+              read "Ctrl K", which is the command palette, and it was wrong on
+              macOS too. `useIsMac` starts false so the first paint cannot
+              disagree with the server. */}
+          <Kbd>{formatShortcut("quick-find", { isMac }) || "Ctrl+P"}</Kbd>
         </button>
         {onHideSidebar ? (
           <button
             type="button"
             onClick={onHideSidebar}
-            title={`${t(locale, "hideSidebar")} (Ctrl+\\)`}
+            title={`${t(locale, "hideSidebar")} (${formatShortcut("toggle-sidebar", { isMac })})`}
             aria-label={t(locale, "hideSidebar")}
             data-testid="sidebar-hide"
             className="focus-ring u-interactive u-colors shrink-0 rounded-md p-1.5 text-muted hover:bg-surface-2 hover:text-fg"
@@ -316,6 +325,7 @@ export function Sidebar({
         user={user}
         workspace={workspace}
         onOpenQuickFind={onOpenQuickFind}
+        quickFindHint={formatShortcut("quick-find", { isMac })}
         startTransition={startTransition}
       />
 

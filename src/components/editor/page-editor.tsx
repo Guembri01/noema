@@ -87,7 +87,8 @@ import {
   nextBatch,
   type QueuedMutation,
 } from "@/lib/offline-queue";
-import { initials } from "@/lib/utils";
+import { cn, initials } from "@/lib/utils";
+import { FLOATING_CORNER } from "@/lib/floating-corner";
 import { OPTION_COLORS } from "@/components/database/database-types";
 
 /** Clicking an equation anywhere in the document reopens the LaTeX editor. */
@@ -883,7 +884,15 @@ function SuggestionsControls({ editor, locale }: { editor: Editor; locale: strin
 
   return (
     <div
-      className="fixed bottom-4 left-4 flex flex-col items-start gap-1 text-xs"
+      // Bottom-right, in the stack above the undo/redo bar. It used to be pinned
+      // to the bottom-*left* to stay out of the undo/redo bar's way, which put it
+      // straight on top of the sidebar footer — picking a corner the contract does
+      // not cover is not a way to avoid a collision, it just moves it. See
+      // `src/lib/floating-corner.ts`.
+      className={cn(
+        "fixed flex flex-col items-end gap-1 text-xs",
+        FLOATING_CORNER.suggest,
+      )}
       style={{ zIndex: Z.sticky }}
     >
       {open && pending.length > 0 && (
