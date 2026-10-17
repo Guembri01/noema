@@ -199,6 +199,14 @@ jobs:
         run: npm run desktop:prepare
       - name: Create the schema
         run: npx prisma db push --skip-generate
+      # The payload's database is PGlite behind a socket server — the one part of
+      # the desktop path that `cargo test` cannot reach. Two bugs already escaped
+      # into it (a client that reset mid-handshake killed the engine process; ten
+      # of them left every slot leaked, so the database answered "Too many
+      # connections" forever). This reproduces both against a real engine, in a
+      # throwaway data directory, with no Postgres and no Tauri.
+      - name: Embedded database survives rude and repeated clients
+        run: npm run check:embedded-db
       - name: Smoke-test the payload (boots, migrates, serves HTTP)
         run: npm run desktop:smoke
       - name: Assert the staged payload is complete

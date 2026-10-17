@@ -347,10 +347,26 @@ schema's own model list. A floor is not an assertion.
 
 | Limit | Consequence, and what to do |
 |---|---|
-| **One client at a time** | PGlite queues every connection onto a single PostgreSQL session, so Prisma's prepared-statement names are global to it. The boot path never hits this (the migration finishes before the server starts, and the server itself uses `connection_limit=1`), but a second *external* client — a psql session, an admin script, `prisma studio` — can collide with the running app (`prepared statement "s0" already exists`). Stop the app, or point it at a real Postgres with `NOEMA_DATABASE_URL`. |
+| **One session, shared by every client** | PGlite queues every connection onto a single PostgreSQL session, so anything that *names* its prepared statements collides with the previous client: a second process running `PREPARE s0` failed with `42P05: prepared statement "s0" already exists`, which broke the seed after a build and every second process to touch the database. The generated URL carries `pgbouncer=true` (§5), which stops Prisma naming statements, so several Prisma clients — the app, a seed, the screenshot harness — coexist. A *non-Prisma* client (psql, an admin script) is still one session at a time: stop the app, or point it at a real Postgres with `NOEMA_DATABASE_URL`. |
 | **No `pg_dump`** | it is a WebAssembly engine, not a server with binaries beside it, so `npm run backup` (which shells out to `pg_dump`) cannot dump it. The backup unit is the **data directory** (`pgdata/` inside the app data folder) — copy it while the app is stopped. Point the app at a real Postgres if you need `pg_dump`-style dumps and GFS retention. |
 | **First launch initialises it** | a few seconds once, on the machine's disk, with no network. Later launches reuse `pgdata/`. |
 | **Not for multiple machines** | it is a local file-backed database. For shared workspaces use a real Postgres via `NOEMA_DATABASE_URL`. |
+
+### The socket server needed two fixes before it was trustworthy
+
+The engine is served over the Postgres wire protocol by
+`@electric-sql/pglite-socket`, and that server had two failure modes no unit test
+could reach — `cargo test` cannot see it, and the app cannot be launched in CI.
+Both were found by driving a real engine, and both are now reproduced by
+`npm run check:embedded-db`:
+
+| Failure | What it looked like | Fix |
+|---|---|---|
+| A client that reset mid-handshake **killed the process** | `Error: read ECONNRESET`, and the whole database process exited — taking the session's data with it. Node treats an unhandled `error` event as fatal, and the server attaches its own listener only *after* accepting a connection, so a socket that goes away before that is unguarded. | `scripts/desktop/embedded-db.cjs` listens on the server's `connection` event — which runs before its deferred accept — and attaches an `error` listener to every socket. |
+| Ten aborted handshakes **wedged it forever** | The server creates a handler per accepted connection and removes it on the handler's `close` event, but a socket that dies before `attach` runs has *already* fired `close`: the handler leaked, the count climbed to `maxConnections` (10), and every later client was answered `Too many connections`. The database was unreachable until restart. | The wrapper reclaims any handler whose socket is gone, and checks as each connection arrives — *before* the server decides whether there is room. A wedged engine heals on the next client instead of needing a restart. |
+
+Both are worth reading as a pattern: the embedded engine is a *server inside the
+app's own process*, so a bug there is not a failed request, it is a dead app.
 
 ### Why the embedded engine is the default
 
@@ -489,6 +505,7 @@ what that means for the user (SmartScreen) and what is already wired for signing
 | Shared TS | the whole existing suite — the app version adds **no** forked logic |
 | Runtime mode | `src/lib/runtime-mode.test.ts` (site vs desktop, the mode the server renders into the document, the Tauri fallback, API base, data dir, version, capabilities, SSR safety) and `src/app/a11y-layout.test.ts` (the attribute the layout renders for the site, `NOEMA_RUNTIME` and `NOEMA_STANDALONE`) |
 | Packaging | `desktop:preflight` on every run; `site.yml` asserts the site build never emits a standalone server |
+| Embedded database | `npm run check:embedded-db` — starts a real PGlite engine in a throwaway data directory, aborts 24 handshakes mid-flight, and proves the engine still serves a second and a third Prisma client. No Postgres, no Docker, no Tauri. Run in CI's `payload-smoke` job. |
 | Manual smoke | install → first run → the swap from "starting…" to the workspace → create a note → quit → relaunch (same origin, so window geometry, theme and the rest of the browser-side state are still there) |
 
 ## 9. Troubleshooting

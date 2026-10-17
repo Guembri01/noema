@@ -35,6 +35,41 @@ function resolveDataDir(dataDir) {
 }
 
 /**
+ * The handler the socket server registered for `socket`, if it registered one.
+ * A handler is only created for a connection the server had room for.
+ */
+function findHandlerFor(server, socket) {
+  for (const handler of server.handlers) {
+    if (handler.socket === socket) return handler;
+  }
+  return undefined;
+}
+
+/**
+ * Detach one handler and forget it.
+ *
+ * `detach` is what releases the slot; the `delete` is what makes the count
+ * trustworthy even if the handler's own `close` event never fires (which is the
+ * whole problem — see `startEmbeddedDatabase`).
+ */
+function reclaimHandler(server, handler) {
+  try {
+    handler.detach(true);
+  } catch {
+    // The socket is already gone; the bookkeeping is the part that matters.
+  }
+  server.handlers.delete(handler);
+}
+
+/** Forget every handler whose client socket has already gone away. */
+function reclaimDeadHandlers(server) {
+  for (const handler of [...server.handlers]) {
+    const socket = handler.socket;
+    if (socket && socket.destroyed) reclaimHandler(server, handler);
+  }
+}
+
+/**
  * Start the embedded database and expose it on loopback.
  *
  * @returns {Promise<{url: string, port: number, dir: string, stop: () => Promise<void>}>}
@@ -57,7 +92,50 @@ async function startEmbeddedDatabase({ dataDir, log = console, host = "127.0.0.1
   // be refused a slot. The connection URL further pins Prisma to one connection,
   // because PGlite executes one query at a time.
   const server = new PGLiteSocketServer({ db, port: 0, host, maxConnections: 10 });
+
+  // PGlite's socket server leaks a connection slot whenever a client goes away
+  // before it is accepted, and once every slot has leaked it answers "Too many
+  // connections" to everyone — the database becomes unreachable and only a
+  // restart brings it back.
+  //
+  // The window is small but real. The server accepts on a `setImmediate`, so a
+  // client that connects and resets immediately (a pool closing, a window
+  // closing, a laptop waking) is already `destroyed` by the time `attach` runs.
+  // The library attaches its `close` listener *after* that event has fired, so
+  // nothing ever removes the handler it created for the socket, and the count
+  // only grows. Measured: 24 aborted handshakes against `maxConnections: 10`
+  // left the engine refusing every client.
+  //
+  // Two guards close it, both deterministic — no timers, no grace period:
+  //
+  //   • every client socket gets an `error` listener the moment it is accepted
+  //     by the *server* (before the deferred accept runs). Node treats an
+  //     unhandled `error` event as fatal, and an unhandled `ECONNRESET` used to
+  //     kill the engine process outright, taking the user's data with it.
+  //   • a handler whose socket is already gone is detached and forgotten, and
+  //     the check runs as each connection arrives — *before* the library decides
+  //     whether there is room. A wedged engine therefore heals on the next
+  //     client rather than needing a restart.
+  const accept = server.handleConnection.bind(server);
+  server.handleConnection = async (socket) => {
+    reclaimDeadHandlers(server);
+    const accepted = accept(socket);
+    // `handleConnection` registers its handler synchronously (its only `await`
+    // is `attach`, which sets `handler.socket` before suspending), so by now the
+    // handler for this socket exists — and is already orphaned if the socket
+    // died before this deferred accept ran.
+    const handler = findHandlerFor(server, socket);
+    if (handler && socket.destroyed) reclaimHandler(server, handler);
+    return accepted;
+  };
+
   await server.start();
+
+  server.server?.on("connection", (socket) => {
+    socket.on("error", (error) => {
+      log.warn(`[noema] embedded database client disconnected: ${error && error.message}`);
+    });
+  });
 
   const address = server.server.address();
   const port = typeof address === "object" && address ? address.port : server.port;
@@ -69,7 +147,17 @@ async function startEmbeddedDatabase({ dataDir, log = console, host = "127.0.0.1
 
   // `connection_limit=1`: PGlite is one query at a time, so a Prisma pool with
   // more connections would only queue. `schema=public` is Prisma's own default.
-  const url = `postgresql://${DB_USER}:${DB_USER}@${host}:${port}/${DB_NAME}?schema=public&connection_limit=1`;
+  //
+  // `pgbouncer=true` is not about a connection pooler here — it tells Prisma to
+  // stop using *named* prepared statements. It is required, not cosmetic: the
+  // socket server fronts one PGlite session, so a statement name (`s0`, `s1`, …)
+  // created by one client is still registered when the next client connects, and
+  // Prisma's `PREPARE s0` then fails with `42P05 prepared statement "s0" already
+  // exists`. That hit every second process to touch the database (the migration
+  // CLI before the server, a seed after a build, a restart), which is exactly the
+  // sequence the desktop app performs. Disabling prepared statements makes each
+  // connection self-contained and the race disappears.
+  const url = `postgresql://${DB_USER}:${DB_USER}@${host}:${port}/${DB_NAME}?schema=public&connection_limit=1&pgbouncer=true`;
 
   let stopped = false;
   const stop = async () => {
