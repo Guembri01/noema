@@ -216,6 +216,37 @@ itself**:
 4. **Otherwise** the conventional `postgresql://postgres:postgres@127.0.0.1:5432/noema`,
    so an existing local Postgres still works and the bootstrap page can take over.
 
+### Migrations are the schema — verified, not assumed
+
+Two defects lived here, both invisible to the test suite, and both fatal to a real
+install:
+
+| Defect | Why nothing caught it |
+|---|---|
+| `prisma migrate deploy` created **17 of 45 tables** and left **28 columns** off the existing ones (`Page.searchText`, page font/width/locked, 2FA, share-link indexing, recurring templates…) | unit tests mock Prisma; dev and e2e databases are built by `db push`, which syncs everything. Only the *app's own* path was malformed — `relation "ticket" does not exist`, 221 call sites |
+| No **full-text GIN index** — `setup:search` created it by hand in dev, and no migration ever did | search still answered, by falling back to a capped scan: correct results, no index |
+
+Both are fixed by migrations (`20260114000000_complete_schema`,
+`20260114000001_search_index`) and guarded by two commands you should run before
+believing anything:
+
+```bash
+npm run check:schema     # migrations describe the schema, and a fresh database gets every model
+npm run check:features   # boot the shipped payload on a migrate-built database and run every live check
+```
+
+`check:schema` replays the migrations in a shadow database and fails on any drift,
+then applies them for real and fails unless **every `model` in the schema has a
+table** — the assertion that was missing. `check:features` is the end-to-end one: it
+creates a database with `prisma migrate deploy`, seeds it, starts the packaged
+payload with the bundled runtime, and runs all sixteen live checks through real
+routes, APIs and Server Actions. That is the combination that catches "the installer
+boots but half the features are broken".
+
+The desktop smoke test was also strengthened for the same reason: it compared a
+database against a magic number (`> 10 tables`) and now compares it against the
+schema's own model list. A floor is not an assertion.
+
 ### Limits of the embedded engine (worth knowing before you rely on it)
 
 | Limit | Consequence, and what to do |

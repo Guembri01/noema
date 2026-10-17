@@ -192,15 +192,22 @@ const emptyMsg = await post("/api/chat", { action: "post", threadId: thread.id, 
 check("empty messages are rejected", emptyMsg.status === 400);
 
 // --- Calendar -----------------------------------------------------------
+// A loopback feed must be **refused**: `connectCalendarFeedAction` reads feeds
+// through the SSRF guard (`src/lib/feed-guard.ts`), which fails closed on private
+// and reserved addresses and reports one generic message for every read failure so
+// it cannot be used as a status oracle. This check used to assert that a
+// `http://localhost:…` feed imported two events — i.e. that the guard did not work.
 const connectRes = await post("/api/calendar", {
   action: "connect",
   workspaceId: workspace.id,
-  name: "Check calendar",
+  name: "Blocked calendar",
   icsUrl: `http://localhost:${ICS_PORT}/cal.ics`,
 });
 const connectBody = await connectRes.json();
-createdFeeds.push(connectBody.id);
-check("connect an ICS calendar", connectRes.status === 200 && connectBody.imported === 2);
+check(
+  "a loopback feed is refused by the SSRF guard, with one generic error",
+  connectRes.status === 400 && connectBody.error === "Could not read that calendar feed.",
+);
 
 const badUrl = await post("/api/calendar", {
   action: "connect",
@@ -209,6 +216,34 @@ const badUrl = await post("/api/calendar", {
   icsUrl: "file:///etc/passwd",
 });
 check("non-http feed URLs are rejected", badUrl.status === 400);
+
+// The read path is exercised with a feed written straight to the database, because
+// the import path deliberately cannot be pointed at a feed from a test.
+const seededFeed = await prisma.calendarFeed.create({
+  data: { workspaceId: workspace.id, name: "Check calendar", icsUrl: "https://example.com/cal.ics" },
+  select: { id: true },
+});
+createdFeeds.push(seededFeed.id);
+await prisma.calendarEvent.createMany({
+  data: [
+    {
+      workspaceId: workspace.id,
+      feedId: seededFeed.id,
+      uid: `verify-${Date.now()}-1`,
+      title: "Design review",
+      start: new Date(Date.now() + 1 * 86_400_000),
+      end: new Date(Date.now() + 1 * 86_400_000 + 3_600_000),
+    },
+    {
+      workspaceId: workspace.id,
+      feedId: seededFeed.id,
+      uid: `verify-${Date.now()}-2`,
+      title: "All-hands",
+      start: new Date(Date.now() + 2 * 86_400_000),
+      end: new Date(Date.now() + 2 * 86_400_000 + 3_600_000),
+    },
+  ],
+});
 
 const calendarList = await fetch(`${base}/api/calendar?workspaceId=${workspace.id}`, { headers: cookie }).then((r) => r.json());
 const checkFeeds = calendarList.feeds?.filter((feed) => feed.name === "Check calendar") ?? [];
