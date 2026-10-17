@@ -39,6 +39,12 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- The unlock state of a password-protected share link is no longer a client
+  cookie whose value is the constant `"1"`. Any client could send
+  `Cookie: share_<token>=1` and read the protected page — the password was
+  never enforced. The value is now an HMAC-SHA256 over the share token and an
+  expiry, keyed by `AUTH_SECRET` under its own domain separation, and it is
+  verified server-side in constant time. Every verification path fails closed.
 
 ## [1.4.1] — 2026-10-17
 

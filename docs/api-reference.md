@@ -787,8 +787,10 @@ public · no rate limit
 Form body: `password`. Delegates to `verifySharePassword(token, password)`
 (`src/server/actions/share.ts`).
 
-- Success → sets cookie `share_<token>=1` (`httpOnly`, `lax`, 7 days) and
-  **303** → `/s/<token>`.
+- Success → sets cookie `share_<token>` (`httpOnly`, `lax`, `secure` in
+  production, 7 days) and **303** → `/s/<token>`. The cookie value is an
+  HMAC-SHA256 over the share token and an expiry, keyed by `AUTH_SECRET`; it is
+  verified server-side, so a forged value unlocks nothing.
 - Wrong password → **303** → `/s/<token>?error=1`.
 - No JSON body in either direction.
 
