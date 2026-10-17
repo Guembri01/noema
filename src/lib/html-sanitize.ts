@@ -8,6 +8,7 @@
  *
  *   • `escapeHtml(value)`  — the one text/attribute escaper.
  *   • `sanitizeHtml(html, opts?)` — allowlist markup in, safe markup out.
+ *   • `safeUrl(value, schemes?)` — one url attribute, safe url or `null`.
  *   • `stripTags(html)`    — markup in, decoded text out.
  *
  * What is stripped, unconditionally:
@@ -78,6 +79,9 @@ const DEFAULT_ALLOWED_ATTRS = new Set([
 
 /** Default URL schemes; `data:` is additionally restricted to safe images. */
 const DEFAULT_ALLOWED_SCHEMES = ["http", "https", "mailto", "tel", "data"];
+
+/** The default schemes as a set — the allowlist {@link safeUrl} starts from. */
+const DEFAULT_SCHEME_SET = new Set(DEFAULT_ALLOWED_SCHEMES);
 
 /** Elements removed *with* their content — scripting/plugin/foreign roots. */
 const DROP_WITH_CONTENT = [
@@ -199,8 +203,14 @@ function tokenize(html: string, dropRe: RegExp): HtmlNode[] {
  * protocol-relative targets are rejected, a declared scheme must be on the
  * allowlist, `data:` must be a safe raster image, and an unattributable or
  * encoded colon — an attempt to smuggle a scheme — is rejected.
+ *
+ * The allowlist defaults to the module's own ({@link DEFAULT_ALLOWED_SCHEMES});
+ * `sanitizeHtml` passes the caller's list.
  */
-function safeUrl(value: string, allowedSchemes: ReadonlySet<string>): string | null {
+export function safeUrl(
+  value: string,
+  allowedSchemes: ReadonlySet<string> = DEFAULT_SCHEME_SET,
+): string | null {
   const raw = value.replace(/[\u0000-\u001f\u007f]+/g, "").trim();
   if (!raw) return null;
   if (/^[\\/]{2}/.test(raw)) return null;

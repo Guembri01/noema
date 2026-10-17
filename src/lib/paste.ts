@@ -9,8 +9,14 @@
  * `data-pm-slice`), turning copied headings into plain paragraphs.
  *
  * Only unsafe markup is stripped (script/style/iframe content, `on*`
- * handlers, `javascript:` urls, non-whitelisted CSS); structure and every
- * Noema block attribute survive.
+ * handlers, `javascript:` urls, protocol-relative targets, non-whitelisted
+ * CSS); structure and every Noema block attribute survive.
+ *
+ * URLs are judged by the shared gates, not by a local copy: a link target
+ * goes through `safeHref` (`@/lib/markdown`), a resource url through
+ * `safeUrl` (`@/lib/html-sanitize`) — the allowlists the rest of the
+ * repository uses, so this module carries no second, weaker notion of a
+ * safe target.
  *
  * The same parser backs two standalone sanitisation helpers:
  * `sanitizePastedHtml` (HTML in -> clean HTML out, for "paste with
@@ -19,7 +25,8 @@
  */
 
 import type { Mark, RichNode } from "@/lib/blocks";
-import { sanitizeHtml } from "@/lib/html-sanitize";
+import { safeUrl, sanitizeHtml } from "@/lib/html-sanitize";
+import { safeHref } from "@/lib/markdown";
 import { looksLikeMatrix, matrixToTableBlocks, parseClipboardMatrix } from "@/lib/paste-matrix";
 
 export type NormalizedPaste = {
@@ -147,37 +154,7 @@ function isInlineElement(el: ElementNode): boolean {
 
 /* -------------------------------------------------------------------- urls */
 
-/**
- * A URL as a browser reads it: control characters removed and lower-cased, so
- * `java\nscript:` reads as `javascript:`. The same strip set the editor's own
- * paste gate uses (`src/lib/paste-cleanup.ts`).
- */
-function urlProbe(value: string): string {
-  return value.replace(/[\u0000-\u0020\u007f]+/g, "").toLowerCase();
-}
-
-/** True for URLs that execute code (scheme-obfuscation tolerant). */
-function unsafeUrl(value: string): boolean {
-  return /^(javascript|vbscript|data:text\/html)/.test(urlProbe(value));
-}
-
-/**
- * The link gate of the paste normaliser.
- *
- * The scheme is read the way a browser reads it — control characters removed
- * first — so `java\nscript:` cannot hide behind a newline, and a `data:`
- * document is never a valid target: its payload can carry markup.
- */
-function safeHref(href: string | undefined): string | null {
-  if (!href) return null;
-  const value = href.trim();
-  if (unsafeUrl(value)) return null;
-  if (urlProbe(value).startsWith("data:")) return null;
-  return value;
-}
-
 /* ------------------------------------------------------------ mark mapping */
-
 function styleMarks(style: string | undefined): Mark[] {
   if (!style || /expression\s*\(|javascript:/i.test(style)) return [];
   const marks: Mark[] = [];
@@ -213,7 +190,7 @@ function extraMarks(el: ElementNode): Mark[] {
     case "s": case "del": case "strike": marks.push({ type: "strike" }); break;
     case "code": marks.push({ type: "code" }); break;
     case "a": {
-      const href = safeHref(el.attrs.href);
+      const href = safeHref(el.attrs.href ?? "");
       if (href) marks.push({ type: "link", attrs: { href } });
       break;
     }
@@ -356,7 +333,8 @@ function blockNodeFor(el: ElementNode, inheritedColor: string | null): RichNode 
       return {
         type: "image",
         attrs: {
-          src: el.attrs.src ?? "",
+          // A resource url, not a link target: a `data:` image survives.
+          src: safeUrl(el.attrs.src ?? "") ?? "",
           ...(el.attrs.alt !== undefined ? { alt: decodeEntities(el.attrs.alt) } : {}),
           ...(el.attrs.title ? { title: el.attrs.title } : {}),
           ...(el.attrs["data-caption"] ? { caption: el.attrs["data-caption"] } : {}),
@@ -569,6 +547,13 @@ const URL_ATTRS = new Set([
   "href", "src", "action", "formaction", "cite", "background", "poster", "xlink:href",
 ]);
 
+/**
+ * The attribute that carries a *link target* — the url a click follows. It
+ * goes through the shared `safeHref`; every other url attribute is a resource
+ * and goes through the shared `safeUrl`.
+ */
+const LINK_TARGET_ATTR = "href";
+
 /** Tags that form block boundaries in plain-text output. */
 const PLAIN_BLOCK_TAGS = new Set([
   "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "pre",
@@ -609,7 +594,12 @@ function serializeAttrs(attrs: Record<string, string>, allowStyles: ReadonlySet<
       if (style) out += ` style="${escapeAttr(style)}"`;
       continue;
     }
-    if (URL_ATTRS.has(name) && unsafeUrl(value)) continue;
+    if (URL_ATTRS.has(name)) {
+      const safe = name === LINK_TARGET_ATTR ? safeHref(value) : safeUrl(value);
+      if (safe === null) continue;
+      out += ` ${name}="${escapeAttr(safe)}"`;
+      continue;
+    }
     out += ` ${name}="${escapeAttr(value)}"`;
   }
   return out;
