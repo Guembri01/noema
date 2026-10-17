@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
+import { Lock } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   Crown,
@@ -319,6 +320,7 @@ export function MembersManager({
   const { run, pending, error } = useAction(locale);
   const [removeTarget, setRemoveTarget] = useState<MemberRow | null>(null);
   const [transferTarget, setTransferTarget] = useState<MemberRow | null>(null);
+  const [transferPassword, setTransferPassword] = useState("");
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"GUEST" | "MEMBER" | "ADMIN">("MEMBER");
@@ -699,15 +701,30 @@ export function MembersManager({
         onConfirm={() => {
           const target = transferTarget;
           if (!target) return;
-          run(() => transferOwnershipAction(workspaceId, target.userId), {
+          run(() => transferOwnershipAction(workspaceId, target.userId, transferPassword), {
             success: "Ownership transferred",
             onSuccess: () => {
               setTransferTarget(null);
+              setTransferPassword("");
               refresh();
             },
           });
         }}
-      />
+      >
+        <label className="block text-sm">
+          <span className="flex items-center gap-1.5">
+            <Lock className="h-3.5 w-3.5 text-muted" aria-hidden /> Your password
+          </span>
+          <input
+            type="password"
+            value={transferPassword}
+            onChange={(event) => setTransferPassword(event.target.value)}
+            placeholder="Your password"
+            autoComplete="current-password"
+            className="focus-ring mt-1 h-9 w-full rounded-sm border border-border bg-bg px-2 text-sm"
+          />
+        </label>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={leaveOpen}
