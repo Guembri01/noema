@@ -58,11 +58,10 @@ function nextPageLink(requestUrl: URL, nextCursor: string | null): string | null
  *
  * A `GUEST` only ever sees the pages shared with them: the listing (and the
  * breadcrumb tree) is filtered by the guest scope, exactly like the workspace
- * UI. A full member keeps the whole workspace.
- *
- * The bearer token must hold the `read:pages` scope; a token without it is
- * refused with 403 `insufficient_scope` before the workspace is even looked
- * up. */
+ * UI. A full member keeps the whole workspace. The bearer token must also hold
+ * the `read:pages` scope; a token without it is refused with 403
+ * `insufficient_scope` before the workspace is even looked up.
+ */
 export async function GET(request: Request) {
   const auth = await authenticateApiRequest(request);
   const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });

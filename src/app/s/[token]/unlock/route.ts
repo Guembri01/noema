@@ -2,18 +2,19 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { rateLimit } from "@/lib/api-guard";
 import { bodyReadError, readFormDataBody } from "@/lib/body-limit";
-import { attemptShareUnlock } from "@/server/actions/share";
 import {
   SHARE_UNLOCK_TTL_SECONDS,
   createShareUnlockToken,
   shareUnlockCookieName,
 } from "@/lib/secrets";
+import { attemptShareUnlock } from "@/server/actions/share";
 
 export const runtime = "nodejs";
 
 /**
- * B22 — the budget for one unlock attempt. The route is public and not rate
- * limited, so the form body has to carry a bound of its own.
+ * B22 — the budget for one unlock attempt. The route is public, so the form
+ * body has to carry a bound of its own (besides the rate and attempt brakes
+ * below).
  */
 const MAX_BODY_BYTES = 16 * 1024;
 
@@ -23,6 +24,7 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> },
 ) {
   const { token } = await params;
+
   const origin = new URL(request.url).origin;
 
   // This endpoint is unauthenticated, so it needs the same rate limit as
