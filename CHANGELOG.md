@@ -516,10 +516,6 @@ list marks it as **No access**.
   raw request value is transitive as well: a local that is derived from a
   tainted local is tainted too, and a read of `.parentId` from a name whose
   origin the gate cannot see is a raw value, whatever that receiver is called.
-  The taint closes the **class** and not a list of shapes: a read from a local
-  whose initializer the gate cannot resolve — an object spread, the result of a
-  call, a template literal, a JSON round trip — is a raw value as well, so a
-  write that stores such a value is reported instead of released.
   It is a safety net over the tests, not a proof — a write it
   cannot recognise is not covered by it. The holes that are known today are
   listed in the gate's own docstring, and that list is a safety net, not an
@@ -552,34 +548,6 @@ list marks it as **No access**.
   app (1 for a single nginx/Caddy). Because the IP allowlist lives in the Edge
   runtime, where `process.env` is frozen at build time, the variable has to be
   set for the **build**, not only for the start.
-- The "Authoring windows" check no longer fails for every pull request. It
-  collected its commits with `git log --all`, and CI checks out with
-  `fetch-depth: 0`, which fetches every branch — so the open Dependabot
-  branches, authored by a bot, made the required check fail with identity
-  violations that had nothing to do with the pull request under review. It
-  now walks the commits of the ref under review. A commit that GitHub itself
-  created is exempt as a whole — the anchor is its **committer** (an App
-  account, or the `noreply@github.com` identity GitHub commits merges under),
-  so neither its author field nor its committer field is checked, against
-  either the date or the identity policy. The scope has to be the whole
-  commit: the merge commit GitHub synthesises for a pull request is dated when
-  GitHub rebuilt the ref and carries the *human's* address in its author
-  field, so an exemption that only covered the field holding the bot address
-  still failed the gate. The converse does not hold: a bot author with a
-  human committer was not created by GitHub and is checked like any other
-  commit. A human's no-reply address is not a bot and still has to pass.
-  value. An allow-list entry used to match on the file, the function and the
-  written value — so the local behind that value could change its origin
-  (the parent taken straight from the request) and the gate stayed green, and
-  so could the authorization the entry relies on (it could be deleted) — while
-  not a single test turned red. Every entry now names the **proof** it relies
-  on and the gate checks it: the entry for `createRowAction()`, for instance,
-  holds only while `authorizeDatabase(databasePageId)` is still in that
-  function. The taint of a raw request value is transitive now as well: a
-  local derived from a tainted local is tainted too, the taint is found in a
-  destructuring and in a re-assignment, and a read of `.parentId` from a
-  receiver whose origin the gate cannot see (a parameter, a module-level
-  name) is a raw value — whatever that receiver is called.
 
 ## [1.4.1] — 2026-10-17
 
