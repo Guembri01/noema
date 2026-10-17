@@ -310,7 +310,13 @@ const ALLOWED_IN_TESTS = new Set([
 
 const args = process.argv.slice(2);
 const withHistory = args.includes("--history");
-const ref = args.find((arg) => !arg.startsWith("--")) ?? "HEAD";
+// The ref is the first argument that is neither a switch nor the *value* of
+// `--root`: the directory of a throw-away repository is not a revision, and
+// `git rev-list --objects <directory>` answers with an empty list and exit 0
+// — the history scan would walk 0 blobs and report green.
+const rootValue = args.indexOf("--root") + 1;
+const ref =
+  args.find((arg, index) => !arg.startsWith("--") && index !== rootValue) ?? "HEAD";
 
 const rel = (file) => relative(ROOT, file).replace(/\\/g, "/");
 

@@ -79,9 +79,29 @@ function gateOver(commits) {
       git("commit", "--quiet", "--allow-empty", "-m", "probe");
     }
 
-    return { tree: run(dir, []), history: run(dir, ["--history"]) };
+    return {
+      tree: run(dir, []),
+      history: run(dir, ["--history"]),
+      // The same tree, scanned through `--root`: the gate stays where it is
+      // and looks at the other directory.
+      rootHistory: runRoot(dir, ["--history"]),
+    };
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Run the gate over the throwaway repository through `--root`. */
+function runRoot(dir, args) {
+  try {
+    const output = execFileSync("node", [GATE, "--root", dir, ...args], {
+      cwd: dir,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    return { code: 0, output };
+  } catch (error) {
+    return { code: error.status ?? 1, output: `${error.stdout ?? ""}${error.stderr ?? ""}` };
   }
 }
 
@@ -155,6 +175,19 @@ const CASES = [
     treeGreen: true,
     historyGreen: true,
   },
+  {
+    name: "the history scan walks the history of a tree that is scanned with --root",
+    commits: [
+      { "src/lib/leaked.ts": `const API_KEY = "${LIVE_KEY}";\n` },
+      { "src/lib/leaked.ts": null },
+    ],
+    // The tree is clean again — the file is gone. The history is not. The
+    // directory of the throw-away repository must not become the ref of the
+    // history scan: `git rev-list --objects <dir>` answers with an empty list
+    // and exit 0, so a scan that walked 0 blobs would report green.
+    treeGreen: true,
+    rootHistoryReported: ["src/lib/leaked.ts:1", "OpenAI / DeepSeek key"],
+  },
 ];
 
 function runCase(testCase) {
@@ -164,6 +197,9 @@ function runCase(testCase) {
   if (testCase.treeGreen) assertAccepted(result.tree);
   if (testCase.historyReported) assertReported(result.history, testCase.historyReported);
   if (testCase.historyGreen) assertAccepted(result.history);
+  if (testCase.rootHistoryReported) {
+    assertReported(result.rootHistory, testCase.rootHistoryReported);
+  }
 }
 
 if (process.env.VITEST) {
