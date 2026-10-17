@@ -28,17 +28,31 @@ function siteOrigin(): string {
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
-  const links = await prisma.shareLink.findMany({
-    where: {
-      indexing: true,
-      passwordHash: null,
-      page: { deletedAt: null },
-      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-    },
-    select: { token: true, page: { select: { updatedAt: true } } },
-    orderBy: { page: { updatedAt: "desc" } },
-    take: SITEMAP_LIMIT,
-  });
+  let links: Array<{ token: string; page: { updatedAt: Date } }>;
+  try {
+    links = await prisma.shareLink.findMany({
+      where: {
+        indexing: true,
+        passwordHash: null,
+        page: { deletedAt: null },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+      select: { token: true, page: { select: { updatedAt: true } } },
+      orderBy: { page: { updatedAt: "desc" } },
+      take: SITEMAP_LIMIT,
+    });
+  } catch (error) {
+    // A build must not depend on a reachable database. This route is prerendered
+    // (`revalidate` above), so an unreachable database failed `next build`
+    // outright — a database blip could block a deploy, and the desktop payload
+    // build died on a placeholder `DATABASE_URL` in `.env`. An empty sitemap is
+    // the honest answer: no database, no known published pages. ISR refills it
+    // on the first request that succeeds.
+    console.warn(
+      `[sitemap] no published pages: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return [];
+  }
 
   const changeFrequency: ChangeFreq = "weekly";
   const origin = siteOrigin();

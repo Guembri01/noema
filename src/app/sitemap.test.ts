@@ -71,4 +71,16 @@ describe("sitemap()", () => {
       expect.objectContaining({ url: "https://noema.example.com/s/tok-3" }),
     ]);
   });
+
+  it("answers with an empty sitemap when the database is unreachable", async () => {
+    // The route is prerendered, so an unreachable database used to fail
+    // `next build` — a database blip could block a deploy, and the desktop
+    // payload build died on a placeholder `DATABASE_URL`.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    db.shareLinkFindMany.mockRejectedValue(new Error("Can't reach database server"));
+
+    await expect(sitemap()).resolves.toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("[sitemap]"));
+    warn.mockRestore();
+  });
 });
