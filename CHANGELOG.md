@@ -565,6 +565,14 @@ list marks it as **No access**.
   app's origin for every member who opened the table or the page. Every
   stored URL now passes the shared href allowlist before it reaches an `href`
   (`http`, `https`, `mailto`, `tel` and safe relative paths).
+- The workspace invitation token is persisted as its domain-separated SHA-256
+  digest — the plaintext exists only in the link that is mailed out, and the
+  token is a bearer credential for the workspace. The rows that predate that
+  change are migrated as well: the migration
+  `20261021000000_invite_token_digests` turns the invitation tokens that are
+  still in cleartext into their digest, losslessly and idempotently, so an
+  invitation that was issued before the change and has not expired still
+  works. The migration is a data migration, not a schema change.
 
 
 
