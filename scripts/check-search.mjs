@@ -83,6 +83,10 @@ const tokenRow = await prisma.apiToken.create({
     userId: user.id,
     name: `search check ${stamp}`,
     tokenHash: createHash("sha256").update(apiToken).digest("hex"),
+    // The v1 API enforces the grant of the bearer token: `GET /api/v1/search`
+    // needs `read:pages`, so the token is minted with exactly that scope
+    // (`src/lib/api-token-scope.ts` — the catalogue the app knows).
+    scopes: ["read:pages"],
   },
   select: { id: true },
 });

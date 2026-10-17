@@ -423,6 +423,26 @@ curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 # 9. restart the cron driver + `npm run collab` so they pick up new code/env
 ```
 
+### 8.1 API token scopes — existing tokens keep their grant
+
+The REST API (`/api/v1/*`) enforces the scope grant of the bearer token: a
+token without `read:pages` (respectively `write:pages`) is refused with
+`403 {"error":"insufficient_scope","required":"read:pages"}`.
+
+**There is deliberately no migration for this.** A token that was created
+without a scope keeps its **empty** grant — a fail-closed system must not hand
+out permissions silently during an upgrade. Such a token has to be re-created
+in the workspace settings (**API tokens** card) with the scopes it needs; until
+then every `/api/v1/*` route refuses it. The token list marks a scope-less
+token as **No access**.
+
+OAuth-minted tokens are unaffected: `/oauth/token` stores an explicit scope
+list with every token it mints, and returns that list in the response.
+
+Note the order of the checks: the scope check runs **before** the workspace
+check, so a token without the scope gets `403 insufficient_scope` and learns
+nothing about the workspace it was aimed at.
+
 ## 9. Incident quick reference
 
 | Symptom | First checks |
@@ -436,6 +456,7 @@ curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 | Collaborative socket closed 4400 | `APP_ORIGINS` is set and the client’s `Origin` isn’t on the list (checked pre-auth) — add the origin or unset `APP_ORIGINS` |
 | Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
 | `EADDRINUSE` / weird build output | dev and prod share `.next` and the ports — exactly one writer at a time |
+| `/api/v1/*` answers `403 insufficient_scope` | the token's grant does not cover the call (`read:pages` / `write:pages`); a token created without a scope has an empty grant and has to be re-created — see §8.1 |
 
 ## 10. Verification appendix
 
@@ -459,6 +480,7 @@ nothing was executed against live servers):
 | 7 | `/api/health` 200/503 shapes, 2 s ping, `no-store`, no auth/disclosure, compose healthcheck | `src/app/api/health/route.ts` · `docker-compose.yml` |
 | 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
 | 8 | single `20260113000000_init` migration vs push-evolved schema | `prisma/migrations/` · `docs/specs/engineering-hardening.md:149,367-373` |
+| 8.1 | scope grant enforced on `/api/v1/*`, no migration for existing tokens, scope check before workspace check | `src/app/api/v1/*/route.ts` · `src/lib/api-token-scope.ts` · `src/server/actions/api-tokens.ts` |
 | all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
 
 **Not verified by execution (be explicit when relying on them):** the backup →

@@ -7,6 +7,36 @@ import { verifyChallenge } from "@/lib/oauth-pkce";
 
 export const runtime = "nodejs";
 
+/**
+ * The scopes a token minted here carries.
+ *
+ * The OAuth flow negotiates no scopes yet: the consent screen offers no
+ * picker, the app row stores no scopes and the authorization code carries
+ * none — so there is nothing the token endpoint could read back to honour a
+ * narrower grant. The list is therefore fixed and explicit rather than empty:
+ * every read and write scope of the catalogue, minus `admin:workspace`, which
+ * this endpoint never advertised (its response said `scope: "read write"`).
+ * A token minted here is exactly as capable as the one it replaces, but the
+ * grant is now recorded on the row and enforced by the API instead of being
+ * implied by the absence of a check.
+ */
+const OAUTH_TOKEN_SCOPES: readonly string[] = [
+  "read:pages",
+  "write:pages",
+  "read:databases",
+  "write:databases",
+  "read:tickets",
+  "write:tickets",
+  "read:comments",
+  "write:comments",
+  "read:files",
+  "write:files",
+  "read:webhooks",
+  "write:webhooks",
+  "read:members",
+  "write:members",
+];
+
 /** Exchange an authorization code for an API access token. */
 export async function POST(request: Request) {
   const limited = rateLimit(request, "oauth-token", 30, 60_000);
@@ -53,12 +83,13 @@ export async function POST(request: Request) {
       userId: record.userId,
       name: `OAuth: ${app.name}`,
       tokenHash: hashApiToken(accessToken),
+      scopes: [...OAUTH_TOKEN_SCOPES],
     },
   });
 
   return NextResponse.json({
     access_token: accessToken,
     token_type: "Bearer",
-    scope: "read write",
+    scope: OAUTH_TOKEN_SCOPES.join(" "),
   });
 }

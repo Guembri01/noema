@@ -95,7 +95,7 @@ This repository is a **working application plus a complete parity tracker**.
 | Import / Export | Export a page as **Markdown / JSON / HTML**, a database as **CSV**, the whole workspace as a **.zip**; import **Markdown** or **CSV** |
 | Sharing | **Share to web** — publish a page read-only at `/s/<token>` with optional **password + expiry**; unpublish; per-member share levels and **email invitations** (see [Permissions](#permissions-guests-teamspaces-page-shares)) |
 | Templates | **Template button** block + database templates with **recurrence** (daily/weekly/monthly) materialized by `POST /api/cron/templates` |
-| Public API | `GET/POST /api/v1/pages`, `GET /api/v1/pages/:id`, `GET /api/v1/search`, `GET /api/v1/workspaces` — authenticated with **Bearer API tokens** (hashed at rest, managed in workspace settings) |
+| Public API | `GET/POST /api/v1/pages`, `GET /api/v1/pages/:id`, `GET /api/v1/search`, `GET /api/v1/workspaces` — authenticated with **Bearer API tokens** (hashed at rest, managed in workspace settings); the token's **scope grant is enforced** (`read:pages` for the read routes, `write:pages` for creating pages) |
 | Workspace settings | Rename, member list, API tokens, workspace export |
 | Home & templates | A greeting home with **Empty page / Empty database** cards, a **workflow template gallery** (Task tracking, Projects, Skills, Document center, Brainstorm, Meeting notes) with mini previews, and “Other templates”; `POST /api/templates` |
 | Sidebar chrome | **Home / Chat / Meetings** tabs, **Projects**, **Library**, **Teamspaces**, **Private pages**, search, **Add**, **Customize**, a footer help menu, and a **right-click menu on every page** (open, open in new tab, discuss in chat, rename, favorite, copy link, move to teamspace/project, trash) |
@@ -495,7 +495,7 @@ password: password123
 | `npm run check:embedded-db` | Embedded-database robustness: a real PGlite engine, 24 handshakes aborted mid-flight, then two more Prisma clients — no Postgres, no Docker, no Tauri |
 | `npm run screenshots` | Regenerates the gallery in `docs/screenshots/` and `docs/GALLERY.md` from the seeded demo workspace (drives the installed Edge) |
 | `npm run features:pdf` | Builds `docs/Noema-features.pdf` — the feature sheet: every area as bullet points, illustrated with all 44 screenshots, derived from the README's feature tables and the screenshot report (drives the installed Edge) |
-| `npm run check:search` | Proves ranking, prefix matching, snippets, trashed-page exclusion, re-indexing and the public API path |
+| `npm run check:search` | Proves ranking, prefix matching, snippets, trashed-page exclusion, re-indexing and the public API path — with a bearer token that holds the `read:pages` grant the API enforces |
 | `npm run check:storage` | Storage round trip through the API: upload, byte-for-byte read, guards (auth, traversal, missing, bad type) |
 | `npm run check:chat-stream` | Proves answers stream in chunks, arrive before completion, and persist exactly once |
 | `npm run check:coherence` | **Fails on drift**: orphan actions, native dialogs, unexpected injection sinks, growing action-call drift, shrinking i18n coverage |
