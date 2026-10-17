@@ -236,10 +236,9 @@ export async function GET() {
  * Body: { skillId, text, workspaceId?, targetLocale?, tone?, style?, audience?, maxWords? }
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "ai-skills", 30, 60_000);
-  if (limited) return limited;
-
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "ai-skills", 30, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let raw: unknown;

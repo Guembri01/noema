@@ -23,6 +23,72 @@ Required env: `DATABASE_URL` (must match the docker mapping `localhost:5433`,
 user/db `noema`) and `AUTH_SECRET` (≥ 16 chars — shorter is rejected by the
 collab relay). Full key inventory: `.env.example`.
 
+### 1.1 Reverse proxy in front of the app (`TRUSTED_PROXY_HOPS`)
+
+The app does **not** trust `X-Forwarded-For` / `X-Real-IP` on its own: those
+headers are written by the client, so a client could name any address it
+likes and get a fresh rate-limit budget (or slip past the IP allowlist) with
+every request. How many proxy hops in front of the app may set them is
+declared with one variable:
+
+| `TRUSTED_PROXY_HOPS` | Meaning | Client IP used |
+|---|---|---|
+| unset / `0` / not a positive integer | no trusted proxy — the forwarding headers are **ignored** | unknown → every caller of a scope shares the `scope:local` bucket |
+| `1` | one reverse proxy (the usual nginx/Caddy in front of the container) | the **last** `X-Forwarded-For` hop — the address the proxy saw |
+| `N` | N proxies | the **Nth-from-last** hop — the **N-th hop from the end**, i.e. the **real client** (every trusted proxy appends the address of its peer, so the last N entries of the chain are the ones the proxies appended). A chain shorter than N cannot be attributed that way → the `X-Real-IP` fallback (the proxy sets it) → and only if that is missing too, `scope:local` |
+
+Set it to the number of proxies between the internet and the app:
+
+```bash
+# docker compose app behind one nginx:
+TRUSTED_PROXY_HOPS=1
+```
+
+Only a value up to **16** is a valid declaration. Anything above that is a
+configuration error (a typo) and is **rejected** — the app then trusts no
+forwarding header at all. It is not silently clamped: clamping would declare
+a trust boundary nobody wrote.
+
+The proxy **must overwrite** the headers — it appends its own peer address to
+`X-Forwarded-For` and sets `X-Real-IP`:
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Real-IP       $remote_addr;
+```
+
+**What happens without the variable** (the safe direction, but it bites):
+
+- **All clients of a scope share one budget.** In the shipped
+  `docker-compose` setup — no reverse proxy — the 120/min budget of
+  `/api/v1/*` is a budget for *all* users together, not per user. Signed-in
+  callers are additionally limited per user id (that budget cannot be
+  spoofed), so the shared budget is the first thing to bite on a busy
+  instance.
+- **The admin/private surfaces answer 403 for everybody.** Without a declared
+  proxy the client IP is unknown, and the allowlist fails closed — including
+  the legitimate admin address. Only the gated surfaces are affected
+  (`/w/<slug>/settings`, `/w/<slug>/audit`, `/admin/*`); the rest of the app
+  keeps working. Declare the proxy (or unset the allowlist).
+
+**The memory bound of the limiter** (both stores, named so it is not a
+surprise): the client-IP budgets and the per-user budgets live in **two
+separate** in-memory stores, each capped at **10 000 live buckets**. When a
+store holds more than 10 000 live keys inside one window, the **coldest live
+bucket is sacrificed** and **that caller's window starts over**. For the
+client-IP store that needs 10 000 distinct client addresses in one window
+(and without a declared proxy it cannot happen at all — every caller shares
+`scope:local`). For the per-user store it needs 10 000 *distinct
+authenticated users* with a live budget in the same window — a real
+installation, not a flood. Because the stores are separate, a flood of forged
+client addresses can never reset an exhausted per-user budget.
+
+> **Edge runtime:** `src/middleware.ts` runs in the Edge runtime, where
+> `process.env` is frozen at **build** time. `TRUSTED_PROXY_HOPS` therefore
+> has to be set for the **build** (`npm run build` / `docker compose build`),
+> not only for the start. A value that is only present in the runtime
+> environment is invisible to the middleware.
+
 ## 2. Backup drill
 
 ### 2.1 Run a backup
@@ -436,7 +502,9 @@ curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 | Collaborative socket closed 4400 | `APP_ORIGINS` is set and the client’s `Origin` isn’t on the list (checked pre-auth) — add the origin or unset `APP_ORIGINS` |
 | Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
 | Sign-in answers "Too many attempts" / "This account is temporarily locked" | a budget is spent (30/min per client address, 10/min per account, 5 2FA guesses / 15 min) or the account is locked (5 consecutive failures); wait for the quoted time — an operator can release the lock with `UPDATE "User" SET "failedLoginCount" = 0, "lockedUntil" = NULL WHERE email = '…'` |
-| `EADDRINUSE` / weird build output | dev and prod share `.next` and the ports — exactly one writer at a time |
+| Everyone hits the rate limit at once (429) | no `TRUSTED_PROXY_HOPS` → all clients of a scope share the `scope:local` budget; declare the proxy hops (see §1.1) |
+| Admin surface answers 403 for everybody | `ADMIN_IP_ALLOWLIST` is set but `TRUSTED_PROXY_HOPS` is not → the allowlist fails closed; declare the proxy hops (see §1.1) |
+| A single caller suddenly gets a fresh allowance | a bucket store was full (> 10 000 live keys): the coldest live bucket is sacrificed and that caller's window starts over (see §1.1) || `EADDRINUSE` / weird build output | dev and prod share `.next` and the ports — exactly one writer at a time |
 
 ## 10. Verification appendix
 
@@ -445,6 +513,7 @@ nothing was executed against live servers):
 
 | Section | Command / fact | Source of truth |
 | --- | --- | --- |
+| 1.1 | `TRUSTED_PROXY_HOPS`, the hop arithmetic (last / Nth-from-last), the `X-Real-IP` fallback for a chain shorter than N and the `scope:local` fallback, the rejected hop counts above 16, the `ADMIN_IP_ALLOWLIST` fail-closed gate, the Edge-runtime build-time freeze | `src/lib/tenant-guard.ts` (`parseTrustedProxyHops`, `resolveClientIp`) · `src/lib/rate-limit.ts` (`clientKey`, `userKey`) · `src/lib/api-guard.ts` (`rateLimit`) · `src/middleware.ts` (`ipGate`) · `.env.example` |
 | 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL” | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 23 tests) |
 | 2.2 | `psql "$DATABASE_URL" < backups/<file>.sql` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) |
 | 3 | `POST /api/cron/templates`, `x-cron-secret`, 503/401, `12/60_000` limit, `{due,created,skipped,failed}`, fail-closed order | `src/app/api/cron/templates/route.ts` |

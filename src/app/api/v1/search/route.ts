@@ -43,9 +43,9 @@ function parseSearchType(raw: string | null): "PAGE" | "DATABASE" | null {
  * not scoped yet (tracked in #105).
  */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "v1");
-  if (limited) return limited;
   const auth = await authenticateApiRequest(request);
+  const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
+  if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const url = new URL(request.url);

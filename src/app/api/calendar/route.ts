@@ -248,9 +248,9 @@ async function handleSync(body: {
  * Calendar events are not page-scoped, so a `GUEST` gets a 403.
  */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "calendar-read", 120, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "calendar-read", 120, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const params = new URL(request.url).searchParams;
@@ -299,9 +299,9 @@ export async function GET(request: Request) {
  * With `apply: true` the pull operations are persisted locally.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "calendar-write", 30, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "calendar-write", 30, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let body: {

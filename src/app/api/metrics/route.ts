@@ -59,13 +59,10 @@ type MetricsPayload = {
  * "admin" is platform-scoped: a member who can administer *any* workspace
  * qualifies, as does a workspace they own.
  */
-async function isWorkspaceAdmin(): Promise<boolean> {
-  const user = await getCurrentUser();
-  if (!user) return false;
-
+async function isWorkspaceAdmin(userId: string): Promise<boolean> {
   const membership = await prisma.workspaceMember.findFirst({
     where: {
-      userId: user.id,
+      userId,
       role: { in: [WorkspaceRole.OWNER, WorkspaceRole.ADMIN] },
     },
     select: { id: true },
@@ -73,32 +70,49 @@ async function isWorkspaceAdmin(): Promise<boolean> {
   if (membership !== null) return true;
 
   const owned = await prisma.workspace.findFirst({
-    where: { ownerId: user.id },
+    where: { ownerId: userId },
     select: { id: true },
   });
   return owned !== null;
 }
 
+/**
+ * The caller's authorization path: how they got in, and — for the admin path
+ * — the user id the per-user rate-limit budget is keyed on. The cron path
+ * has no user id: it is a shared secret, not an identity.
+ */
+type Authorized = { via: "cron" | "admin"; userId: string | null };
+
 /** Resolve the caller's authorization path, or `null` when denied. */
-async function authorize(request: Request): Promise<"cron" | "admin" | null> {
+async function authorize(request: Request): Promise<Authorized | null> {
   const secret = process.env.CRON_SECRET;
   const provided = request.headers.get("x-cron-secret");
-  if (typeof secret === "string" && secret !== "" && provided === secret) return "cron";
-  if (await isWorkspaceAdmin()) return "admin";
+  if (typeof secret === "string" && secret !== "" && provided === secret) {
+    return { via: "cron", userId: null };
+  }
+  const user = await getCurrentUser();
+  if (user && (await isWorkspaceAdmin(user.id))) {
+    return { via: "admin", userId: user.id };
+  }
   return null;
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
-  const limited = rateLimit(request, "metrics", 120, 60_000);
+  // The identity is resolved before the limit, so the per-user budget (the
+  // one a caller cannot dodge by rotating its client IP) can be applied.
+  const auth = await authorize(request);
+  const limited = rateLimit(request, "metrics", 120, 60_000, {
+    userId: auth?.userId ?? null,
+  });
   if (limited) return limited;
 
-  const via = await authorize(request);
-  if (via === null) {
+  if (auth === null) {
     return NextResponse.json(
       { error: "Unauthorized" },
       { status: 401, headers: { "cache-control": "no-store" } },
     );
   }
+  const via = auth.via;
 
   const traceId = newTraceId();
   const span = startSpan("metrics.collect", { traceId });

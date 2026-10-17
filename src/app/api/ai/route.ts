@@ -43,9 +43,9 @@ function contextToDocs(context: string): ContextDoc[] {
  * with guidance when unconfigured so the "Ask AI" block degrades gracefully.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "ai", 30, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "ai", 30, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let raw: unknown;

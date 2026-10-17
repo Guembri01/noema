@@ -130,17 +130,64 @@ Source: [`src/lib/api-guard.ts`](../src/lib/api-guard.ts) +
 [`src/lib/rate-limit.ts`](../src/lib/rate-limit.ts)
 
 ```ts
-rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
+rateLimit(request, scope, limit = 120, windowMs = 60_000, { userId }): NextResponse | null
 ```
 
-- Fixed-window, **in-memory** (`Map`), keyed
-  `scope:firstXForwardedForHop` with fallback to `x-real-ip` then the
-  literal `local` (→ every loopback caller shares one bucket when no proxy
-  headers are set). Single-node only; the file header says to swap in Redis
-  for multi-instance.
+- Fixed-window, **in-memory**, in **two separate bounded LRU stores** — one for
+  the client-IP budgets, one for the per-user budgets. Each store holds at
+  most **10 000 buckets** and has a TTL sweep that drops the buckets whose
+  window has closed.
+- The client-IP bucket is keyed `scope:clientIp`. The client IP is read from
+  `X-Forwarded-For` / `X-Real-IP` **only** when the deployment declares how
+  many reverse-proxy hops to trust (`TRUSTED_PROXY_HOPS`); without that
+  declaration the forwarding headers are written by the client itself and are
+  ignored, so every caller of a scope shares the `scope:local` bucket. With
+  `TRUSTED_PROXY_HOPS=N` the **Nth-from-last** `X-Forwarded-For` hop is used —
+  the **N-th hop from the end**, i.e. the **real client** (every trusted proxy
+  appends the address of its peer, so the last N entries of the chain are the
+  ones the trusted proxies appended). A chain shorter than N hops cannot be
+  attributed that way: the `X-Real-IP` fallback is used instead (the proxy
+  that declared itself sets it), and only when that header is missing too
+  does the key fall back to `scope:local`. The address is canonicalized
+  (IPv4 dotted-decimal, IPv6 RFC 5952); a value that is not an IP literal
+  cannot be attributed and also falls back to `scope:local`.
+- **Two budgets** apply. The client-IP budget always does; for routes that
+  know their caller a **per-user** budget (`scope:user:<id>`) applies on top.
+  The user id comes from the session cookie or the API token and cannot be
+  spoofed — rotating the (spoofable) client IP does not buy a fresh
+  allowance. The per-user budget is checked **first**; it is the budget a
+  caller cannot dodge.
+- The two budgets live in **separate stores**, so the client-IP key space —
+  the part an unauthenticated caller controls — cannot evict the per-user
+  bucket. A flood of 10 000 forged client addresses therefore cannot reset
+  an exhausted per-user budget.
+- **The residual of the memory bound, named:** when a store holds more than
+  10 000 **live** keys inside one window, the **coldest live bucket is
+  sacrificed** and **that caller's window starts over** (same trade-off the
+  sliding-window limiter makes at its own 10 000-key cap). For the client-IP
+  store that needs 10 000 distinct client addresses in one window; with the
+  default configuration (`TRUSTED_PROXY_HOPS` unset) every caller of a scope
+  shares `scope:local`, so the key space cannot grow that way at all. For the
+  per-user store it needs 10 000 **distinct authenticated users** holding a
+  live budget in the same window — a real installation, not a flood.
+- An **anonymous** caller only gets the client-IP budget. Without a declared
+  proxy that is the shared `scope:local` bucket — a shared budget, but never a
+  bypassable one.
+- The caller is identified **before** the limit is charged: the per-user
+  budget is keyed on the user id, so the route resolves the session or the
+  API token first. The limiter therefore does not bound that lookup itself —
+  an anonymous flood on a wired route costs one session lookup per request
+  before the limit bites. The lookup is cheap for an unauthenticated caller
+  (a forged cookie fails the signature check before any database access), so
+  only authenticated callers make it expensive.
 - Over the limit → `429 {"error":"Rate limit exceeded"}` with a `retry-after`
   header (whole seconds, min 1). `null` means continue.
 - The limiter resets on process restart; `resetRateLimits()` exists for tests.
+- Single-node only; the file header says to swap in Redis for multi-instance.
+- Operational note: see [OPERATIONS §1.1](./OPERATIONS.md#11-reverse-proxy-in-front-of-the-app-trusted_proxy_hops)
+  — without `TRUSTED_PROXY_HOPS` all clients of a scope share one budget, and
+  a configured `ADMIN_IP_ALLOWLIST` makes the admin/private surfaces answer
+  403 for everybody until the proxy is declared.
 
 | Scope | Limit | Used by |
 |---|---|---|
@@ -154,14 +201,20 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
 | `preview` | 60/min | `GET /api/link-preview` |
 | `upload` | 60/min | `POST /api/upload` |
 | `ai` / `ai-skills` / `transcribe` | 30 / 30 / 10 per min | `POST /api/ai*` |
-| `notion-import` | 30/min | `POST /api/import/notion` |
+| `notion-import` / `pdf-import` | 30 / 30 per min | `POST /api/import/*` |
+| `export-page` / `export-database` / `export-workspace` | 30 / 30 / 5 per min | `GET /api/export/*` |
+| `inbound-webhook` | 60/min | `POST /api/webhooks/inbound` |
+| `mcp` | 120/min | `GET` / `POST /api/mcp` |
+| `metrics` | 120/min | `GET /api/metrics` |
 | `oauth-token` | 30/min | `POST /oauth/token` |
 | `cron` | 12/min | `POST /api/cron/templates` (after the secret check) |
 | `share-unlock-<token>` | 5/min | `POST /s/[token]/unlock` (per share link) |
 
-**Not rate-limited:** `export/page`, `export/database`, `export/workspace`
-(the zip export is the heaviest unthrottled endpoint), `files/[...path]`,
-`auth/sso/start`, `auth/sso/callback`, `oauth/authorize/complete`.
+Every scope above is spent **per client IP**; the scopes whose routes know
+their caller additionally spend the per-user budget (see above).
+
+**Not rate-limited:** `files/[...path]`, `auth/sso/start`,
+`auth/sso/callback`, `oauth/authorize/complete`, `s/[token]/unlock`.
 
 ### 3.1 Auth surface (server actions)
 

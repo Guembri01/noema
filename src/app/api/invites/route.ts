@@ -10,9 +10,9 @@ export const runtime = "nodejs";
 
 /** List recent email deliveries for a workspace (admins only). */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "invites-read", 60, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "invites-read", 60, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const workspaceId = new URL(request.url).searchParams.get("workspaceId") ?? "";
@@ -35,9 +35,9 @@ export async function GET(request: Request) {
  *   { target: "teamspace", teamspaceId, email, role?: "MEMBER" | "ADMIN" }
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "invites-write", 20, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "invites-write", 20, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let body: {

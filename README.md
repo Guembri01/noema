@@ -420,6 +420,7 @@ npm run dev                 # http://localhost:3000 (Next.js default port)
 | SMTP (optional) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, … | invitation emails; without it the invite link is still shown in the UI |
 | Notion importer (optional) | `NOTION_API_BASE` | defaults to `https://api.notion.com/v1`; checks point it at a local mock (`http://localhost:4322/v1`) |
 | Misc (optional) | `APP_URL`, `APP_ORIGINS`, `CRON_SECRET`, `NEXT_PUBLIC_COLLAB_URL` | canonical email links, Server-Action origin allow-list, cron guard, realtime collab |
+| Reverse proxy (optional) | `TRUSTED_PROXY_HOPS` | how many reverse-proxy hops may set `X-Forwarded-For` / `X-Real-IP` (1 for a single nginx/Caddy). Unset = the forwarding headers are ignored; see [OPERATIONS §1.1](./docs/OPERATIONS.md#11-reverse-proxy-in-front-of-the-app-trusted_proxy_hops) |
 
 **Production:** `npm run build` then `npm start`. Note that dev and prod share
 the same `.next` directory — never run them at the same time.

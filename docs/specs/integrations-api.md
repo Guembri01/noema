@@ -67,7 +67,7 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
 | Minting (manual) | `src/server/actions/tokens.ts:10-21` | `noema_${randomToken(24)}`, plaintext returned once; revoke at `:23-31`. |
 | Minting (OAuth) | `src/app/oauth/token/route.ts:41-48` | Creates an `ApiToken` named `OAuth: ${app.name}`; **scope hardcoded `"read write"`** (`:53`). |
 | Schema | `prisma/schema.prisma` `model ApiToken` | `id, userId, name, tokenHash @unique, createdAt, lastUsedAt` — **no scopes, no expiry, no per-token quota**. |
-| Rate limiting | `src/lib/rate-limit.ts:17-33, 36-43` | In-memory fixed window (documented single-node topology, `:1-5`); key = `scope:first-x-forwarded-for-hop`. Used as `"v1"` 120/min shared by all four v1 routes, `"oauth-token"` 30/min (`oauth/token/route.ts:11`), `"tickets-read"` 120 / `"tickets-write"` 60 (`api/tickets/route.ts:26,50`). |
+| Rate limiting | `src/lib/rate-limit.ts:143-169, 193-212` | In-memory fixed window in **two separate bounded LRU stores** (documented single-node topology, `:1-5`), each capped at 10 000 live buckets; key = `scope:clientIp` — the client IP is read from the forwarding headers **only** when `TRUSTED_PROXY_HOPS` declares the trusted proxy hops, otherwise the key is `scope:local` and every caller of the scope shares it. A **second** budget `scope:user:<id>` is keyed on the session/API-token user id and cannot be spoofed; it lives in its own store, so a flood of forged client addresses cannot evict it or reset an exhausted user window. Used as `"v1"` 120/min shared by all four v1 routes, `"oauth-token"` 30/min (`oauth/token/route.ts:11`), `"tickets-read"` 120 / `"tickets-write"` 60 (`api/tickets/route.ts:26,50`). |
 
 ### 2.3 Webhooks & delivery
 
@@ -461,7 +461,7 @@ verifier received (do not re-serialize JSON); reject if older than 300 s.
 | Secret rotated while deliveries are queued | Signature is computed at send time with the *current* secret (R24.14). |
 | Hook deactivated between claim and send | Scheduler re-checks `active` at claim time; claimed rows for inactive hooks are marked `failed` with `error = "hook disabled"` (R24.16). |
 | Receiver returns 3xx | `redirect: "manual"` → recorded as a failed attempt, no redirect following (R24.11). |
-| `X-Forwarded-For` spoofing | IP bucket trusts the first hop (`rate-limit.ts:37-39`) — documented as best-effort behind a trusted proxy; the token bucket (R24.6) is spoof-proof and becomes the primary control. |
+| `X-Forwarded-For` spoofing | The forwarding headers are **ignored** unless `TRUSTED_PROXY_HOPS` declares how many proxy hops to trust (`tenant-guard.ts:303-352`); with N hops the Nth-from-last hop is used, without a declaration every caller of a scope shares the `scope:local` bucket. The per-user budget (`scope:user:<id>`, keyed on the session/API-token id) is the control that cannot be spoofed at all — and it lives in its own store, so no flood of forged addresses can evict it or reset its window. |
 | In-memory limiter reset on deploy | Buckets clear on restart — accepted under the single-node topology (R24.9); noted in O24.1. |
 | Empty event selection | Means "all events" — now explicitly labeled (R24.19); existing hooks keep working unchanged. |
 | Consent downgrade mid-flow | Only the final checked scopes are minted (R24.20); re-authorization can widen them again. |

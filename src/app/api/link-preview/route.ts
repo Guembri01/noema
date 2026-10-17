@@ -133,9 +133,9 @@ async function safeAssetUrl(
  * conditional `If-None-Match` handling.
  */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "preview", 60, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "preview", 60, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

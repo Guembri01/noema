@@ -54,9 +54,9 @@ function nextPageLink(requestUrl: URL, nextCursor: string | null): string | null
  * UI. A full member keeps the whole workspace.
  */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "v1");
-  if (limited) return limited;
   const auth = await authenticateApiRequest(request);
+  const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
+  if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const url = new URL(request.url);
@@ -121,9 +121,9 @@ export async function GET(request: Request) {
  * that send no key are unaffected — the handler simply runs.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "v1");
-  if (limited) return limited;
   const auth = await authenticateApiRequest(request);
+  const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
+  if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   return withIdempotency(request, { userId: auth.userId }, async () => {
