@@ -100,6 +100,12 @@ beforeEach(async () => {
   // The unlock cookie is signed (B01); without a secret the route fails
   // closed and hands out no cookie at all.
   process.env.AUTH_SECRET = "test-secret-for-share-unlock-tests";
+  // The rate limit's bucket is keyed `share-unlock-<token>:<ip>`. The address
+  // is only read when the deployment declares how many reverse-proxy hops to
+  // trust (`TRUSTED_PROXY_HOPS`); without that declaration the forwarding
+  // headers are ignored and every caller of a scope shares one budget — the
+  // tests below need the address dimension, so they declare one proxy.
+  process.env.TRUSTED_PROXY_HOPS = "1";
   db.shareLinkFindUnique.mockResolvedValue({ passwordHash: "hash" });
   auth.verifyPassword.mockImplementation(
     async (password: string) => password === PASSWORD,
@@ -110,6 +116,7 @@ beforeEach(async () => {
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.AUTH_SECRET;
+  delete process.env.TRUSTED_PROXY_HOPS;
 });
 
 describe("POST /s/<token>/unlock - unlocking a share link", () => {
@@ -160,6 +167,20 @@ describe("POST /s/<token>/unlock - brute force is throttled", () => {
       error: "Rate limit exceeded",
     });
     expect(auth.verifyPassword).toHaveBeenCalledTimes(5);
+  });
+
+  it("shares one budget per share link when no proxy is declared", async () => {
+    // Without `TRUSTED_PROXY_HOPS` the forwarding headers are ignored, so the
+    // bucket key carries no address: every caller of the link spends the same
+    // budget. That is the safe direction — the rate limit gets stricter, not
+    // looser — and the attempt brake below is unaffected either way.
+    delete process.env.TRUSTED_PROXY_HOPS;
+    for (let i = 0; i < 5; i += 1) {
+      const res = await post({ password: `guess-${i}`, ip: `10.0.9.${i}` });
+      expect(res.status).toBe(303);
+    }
+    const limited = await post({ password: "guess-5", ip: "10.0.9.99" });
+    expect(limited.status).toBe(429);
   });
 
   it("locks a share link after too many failed attempts, even when the ip rotates", async () => {
