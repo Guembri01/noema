@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { planPageDuplicate, validatePageDuplicate } from "@/lib/page-duplicate";
+import { describe, expect, it, vi } from "vitest";
+import {
+  defaultIdFactory,
+  planPageDuplicate,
+  validatePageDuplicate,
+} from "@/lib/page-duplicate";
 import type { IdFactory, PageDuplicatePlan, PageNode } from "@/lib/page-duplicate";
 
 /** Deterministic factory: `new-1`, `new-2`, … in allocation order. */
@@ -41,6 +45,29 @@ function basePages(): PageNode[] {
 function validPlan(): PageDuplicatePlan {
   return planPageDuplicate(basePages(), "p-root", { idFactory: seqFactory() });
 }
+
+describe("defaultIdFactory", () => {
+  it("keeps the `page_<counter>_<random>` shape the page ids have always had", () => {
+    expect(defaultIdFactory()).toMatch(/^page_[0-9a-z]+_[0-9a-z]{8}$/);
+  });
+
+  it("never hands out the same id twice", () => {
+    const ids = new Set(Array.from({ length: 500 }, () => defaultIdFactory()));
+    expect(ids.size).toBe(500);
+  });
+
+  it("draws the random part from the CSPRNG, never from Math.random", () => {
+    // The id ends up as the primary key of the copy and in its URL, so a weak
+    // PRNG would make the copied page enumerable.
+    const spy = vi.spyOn(Math, "random");
+    try {
+      defaultIdFactory();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
 
 describe("planPageDuplicate", () => {
   it("copies the whole subtree, root last in position but first link intact", () => {

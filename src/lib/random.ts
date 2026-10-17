@@ -10,6 +10,7 @@
  *
  * Security: `crypto.getRandomValues` is a CSPRNG, and `randomInt` rejects
  * out-of-range draws (modulo bias would make short codes slightly guessable).
+ * `randomBase36` does the same for the base36 alphabet.
  */
 
 /** The platform CSPRNG. Throws a clear error rather than silently weakening. */
@@ -53,6 +54,37 @@ export function randomInt(maxExclusive: number): number {
     draw = buffer[0];
   } while (draw >= ceiling);
   return draw % maxExclusive;
+}
+
+const BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz";
+
+/**
+ * 252 = 36 × 7 — the largest multiple of the alphabet that fits in a byte.
+ * The bytes 0…251 cover every character exactly seven times, so `byte % 36` is
+ * uniform; the four bytes above are rejected instead of biasing the alphabet.
+ */
+const BASE36_LIMIT = 252;
+
+/**
+ * A random lowercase base36 string of exactly `length` characters.
+ *
+ * The characters come from the CSPRNG (`crypto.getRandomValues`) and carry
+ * `length * log2(36)` ≈ 5.17 bits each. The alphabet is the one
+ * `Number.prototype.toString(36)` produces, so ids built from it keep the
+ * shape their readers already expect.
+ */
+export function randomBase36(length: number): string {
+  if (!Number.isInteger(length) || length < 0) {
+    throw new RangeError(`randomBase36: length must be a non-negative integer, got ${length}`);
+  }
+  let out = "";
+  while (out.length < length) {
+    for (const byte of randomBytes(length - out.length)) {
+      if (byte >= BASE36_LIMIT) continue; // rejected, not folded in
+      out += BASE36[byte % BASE36.length];
+    }
+  }
+  return out;
 }
 
 const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
