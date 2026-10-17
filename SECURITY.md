@@ -75,6 +75,17 @@ Out of scope:
 - Set `CRON_SECRET` if you expose the cron route.
 - Keep dependencies current — Dependabot opens grouped weekly updates.
 
+A single sign-on only links an account that proved its own address
+(`User.emailVerified`): a local sign-up never proves one, and an account
+created by the SSO callback inherits the provider's proof. The identity
+provider is therefore the trust root for the addresses it hands out — an IdP
+that lets users type an arbitrary, unverified address weakens the guarantee.
+The `email_verified` claim of the id_token is **not** read: the callback
+trusts the address the provider hands out, so the guarantee rests entirely on
+the provider's address policy, not on the claim. A sign-in that meets an
+account whose address was never proven is refused (`?error=sso_email_taken`)
+instead of taking the account over.
+
 ## Secrets in the repository
 
 No credential belongs in the tree. `npm run check:secrets` fails the build on
