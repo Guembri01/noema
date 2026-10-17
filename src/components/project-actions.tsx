@@ -117,7 +117,7 @@ export function ProjectActions({
               type="email"
               value={email}
               aria-label={t(locale, "clientEmailAria")}
-              placeholder="client@company.com"
+              placeholder={t(locale, "clientEmailPlaceholder")}
               onChange={(event) => setEmail(event.target.value)}
               className="h-9 w-64 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
             />

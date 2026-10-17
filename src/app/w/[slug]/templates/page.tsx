@@ -201,7 +201,7 @@ export default async function TemplatesPage({
         <ChevronLeft className="h-3.5 w-3.5" /> {t(locale, "home")}
       </Link>
       <header className="mb-6 mt-2">
-        <h1 className="text-[28px] font-semibold tracking-[-0.02em]">{t(locale, "templates")}</h1>
+        <h1 className="text-title font-semibold tracking-title">{t(locale, "templates")}</h1>
         <p className="mt-2 text-sm text-muted">
           {workspace.name} · {templates.length}
         </p>

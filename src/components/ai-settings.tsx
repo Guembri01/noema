@@ -442,7 +442,7 @@ export function AiSettings({
               checked={useLocal}
               onCheckedChange={setUseLocal}
               label="Use local model"
-              aria-label="Use local model"
+              aria-label={t(locale, "useLocalModel")}
             />
           </div>
         }
@@ -619,7 +619,7 @@ export function AiSettings({
               id="sample-prompt"
               value={samplePrompt}
               rows={3}
-              aria-label="Sample prompt"
+              aria-label={t(locale, "samplePrompt")}
               onChange={(event) => setSamplePrompt(event.target.value)}
             />
           </Field>
@@ -654,7 +654,7 @@ export function AiSettings({
         </p>
 
         <pre
-          aria-label="Truncated sample preview"
+          aria-label={t(locale, "truncatedSamplePreview")}
           className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-2 text-xs text-fg scrollbar-thin"
         >
           {contextPreview.preview}
@@ -699,7 +699,7 @@ export function AiSettings({
           <Field id="local-runtime" label="Runtime">
             <Select
               id="local-runtime"
-              aria-label="Local runtime"
+              aria-label={t(locale, "localRuntime")}
               options={localOptions}
               value={localProviderId}
               onChange={pickLocalProvider}
@@ -711,7 +711,7 @@ export function AiSettings({
             <Input
               id="local-base-url"
               value={localBaseUrl}
-              aria-label="Local base URL"
+              aria-label={t(locale, "baseUrlLabel")}
               onChange={(event) => setLocalBaseUrl(event.target.value)}
             />
           </Field>
@@ -719,7 +719,7 @@ export function AiSettings({
             <Input
               id="local-model"
               value={localModel}
-              aria-label="Local model"
+              aria-label={t(locale, "modelLabel")}
               onChange={(event) => setLocalModel(event.target.value)}
             />
           </Field>
@@ -730,7 +730,7 @@ export function AiSettings({
             id="local-token"
             type="password"
             value={localApiKey}
-            aria-label="Local API token"
+            aria-label={t(locale, "localApiToken")}
             onChange={(event) => setLocalApiKey(event.target.value)}
           />
         </Field>
@@ -776,7 +776,7 @@ export function AiSettings({
             <Input
               id="autofill-column"
               value={autofillPropertyId}
-              aria-label="AI autofill column id"
+              aria-label={t(locale, "autofillColumnId")}
               onChange={(event) => setAutofillPropertyId(event.target.value)}
             />
           </Field>
@@ -784,7 +784,7 @@ export function AiSettings({
             <Input
               id="autofill-row"
               value={autofillRowId}
-              aria-label="AI autofill row id"
+              aria-label={t(locale, "autofillRowId")}
               onChange={(event) => setAutofillRowId(event.target.value)}
             />
           </Field>

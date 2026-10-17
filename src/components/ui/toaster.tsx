@@ -67,7 +67,8 @@ export function overflowCount(
   return Math.max(0, count - cap);
 }
 
-/** Per-variant icons. Colour rides inline so it beats Sonner's injected CSS. */
+/** Per-variant icons. Each status colour is a token utility class, so it is
+ *  re-themeable with the rest of the palette (no inline `var(--…)` colour). */
 const TOAST_ICON_CLASS = "h-4 w-4";
 
 /**
@@ -109,7 +110,8 @@ export function ToastView({
         <button
           type="button"
           onClick={onAction}
-          className="shrink-0 rounded-sm bg-fg px-2 py-1 text-xs font-medium text-bg transition-opacity hover:opacity-90"
+          aria-label={actionLabel}
+          className="focus-ring u-interactive shrink-0 rounded-sm bg-fg px-2 py-1 text-xs font-medium text-bg transition-opacity hover:opacity-90"
         >
           {actionLabel}
         </button>
@@ -141,29 +143,25 @@ export function Toaster() {
           success: (
             <Check
               aria-hidden
-              className={TOAST_ICON_CLASS}
-              style={{ color: "var(--success)" }}
+              className={cn(TOAST_ICON_CLASS, "text-success")}
             />
           ),
           error: (
             <TriangleAlert
               aria-hidden
-              className={TOAST_ICON_CLASS}
-              style={{ color: "var(--danger)" }}
+              className={cn(TOAST_ICON_CLASS, "text-danger")}
             />
           ),
           warning: (
             <TriangleAlert
               aria-hidden
-              className={TOAST_ICON_CLASS}
-              style={{ color: "var(--warning)" }}
+              className={cn(TOAST_ICON_CLASS, "text-warning")}
             />
           ),
           info: (
             <Info
               aria-hidden
-              className={TOAST_ICON_CLASS}
-              style={{ color: "var(--accent)" }}
+              className={cn(TOAST_ICON_CLASS, "text-accent")}
             />
           ),
           loading: (

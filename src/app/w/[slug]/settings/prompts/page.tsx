@@ -217,7 +217,7 @@ export default function PromptLibraryPage() {
       <Link href={`/w/${slug}/settings`} className="text-xs text-muted hover:underline">
         ← Settings
       </Link>
-      <h1 className="mb-2 mt-3 text-[28px] font-semibold tracking-[-0.02em]">Prompt library</h1>
+      <h1 className="mb-2 mt-3 text-title font-semibold tracking-title">Prompt library</h1>
       <p className="mb-8 text-sm text-muted">
         Save reusable prompts with <code>{"{{variable}}"}</code> placeholders and insert them from
         the editor or the chat composer. Workspace prompts are shared; personal prompts are private.

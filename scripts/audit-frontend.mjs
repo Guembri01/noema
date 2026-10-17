@@ -47,18 +47,62 @@ const stripComments = (t) =>
  * a real fix in one file and a bogus finding in another.
  */
 function classNameSources(source) {
-  const map = new Map();
-  for (const match of source.matchAll(/^\s*const (\w+) = "([^"]{3,400})";$/gm)) {
-    map.set(match[1], match[2]);
+  const resolved = new Map();
+  const expressions = new Map();
+  // Three shapes, because real components use all of them:
+  //   const BUTTON_BASE = "…";                  (also `export const`, and the
+  //                                             string may sit on the next line)
+  //   const classes = cn(BUTTON_BASE, size);
+  //   const classes = buttonClasses({ … });     (a local builder — see below)
+  for (const match of source.matchAll(/^\s*(?:export\s+)?const (\w+)\s*=\s*([^;]{3,600});/gm)) {
+    const name = match[1];
+    const value = match[2].trim();
+    if (value.length >= 3 && value.startsWith('"') && value.endsWith('"')) resolved.set(name, value.slice(1, -1));
+    else if (value.length >= 3 && !value.startsWith("`")) expressions.set(name, value);
   }
-  return map;
+  // Follow a local builder's *return* expressions only. Reading its whole body
+  // would pull in classes the element never receives and could mask a real
+  // finding, which is the one thing this checker must never do.
+  for (const match of source.matchAll(/function (\w+)\([\s\S]{0,600}?\)\s*(?::[^{]{0,120})?\{([\s\S]{0,2000}?)\n\}/g)) {
+    if (resolved.has(match[1])) continue;
+    const returned = [...match[2].matchAll(/return ([^;]{3,600});/g)].map((r) => r[1]).join(" ");
+    if (returned) expressions.set(match[1], returned);
+  }
+  for (const [name, expression] of expressions) {
+    if (!resolved.has(name)) resolved.set(name, { expression });
+  }
+  return resolved;
+}
+
+/** Resolve one identifier to the class strings it contributes (bounded depth). */
+function classValues(name, sources, depth = 0, seen = new Set()) {
+  if (depth > 3 || seen.has(name)) return [];
+  seen.add(name);
+  const entry = sources.get(name);
+  if (entry === undefined) return [];
+  if (typeof entry === "string") return [entry];
+  return [...entry.expression.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)]
+    .map((match) => match[1])
+    .flatMap((next) => classValues(next, sources, depth + 1, seen));
 }
 
 /** Expand `className={NAME}` to the constant's value so the rules can read it. */
 function expandClassNames(line, sources) {
-  return line.replace(/className=\{(\w+)\}/g, (whole, name) =>
-    sources.has(name) ? `className="${sources.get(name)}"` : whole,
-  );
+  // Any known class constant mentioned inside the braces counts — a bare
+  // \`className={CONST}\` and a composed \`className={cn(CONST, tone)}\` are the
+  // same thing to the rules below, and the composed form is the common one.
+  return line.replace(/className=\{([^}]*)\}/g, (whole, expression) => {
+    // Both halves of a composed expression matter: the literal classes
+    // (\`cn("focus-ring", CLOSE_CLASS)\`) and the resolved constants. Taking only
+    // the constants once dropped a ring that was present as a literal.
+    const literals = [...expression.matchAll(/"([^"]*)"/g)].map((match) => match[1]);
+    const values = [
+      ...literals,
+      ...[...expression.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)]
+        .flatMap((match) => classValues(match[1], sources, 0, new Set())),
+    ];
+    return values.length > 0 ? `className="${values.join(" ")}"` : whole;
+  });
 }
 
 const findings = [];

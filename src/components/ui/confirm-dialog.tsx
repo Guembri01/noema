@@ -102,14 +102,11 @@ export const CONFIRM_ICON_CLASS: Record<ConfirmTone, string> = {
   danger: "bg-danger-soft text-danger",
 };
 
-const CONFIRM_BUTTON_BASE =
-  "focus-ring u-colors inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50";
+const CONFIRM_BUTTON_BASE = "focus-ring u-colors inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50";
 
-const CONFIRM_CANCEL_BASE =
-  "focus-ring u-colors inline-flex h-9 items-center justify-center rounded-md border border-border bg-bg px-3 text-sm font-medium text-fg hover:bg-surface-2";
+const CONFIRM_CANCEL_BASE = "focus-ring u-colors inline-flex h-9 items-center justify-center rounded-md border border-border bg-bg px-3 text-sm font-medium text-fg hover:bg-surface-2";
 
-const CONFIRM_INPUT_CLASS =
-  "mt-1 h-10 w-full rounded-md border border-border bg-bg px-3 text-sm text-fg outline-none placeholder:text-muted focus:border-accent";
+const CONFIRM_INPUT_CLASS = "mt-1 h-10 w-full rounded-md border border-border bg-bg px-3 text-sm text-fg outline-none placeholder:text-muted focus:border-accent";
 
 /* ------------------------------------------------------------------------- *
  * ConfirmDialog
@@ -253,6 +250,7 @@ export function ConfirmDialog({
           <button
             type="button"
             data-testid="confirm-cancel"
+            aria-label={cancelLabel}
             className={CONFIRM_CANCEL_BASE}
           >
             {cancelLabel}
@@ -263,6 +261,7 @@ export function ConfirmDialog({
           onClick={submit}
           disabled={!enabled}
           aria-busy={pending || undefined}
+          aria-label={confirmLabel}
           data-testid="confirm-submit"
           className={cn(CONFIRM_BUTTON_BASE, toneClass)}
         >
@@ -311,6 +310,7 @@ export function ConfirmDialog({
           disabled={pending}
           aria-pressed={armedValue}
           aria-busy={pending || undefined}
+          aria-label={armedValue ? confirmLabel : armLabel ?? confirmLabel}
           data-testid="confirm-twostep-action"
           className={cn(CONFIRM_BUTTON_BASE, toneClass)}
         >
@@ -325,6 +325,7 @@ export function ConfirmDialog({
               onOpenChange(false);
             }}
             data-testid="confirm-twostep-cancel"
+            aria-label={cancelLabel}
             className={CONFIRM_CANCEL_BASE}
           >
             {cancelLabel}
@@ -338,8 +339,8 @@ export function ConfirmDialog({
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Overlay
         data-testid="confirm-scrim"
-        className="fixed inset-0 animate-fade"
-        style={{ zIndex: Z.overlay, background: "var(--overlay)" }}
+        className="fixed inset-0 animate-fade bg-overlay"
+        style={{ zIndex: Z.overlay }}
       />
       <DialogPrimitive.Content
         role="dialog"

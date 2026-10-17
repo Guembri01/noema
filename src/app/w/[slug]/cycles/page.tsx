@@ -50,7 +50,7 @@ export default async function CyclesPage({ params }: { params: Promise<{ slug: s
         <ChevronLeft className="h-3.5 w-3.5" /> Back to {workspace.name}
       </Link>
       <header className="mb-6 mt-2">
-        <h1 className="text-[28px] font-semibold tracking-[-0.02em]">Cycles</h1>
+        <h1 className="text-title font-semibold tracking-title">Cycles</h1>
         <p className="mt-2 text-sm text-muted">
           Time-box the work, commit to an estimate, and see what actually shipped. Schedule tickets from
           the ticket drawer — pick a cycle under “Scheduled in”.

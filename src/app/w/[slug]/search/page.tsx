@@ -90,7 +90,7 @@ export default async function SearchPage({
   return (
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <header className="mb-6">
-        <h1 className="text-[28px] font-semibold tracking-[-0.02em]">{t(locale, "search")}</h1>
+        <h1 className="text-title font-semibold tracking-title">{t(locale, "search")}</h1>
         <p className="mt-2 text-sm text-muted">
           Find pages and databases by title and content across the workspace.
         </p>

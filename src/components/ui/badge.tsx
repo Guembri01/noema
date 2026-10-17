@@ -45,7 +45,7 @@ export function badgeToneClass(tone: string | null | undefined): string {
 }
 
 const SIZE_CLASS: Record<BadgeSize, string> = {
-  sm: "h-4 min-w-4 gap-1 px-1 text-[10px]",
+  sm: "h-4 min-w-4 gap-1 px-1 text-3xs",
   md: "h-5 min-w-5 gap-1 px-1.5 text-xs",
 };
 

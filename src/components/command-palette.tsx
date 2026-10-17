@@ -736,7 +736,7 @@ export function CommandPalette({
         <div
           aria-hidden
           style={{ zIndex: Z.sticky }}
-          className="sticky top-0 flex items-center justify-between bg-bg px-2 py-1 text-[11px] font-medium uppercase text-muted"
+          className="sticky top-0 flex items-center justify-between bg-bg px-2 py-1 text-2xs font-medium uppercase text-muted"
         >
           <span>{heading}</span>
           <span className="tabular-nums">{section.count}</span>

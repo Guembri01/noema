@@ -344,7 +344,7 @@ export function TeamspaceManager({
                       <Input
                         value={inviteEmail[teamspace.id] ?? ""}
                         aria-label={`${t(locale, "inviteByEmailTo")} ${teamspace.name}`}
-                        placeholder="teammate@example.com"
+                        placeholder={t(locale, "emailPlaceholder")}
                         size="sm"
                         className="w-56"
                         disabled={pending}

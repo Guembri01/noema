@@ -188,7 +188,7 @@ export default async function InboxPage({
       )}
       <header className="mb-5">
         <div className="flex items-center justify-between gap-4">
-          <h1 className="flex items-center gap-2 text-[28px] font-semibold tracking-[-0.02em]">
+          <h1 className="flex items-center gap-2 text-title font-semibold tracking-title">
             <Bell className="h-5 w-5" />
             {t(locale, "inbox")}
             {unread > 0 && (

@@ -40,7 +40,7 @@ export default async function WorkspaceHome({
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <div className="flex flex-col gap-6">
         <header className="flex flex-col gap-1">
-          <h1 className="text-[28px] font-semibold tracking-[-0.02em] text-fg">
+          <h1 className="text-title font-semibold tracking-title text-fg">
             {greeting}, {user.name.split(" ")[0]}
           </h1>
           <p className="text-sm text-muted">

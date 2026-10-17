@@ -8,6 +8,7 @@ import {
   type AvatarSize,
   type AvatarUser,
 } from "@/lib/avatars";
+import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -64,6 +65,8 @@ export type AvatarStackProps = {
   max?: number;
   /** Render size in CSS pixels. Defaults to 24 (R9.19). */
   size?: AvatarSize;
+  /** UI locale for the unnamed-face fallback label; defaults to English. */
+  locale?: string;
   className?: string;
 };
 
@@ -72,27 +75,32 @@ function AvatarFace({
   name,
   avatar,
   size,
+  locale,
 }: {
   name: string;
   avatar: Avatar;
   size: AvatarSize;
+  locale: string;
 }) {
-  const label = name.trim() === "" ? "Anonymous" : name.trim();
+  const label = name.trim() === "" ? t(locale, "anonymous") : name.trim();
   const srcSet = avatarSrcSet(avatar);
   return (
     <button
       type="button"
       title={label}
       aria-label={label}
+      // Dynamic: the per-user hue pair the avatar engine resolved from the id
+      // (`resolveAvatar`), so it cannot be a static utility class.
       style={{ backgroundColor: avatar.background, color: avatar.foreground }}
       className={cn(
         "-ml-2 grid shrink-0 place-items-center overflow-hidden rounded-full border-2 border-bg",
-        "text-[10px] font-medium leading-none outline-none first:ml-0 focus-visible:ring-2 focus-visible:ring-accent",
+        "text-3xs font-medium leading-none outline-none first:ml-0 focus-visible:ring-2 focus-visible:ring-accent",
       )}
     >
       <span
         aria-hidden
         className="grid place-items-center"
+        // Dynamic: the `size` prop (default 24), not a static design value.
         style={{ width: size, height: size }}
       >
         {avatar.kind === "image" && avatar.src ? (
@@ -119,6 +127,7 @@ export function AvatarStack({
   selfId = null,
   max = 5,
   size = 24,
+  locale = "en",
   className,
 }: AvatarStackProps) {
   const plan = stackPlan(users, { max, size });
@@ -144,6 +153,7 @@ export function AvatarStack({
             name={entry.name}
             avatar={user ? resolveAvatar(user, { size }) : entry.avatar}
             size={size}
+            locale={locale}
           />
         );
       })}
@@ -151,7 +161,8 @@ export function AvatarStack({
         <span
           title={plan.overflowLabel}
           aria-hidden
-          className="-ml-2 grid shrink-0 place-items-center rounded-full border-2 border-bg bg-surface-2 text-[10px] font-medium text-muted"
+          className="-ml-2 grid shrink-0 place-items-center rounded-full border-2 border-bg bg-surface-2 text-3xs font-medium text-muted"
+          // Dynamic: the same `size` prop as the faces, so the chip lines up.
           style={{ width: size, height: size }}
         >
           {plan.overflowLabel}

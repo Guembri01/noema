@@ -40,7 +40,7 @@ export function ThemeToggle({ locale = "en" }: { locale?: string }) {
         <button
           type="button"
           aria-label={t(locale, "theme")}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted transition hover:bg-surface-2"
+          className="focus-ring u-interactive inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted transition hover:bg-surface-2"
         >
           {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </button>

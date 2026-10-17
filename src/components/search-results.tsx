@@ -372,7 +372,7 @@ export function SearchResults({
       {types.length > 1 && (
         <div
           role="group"
-          aria-label="Filter results by type"
+          aria-label={t(locale, "filterResultsByType")}
           className="mt-3 flex flex-wrap items-center gap-2"
         >
           {types.map((type) => (
@@ -402,7 +402,7 @@ export function SearchResults({
         <div
           ref={scrollerRef}
           role="region"
-          aria-label="Search results"
+          aria-label={t(locale, "searchResults")}
           tabIndex={-1}
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
           onKeyDown={onListKeyDown}

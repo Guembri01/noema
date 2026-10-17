@@ -113,7 +113,7 @@ export default async function RoadmapPage({
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <header className="mb-6">
         <p className="text-sm text-muted">Workspace</p>
-        <h1 className="mt-1 text-[28px] font-semibold tracking-[-0.02em]">Roadmap</h1>
+        <h1 className="mt-1 text-title font-semibold tracking-title">Roadmap</h1>
         <p className="mt-2 text-sm text-muted">
           Every project&apos;s milestones and tickets on one shared timeline.
         </p>

@@ -148,9 +148,11 @@ function readField(form: FormData, key: string): string {
 function PasswordStrength({
   strength,
   issues,
+  locale,
 }: {
   strength: PasswordScore;
   issues: readonly PasswordIssue[];
+  locale: string;
 }) {
   const tone = strengthTone(strength.score);
   return (
@@ -159,7 +161,7 @@ function PasswordStrength({
         <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
           <span
             role="progressbar"
-            aria-label="Password strength"
+            aria-label={t(locale, "passwordStrength")}
             aria-valuemin={0}
             aria-valuemax={4}
             aria-valuenow={strength.score}
@@ -255,7 +257,7 @@ export function AuthFormView({
           <Input
             name="name"
             autoComplete="name"
-            placeholder="Ada Lovelace"
+            placeholder={t(locale, "namePlaceholder")}
             required
             value={values.name}
             onChange={(event) => onValueChange("name", event.target.value)}
@@ -274,7 +276,7 @@ export function AuthFormView({
           name="email"
           type="email"
           autoComplete="email"
-          placeholder="you@example.com"
+          placeholder={t(locale, "emailPlaceholder")}
           required
           value={values.email}
           onChange={(event) => onValueChange("email", event.target.value)}
@@ -289,7 +291,7 @@ export function AuthFormView({
         error={fieldError("password")}
         hint={
           isSignup && values.password.length > 0 ? (
-            <PasswordStrength strength={strength} issues={validation.issues} />
+            <PasswordStrength strength={strength} issues={validation.issues} locale={locale} />
           ) : undefined
         }
       >

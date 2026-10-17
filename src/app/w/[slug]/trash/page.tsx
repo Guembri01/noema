@@ -29,7 +29,7 @@ export default async function TrashPage({ params }: { params: Promise<{ slug: st
       >
         <ChevronLeft className="h-3.5 w-3.5" /> Back to {workspace.name}
       </Link>
-      <h1 className="mt-2 mb-1 flex items-center gap-2 text-[28px] font-semibold tracking-[-0.02em]">
+      <h1 className="mt-2 mb-1 flex items-center gap-2 text-title font-semibold tracking-title">
         <Trash2 className="h-6 w-6 text-muted" aria-hidden />
         {t(locale, "trash")}
       </h1>

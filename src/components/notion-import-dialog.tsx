@@ -93,7 +93,7 @@ function NotionSteps({ step }: { step: NotionStep }) {
             <span
               data-state={state}
               className={cn(
-                "grid size-5 shrink-0 place-items-center rounded-full border text-[10px] font-medium",
+                "grid size-5 shrink-0 place-items-center rounded-full border text-3xs font-medium",
                 state === "current" && "border-accent bg-accent text-accent-fg",
                 state === "done" && "border-accent bg-accent-soft text-accent",
                 state === "upcoming" && "border-border bg-surface-2 text-muted",
@@ -341,7 +341,7 @@ export function NotionImportDialog({
               value={token}
               autoComplete="off"
               onChange={(event) => setToken(event.target.value)}
-              placeholder="ntn_… / secret_…"
+              placeholder={t(locale, "notionTokenPlaceholder")}
             />
           </Field>
           <Field
@@ -353,7 +353,7 @@ export function NotionImportDialog({
               id="notion-page"
               value={pageId}
               onChange={(event) => setPageId(event.target.value)}
-              placeholder="https://www.notion.so/My-page-1a2b3c…"
+              placeholder={t(locale, "notionPagePlaceholder")}
             />
           </Field>
 

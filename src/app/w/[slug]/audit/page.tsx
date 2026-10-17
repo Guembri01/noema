@@ -166,7 +166,7 @@ export default async function AuditEnginePage({
         ← {t(locale, "settings")}
       </Link>
       <header className="mb-6 mt-3">
-        <h1 className="text-[28px] font-semibold tracking-[-0.02em]">
+        <h1 className="text-title font-semibold tracking-title">
           {t(locale, "activityHeading")}
         </h1>
         <p className="mt-2 text-sm text-muted">{t(locale, "activityIntro")}</p>

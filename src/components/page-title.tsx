@@ -43,6 +43,7 @@ import { setPageTeamspaceAction } from "@/server/actions/teamspaces";
 import { WhoHasAccess } from "@/components/who-has-access";
 import { ShareDialog } from "@/components/share-dialog";
 import { NotionImportDialog } from "@/components/notion-import-dialog";
+import { NavHistory } from "@/components/nav-history";
 import {
   ActionsMenu,
   EMOJIS,
@@ -91,6 +92,7 @@ import {
 import { pageToMarkdown } from "@/lib/serialize";
 import type { TextBlock } from "@/lib/text-stats";
 import { DUR, Z } from "@/lib/design-tokens";
+import { t } from "@/lib/i18n";
 import { estimateTextWidth } from "@/lib/text-measure";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -360,6 +362,8 @@ export type PageTitleRowProps = {
   scrolled: boolean;
   showStickyTitle: boolean;
   editedLabel?: string | null;
+  /** UI locale for the row's own labels; defaults to English (SSR + tests). */
+  locale?: string;
   breadcrumbWidth?: number;
   h1Ref?: React.Ref<HTMLHeadingElement>;
   titleRef?: React.Ref<HTMLTextAreaElement>;
@@ -374,6 +378,8 @@ export type PageTitleRowProps = {
   iconMenu?: ReactNode;
   undoRedo?: ReactNode;
   actions?: ReactNode;
+  /** Back/forward controls, injected so the row stays a pure function of props. */
+  navHistory?: ReactNode;
   avatars?: ReactNode;
   cover?: ReactNode;
   addCover?: ReactNode;
@@ -406,6 +412,7 @@ export function PageTitleRow({
   scrolled,
   showStickyTitle,
   editedLabel,
+  locale = "en",
   breadcrumbWidth,
   h1Ref,
   titleRef,
@@ -420,6 +427,7 @@ export function PageTitleRow({
   iconMenu,
   undoRedo,
   actions,
+  navHistory,
   avatars,
   cover,
   addCover,
@@ -439,8 +447,9 @@ export function PageTitleRow({
         data-testid="page-title-bar"
       >
         <div className="flex min-w-0 flex-1 items-center gap-2">
+          {navHistory}
           <nav
-            aria-label="Breadcrumb"
+            aria-label={t(locale, "blockBreadcrumb")}
             className="flex min-w-0 items-center gap-1 text-sm text-muted"
           >
             <a
@@ -470,6 +479,18 @@ export function PageTitleRow({
               </span>
             ))}
             {overflow.length > 0 && (
+              /* Intentionally NOT migrated to `placeFloating`/`FloatingLayer`.
+                 DESIGN_SYSTEM §"Floating panels" is explicit: only a `position:
+                 fixed` panel needs portalling (a `backdrop-blur`/`transform`
+                 ancestor would re-root it); an `absolute` panel with static
+                 offsets must stay inline, because `absolute` already resolves
+                 against its positioned ancestor (this `relative` `<details>`).
+                 Portalling it would move the `<ul>` out of
+                 `[data-testid="breadcrumb-overflow"]`, breaking `check:popovers`
+                 (2c), and the native `<details>` toggle would have to be
+                 re-implemented. It opens below-left (`start-0 top-full`), so it
+                 can only ever overflow the right edge of a very narrow window —
+                 there is nothing to flip or clamp. */
               <details className="relative shrink-0" data-testid="breadcrumb-overflow">
                 <summary
                   aria-label={`Show ${overflow.length} more ${
@@ -501,8 +522,8 @@ export function PageTitleRow({
               <span
                 className="flex shrink-0 items-center rounded px-1 text-muted"
                 role="img"
-                aria-label="Page locked"
-                title="This page is locked"
+                aria-label={t(locale, "pageLocked")}
+                title={t(locale, "pageLockedHint")}
               >
                 <Lock className="h-3.5 w-3.5" aria-hidden />
               </span>
@@ -518,7 +539,7 @@ export function PageTitleRow({
                   {icon.value}
                 </span>
               )}
-              <span className="truncate text-sm font-semibold tracking-[-0.02em] text-fg">
+              <span className="truncate text-sm font-semibold tracking-title text-fg">
                 {displayTitle}
               </span>
             </span>
@@ -536,10 +557,10 @@ export function PageTitleRow({
           )}
           <button
             type="button"
-            aria-label={following ? "Unfollow page" : "Follow page"}
+            aria-label={following ? t(locale, "unfollowPage") : t(locale, "followPage")}
             aria-pressed={following}
             aria-busy={followPending || undefined}
-            title={following ? "Following" : "Follow"}
+            title={following ? t(locale, "following") : t(locale, "follow")}
             disabled={followPending}
             onClick={onToggleFollow}
             className={cn(
@@ -556,7 +577,7 @@ export function PageTitleRow({
           </button>
           <button
             type="button"
-            aria-label="Share"
+            aria-label={t(locale, "share")}
             onClick={onShare}
             className="focus-ring u-interactive flex h-7 items-center gap-1 rounded px-2 text-sm text-muted hover:bg-surface-2"
           >
@@ -565,8 +586,8 @@ export function PageTitleRow({
           </button>
           <button
             type="button"
-            aria-label="Copy link"
-            title="Copy link"
+            aria-label={t(locale, "copyLink")}
+            title={t(locale, "copyLink")}
             onClick={onCopyLink}
             className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
           >
@@ -574,9 +595,9 @@ export function PageTitleRow({
           </button>
           <button
             type="button"
-            aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
+            aria-label={favorite ? t(locale, "removeFromFavorites") : t(locale, "addToFavorites")}
             aria-pressed={favorite}
-            title={favorite ? "Remove from favorites" : "Add to favorites"}
+            title={favorite ? t(locale, "removeFromFavorites") : t(locale, "addToFavorites")}
             onClick={onToggleFavorite}
             className={cn(
               "focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2",
@@ -608,7 +629,7 @@ export function PageTitleRow({
               type="button"
               disabled={!canEdit}
               onClick={onToggleIcon}
-              aria-label="Change icon"
+              aria-label={t(locale, "changeIcon")}
               className={cn(
                 "focus-ring u-interactive rounded p-0.5 leading-none hover:bg-surface-2 disabled:cursor-not-allowed",
                 icon.kind === "emoji" && "text-5xl",
@@ -622,7 +643,7 @@ export function PageTitleRow({
             <button
               type="button"
               onClick={onToggleIcon}
-              aria-label="Add icon"
+              aria-label={t(locale, "addIcon")}
               className="focus-ring u-colors flex items-center gap-1 rounded px-1 py-0.5 text-sm text-muted opacity-0 hover:bg-surface-2 hover:text-fg focus-visible:opacity-100 group-hover/title:opacity-100"
             >
               <Smile className="h-4 w-4" aria-hidden /> Add icon
@@ -633,10 +654,11 @@ export function PageTitleRow({
         <h1 ref={h1Ref} className="scroll-mt-16">
           <textarea
             ref={titleRef}
-            aria-label="Page title"
+            aria-label={t(locale, "pageTitle")}
+            aria-roledescription={t(locale, "pageTitleRoleDescription")}
             value={title}
             readOnly={!canEdit}
-            placeholder="Untitled"
+            placeholder={t(locale, "untitled")}
             rows={1}
             spellCheck={false}
             onChange={(event) => {
@@ -646,7 +668,7 @@ export function PageTitleRow({
             }}
             onBlur={onTitleBlur}
             onKeyDown={onTitleKeyDown}
-            className="w-full resize-none overflow-hidden bg-transparent text-[28px] font-semibold leading-[1.2] tracking-[-0.02em] text-fg outline-none placeholder:text-muted/40"
+            className="w-full resize-none overflow-hidden bg-transparent text-title font-semibold leading-[1.2] tracking-title text-fg outline-none placeholder:text-muted/40"
           />
         </h1>
         {addCover}
@@ -1195,6 +1217,7 @@ export function PageTitle({
         starPopped={starPopped}
         scrolled={scrolled}
         showStickyTitle={showStickyTitle}
+        locale={locale}
         editedLabel={edited ? lastEditedLabel(edited, members, new Date()) : null}
         h1Ref={h1Ref}
         titleRef={titleRef}
@@ -1211,6 +1234,7 @@ export function PageTitle({
         onToggleFollow={toggleFollow}
         onCopyLink={() => void copyLink()}
         onShare={() => setShareOpen(true)}
+        navHistory={<NavHistory locale={locale} />}
         iconMenu={
           showEmoji || showCover ? (
             <div
@@ -1267,13 +1291,13 @@ export function PageTitle({
         undoRedo={
           <div
             role="group"
-            aria-label="Undo and redo"
+            aria-label={t(locale, "undoAndRedo")}
             className="flex items-center gap-0.5"
           >
             <button
               type="button"
-              aria-label="Undo"
-              title="Undo (Ctrl+Z)"
+              aria-label={t(locale, "undo")}
+              title={`${t(locale, "undo")} (Ctrl+Z)`}
               disabled={!canUndo}
               onClick={undoGlobal}
               className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
@@ -1282,8 +1306,8 @@ export function PageTitle({
             </button>
             <button
               type="button"
-              aria-label="Redo"
-              title="Redo (Ctrl+Shift+Z)"
+              aria-label={t(locale, "redo")}
+              title={`${t(locale, "redo")} (Ctrl+Shift+Z)`}
               disabled={!canRedo}
               onClick={redoGlobal}
               className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
@@ -1297,6 +1321,7 @@ export function PageTitle({
             pageId={pageId}
             title={title || "Untitled"}
             editable={editable}
+            locale={locale}
             font={font}
             fullWidth={fullWidth}
             smallText={smallText}
@@ -1329,7 +1354,7 @@ export function PageTitle({
             onPickCover={pickCover}
           />
         }
-        avatars={<AvatarStack users={avatarUsers} className="ms-1" />}
+        avatars={<AvatarStack users={avatarUsers} locale={locale} className="ms-1" />}
         cover={
           storedCover ? (
             <div className="group/cover relative -mx-12 mb-4">

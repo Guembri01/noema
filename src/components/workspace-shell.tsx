@@ -353,10 +353,10 @@ export function WorkspaceShell({
         <button
           type="button"
           onClick={toggleSidebar}
-          title="Show sidebar (Ctrl+\)"
-          aria-label="Show sidebar"
+          title={`${t(locale, "showSidebar")} (Ctrl+\\)`}
+          aria-label={t(locale, "showSidebar")}
           data-testid="sidebar-show"
-          className="fixed left-3 top-3 z-40 hidden h-8 w-8 items-center justify-center rounded-md border border-border bg-bg text-muted shadow-sm transition-colors hover:bg-surface-2 hover:text-fg md:flex"
+          className="focus-ring u-interactive fixed left-3 top-3 z-40 hidden h-8 w-8 items-center justify-center rounded-md border border-border bg-bg text-muted shadow-sm transition-colors hover:bg-surface-2 hover:text-fg md:flex"
         >
           <PanelLeftOpen className="h-4 w-4" />
         </button>

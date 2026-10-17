@@ -1,4 +1,6 @@
 import { Extension } from "@tiptap/core";
+import { HUE_NAMES, hueInk, hueLabel, hueSurface } from "@/lib/palette";
+import type { TagHue } from "@/lib/design-tokens";
 
 /**
  * Notion-style block background colours.
@@ -29,17 +31,9 @@ export const BLOCK_COLOR_TYPES = [
  * keeps light / dark / high-contrast working from a single source instead of a
  * literal hex per row.
  */
-export const BLOCK_COLOR_HUES = [
-  "gray",
-  "brown",
-  "orange",
-  "yellow",
-  "green",
-  "blue",
-  "purple",
-  "pink",
-  "red",
-] as const;
+export const BLOCK_COLOR_HUES = HUE_NAMES.filter(
+  (hue): hue is Exclude<TagHue, "teal"> => hue !== "teal",
+);
 
 export type BlockColorHue = (typeof BLOCK_COLOR_HUES)[number];
 
@@ -79,26 +73,14 @@ export type BlockColorEntry = {
  * from the old one-off hexes — that is the point of a single source.)
  */
 
-const HUE_LABELS: Record<BlockColorHue, string> = {
-  gray: "Gray",
-  brown: "Brown",
-  orange: "Orange",
-  yellow: "Yellow",
-  green: "Green",
-  blue: "Blue",
-  purple: "Purple",
-  pink: "Pink",
-  red: "Red",
-};
-
 /** The nine tints Notion offers, plus Default (which clears the colour). */
 export const BLOCK_COLORS: BlockColorEntry[] = [
   { label: "Default", value: null, hue: null, tint: "transparent" },
   ...BLOCK_COLOR_HUES.map((hue): BlockColorEntry => ({
-    label: HUE_LABELS[hue],
+    label: hueLabel(hue),
     value: hue,
     hue,
-    tint: `var(--tag-${hue}-bg)`,
+    tint: hueSurface(hue),
   })),
 ];
 
@@ -126,7 +108,7 @@ export type BlockColorStyle = { backgroundColor: string; color?: string };
 export function blockColorCss(id: string | null | undefined): BlockColorStyle {
   const hue = blockColorHue(id);
   return hue
-    ? { backgroundColor: `var(--tag-${hue}-bg)`, color: `var(--tag-${hue}-fg)` }
+    ? { backgroundColor: hueSurface(hue), color: hueInk(hue) }
     : { backgroundColor: "transparent" };
 }
 

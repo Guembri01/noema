@@ -394,7 +394,7 @@ export function ProjectDetail({
                   >
                     {milestone.name}
                   </p>
-                  <p className="flex items-center gap-2 text-[11px] text-muted">
+                  <p className="flex items-center gap-2 text-2xs text-muted">
                     <Badge
                       tone={milestoneStatusTone(milestone.status)}
                       size="sm"
@@ -427,7 +427,7 @@ export function ProjectDetail({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    aria-label="Move up"
+                    aria-label={t(locale, "moveUp")}
                     disabled={pending || index === 0}
                     onClick={() => setOrder((current) => moveMilestone(current, index, -1))}
                   >
@@ -437,7 +437,7 @@ export function ProjectDetail({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    aria-label="Move down"
+                    aria-label={t(locale, "moveDown")}
                     disabled={pending || index === ordered.length - 1}
                     onClick={() => setOrder((current) => moveMilestone(current, index, 1))}
                   >
@@ -484,7 +484,7 @@ export function ProjectDetail({
                   data-testid="ticket-row"
                   className="flex items-center gap-2 px-3 py-1.5 text-sm"
                 >
-                  <span className="w-16 shrink-0 font-mono text-[11px] text-muted">
+                  <span className="w-16 shrink-0 font-mono text-2xs text-muted">
                     {ticket.key}
                   </span>
                   <span className="min-w-0 flex-1 truncate" title={ticket.title}>
@@ -526,7 +526,7 @@ export function ProjectDetail({
                   <span className="font-medium">{entry.actor}</span> {entry.action}
                 </p>
                 {entry.detail && <p className="text-xs text-muted">{entry.detail}</p>}
-                <p className="text-[11px] text-muted">
+                <p className="text-2xs text-muted">
                   <LocalTime value={entry.at} mode="datetime" />
                 </p>
               </li>
@@ -645,7 +645,7 @@ function ProjectRoleEditor({ projectId, locale }: { projectId: string; locale: s
           {members.map((member) => (
             <li key={member.userId} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
               <span className="min-w-0 flex-1 truncate">{member.name ?? member.userId}</span>
-              <span className="text-[11px] uppercase text-muted">{member.source}</span>
+              <span className="text-2xs uppercase text-muted">{member.source}</span>
               <Select
                 options={roles.map((role) => ({
                   value: role.id,

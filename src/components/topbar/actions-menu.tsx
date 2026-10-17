@@ -29,7 +29,7 @@ import { Radio, RadioGroup } from "@/components/ui/radio";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Section } from "@/components/ui/section";
 import { Separator } from "@/components/ui/separator";
-import { LOCALES } from "@/lib/i18n";
+import { LOCALES, t } from "@/lib/i18n";
 import { localTime } from "@/lib/time";
 import {
   filterMenuItems,
@@ -447,6 +447,8 @@ type ActionsMenuProps = {
   pageId: string;
   title: string;
   editable: boolean;
+  /** UI locale for the menu's accessible names; defaults to English. */
+  locale?: string;
   font: string;
   fullWidth: boolean;
   smallText: boolean;
@@ -487,6 +489,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
     pageId,
     title,
     editable,
+    locale = "en",
     font,
     smallText,
     fullWidth,
@@ -1211,7 +1214,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
   if (!open) {
     return (
       <div ref={wrapperRef} className="relative">
-        <TriggerButton open={false} onToggleOpen={openMenu} />
+        <TriggerButton open={false} onToggleOpen={openMenu} locale={locale} />
       </div>
     );
   }
@@ -1225,7 +1228,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Page actions"
+        aria-label={t(locale, "moreActions")}
         data-contrast={highContrast ? "more" : "normal"}
         onKeyDown={onDialogKeyDown}
         style={{
@@ -1245,11 +1248,11 @@ export function ActionsMenu(props: ActionsMenuProps) {
               aria-expanded="true"
               aria-controls={LIST_ID}
               aria-autocomplete="list"
-              aria-label="Search actions…"
+              aria-label={t(locale, "search")}
               aria-activedescendant={
                 activeItem ? `${LIST_ID}-opt-${activeItem.id}` : undefined
               }
-              placeholder="Search actions…"
+              placeholder={t(locale, "search")}
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value);
@@ -1262,13 +1265,13 @@ export function ActionsMenu(props: ActionsMenuProps) {
             {query.trim() === "" && (
               <div className="border-b border-border px-2 py-1.5">
                 <Select
-                  aria-label="Font style"
+                  aria-label={t(locale, "fontStyle")}
                   options={FONT_SELECT_OPTIONS}
                   value={resolvedAppearance.font}
                   allowClear={false}
                   searchable={false}
                   size="sm"
-                  placeholder="Font"
+                  placeholder={t(locale, "fontStyle")}
                   onChange={(font) => {
                     if (font === "") return;
                     if (onAppearance) onAppearance({ font: font as PageFont });
@@ -1280,7 +1283,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
             {query.trim() === "" && onAppearance && (
               <div className="border-b border-border px-2 py-1.5">
                 <RadioGroup
-                  aria-label="Line spacing"
+                  aria-label={t(locale, "lineSpacing")}
                   orientation="horizontal"
                   value={resolvedAppearance.lineSpacing}
                   onValueChange={(value) =>
@@ -1296,7 +1299,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
             <ul
               id={LIST_ID}
               role="menu"
-              aria-label="Actions"
+              aria-label={t(locale, "actionsGroup")}
               className="max-h-72 overflow-y-auto py-1"
             >
               {groups.map((group, groupIndex) =>
@@ -1467,7 +1470,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
           </>
         ) : view === "customize" ? (
           <>
-            <PanelHeader title="Customize page" onBack={backToMain} />
+            <PanelHeader title="Customize page" onBack={backToMain} locale={locale} />
             <CustomizePanel
               theme={theme}
               onThemeChange={setTheme}
@@ -1476,6 +1479,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
               contrastLabel={contrastLabel}
               cover={storedCover}
               position={coverPosition}
+              locale={locale}
               onPickIcon={pickIcon}
               onPickCover={pickCoverValue}
               onPickPosition={pickCoverPosition}
@@ -1483,7 +1487,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
           </>
         ) : view === "accessibility" ? (
           <>
-            <PanelHeader title="Accessibility check" onBack={backToMain} />
+            <PanelHeader title="Accessibility check" onBack={backToMain} locale={locale} />
             <div className="max-h-80 overflow-y-auto p-2 text-sm">
               {a11yReport === null ? (
                 <p className="text-muted">Page content isn&apos;t loaded yet.</p>
@@ -1519,7 +1523,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
           </>
         ) : (
           <>
-            <PanelHeader title="Updates & analytics" onBack={backToMain} />
+            <PanelHeader title="Updates & analytics" onBack={backToMain} locale={locale} />
             <div className="max-h-80 overflow-y-auto p-2 text-sm">
               {data ? (
                 <>
@@ -1560,7 +1564,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
   const portalTarget = typeof document === "undefined" ? null : document.body;
   return (
     <div ref={wrapperRef} className="relative">
-      <TriggerButton open onToggleOpen={() => setOpen(false)} />
+      <TriggerButton open onToggleOpen={() => setOpen(false)} locale={locale} />
       {portalTarget ? createPortal(panel, portalTarget) : panel}
     </div>
   );
@@ -1569,6 +1573,8 @@ export function ActionsMenu(props: ActionsMenuProps) {
 export type CustomizePanelProps = {
   /** Resolved theme name (`light` / `dark` / `system`) or `undefined`. */
   theme?: string;
+  /** UI locale for the panel's accessible names; defaults to English. */
+  locale?: string;
   onThemeChange: (theme: string) => void;
   highContrast: boolean;
   onHighContrastChange: (value: boolean) => void;
@@ -1593,6 +1599,7 @@ export type CustomizePanelProps = {
  */
 export function CustomizePanel({
   theme,
+  locale = "en",
   onThemeChange,
   highContrast,
   onHighContrastChange,
@@ -1655,7 +1662,7 @@ export function CustomizePanel({
             <p className="mt-2 text-xs font-medium text-muted">Position</p>
             <div
               role="group"
-              aria-label="Cover position"
+              aria-label={t(locale, "coverPosition")}
               className="grid w-24 grid-cols-3 gap-1"
             >
               {POSITION_PRESETS.map((preset) => {
@@ -1692,7 +1699,7 @@ export function CustomizePanel({
 
       <Section title="Theme" level={3} className="gap-2">
         <RadioGroup
-          aria-label="Theme"
+          aria-label={t(locale, "theme")}
           orientation="horizontal"
           value={themeValue}
           onValueChange={onThemeChange}
@@ -1725,14 +1732,16 @@ export function CustomizePanel({
 function TriggerButton({
   open,
   onToggleOpen,
+  locale,
 }: {
   open: boolean;
   onToggleOpen: () => void;
+  locale: string;
 }) {
   return (
     <button
       type="button"
-      aria-label="Actions"
+      aria-label={t(locale, "actionsGroup")}
       aria-haspopup="dialog"
       aria-expanded={open}
       onClick={onToggleOpen}
@@ -1745,12 +1754,12 @@ function TriggerButton({
   );
 }
 
-function PanelHeader({ title, onBack }: { title: string; onBack: () => void }) {
+function PanelHeader({ title, onBack, locale }: { title: string; onBack: () => void; locale: string }) {
   return (
     <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
       <button
         type="button"
-        aria-label="Back to actions"
+        aria-label={t(locale, "goBack")}
         onClick={onBack}
         className="focus-ring u-interactive u-colors rounded-sm p-1 text-muted hover:bg-surface-2"
       >

@@ -89,7 +89,7 @@ export function PromptDialog({
           {fields.map((field) => (
             <label key={field.name} className="block text-sm">
               {field.label}
-              {field.hint && <span className="ml-2 text-[11px] text-muted">{field.hint}</span>}
+              {field.hint && <span className="ml-2 text-2xs text-muted">{field.hint}</span>}
               {field.multiline ? (
                 <textarea
                   value={values[field.name] ?? ""}
@@ -117,14 +117,16 @@ export function PromptDialog({
             <button
               type="button"
               onClick={onClose}
-              className="h-9 rounded border border-border px-3 text-sm text-muted hover:bg-surface-2"
+              aria-label={t(locale, "cancel")}
+              className="focus-ring u-interactive h-9 rounded border border-border px-3 text-sm text-muted hover:bg-surface-2"
             >
               {t(locale, "cancel")}
             </button>
             <button
               type="submit"
               disabled={missing || busy}
-              className="h-9 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-40"
+              aria-label={busy ? t(locale, "working") : confirmLabel ?? t(locale, "save")}
+              className="focus-ring u-interactive h-9 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-40"
             >
               {busy ? t(locale, "working") : confirmLabel ?? t(locale, "save")}
             </button>

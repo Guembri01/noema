@@ -212,7 +212,7 @@ export default async function PublicSharedPage({
                 </>
               )}
             </p>
-            <h1 className="text-[28px] font-semibold tracking-[-0.02em]">
+            <h1 className="text-title font-semibold tracking-title">
               {isEmoji(page.icon) ? `${page.icon} ` : ""}
               {title}
             </h1>
