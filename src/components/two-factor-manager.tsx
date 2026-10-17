@@ -9,18 +9,19 @@
  * - the secret lives in a token-only code block (`SecretBlock`);
  * - a six-digit `Input` that submits itself the moment the code is complete;
  * - a wrong code shows the field's `error` state (danger ring + message);
- * - recovery codes are a `Card` with per-code copy buttons (checkmark on copy);
+ * - the flow ends with an honest notice: **no recovery codes are issued**,
+ *   so a lost authenticator locks the account until an operator resets it;
  * - disabling goes through a danger `ConfirmDialog`.
  *
- * The pure pieces (step machine, code completeness, recovery-code derivation)
- * are exported so the node tests can pin them without a DOM; the presentational
- * views (`StepIndicator`, `SecretBlock`, `RecoveryCodesCard`, `TwoFactorSetup`)
- * are exported so `renderToStaticMarkup` can prove each step reaches the DOM.
+ * The pure pieces (step machine, code completeness) are exported so the node
+ * tests can pin them without a DOM; the presentational views (`StepIndicator`,
+ * `SecretBlock`, `NoRecoveryCodesNotice`, `TwoFactorSetup`) are exported so
+ * `renderToStaticMarkup` can prove each step reaches the DOM.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Copy, KeyRound, ShieldCheck } from "lucide-react";
+import { Check, Copy, Info, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import {
   disableTwoFactorAction,
@@ -47,7 +48,6 @@ export const TWO_FACTOR_STEPS = ["start", "scan", "verify"] as const;
 export type TwoFactorStepName = (typeof TWO_FACTOR_STEPS)[number];
 
 export const TWO_FACTOR_CODE_LENGTH = 6;
-export const RECOVERY_CODE_COUNT = 8;
 
 /** How long a copy button keeps its checkmark before reverting. */
 export const COPY_FEEDBACK_MS = 1500;
@@ -66,7 +66,7 @@ export type SetupEvent =
  * - `start`  --begin-->   `scan`   (the secret is ready)
  * - `scan`   --submit-->  `verify` (checking the code)
  * - `verify` --fail-->    `scan`   (retry with an error)
- * - `verify` --succeed--> `done`   (recovery codes)
+ * - `verify` --succeed--> `done`   (the no-recovery-codes notice)
  * - `scan`   --back-->    `start`
  * - `verify` --back-->    `scan`
  * - any      --reset-->   `start`
@@ -130,45 +130,6 @@ export function isCodeComplete(
   return code.length === length && /^\d+$/.test(code);
 }
 
-/** Unambiguous, human-copyable alphabet (no 0/O/1/I/L). */
-export const RECOVERY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-
-/** FNV-1a with a final avalanche mix — good low-bit distribution. */
-function hashString(input: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < input.length; i += 1) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  hash ^= hash >>> 16;
-  return hash >>> 0;
-}
-
-/**
- * Derive a deterministic batch of recovery codes from the setup secret.
- *
- * NOTE: the server does not yet issue recovery codes, so these are derived
- * client-side and are not persisted anywhere. This is presentation-only; see
- * the follow-up in the follow-up report (`RecoveryCode` model + hashed storage).
- */
-export function recoveryCodes(
-  seed: string,
-  count = RECOVERY_CODE_COUNT,
-): string[] {
-  const codes: string[] = [];
-  for (let c = 0; c < Math.max(0, count); c += 1) {
-    let code = "";
-    for (let group = 0; group < 8; group += 1) {
-      code +=
-        RECOVERY_ALPHABET[
-          hashString(`${seed}:${c}:${group}`) % RECOVERY_ALPHABET.length
-        ];
-    }
-    codes.push(`${code.slice(0, 4)}-${code.slice(4)}`);
-  }
-  return codes;
-}
-
 /* -------------------------------------------------------------------------- */
 /* Labels                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -184,11 +145,10 @@ export type TwoFactorSetupLabels = {
   back: string;
   enable: string;
   verifying: string;
-  recoveryTitle: string;
-  recoveryHint: string;
-  recoveryDownload: string;
   copy: string;
   copied: string;
+  noRecoveryTitle: string;
+  noRecoveryBody: string;
 };
 
 /**
@@ -196,10 +156,10 @@ export type TwoFactorSetupLabels = {
  *
  * Every value the catalogue already owns is overridden with `t(...)` by the
  * container; these fallbacks cover the handful of new strings (secret/otpauth
- * labels, the recovery-card copy and the disable confirmation) whose catalogue
- * keys require an edit to `src/lib/i18n.ts` — outside this phase's file
- * ownership. Swapping them for `t(locale, key)` is a one-line change per label
- * once the keys land.
+ * labels, the no-recovery-codes notice and the disable confirmation) whose
+ * catalogue keys require an edit to `src/lib/i18n.ts` — outside this phase's
+ * file ownership. Swapping them for `t(locale, key)` is a one-line change per
+ * label once the keys land.
  */
 export const TWO_FACTOR_SETUP_LABELS: TwoFactorSetupLabels = {
   steps: {
@@ -217,11 +177,11 @@ export const TWO_FACTOR_SETUP_LABELS: TwoFactorSetupLabels = {
   back: "Cancel",
   enable: "Enable two-factor",
   verifying: "Working.",
-  recoveryTitle: "Recovery codes",
-  recoveryHint: "Save these somewhere safe — each can be used once.",
-  recoveryDownload: "Download",
   copy: "Copy",
   copied: "Copied",
+  noRecoveryTitle: "No recovery codes",
+  noRecoveryBody:
+    "No recovery codes are issued. If you lose your authenticator, sign-in stays blocked until an operator resets the account.",
 };
 
 /** The disable confirmation copy (new strings; see the note above). */
@@ -382,60 +342,27 @@ export function SecretBlock({
   );
 }
 
-/** Recovery codes as a card with a copy button per code. */
-export function RecoveryCodesCard({
-  codes,
-  copied,
-  onCopy,
+/**
+ * The honest end of the setup: **no recovery codes are issued**.
+ *
+ * The server only ever checks a TOTP code — `verifyTotp` accepts digits
+ * only (`src/lib/totp.ts`) and there is no recovery-code store anywhere — so
+ * a list of codes would be a promise the app cannot keep. A user who loses
+ * the authenticator is locked out until an operator resets the account
+ * (`docs/OPERATIONS.md` §9).
+ */
+export function NoRecoveryCodesNotice({
   title,
-  hint,
-  copyLabel,
-  copiedLabel,
-  downloadLabel,
-  onDownload,
+  body,
 }: {
-  codes: string[];
-  copied: string | null;
-  onCopy: (value: string) => void;
   title: string;
-  hint: string;
-  copyLabel: string;
-  copiedLabel: string;
-  downloadLabel: string;
-  onDownload: () => void;
+  body: string;
 }) {
   return (
-    <Card variant="flat" padding="md" data-testid="recovery-codes">
-      <CardHeader
-        icon={<KeyRound className="h-4 w-4" aria-hidden />}
-        title={title}
-        subtitle={hint}
-        actions={
-          <Button variant="secondary" size="sm" onClick={onDownload}>
-            {downloadLabel}
-          </Button>
-        }
-      />
+    <Card variant="flat" padding="md" data-testid="no-recovery-codes">
+      <CardHeader icon={<Info className="h-4 w-4" aria-hidden />} title={title} />
       <CardBody>
-        <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {codes.map((code) => (
-            <li
-              key={code}
-              className="flex items-center justify-between gap-2 rounded-sm border border-border bg-surface-2 px-2 py-1"
-            >
-              <code className="font-mono text-xs tabular-nums text-fg">
-                {code}
-              </code>
-              <CopyButton
-                value={code}
-                copied={copied === code}
-                label={copyLabel}
-                copiedLabel={copiedLabel}
-                onCopy={onCopy}
-              />
-            </li>
-          ))}
-        </ul>
+        <p className="text-sm text-muted">{body}</p>
       </CardBody>
     </Card>
   );
@@ -450,7 +377,6 @@ export type TwoFactorSetupProps = {
   otpauth?: string | null;
   code: string;
   error?: string | null;
-  recoveryCodeList?: string[];
   pending?: boolean;
   copied?: string | null;
   onBegin: () => void;
@@ -458,7 +384,6 @@ export type TwoFactorSetupProps = {
   onVerify: () => void;
   onBack: () => void;
   onCopy: (value: string) => void;
-  onDownloadRecovery?: () => void;
 };
 
 /** The whole three-step setup flow, pure over its props. */
@@ -469,7 +394,6 @@ export function TwoFactorSetup({
   otpauth,
   code,
   error,
-  recoveryCodeList = [],
   pending = false,
   copied = null,
   onBegin,
@@ -477,7 +401,6 @@ export function TwoFactorSetup({
   onVerify,
   onBack,
   onCopy,
-  onDownloadRecovery,
 }: TwoFactorSetupProps) {
   const resolved: TwoFactorSetupLabels = {
     ...TWO_FACTOR_SETUP_LABELS,
@@ -493,16 +416,9 @@ export function TwoFactorSetup({
           labels={resolved.steps}
           ariaLabel={resolved.stepsAria}
         />
-        <RecoveryCodesCard
-          codes={recoveryCodeList}
-          copied={copied}
-          onCopy={onCopy}
-          title={resolved.recoveryTitle}
-          hint={resolved.recoveryHint}
-          copyLabel={resolved.copy}
-          copiedLabel={resolved.copied}
-          downloadLabel={resolved.recoveryDownload}
-          onDownload={() => onDownloadRecovery?.()}
+        <NoRecoveryCodesNotice
+          title={resolved.noRecoveryTitle}
+          body={resolved.noRecoveryBody}
         />
       </div>
     );
@@ -612,7 +528,6 @@ export function TwoFactorManager({
   );
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [recovery, setRecovery] = useState<string[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
   const [disableOpen, setDisableOpen] = useState(false);
   const [disableCode, setDisableCode] = useState("");
@@ -669,7 +584,9 @@ export function TwoFactorManager({
         inFlight.current = false;
         setBusy(false);
         if ("ok" in result) {
-          setRecovery(recoveryCodes(setup?.secret ?? value));
+          // No recovery codes are derived here: the server issues none and
+          // would refuse any it did (a TOTP code is digits only), so the
+          // flow ends with the notice instead of a list of unusable codes.
           setStep((current) => nextSetupStep(current, "succeed"));
           toast.success(t(locale, "tfEnabledToast"));
           router.refresh();
@@ -680,7 +597,7 @@ export function TwoFactorManager({
         }
       });
     },
-    [locale, router, setup?.secret],
+    [locale, router],
   );
 
   const handleCodeChange = useCallback(
@@ -712,7 +629,6 @@ export function TwoFactorManager({
       if ("ok" in result) {
         setDisableCode("");
         setCode("");
-        setRecovery([]);
         setSetup(null);
         setStep("start");
         toast.success(t(locale, "tfDisabledToast"));
@@ -722,17 +638,6 @@ export function TwoFactorManager({
       }
     });
   }, [disableCode, locale, router]);
-
-  const downloadRecovery = useCallback(() => {
-    if (typeof URL === "undefined" || typeof document === "undefined") return;
-    const blob = new Blob([recovery.join("\n")], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "recovery-codes.txt";
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }, [recovery]);
 
   const setupLabels: TwoFactorSetupProps["labels"] = {
     steps: {
@@ -797,19 +702,10 @@ export function TwoFactorManager({
             </CardBody>
           </Card>
 
-          {recovery.length > 0 ? (
-            <RecoveryCodesCard
-              codes={recovery}
-              copied={copied}
-              onCopy={copy}
-              title={TWO_FACTOR_SETUP_LABELS.recoveryTitle}
-              hint={TWO_FACTOR_SETUP_LABELS.recoveryHint}
-              copyLabel={t(locale, "copy")}
-              copiedLabel={t(locale, "copiedWord")}
-              downloadLabel={TWO_FACTOR_SETUP_LABELS.recoveryDownload}
-              onDownload={downloadRecovery}
-            />
-          ) : null}
+          <NoRecoveryCodesNotice
+            title={TWO_FACTOR_SETUP_LABELS.noRecoveryTitle}
+            body={TWO_FACTOR_SETUP_LABELS.noRecoveryBody}
+          />
 
           <ConfirmDialog
             open={disableOpen}
@@ -831,7 +727,6 @@ export function TwoFactorManager({
           otpauth={setup?.otpauth ?? null}
           code={code}
           error={error}
-          recoveryCodeList={recovery}
           pending={busy}
           copied={copied}
           onBegin={begin}
@@ -839,7 +734,6 @@ export function TwoFactorManager({
           onVerify={() => verify(code)}
           onBack={back}
           onCopy={copy}
-          onDownloadRecovery={downloadRecovery}
         />
       )}
     </Section>
