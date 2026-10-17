@@ -13,6 +13,21 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ### Security
 
+- The three secret-redaction lists of the codebase are one list now. The
+  observability logger, the error reporter and the env-secret diagnostics each
+  carried their own set of secret-shaped field names, and the three had
+  drifted: `apiKey`, `privateKey` and `accessKey` were masked by the error
+  reporter but printed by the logger, while `dbUrl` was masked by nobody — one
+  field could therefore be masked on one path and printed on another.
+  `src/lib/redaction.ts` owns the names now; it is the union of the three
+  former lists, so nothing that was masked before is unmasked now. Each
+  consumer keeps what is genuinely its own: the logger and the error reporter
+  over-redact by substring, the diagnostics match whole names (an `author` is
+  not a secret), and only the error reporter scrubs credential-shaped *values*
+  as well. Trace and span ids come from the platform CSPRNG
+  (`src/lib/random.ts`) instead of `Math.random` — they are correlation ids,
+  not credentials, but they were guessable and could collide.
+
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CIRCULAR,
   NO_TRACE_ID,
@@ -159,6 +159,30 @@ describe("redaction", () => {
     expect(isSensitiveKey("requestId")).toBe(false);
   });
 
+  it("masks the api/private-key names the error reporter masks (B35)", () => {
+    // The logger used to carry a narrower list than the error reporter, so
+    // `apiKey` and `privateKey` were masked in one place and printed in the
+    // other. One list rules both now.
+    expect(isSensitiveKey("apiKey")).toBe(true);
+    expect(isSensitiveKey("privateKey")).toBe(true);
+    expect(isSensitiveKey("accessKey")).toBe(true);
+    expect(isSensitiveKey("dbUrl")).toBe(true);
+    expect(isSensitiveKey("credential")).toBe(true);
+    expect(isSensitiveKey("sessionId")).toBe(true);
+  });
+
+  it("redacts a secret-shaped field the error reporter masks", () => {
+    const { sink } = collect();
+    const record = createLogger({ sink }).info("ai call", {
+      apiKey: "sk-live-abcdefghijklmnop",
+      dbUrl: "postgresql://noema:pw@localhost:5433/noema",
+    });
+    expect(record).toMatchObject({
+      apiKey: REDACTED,
+      dbUrl: REDACTED,
+    });
+  });
+
   it("honours caller-supplied exact keys", () => {
     expect(isSensitiveKey("ssn", ["ssn"])).toBe(true);
     expect(isSensitiveKey("SSN", ["ssn"])).toBe(true);
@@ -238,6 +262,18 @@ describe("spans and trace context", () => {
   it("generates hex ids of a stable shape", () => {
     expect(newTraceId()).toMatch(/^[0-9a-f]{32}$/);
     expect(newSpanId()).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("does not derive the ids from Math.random (B35)", () => {
+    const spy = vi.spyOn(Math, "random");
+    try {
+      const first = newTraceId();
+      const second = newTraceId();
+      expect(spy).not.toHaveBeenCalled();
+      expect(first).not.toBe(second);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("records a duration from the injected clock", () => {

@@ -77,3 +77,15 @@ export function toBase64Url(bytes: Uint8Array): string {
 export function randomToken(bytes = 24): string {
   return toBase64Url(randomBytes(bytes));
 }
+
+/**
+ * Lower-case hex, two characters per byte — the encoding
+ * `Buffer.toString("hex")` gives, without needing `Buffer`.
+ */
+export function toHex(bytes: Uint8Array): string {
+  let out = "";
+  for (let index = 0; index < bytes.length; index += 1) {
+    out += bytes[index].toString(16).padStart(2, "0");
+  }
+  return out;
+}
