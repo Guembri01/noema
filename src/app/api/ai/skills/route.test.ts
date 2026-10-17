@@ -97,7 +97,9 @@ describe("authentication and validation", () => {
 
     expect(response.status).toBe(200);
     const input = ai.chatComplete.mock.calls[0]?.[0] as { user?: string };
-    expect(input.user?.endsWith("x".repeat(8000))).toBe(true);
+    // The selection is framed, so it is no longer the tail of the message —
+    // the text itself is still the 8000 characters the cap left.
+    expect(input.user).toContain("x".repeat(8000));
   });
 
   it("reads a null workspace id as 'no workspace'", async () => {

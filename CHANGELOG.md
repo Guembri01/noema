@@ -320,6 +320,18 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   with the **page title** in the payload. The three kinds are now entities of
   the existing engine: the export (Art. 15) lists them, a legal hold keeps
   them, and the plan deletes the whole row.
+- The AI skills now frame the caller's text and declare it as data. The skills
+  route put the text of the request — the editor selection, up to 8000
+  characters — into the user message without a delimiter, while the system
+  prompts only described the transformation. When the text is a page somebody
+  else wrote, it carries their instructions into the model. The text is now
+  framed with two tags that name the request — `<selection-text id="…">` …
+  `</selection-text id="…">` — with an id that is minted per request, so the
+  text cannot know which tag closes the block; the text that could pass for a
+  tag is removed; and the system prompt says what the block is: data to
+  rewrite, never instructions. The framing happens after the token budget is
+  applied, so the budget can never cut the closing tag off, and the text
+  inside the frame is the same text the budget left.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
