@@ -25,6 +25,7 @@
  */
 
 import type { Mark, RichNode } from "@/lib/blocks";
+import { underHtmlScanBudget } from "@/lib/html-budget";
 import { safeUrl, sanitizeHtml } from "@/lib/html-sanitize";
 import { safeHref } from "@/lib/markdown";
 import { looksLikeMatrix, matrixToTableBlocks, parseClipboardMatrix } from "@/lib/paste-matrix";
@@ -102,6 +103,14 @@ function parseAttrs(source: string): Record<string, string> {
 
 /** Tokenize into a tree; unbalanced closes pop the nearest open element. */
 function tokenize(html: string, dropRe: RegExp = DEFAULT_DROP_RE): HtmlNode[] {
+  // B130: the tokenizer's regular expression backtracks at every tag start
+  // (the attribute group reads forward to the next ">" and gives the work
+  // back one character at a time when there is none). A document built to
+  // make that work would block the event loop for minutes — measured: 35 KB
+  // of "<script" cost 8.3 s, 70 KB cost 31 s. The budget refuses such a
+  // document before the scan starts.
+  if (!underHtmlScanBudget(html)) {
+    return [];  }
   const root: ElementNode = { kind: "element", tag: "#root", attrs: {}, children: [] };
   const stack: ElementNode[] = [root];
   const clean = html.replace(COMMENT, "").replace(dropRe, "");
