@@ -3,7 +3,8 @@
 # gate. Deliberately NO e2e: Playwright needs a real postgres (prisma db push +
 # seed) and the suite runs serially (workers: 1, shared demo workspace) — see the
 # commented follow-up at the bottom of this file.
-# The same checks ship as a plain git hook: scripts/pre-commit.sample.md.
+# The same secret gate ships as a plain git hook: .githooks/pre-commit
+# (versioned via `git config core.hooksPath .githooks`).
 name: CI
 
 on:
@@ -23,6 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The authoring-window gate walks the whole history, so a shallow
+          # checkout would make it vacuous.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -54,6 +59,12 @@ jobs:
       # moment it lands. Value-shaped patterns — see the script for the reasoning.
       - name: Secret gate
         run: node scripts/check-secrets.mjs
+
+      # Every commit — author *and* committer date — must land inside a Noema
+      # authoring window (Wed–Sat evenings, Europe/Paris). See
+      # src/lib/dates-policy.ts for the rule and the tests that pin its edges.
+      - name: Authoring windows
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-commit-dates.mjs
 
       # The remaining static gates. All are offline and take seconds; they are
       # required locally, so a pull request that fails one fails here too.

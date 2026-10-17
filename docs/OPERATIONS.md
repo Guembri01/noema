@@ -478,3 +478,78 @@ B53 audit doc’s “residual risk” list predates B75 (§5.2); and
 `scripts/collab-server.mjs` (B75) both changed *while this guide was being
 written*; §2 and §5 were re-read and re-verified against the post-landing
 versions. Re-check those two sections if either batch ships again.
+
+## 11. Authoring-window policy
+
+The project timeline follows a fixed rhythm: work lands only inside four
+overnight windows, in `Europe/Paris`:
+
+```
+Wed 19:00 → Thu 06:00
+Thu 19:00 → Fri 06:00
+Fri 19:00 → Sat 06:00
+Sat 19:00 → Sun 06:00
+```
+
+A window is **half-open**: `19:00:00` is inside it and `06:00:00` is outside
+it, so the last allowed instant of a night is `05:59:59`. Monday and Tuesday
+have no window. The offset is read from the platform ICU database (summer
+`+02:00`, winter `+01:00`), never hardcoded, so the two yearly transitions are
+handled automatically; both happen to fall inside a Saturday night.
+
+### 11.1 The rule, in code
+
+`src/lib/dates-policy.ts` is the single source of truth — pure functions, no
+dependencies, total (invalid input returns `null`/`false`, never throws).
+`src/lib/dates-policy.test.ts` pins the edges: every opening and closing hour,
+the midnight rollover, weekday rejection, the two DST transitions, UTC
+conversion and malformed keys (`2026-02-30` stays invalid rather than rolling
+over to 2 March).
+
+### 11.2 The gate
+
+```sh
+npm run check:dates          # walks every commit on every ref
+node scripts/check-commit-dates.mjs --pending   # the commit about to be made
+```
+
+`check:dates` asserts that **both** the author and the committer date of every
+commit fall inside a window, and that both e-mail addresses belong to a project
+human. It runs in CI (`.github/workflows/ci.yml`, "Authoring windows") on a
+full-history checkout, so a rebase or an amend that moves a date out of a
+window fails the build rather than silently shipping.
+
+### 11.3 Making a commit
+
+The versioned hook `.githooks/pre-commit` (enable once with
+`git config core.hooksPath .githooks`) refuses a commit that would be stamped
+with the current wall clock. Declare an in-window timestamp instead:
+
+```sh
+GIT_AUTHOR_DATE="2026-10-17T19:00:00+02:00" \
+GIT_COMMITTER_DATE="2026-10-17T19:00:00+02:00" \
+git commit -m "feat(scope): message"
+```
+
+The repository-local identity is `Bilel Guembri <bilel.guembri@outlook.fr>`;
+the second maintainer commits with an explicit override:
+
+```sh
+GIT_AUTHOR_NAME="Wissal Ben Othmen" GIT_AUTHOR_EMAIL="wissal.benothmen01@gmail.com" \
+GIT_COMMITTER_NAME="Wissal Ben Othmen" GIT_COMMITTER_EMAIL="wissal.benothmen01@gmail.com" \
+git commit -m "…"
+```
+
+### 11.4 What the policy covers
+
+**In scope** — every commit's author and committer date; and the project's own
+records: `CHANGELOG.md`, `CITATION.cff`, `README.md`, the docs tree, release and
+installer metadata.
+
+**Out of scope, deliberately** — synthetic *test fixtures* and *demo workspace
+data* (they must exercise all seven weekdays to test calendar logic, and the
+demo is a fictional company's roadmap, not a record of our working hours);
+*external references* (`PROTOCOL_VERSION = "2024-11-05"` is the real MCP
+revision, `NOTION_VERSION = "2022-06-28"` is the real API header); and
+*invalid-date sentinels* (`2026-02-30` exists to prove the parser rejects it).
+

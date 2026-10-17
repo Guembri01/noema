@@ -121,7 +121,8 @@
     "check:schema": "node scripts/check-schema-drift.mjs",
     "check:features": "node scripts/check-payload-features.mjs",
     "audit:motion-spec": "node scripts/audit-motion-spec.mjs",
-    "check:animation": "node scripts/check-animation.mjs"
+    "check:animation": "node scripts/check-animation.mjs",
+    "check:dates": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-commit-dates.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
