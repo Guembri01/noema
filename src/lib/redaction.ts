@@ -1,26 +1,26 @@
 /**
- * The repository's one list of secret-shaped field names (B35).
+ * The repository's shared list of secret-shaped field names.
  *
- * Three modules redact secret-shaped values: the observability logger
- * (`src/lib/observability.ts`), the error reporter (`src/lib/error-reporting.ts`)
- * and the env-secret diagnostics (`src/lib/secrets.ts`). Each used to carry
- * its own list of names, and the three had drifted apart: `apiKey`,
- * `privateKey` and `accessKey` were masked by the error reporter but printed
- * by the logger, while `dbUrl` was masked by nobody. One field could
- * therefore be masked on one path and printed on another.
+ * The JSON export (`src/lib/json-export.ts`) used to carry its own list of
+ * secret-shaped names. It drifted from the lists of the other consumers (the
+ * observability logger, the error reporter, the audit diff, the env-secret
+ * diagnostics): thirteen names of the shared list — `passwd`, `passcode`,
+ * `cookie`, `setCookie`, `sessionId`, `dbUrl`, `databaseUrl`,
+ * `connectionString`, `dsn`, `auth`, `pass`, `pwd`, `signature` — were kept
+ * verbatim by the export, while the same names were masked elsewhere.
  *
  * This module owns the names. What each consumer keeps is genuinely its own:
  *
- * - **Matching.** The logger and the error reporter over-redact by substring
- *   (a field called `tokenCount` is masked rather than leaked); the
+ * - **Matching.** {@link isSecretKey} over-redacts by substring (a field
+ *   called `tokenCount` is masked rather than leaked); the env-secret
  *   diagnostics match whole names only, because they show masked values to an
  *   operator and must not swallow `author`.
- * - **Values.** The error reporter also scrubs credential-shaped *values* (a
- *   `Bearer …` inside a message), the logger replaces the value outright, and
- *   the diagnostics mask a connection string as a connection string.
+ * - **Values.** A consumer decides what a masked value looks like — the
+ *   export replaces it outright, the diagnostics mask a connection string as a
+ *   connection string.
  *
- * The names below are the union of the three former lists, so every name that
- * was masked before is still masked — only the drift is gone.
+ * The names below are the union of the former lists, so every name that was
+ * masked before is still masked — only the drift is gone.
  */
 
 /**
@@ -81,8 +81,8 @@ export const SECRET_KEY_LIST: readonly string[] = [
 
 /**
  * Keys whose value is a connection string (`postgresql://user:pw@host/db`).
- * The diagnostics mask such a value as a connection string: host and database
- * stay readable, the credentials do not.
+ * A consumer that shows masked values to an operator masks such a value as a
+ * connection string: host and database stay readable, the credentials do not.
  */
 export const CONNECTION_STRING_KEYS: readonly string[] = [
   "databaseurl",

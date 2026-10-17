@@ -6,6 +6,7 @@ import {
   isSupportedSchemaVersion,
   parseDatabaseJson,
 } from "./json-export";
+import { SECRET_KEY_LIST } from "./redaction";
 
 /**
  * B91 follow-up — Database JSON export.
@@ -145,6 +146,81 @@ describe("exportDatabaseJson", () => {
   it("pretty-prints on request and stays compact otherwise", () => {
     expect(exportDatabaseJson(input, { pretty: true })).toContain('\n  "name"');
     expect(exportDatabaseJson(input)).not.toContain("\n");
+  });
+});
+
+/**
+ * B119 follow-up — the export redacts the repository's shared secret list.
+ *
+ * The export used to carry its own key list, which was a strict subset of the
+ * shared one: thirteen secret-shaped names — `passwd`, `passcode`, `cookie`,
+ * `setCookie`, `sessionId`, `dbUrl`, `databaseUrl`, `connectionString`, `dsn`,
+ * `auth`, `pass`, `pwd`, `signature` — passed through the export verbatim,
+ * while the same names were masked on other paths. The export now asks the
+ * shared list (`src/lib/redaction.ts`), so the two cannot drift apart again.
+ */
+
+/** The names the export used to keep; every one of them is a secret. */
+const LEAKED_NAMES: readonly string[] = [
+  "passwd",
+  "passcode",
+  "cookie",
+  "setCookie",
+  "sessionId",
+  "dbUrl",
+  "databaseUrl",
+  "connectionString",
+  "dsn",
+  "auth",
+  "pass",
+  "pwd",
+  "signature",
+];
+
+/** Ordinary fields that must stay readable in an export. */
+const BENIGN_KEYS: readonly string[] = [
+  "name",
+  "title",
+  "type",
+  "position",
+  "config",
+  "value",
+  "author",
+  "authorId",
+  "publicKey",
+  "passport",
+  "bypass",
+];
+
+const exportedRow = (row: Record<string, unknown>): Record<string, unknown> => {
+  const parsed = parsedExport(
+    exportDatabaseJson({ name: "T", properties: [], rows: [row], views: [] }),
+  );
+  return (parsed.rows as Record<string, unknown>[])[0];
+};
+
+describe("the export redacts the shared secret list", () => {
+  it("redacts the thirteen names the export used to keep", () => {
+    for (const key of LEAKED_NAMES) {
+      expect(exportedRow({ [key]: "s3cret" })[key]).toBe(REDACTED);
+    }
+  });
+
+  it("redacts every name of the shared list", () => {
+    const kept = SECRET_KEY_LIST.filter((name) => exportedRow({ [name]: "s3cret" })[name] !== REDACTED);
+    expect(kept).toEqual([]);
+  });
+
+  it("redacts a name whatever the spelling — the separators are normalised", () => {
+    for (const key of ["API KEY", "api-key", "api_key", "apiKey", "Access Token"]) {
+      expect(exportedRow({ [key]: "s3cret" })[key]).toBe(REDACTED);
+    }
+  });
+
+  it("keeps ordinary fields readable", () => {
+    for (const key of BENIGN_KEYS) {
+      expect(exportedRow({ [key]: "plain" })[key]).toBe("plain");
+    }
   });
 });
 
