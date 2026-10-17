@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { assertScopedParent } from "@/lib/page-parent";
+import { sanitizeDocHrefs } from "@/lib/validation";
 import type { ImportCounts } from "@/lib/importers";
 import {
   mapNotionBlockType,
@@ -299,7 +300,10 @@ export async function importNotionPageAction(input: {
             icon: "📥",
             createdById: user.id,
             position: await nextPosition(parentId),
-            content: item.doc as unknown as Prisma.InputJsonValue,
+            // B110: the imported document meets the same href allowlist the
+            // save path applies (`parsePageContent`) — a Notion link target
+            // must not land in the page unchecked.
+            content: sanitizeDocHrefs(item.doc) as unknown as Prisma.InputJsonValue,
           },
           select: { id: true },
         });

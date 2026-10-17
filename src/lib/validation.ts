@@ -162,6 +162,20 @@ function sanitizeHrefAttributes(node: unknown): void {
   if (Array.isArray(record.content)) sanitizeHrefAttributes(record.content);
 }
 
+/**
+ * Run a whole document through the href allowlist and hand it back.
+ *
+ * The save path applies the allowlist through {@link parsePageContent}; the
+ * import paths call this on the document they are about to store, so an
+ * imported link target meets the same gate as a saved one (B110). The
+ * document is changed in place — an unsafe `attrs.href` / `attrs.url` loses
+ * its value, exactly as it does on the save path.
+ */
+export function sanitizeDocHrefs<T>(doc: T): T {
+  sanitizeHrefAttributes(doc);
+  return doc;
+}
+
 /** Parse and validate a page document sent as JSON text (or a plain object). */
 export function parsePageContent(
   input: unknown,
