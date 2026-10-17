@@ -19,20 +19,10 @@ export type ShareOptions = {
    */
   allowEditing?: boolean;
   /**
-   * Let viewers copy the published page. On an existing link `undefined`
-   * leaves the current choice untouched.
-   */
-  allowDuplicate?: boolean;
-  /**
    * Let search engines index the public page. On an existing link `undefined`
    * leaves the current choice untouched.
    */
   indexing?: boolean;
-  /**
-   * Disable exporting the published page. On an existing link `undefined`
-   * leaves the current choice untouched.
-   */
-  exportRestricted?: boolean;
 };
 
 export type ShareLinkState = {
@@ -41,9 +31,7 @@ export type ShareLinkState = {
   allowEditing: boolean;
   hasPassword: boolean;
   expiresAt: string | null;
-  allowDuplicate: boolean;
   indexing: boolean;
-  exportRestricted: boolean;
 };
 
 /** Current share state of a page for the share panel (fail-closed for guests). */
@@ -54,9 +42,7 @@ export async function getShareLinkStateAction(pageId: string): Promise<ShareLink
     allowEditing: false,
     hasPassword: false,
     expiresAt: null,
-    allowDuplicate: false,
     indexing: true,
-    exportRestricted: false,
   };
   const user = await requireUser();
   const page = await prisma.page.findUnique({
@@ -75,9 +61,7 @@ export async function getShareLinkStateAction(pageId: string): Promise<ShareLink
     allowEditing: link.permission === "EDIT",
     hasPassword: Boolean(link.passwordHash),
     expiresAt: link.expiresAt ? link.expiresAt.toISOString() : null,
-    allowDuplicate: link.allowDuplicate,
     indexing: link.indexing,
-    exportRestricted: link.exportRestricted,
   };
 }
 
@@ -113,9 +97,7 @@ export async function createShareLinkAction(
         passwordHash: passwordHash ?? existing.passwordHash,
         expiresAt: expiresAt ?? existing.expiresAt,
         permission: requested ?? existing.permission,
-        allowDuplicate: options.allowDuplicate ?? existing.allowDuplicate,
         indexing: options.indexing ?? existing.indexing,
-        exportRestricted: options.exportRestricted ?? existing.exportRestricted,
       },
     });
     revalidatePath("/w", "layout");
@@ -129,11 +111,7 @@ export async function createShareLinkAction(
       permission: requested ?? "READ",
       ...(passwordHash ? { passwordHash } : {}),
       ...(expiresAt ? { expiresAt } : {}),
-      ...(options.allowDuplicate !== undefined ? { allowDuplicate: options.allowDuplicate } : {}),
       ...(options.indexing !== undefined ? { indexing: options.indexing } : {}),
-      ...(options.exportRestricted !== undefined
-        ? { exportRestricted: options.exportRestricted }
-        : {}),
     },
     select: { token: true },
   });

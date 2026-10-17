@@ -52,7 +52,7 @@ vi.mock("@/components/share-dialog", () => ({
   CopyLinkButton: () => null,
 }));
 
-import PublicSharedPage from "./page";
+import PublicSharedPage, { generateMetadata } from "./page";
 import { createShareUnlockToken, shareUnlockCookieName } from "@/lib/secrets";
 
 const TOKEN = "share-token-abc";
@@ -172,5 +172,90 @@ describe("the public share page (B01)", () => {
 
     expect(html).toContain(MARKER);
     expect(html).not.toContain("Password required");
+  });
+});
+
+/**
+ * B36 — the metadata must not disclose the title before the password check.
+ *
+ * `generateMetadata` read the link without `passwordHash` and `expiresAt`, so
+ * the page's own title went into the `<title>` tag and into the Open Graph
+ * metadata of the *password prompt* — the title of a page the reader may not
+ * see yet, handed to anyone who knows the link. The metadata now applies the
+ * same state check the body makes: a locked, expired or deleted page stays
+ * anonymous, an open (or unlocked) page may name itself.
+ */
+describe("the share page metadata (B36)", () => {
+  const metadata = async () =>
+    generateMetadata({ params: Promise.resolve({ token: TOKEN }) });
+
+  it("does not disclose the title of a password-protected page", async () => {
+    const meta = await metadata();
+
+    expect(meta.title).toBe("Shared page");
+    expect(meta.title).not.toBe("Locked page");
+  });
+
+  it("does not disclose the title for a forged unlock cookie", async () => {
+    jar.set(shareUnlockCookieName(TOKEN), "1");
+
+    const meta = await metadata();
+
+    expect(meta.title).toBe("Shared page");
+  });
+
+  it("discloses the title once the link is unlocked", async () => {
+    jar.set(shareUnlockCookieName(TOKEN), createShareUnlockToken(TOKEN));
+
+    const meta = await metadata();
+
+    expect(meta.title).toBe("Locked page");
+  });
+
+  it("discloses the title of a link that has no password", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(link(null, "Open page"));
+
+    const meta = await metadata();
+
+    expect(meta.title).toBe("Open page");
+  });
+
+  it("does not disclose the title of an expired link", async () => {
+    db.shareLinkFindUnique.mockResolvedValue({
+      ...link(null, "Expired page"),
+      expiresAt: new Date(Date.now() - 60_000),
+    });
+
+    const meta = await metadata();
+
+    expect(meta.title).toBe("Shared page");
+  });
+
+  it("does not disclose the title of a deleted page", async () => {
+    db.shareLinkFindUnique.mockResolvedValue({
+      ...link(null, "Deleted page"),
+      page: { ...page("Deleted page"), deletedAt: new Date() },
+    });
+
+    const meta = await metadata();
+
+    expect(meta.title).toBe("Shared page");
+  });
+
+  it("does not disclose anything for an unknown link", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(null);
+
+    const meta = await metadata();
+
+    expect(meta.title).toBe("Shared page");
+  });
+
+  it("keeps the publisher's indexing choice", async () => {
+    db.shareLinkFindUnique.mockResolvedValue({ ...link(null, "Open page"), indexing: false });
+
+    const meta = await metadata();
+
+    expect(meta.title).toBe("Open page");
+    expect(meta.robots).toEqual({ index: false, follow: false });
   });
 });

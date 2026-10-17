@@ -134,6 +134,35 @@ export function isSharedPageUnavailable(
   return expiresAt !== null && expiresAt <= now.getTime();
 }
 
+/**
+ * The title a share link shows while the page behind it may not be disclosed.
+ */
+export const GENERIC_SHARED_TITLE = "Shared page";
+
+/**
+ * The title a share link may disclose.
+ *
+ * A page's title is content, so it may only leave the server once the reader
+ * is allowed to see the page: the link must still be available (not deleted,
+ * not expired) and a password-protected link must be unlocked — the same state
+ * check the page body makes. Everything else gets the generic title, so
+ * neither the `<title>` tag nor the Open Graph metadata names a page that is
+ * still locked (B36).
+ */
+export function sharedPageTitle(
+  link:
+    | { passwordHash?: string | null; expiresAt?: Date | string | null }
+    | null
+    | undefined,
+  page: { title?: string | null; deletedAt?: Date | string | null } | null | undefined,
+  options: { unlocked?: boolean } = {},
+): string {
+  if (!link || !page) return GENERIC_SHARED_TITLE;
+  if (isSharedPageUnavailable(link, page)) return GENERIC_SHARED_TITLE;
+  if (link.passwordHash && !options.unlocked) return GENERIC_SHARED_TITLE;
+  return page.title || GENERIC_SHARED_TITLE;
+}
+
 /** Renderable banner: the `background-image` plus its focal point. */
 export type CoverBanner = { backgroundImage: string; backgroundPosition: string };
 
