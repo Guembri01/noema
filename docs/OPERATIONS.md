@@ -677,6 +677,36 @@ added column is invisible to it), but the **new build needs the column to
 exist** — its SSO callback reads it, and a missing column is a query error,
 not a fallback. So apply the migration *before* the new build starts serving.
 `npm run db:push` does the same thing without the migration history.
+
+### 8.5 The tenant boundary is enforced in the application, not in the schema
+
+`Page.parentId` is a plain self-foreign key. The schema carries **no**
+composite constraint on `(parentId, workspaceId)`, and none is planned — the
+rule *"a `parentId` always points inside the same workspace"* is enforced in
+the code, not by Postgres.
+
+What that means for an operator:
+
+- **The database will happily store a cross-workspace parent.** No
+  `prisma db push` and no `prisma migrate` changes that, and the hardening
+  spec for this rule deliberately proposes no constraint — the check is
+  application-side.
+- **Every write path has to opt in.** The single gate is `assertScopedParent()`
+  in [`src/lib/page-parent.ts`](../src/lib/page-parent.ts): it loads the parent
+  **tenant-scoped** (`{ id, workspaceId }`), so a foreign parent is never read
+  and the refusal never names it. **That file is the place to pull in when a
+  new write path stores a `Page.parentId`** — a path that skips the helper
+  re-opens the hole.
+- **What a refusal looks like:** the write is refused with `That parent page
+  does not exist in this workspace.` (HTTP 400 on the REST routes, an
+  `{error}` on the server actions). If a *legitimate* parent is refused, the
+  page it names is not in the workspace the write was scoped to — check the
+  ids, not the helper.
+- **Old rows are not repaired by the deploy.** Pages that were linked across
+  workspaces before the check existed stay in the database; the read side
+  (database view, CSV/JSON export) filters rows by the database's workspace, so
+  they no longer surface in the foreign workspace's views — but the rows
+  themselves are still there until someone moves or deletes them.
 ## 9. Incident quick reference
 
 | Symptom | First checks |
@@ -721,8 +751,10 @@ nothing was executed against live servers):
 | 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
 | 8 | single `20260113000000_init` migration vs push-evolved schema | `prisma/migrations/` · `docs/specs/engineering-hardening.md:149,367-373` |
 | 8.1 | scope grant enforced on `/api/v1/*`, no migration for existing tokens, scope check before workspace check | `src/app/api/v1/*/route.ts` · `src/lib/api-token-scope.ts` · `src/server/actions/api-tokens.ts` |
-
 | 8.2 | `npm run backfill:2fa`, `--dry-run`, `--confirm-key`, `--help`, idempotence (`v1:`/`v2:` rows skipped), fail-closed (unsealable rows left untouched, exit 1), the key proof (no envelope opens ⇒ nothing is written, exit 1; `--confirm-key` overrides it) | `package.json` · `scripts/backfill-2fa-secrets.mjs` · `scripts/backfill-2fa-secrets-lib.mjs` (+ `scripts/backfill-2fa-secrets-lib.test.mjs`) · `src/lib/env-files.ts` |
+| 8.3 | OAuth secrets hashed at rest (`clientSecretHash`/`codeHash`), the SQL digest byte-identical to the Node one, the code consumed atomically, the migration before the app | `prisma/migrations/20261019000000_oauth_secret_hashes/` · `src/lib/api-auth.ts` · `src/app/oauth/token/route.ts` |
+| 8.4 | the SSO link guard migration (`User.emailVerified`), the backfill marks only the provider-created accounts, the new build needs the column | `prisma/migrations/20261019000000_user_email_verified/` · `src/lib/auth-strategies.ts` |
+| 8.5 | tenant boundary enforced in the application (`assertScopedParent`), no `(parentId, workspaceId)` constraint, refusal message, legacy rows not repaired | `src/lib/page-parent.ts` · `prisma/schema.prisma` (`Page.parentId`) · `src/server/actions/import-pdf.ts` · `src/server/queries.ts` (`getDatabase`) |
 | all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
 
 **Not verified by execution (be explicit when relying on them):** the backup →

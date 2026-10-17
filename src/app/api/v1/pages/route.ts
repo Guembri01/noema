@@ -8,6 +8,7 @@ import { dispatchWebhooks } from "@/lib/webhooks";
 import { rateLimit } from "@/lib/api-guard";
 import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
 import { buildBreadcrumb } from "@/lib/breadcrumb";
+import { assertScopedParent } from "@/lib/page-parent";
 import { withIdempotency } from "@/lib/idempotency";
 import { getPagesPage, getPageTree, type ApiPageRow } from "@/server/queries";
 
@@ -167,8 +168,16 @@ export async function POST(request: Request) {
     const type = body.type === "DATABASE" ? "DATABASE" : "PAGE";
     const title = typeof body.title === "string" ? body.title.slice(0, 500) : "Untitled";
 
+    // The parent must live in the caller's workspace — `Page.parentId` is a
+    // plain foreign key, so a foreign parent would link the page into another
+    // tenant's tree (B08). Refused before anything is written.
+    const parent = await assertScopedParent({ workspaceId, parentId });
+    if ("error" in parent) {
+      return NextResponse.json({ error: parent.error }, { status: 400 });
+    }
+
     const last = await prisma.page.findFirst({
-      where: { workspaceId, parentId },
+      where: { workspaceId, parentId: parent.parentId },
       orderBy: { position: "desc" },
       select: { position: true },
     });
@@ -176,7 +185,7 @@ export async function POST(request: Request) {
     const page = await prisma.page.create({
       data: {
         workspaceId,
-        parentId,
+        parentId: parent.parentId,
         type,
         title,
         createdById: auth.userId,

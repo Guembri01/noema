@@ -10,6 +10,7 @@ import { pageScopeFor } from "@/lib/guest-access";
 import { templateContent, type TemplateId } from "@/lib/templates";
 import { galleryTemplate, type GalleryProperty } from "@/lib/workflow-templates";
 import { pageSearchText } from "@/lib/search";
+import { assertScopedParent } from "@/lib/page-parent";
 import type { RichNode } from "@/lib/blocks";
 import {
   applyTemplate,
@@ -166,6 +167,14 @@ export async function createGalleryTemplateAction(input: {
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to create pages." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the page into another tenant's
+  // tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+  });
+  if ("error" in parent) return parent;
   const template = galleryTemplate(input.templateId);
   if (!template) return { error: "That template does not exist." };
   const workspace = await prisma.workspace.findUnique({
@@ -174,7 +183,7 @@ export async function createGalleryTemplateAction(input: {
   });
   if (!workspace) return { error: "Workspace not found." };
 
-  const parentId = input.parentId ?? null;
+  const parentId = parent.parentId;
   // Instantiation context: the gallery's sample rows may carry `{{tokens}}`
   // (`{{date}}`, `{{user}}`, …) that must resolve at creation time.
   const context = renderBuiltins({ now: new Date(), user: user.name });
@@ -241,6 +250,9 @@ export async function createGalleryTemplateAction(input: {
     const page = await prisma.page.create({
       data: {
         workspaceId: input.workspaceId,
+        // The parent is the database page this action just created in
+        // `input.workspaceId` — inside the workspace by construction (B08:
+        // `assertScopedParent` would be redundant here).
         parentId: database.id,
         title: rowTitle,
         createdById: user.id,
@@ -283,6 +295,14 @@ export async function createBlockTemplateAction(input: {
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to create pages." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the page into another tenant's
+  // tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+  });
+  if ("error" in parent) return parent;
   const content = templateContent(input.templateId);
   if (content.length === 0) return { error: "That template does not exist." };
   const workspace = await prisma.workspace.findUnique({
@@ -295,7 +315,7 @@ export async function createBlockTemplateAction(input: {
   const context = renderBuiltins({ now: new Date(), user: user.name });
   const blocks = interpolateBlocks(content, context);
   const title = interpolate(content[0]?.content?.[0]?.text ?? "Untitled", context);
-  const parentId = input.parentId ?? null;
+  const parentId = parent.parentId;
   const page = await prisma.page.create({
     data: {
       workspaceId: input.workspaceId,
@@ -325,13 +345,21 @@ export async function createQuickStartAction(input: {
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to create pages." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the page into another tenant's
+  // tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+  });
+  if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({
     where: { id: input.workspaceId },
     select: { slug: true },
   });
   if (!workspace) return { error: "Workspace not found." };
 
-  const parentId = input.parentId ?? null;
+  const parentId = parent.parentId;
   const isDatabase = input.kind === "database";
   const page = await prisma.page.create({
     data: {
@@ -523,6 +551,9 @@ export async function instantiateWorkspaceTemplateAction(input: {
   const page = await prisma.page.create({
     data: {
       workspaceId: input.workspaceId,
+      // The parent is the template's database page, whose workspace was checked
+      // against `input.workspaceId` above — inside the workspace by
+      // construction (B08: `assertScopedParent` would be redundant here).
       parentId: database.id,
       title,
       icon: template.icon,

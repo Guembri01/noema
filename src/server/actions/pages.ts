@@ -15,6 +15,7 @@ import {
 } from "@/lib/permissions";
 import { pageScopeFor } from "@/lib/guest-access";
 import { parsePageContent } from "@/lib/validation";
+import { assertScopedParent } from "@/lib/page-parent";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { prosemirrorToText } from "@/lib/blocks";
 import { fileKeyFromUrl, purgeableError, staleFileUrls, subtreeClosure } from "@/lib/trash";
@@ -80,9 +81,19 @@ export async function createPageAction(input: {
   });
   if (!workspace) return { error: "Workspace not found." };
 
+  // The parent must live in the same workspace: `Page.parentId` is a plain
+  // foreign key, so nothing but this check keeps a page inside its tenant
+  // (B08). A foreign parent is refused before anything is written.
+  const parent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+  });
+  if ("error" in parent) return parent;
+  const parentId = parent.parentId;
+
   // Sibling ordering: place the new page after the current maximum.
   const last = await prisma.page.findFirst({
-    where: { workspaceId: input.workspaceId, parentId: input.parentId ?? null },
+    where: { workspaceId: input.workspaceId, parentId },
     orderBy: { position: "desc" },
     select: { position: true },
   });
@@ -90,7 +101,7 @@ export async function createPageAction(input: {
   const page = await prisma.page.create({
     data: {
       workspaceId: input.workspaceId,
-      parentId: input.parentId ?? null,
+      parentId,
       ...(input.projectId ? { projectId: input.projectId } : {}),
       type: input.type ?? "PAGE",
       title:
@@ -189,6 +200,10 @@ async function seedDatabaseStructure(databasePageId: string): Promise<void> {
     const page = await prisma.page.create({
       data: {
         workspaceId: owner.workspaceId,
+        // The parent is the database page `owner` was read from, and the row is
+        // written into that very page's workspace — parent and row share one
+        // workspace by construction (B08: `assertScopedParent` would be
+        // redundant here).
         parentId: databasePageId,
         title: row.name,
         createdById: owner.createdById,
@@ -377,6 +392,15 @@ export async function movePageAction(
   }
   if (parentId === pageId) return { error: "A page cannot be its own parent." };
 
+  // The new parent must live in the same workspace as the page: without this
+  // check a move would link the page into another tenant's tree (B08).
+  const parent = await assertScopedParent({
+    workspaceId: auth.page.workspaceId,
+    parentId,
+    pageId,
+  });
+  if ("error" in parent) return parent;
+
   // Guard against cycles: the new parent must not be a descendant.
   if (parentId) {
     let cursor: string | null = parentId;
@@ -384,9 +408,11 @@ export async function movePageAction(
       if (cursor === pageId) {
         return { error: "Cannot move a page into one of its own children." };
       }
+      // The walk stays inside the page's own workspace: an ancestor that is
+      // not in it ends the walk (the chain cannot be continued across tenants).
       const next: { parentId: string | null } | null =
-        await prisma.page.findUnique({
-          where: { id: cursor },
+        await prisma.page.findFirst({
+          where: { id: cursor, workspaceId: auth.page.workspaceId },
           select: { parentId: true },
         });
       cursor = next?.parentId ?? null;

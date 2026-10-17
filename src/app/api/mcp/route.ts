@@ -16,7 +16,8 @@ import {
   type McpTool,
 } from "@/lib/mcp-server";
 import { apiScopesForRole, canEditContent, getWorkspaceAccess } from "@/lib/permissions";
-import { searchPagesPage } from "@/server/queries";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { assertScopedParent } from "@/lib/page-parent";import { searchPagesPage } from "@/server/queries";
 
 export const runtime = "nodejs";
 
@@ -259,7 +260,16 @@ async function loadPageForWrite(pageId: string, ctx: ExecContext) {
 async function runWriteTool(name: string, args: RpcParams, ctx: ExecContext): Promise<unknown> {
   switch (name) {
     case "create_page": {
-      const parentId = asString(args.parentId) || null;
+      const requestedParentId = asString(args.parentId) || null;
+      // The parent must live in the tool's workspace — `Page.parentId` is a
+      // plain foreign key, so a foreign parent would link the page into another
+      // tenant's tree (B08).
+      const parent = await assertScopedParent({
+        workspaceId: ctx.workspaceId,
+        parentId: requestedParentId,
+      });
+      if ("error" in parent) throw new Error(parent.error);
+      const parentId = parent.parentId;
       const last = await prisma.page.findFirst({
         where: { workspaceId: ctx.workspaceId, parentId },
         orderBy: { position: "desc" },

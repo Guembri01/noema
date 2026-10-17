@@ -167,6 +167,10 @@ export async function POST(request: Request) {
         const row = await tx.page.create({
           data: {
             workspaceId: database.workspaceId,
+            // The parent is the database page this row is materialized into —
+            // `database` is that very page, so parent and row share one
+            // workspace by construction (B08: `assertScopedParent` would be
+            // redundant here).
             parentId: template.databasePageId,
             title: template.name,
             icon: template.icon,
