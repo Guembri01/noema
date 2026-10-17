@@ -129,6 +129,27 @@ describe("isSvgSafe", () => {
     expect(isSvgSafe('<svg><image href="&#104;ttps://evil.test/x.png"/></svg>')).toBe(false);
   });
 
+  it("rejects a scheme that hides behind a control character (B112)", () => {
+    // A browser drops the control characters from a URL *before* it parses the
+    // scheme, so `java\nscript:` is `javascript:` for it. The gate has to
+    // read the canonical form for the scheme (the raw source stays in the
+    // test for the markup patterns, which anchor on the whitespace in front
+    // of an `on*` handler).
+    expect(isSvgSafe('<svg><rect fill="url(java\nscript:alert(1))"/></svg>')).toBe(false);
+    expect(isSvgSafe('<svg><rect fill="url(java\tscript:alert(1))"/></svg>')).toBe(false);
+    expect(
+      isSvgSafe('<svg><animate attributeName="href" values="java\nscript:alert(1)"/></svg>'),
+    ).toBe(false);
+  });
+
+  it("still rejects an event handler a line break hides behind (B112)", () => {
+    // The counterpart: dropping the control characters must not swallow the
+    // whitespace the markup patterns anchor on — `<svg\nonload="…">` is an
+    // event handler in an XML document, and the raw source is what sees it.
+    expect(isSvgSafe('<svg\nonload="alert(1)"></svg>')).toBe(false);
+    expect(isSvgSafe('<svg><rect\nonmouseover="alert(1)"/></svg>')).toBe(false);
+  });
+
   it("rejects an event handler that is not separated by a space", () => {
     expect(isSvgSafe('<svg><rect width="1"onload="x()"/></svg>')).toBe(false);
   });

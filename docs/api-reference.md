@@ -402,6 +402,10 @@ cookie session · **no rate limit**
   (`^[A-Za-z0-9_-]+$` / `^[A-Za-z0-9._-]+$`, no `..`, plus
   `isValidAssetKey`).
 - **200** raw bytes with `content-type` and `cache-control: private, max-age=3600`.
+  An SVG (`image/svg+xml`) is an active document, so it is delivered as a
+  download — `content-disposition: attachment; filename="<name>"` — and never
+  as a document of the app's origin. The raster images stay inline; they are
+  what the editor renders in an `<img>`.
 - Reserved for full members: a `GUEST` is refused with `403` before the
   storage driver is asked, so the refusal carries no bytes, no asset
   `content-type`, no `etag` and no `cache-control`; a missing asset is
