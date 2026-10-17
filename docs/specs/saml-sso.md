@@ -35,7 +35,7 @@ protocol.
 | Area | Evidence | State |
 | --- | --- | --- |
 | Password auth + 2FA | `src/server/actions/auth.ts:20-144`, `src/lib/auth.ts`, `src/lib/totp.ts` (+ `totp.test.ts`), `src/server/actions/two-factor.ts` | Signup/login/logout server actions; TOTP gate before session issue (`auth.ts:86-120`); sessions = HS256 JWT cookie `noema_session`, 30 days, signed with `AUTH_SECRET` (`src/lib/auth.ts:47-76`). |
-| OIDC SSO (env-level) | `src/app/api/auth/sso/start/route.ts`, `.../callback/route.ts`, `.env.example:30-33` | Discovery via `/.well-known/openid-configuration` (`start:14-21`), state+nonce in httpOnly cookies (`start:38-39`), code exchange + `jose` JWKS verification with issuer/audience/nonce (`callback:42-72`), JIT user create keyed by lowercased email with sentinel password `sso:<random>` (`callback:82-87`), then `createSession` (`callback:89`). **Global for the whole deployment; not per-workspace; no role/group mapping** (JIT user lands in no workspace). |
+| OIDC SSO (env-level) | `src/app/api/auth/sso/start/route.ts`, `.../callback/route.ts`, `.env.example:30-33` | Discovery via `/.well-known/openid-configuration` (`start:14-21`), state+nonce in httpOnly cookies (`start:38-39`), code exchange + `jose` JWKS verification with issuer/audience/nonce (`callback:42-72`), JIT user create keyed by lowercased email with sentinel password `sso:<random>` and `emailVerified: true` (`callback:82-87`), then `createSession` (`callback:89`). A sign-in links an existing account only when that account proved its address (`User.emailVerified`); an unverified one is refused with `?error=sso_email_taken` (B07). **Global for the whole deployment; not per-workspace; no role/group mapping** (JIT user lands in no workspace).
 | Login surface | `src/app/login/page.tsx:26` | Renders a "Sign in with SSO" link only when `process.env.SSO_ISSUER` is set. |
 | Settings UI | `src/app/w/[slug]/settings/page.tsx` | Single scrolling settings page of sections (General, Members, Activity, 2FA, API tokens, OAuth apps, Webhooks, AI, Labels, Email, Teamspaces); admin gate `canManageMembers` (`:62,164`). **No SSO section** — SSO config exists only as env. |
 | OAuth apps | `src/server/actions/oauth-apps.ts`, `OAuthAppManager` on settings page (`:246`) | Third-party OAuth **clients** Noema issues (integrations). Unrelated to SSO; must not be conflated in the UI. |
@@ -147,11 +147,20 @@ domain verification, SLO, and SCIM.
   OIDC path's `callback:82-87`, but with `passwordHash: "sso:<random>"` and no
   auto-created personal workspace unless signup policy says so (default:
   create the user + **no workspace**; they land on `/app` with an empty-state).
+  The JIT account carries `emailVerified: true` — the assertion vouched for
+  the address — so a later provider sign-in may link it.
 - **R10.8** — Existing-account linking: if a user with the same email exists
-  (password or OIDC), the SAML login **signs that account in** (no duplicate
-  user). If the account has 2FA enabled, SSO login bypasses the TOTP prompt
-  (IdP is the factor — matches product-class behavior); this is an explicit,
-  documented decision (open question O10.3).
+  (password or OIDC) **and that account proved its own address**
+  (`User.emailVerified` — `true` for the accounts the OIDC callback creates,
+  `false` for every local sign-up), the SAML login **signs that account in**
+  (no duplicate user). An account that never verified its address is **not**
+  linked: the address may have been registered by somebody else before the
+  real owner showed up (B07, account pre-hijacking), so the sign-in ends in
+  the `email_taken_unverified` conflict instead of taking the account over —
+  a vouching provider does not authorize the link, it only vouches for the
+  address it was given. If the account has 2FA enabled, SSO login bypasses
+  the TOTP prompt (IdP is the factor — matches product-class behavior); this
+  is an explicit, documented decision (open question O10.3).
 - **R10.9** — Domain auto-join: JIT users whose email domain matches a
   **verified domain** of a workspace are added as `MEMBER` automatically
   (schema §6). Unverified domains never auto-join.
@@ -350,11 +359,14 @@ validation failure fails review even if tests were adjusted.
    battle-tested; we only configure it. Mitigation: per-IdP docs tested
    against the mock plus one real Okta dev org before calling M2 done.
 2. **JIT account linking abuse**: an IdP that lets unverified emails through
-   could take over password accounts by email match (R10.8). Mitigation:
-   only trust the email when the assertion is signed (always) **and** the
-   connection's `emailAttribute` is explicitly configured; document that
-   IdPs must mark email `email_verified`; O10.1 considers requiring
-   NameID-format-email only.
+   could take over password accounts by email match (R10.8). Mitigation: the
+   link rule keys on the **account's own proof** (`User.emailVerified`), not
+   on how trustworthy the provider is — an account that never verified its
+   address (every local sign-up) is never linked by an SSO sign-in, whatever
+   the assertion says (B07). On top of that: only trust the email when the
+   assertion is signed (always) **and** the connection's `emailAttribute` is
+   explicitly configured; document that IdPs must mark email `email_verified`;
+   O10.1 considers requiring NameID-format-email only.
 3. **Secret storage**: private keys and (later) SCIM tokens in DB encrypted
    with an `AUTH_SECRET`-derived key is better than nothing but not a vault;
    consistent with matrix row 659, but enterprise reviewers will ask. Be

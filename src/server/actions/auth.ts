@@ -150,7 +150,18 @@ async function createUser(
   passwordHash: string,
 ): Promise<{ id: string } | null> {
   try {
-    return await prisma.user.create({ data: { name, email, passwordHash } });
+    return await prisma.user.create({
+      data: {
+        name,
+        email,
+        passwordHash,
+        // A local signup proves nothing about the address it registers (B07):
+        // the account stays unverified until the owner proves it, so a later
+        // provider sign-in may not link it silently — the address may have
+        // been registered by somebody else before the real owner showed up.
+        emailVerified: false,
+      },
+    });
   } catch (error) {
     if (isUniqueViolation(error)) return null;
     throw error;

@@ -131,8 +131,11 @@ Query: `?code=…&state=…`. Verifies `state` against the cookie, exchanges the
 code at the provider's `token_endpoint` (client-secret post), verifies the
 `id_token` via JWKS (`issuer` + `audience`), checks `nonce`, then:
 
-- upserts the user by lowercased email (SSO-created users get
-  `passwordHash: "sso:<random>"`),
+- looks the user up by lowercased email, reading `emailVerified` — an account
+  may only be linked when it proved its own address (SSO-created users get
+  `passwordHash: "sso:<random>"` and `emailVerified: true`),
+- creates the user when no account matches (just-in-time), with
+  `emailVerified: true` — the provider vouched for the address,
 - issues the `noema_session` cookie, deletes `sso_state`/`sso_nonce`,
 - redirects to `/app`.
 
@@ -140,7 +143,15 @@ code at the provider's `token_endpoint` (client-secret post), verifies the
 |---|---|
 | Env not configured | `404 {"error":"SSO is not configured."}` |
 | Missing/mismatched `state`/`code`, discovery failure, token exchange failure, bad id_token, nonce mismatch, no email in token | `307` → `/login?error=sso` (redirect, no JSON body) |
+| The address belongs to an account that never verified it | `307` → `/login?error=sso_email_taken` (redirect, no JSON body) |
 | OK | `307` → `/app` |
+
+The `sso_email_taken` case is the account pre-hijacking guard: the address
+may have been registered by somebody else before the real owner showed up, so
+the sign-in is refused instead of landing in that account. The login page
+(`src/app/login/page.tsx`) answers it with "An account with this email already
+exists. Sign in with your password instead. If you never created that account,
+ask your administrator for help."
 
 ---
 

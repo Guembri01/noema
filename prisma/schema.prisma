@@ -79,6 +79,13 @@ enum SharePermission {
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
+  // B07: whether the address was proven. A local signup never proves it
+  // (false); an account created by a trusted provider (SSO) inherits the
+  // provider's proof (true). A provider sign-in may link an existing
+  // account only when that account proved its own address — a vouching
+  // provider is not enough, because an unverified account may have been
+  // pre-registered by someone else (account pre-hijacking).
+  emailVerified Boolean @default(false)
   passwordHash String
   name         String
   avatarUrl    String?

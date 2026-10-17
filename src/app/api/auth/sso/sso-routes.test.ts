@@ -180,7 +180,7 @@ describe("GET /api/auth/sso/callback", () => {
       },
     });
     prismaMock.user.findMany.mockResolvedValue([
-      { id: "user-1", email: "sso-user@noema.local" },
+      { id: "user-1", email: "sso-user@noema.local", emailVerified: true },
     ]);
 
     const response = await ssoCallback(
@@ -192,6 +192,53 @@ describe("GET /api/auth/sso/callback", () => {
     expect(prismaMock.user.create).not.toHaveBeenCalled();
     expect(jar.has("sso_state")).toBe(false);
     expect(jar.has("sso_nonce")).toBe(false);
+  });
+
+  it("reads the verification flag of the candidate account", async () => {
+    joseMock.jwtVerify.mockResolvedValue({
+      payload: {
+        sub: "sso-user-1",
+        email: "sso-user@noema.local",
+        name: "SSO User",
+        nonce: "nonce-1",
+      },
+    });
+    prismaMock.user.findMany.mockResolvedValue([
+      { id: "user-1", email: "sso-user@noema.local", emailVerified: true },
+    ]);
+
+    await ssoCallback(new Request(`${CALLBACK_URL}?code=code-1&state=state-1`));
+
+    expect(prismaMock.user.findMany).toHaveBeenCalledWith({
+      where: { email: "sso-user@noema.local" },
+      select: { id: true, email: true, emailVerified: true },
+    });
+  });
+
+  it("refuses to link an account that never verified the address", async () => {
+    // B07: the address may have been registered by somebody else before the
+    // real owner showed up — the sign-in must not land in that account.
+    joseMock.jwtVerify.mockResolvedValue({
+      payload: {
+        sub: "sso-user-5",
+        email: "pre-registered@noema.local",
+        name: "Pre Registered",
+        nonce: "nonce-1",
+      },
+    });
+    prismaMock.user.findMany.mockResolvedValue([
+      { id: "user-5", email: "pre-registered@noema.local", emailVerified: false },
+    ]);
+
+    const response = await ssoCallback(
+      new Request(`${CALLBACK_URL}?code=code-1&state=state-1`),
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?error=sso_email_taken",
+    );
+    expect(authMock.createSession).not.toHaveBeenCalled();
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
   });
 
   it("just-in-time creates a user when no account matches", async () => {
@@ -217,6 +264,8 @@ describe("GET /api/auth/sso/callback", () => {
           email: "new-user@noema.local",
           name: "New User",
           passwordHash: expect.stringMatching(/^sso:/),
+          // The provider vouched for the address.
+          emailVerified: true,
         }),
       }),
     );

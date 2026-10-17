@@ -448,6 +448,16 @@ model User {
 Prisma change = one column (`db push` locally, baseline migration for prod per
 R28.25). Everything else is behavior, not schema.
 
+**Later addition (B07, the security campaign):** the same `User` model also
+carries `emailVerified Boolean @default(false)` — whether the address was
+ever proven. A local sign-up writes `false` (a sign-up proves nothing about
+the address it registers), the SSO callback writes `true` for the account it
+creates (the address came out of a signed id_token), and a provider sign-in
+links an existing account only when **that account** proved its own address
+— a vouching provider alone does not authorize the link, because the address
+may have been pre-registered by somebody else (account pre-hijacking). Its
+migration is `20261019000000_user_email_verified`.
+
 ## 6. Behavior & edge spec
 
 | Edge | Behavior |
