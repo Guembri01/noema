@@ -132,10 +132,11 @@ Source: [`src/lib/api-guard.ts`](../src/lib/api-guard.ts) +
 rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
 ```
 
-- Fixed-window, **in-memory** (`Map`), keyed `scope:firstXForwardedForHop` with
-  fallback to `x-real-ip` then the literal `local` (→ every loopback caller
-  shares one bucket when no proxy headers are set). Single-node only; the file
-  header says to swap in Redis for multi-instance.
+- Fixed-window, **in-memory** (`Map`), keyed
+  `scope:firstXForwardedForHop` with fallback to `x-real-ip` then the
+  literal `local` (→ every loopback caller shares one bucket when no proxy
+  headers are set). Single-node only; the file header says to swap in Redis
+  for multi-instance.
 - Over the limit → `429 {"error":"Rate limit exceeded"}` with a `retry-after`
   header (whole seconds, min 1). `null` means continue.
 - The limiter resets on process restart; `resetRateLimits()` exists for tests.
@@ -155,11 +156,11 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
 | `notion-import` | 30/min | `POST /api/import/notion` |
 | `oauth-token` | 30/min | `POST /oauth/token` |
 | `cron` | 12/min | `POST /api/cron/templates` (after the secret check) |
+| `share-unlock-<token>` | 5/min | `POST /s/[token]/unlock` (per share link) |
 
 **Not rate-limited:** `export/page`, `export/database`, `export/workspace`
 (the zip export is the heaviest unthrottled endpoint), `files/[...path]`,
-`auth/sso/start`, `auth/sso/callback`, `oauth/authorize/complete`,
-`s/[token]/unlock`.
+`auth/sso/start`, `auth/sso/callback`, `oauth/authorize/complete`.
 
 ### Common status codes
 
@@ -782,15 +783,32 @@ Source: [`src/app/api/ai/transcribe/route.ts`](../src/app/api/ai/transcribe/rout
 
 ### `POST /s/[token]/unlock`
 Source: [`src/app/s/[token]/unlock/route.ts`](../src/app/s/[token]/unlock/route.ts) ·
-public · no rate limit
+public · rate scope `share-unlock-<token>` (5/min) · attempt brake per share link
 
-Form body: `password`. Delegates to `verifySharePassword(token, password)`
+Form body: `password`. Delegates to `attemptShareUnlock(token, password)`
 (`src/server/actions/share.ts`).
 
-- Success → sets cookie `share_<token>=1` (`httpOnly`, `lax`, 7 days) and
-  **303** → `/s/<token>`.
-- Wrong password → **303** → `/s/<token>?error=1`.
-- No JSON body in either direction.
+Two brakes guard the password: the rate limit's **scope** names the share
+link, the attempt counter is **keyed** by it.
+
+1. **Rate limit** — scope `share-unlock-<token>`, 5 requests per minute
+   (`src/lib/api-guard.ts`). The bucket key is `share-unlock-<token>:<ip>`,
+   so a caller that rotates its forwarded ip gets a fresh rate-limit budget.
+2. **Attempt counter** — `attemptShareUnlock` counts failed attempts per
+   share token, so rotating the forwarded ip does not reset the budget:
+   10 failed attempts lock the link for 15 minutes, the budget is restored
+   after 60 minutes of silence, and a successful unlock clears the count.
+   While a link is locked **no password is compared at all** (fail closed).
+
+| Case | Response |
+|---|---|
+| Over 5 requests/min for the link | **429** `{"error":"Rate limit exceeded"}` with `retry-after` (seconds) |
+| Link locked (10 failed attempts) | **429** `{"error":"Too many unlock attempts"}` with `retry-after` (seconds, until the lock expires) |
+| Wrong password | **303** → `/s/<token>?error=1` (no JSON body) |
+| Correct password | **303** → `/s/<token>`, cookie `share_<token>=1` (`httpOnly`, `lax`, 7 days) |
+
+The rate limit and the attempt counter are in-process (like every other
+limiter in §3): a multi-instance deployment needs a shared store.
 
 ---
 
@@ -857,7 +875,7 @@ rescheduled.
 | 28 | POST | `/api/ai/skills` | cookie | `ai-skills` | `src/app/api/ai/skills/route.ts` |
 | 29 | POST | `/api/ai/transcribe` | cookie | `transcribe` | `src/app/api/ai/transcribe/route.ts` |
 | 30 | POST | `/api/cron/templates` | `x-cron-secret` | `cron` | `src/app/api/cron/templates/route.ts` |
-| 31 | POST | `/s/[token]/unlock` | share password | — | `src/app/s/[token]/unlock/route.ts` |
+| 31 | POST | `/s/[token]/unlock` | share password | `share-unlock-<token>` | `src/app/s/[token]/unlock/route.ts` |
 
 ## Appendix B — domains with **no** REST surface
 
