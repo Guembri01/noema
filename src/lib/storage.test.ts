@@ -129,6 +129,15 @@ describe("localDriver", () => {
     await expect(driver.put(".", new Uint8Array([1]), "text/plain")).rejects.toThrow();
   });
 
+  it("stores uploads owner-only: a 0600 file inside a 0700 directory (B38)", async () => {
+    await driver.put("ws1/secret.png", new Uint8Array([1]), "image/png");
+
+    const file = await stat(path.join(root, "ws1", "secret.png"));
+    expect(file.mode & 0o777).toBe(0o600);
+    const dir = await stat(path.join(root, "ws1"));
+    expect(dir.mode & 0o777).toBe(0o700);
+  });
+
   it("hardens uploads that an older version left readable (B67)", async () => {
     // An install from before the modes were set: the workspace directory is
     // 0755 and the file in it 0644 — the umask's defaults.
