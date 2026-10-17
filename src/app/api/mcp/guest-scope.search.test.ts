@@ -221,7 +221,13 @@ beforeEach(() => {
 
   // The guest is a member of the workspace with the `GUEST` role.
   edge.getWorkspaceAccess.mockResolvedValue({ role: "GUEST" });
-  edge.authenticateApiRequest.mockResolvedValue({ userId: "user-guest" });
+  // The resolver hands back the granted scopes as well (B04): the MCP route
+  // enforces them, so a token without `read:pages` is refused before the
+  // tool is even looked at.
+  edge.authenticateApiRequest.mockResolvedValue({
+    userId: "user-guest",
+    scopes: ["read:pages", "admin:workspace"],
+  });
   db.apiTokenFindUnique.mockResolvedValue({ scopes: ["read:pages", "admin:workspace"] });
 
   // The guest was shared "page-a" — nothing else.

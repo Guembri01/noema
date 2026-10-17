@@ -16,8 +16,8 @@ import {
   type McpTool,
 } from "@/lib/mcp-server";
 import { apiScopesForRole, canEditContent, getWorkspaceAccess } from "@/lib/permissions";
-import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
-import { assertScopedParent } from "@/lib/page-parent";import { searchPagesPage } from "@/server/queries";
+import { assertScopedParent } from "@/lib/page-parent";
+import { searchPagesPage } from "@/server/queries";
 
 export const runtime = "nodejs";
 

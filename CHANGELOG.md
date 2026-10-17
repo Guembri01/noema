@@ -433,6 +433,13 @@ list marks it as **No access**.
   users on single sign-on has to let them arrive through the identity provider
   in the first place.
 
+- When a page is created or moved, its parent is now checked against the
+  workspace: a page can no longer be filed under a page of another workspace.
+  It therefore no longer turns up in that workspace's database view or in its
+  CSV/JSON export, and it is no longer swept along by the foreign workspace's
+  cascade delete. The database and export views filter their rows by the
+  workspace as well.
+
 ### Changed
 
 - The app's own write path accepts only the app's own `/api/files/...` asset
