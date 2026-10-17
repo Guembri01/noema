@@ -101,7 +101,7 @@ const editEquation = (node: { type: { name: string }; attrs: { latex?: string } 
 import { actionError, safeAction } from "@/lib/actions-client";
 import { updatePageAction } from "@/server/actions/pages";
 import { uploadFile } from "@/lib/upload-client";
-import { DUR, EASE } from "@/lib/design-tokens";
+import { DUR, EASE, Z } from "@/lib/design-tokens";
 import {
   Callout,
   Column,
@@ -199,6 +199,28 @@ function presenceColor(name: string | undefined): string {
     if (hex) return hex;
   }
   return OPTION_COLORS.gray;
+}
+
+/**
+ * The local user's collaboration-cursor colour, resolved from the `--accent`
+ * token at runtime.
+ *
+ * The collaboration caret is protocol data, not theme styling: y-prosemirror
+ * validates it with `/^#[0-9a-fA-F]{6}$/` and paints the accepted value
+ * straight onto the caret border and name label, so a `var(--accent)` reference
+ * would be rejected and the cursor would fall back to transparent. Reading the
+ * token's computed value keeps the presence colour on the design system (and
+ * correct across light / dark / high-contrast) while still handing the library
+ * the concrete hex it demands. Outside a DOM (SSR) it returns `""`, which the
+ * caret already treats as "no colour" — no caret renders there anyway.
+ */
+export function presenceCursorColor(): string {
+  if (typeof window === "undefined" || typeof document === "undefined") return "";
+  try {
+    return getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+  } catch {
+    return "";
+  }
 }
 
 /** Human label for one pending suggestion (kind + the affected text). */
@@ -800,7 +822,10 @@ function SuggestionsControls({ editor, locale }: { editor: Editor; locale: strin
   const pending = pendingSuggestions(editor.state);
 
   return (
-    <div className="fixed bottom-4 left-4 z-20 flex flex-col items-start gap-1 text-xs">
+    <div
+      className="fixed bottom-4 left-4 flex flex-col items-start gap-1 text-xs"
+      style={{ zIndex: Z.sticky }}
+    >
       {open && pending.length > 0 && (
         <ul
           aria-label={t(locale, "suggestionsWord")}
@@ -822,7 +847,7 @@ function SuggestionsControls({ editor, locale }: { editor: Editor; locale: strin
                 aria-label={t(locale, "acceptSuggestion")}
                 title={t(locale, "acceptSuggestion")}
                 onClick={() => editor.chain().focus().acceptSuggestion(suggestion.id).run()}
-                className="rounded px-1 text-emerald-600 hover:bg-surface"
+                className="rounded px-1 text-success hover:bg-surface"
               >
                 ✓
               </button>
@@ -831,7 +856,7 @@ function SuggestionsControls({ editor, locale }: { editor: Editor; locale: strin
                 aria-label={t(locale, "rejectSuggestion")}
                 title={t(locale, "rejectSuggestion")}
                 onClick={() => editor.chain().focus().rejectSuggestion(suggestion.id).run()}
-                className="rounded px-1 text-red-500 hover:bg-surface"
+                className="rounded px-1 text-danger hover:bg-surface"
               >
                 ✕
               </button>
@@ -851,10 +876,10 @@ function SuggestionsControls({ editor, locale }: { editor: Editor; locale: strin
             if (active) setOpen(false);
           }}
           className={`flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-surface-2 ${
-            active ? "text-emerald-600" : "text-muted"
+            active ? "text-success" : "text-muted"
           }`}
         >
-          <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-emerald-500" : "bg-muted"}`} />
+          <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-success" : "bg-muted"}`} />
           {t(locale, "suggestingWord")}
         </button>
 
@@ -873,14 +898,14 @@ function SuggestionsControls({ editor, locale }: { editor: Editor; locale: strin
             <button
               type="button"
               onClick={() => editor.chain().focus().acceptAll().run()}
-              className="rounded px-1.5 py-0.5 text-emerald-600 hover:bg-surface-2"
+              className="rounded px-1.5 py-0.5 text-success hover:bg-surface-2"
             >
               {t(locale, "acceptAllSuggestions")}
             </button>
             <button
               type="button"
               onClick={() => editor.chain().focus().rejectAll().run()}
-              className="rounded px-1.5 py-0.5 text-red-500 hover:bg-surface-2"
+              className="rounded px-1.5 py-0.5 text-danger hover:bg-surface-2"
             >
               {t(locale, "rejectAllSuggestions")}
             </button>
@@ -972,7 +997,7 @@ export function PageEditor({
     const provider = new WebsocketProvider(collabUrl, pageId, ydoc, { connect: false });
     provider.awareness.setLocalStateField("user", {
       name: "You",
-      color: "#2383e2",
+      color: presenceCursorColor(),
     });
     return { ydoc, provider };
   }, [collabUrl, pageId]);
@@ -1389,7 +1414,7 @@ export function PageEditor({
             Collaboration.configure({ document: collab.ydoc }),
             CollaborationCaret.configure({
               provider: collab.provider,
-              user: { name: "You", color: "#2383e2" },
+              user: { name: "You", color: presenceCursorColor() },
             }),
           ]
         : []),
@@ -1812,7 +1837,7 @@ export function PageEditor({
           >
             <span
               className={`h-1.5 w-1.5 rounded-full ${
-                collabStatus === "connected" ? "bg-emerald-500" : "bg-amber-500"
+                collabStatus === "connected" ? "bg-success" : "bg-warning"
               }`}
             />
             {t(locale, "liveWord")} · {peers}
@@ -1820,7 +1845,7 @@ export function PageEditor({
         )}
         {brokenRefs > 0 && (
           <span
-            className="pointer-events-auto flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-red-500"
+            className="pointer-events-auto flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-danger"
             data-broken-refs={brokenRefs}
             title={t(locale, "somethingWentWrongDot")}
           >
@@ -1830,7 +1855,7 @@ export function PageEditor({
         {saveState === "saving" && t(locale, "saving")}
         {saveState === "saved" && t(locale, "savedWord")}
         {saveState === "error" && (
-          <span className="pointer-events-auto flex items-center gap-1 text-red-500">
+          <span className="pointer-events-auto flex items-center gap-1 text-danger">
             {t(locale, "saveFailed")}
             <button
               type="button"

@@ -61,7 +61,7 @@ import {
   type PullQuoteBlock,
 } from "@/lib/pull-quote";
 import { t } from "@/lib/i18n";
-import { DUR, EASE } from "@/lib/design-tokens";
+import { DUR, EASE, Z } from "@/lib/design-tokens";
 import { prefersReducedMotion } from "@/components/editor/extensions/animated-image";
 
 /* ------------------------------------------------------------- motion (§6/§19) */
@@ -170,15 +170,23 @@ declare module "@tiptap/core" {
 
 /* ------------------------------------------------------------------ callout */
 
+/**
+ * Callout background per colour name. The serialised `color` attribute stores
+ * the hue *name* ("blue", "red", …), never a colour value, so this is pure
+ * presentation and reads the shared tag palette (`--tag-<hue>-bg`) instead of
+ * hard-coding Notion's pastels — every hue then follows light / dark /
+ * high-contrast automatically. `gray` (also the fallback) is the neutral
+ * surface.
+ */
 const CALLOUT_COLORS: Record<string, string> = {
   gray: "var(--surface)",
-  blue: "#e7f3f8",
-  green: "#edf3ec",
-  yellow: "#fbf3db",
-  red: "#fdebec",
-  purple: "#f6f3f9",
-  orange: "#fbecdd",
-  pink: "#faf1f5",
+  blue: "var(--tag-blue-bg)",
+  green: "var(--tag-green-bg)",
+  yellow: "var(--tag-yellow-bg)",
+  red: "var(--tag-red-bg)",
+  purple: "var(--tag-purple-bg)",
+  orange: "var(--tag-orange-bg)",
+  pink: "var(--tag-pink-bg)",
 };
 
 export const Callout = Node.create<{ locale: string }>({
@@ -467,7 +475,7 @@ function chevronGlyph(collapsed: boolean): SVGSVGElement {
   svg.setAttribute("aria-hidden", "true");
   // Collapsed points right (closed); expanded rotates to point down (open).
   svg.style.transform = collapsed ? "none" : "rotate(90deg)";
-  svg.style.transition = "transform 120ms ease";
+  svg.style.transition = "transform var(--dur-1) var(--ease-smooth)";
   const path = document.createElementNS(ns, "path");
   path.setAttribute("d", "m9 18 6-6-6-6");
   svg.appendChild(path);
@@ -1087,7 +1095,7 @@ function ColumnsView({ node, editor, getPos, locale }: NodeViewProps & { locale:
             right: "2px",
             display: "flex",
             gap: "2px",
-            zIndex: 2,
+            zIndex: Z.sticky,
           }}
         >
           <button
@@ -1263,7 +1271,7 @@ function ColumnView({ node, editor, getPos, locale }: NodeViewProps & { locale: 
             background: "var(--border)",
             backgroundClip: "content-box",
             cursor: "col-resize",
-            zIndex: 1,
+            zIndex: Z.sticky,
           }}
         />
       )}
