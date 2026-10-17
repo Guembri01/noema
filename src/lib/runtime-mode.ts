@@ -66,6 +66,13 @@ declare global {
           args?: Record<string, unknown>,
         ) => Promise<unknown>;
       };
+      /** Reinstalled on every document, so the served app can subscribe too. */
+      event?: {
+        listen?: (
+          event: string,
+          handler: (message: { payload?: unknown }) => void,
+        ) => Promise<() => void>;
+      };
     };
   }
 }
@@ -123,6 +130,57 @@ export function invokeShell(
   return Promise.resolve()
     .then(() => invoke(command, args))
     .catch(() => undefined);
+}
+
+/**
+ * Subscribe to an event the shell emits (see `src-tauri/src/shell.rs`), or
+ * `null` when there is no shell to listen to — the site, a plain browser, SSR.
+ *
+ * The returned function unsubscribes, and is safe to call at any point: Tauri's
+ * `listen` is asynchronous, so a component can unmount before the subscription
+ * exists. In that window the pending listener is cancelled the moment it
+ * arrives instead of being left attached to a dead tree — which is the bug this
+ * shape exists to avoid, since a React effect that only unsubscribes "later"
+ * leaks one listener per mount.
+ *
+ * A shell that refuses to listen resolves to a no-op rather than throwing:
+ * native events are an enhancement, and nothing in the app may break because the
+ * shell said no.
+ */
+export function listenShell(
+  event: string,
+  handler: (payload: unknown) => void,
+): (() => void) | null {
+  if (typeof window === "undefined") return null;
+  const listen = window.__TAURI__?.event?.listen;
+  if (typeof listen !== "function") return null;
+
+  let stopped = false;
+  let unlisten: (() => void) | null = null;
+  void Promise.resolve()
+    .then(() =>
+      listen(event, (message) => {
+        if (stopped) return;
+        handler(message?.payload);
+      }),
+    )
+    .then((off) => {
+      if (typeof off !== "function") return;
+      if (stopped) {
+        off();
+        return;
+      }
+      unlisten = off;
+    })
+    .catch(() => undefined);
+
+  return () => {
+    stopped = true;
+    if (unlisten) {
+      unlisten();
+      unlisten = null;
+    }
+  };
 }
 
 /**

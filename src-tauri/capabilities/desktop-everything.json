@@ -8,6 +8,7 @@
     "urls": ["http://127.0.0.1:*"]
   },
   "permissions": [
+    "allow-backup-now",
     "allow-check-update",
     "allow-desktop-info",
     "allow-log-file-path",

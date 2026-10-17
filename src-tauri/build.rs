@@ -45,5 +45,6 @@ const APP_COMMANDS: &[&str] = &[
     "database_url",
     "set_decorations",
     "set_theme",
+    "backup_now",
     "quit",
 ];

@@ -19,15 +19,26 @@ import { ThemeProvider as NextThemesProvider } from "next-themes";
 export function ThemeProvider({
   children,
   nonce,
+  defaultTheme = "light",
 }: {
   children: React.ReactNode;
   /** Per-response CSP nonce, from the middleware via `x-nonce`. */
   nonce?: string;
+  /**
+   * What a first paint uses, before `localStorage` has an opinion.
+   *
+   * The root layout passes the desktop shell's stored theme (via the cookie the
+   * middleware sets); the site passes nothing and keeps `"light"`. Without this
+   * the desktop app fell back to `"light"` on any launch whose port had changed,
+   * flashing a light page under a dark title bar — and then told the shell the
+   * theme was light, persisting the mistake.
+   */
+  defaultTheme?: string;
 }) {
   return (
     <NextThemesProvider
       attribute="class"
-      defaultTheme="light"
+      defaultTheme={defaultTheme}
       enableSystem
       disableTransitionOnChange
       nonce={nonce}

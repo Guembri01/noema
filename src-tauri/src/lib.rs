@@ -73,6 +73,19 @@ pub fn install_panic_hook() {
     }));
 }
 
+/// The theme value to hand to the served app.
+///
+/// Only the two concrete themes are passed through; `"system"` and anything
+/// unrecognised become `"system"`, so a corrupt preference leaves the page
+/// following the OS rather than pinned to a wrong look. Mirrors
+/// `commands::theme_from_name`, which makes the same call for the window chrome.
+fn theme_query(stored: &str) -> String {
+    match stored {
+        "light" | "dark" => stored.to_string(),
+        _ => "system".to_string(),
+    }
+}
+
 /// Inject the bridge object and point the window at the local server.
 async fn attach_server(app: &tauri::AppHandle, info: &sidecar::SidecarInfo) {
     let Some(window) = app.get_webview_window("main") else {
@@ -87,7 +100,17 @@ async fn attach_server(app: &tauri::AppHandle, info: &sidecar::SidecarInfo) {
     });
     let script = format!("window.__NOEMA_DESKTOP__ = Object.freeze({bridge});");
     let _ = window.eval(&script);
-    if let Ok(url) = url::Url::parse(&info.api_base) {
+    if let Ok(mut url) = url::Url::parse(&info.api_base) {
+        // Hand the stored theme over as a query parameter: the page's own store
+        // (`localStorage`) is keyed by origin, and the port is only *preferred*
+        // to be stable, so on a launch after a port change the page would
+        // otherwise start on its default theme while the window chrome is
+        // already painted in this one. The middleware turns the parameter into a
+        // cookie and the server renders the theme into the first document, so
+        // the first paint is right — see `src/lib/theme-preference.ts`.
+        let stored_theme = state::pref::<String>(app, state::prefs::THEME, "system".to_string());
+        url.query_pairs_mut()
+            .append_pair("theme", &theme_query(&stored_theme));
         let _ = window.navigate(url);
     }
 }
@@ -138,6 +161,7 @@ pub fn run() {
             commands::check_update,
             commands::set_decorations,
             commands::set_theme,
+            commands::backup_now,
             commands::quit,
         ])
         .setup(|app| {
@@ -243,4 +267,41 @@ pub fn run() {
             });
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Only the two concrete themes travel to the page. `"system"` — and any
+    /// value this build does not know, such as one written by a newer release —
+    /// leaves the page following the OS instead of pinning a look the shell
+    /// never asked for.
+    #[test]
+    fn only_a_concrete_theme_is_handed_to_the_page() {
+        assert_eq!(theme_query("light"), "light");
+        assert_eq!(theme_query("dark"), "dark");
+        assert_eq!(theme_query("system"), "system");
+        assert_eq!(theme_query(""), "system");
+        assert_eq!(theme_query("solarized"), "system");
+        assert_eq!(theme_query("DARK"), "system");
+    }
+
+    /// The value is read by the page from a query parameter, so it has to survive
+    /// URL encoding intact and must never carry a character that could split the
+    /// query string.
+    #[test]
+    fn the_handed_theme_is_url_safe() {
+        for stored in ["light", "dark", "system", "nonsense"] {
+            let value = theme_query(stored);
+            let mut url = url::Url::parse("http://127.0.0.1:47821").expect("parse");
+            url.query_pairs_mut().append_pair("theme", &value);
+            let round_tripped = url
+                .query_pairs()
+                .find(|(key, _)| key == "theme")
+                .map(|(_, value)| value.into_owned());
+            assert_eq!(round_tripped.as_deref(), Some(value.as_str()));
+            assert!(!value.contains('&') && !value.contains('=') && !value.contains('#'));
+        }
+    }
 }

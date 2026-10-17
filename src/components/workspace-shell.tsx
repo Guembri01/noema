@@ -17,8 +17,16 @@ import type { ChatModelInfo } from "@/lib/chat-model";
 import type { CalendarFeedView, MeetingEventView } from "@/components/sidebar-meetings";
 import { CommandPalette } from "@/components/command-palette";
 import { QuickFind } from "@/components/quick-find";
+import { AboutDialog } from "@/components/about-dialog";
+import { DiagnosticsDialog } from "@/components/diagnostics-dialog";
+import { ShortcutsDialog } from "@/components/shortcuts-dialog";
 import { RouteProgress } from "@/components/ui/route-progress";
 import { safeAction } from "@/lib/actions-client";
+import { invokeShell } from "@/lib/runtime-mode";
+import { formatShortcut } from "@/lib/keyboard-shortcuts";
+import { useIsMac } from "@/lib/use-is-mac";
+import { shellWindowEvent, type ShellMenuEvent } from "@/lib/shell-events";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import {
@@ -124,6 +132,12 @@ export function WorkspaceShell({
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatThreadId, setChatThreadId] = useState<string | null>(null);
+  // Desktop-only surfaces the native menu opens (Help → Keyboard shortcuts,
+  // Help → About, Data → Diagnostics…). They are ordinary dialogs, so the
+  // browser can open them too once something dispatches the same window event.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -268,6 +282,76 @@ export function WorkspaceShell({
     }
   }, [requestedThread]);
 
+  // Platform-aware chord hints for the sidebar toggles and the palette rows.
+  const isMac = useIsMac();
+
+  // The desktop shell's native menu, served.
+  //
+  // `DesktopShellBridge` (rendered in the root layout) turns a menu click into a
+  // `noema:shell:<id>` window event; this is where those become something. Each
+  // one is a single line because the actions already exist — the menu was dead
+  // only because nothing connected it to them.
+  //
+  // Listeners are attached even in the browser: no shell means no events, so the
+  // cost is one idle handler, and a test or a deep link can dispatch the same
+  // event to open the same surface.
+  useEffect(() => {
+    const handlers: Array<[ShellMenuEvent, () => void]> = [
+      ["new-note", () => void createNewPage()],
+      ["quick-find", () => setQuickOpen(true)],
+      ["search", () => router.push(`/w/${workspace.slug}/search`)],
+      ["settings", () => router.push(`/w/${workspace.slug}/settings`)],
+      ["shortcuts", () => setShortcutsOpen(true)],
+      ["about", () => setAboutOpen(true)],
+      ["diagnostics", () => setDiagnosticsOpen(true)],
+      [
+        "backup",
+        () => {
+          // The shell stops the server, copies the data directory and restarts,
+          // so this is genuinely slow (seconds) — hence a promise, not a click
+          // that looks ignored. See `commands::backup_now`.
+          const call = invokeShell("backup_now");
+          if (!call) return;
+          void call
+            .then((result) =>
+              typeof result === "string"
+                ? toast.success(`${t(locale, "backupCreated")} · ${result}`)
+                : toast.error(t(locale, "backupFailed")),
+            )
+            .catch(() => toast.error(t(locale, "backupFailed")));
+        },
+      ],
+      [
+        "check-update",
+        () => {
+          const call = invokeShell("check_update");
+          if (!call) return;
+          void call
+            .then((version) =>
+              typeof version === "string" && version.trim() !== ""
+                ? // `toast.message`, not `toast.info`: the info variant is banned
+                  // by the coherence gate (docs/specs/notifications.md R82.30).
+                  toast.message(`${t(locale, "updateAvailable")} ${version}`)
+                : toast.success(t(locale, "upToDate")),
+            )
+            .catch(() => toast.error(t(locale, "upToDate")));
+        },
+      ],
+    ];
+
+    const bound = handlers.map(([id, run]) => {
+      const event = shellWindowEvent(id);
+      const listener = () => run();
+      window.addEventListener(event, listener);
+      return [event, listener] as const;
+    });
+    return () => {
+      for (const [event, listener] of bound) {
+        window.removeEventListener(event, listener);
+      }
+    };
+  }, [createNewPage, locale, router, workspace.slug]);
+
   // Any surface can open a conversation by dispatching OPEN_CHAT_EVENT.
   useEffect(() => {
     const handler = (event: Event) => {
@@ -279,17 +363,26 @@ export function WorkspaceShell({
     return () => window.removeEventListener(OPEN_CHAT_EVENT, handler);
   }, []);
 
-  // B43 shortcuts: Ctrl/Cmd+K and Ctrl/Cmd+P open the command palette,
-  // Ctrl/Cmd+N creates a page, Ctrl/Cmd+\ toggles the sidebar.
+  // B43 shortcuts: Ctrl/Cmd+K opens the command palette, Ctrl/Cmd+P opens Quick
+  // find, Ctrl/Cmd+N creates a page, Ctrl/Cmd+\ toggles the sidebar.
+  //
+  // K and P are split because the two surfaces are different: the palette
+  // searches commands *and* pages, Quick find only jumps to a page. `Mod+P` was
+  // in the shortcut registry and on the sidebar's Quick find chip, but nothing
+  // listened for it, so the hint was a promise the app did not keep.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
       const key = event.key.toLowerCase();
-      if (key === "k" || key === "p") {
+      if (key === "k") {
         event.preventDefault();
         setQuickOpen(false);
         setPaletteOpen((open) => !open);
+      } else if (key === "p") {
+        event.preventDefault();
+        setPaletteOpen(false);
+        setQuickOpen((open) => !open);
       } else if (key === "n") {
         event.preventDefault();
         void createNewPage();
@@ -357,7 +450,7 @@ export function WorkspaceShell({
         <button
           type="button"
           onClick={toggleSidebar}
-          title={`${t(locale, "showSidebar")} (Ctrl+\\)`}
+          title={`${t(locale, "showSidebar")} (${formatShortcut("toggle-sidebar", { isMac })})`}
           aria-label={t(locale, "showSidebar")}
           data-testid="sidebar-show"
           className="focus-ring u-interactive fixed left-3 top-3 z-40 hidden h-8 w-8 items-center justify-center rounded-md border border-border bg-bg text-muted shadow-sm transition-colors hover:bg-surface-2 hover:text-fg md:flex"
@@ -502,6 +595,21 @@ export function WorkspaceShell({
         pages={tree}
         onCreatePage={() => void createNewPage()}
         onToggleSidebar={toggleSidebar}
+      />
+      <ShortcutsDialog
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+        locale={locale}
+      />
+      <AboutDialog
+        open={aboutOpen}
+        onClose={() => setAboutOpen(false)}
+        locale={locale}
+      />
+      <DiagnosticsDialog
+        open={diagnosticsOpen}
+        onClose={() => setDiagnosticsOpen(false)}
+        locale={locale}
       />
     </div>
   );

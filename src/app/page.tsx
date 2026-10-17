@@ -4,6 +4,10 @@ import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { t } from "@/lib/i18n";
 import { insideDesktopShell } from "@/lib/security-headers";
+import {
+  PROJECT_REPOSITORY,
+  projectAuthorLine,
+} from "@/lib/project-info";
 import { Button } from "@/components/ui/button";
 
 export default async function Home() {
@@ -65,7 +69,7 @@ export default async function Home() {
             <Button size="md">Create your workspace</Button>
           </Link>
           <a
-            href="https://github.com"
+            href={PROJECT_REPOSITORY}
             target="_blank"
             rel="noreferrer"
             className="inline-flex h-10 items-center rounded-md border border-border px-4 text-sm font-medium hover:bg-surface-2"
@@ -85,7 +89,8 @@ export default async function Home() {
       </section>
 
       <footer className="border-t border-border py-6 text-sm text-muted">
-        MIT licensed · Built with Next.js, Prisma and PostgreSQL.
+        MIT licensed · Built by {projectAuthorLine()} · Next.js, Prisma and
+        PostgreSQL.
       </footer>
     </main>
   );

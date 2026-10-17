@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { SECURITY_HEADERS } from "./src/lib/security-headers";
 // Next.js only accepts a Server Action POST when the request's `Origin` matches
 // the `Host` header (CSRF protection), so this machine's own addresses have to be
@@ -17,6 +18,9 @@ import { allowedOrigins } from "./scripts/desktop/allowed-origins.cjs";
 export { SECURITY_HEADERS };
 
 const root = dirname(fileURLToPath(import.meta.url));
+
+/** The app version, from the one file that owns it. */
+const packageVersion: string = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 
 /**
  * B61 - security headers on EVERY response (docs/audits/security-1.md M9,
@@ -51,6 +55,12 @@ const nextConfig: NextConfig = {
   //            the Tauri sidecar. Left off by default because `next start` does
   //            not serve a standalone build.
   ...(process.env.NOEMA_STANDALONE === "1" ? { output: "standalone" as const } : {}),
+  // The About box shows the app version. The *site* build has no desktop bridge
+  // to read it from, and `npm_package_version` only exists while npm is the
+  // parent process (a container does not have it), so the number is inlined at
+  // build time from the one place that owns it — `package.json`, which is also
+  // what `tauri.conf.json` and `/api/health` report.
+  env: { NEXT_PUBLIC_APP_VERSION: packageVersion },
   // Pin the tracing root so an unrelated lockfile above this project does not
   // change how the standalone output is assembled.
   outputFileTracingRoot: root,

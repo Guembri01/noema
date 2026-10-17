@@ -120,6 +120,25 @@ pub struct SidecarState {
     pub info: Arc<Mutex<Option<SidecarInfo>>>,
     pub attempt: Arc<Mutex<u32>>,
     pub stopping: Arc<Mutex<bool>>,
+    /// Monotonic id of the child that is *currently* supervised.
+    ///
+    /// Exit events are delivered asynchronously, so an old child's `Terminated`
+    /// can still be in flight while its replacement is already running (a manual
+    /// restart) or while the app is quitting. Without an identity check the log
+    /// pump would treat that stale event as a crash and start a *third* server —
+    /// the orphaned `noema-node` that outlives the window. See `should_restart`.
+    pub epoch: Arc<Mutex<u64>>,
+}
+
+/// Should a `Terminated` event from child `epoch` trigger an automatic restart?
+///
+/// Both conditions are necessary:
+///  * `!stopping` — the stop was not deliberate, and
+///  * `epoch == current` — the event belongs to the child still being supervised.
+///
+/// Kept as a free function so the rule is unit-testable without a running app.
+pub fn should_restart(stopping: bool, epoch: u64, current: u64) -> bool {
+    !stopping && epoch == current
 }
 
 /// Layout of the per-user data directory, created on first run.
@@ -346,7 +365,10 @@ pub fn server_entry(app: &AppHandle) -> Result<PathBuf, SidecarError> {
 /// Kept out of `start` so the supervisor's own future stays simple: it must be
 /// `Send` (the shell spawns it), and an inline `async move` block that captures
 /// the start-up locals makes that harder to prove than it needs to be.
-fn spawn_log_pump(app: AppHandle, mut receiver: Receiver<CommandEvent>) {
+///
+/// `epoch` is the identity of the child this pump is draining, so an exit event
+/// from a superseded child is ignored rather than restarted.
+fn spawn_log_pump(app: AppHandle, mut receiver: Receiver<CommandEvent>, epoch: u64) {
     tauri::async_runtime::spawn(async move {
         while let Some(event) = receiver.recv().await {
             match event {
@@ -357,13 +379,21 @@ fn spawn_log_pump(app: AppHandle, mut receiver: Receiver<CommandEvent>) {
                     crate::logging::sidecar_line(&app, "stderr", &String::from_utf8_lossy(&line));
                 }
                 CommandEvent::Terminated(payload) => {
-                    let stopping = { *app.state::<SidecarState>().stopping.lock().await };
+                    let (stopping, current) = {
+                        let state = app.state::<SidecarState>();
+                        let stopping = *state.stopping.lock().await;
+                        let current = *state.epoch.lock().await;
+                        (stopping, current)
+                    };
                     crate::logging::sidecar_line(
                         &app,
                         "lifecycle",
-                        &format!("terminated code={:?} stopping={stopping}", payload.code),
+                        &format!(
+                            "terminated code={:?} stopping={stopping} epoch={epoch} current={current}",
+                            payload.code
+                        ),
                     );
-                    if !stopping {
+                    if should_restart(stopping, epoch, current) {
                         // Restart on its own task: the log stream must keep
                         // draining while the backoff sleeps, and awaiting the
                         // restart here would tie this task's future to `start`,
@@ -387,11 +417,14 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
     let entry = server_entry(app)?;
     let database_url = crate::state::database_url(app);
 
-    let attempt = {
+    let (attempt, epoch) = {
         let state = app.state::<SidecarState>();
         let mut attempt = state.attempt.lock().await;
         *attempt += 1;
-        *attempt
+        // A new child gets a new identity; see `SidecarState::epoch`.
+        let mut epoch = state.epoch.lock().await;
+        *epoch += 1;
+        (*attempt, *epoch)
     };
     let _ = app.emit("sidecar://event", SidecarEvent::Starting { attempt });
 
@@ -427,10 +460,15 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
     {
         let state = app.state::<SidecarState>();
         *state.child.lock().await = Some(child);
+        // This child is the one being supervised, so clear the flag a deliberate
+        // stop left set: a later genuine crash must still restart. A stale exit
+        // event from the previous child is rejected by the epoch check instead,
+        // which is what keeps a manual restart from leaving two servers running.
+        *state.stopping.lock().await = false;
     }
 
     // Stream logs to file + the UI, and notice an unexpected exit.
-    spawn_log_pump(app.clone(), receiver);
+    spawn_log_pump(app.clone(), receiver, epoch);
 
     match wait_until_ready(port, READY_TIMEOUT).await {
         Readiness::Ready => {
@@ -492,6 +530,10 @@ pub async fn restart(app: &AppHandle, code: Option<i32>) {
 }
 
 /// Stop the server.
+///
+/// The `stopping` flag stays set: an intentional stop must never be mistaken for
+/// a crash by the log pump. `start` clears it when it spawns a replacement, so
+/// both a crash and a manual restart get supervision back.
 pub async fn stop(app: &AppHandle) {
     let state = app.state::<SidecarState>();
     *state.stopping.lock().await = true;
@@ -501,7 +543,6 @@ pub async fn stop(app: &AppHandle) {
         let _ = child.kill();
     }
     *state.info.lock().await = None;
-    *state.stopping.lock().await = false;
     let _ = app.emit("sidecar://event", SidecarEvent::Stopped);
 }
 
@@ -643,6 +684,23 @@ mod tests {
         assert!(choose_port(None).expect("chosen") > 1024);
     }
 
+    /// The rule that keeps a stopped server stopped.
+    ///
+    /// A `Terminated` event arrives asynchronously, so at the moment one lands the
+    /// world may already have moved on. Restarting is only correct for the child
+    /// that is still the current one *and* was not stopped on purpose.
+    #[test]
+    fn only_a_current_child_that_was_not_stopped_restarts() {
+        // The ordinary crash: current child, no deliberate stop.
+        assert!(should_restart(false, 3, 3));
+        // A deliberate stop (quit, "stop server"): never restart.
+        assert!(!should_restart(true, 3, 3));
+        // A stale event from a superseded child: never restart, or a manual
+        // restart would end up with two servers.
+        assert!(!should_restart(false, 2, 3));
+        assert!(!should_restart(true, 2, 3));
+    }
+
     #[test]
     fn ensure_layout_creates_every_directory() {
         let dir = std::env::temp_dir().join(format!("noema-layout-{}", rand::random::<u32>()));
@@ -682,6 +740,7 @@ mod send_guards {
             let _ = state.info.lock().await;
             let _ = state.attempt.lock().await;
             let _ = state.stopping.lock().await;
+            let _ = state.epoch.lock().await;
         });
     }
 

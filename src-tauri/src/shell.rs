@@ -92,6 +92,10 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let help = SubmenuBuilder::new(app, "Help")
         .item(&MenuItemBuilder::with_id("docs", "Documentation").build(app)?)
         .item(&MenuItemBuilder::with_id("shortcuts", "Keyboard shortcuts").build(app)?)
+        // "About" sits in Help on every platform rather than in the macOS app
+        // submenu: the credits should be one click away everywhere, and a
+        // second platform-specific item is how the two menus drift apart.
+        .item(&MenuItemBuilder::with_id("about", "About Noema").build(app)?)
         .separator()
         .item(&MenuItemBuilder::with_id("check-update", "Check for updates…").build(app)?)
         .build()?;
@@ -140,6 +144,7 @@ pub fn on_shell_command(app: &AppHandle, id: &str) {
         "diagnostics" => emit(app, "shell://diagnostics"),
         "backup" => emit(app, "shell://backup"),
         "shortcuts" => emit(app, "shell://shortcuts"),
+        "about" => emit(app, "shell://about"),
         "docs" => {
             let _ = app
                 .opener()

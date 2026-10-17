@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildCsp, insideDesktopShell, NONCE_HEADER } from "./lib/security-headers";
 import {
+  THEME_COOKIE,
+  THEME_COOKIE_OPTIONS,
+  themeHandoff,
+} from "./lib/theme-preference";
+import {
   decideIpAllowlist,
   headerClientIp,
   isPrivateSurface,
@@ -106,6 +111,23 @@ function ipGate(request: NextRequest): NextResponse | null {
 export function middleware(request: NextRequest): NextResponse {
   const blocked = ipGate(request);
   if (blocked) return blocked;
+
+  // The desktop shell's stored theme arrives as a query parameter on its first
+  // navigation (it cannot set a header on the navigation it performs). Turn it
+  // into a cookie and send the browser to the same page without the parameter,
+  // so the root layout can render the matching theme into the first document —
+  // before paint, which is the whole point. See `lib/theme-preference.ts`.
+  //
+  // Deliberately before the nonce work: the redirect carries no body, so there
+  // is nothing for a CSP to protect, and no nonce should be minted for it.
+  const handoff = themeHandoff(request.nextUrl.pathname, request.nextUrl.search);
+  if (handoff) {
+    const redirect = NextResponse.redirect(
+      new URL(handoff.location, request.nextUrl.origin),
+    );
+    redirect.cookies.set(THEME_COOKIE, handoff.theme, THEME_COOKIE_OPTIONS);
+    return redirect;
+  }
 
   const nonce = btoa(crypto.randomUUID());
   // Next's dev runtime evaluates module boundaries, so a document CSP without
