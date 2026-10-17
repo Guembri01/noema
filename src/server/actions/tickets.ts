@@ -69,6 +69,23 @@ async function logActivity(
   });
 }
 
+/**
+ * The tickets of a selection that really belong to a workspace.
+ *
+ * `TicketLabel` and `TicketActivity` carry no workspace column of their own —
+ * both hang off the ticket — so a bulk write cannot be scoped by a filter of
+ * its own. The ticket ids are narrowed here once, and only that list is
+ * written to. The order of the selection is kept.
+ */
+async function ticketsInWorkspace(ticketIds: string[], workspaceId: string): Promise<string[]> {
+  const rows = await prisma.ticket.findMany({
+    where: { id: { in: ticketIds }, workspaceId },
+    select: { id: true },
+  });
+  const scoped = new Set(rows.map((row) => row.id));
+  return ticketIds.filter((id) => scoped.has(id));
+}
+
 // ---------------------------------------------------------------------------
 // Labels (workspace level)
 // ---------------------------------------------------------------------------
@@ -254,6 +271,19 @@ export async function createTicketAction(input: {
     }
   }
 
+  // Labels are workspace level, and `TicketLabel` has no workspace column of
+  // its own, so the check has to happen on the id list: by id alone a ticket
+  // could be created carrying another workspace's label.
+  let labelIds: string[] = [];
+  if (input.labelIds && input.labelIds.length > 0) {
+    const labels = await prisma.label.findMany({
+      where: { id: { in: input.labelIds }, workspaceId: input.workspaceId },
+      select: { id: true },
+    });
+    const valid = new Set(labels.map((label) => label.id));
+    labelIds = input.labelIds.filter((id) => valid.has(id));
+  }
+
   // Reserve the next number atomically so keys never collide.
   const bumped = await prisma.workspace.update({
     where: { id: input.workspaceId },
@@ -291,8 +321,8 @@ export async function createTicketAction(input: {
       reporterId: user.id,
       parentId: input.parentId ?? null,
       position: (last?.position ?? 0) + 1000,
-      ...(input.labelIds && input.labelIds.length > 0
-        ? { labels: { create: input.labelIds.map((labelId) => ({ labelId })) } }
+      ...(labelIds.length > 0
+        ? { labels: { create: labelIds.map((labelId) => ({ labelId })) } }
         : {}),
     },
     select: { id: true, key: true },
@@ -753,6 +783,11 @@ export async function bulkUpdateTicketsAction(input: {
   const hasLabels = addLabelIds.length > 0 || removeLabelIds.length > 0;
   if (!hasScalar && !hasLabels) return { ok: true, updated: 0 };
 
+  // The selection is narrowed to this workspace once. The label rows and the
+  // activity trail hang off the ticket and carry no workspace of their own, so
+  // a ticket from another workspace would otherwise receive both.
+  const ticketIds = await ticketsInWorkspace(input.ticketIds, first.workspaceId);
+
   // Which of the selected tickets actually change hands? Read *before* the
   // update so the assignee's notice counts what moved ("3 tickets"), not what was
   // selected, and so re-assigning the same person says nothing at all.
@@ -779,18 +814,18 @@ export async function bulkUpdateTicketsAction(input: {
   }
   if (addLabelIds.length > 0) {
     await prisma.ticketLabel.createMany({
-      data: input.ticketIds.flatMap((ticketId) =>
+      data: ticketIds.flatMap((ticketId) =>
         addLabelIds.map((labelId) => ({ ticketId, labelId })),
       ),
       skipDuplicates: true,
     });
-    updated = Math.max(updated, input.ticketIds.length);
+    updated = Math.max(updated, ticketIds.length);
   }
   if (removeLabelIds.length > 0) {
     await prisma.ticketLabel.deleteMany({
-      where: { ticketId: { in: input.ticketIds }, labelId: { in: removeLabelIds } },
+      where: { ticketId: { in: ticketIds }, labelId: { in: removeLabelIds } },
     });
-    updated = Math.max(updated, input.ticketIds.length);
+    updated = Math.max(updated, ticketIds.length);
   }
 
   const detail = {
@@ -798,7 +833,7 @@ export async function bulkUpdateTicketsAction(input: {
     ...(addLabelIds.length > 0 ? { labelsAdded: addLabelIds } : {}),
     ...(removeLabelIds.length > 0 ? { labelsRemoved: removeLabelIds } : {}),
   };
-  for (const ticketId of input.ticketIds) {
+  for (const ticketId of ticketIds) {
     await logActivity(ticketId, user.id, "bulk_updated", detail);
   }
   revalidatePath("/w", "layout");
@@ -836,7 +871,10 @@ export async function bulkArchiveTicketsAction(input: {
     where: { id: { in: input.ticketIds }, workspaceId: first.workspaceId },
     data: { archived },
   });
-  for (const ticketId of input.ticketIds) {
+  // The activity trail hangs off the ticket and carries no workspace of its
+  // own, so only the tickets of this workspace are written to.
+  const ticketIds = await ticketsInWorkspace(input.ticketIds, first.workspaceId);
+  for (const ticketId of ticketIds) {
     await logActivity(ticketId, user.id, archived ? "archived" : "restored");
   }
   revalidatePath("/w", "layout");
