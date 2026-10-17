@@ -967,6 +967,15 @@ list marks it as **No access**.
   confirmed. The comparison is the recipient's own — the sender's account is
   never read — and an account whose stored value is not a bcrypt hash (an SSO
   account) fails closed.
+- The JSON export of a database now redacts the repository's shared list of
+  secret-shaped field names. The export carried its own list, which was a
+  strict subset of the shared one: thirteen names — `passwd`, `passcode`,
+  `cookie`, `setCookie`, `sessionId`, `dbUrl`, `databaseUrl`,
+  `connectionString`, `dsn`, `auth`, `pass`, `pwd`, `signature` — passed
+  through the export verbatim, while the same names were masked on other
+  paths. The names now come from the shared list (`src/lib/redaction.ts`),
+  matched on the normalised key, so a spelling like `API KEY` is masked as
+  well.
 
 
 
