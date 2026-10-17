@@ -9,12 +9,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   memberFindUnique: vi.fn(),
   workspaceFindUnique: vi.fn(),
+  // B132: the recurring ticket asks the project of the workspace.
+  projectFindFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
     workspaceMember: { findUnique: db.memberFindUnique },
     workspace: { findUnique: db.workspaceFindUnique },
+    project: { findFirst: db.projectFindFirst },
   },
 }));
 vi.mock("@/lib/auth", () => ({ requireUser: vi.fn(async () => ({ id: "actor-1" })) }));
@@ -34,6 +37,14 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   db.memberFindUnique.mockResolvedValue({ role: "OWNER" });
+  // B132: the project lookup is tenant-scoped in the query, so a project of
+  // another workspace exists but is never returned.
+  db.projectFindFirst.mockImplementation(
+    async (args: { where: { id: string; workspaceId: string } }) =>
+      args.where.id === "project-own" && args.where.workspaceId === "ws-1"
+        ? { id: "project-own" }
+        : null,
+  );
 });
 
 describe("automation rules", () => {
@@ -88,6 +99,34 @@ describe("automation rules", () => {
 });
 
 describe("recurring tickets", () => {
+  it("refuses a project of another workspace (B132)", async () => {
+    // The schedule stores the project id and every spawned ticket carries it
+    // on — a foreign project would put the ticket into the tracker of
+    // another workspace, which shows that project's name.
+    const result = await saveRecurringTicketAction({
+      workspaceId: "ws-1",
+      title: "Weekly report",
+      projectId: "project-foreign",
+      rule: { freq: "weekly", interval: 1 },
+    });
+
+    expect("error" in result ? result.error : "").toBe(
+      "That project does not exist in this workspace.",
+    );
+    expect("error" in result ? result.error : "").not.toContain("project-foreign");
+  });
+
+  it("keeps a project of the caller's workspace", async () => {
+    const result = await saveRecurringTicketAction({
+      workspaceId: "ws-1",
+      title: "Weekly report",
+      projectId: "project-own",
+      rule: { freq: "weekly", interval: 1 },
+    });
+
+    expect(result).toEqual({ ok: true, id: expect.any(String) });
+  });
+
   it("validates the recurrence rule with parseRule", async () => {
     await expect(
       saveRecurringTicketAction({

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { assertScopedProject } from "@/lib/page-project";
 import { requireUser } from "@/lib/auth";
 import {
   canEditContent,
@@ -235,6 +236,17 @@ export async function saveRecurringTicketAction(input: {
   const title = input.title.trim().slice(0, 300);
   if (!title) return { error: "Give the recurring ticket a title." };
 
+  // B132: the project must live in the same workspace. The schedule stores
+  // the project id and every spawned ticket carries it on — so a foreign
+  // project would put the ticket of this workspace into the tracker of
+  // another one, which shows that project's name. The sibling path
+  // (`createTicketAction`) checks the same id.
+  const project = await assertScopedProject({
+    workspaceId: input.workspaceId,
+    projectId: input.projectId,
+  });
+  if ("error" in project) return project;
+
   let rule: RecurrenceRule;
   try {
     rule = parseRule(input.rule);
@@ -249,7 +261,7 @@ export async function saveRecurringTicketAction(input: {
     workspaceId: input.workspaceId,
     templateId: input.templateId?.trim() || id,
     title,
-    projectId: input.projectId ?? null,
+    projectId: project.projectId,
     priority: input.priority ?? null,
     labels: Array.isArray(input.labels)
       ? input.labels.filter((label): label is string => typeof label === "string")
