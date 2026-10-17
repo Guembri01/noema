@@ -174,6 +174,21 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   request — with an id minted per request, so the content cannot know which
   tag closes the block. The system prompt says what the block is: data to
   read, quote and summarise, never instructions.
+- The AI-autofill action now frames the row context and declares it as data.
+  The action sent the row's property values and its title to the model under a
+  `Row context:` heading, unframed: that content is workspace content, written
+  by whoever owns the row and not by whoever runs the autofill, so a title that
+  carries an instruction read like an instruction — and a newline in that title
+  opened a second `Row context:` paragraph that held nothing but the
+  instruction. The block now carries two tags that name the request —
+  `<row-context id="…">` … `</row-context id="…">` — with an id that is minted
+  per request, so the content cannot know which tag closes the block; the text
+  that could pass for a tag is removed from the content; every value and the
+  title are folded onto one line, so a newline in the content cannot open a
+  line of its own; and the system prompt names the tags of this request and
+  says what the block is: data to quote, never instructions. The frame goes
+  around the finished text, and the autofill has no context budget (`maxTokens`
+  there is the output budget), so nothing can cut the closing tag off.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
