@@ -455,12 +455,19 @@ jobs:
         # the session signing key must be a secret of the operator's own, and
         # every instance that copies the placeholder shares the same, public
         # one. The key is generated here and never written to the log.
+        #
+        # The database password is generated the same way (B09): the compose
+        # stack reads it from .env and refuses to start without it, so a
+        # database with a published, well-known password can never come up.
         run: |
           cp .env.example .env
           python3 - <<'PY'
           import pathlib, re, secrets
           p = pathlib.Path(".env")
-          p.write_text(re.sub(r'(?m)^AUTH_SECRET=.*$', 'AUTH_SECRET="%s"' % secrets.token_hex(32), p.read_text()))
+          text = p.read_text()
+          text = re.sub(r'(?m)^AUTH_SECRET=.*$', 'AUTH_SECRET="%s"' % secrets.token_hex(32), text)
+          text = re.sub(r'(?m)^POSTGRES_PASSWORD=.*$', 'POSTGRES_PASSWORD="%s"' % secrets.token_hex(16), text)
+          p.write_text(text)
           PY
 
       - name: Start the stack

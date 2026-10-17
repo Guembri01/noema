@@ -69,6 +69,7 @@
     "check:secrets": "node scripts/check-secrets.mjs",
     "check:audit": "node scripts/check-npm-audit.mjs",
     "check:hooks": "node scripts/check-hook-gate.mjs",
+    "check:compose": "node scripts/check-compose-exposure.mjs",
     "check:workflow-permissions": "node scripts/check-workflow-permissions.mjs",
     "check:image-pins": "node scripts/check-image-pins.mjs",
     "check:action-pins": "node scripts/check-action-pins.mjs",
