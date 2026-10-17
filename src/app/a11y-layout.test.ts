@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -69,5 +69,42 @@ describe("root layout shell when the session lookup fails (DB outage)", () => {
     const html = renderToStaticMarkup(tree);
     expect(hasLangDir(html)).toBe(true);
     expect(html).toContain('dir="rtl"');
+  });
+});
+
+// The mode is the one fact about the deployment only the *server* knows, and it
+// has to reach the document: the shell navigates its window from its own page to
+// the served app, so a global object injected before the navigation is gone by
+// the time the app runs (`isDesktop()` answered false inside the installed app).
+describe("the mode the server renders into the document", () => {
+  beforeEach(() => {
+    vi.mocked(getCurrentUser).mockReset();
+    vi.mocked(getCurrentUser).mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    delete process.env.NOEMA_RUNTIME;
+    delete process.env.NOEMA_STANDALONE;
+  });
+
+  const documentShell = async () =>
+    renderToStaticMarkup(
+      await RootLayout({ children: createElement("div", null, "content") }),
+    );
+
+  it("marks the hosted site as the site", async () => {
+    expect(await documentShell()).toContain('data-noema-runtime="site"');
+  });
+
+  it("marks the desktop app's own server as the app", async () => {
+    // The shell sets this for its child process (`src-tauri/src/sidecar.rs`).
+    process.env.NOEMA_RUNTIME = "desktop";
+    expect(await documentShell()).toContain('data-noema-runtime="desktop"');
+  });
+
+  it("marks the desktop build as the app even when the shell did not say so", async () => {
+    // `scripts/desktop/prepare.mjs` bakes this into the payload.
+    process.env.NOEMA_STANDALONE = "1";
+    expect(await documentShell()).toContain('data-noema-runtime="desktop"');
   });
 });

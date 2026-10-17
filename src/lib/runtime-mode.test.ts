@@ -11,6 +11,7 @@ import {
   platform,
   resolveApiBase,
   resolveDataDir,
+  runtimeMode,
 } from "@/lib/runtime-mode";
 
 const bridge = {
@@ -23,12 +24,23 @@ const bridge = {
 
 afterEach(() => {
   delete (globalThis as { window?: unknown }).window;
+  delete (globalThis as { document?: unknown }).document;
   delete process.env.NEXT_PUBLIC_APP_VERSION;
 });
 
 function withWindow(b: unknown) {
   (globalThis as unknown as { window: { __NOEMA_DESKTOP__?: unknown } }).window = {
     __NOEMA_DESKTOP__: b,
+  };
+}
+
+/** A document whose `<html>` carries (or lacks) the server-rendered mode. */
+function withDocument(runtime: string | null) {
+  (globalThis as unknown as { document: unknown }).document = {
+    documentElement: {
+      getAttribute: (name: string) =>
+        name === "data-noema-runtime" ? runtime : null,
+    },
   };
 }
 
@@ -64,6 +76,46 @@ describe("runtime mode", () => {
     withWindow({ mode: "something-else" });
     expect(isDesktop()).toBe(false);
     expect(desktopBridge()).toBeNull();
+  });
+
+  it("knows it is the app from the mode the server rendered", () => {
+    // The regression this guards: the shell injects its bridge into its own
+    // page and then navigates the window to the served app, so by the time the
+    // app runs the bridge is gone and every `isDesktop()` consumer was wrong.
+    // The mode has to come from the document the server sent.
+    withWindow(undefined);
+    withDocument("desktop");
+    expect(runtimeMode()).toBe("desktop");
+    expect(isDesktop()).toBe(true);
+    expect(desktopChrome()).toBe(true);
+    expect(hideSiteOnlyChrome()).toBe(true);
+    expect(nativeCapabilities().filesystem).toBe(true);
+  });
+
+  it("reads the hosted site's own mode as the site", () => {
+    withWindow(undefined);
+    withDocument("site");
+    expect(runtimeMode()).toBe("site");
+    expect(isDesktop()).toBe(false);
+  });
+
+  it("falls back to Tauri's global when the document carries no mode", () => {
+    withWindow(undefined);
+    withDocument(null);
+    expect(isDesktop()).toBe(false);
+    (globalThis as unknown as { window: unknown }).window = {
+      __TAURI__: { core: { invoke: () => Promise.resolve(null) } },
+    };
+    expect(isDesktop()).toBe(true);
+  });
+
+  it("treats an empty Tauri global as the site", () => {
+    // `withGlobalTauri` installs a populated object; anything else is a page
+    // that merely defined the name.
+    withWindow(undefined);
+    withDocument(null);
+    (globalThis as unknown as { window: unknown }).window = { __TAURI__: {} };
+    expect(isDesktop()).toBe(false);
   });
 
   it("falls back to the build-time version, then dev", () => {

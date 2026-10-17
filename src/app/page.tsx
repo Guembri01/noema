@@ -3,18 +3,20 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { t } from "@/lib/i18n";
+import { insideDesktopShell } from "@/lib/security-headers";
 import { Button } from "@/components/ui/button";
 
 export default async function Home() {
   const user = await getCurrentUser();
   if (user) redirect("/app");
 
-  // The installed app is not a marketing surface. The shell runs this server with
-  // `NOEMA_RUNTIME=desktop`, and someone who installed Noema wants either their
-  // workspace or, on a brand-new install, the "create your account" form — never
-  // a landing page advertising features they already downloaded. (The site
-  // version deliberately keeps the landing page: its whole job is to pitch.)
-  if (process.env.NOEMA_RUNTIME === "desktop") {
+  // The installed app is not a marketing surface. Someone who installed Noema
+  // wants either their workspace or, on a brand-new install, the "create your
+  // account" form — never a landing page advertising features they already
+  // downloaded. (The site version deliberately keeps the landing page: its whole
+  // job is to pitch.) `insideDesktopShell()` is the one place that decides, so
+  // the payload's build flag counts here too.
+  if (insideDesktopShell()) {
     const users = await prisma.user.count();
     redirect(users === 0 ? "/signup" : "/login");
   }

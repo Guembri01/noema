@@ -15,9 +15,22 @@
  *
  * Nothing in this module throws: an unknown environment degrades to `site`, so a
  * misconfigured desktop build can never brick the UI.
+ *
+ * The mode itself comes from {@link runtimeMode}, which prefers the signal the
+ * **server** rendered into the document. That matters: the shell evaluates its
+ * bridge object into its own page and then navigates the window to the served
+ * app, so anything injected that way is gone by the time the app runs — which is
+ * why `isDesktop()` used to answer `false` inside the installed app.
  */
 
 export type RuntimeMode = "site" | "desktop";
+
+/**
+ * The attribute the server writes the mode into: `<html data-noema-runtime>`.
+ * Set in `src/app/layout.tsx` from `insideDesktopShell()` and read back by
+ * {@link runtimeMode} — exported so the two ends cannot drift apart.
+ */
+export const RUNTIME_ATTRIBUTE = "data-noema-runtime";
 
 /** The desktop shell's contract, mirrored from `src-tauri/src/main.rs`. */
 export type DesktopBridge = {
@@ -34,7 +47,11 @@ export type DesktopBridge = {
 
 declare global {
   interface Window {
-    /** Injected by the Tauri shell before the webview loads the app. */
+    /**
+     * Injected by the Tauri shell into its **own** page, which it then replaces
+     * with the served app — so it is not there by the time the app runs (see
+     * {@link runtimeMode}).
+     */
     __NOEMA_DESKTOP__?: DesktopBridge;
     /**
      * Tauri's own global, injected on **every** page the webview hosts when
@@ -53,10 +70,37 @@ declare global {
   }
 }
 
+/**
+ * The mode of the document that is running right now.
+ *
+ * Three signals, most authoritative first:
+ *
+ *  1. `data-noema-runtime` on `<html>`, rendered by the server that served this
+ *     document (`insideDesktopShell()`). It survives the navigation from the
+ *     shell's own page to the served app and exists during SSR, so it is the
+ *     only signal the *served* app can rely on for free.
+ *  2. `window.__NOEMA_DESKTOP__` — the shell's bridge object, evaluated into the
+ *     document it is about to replace (so: the shell's own page only).
+ *  3. `window.__TAURI__` — reinstalled by Tauri on every document the webview
+ *     hosts, so it is present in the served app too. A fallback for a document
+ *     that somehow lacks the attribute.
+ */
+export function runtimeMode(): RuntimeMode {
+  if (typeof window === "undefined") return "site";
+  if (
+    typeof document !== "undefined" &&
+    document.documentElement.getAttribute(RUNTIME_ATTRIBUTE) === "desktop"
+  ) {
+    return "desktop";
+  }
+  if (window.__NOEMA_DESKTOP__?.mode === "desktop") return "desktop";
+  if (window.__TAURI__?.core) return "desktop";
+  return "site";
+}
+
 /** True when the page is running inside the Tauri shell. */
 export function isDesktop(): boolean {
-  if (typeof window === "undefined") return false;
-  return Boolean(window.__NOEMA_DESKTOP__?.mode === "desktop");
+  return runtimeMode() === "desktop";
 }
 
 /**
@@ -81,7 +125,17 @@ export function invokeShell(
     .catch(() => undefined);
 }
 
-/** The desktop bridge, or null in a browser. */
+/**
+ * The desktop bridge, or null in a browser.
+ *
+ * This is the **shell's own page** contract: the shell evaluates the object into
+ * the document it is about to replace, so the served app never sees it. The
+ * served app does not need it — it is served *by* the sidecar, which is why
+ * `resolveApiBase()` correctly returns `""` (same-origin, relative fetches) for
+ * any document reached through `runtimeMode()`'s server signal. Values that only
+ * the shell knows (data dir, app version, platform triple) are available to the
+ * served app from `desktop_info` instead.
+ */
 export function desktopBridge(): DesktopBridge | null {
   if (typeof window === "undefined") return null;
   const bridge = window.__NOEMA_DESKTOP__;

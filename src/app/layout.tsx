@@ -10,7 +10,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
 import { headers } from "next/headers";
 import { getCurrentUser } from "@/lib/auth";
-import { NONCE_HEADER } from "@/lib/security-headers";
+import { insideDesktopShell, NONCE_HEADER } from "@/lib/security-headers";
+import { RUNTIME_ATTRIBUTE } from "@/lib/runtime-mode";
 import { directionOf } from "@/lib/i18n";
 
 export const metadata: Metadata = {
@@ -52,8 +53,19 @@ export default async function RootLayout({
   } catch {
     nonce = undefined;
   }
+  // The mode, rendered into the document: the shell navigates this window from
+  // its own page to the served app, so an object injected into the old document
+  // does not survive — this does. `runtimeMode()` reads it back.
+  const runtimeModeAttribute = {
+    [RUNTIME_ATTRIBUTE]: insideDesktopShell() ? "desktop" : "site",
+  };
   return (
-    <html lang={locale} dir={dir} suppressHydrationWarning>
+    <html
+      lang={locale}
+      dir={dir}
+      {...runtimeModeAttribute}
+      suppressHydrationWarning
+    >
       <body className="min-h-screen bg-bg text-fg antialiased">
         <ThemeProvider nonce={nonce}>
           <TooltipProvider delayDuration={400}>
