@@ -228,6 +228,22 @@ reads and writes the store through Rust (`state::set_pref`), which the ACL does
 not gate. The preference store stays reachable for the shell's own page — as
 the audited app commands `get_pref`/`set_pref`.
 
+The **`default` capability** is the shell's own page — the first-run and
+diagnostics surface (`dist/index.html`), the only document that runs on the
+shell's origin — and it holds exactly what that page calls: the app's own
+command set (`default`) and the two `core:event` permissions its subscription
+to the sidecar's `sidecar://event` stream needs. Everything else is gone: the
+process plugin (the page never restarts or quits the app through it — the
+native menu does that in Rust), the opener, the dialog, the `os` and the
+file-system plugins (the page opens no URL, picks no file and reads no file)
+and the `core:` collectors — `core:default` expands to the image, menu, tray,
+path and resources plugins and to the window and app commands no document
+calls; the window title, the theme, the zoom and the decorations are the
+shell's own app commands (`set_window_title`, `set_theme`, `set_zoom`,
+`set_decorations`), which run in Rust, where the ACL does not gate them.
+Unused permissions are misleading — they read as "the app needs this" and
+become live the next time somebody wires them up.
+
 `scripts/desktop/capabilities.test.mjs` pins the split — across the capability
 **files** *and* the capabilities declared inline in `tauri.conf.json`
 (`CapabilityEntry::Inlined`), which the ACL assembles just like the files and

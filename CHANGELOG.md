@@ -93,10 +93,8 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   Downloads, Pictures, Video and Audio) together with `remove`, `rename` and
   `copy` — a script in the web view could read, overwrite or delete the
   user's files. Nothing used the plugin's JavaScript face (the shell reads
-  and writes its files server-side, in Rust), so the broad capability now
-  grants no file-system permission at all; the app's own data directories
-  stay covered by the narrow `fs:default` in the local-only `default`
-  capability.
+  and writes its files server-side, in Rust), so no capability grants the
+  plugin any more.
 - The desktop shell's broad capability was bound to the **served** web app's
   origin as well as to the shell's own page. It carried `shell:allow-execute`
   for the bundled Node sidecar with `"args": true` — no argument checking at
@@ -108,6 +106,24 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   no filesystem, shell, store, opener, dialog, `os` or `log`, and no
   `core:default` either (that set expands to an unscoped file-read plugin and
   to the menu/tray plugins, whose item ids the shell dispatches on raw).
+- The desktop shell's **own** capability granted more than the app uses. It is
+  local-only, so the trust model was sound, but `default.json` handed the
+  shell's first-run and diagnostics page the process plugin (`allow-restart`,
+  `allow-exit`), the opener, the dialog, the `os` and the file-system plugins
+  and the `core:` collectors — `core:default` expands to the image plugin
+  (`plugin:image|from_path` is a bare `std::fs::read` with no scope check), to
+  the menu and tray plugins (a forged item id reaches the commands in
+  `src-tauri/src/shell.rs`) and to the path plugin (it resolves the user's
+  home directory). No document in the app calls any of them: the whole
+  JavaScript surface is the app's own commands and the subscription to the
+  sidecar's event stream, and the window title, the theme, the zoom and the
+  decorations are the shell's own app commands, which run in Rust, where the
+  ACL does not gate them. The
+  capability now holds exactly what the page calls — the app's own command set
+  and the two `core:event` permissions its subscription to the sidecar's
+  event stream needs — and the process plugin is granted to no origin at all.
+  Unused permissions are misleading: they read as "the app needs this" and
+  become live the next time somebody wires them up.
 - The release workflow now promotes the release tags only after the Trivy
   scan, the cosign signature and the container smoke test pass. The build
   pushes a staging tag first, so a failing scan cannot leave `latest`/`edge`
