@@ -15,6 +15,8 @@ import {
 import { emailTemplate, escapeHtml, sendMail, verifyMail } from "@/lib/mailer";
 import { normalizeEmail } from "@/lib/email-validation";
 import { evaluateGuestInviteGate, readWorkspacePlan } from "@/lib/workspace-plan";
+import { canGrantRole } from "@/lib/workspace-roles";
+import { toEngineRole } from "@/lib/workspace-role-map";
 
 export type EmailResult<T = unknown> = ({ ok: true } & T) | { error: string };
 
@@ -253,6 +255,19 @@ export async function sendWorkspaceInviteAction(input: {
   const role: WorkspaceRole = input.role ?? "MEMBER";
   if (!["GUEST", "MEMBER", "ADMIN"].includes(role)) {
     return { error: "Unknown role." };
+  }
+  // The role an invitation carries is a grant, so it goes through the same
+  // policy as a role change (`setMemberRoleAction` → `validateRoleChange`):
+  // an actor may only hand out a role strictly below their own, which means
+  // only the owner can grant the admin role. Fail closed — a role the actor
+  // may not grant is refused, never silently weakened.
+  if (!canGrantRole(toEngineRole(auth.access.role), toEngineRole(role))) {
+    return {
+      error:
+        role === "ADMIN"
+          ? "Only the workspace owner can invite an admin."
+          : "You can only invite people with a role below your own.",
+    };
   }
 
   const workspace = await prisma.workspace.findUnique({

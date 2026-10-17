@@ -658,7 +658,10 @@ Permission quirk: the route only requires workspace membership, but
 - Workspace invite (default when `target` ≠ `"teamspace"`; role defaults to
   `MEMBER`) → **200** `{"ok":true,"link":"…","emailed":true,"warning":null}`
   (`warning` present when SMTP is unconfigured and the link must be shared
-  manually).
+  manually). The role an invitation carries is a grant and goes through the
+  same policy as a role change: an admin may invite `MEMBER`/`GUEST` only, and
+  only the workspace owner may invite an `ADMIN` (400 `Only the workspace
+  owner can invite an admin.` otherwise).
 - Teamspace invite → **200**
   `{"ok":true,"invited":true,"added":false,"link":"…","email":"…","emailed":true}`.
 - Errors: 400 (`Invalid JSON body.` / action `{error}` such as unknown

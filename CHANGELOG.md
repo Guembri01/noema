@@ -11,6 +11,22 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Security
+
+- An admin could invite further admins. The role matrix grants an actor only
+  the roles strictly below their own — an admin hands out member and guest,
+  and only the owner grants the admin role — but the invitation path never
+  consulted it: it checked the role against a hard-coded list, persisted it
+  unchanged, and `POST /api/invites` had the same gap. An admin could
+  therefore mint an invitation that turned its recipient into a workspace
+  admin, exactly the escalation the role change path refuses. The role an
+  invitation carries is now a grant like any other: `sendWorkspaceInviteAction`
+  asks the matrix (`canGrantRole`) before it writes anything, so only the
+  workspace owner can invite an admin and an admin is refused with `Only the
+  workspace owner can invite an admin.`
+
+
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour
