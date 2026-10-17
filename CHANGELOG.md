@@ -226,6 +226,18 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   **This is a breaking change for a deployment that does not set `APP_URL`:**
   its invitation links now point at the local development origin instead of
   the request host.
+- A stored property pattern can no longer freeze the editor that applies it.
+  The cell validation compiled the pattern a property carries without a
+  backtracking guard, so a workspace admin could store `(a|aa)+` on a TEXT
+  property and every cell of that column was matched against it — on every
+  render, without a cache. Measured, `(a|aa)+$` against 28 `a`s took 25 to
+  36 ms per cell and `(a+)+$` against 24 `a`s took 334 to 505 ms per cell; a
+  column of a hundred cells paid that on every repaint. The guard the formula
+  engine uses now stands in front of a stored pattern as well: a quantified
+  group whose body holds an alternation (`(a|aa)+`) or an inner quantifier
+  (`(a+)+`) is refused. A refused pattern is not applied at all — like a
+  pattern that does not compile — so the constraint is skipped instead of
+  rejecting every value or freezing the tab.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
