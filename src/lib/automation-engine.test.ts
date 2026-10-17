@@ -487,6 +487,24 @@ describe("runAutomation", () => {
     }
   });
 
+  it("does not let the user data change the prototype of the scope", () => {
+    // `Object.assign` sets the `__proto__` key of its source — with a
+    // `__proto__` in the data the scope would inherit the injected members,
+    // and a template would resolve a key that was never there.
+    const result = runAutomation(
+      rule({ actions: [{ type: "notify", message: "{{injected}}", targets: ["u1"] }] }),
+      event(),
+      { row, variables: JSON.parse('{"__proto__": {"injected": "yes"}}') as Record<string, string> },
+    );
+    if (result.status !== "planned") throw new Error("expected planned");
+    const effect = result.effects[0];
+    if (effect.type === "notify") {
+      // The placeholder stays a placeholder: the scope has no prototype the
+      // injected members could hang on.
+      expect(effect.message).toBe("{{injected}}");
+    }
+  });
+
   it("planes createRow and webhook effects with defaults", () => {
     const result = runAutomation(
       rule({
