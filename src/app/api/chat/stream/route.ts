@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { rateLimit } from "@/lib/api-guard";
 import { prisma } from "@/lib/db";
-import { resolveAiConfig, chatCompleteStream } from "@/lib/ai-provider";
+import { resolveAiConfig, chatCompleteStream, providerClass } from "@/lib/ai-provider";
 import { buildChatRequest } from "@/lib/chat-runtime";
 import { effectiveChatModel } from "@/lib/chat-model";
 import { linkifyReferences } from "@/lib/chat-context";
@@ -173,7 +173,11 @@ export async function POST(request: Request) {
           controller.enqueue(encoder.encode(delta));
         }
       } catch (error) {
-        const detail = error instanceof Error ? error.message : "AI request failed";
+        // The failure travels in-band *and* into the persisted assistant
+        // message, so both carry a class, never provider or runtime text: the
+        // runtime's transport message can carry the request header, and the
+        // header carries the workspace's key.
+        const detail = providerClass(error);
         // The status is already 200, so the failure travels in-band and the client
         // surfaces it next to the partial answer.
         controller.enqueue(encoder.encode(`\n\n[stream-error] ${detail}`));
