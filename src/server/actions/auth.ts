@@ -13,13 +13,28 @@ import { loginSchema, signupSchema } from "@/lib/validation";
 import { verifyTotp } from "@/lib/totp";
 import { welcomeDoc } from "@/lib/welcome";
 import { uniqueWorkspaceSlug } from "@/server/unique";
+import { passwordStrategyEnabled } from "@/lib/auth-strategies";
 
 export type AuthState = { error?: string; requiresTwoFactor?: boolean };
+
+/**
+ * Shown when the deployment has switched the password strategy off
+ * (`AUTH_PASSWORD=disabled` or an `AUTH_STRATEGIES` allow-list without
+ * `password`). The same message is returned for every input, so it discloses
+ * nothing about the submitted account.
+ */
+const PASSWORD_DISABLED_ERROR = "Password sign-in is disabled on this deployment.";
 
 export async function signupAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
+  // The strategy gate comes first: with the password strategy disabled the
+  // deployment is single-sign-on only, so no local account may be created.
+  if (!passwordStrategyEnabled(process.env)) {
+    return { error: PASSWORD_DISABLED_ERROR };
+  }
+
   const parsed = signupSchema.safeParse({
     name: formData.get("name"),
     email: formData.get("email"),
@@ -66,6 +81,12 @@ export async function loginAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
+  // The strategy gate comes first: with the password strategy disabled the
+  // deployment is single-sign-on only, so no password may be accepted.
+  if (!passwordStrategyEnabled(process.env)) {
+    return { error: PASSWORD_DISABLED_ERROR };
+  }
+
   const parsed = loginSchema.safeParse({
     email: formData.get("email"),
     password: formData.get("password"),

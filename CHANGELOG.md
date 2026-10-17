@@ -11,6 +11,20 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Security
+
+- The sign-in and sign-up actions never consulted the strategy registry, so
+  `AUTH_PASSWORD=disabled` and the `AUTH_STRATEGIES` allow-list were enforced
+  by the two SSO routes only: a deployment that had switched the local password
+  strategy off still accepted a direct POST to `/login` and `/signup` with the
+  credentials of a local account. Both switches are now enforced by the
+  actions themselves — with the password strategy off, every sign-in and every
+  sign-up is refused before an account is looked up — and `AUTH_PASSWORD` and
+  `AUTH_STRATEGIES` are documented in `.env.example`, the README and
+  `SECURITY.md`.
+
+
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour
