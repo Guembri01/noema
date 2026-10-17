@@ -98,6 +98,17 @@ jobs:
       - name: Client bundle
         run: node scripts/check-client-bundle.mjs
 
+      # The compose smoke test of the site workflow can only succeed if the
+      # workflow, the compose file and the image agree: the stack must be
+      # started with the profile that gates the app service, the probe must
+      # ask for the port the compose file publishes, and the image must apply
+      # the migrations before the probe. The compose job itself only runs on a
+      # push to `main` — this gate is what keeps a pull request from breaking
+      # the container path unseen. It is a pure file scan: no Docker, no
+      # database.
+      - name: Compose smoke
+        run: node scripts/check-compose-smoke.mjs
+
       # The feature sheet (docs/Noema-features.pdf) is derived from the README's
       # feature tables and the screenshot report. This asserts every feature row
       # and every screenshot is still placed in it — rendering it needs Edge, so

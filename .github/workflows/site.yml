@@ -119,6 +119,15 @@ jobs:
       # randomness, so it does not drown in false positives. A real key did once
       # reach `.env`; this is what stops the next one.
       - run: npm run check:secrets
+      # The compose smoke job below can only succeed if this workflow, the
+      # compose file and the image agree: the stack must be started with the
+      # profile that gates the `app` service, the probe must ask for the port
+      # the compose file publishes, and the image must apply the migrations
+      # before the probe. It once did none of the three, and the job could
+      # never succeed. The gate is a pure file scan — no Docker, no database —
+      # so it also runs on every pull request, where the compose job itself
+      # never runs.
+      - run: npm run check:compose-smoke
       - name: Design report (informative)
         if: always()
         run: npm run design:report

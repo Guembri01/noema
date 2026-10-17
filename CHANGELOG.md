@@ -13,6 +13,18 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ### Security
 
+- The compose smoke test of the site workflow is checked before it runs. It
+  can only succeed if the workflow, the compose file and the image agree: the
+  stack must be started with the profile that gates the `app` service, the
+  probe must ask for the port the compose file publishes, and the image must
+  apply the migrations before the probe. At the reviewed commit none of the
+  three held, and the job could never succeed. The three symptoms are fixed
+  upstream, but nothing kept them fixed — and the job itself runs only on a
+  push to `main`, never in a pull request. The new gate (`npm run
+  check:compose-smoke`) reads the workflow, the compose file, the `Dockerfile`
+  and the boot wrapper and checks the seven rules that make the job work, so a
+  pull request that breaks the container path fails in the CI that runs on
+  every pull request.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
