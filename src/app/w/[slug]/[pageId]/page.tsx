@@ -8,7 +8,7 @@ import { requireUser } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { groupReactions } from "@/lib/comments";
 import { getWorkspaceAccess } from "@/lib/permissions";
-import { pageScopeFor } from "@/lib/guest-access";
+import { pageScopeFor, guestReadablePageIds } from "@/lib/guest-access";
 import { buildVersionRecord } from "@/lib/version-history";
 import {
   getAncestorTrail,
@@ -54,6 +54,26 @@ export default async function PageRoute({
     notFound();
   }
 
+  /**
+   * The viewer's **read** scope — the pages they may read (the pages shared
+   * with them plus their whole subtree, never an ancestor).
+   *
+   * It is not the display scope above (`visiblePageIds`): that one also
+   * carries the *ancestors* of the shared pages, because the sidebar has to
+   * draw the breadcrumb chain down to a shared child. The read scope is the
+   * canonical inheritance rule of `lib/access-inheritance.ts` — a grant covers
+   * the page itself and its descendants, never its ancestors.
+   *
+   * The scope decides which relation *targets* of this database may be
+   * resolved: a target outside it delivers no rows, no cell values and no
+   * schema. Only a guest has a scope — every other role sees the whole
+   * workspace, so the scope query runs for a guest alone.
+   */
+  const guestReadScope =
+    access.role === "GUEST"
+      ? await guestReadablePageIds(user.id, workspace.id)
+      : null;
+
   // The reference scan walks the workspace's link graph (up to 1000 pages), so
   // it is started alongside the other reads but deliberately NOT awaited here:
   // it streams into the `Backlinks` panel below (same query, same guest-scoping
@@ -66,7 +86,7 @@ export default async function PageRoute({
   );
 
   const [database, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces, versionLabels] = await Promise.all([
-    page.type === "DATABASE" ? getDatabase(page.id) : Promise.resolve(null),
+    page.type === "DATABASE" ? getDatabase(page.id, guestReadScope) : Promise.resolve(null),
     getAncestorTrail(workspace.id, page.id),
     prisma.pageFollow.findUnique({
       where: { userId_pageId: { userId: user.id, pageId: page.id } },

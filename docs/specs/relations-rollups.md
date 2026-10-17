@@ -181,14 +181,19 @@ map — the exact pattern already used for `lastEditedBy`
 - **R21.4** — Read scoping of relation targets: options, `valuesByRow` and
   target property metadata are served only when the viewer has access to the
   target database: `getWorkspaceAccess(user, targetWorkspaceId)` (precedent
-  `linked-database.ts:41-42`) **and**, for `GUEST` roles,
-  `guestVisiblePageIds`/`isVisibleToGuest` (precedent `guest-access.ts:9-10,38-40,46`).
+  `linked-database.ts:41-42`) **and**, for `GUEST` roles, the **read** scope
+  `guestReadablePageIds` (precedent `guest-access.ts`) — the shared pages plus
+  their whole subtree, never an ancestor. The *display* scope
+  (`guestVisiblePageIds`) is too wide here: it also carries the ancestors of
+  the shared pages, so a guest who was given a single row of the target would
+  pass it for the database above it.
   A denied target yields an empty `relationData` entry — not an error that
   reveals existence. Closes D3.
   *Acceptance:* red tests — member of workspace B with a relation config
   pointing at B's database from A (should be impossible post-R21.2, but the
   read path must still hold): guest without `PagePermission` on the target sees
-  `options: []` and no `valuesByRow`; non-member gets nothing.
+  `options: []` and no `valuesByRow`; a guest who was given only a row of the
+  target does not get the target either; non-member gets nothing.
 - **R21.5** — Page picker dialog: the relation cell opens a **dialog** (not the
   dropdown at `view-parts.tsx:663-696`) with typeahead search against a new
   cursor-paginated server action `searchRelationTargetsAction(propertyId,
@@ -427,7 +432,7 @@ Threats → controls (all grounded in existing precedents):
 | --- | --- | --- | --- |
 | T1 | `targetDatabaseId` pointing cross-workspace → row/title leak | R21.2 rejects at write; R21.4 re-checks at read (defense in depth: a config that predates validation can never leak) | `linked-database.ts:41-42` (`getWorkspaceAccess` on the target's workspace) |
 | T2 | Client writes an arbitrary `propertyId` (all types) | R21.3(a) — property must belong to the row's database | `authorizeDatabase`, `database.ts:40-52` |
-| T3 | Relation cell as an oracle for guest-scoped pages | R21.4: guests filtered through `guestVisiblePageIds`; denied target → empty result, generic errors only | `guest-access.ts:9-10,38-40,46`; no-existence-oracle rule, realtime spec R9.7 |
+| T3 | Relation cell as an oracle for guest-scoped pages | R21.4: guests filtered through the read scope `guestReadablePageIds` (shared pages plus their subtree, never an ancestor); denied target → empty result, generic errors only | `guest-access.ts`; no-existence-oracle rule, realtime spec R9.7 |
 | T4 | Formula strings abusing the evaluator | Whitelist parser — no `eval`/`Function` (kept); length + depth bounds (R21.14); server-side parse rejects at save (R21.15) | `formula.ts:79-250` design |
 | T5 | Guest escalating to write (link/unlink, config) | `canEditContent` gate on every action — GUEST excluded | `permissions.ts:28-30`, already applied in `database.ts:66,112,137,190` |
 | T6 | Two-way backfill mutating another workspace's rows | Backfill runs inside the same authorized transaction and only over ids that passed R21.3(b) | transactional pair writes (R21.7-R21.9) |

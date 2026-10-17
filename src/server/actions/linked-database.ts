@@ -3,6 +3,7 @@
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
+import { guestReadablePageIds } from "@/lib/guest-access";
 import { getDatabase } from "@/server/queries";
 
 export type LinkedDatabaseData = {
@@ -41,7 +42,22 @@ export async function getLinkedDatabaseAction(
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return { error: "You do not have access to that database." };
 
-  const database = await getDatabase(databasePageId);
+  /**
+   * The viewer's **read** scope — the pages they may read (the pages shared
+   * with them plus their whole subtree, never an ancestor).
+   *
+   * It decides which relation *targets* of this database may be resolved:
+   * `getDatabase` filters them by it, so a target outside the scope delivers
+   * no rows, no cell values and no schema. Every other role has no scope
+   * (`null`) and sees the workspace as before — the scope query therefore runs
+   * for a guest alone.
+   */
+  const readable =
+    access.role === "GUEST"
+      ? await guestReadablePageIds(user.id, page.workspaceId)
+      : null;
+
+  const database = await getDatabase(databasePageId, readable);
   return {
     databasePageId,
     title: page.title,
