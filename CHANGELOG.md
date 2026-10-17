@@ -271,6 +271,19 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   the store through Rust, which the ACL does not gate. The unredacted database
   connection string is therefore no longer reachable from the webview, and the
   `database_url` command returns the redacted form.
+- The desktop shell no longer believes any server that answers `200` on its
+  loopback port. It chose the port by binding `127.0.0.1:0`, reading the port
+  and closing the socket again, so a program on the same machine could take the
+  port first, answer `/api/health` with `200`, and have the window load *its*
+  page — on an origin the Tauri capability covers, with the app's IPC rights.
+  The shell now hands the server a random 32-byte token per start through
+  `NOEMA_SHELL_TOKEN`; the server echoes it in the `x-noema-shell-token`
+  response header, and the supervisor waits for that token before it trusts the
+  port. A squatter that wins the race never sees the token, because the server
+  it displaced never runs to echo it; a restart issues a new token. The token is
+  per start and never enters the frozen health body or the log, so a caller
+  that reads it from the running server cannot replay it against the next
+  start.
 - The ops gate spends the rate-limit budget before it compares the shared
   secret. `/api/metrics` was the remaining route that compared first, so a
   wrong secret was answered `401` without a limit; it now follows the same

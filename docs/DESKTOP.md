@@ -119,9 +119,13 @@ Other deliberate choices:
   generates a random token per start (`NOEMA_SHELL_TOKEN`, 32 bytes from the
   system CSPRNG), hands it to the server through the environment, and accepts a
   server only when the health response echoes it in the `x-noema-shell-token`
-  header. The token never reaches the log, the webview or the frozen health body.
-  A program squatting the port cannot get it: the token lives in the server
-  process' environment, which belongs to another user.
+  header. The token never reaches the log or the frozen health body. It is a
+  response header, so the app's own origin (and any local process that queries
+  the running server) can read it; that is not the squatting attack, because a
+  program that grabs the port before the server starts never sees a response
+  from the server at all. The token is per start, and a restart issues a new one
+  before the shell trusts the port again, so a token read from a running server
+  cannot be replayed against the next start.
 - **The payload ships no `.env`.** Next's standalone output copies `.env` files
   into `.next/standalone` by itself, so `prepare.mjs` strips them — and fails the
   build if one would still ship. Without that step the installer carried the
