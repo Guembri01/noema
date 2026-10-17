@@ -84,6 +84,12 @@ code, link, underline, history) plus task lists, placeholders and images. Change
 are debounced (~700 ms) and persisted through `updatePageAction`, which snapshots
 the previous revision into `PageVersion`. A `/` menu offers block insertions.
 
+Every stored URL that reaches an `href` — a link mark, a bookmark card — passes
+the shared `http|https|mailto|tel` allowlist at render time, so a document
+stored before the write-time gate existed, or written by a client that does not
+run the document sanitiser (the MCP tool), can never turn into a live
+`javascript:` link.
+
 ## Databases & views
 
 `DatabaseView` (client) receives serialized properties, views and rows. It renders

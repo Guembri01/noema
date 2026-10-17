@@ -11,6 +11,19 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Security
+
+- A stored bookmark URL is no longer rendered as a link without a scheme check.
+  The editor's bookmark card took the stored `attrs.url` straight into an
+  anchor `href`, so a document stored before the write-time href gate existed
+  — or written through the MCP `append_blocks` tool, which does not run the
+  document sanitiser — could put a hostile URL into the card's link target for
+  every member who opened the page. A `data:` URL reached the `href` verbatim
+  (a literal `javascript:` URL is neutralised by React itself; a `data:` URL is
+  not). The stored URL now passes the shared href allowlist (`http`, `https`,
+  `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
+  editor as well as in the read-only renderer.
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour

@@ -39,6 +39,7 @@ import {
   type SlackRef,
 } from "@/lib/integration-links";
 import { t } from "@/lib/i18n";
+import { sanitizeHref } from "@/lib/validation";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -386,7 +387,17 @@ export function BookmarkCardSurface({
       data-bookmark-state="ready"
       contentEditable={false}
     >
-      <a href={url ?? "#"} target="_blank" rel="noreferrer noopener" className="noema-bookmark-link">
+      {/* The stored `url` is untrusted (a document stored before the
+          write-time href gate existed, or written through the MCP
+          `append_blocks` tool, which does not run the document sanitiser),
+          so it passes the shared href allowlist before it may become a
+          link. A rejected URL renders the card without a live target. */}
+      <a
+        href={sanitizeHref(url) ?? "#"}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="noema-bookmark-link"
+      >
         <span className="noema-bookmark-text">
           {icon ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -429,7 +440,11 @@ export function BookmarkCardSurface({
   );
 }
 
-function BookmarkView({ node, updateAttributes, deleteNode, locale }: NodeViewProps & { locale: string }) {
+/**
+ * The node view of the bookmark block. Exported so the rendered markup (the
+ * card link in particular) can be asserted without a DOM.
+ */
+export function BookmarkView({ node, updateAttributes, deleteNode, locale }: NodeViewProps & { locale: string }) {
   const url = node.attrs.url as string | null;
   const [editing, setEditing] = useState(!url);
   const [value, setValue] = useState(url ?? "");
