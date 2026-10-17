@@ -89,20 +89,6 @@ async function main() {
   let url = "";
   if (MANAGED) {
     check(true, "managed mode: the app provisions Postgres with Docker");
-    if (FRESH) {
-      // The container has to exist before anything can be dropped: ask the helper
-      // to provision it (exactly what the boot wrapper does), then reset the
-      // database so migrations are genuinely exercised.
-      const ensured = spawnSync(process.execPath, [join(payload, "docker-db.cjs"), "--ensure"], {
-        cwd: payload,
-        env: { ...process.env, NOEMA_DATA_DIR: dataDir },
-        encoding: "utf8",
-      });
-      check(ensured.status === 0, "provisioned the managed database", (ensured.stdout || "").trim().split("\n").pop());
-      spawnSync("docker", ["exec", MANAGED_CONTAINER, "dropdb", "-U", MANAGED_USER, "--if-exists", MANAGED_DB], { encoding: "utf8" });
-      const created = spawnSync("docker", ["exec", MANAGED_CONTAINER, "createdb", "-U", MANAGED_USER, MANAGED_DB], { encoding: "utf8" });
-      check(created.status === 0, "reset to an empty database");
-    }
   } else {
     url = databaseUrl();
     if (!url) {
@@ -114,6 +100,20 @@ async function main() {
 
   const dataDir = mkdtempSync(join(tmpdir(), "noema-smoke-"));
   const port = await freePort();
+  if (MANAGED && FRESH) {
+    // Provision the container first (exactly what the boot wrapper does), then
+    // reset the database, so migrations are genuinely exercised.
+    const ensured = spawnSync(process.execPath, [join(payload, "docker-db.cjs"), "--ensure"], {
+      cwd: payload,
+      env: { ...process.env, NOEMA_DATA_DIR: dataDir },
+      encoding: "utf8",
+    });
+    check(ensured.status === 0, "provisioned the managed database", (ensured.stdout || "").trim().split("\n").pop());
+    spawnSync("docker", ["exec", MANAGED_CONTAINER, "dropdb", "-U", MANAGED_USER, "--if-exists", MANAGED_DB], { encoding: "utf8" });
+    const created = spawnSync("docker", ["exec", MANAGED_CONTAINER, "createdb", "-U", MANAGED_USER, MANAGED_DB], { encoding: "utf8" });
+    check(created.status === 0, "reset to an empty database");
+  }
+
   console.log(`\n  starting the packaged server on 127.0.0.1:${port} …\n`);
 
   const child = spawn(runtime, [join(payload, "start.cjs")], {

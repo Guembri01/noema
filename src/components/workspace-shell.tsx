@@ -454,6 +454,7 @@ export function WorkspaceShell({
             modelLabel={aiModel}
             locale={locale}
             onClose={() => setChatOpen(false)}
+            activePageId={activePageId}
           />
         )}
       </div>

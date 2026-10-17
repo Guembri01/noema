@@ -125,6 +125,8 @@ export async function discussPageAction(
 /** Post a message; questions get an assistant reply grounded in the workspace. */export async function postChatMessageAction(
   threadId: string,
   body: string,
+  /** The page open in the UI, so "this page" can be answered about. */
+  activePageId?: string | null,
 ): Promise<ChatResult<{ id: string; title: string; answered: boolean }>> {
   const user = await requireUser();
   const message = (body ?? "").trim();
@@ -179,6 +181,7 @@ export async function discussPageAction(
   const answered = await replyAsAssistant(threadId, {
     workspaceId: thread.workspaceId,
     pageId: thread.pageId,
+    activePageId: activePageId ?? null,
     question,
   });
 
@@ -192,7 +195,14 @@ export async function discussPageAction(
  */
 async function replyAsAssistant(
   threadId: string,
-  input: { workspaceId: string; pageId: string | null; question: string },
+  input: {
+    workspaceId: string;
+    /** The page the thread is pinned to. */
+    pageId: string | null;
+    /** The page the user is looking at, if any. */
+    activePageId?: string | null;
+    question: string;
+  },
 ): Promise<boolean> {
   const config = await resolveAiConfig(input.workspaceId);
   if (!config) return false;
@@ -203,6 +213,7 @@ async function replyAsAssistant(
   const request = await buildChatRequest({
     workspaceId: input.workspaceId,
     pageId: input.pageId,
+    activePageId: input.activePageId ?? null,
     question: input.question,
   });
 

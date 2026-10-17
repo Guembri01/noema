@@ -784,6 +784,7 @@ export function ChatPanel({
   modelLabel,
   locale,
   onClose,
+  activePageId = null,
   loading = false,
 }: {
   workspaceId: string;
@@ -793,6 +794,12 @@ export function ChatPanel({
   modelLabel: string;
   locale: string;
   onClose: () => void;
+  /**
+   * The page currently open in the UI. Sent with every question so the assistant
+   * can answer about "this page" — before this, such questions could only be
+   * answered from the workspace overview.
+   */
+  activePageId?: string | null;
   /** Show the thread skeleton while the conversation is being fetched. */
   loading?: boolean;
 }) {
@@ -971,6 +978,8 @@ export function ChatPanel({
           body: JSON.stringify({
             threadId,
             body,
+            // The page on screen, so "what page am I in?" is answerable.
+            pageId: activePageId,
             context: attachment.prompt,
             contextTokens: attachment.usedTokens,
             maxTokens: contextBudget,
@@ -980,7 +989,9 @@ export function ChatPanel({
         acknowledged = response.ok;
 
         if (!response.ok || !response.body) {
-          const posted = await safeAction(() => postChatMessageAction(threadId, body));
+          const posted = await safeAction(() =>
+            postChatMessageAction(threadId, body, activePageId),
+          );
           const failure = !posted.ok
             ? posted.error
             : "error" in posted.value

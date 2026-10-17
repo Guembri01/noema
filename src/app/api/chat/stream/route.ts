@@ -62,6 +62,10 @@ export async function POST(request: Request) {
     body?: string;
     confirm?: ChatActionProposal;
     proposalMessageId?: string | null;
+    /** The page open in the UI, so "this page" has a referent. Untrusted: it is
+     *  resolved scoped to the thread's workspace, so a foreign id resolves to
+     *  nothing rather than leaking a title. */
+    pageId?: string | null;
   };
   try {
     payload = (await request.json()) as typeof payload;
@@ -137,6 +141,7 @@ export async function POST(request: Request) {
   const chatRequest = await buildChatRequest({
     workspaceId: thread.workspaceId,
     pageId: thread.pageId,
+    activePageId: typeof payload.pageId === "string" ? payload.pageId.slice(0, 64) : null,
     question: message,
   });
 
