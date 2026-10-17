@@ -16,15 +16,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * Only the two edges are mocked — the password check and the cookie store.
  * The signing and verification run for real.
+ *
+ * (Its own file: the brute-force suite of B44 mocks the database and bcrypt
+ * instead, and two `vi.mock` blocks for one module cannot live in one file.
+ * The rate limiter runs for real here too — the store is reset before every
+ * test, so the budget of one test never bleeds into the next.)
  */
 
-const share = vi.hoisted(() => ({ verifySharePassword: vi.fn() }));
-vi.mock("@/server/actions/share", () => ({ verifySharePassword: share.verifySharePassword }));
+const share = vi.hoisted(() => ({ attemptShareUnlock: vi.fn() }));
+vi.mock("@/server/actions/share", () => ({ attemptShareUnlock: share.attemptShareUnlock }));
 
 const cookieStore = vi.hoisted(() => ({ set: vi.fn(), get: vi.fn() }));
 vi.mock("next/headers", () => ({ cookies: vi.fn(async () => cookieStore) }));
 
 import { createShareUnlockToken, shareUnlockCookieName, verifyShareUnlockToken } from "@/lib/secrets";
+import { resetRateLimits } from "@/lib/rate-limit";
 import { POST as unlock } from "./route";
 
 const TOKEN = "share-token-abc";
@@ -32,7 +38,9 @@ const ORIGINAL_SECRET = process.env.AUTH_SECRET;
 
 beforeEach(() => {
   process.env.AUTH_SECRET = "test-secret-for-share-unlock-tests";
-  share.verifySharePassword.mockReset();
+  share.attemptShareUnlock.mockReset();
+  // The route's rate limiter is real; its store is module state.
+  resetRateLimits();
   cookieStore.set.mockReset();
   cookieStore.get.mockReset();
 });
@@ -48,7 +56,7 @@ const call = (password: string) =>
 
 describe("the share unlock route (B01)", () => {
   it("sets no cookie when the password is wrong", async () => {
-    share.verifySharePassword.mockResolvedValue(false);
+    share.attemptShareUnlock.mockResolvedValue({ status: "wrong-password" });
 
     const response = await call("wrong-password");
 
@@ -60,7 +68,7 @@ describe("the share unlock route (B01)", () => {
   });
 
   it("sets a cookie that verifies for this share token", async () => {
-    share.verifySharePassword.mockResolvedValue(true);
+    share.attemptShareUnlock.mockResolvedValue({ status: "unlocked" });
 
     const response = await call("right-password");
 
@@ -75,7 +83,7 @@ describe("the share unlock route (B01)", () => {
   });
 
   it("never hands out a value that unlocks a different share token", async () => {
-    share.verifySharePassword.mockResolvedValue(true);
+    share.attemptShareUnlock.mockResolvedValue({ status: "unlocked" });
 
     await call("right-password");
 
@@ -84,7 +92,7 @@ describe("the share unlock route (B01)", () => {
   });
 
   it("never hands out the old constant value", async () => {
-    share.verifySharePassword.mockResolvedValue(true);
+    share.attemptShareUnlock.mockResolvedValue({ status: "unlocked" });
 
     await call("right-password");
 
@@ -95,7 +103,7 @@ describe("the share unlock route (B01)", () => {
   });
 
   it("marks the cookie http-only, same-site and secure in production", async () => {
-    share.verifySharePassword.mockResolvedValue(true);
+    share.attemptShareUnlock.mockResolvedValue({ status: "unlocked" });
     vi.stubEnv("NODE_ENV", "production");
 
     try {
@@ -112,7 +120,7 @@ describe("the share unlock route (B01)", () => {
   });
 
   it("fails closed when the server secret is missing", async () => {
-    share.verifySharePassword.mockResolvedValue(true);
+    share.attemptShareUnlock.mockResolvedValue({ status: "unlocked" });
     delete process.env.AUTH_SECRET;
 
     // No usable secret means no cookie can be minted or verified, so the
