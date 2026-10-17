@@ -14,10 +14,16 @@
  * until the B13 i18n tranche converts it.
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTheme } from "next-themes";
 import { ArrowLeft, Check, ChevronRight, Lock, LockOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Z } from "@/lib/design-tokens";
+import {
+  floatingStyle,
+  placeFloating,
+  type Placement,
+} from "@/lib/floating";
 import { Switch } from "@/components/ui/switch";
 import { Radio, RadioGroup } from "@/components/ui/radio";
 import { Select, type SelectOption } from "@/components/ui/select";
@@ -315,6 +321,10 @@ function toAuditBlocks(
 }
 
 const LIST_ID = "actions-menu-list";
+const SUBMENU_ID = "actions-menu-submenu";
+/** Design bounds of a submenu, used to resolve its placement before render. */
+const SUBMENU_WIDTH = 240;
+const SUBMENU_MAX_HEIGHT = 320;
 
 /**
  * localStorage key for the persisted high-contrast preference. The value is
@@ -505,7 +515,8 @@ export function ActionsMenu(props: ActionsMenuProps) {
   >("main");
   const [submenu, setSubmenu] = useState<{
     id: string;
-    top: number;
+    /** Collision-aware placement resolved when the submenu opens. */
+    placement: Placement;
     focus: boolean;
   } | null>(null);
   const [subIndex, setSubIndex] = useState(0);
@@ -955,9 +966,25 @@ export function ActionsMenu(props: ActionsMenuProps) {
   }, [open, submenu, view]);
 
   const openSubmenuFor = (item: MenuItem, focus: boolean) => {
-    const top = liRefs.current[item.id]?.offsetTop ?? 0;
+    const anchorEl = liRefs.current[item.id];
+    const anchor = anchorEl?.getBoundingClientRect();
+    const rect = anchor
+      ? { top: anchor.top, left: anchor.left, width: anchor.width, height: anchor.height }
+      : { top: 0, left: 0, width: 0, height: 0 };
+    // Measure the panel before it exists by using its design bounds; the real
+    // height is re-clamped by `maxHeight` on render.
+    const placement = placeFloating({
+      anchor: rect,
+      size: { width: SUBMENU_WIDTH, height: SUBMENU_MAX_HEIGHT },
+      viewport: {
+        width: typeof window === "undefined" ? 1280 : window.innerWidth,
+        height: typeof window === "undefined" ? 800 : window.innerHeight,
+      },
+      preferred: "right",
+      align: "start",
+    });
     setSubIndex(0);
-    setSubmenu({ id: item.id, top, focus });
+    setSubmenu({ id: item.id, placement, focus });
   };
 
   // Keyboard focus into the submenu (only when opened via the keyboard).
@@ -1219,7 +1246,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
             )}
             <ul
               id={LIST_ID}
-              role="listbox"
+              role="menu"
               aria-label="Actions"
               className="max-h-72 overflow-y-auto py-1"
             >
@@ -1228,6 +1255,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
                   const index = indexOf.get(item.id) ?? -1;
                   const checked = toggleState[item.id];
                   const isActive = active === index;
+                  const isSubmenu = item.kind === "submenu";
                   return (
                     <li
                       key={item.id}
@@ -1235,24 +1263,26 @@ export function ActionsMenu(props: ActionsMenuProps) {
                       ref={(element) => {
                         liRefs.current[item.id] = element;
                       }}
-                      role="option"
-                      aria-selected={isActive}
+                      // A menu of commands: `menuitem`, or `menuitemcheckbox` for
+                      // toggles (aria-checked), never `option`/`aria-selected`.
+                      role={item.kind === "toggle" ? "menuitemcheckbox" : "menuitem"}
+                      aria-checked={item.kind === "toggle" ? Boolean(checked) : undefined}
+                      data-active={isActive || undefined}
                       aria-disabled={item.kind === "disabled" || undefined}
-                      aria-haspopup={item.kind === "submenu" || undefined}
-                      aria-expanded={
-                        item.kind === "submenu"
-                          ? submenu?.id === item.id
-                          : undefined
-                      }
+                      aria-haspopup={isSubmenu ? "menu" : undefined}
+                      aria-expanded={isSubmenu ? submenu?.id === item.id : undefined}
+                      aria-controls={isSubmenu ? SUBMENU_ID : undefined}
+                      tabIndex={isActive && item.kind !== "disabled" ? 0 : -1}
                       title={item.kind === "disabled" ? item.hint : undefined}
                       onMouseEnter={() => {
                         setActiveIndex(index);
-                        if (item.kind === "submenu") openSubmenuFor(item, false);
+                        if (isSubmenu) openSubmenuFor(item, false);
                         else if (submenu) setSubmenu(null);
                       }}
+                      onFocus={() => setActiveIndex(index)}
                       onClick={() => activateItem(item)}
                       className={cn(
-                        "u-colors focus-ring mx-1 flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-fg",
+                        "u-colors focus-ring mx-1 flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-fg outline-none",
                         groupIndex > 0 &&
                           indexOf.get(group.items[0].id) === index &&
                           "mt-1 border-t border-border pt-2.5",
@@ -1294,14 +1324,22 @@ export function ActionsMenu(props: ActionsMenuProps) {
             {flat.length === 0 && (
               <p className="px-3 py-2 text-sm text-muted">No matching actions</p>
             )}
-            {submenu && subSpec && (
+            {submenu && subSpec && createPortal(
               <div
+                id={SUBMENU_ID}
                 role="menu"
                 aria-label={subSpec.label}
                 tabIndex={-1}
                 onKeyDown={onSubmenuKeyDown}
-                style={{ top: submenu.top, zIndex: Z.popover }}
-                className="surface-raised scrollbar-thin absolute start-full min-w-48 max-w-64 animate-rise overflow-y-auto py-1 outline-none"
+                style={{
+                  ...floatingStyle(submenu.placement),
+                  zIndex: Z.popover,
+                  // Must match SUBMENU_WIDTH so the placement maths and the
+                  // rendered box agree (an auto width made it look detached).
+                  width: SUBMENU_WIDTH,
+                  maxWidth: "min(280px, 90vw)",
+                }}
+                className="surface-raised scrollbar-thin animate-rise overflow-y-auto py-1 outline-none"
               >
                 {(() => {
                   let cursor = 0;
@@ -1361,7 +1399,8 @@ export function ActionsMenu(props: ActionsMenuProps) {
                     return <Fragment key={sectionIndex}>{body}</Fragment>;
                   });
                 })()}
-              </div>
+              </div>,
+              document.body,
             )}
             <footer className="border-t border-border px-3 py-2 text-xs text-muted">
               {data ? (

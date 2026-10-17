@@ -26,10 +26,12 @@
  */
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown, Loader2, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import { DUR, Z, tagStyle } from "@/lib/design-tokens";
+import { floatingStyle, placeFloating, type Placement } from "@/lib/floating";
 import { offsetForIndex, totalHeight, visibleRange, type VirtualListRange } from "@/lib/virtual-list";
 
 /* -------------------------------------------------------------------------- *
@@ -305,6 +307,20 @@ export function optionId(baseId: string, index: number): string {
 export const VIRTUALIZE_THRESHOLD = 200;
 /** Pixel height of one option row. */
 export const OPTION_ROW_HEIGHT = 32;
+/** Tallest the popup may grow before it scrolls (design bound). */
+export const MENU_MAX_HEIGHT = 340;
+/** Row height used to estimate the popup height before it is measured. */
+const ROW_ESTIMATE = 32;
+
+/**
+ * Renders the popup into `document.body` in the browser (so it can never be
+ * clipped by a scrolling ancestor) while rendering inline during SSR, where
+ * portals are unavailable.
+ */
+function FloatingLayer({ children }: { children?: React.ReactNode }) {
+  if (typeof document === "undefined") return <>{children}</>;
+  return createPortal(children, document.body);
+}
 /** Pixel height of one group heading row. */
 export const GROUP_ROW_HEIGHT = 24;
 /** Extra rows rendered outside the viewport while virtualised. */
@@ -455,6 +471,13 @@ export function Select(props: SelectProps) {
 
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const rootRef = React.useRef<HTMLDivElement>(null);
+  /**
+   * Collision-aware placement of the portal-ed listbox. Resolved on open (and on
+   * scroll/resize) so the popup can never be clipped by a scrolling ancestor or
+   * run off the viewport edge.
+   */
+  const [placement, setPlacement] = React.useState<Placement | null>(null);
+  const [menuWidth, setMenuWidth] = React.useState<number | undefined>(undefined);
   const scrollTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const selected = React.useMemo(
@@ -547,7 +570,54 @@ export function Select(props: SelectProps) {
   React.useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      // Resolve the popup placement whenever it opens, and keep it correct while
+  // the page scrolls or the window resizes (the layer is `fixed`).
+  React.useEffect(() => {
+    if (!open) {
+      setPlacement(null);
+      return;
+    }
+    const resolve = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const estimated = Math.min(
+        MENU_MAX_HEIGHT,
+        Math.max(120, rows.length * ROW_ESTIMATE + (searchable ? 44 : 8)),
+      );
+      setMenuWidth(rect.width);
+      setPlacement(
+        placeFloating({
+          anchor: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
+          size: { width: rect.width, height: estimated },
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          preferred: "bottom",
+          align: "start",
+        }),
+      );
+    };
+    resolve();
+    window.addEventListener("resize", resolve);
+    window.addEventListener("scroll", resolve, true);
+    return () => {
+      window.removeEventListener("resize", resolve);
+      window.removeEventListener("scroll", resolve, true);
+    };
+  }, [open, rows.length, searchable]);
+
+  // Click outside: the layer lives in a portal, so `rootRef` no longer contains
+  // it — check both trees.
+  React.useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target)) return;
+      if ((target as HTMLElement).closest?.('[data-testid="select-menu"]')) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [open]);
+
     };
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
@@ -782,11 +852,25 @@ export function Select(props: SelectProps) {
         />
 
         {open ? (
+          <FloatingLayer>
           <div
             data-testid="select-menu"
-            style={{ zIndex: Z.popover }}
+            style={{
+              ...floatingStyle(
+                placement ?? {
+                  top: 0,
+                  left: 0,
+                  side: "bottom",
+                  flipped: false,
+                  cramped: false,
+                  maxHeight: MENU_MAX_HEIGHT,
+                },
+              ),
+              zIndex: Z.popover,
+              width: menuWidth,
+            }}
             className={cn(
-              "surface-raised absolute start-0 top-full mt-1 w-full animate-rise overflow-hidden p-1 text-fg",
+              "surface-raised animate-rise overflow-hidden p-1 text-fg",
               menuClassName,
             )}
           >
@@ -927,6 +1011,7 @@ export function Select(props: SelectProps) {
               )}
             </div>
           </div>
+          </FloatingLayer>
         ) : null}
       </span>
 
