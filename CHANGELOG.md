@@ -339,6 +339,18 @@
   A link is locked for 15 minutes after 10 failed attempts, and no password is
   compared at all while it is locked.
 
+- **The rate limits and the IP allowlist no longer trust `X-Forwarded-For`
+  blindly.** The number of reverse-proxy hops in front of the app is declared
+  with `TRUSTED_PROXY_HOPS`, and without that declaration the forwarding
+  headers are ignored entirely — a client can no longer buy a fresh budget
+  (or slip past the allowlist) with a made-up `X-Forwarded-For`. With
+  `TRUSTED_PROXY_HOPS=N` the Nth-from-last hop is used. The bucket store is
+  bounded and prunes expired entries, and every rate-limited route that knows
+  its caller additionally spends a **per-user** budget keyed on the
+  session/API-token user id, which cannot be spoofed at all. The per-user
+  budget lives in its **own** store, so a flood of forged client addresses
+  cannot evict it and cannot reset an exhausted user window.
+
 ### Changed
 
 - The app's own write path accepts only the app's own `/api/files/...` asset
@@ -354,6 +366,14 @@
   cannot produce such a URL. The render gate is the security boundary
   instead: a stored `javascript:`, `data:` or protocol-relative URL never
   becomes an anchor, whichever client wrote it.
+
+- **Operational note:** without `TRUSTED_PROXY_HOPS` all clients of a scope
+  share one budget, and a configured IP allowlist makes the admin/private
+  surfaces answer 403 for everybody until the proxy is declared. Set
+  `TRUSTED_PROXY_HOPS` to the number of proxies between the internet and the
+  app (1 for a single nginx/Caddy). Because the IP allowlist lives in the Edge
+  runtime, where `process.env` is frozen at build time, the variable has to be
+  set for the **build**, not only for the start.
 
 
 ## [1.4.1] — 2026-10-17
