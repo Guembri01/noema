@@ -658,6 +658,20 @@ list marks it as **No access**.
   (`npm run backup:restore -- backups/<file>.sql.enc | psql "$DATABASE_URL"`);
   the seal is opened with the same key, and a wrong key or a tampered file
   fails instead of restoring garbage.
+- Every image the repository pulls is now pinned by digest, and a new gate
+  keeps it that way. A tag is a name, not a version: `FROM node:24-alpine` and
+  `image: postgres:16-alpine` resolve to whatever the registry serves at build
+  time, so the same commit can produce an image nobody reviewed — without the
+  repository changing at all. The `Dockerfile` and the compose file already
+  named their images by digest, but the Postgres service of the desktop
+  workflow's payload smoke test still pulled `postgres:16-alpine` by tag; it
+  now names the digest of the image that tag pointed at. The gate
+  (`npm run check:image-pins`, and the test CI runs with it) reads the `FROM`
+  instructions of the `Dockerfile` and the `image:` keys of the compose file
+  and of the workflow services, and fails when one of them has no `sha256`
+  digest behind it. The image this repository publishes itself is exempt: its
+  digest changes with every release, so a digest in the repository would freeze
+  every installation on the release the file was written for.
 
 
 
