@@ -127,11 +127,35 @@ pub fn log_file_path() -> Option<String> {
 }
 
 /// Read a preference from the shell's own store.
+///
+/// The database connection string is **not** among them: the store holds it
+/// unredacted (`set_database_url` writes it there), and this command reads
+/// *any* key — so it would hand the password straight past the redaction
+/// `desktop_info` does. `database_url` is the redacted way to ask for it.
 #[tauri::command]
 pub fn get_pref(app: AppHandle, key: String) -> Option<serde_json::Value> {
-    app.store(state::PREFS_FILE)
-        .ok()
-        .and_then(|store| store.get(key))
+    read_pref(
+        |key| {
+            app.store(state::PREFS_FILE)
+                .ok()
+                .and_then(|store| store.get(key))
+        },
+        &key,
+    )
+}
+
+/// Read a preference, refusing the one that holds a secret.
+///
+/// The lookup is injected so the rule can be proven without a running app:
+/// `get_pref` needs an `AppHandle`, and a unit test has none.
+fn read_pref<F>(lookup: F, key: &str) -> Option<serde_json::Value>
+where
+    F: Fn(&str) -> Option<serde_json::Value>,
+{
+    if key == state::prefs::DATABASE_URL {
+        return None;
+    }
+    lookup(key)
 }
 
 /// Write a preference.
@@ -188,9 +212,22 @@ pub async fn set_database_url(app: AppHandle, url: String) -> Result<SidecarInfo
 }
 
 /// The connection string currently in use (for the diagnostics panel).
+///
+/// **Redacted**: the password must not leave the shell, not even to the
+/// shell's own page. `desktop_info` hands out the same redacted form.
 #[tauri::command]
 pub fn database_url(app: AppHandle) -> String {
-    state::database_url(&app)
+    redacted_connection_string(&state::database_url(&app))
+}
+
+/// The connection string as the shell hands it out: **redacted**, or empty
+/// when the user has configured none.
+fn redacted_connection_string(resolved: &str) -> String {
+    if resolved.trim().is_empty() {
+        String::new()
+    } else {
+        redact(resolved)
+    }
 }
 
 /// Toggle the native window decorations (for a "focus mode").
@@ -404,6 +441,54 @@ mod tests {
     #[test]
     fn redact_never_echoes_garbage_back() {
         assert_eq!(redact("not a url"), "<unparseable connection string>");
+    }
+
+    /// The store holds the connection string unredacted, and `get_pref` reads
+    /// *any* key — so this is the one key that must not come back out of the
+    /// shell.
+    #[test]
+    fn get_pref_refuses_the_unredacted_connection_string() {
+        let secret = serde_json::json!("postgresql://noema:sup3r-secret@db.example.com:5432/noema");
+        let lookup = |key: &str| {
+            if key == crate::state::prefs::DATABASE_URL {
+                Some(secret.clone())
+            } else {
+                None
+            }
+        };
+        assert_eq!(
+            read_pref(lookup, crate::state::prefs::DATABASE_URL),
+            None,
+            "the password must not leave the shell through get_pref"
+        );
+    }
+
+    #[test]
+    fn get_pref_still_returns_an_ordinary_preference() {
+        let lookup = |key: &str| {
+            if key == crate::state::prefs::THEME {
+                Some(serde_json::json!("dark"))
+            } else {
+                None
+            }
+        };
+        assert_eq!(
+            read_pref(lookup, crate::state::prefs::THEME),
+            Some(serde_json::json!("dark"))
+        );
+    }
+
+    /// The connection string the shell hands out is for display only.
+    #[test]
+    fn the_connection_string_the_shell_hands_out_is_redacted() {
+        let shown =
+            redacted_connection_string("postgresql://noema:sup3r-secret@db.example.com:5432/noema");
+        assert!(!shown.contains("sup3r-secret"), "password leaked: {shown}");
+        assert!(shown.contains("db.example.com:5432"), "host lost: {shown}");
+        // No connection string configured: the shell says so with an empty
+        // field, not with a placeholder that looks like one.
+        assert_eq!(redacted_connection_string(""), "");
+        assert_eq!(redacted_connection_string("   "), "");
     }
 
     #[test]
