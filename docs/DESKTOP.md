@@ -317,6 +317,21 @@ checks `/api/health`, serves a real page with its stylesheets, proves a second l
 does not start a second server, refuses to pass if a panic was logged, and captures the
 window to `%TEMP%\noema-verify\noema-window.png` so the design can be *looked at*.
 
+Three checks that only make sense against the running app, because each of them has
+failed *only* in a production build:
+
+```bash
+# the installed app serves the nonce-based CSP it claims to
+npm run check:csp -- --base http://127.0.0.1:<the app's loopback port>
+
+# every popup attaches to the control that opened it (the app has no browser chrome,
+# so a mis-anchored menu has nowhere to hide)
+npm run check:popovers -- --base http://127.0.0.1:<port>
+```
+
+The port is the one `verify-install.ps1` prints (`supervised server listening on
+loopback — port …`) — the app picks a free one, so it must be read, not assumed.
+
 > **Windows PowerShell 5.1 note.** These scripts are UTF-8 and contain em-dashes, so
 > they must keep a **UTF-8 BOM**. Without it, `powershell` (5.1, the only interpreter
 > on a stock Windows box — there is no `pwsh`) decodes them as ANSI and fails at
