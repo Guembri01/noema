@@ -23,6 +23,17 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   not). The stored URL now passes the shared href allowlist (`http`, `https`,
   `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
   editor as well as in the read-only renderer.
+- The desktop shell's broad capability was bound to the **served** web app's
+  origin as well as to the shell's own page. It carried `shell:allow-execute`
+  for the bundled Node sidecar with `"args": true` — no argument checking at
+  all — so any script running in that origin (an XSS in the app, or a page
+  that grabbed the port first) could run arbitrary code as the desktop user.
+  The broad set is now local-only, for the shell's own page; the served app
+  gets its own capability with the five shell commands it calls and the two
+  `core:event` permissions it needs to subscribe to the shell's menu events —
+  no filesystem, shell, store, opener, dialog, `os` or `log`, and no
+  `core:default` either (that set expands to an unscoped file-read plugin and
+  to the menu/tray plugins, whose item ids the shell dispatches on raw).
 
 ## [1.4.1] — 2026-10-17
 

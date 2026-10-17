@@ -35,7 +35,7 @@
         "enable": true,
         "scope": ["$APPDATA/**", "$APPLOCALDATA/**", "$HOME/**", "$TEMP/**"]
       },
-      "capabilities": ["default", "desktop-everything"]
+      "capabilities": ["default", "desktop-everything", "desktop-remote"]
     },
     "trayIcon": {
       "id": "main",
