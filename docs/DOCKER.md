@@ -11,6 +11,15 @@ as a non-root user, carries a healthcheck, and runs `prisma migrate deploy` on
 start-up. It is published by [`.github/workflows/site.yml`](../.github/workflows/site.yml)
 on every push to `main` and on every `v*` tag.
 
+That workflow has two image jobs, and the split is a security boundary. The
+`image` job is the pull-request path: it builds the pull request's own image
+for `linux/amd64`, loads it, scans it and smoke-tests it, with `contents: read`
+and no other scope. The `publish` job is the only one that may push to GHCR and
+the only one that may mint the OIDC token cosign signs with; its gate names the
+events that may publish (`push` and `workflow_dispatch`), so no pull-request
+event — not even `pull_request_target` — can reach it. The gate
+`npm run check:workflow-permissions` keeps that shape.
+
 ## Pull and run
 
 The fastest path is the compose file in the repository root: it starts
