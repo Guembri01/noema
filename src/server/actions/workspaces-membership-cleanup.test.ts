@@ -21,6 +21,8 @@ const h = vi.hoisted(() => ({
   pagePermissionDeleteMany: vi.fn(),
   pageFollowDeleteMany: vi.fn(),
   favoriteDeleteMany: vi.fn(),
+  teamspaceMemberDeleteMany: vi.fn(),
+  projectMemberDeleteMany: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -33,6 +35,10 @@ vi.mock("@/lib/db", () => ({
     pagePermission: { deleteMany: h.pagePermissionDeleteMany },
     pageFollow: { deleteMany: h.pageFollowDeleteMany },
     favorite: { deleteMany: h.favoriteDeleteMany },
+    // The other membership rows the removal deletes as well (the findings
+    // B115 and B116) — the mock has to offer them.
+    teamspaceMember: { deleteMany: h.teamspaceMemberDeleteMany },
+    projectMember: { deleteMany: h.projectMemberDeleteMany },
   },
 }));
 vi.mock("@/lib/auth", () => ({ requireUser: h.requireUser }));

@@ -58,6 +58,7 @@ const db = vi.hoisted(() => ({
   transaction: vi.fn(),
   userUpdate: vi.fn(),
   pageUpdate: vi.fn(),
+  memberFindMany: vi.fn(),
   commentUpdate: vi.fn(),
   versionUpdate: vi.fn(),
   shareLinkUpdate: vi.fn(),
@@ -72,6 +73,9 @@ vi.mock("@/lib/db", () => ({
     pageVersion: { findMany: db.versionFindMany },
     shareLink: { findMany: db.shareLinkFindMany },
     pageFollow: { findMany: db.followFindMany, delete: db.followDelete },
+    // B37: the `page.updated` dispatch asks the members of the workspace who
+    // may be notified — the mock has to answer.
+    workspaceMember: { findMany: db.memberFindMany },
     favorite: { findMany: db.favoriteFindMany, delete: db.favoriteDelete },
     notification: {
       findMany: db.notificationFindMany,
@@ -126,6 +130,12 @@ beforeEach(() => {
     { id: "pf_1", userId: SUBJECT, pageId: "pg_1" },
     { id: "pf_2", userId: EDITOR, pageId: "pg_1" },
   ];
+  // B37: the `page.updated` dispatch notifies only the followers that are
+  // members of the workspace — both are, in this fixture.
+  db.memberFindMany.mockImplementation(
+    async (args: { where: { workspaceId: string; userId: { in: string[] } } }) =>
+      args.where.userId.in.map((userId) => ({ userId })),
+  );
   notificationRows = [
     {
       id: "nt_1",
