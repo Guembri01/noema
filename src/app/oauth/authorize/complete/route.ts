@@ -1,16 +1,28 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { bodyReadError, readFormDataBody } from "@/lib/body-limit";
 import { prisma } from "@/lib/db";
 import { randomToken } from "@/lib/slug";
 
 export const runtime = "nodejs";
+
+/**
+ * B22 — the budget for one approval. The form carries the client id, the
+ * redirect URI, the state and the PKCE challenge — a few hundred bytes.
+ */
+const MAX_BODY_BYTES = 16 * 1024;
 
 /** Issue an authorization code after the user approves (or denies) an app. */
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const form = await request.formData();
+  let form: FormData;
+  try {
+    form = await readFormDataBody(request, MAX_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Expected multipart form data");
+  }
   const clientId = String(form.get("client_id") ?? "");
   const redirectUri = String(form.get("redirect_uri") ?? "");
   const state = String(form.get("state") ?? "");

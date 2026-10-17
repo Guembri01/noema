@@ -10,6 +10,11 @@ import {
   type ReadinessReport,
 } from "@/lib/self-hosting";
 import { clientKey, TokenBucketLimiter } from "@/lib/rate-limit";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { summarizeUserAgent } from "@/lib/user-agent";
 
 export const runtime = "nodejs";
@@ -155,9 +160,9 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   let body: unknown;
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Expected a JSON body." }, { status: 400 });
+    body = await readJsonBody<unknown>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Expected a JSON body.");
   }
   const envFile =
     typeof body === "object" && body !== null

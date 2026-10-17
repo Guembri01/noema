@@ -429,7 +429,11 @@ curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 | --- | --- |
 | `/api/health` → 503 `db: down` | `docker compose ps` (db healthy?), `DATABASE_URL` reachable, `pg_isready` healthcheck logs |
 | `/api/health` refused / no answer | app process alive? port correct (3000 vs 3200 vs compose app)? `docker compose logs app` |
-| Cron never materializes | 503 = `CRON_SECRET` unset in the *app’s* env; 401 = header/value mismatch; `journalctl -u noema-templates.service`; rate limit is 12/min |
+| A client gets `413 {"error":"Request body too large."}` | the request body is over the route's own byte budget (`docs/api-reference.md` §3). The budgets are **hard-coded** in the route modules — there is no environment variable for them and no way to raise them at runtime; a client that legitimately needs more has to split the request (the upload route, for instance, accepts one file per request) |
+| An import fails with `That PDF is too large to import (max 10 MB)` / `That archive is too large to import` | the document itself is over the importer's budget (`src/server/actions/import-formats.ts`, `src/server/actions/import.ts`). These are content limits, not body limits — the request was accepted, the *document* was refused |
+| An import fails with `That archive uses the ZIP64 format, which this importer cannot read.` / `That archive is split across several files…` / `That archive is password-protected…` | the file *is* a valid archive, but a format the Markdown importer does not read (`src/lib/zip-archive.ts`): **ZIP64** (the sizes do not fit into 32 bits), a **split** archive (it spans several disks — only the first part was uploaded) or a **password-protected** entry. Re-create the archive as a plain (non-ZIP64) zip, or import the Markdown files one by one |
+| An import fails with `That .zip archive is damaged or incomplete.` / `That archive uses a compression method this importer cannot read.` | the archive's central directory or one of its entries could not be read — the file is truncated, not a zip at all, or compressed with a method other than *store*/*deflate*. Only *store* and *deflate* are read |
+| Cron never materializes | 503 = `CRON_SECRET` unset in the *app's* env; 401 = header/value mismatch; `journalctl -u noema-templates.service`; rate limit is 12/min |
 | Invites never arrive | settings “Email & invitations” → status shows `environment SMTP` / `not configured`; run `npm run check:mail`; delivery log error text (10 s connect / 20 s socket timeouts) |
 | Collaborative editing refuses everything (4401) | `AUTH_SECRET` missing/short in the relay’s env; wrong `NEXT_PUBLIC_COLLAB_URL`; 4403 = page scope/permission, not a secret problem |
 | Backup exits 1 | the script says why: no `pg_dump`, dump < 1 KiB, or missing core tables — it deletes the bad file rather than keeping it. `npm run backup -- --dry-run` shows what a run would do |
@@ -459,6 +463,9 @@ nothing was executed against live servers):
 | 7 | `/api/health` 200/503 shapes, 2 s ping, `no-store`, no auth/disclosure, compose healthcheck | `src/app/api/health/route.ts` · `docker-compose.yml` |
 | 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
 | 8 | single `20260113000000_init` migration vs push-evolved schema | `prisma/migrations/` · `docs/specs/engineering-hardening.md:149,367-373` |
+| 9 | `413 Request body too large.`, the per-route byte budgets, the `Content-Length` fast path vs. the counted body, hard-coded (not configurable) | `src/lib/body-limit.ts` · `docs/api-reference.md` §3 · the route modules (the limit sits next to what it protects) |
+| 9 | the content limits of the importers (10 MB PDF, 4 MB per archive entry, 32 MB unpacked, 5 000 archive entries) | `src/server/actions/import-formats.ts` · `src/server/actions/import.ts` · `src/lib/zip-archive.ts` |
+| 9 | the archive formats the importer refuses and the message each one gets (ZIP64, split, password-protected, unsupported compression method, damaged) | `src/lib/zip-archive.ts` · `src/server/actions/import.ts` (`zipArchiveError` / `zipEntryError`) |
 | all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
 
 **Not verified by execution (be explicit when relying on them):** the backup →

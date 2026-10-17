@@ -161,6 +161,41 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
 `auth/sso/start`, `auth/sso/callback`, `oauth/authorize/complete`,
 `s/[token]/unlock`.
 
+### Request body budgets
+
+Source: [`src/lib/body-limit.ts`](../src/lib/body-limit.ts)
+
+Every route that reads a request body reads it under a byte budget, and the
+budget is enforced **before** the body is parsed:
+
+- the declared `Content-Length` is checked first — a request that declares
+  more than the budget is refused without a byte being read;
+- the body is then streamed and counted, so a **missing** or **lying**
+  `Content-Length` cannot buy an unbounded body (the header is chosen by the
+  client, so it is only ever a fast path, never the limit itself);
+- an over-sized body is answered with **413** `{"error":"Request body too large."}`.
+
+| Route | Budget | Why |
+|---|---|---|
+| `POST /api/ai/transcribe` | 25 MiB | the ceiling the speech-to-text providers apply |
+| `POST /api/import/notion` | 16 MiB | carries a 10 MB PDF as base64 (13 981 016 characters) |
+| `POST /api/upload` | 12 MiB | a 10 MB file plus the multipart envelope |
+| `POST /api/import/pdf` | 8 MiB | carries a 5 000 000 character text layer |
+| `POST /api/mcp`, `POST /api/v1/pages` | 4 MiB | a page's content |
+| `POST /api/webhooks/inbound` | 1 MiB | a provider event |
+| `POST /api/ai`, `POST /api/ai/skills`, `POST /api/calendar`, `POST /api/chat`, `POST /api/chat/stream`, `POST /api/cron/jobs`, `POST /api/invites`, `POST /api/ready`, `POST /api/templates`, `POST /api/tickets` | 256 KiB | identifiers, form fields and short text |
+| `POST /oauth/authorize/complete`, `POST /oauth/token`, `POST /s/[token]/unlock` | 16 KiB | a password, a code, a client id |
+
+That is the complete list: **20 routes read a request body, and every one of
+them answers an over-sized body with 413** `{"error":"Request body too large."}`.
+A route that is not in the table does not read a body.
+
+The budgets are **hard-coded** in the route modules next to the limit they
+protect — they are not environment variables and cannot be raised at runtime.
+Server actions have their own ceiling (`experimental.serverActions.bodySizeLimit`,
+1 MB in `next.config.ts`); the App Router route handlers have no framework-wide
+body limit in this Next version, which is why each route carries its own.
+
 ### Common status codes
 
 | Status | Meaning / body |
@@ -169,7 +204,8 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
 | 401 | `{"error":"Unauthorized"}` — no/invalid session or Bearer token, bad cron secret, bad OAuth client |
 | 403 | `{"error":"Forbidden"}` — no access to the target workspace/page, or role too low |
 | 404 | Target not found. **Quirk:** workspace-scoped cookie routes report *no access* as `404 {"error":"Workspace not found"}` (tickets/calendar/invites/chat) instead of 403 |
-| 413 / 415 | Upload size / MIME rejection |
+| 413 | Request body over the route's budget (`Request body too large`), or the upload size limit (`File too large (max 10 MB)`) |
+| 415 | Unsupported MIME type |
 | 429 | Rate limited (§3) |
 | 502 | Upstream failure (transcription provider, storage driver) |
 | 503 | Feature unconfigured (AI, transcription, cron secret) |
@@ -196,6 +232,7 @@ rate scope `templates` (30/min)
   any `{error}` from the backing action (no workspace permission, bad
   template id, …)
 - **401** unauthenticated · **429** rate limited
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
 
 ### `GET /api/link-preview?url=` — OpenGraph metadata for bookmark blocks
 
@@ -252,7 +289,7 @@ cookie session · rate scope `upload` (60/min)
 | 400 | `Expected multipart form data` / `Missing file or workspaceId` |
 | 401 | `Unauthorized` |
 | 403 | `Forbidden` — no workspace access **or role `GUEST`** |
-| 413 | `File too large (max 10 MB)` |
+| 413 | `File too large (max 10 MB)` — or `Request body too large.` when the request body itself is over the 12 MiB budget (§3) |
 | 415 | `Unsupported file type: <mime>` |
 | 502 | storage driver message |
 
@@ -323,7 +360,9 @@ Errors: **400** `workspaceId is required` · **403** `Forbidden` · 401 · 429.
 - Dispatches the outbound `page.created` webhook with `{"pageId","via":"api"}`.
 
 **201** `{"page":{"id":"…","title":"New doc","type":"PAGE"}}`
-Errors: 400 (`Invalid JSON body`, `workspaceId is required`) · 401 · 403 · 429.
+Errors: 400 (`Invalid JSON body`, `workspaceId is required`) · 401 · 403 ·
+**413** `Request body too large.` — the body is over the 4 MiB budget (§3) ·
+429.
 
 #### Retrying safely — `Idempotency-Key`
 
@@ -342,6 +381,12 @@ A stored response is replayed verbatim, including a **4xx** — so a rejected
 request stays rejected rather than becoming a surprise second attempt. A **5xx**
 and a **429** are deliberately *not* stored: a crash is not an outcome, and rate
 limiting belongs to the attempt, not to the mutation.
+
+The body is fingerprinted by a digest over the bytes that actually arrived plus
+their number — never by the `Content-Length` the client declared. A retry is
+therefore recognised even when it arrives with a different framing (chunked
+the first time, with a `Content-Length` the second time), and a key that is
+reused for a different body is still refused with **422**.
 
 Keys are scoped to the authenticated principal and the endpoint, so two clients
 may pick the same key without colliding. Storage is process-local (a bounded
@@ -370,6 +415,25 @@ Errors: **404** `Not found` (missing **or trashed**) · **403** `Forbidden`
 ```
 `q` may be empty; title + body search via `searchPages()` in
 `src/server/queries.ts`. Errors: 400 (`workspaceId is required`) · 403 · 401 · 429.
+
+### `POST /api/mcp` — MCP (Model Context Protocol) server
+
+Source: [`src/app/api/mcp/route.ts`](../src/app/api/mcp/route.ts) · Bearer
+token · rate scope `mcp` (120/min). It lives outside `/api/v1` but uses the
+same Bearer authentication.
+
+JSON-RPC 2.0 over HTTP: `initialize`, `tools/list`, `tools/call`,
+`resources/list`, `resources/read`. Read-first and fail-closed — the caller's
+token must carry the scope of every tool it calls, and a write call needs
+`?allowWrite=true` plus an edit-capable role.
+
+- **200** the JSON-RPC result (or the JSON-RPC `error` object) · **400**
+  `Invalid JSON body.` / `Invalid request.` · **401** `Unauthorized` ·
+  **413** `Request body too large.` — the body is over the 4 MiB budget (§3) ·
+  **429** rate limited
+
+`GET /api/mcp` returns the discovery descriptor (server info, protocol
+version, tools, resources) and reads no body.
 
 ---
 
@@ -429,17 +493,40 @@ cookie session · rate scope `notion-import` (30/min)
 { "workspaceId": "…", "parentId": null,
   "token": "ntn_…", "pageId": "…-…-…" }
 ```
-Delegates to `importNotionPageAction` (`src/server/actions/notion-import.ts`),
-which fetches from the Notion API server-side.
+
+`format` selects the importer: `notion` (the default, the payload above),
+`html` (`html`, `filename`) or `pdf` (`data` — a base64-encoded PDF, max
+10 MB). The Notion path delegates to `importNotionPageAction`
+(`src/server/actions/notion-import.ts`), which fetches from the Notion API
+server-side; the other two to the importers in
+`src/server/actions/import-formats.ts`.
 
 - **200** `{"ok":true,"id":"…","slug":"…","pages":12}`
 - **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
+- **413** `Request body too large.` — the body is over the 16 MiB budget (§3)
+
+### `POST /api/import/pdf` — import an extracted PDF text layer
+Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
+cookie session · rate scope `pdf-import` (30/min)
+
+Body: `{ workspaceId, parentId?, filename?, text }` — the text layer an
+extractor already produced. The structure-recovery pipeline
+(`src/lib/pdf-import.ts`) runs before the page is created. Companion to
+`POST /api/import/notion` with `format=pdf`, which extracts the text layer
+from a binary PDF itself.
+
+- **200** `{"ok":true,…}` · **400** `Invalid JSON body.` or any action
+  `{error}` · **401** · **429**
+- **413** `Request body too large.` — the body is over the 8 MiB budget (§3)
 
 ---
 
-## 9. Webhooks (outbound only)
+## 9. Webhooks (outbound only) and inbound endpoints
 
-**There is no inbound `/api/webhooks` endpoint** — Noema only *sends*.
+**Outbound**: Noema *sends* webhooks — there is no inbound endpoint for the
+providers Noema talks to. The one inbound route it does have is
+`POST /api/webhooks/inbound` (below), which lets an *automation* call back
+into Noema.
 
 - **Events** (`src/lib/webhooks.ts`): `page.created`, `page.updated`,
   `row.created`, `comment.created`. Empty event list = subscribe to all.
@@ -476,6 +563,20 @@ is still accepted so pre-v2 receivers keep verifying. The only REST route that
 `POST /api/v1/pages` (§6); the other emitters are server actions
 (`src/server/actions/{pages,database,comments,page-menu}.ts`).
 
+### `POST /api/webhooks/inbound` — an inbound automation endpoint
+Source: [`src/app/api/webhooks/inbound/route.ts`](../src/app/api/webhooks/inbound/route.ts) ·
+rate scope `inbound-webhook` (60/min)
+
+The endpoint an *automation* calls back into. The provider is named in the
+query string (`?provider=…`) or in the `x-webhook-provider` header; the raw
+body is read as text because the signature is verified over the exact bytes
+that were sent.
+
+- **200** `{"ok":true}` · **400** `endpoint is required` · **401**
+  (signature mismatch) · **404** `Unknown endpoint` · **409**
+  `Endpoint disabled` · **429** rate limited
+- **413** `Request body too large.` — the body is over the 1 MiB budget (§3)
+
 ---
 
 ## 10. OAuth (third-party apps registered in settings)
@@ -509,7 +610,8 @@ cookie session · no rate limit
 - **303** → `<redirect_uri>?code=…&state=…` (allow) or
   `<redirect_uri>?error=access_denied&state=…` (deny).
 - **401** `Unauthorized` (no session) · **400** `Invalid request`
-  (unknown client or unregistered redirect URI).
+  (unknown client or unregistered redirect URI) · **413**
+  `Request body too large.` (over the 16 KiB budget, §3).
 
 ### `POST /oauth/token` — authorization_code → access token
 Source: [`src/app/oauth/token/route.ts`](../src/app/oauth/token/route.ts) ·
@@ -527,6 +629,7 @@ Form body: `grant_type=authorization_code`, `code`, `client_id`,
 | 400 | `{"error":"unsupported_grant_type"}` |
 | 401 | `{"error":"invalid_client"}` — unknown client or wrong secret |
 | 400 | `{"error":"invalid_grant"}` — code unknown / already used / wrong client / wrong redirect URI / expired |
+| 413 | `{"error":"Request body too large."}` — over the 16 KiB budget (§3) |
 | 429 | rate limited |
 
 The minted token is a regular API token named `OAuth: <app name>` and works on
@@ -570,6 +673,8 @@ Rate scope `tickets-write` (60/min). Body `{ "action": "…", … }`.
 Every action delegates to the same server action the UI uses. Success → **200**
 with the action's `{ok:true, …}` payload; action failure → **400**
 `{"error":"…"}`; unknown action → **400** `{"error":"Unknown action."}`.
+
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
 
 | `action` | Required fields | Optional fields | 200 payload |
 |---|---|---|---|
@@ -636,6 +741,8 @@ Upcoming events: top 25. Errors: **401** · **404** `Workspace not found` · 429
 Errors: 400 (`Invalid JSON body.` / `Unknown action.` / action `{error}`) ·
 401 · 429.
 
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
+
 ---
 
 ## 13. Invites & email
@@ -674,6 +781,7 @@ Permission quirk: the route only requires workspace membership, but
   `{"ok":true,"invited":true,"added":false,"link":"…","email":"…","emailed":true}`.
 - Errors: 400 (`Invalid JSON body.` / action `{error}` such as unknown
   workspace, invalid email, no permission) · 401 · 429.
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
 
 ---
 
@@ -710,6 +818,8 @@ Latest 20 threads with their messages. Errors: 401 · 404
 Errors: 400 (`Invalid JSON body.` / `Unknown action.` / action `{error}`) ·
 401 · 429.
 
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
+
 ### `POST /api/chat/stream` — streamed grounded answer — scope `chat-stream` (20/min)
 Source: [`src/app/api/chat/stream/route.ts`](../src/app/api/chat/stream/route.ts)
 
@@ -727,7 +837,8 @@ Source: [`src/app/api/chat/stream/route.ts`](../src/app/api/chat/stream/route.ts
   `Write something first.` (empty or >4000 chars trimmed) · **401** ·
   **403** `You do not have permission to post here.` (read-only role) ·
   **404** `Discussion not found.` · **503** `AI is not configured for this
-  workspace.` · 429.
+  workspace.` · **413** `Request body too large.` — the body is over the
+  256 KiB budget (§3) · 429.
 
 ### `POST /api/ai` — OpenAI-compatible completion proxy — scope `ai` (30/min)
 Source: [`src/app/api/ai/route.ts`](../src/app/api/ai/route.ts)
@@ -744,7 +855,8 @@ Source: [`src/app/api/ai/route.ts`](../src/app/api/ai/route.ts)
 - **200** `{"text":"…"}`
 - Errors: **400** `Invalid JSON body` / `prompt is required` /
   `context is required to summarize` / `prompt is required to autofill` ·
-  **401** · **503** `AI is not configured. Add a provider in workspace
+  **401** · **413** `Request body too large.` — the body is over the 256 KiB
+  budget (§3) · **503** `AI is not configured. Add a provider in workspace
   settings (AI) or set AI_API_KEY / AI_BASE_URL / AI_MODEL.` ·
   provider failures returned as `{error}` with the upstream status · 429.
 
@@ -762,7 +874,8 @@ Skill ids: `improve`, `proofread`, `reformat`, `shorten`, `explain`,
 { "skill": "improve", "replacesSelection": true, "text": "the sentence…" }
 ```
 Errors: 400 (`Invalid JSON body.` / `Unknown skill.` / `text is required.`,
-text capped at 8000) · 401 · 503 (AI unconfigured) · 429.
+text capped at 8000) · 401 · **413** `Request body too large.` — the body is
+over the 256 KiB budget (§3) · 503 (AI unconfigured) · 429.
 
 ### `POST /api/ai/transcribe` — speech-to-text — scope `transcribe` (10/min)
 Source: [`src/app/api/ai/transcribe/route.ts`](../src/app/api/ai/transcribe/route.ts)
@@ -773,6 +886,7 @@ Source: [`src/app/api/ai/transcribe/route.ts`](../src/app/api/ai/transcribe/rout
 `AI_TRANSCRIBE_API_KEY` / `OPENAI_API_KEY`.
 
 - **200** `{"text":"…"}` · **400** `file is required` · **401** ·
+  **413** `Request body too large.` — the body is over the 25 MiB budget (§3) ·
   **503** `Transcription is not configured. Set AI_TRANSCRIBE_API_KEY …` ·
   **502** `Transcription failed (<upstatus>): …` or transport message · 429.
 
@@ -791,6 +905,7 @@ Form body: `password`. Delegates to `verifySharePassword(token, password)`
   **303** → `/s/<token>`.
 - Wrong password → **303** → `/s/<token>?error=1`.
 - No JSON body in either direction.
+- **413** `Request body too large.` — the body is over the 16 KiB budget (§3).
 
 ---
 
@@ -821,9 +936,38 @@ rescheduled.
 | Wrong/missing header | `401 {"error":"Unauthorized"}` |
 | Over 12 calls/min | `429 {"error":"Rate limit exceeded"}` |
 
+### `POST /api/cron/jobs` — enqueue a background job
+Source: [`src/app/api/cron/jobs/route.ts`](../src/app/api/cron/jobs/route.ts) ·
+auth: `x-cron-secret` · rate scope `cron` (12/min)
+
+Body: `{ kind, payload?, maxAttempts?, delayMs? }` → **202**
+`{"job":…,"stats":…}`. An unregistered `kind` fails by design (a typo cannot
+silently succeed and drop work). `GET /api/cron/jobs` claims the due jobs,
+runs their handlers and completes or fails them — the queue
+(`src/lib/job-queue.ts`) applies its exponential backoff and dead-letters a
+job whose attempts are spent. The store under the queue is in-memory; a
+durable deployment swaps in a Prisma-backed adapter.
+
+- **400** `Body must be a JSON object.` / `"kind" is required.` · **401** ·
+  **429**
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
+
+### `GET`/`POST /api/ready` — readiness probe and `.env` check
+Source: [`src/app/api/ready/route.ts`](../src/app/api/ready/route.ts) ·
+auth: `x-cron-secret` (or `x-ready-secret`)
+
+`GET` grades the process env plus a live Postgres probe and returns the
+readiness report, the health payload and the deployment manifest (**200** when
+ready, **503** when not). `POST` takes `{"envFile": "DATABASE_URL=…"}` and
+grades an operator-supplied `.env` file (**200** when it is complete, **422**
+when it is not). The endpoint fails closed: without the shared ops secret it
+answers **503**.
+
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
+
 ---
 
-## Appendix A — endpoint index (31 endpoints / 26 route files)
+## Appendix A — endpoint index (39 endpoints / 31 route files)
 
 | # | Method | Path | Auth | Rate scope | File |
 |---|---|---|---|---|---|
@@ -858,6 +1002,14 @@ rescheduled.
 | 29 | POST | `/api/ai/transcribe` | cookie | `transcribe` | `src/app/api/ai/transcribe/route.ts` |
 | 30 | POST | `/api/cron/templates` | `x-cron-secret` | `cron` | `src/app/api/cron/templates/route.ts` |
 | 31 | POST | `/s/[token]/unlock` | share password | — | `src/app/s/[token]/unlock/route.ts` |
+| 32 | POST | `/api/import/pdf` | cookie | `pdf-import` | `src/app/api/import/pdf/route.ts` |
+| 33 | GET | `/api/mcp` | Bearer | `mcp` | `src/app/api/mcp/route.ts` |
+| 34 | POST | `/api/mcp` | Bearer | `mcp` | `src/app/api/mcp/route.ts` |
+| 35 | GET | `/api/ready` | `x-cron-secret` | — | `src/app/api/ready/route.ts` |
+| 36 | POST | `/api/ready` | `x-cron-secret` | — | `src/app/api/ready/route.ts` |
+| 37 | GET | `/api/cron/jobs` | `x-cron-secret` | `cron` | `src/app/api/cron/jobs/route.ts` |
+| 38 | POST | `/api/cron/jobs` | `x-cron-secret` | `cron` | `src/app/api/cron/jobs/route.ts` |
+| 39 | POST | `/api/webhooks/inbound` | signature | `inbound-webhook` | `src/app/api/webhooks/inbound/route.ts` |
 
 ## Appendix B — domains with **no** REST surface
 

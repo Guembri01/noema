@@ -49,10 +49,21 @@ export type FormatImportResult =
 const errorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error && error.message ? error.message : fallback;
 
-/** Upper bound on the decoded HTML we will parse (5 MB of characters). */
-const MAX_HTML_CHARS = 5_000_000;
+/**
+ * Upper bound on the characters we parse out of one imported document (5 MB).
+ * It covers the decoded HTML as well as the text layer recovered from a PDF.
+ */
+const MAX_DOC_CHARS = 5_000_000;
 /** Upper bound on a decoded PDF (10 MB). */
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
+/**
+ * The number of base64 characters that can carry {@link MAX_PDF_BYTES}: base64
+ * encodes three bytes as four characters, and the *last* group of a payload is
+ * padded — so the encoded length of `n` bytes is `4 * ceil(n / 3)`, not
+ * `4 * n / 3`. Checked against the *encoded* payload so an oversized document
+ * is refused before anything is decoded (B22).
+ */
+const MAX_BASE64_CHARS = Math.ceil(MAX_PDF_BYTES / 3) * 4;
 
 type Authorized = { user: { id: string }; slug: string };
 
@@ -151,7 +162,7 @@ export async function importHtmlAction(input: {
 }): Promise<FormatImportResult> {
   const html = typeof input.html === "string" ? input.html : "";
   if (!html.trim()) return { error: "No HTML content to import." };
-  if (html.length > MAX_HTML_CHARS) {
+  if (html.length > MAX_DOC_CHARS) {
     return { error: "That HTML document is too large to import (max 5 MB)." };
   }
 
@@ -265,13 +276,39 @@ function pdfStreams(latin: string): string[] {
   return streams;
 }
 
-/** Inflate a FlateDecode stream, falling back to the raw bytes when it is not. */
-function decodeStream(raw: string): string {
+/**
+ * Node reports a `maxOutputLength` overflow as `ERR_BUFFER_TOO_LARGE`; every
+ * other inflate failure means "this stream is not a FlateDecode stream".
+ */
+function isInflateOverflow(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE"
+  );
+}
+
+/**
+ * Inflate a FlateDecode stream, falling back to the raw bytes when it is not.
+ *
+ * B22: the inflate is bounded. `maxOutputLength` caps the decoded size, so a
+ * stream that expands far beyond its compressed size (a zlib bomb inside an
+ * otherwise small PDF) is aborted instead of filling the heap. The cap is the
+ * document budget ({@link MAX_PDF_BYTES}): a single stream that decodes to
+ * more than the whole document may be is out of scope anyway.
+ *
+ * A stream that hits the cap is dropped (`null`): it is not text we would
+ * import, and decoding it without a bound is exactly the DoS this guards.
+ */
+function decodeStream(raw: string): string | null {
   const body = raw.replace(/\r?\n$/, "");
   const bytes = Buffer.from(body, "latin1");
   try {
-    return inflateSync(bytes, { finishFlush: zlibConstants.Z_SYNC_FLUSH }).toString("latin1");
-  } catch {
+    return inflateSync(bytes, {
+      finishFlush: zlibConstants.Z_SYNC_FLUSH,
+      maxOutputLength: MAX_PDF_BYTES,
+    }).toString("latin1");
+  } catch (error) {
+    if (isInflateOverflow(error)) return null;
     return raw;
   }
 }
@@ -450,15 +487,38 @@ function scanContent(content: string): string {
  * Best-effort text-layer extraction. Only streams that contain a `BT` text
  * object are scanned, so embedded fonts/images contribute no junk. Returns the
  * joined text plus a `/Type /Page` count (0 when the PDF uses object streams).
+ *
+ * B22: the recovered text is budgeted as well. A per-stream cap alone is not
+ * enough — a PDF may hold many streams — so the characters are counted while
+ * they are collected and `overflow` reports that the document is too large to
+ * import. `streamOverflow` reports the other case: a single stream refused to
+ * inflate because it expands past the document budget (a zlib bomb).
  */
-function extractPdfText(pdf: Buffer): { text: string; pages: number } {
+function extractPdfText(pdf: Buffer): {
+  text: string;
+  pages: number;
+  overflow: boolean;
+  streamOverflow: boolean;
+} {
   const latin = pdf.toString("latin1");
   const chunks: string[] = [];
+  let chars = 0;
+  let streamOverflow = false;
   for (const raw of pdfStreams(latin)) {
     const decoded = decodeStream(raw);
+    if (decoded === null) {
+      // The stream expanded past the document budget and was dropped.
+      streamOverflow = true;
+      continue;
+    }
     if (!/\bBT\b/.test(decoded)) continue;
     const text = scanContent(decoded);
-    if (text.trim()) chunks.push(text);
+    if (!text.trim()) continue;
+    chars += text.length;
+    if (chars > MAX_DOC_CHARS) {
+      return { text: "", pages: 0, overflow: true, streamOverflow };
+    }
+    chunks.push(text);
   }
   const text = chunks
     .join("\n\n")
@@ -467,7 +527,23 @@ function extractPdfText(pdf: Buffer): { text: string; pages: number } {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   const pages = (latin.match(/\/Type\s*\/Page(?![a-zA-Z])/g) ?? []).length;
-  return { text, pages };
+  return { text, pages, overflow: false, streamOverflow };
+}
+
+/**
+ * The number of base64 characters in the payload, ignoring whitespace. Node's
+ * base64 decoder skips whitespace (and every other character outside the
+ * alphabet), so this is an upper bound on the decoded byte count.
+ */
+function base64Length(data: string): number {
+  let length = 0;
+  for (let i = 0; i < data.length; i += 1) {
+    const code = data.charCodeAt(i);
+    // space, tab, line feed, carriage return, form feed
+    if (code === 32 || code === 9 || code === 10 || code === 13 || code === 12) continue;
+    length += 1;
+  }
+  return length;
 }
 
 /** Import a PDF's text layer as a page (base64 payload from the route). */
@@ -479,6 +555,15 @@ export async function importPdfAction(input: {
 }): Promise<FormatImportResult> {
   const data = typeof input.data === "string" ? input.data : "";
   if (!data.trim()) return { error: "No PDF data provided." };
+
+  // B22: the payload is refused on its *encoded* length, before anything is
+  // decoded. `Buffer.from(data, "base64")` allocates the whole decoded
+  // document first, so comparing that buffer against the limit is too late —
+  // the memory is already spent. Base64 carries three bytes in four
+  // characters, so the character count bounds the decoded size.
+  if (base64Length(data) > MAX_BASE64_CHARS) {
+    return { error: "That PDF is too large to import (max 10 MB)." };
+  }
 
   const workspaceId = String(input.workspaceId ?? "");
   const auth = await authorize(workspaceId);
@@ -494,6 +579,12 @@ export async function importPdfAction(input: {
   }
 
   const extracted = extractPdfText(bytes);
+  if (extracted.overflow) {
+    return { error: "That PDF's text layer is too large to import (max 5 MB)." };
+  }
+  if (extracted.streamOverflow) {
+    return { error: "That PDF is too large to import (max 10 MB)." };
+  }
   if (!extracted.text) {
     return {
       error: "No selectable text layer found in that PDF (scanned/image PDFs are not supported).",

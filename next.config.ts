@@ -67,6 +67,21 @@ const nextConfig: NextConfig = {
   experimental: {
     serverActions: {
       allowedOrigins: allowedOrigins(),
+      // B22 — the body budget for *server actions*.
+      //
+      // Next.js only offers a body limit for server actions (`bodySizeLimit`);
+      // it applies to the RSC action requests, not to the App Router route
+      // handlers, and the app router has no equivalent switch in this Next
+      // version (15.5). The route handlers therefore carry their own
+      // per-route budgets (`src/lib/body-limit.ts`), and this value only
+      // bounds the action endpoints — the imports that take a file
+      // (`.docx`, `.zip`) among them.
+      //
+      // It stays at Next's 1 MB default on purpose: raising it would widen the
+      // input of every action that parses an uploaded file, and the archive
+      // import's own budget (entry count + unpacked size) is what keeps a zip
+      // bomb harmless.
+      bodySizeLimit: "1mb",
     },
   },
   // B61: catch-all source so no response class (incl. public share pages)
