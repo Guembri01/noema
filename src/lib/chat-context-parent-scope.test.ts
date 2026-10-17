@@ -9,9 +9,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * The chat context read the rows of the workspace's databases without that
  * filter — the foreign row's **title and cell values** ended up in the AI
- * prompt. The fake database below applies the filters the real one would, so a
- * missing `workspaceId` in the query surfaces as the foreign row in the
- * assembled context.
+ * prompt. The "current page" block had the same hole: it read the **children**
+ * of the open page by `parentId` only, so the foreign row's title reached the
+ * prompt through that block as well. The fake database below applies the
+ * filters the real one would, so a missing `workspaceId` in the query surfaces
+ * as the foreign row in the assembled context.
  */
 
 const WORKSPACE_A = "ws-a";
@@ -27,6 +29,30 @@ type FakeRow = {
   position: number;
   propertyValues: { value: unknown; property: { name: string } }[];
 };
+
+/**
+ * The `where` the fake page store understands — the subset of Prisma's
+ * `PageWhereInput` the chat context actually uses. The narrowing has to
+ * survive the `filter()` callbacks, so the filtered values are read into
+ * locals first (a property path loses its narrowing inside a closure).
+ */
+type PageFindManyWhere = {
+  type?: string;
+  parentId?: string | null | { in: string[] };
+  workspaceId?: string;
+  deletedAt?: null;
+};
+
+type PageFindManyArgs = { where?: PageFindManyWhere };
+
+/** The `where` of a page lookup by id. */
+type PageFindFirstWhere = {
+  id?: string;
+  workspaceId?: string;
+  deletedAt?: null;
+};
+
+type PageFindFirstArgs = { where?: PageFindFirstWhere };
 
 const ROWS: FakeRow[] = [
   {
@@ -88,12 +114,11 @@ vi.mock("@/server/queries", () => ({
   searchPagesForPrompt: vi.fn(async () => []),
 }));
 
-import { gatherChatIntel } from "./chat-context";
+import { gatherChatIntel, resolveCurrentPage } from "./chat-context";
 
 beforeEach(() => {
   vi.clearAllMocks();
 
-  db.pageFindFirst.mockResolvedValue(null);
   db.pageCount.mockResolvedValue(0);
   db.propertyFindMany.mockResolvedValue([]);
   db.workspaceFindUnique.mockResolvedValue({ name: "Workspace A" });
@@ -107,43 +132,61 @@ beforeEach(() => {
   db.chatThreadFindMany.mockResolvedValue([]);
   db.chatMessageFindMany.mockResolvedValue([]);
 
-  db.pageFindMany.mockImplementation(
-    async (args: {
-      where?: {
-        type?: string;
-        parentId?: string | null | { in: string[] };
-        workspaceId?: string;
-        deletedAt?: null;
-      };
-    }) => {
-      const where = args.where ?? {};
-      // The workspace's databases.
-      if (where.type === "DATABASE") {
-        return [
-          {
-            id: DATABASE_A,
-            title: "Database in A",
-            icon: null,
-            properties: [],
-            _count: { children: ROWS.length },
-          },
-        ];
-      }
-      // The rows of those databases.
-      const parentFilter = where.parentId;
-      if (parentFilter && typeof parentFilter === "object" && Array.isArray(parentFilter.in)) {
-        return ROWS.filter((row) => {
-          if (!parentFilter.in.includes(row.parentId ?? "")) return false;
-          // The real database filters by the workspace when the query asks for
-          // it — and returns the foreign row when it does not.
-          if (where.workspaceId !== undefined && row.workspaceId !== where.workspaceId) return false;
-          if (where.deletedAt === null && row.deletedAt !== null) return false;
-          return true;
-        });
-      }
-      return [];
-    },
-  );
+  // The page the user has open: read tenant-scoped, like the real database.
+  db.pageFindFirst.mockImplementation(async (args: PageFindFirstArgs) => {
+    const where = args.where ?? {};
+    if (where.id !== DATABASE_A) return null;
+    if (where.workspaceId !== undefined && where.workspaceId !== WORKSPACE_A) return null;
+    return {
+      id: DATABASE_A,
+      title: "Database in A",
+      type: "DATABASE",
+      icon: null,
+      content: null,
+      parentId: null,
+      updatedAt: new Date("2026-10-20T00:00:00.000Z"),
+    };
+  });
+
+  db.pageFindMany.mockImplementation(async (args: PageFindManyArgs) => {
+    const where = args.where ?? {};
+    // The workspace's databases.
+    if (where.type === "DATABASE") {
+      return [
+        {
+          id: DATABASE_A,
+          title: "Database in A",
+          icon: null,
+          properties: [],
+          _count: { children: ROWS.length },
+        },
+      ];
+    }
+    const parentFilter = where.parentId;
+    // The rows of those databases.
+    if (parentFilter && typeof parentFilter === "object" && Array.isArray(parentFilter.in)) {
+      const databaseIds = parentFilter.in;
+      return ROWS.filter((row) => {
+        if (!databaseIds.includes(row.parentId ?? "")) return false;
+        // The real database filters by the workspace when the query asks for
+        // it — and returns the foreign row when it does not.
+        if (where.workspaceId !== undefined && row.workspaceId !== where.workspaceId) return false;
+        if (where.deletedAt === null && row.deletedAt !== null) return false;
+        return true;
+      });
+    }
+    // The children of the open page (the rows of the database that is open).
+    if (parentFilter === DATABASE_A) {
+      const parentId = parentFilter;
+      return ROWS.filter((row) => {
+        if (row.parentId !== parentId) return false;
+        if (where.workspaceId !== undefined && row.workspaceId !== where.workspaceId) return false;
+        if (where.deletedAt === null && row.deletedAt !== null) return false;
+        return true;
+      }).sort((a, b) => a.position - b.position);
+    }
+    return [];
+  });
 });
 
 describe("gatherChatIntel — database rows (B08)", () => {
@@ -178,5 +221,37 @@ describe("gatherChatIntel — database rows (B08)", () => {
       );
     });
     expect(rowQuery?.[0]?.where).toMatchObject({ workspaceId: WORKSPACE_A });
+  });
+});
+
+describe("the current page (B08)", () => {
+  it("does not list a child of another workspace", async () => {
+    const page = await resolveCurrentPage(WORKSPACE_A, DATABASE_A);
+
+    expect(page?.children.map((child) => child.title)).toEqual(["Row in A"]);
+  });
+
+  it("scopes the children query to the workspace of the open page", async () => {
+    await resolveCurrentPage(WORKSPACE_A, DATABASE_A);
+
+    const childrenQuery = db.pageFindMany.mock.calls.find((args) => {
+      const where = (args[0] as { where?: { parentId?: unknown } })?.where;
+      return where?.parentId === DATABASE_A;
+    });
+    expect(childrenQuery?.[0]?.where).toMatchObject({
+      workspaceId: WORKSPACE_A,
+      deletedAt: null,
+    });
+  });
+
+  it("keeps a row of another workspace out of the prompt context", async () => {
+    const intel = await gatherChatIntel({
+      workspaceId: WORKSPACE_A,
+      activePageId: DATABASE_A,
+      question: "which rows are in the database I am looking at?",
+    });
+
+    expect(intel.context).toContain("Row in A");
+    expect(intel.context).not.toContain("Row in B (legacy cross-tenant link)");
   });
 });

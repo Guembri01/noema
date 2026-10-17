@@ -77,6 +77,7 @@ const db = vi.hoisted(() => ({
   pageFindMany: vi.fn(),
   pageCreate: vi.fn(),
   pageCreateMany: vi.fn(),
+  pageUpdate: vi.fn(),
   propertyFindMany: vi.fn(),
   propertyCreateMany: vi.fn(),
   propertyValueCreateMany: vi.fn(),
@@ -105,6 +106,7 @@ vi.mock("@/lib/db", () => {
         findMany: db.pageFindMany,
         create: db.pageCreate,
         createMany: db.pageCreateMany,
+        update: db.pageUpdate,
       },
       property: { findMany: db.propertyFindMany },
       databaseView: { findMany: db.databaseViewFindMany },
@@ -124,7 +126,7 @@ vi.mock("@/lib/permissions", () => ({
 vi.mock("@/lib/webhooks", () => ({ dispatchWebhooks: vi.fn(async () => undefined) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { duplicateDatabaseAction, listDeletedRowsAction } from "./database";
+import { duplicateDatabaseAction, listDeletedRowsAction, reorderRowsAction } from "./database";
 
 /** The row payloads the clone wrote (`tx.page.createMany({ data: rowPages })`). */
 function clonedRows(): { title: string; content?: unknown }[] {
@@ -138,6 +140,8 @@ beforeEach(() => {
   vi.clearAllMocks();
 
   db.pageFindUnique.mockImplementation(async (args: { where: { id: string } }) => {
+    // The anchor row of a reorder: only its parent is read.
+    if (args.where.id === "row-a") return { parentId: DATABASE_A };
     if (args.where.id !== DATABASE_A) return null;
     return {
       id: DATABASE_A,
@@ -188,6 +192,7 @@ beforeEach(() => {
 
   db.pageCreate.mockResolvedValue({ id: "clone-page" });
   db.pageCreateMany.mockResolvedValue({ count: 0 });
+  db.pageUpdate.mockResolvedValue({ id: "row-a" });
   db.propertyFindMany.mockResolvedValue([
     { id: "prop-1", name: "Name", type: "TEXT", config: { primary: true }, position: 1000 },
   ]);
@@ -196,14 +201,17 @@ beforeEach(() => {
   db.databaseViewFindMany.mockResolvedValue([]);
   db.databaseViewCreateMany.mockResolvedValue({ count: 0 });
   db.templateFindMany.mockResolvedValue([]);
-  db.transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
-    fn({
+  db.transaction.mockImplementation(async (arg: unknown) => {
+    // `$transaction` takes either a list of promises or a callback.
+    if (Array.isArray(arg)) return Promise.all(arg);
+    const fn = arg as (tx: unknown) => Promise<unknown>;
+    return fn({
       page: { findFirst: db.pageFindFirst, create: db.pageCreate, createMany: db.pageCreateMany },
       property: { createMany: db.propertyCreateMany },
       propertyValue: { createMany: db.propertyValueCreateMany },
       databaseView: { createMany: db.databaseViewCreateMany },
-    }),
-  );
+    });
+  });
 });
 
 describe("duplicateDatabaseAction — row scope (B08)", () => {
@@ -251,6 +259,29 @@ describe("listDeletedRowsAction — row scope (B08)", () => {
     const rowQuery = db.pageFindMany.mock.calls.find((args) => {
       const where = (args[0] as { where?: { deletedAt?: unknown } })?.where;
       return where?.deletedAt !== undefined && where?.deletedAt !== null;
+    });
+    expect(rowQuery?.[0]?.where).toMatchObject({ workspaceId: WORKSPACE_A });
+  });
+});
+
+describe("reorderRowsAction — row scope (B08)", () => {
+  it("does not write the position of a row of another workspace", async () => {
+    const result = await reorderRowsAction("row-a", ["row-a", "row-foreign"]);
+
+    expect(result).toMatchObject({ ok: true });
+    const updated = db.pageUpdate.mock.calls.map(
+      (call) => (call[0] as { where: { id: string } }).where.id,
+    );
+    expect(updated).toContain("row-a");
+    expect(updated).not.toContain("row-foreign");
+  });
+
+  it("scopes the row query to the workspace of the database", async () => {
+    await reorderRowsAction("row-a", ["row-a"]);
+
+    const rowQuery = db.pageFindMany.mock.calls.find((args) => {
+      const where = (args[0] as { where?: { parentId?: unknown } })?.where;
+      return where?.parentId === DATABASE_A;
     });
     expect(rowQuery?.[0]?.where).toMatchObject({ workspaceId: WORKSPACE_A });
   });

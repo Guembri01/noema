@@ -97,11 +97,19 @@ never read and the error never names it. A page therefore never hangs under a
 page of a different workspace, which keeps it out of the foreign workspace's
 database view and CSV/JSON export, and keeps Postgres' `onDelete: Cascade` from
 deleting it together with a foreign parent. Every write path that stores a
-`Page.parentId` goes through that helper; the read side filters a database's
-rows by the database's workspace. The rule is enforced mechanically by
+`Page.parentId` goes through that helper — or holds the workspace equality by
+construction and says so, with a reason, in the gate's allow-list; the read
+side filters a database's rows by the database's workspace (eight read sites).
+The rule is **checked mechanically where the
+gate can see it** by
 [`scripts/check-parent-scope.mjs`](../scripts/check-parent-scope.mjs): the gate
-fails when a `Page.parentId` is written outside `assertScopedParent()` without
-a reasoned allow-list entry.
+finds the `Page.parentId` writes in `src/` statically — 31 of them, the same
+31 an independent TypeScript-parser inventory finds — and fails when one of
+them stores a value the helper has not proved, without a reasoned allow-list
+entry. It is a safety net over the tests, not a proof: a write it cannot
+recognise is not covered by it. It does not see a raw SQL write, a write
+outside `src/`, a member assignment (`data.parentId = …`) or the callers of an
+allow-listed helper.
 
 ## Editor
 

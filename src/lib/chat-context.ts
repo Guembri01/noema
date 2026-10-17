@@ -257,8 +257,12 @@ export async function resolveCurrentPage(
   }
   path.push(page.title || "Untitled");
 
+  // The children are the rows of a database (or the sub-pages of a note).
+  // They have to carry the **workspace** of the open page, not just its id: a
+  // row that was linked across the boundary before the fix (B08) would put a
+  // foreign tenant's title into the AI prompt.
   const children = await prisma.page.findMany({
-    where: { parentId: page.id, deletedAt: null },
+    where: { parentId: page.id, workspaceId, deletedAt: null },
     orderBy: { position: "asc" },
     take: CHILD_LIMIT,
     select: { title: true, type: true },

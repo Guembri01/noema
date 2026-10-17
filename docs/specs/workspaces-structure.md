@@ -194,13 +194,21 @@ the drift (§13).
   (Notion, Docx, Trello, Zip, Markdown, CSV, HTML, PDF), the chat-answer save
   and the page/database duplicate paths. The **invariant** it enforces:
   *a `parentId` always points inside the same workspace*. The read side
-  follows: `getDatabase`, both export routes, the "Deleted rows" panel, the
-  database duplicate and the chat context filter a database's rows by the
-  database's workspace, so a row that was linked across workspaces before
-  the fix no longer surfaces in the foreign workspace's views — and the
-  duplicate no longer copies such a row **with its content**. The invariant
-  is enforced mechanically by `scripts/check-parent-scope.mjs`, which fails
-  when a `Page.parentId` is written outside the helper.
+  follows: `getDatabase`, the relation database, both export routes, the
+  "Deleted rows" panel, the database duplicate and the two chat-context
+  blocks (the database block and the current-page block) filter a database's
+  rows by the database's workspace — eight read sites in all — so a row that
+  was linked across workspaces before the fix no longer surfaces in the
+  foreign workspace's views, and the duplicate no longer copies such a row
+  **with its content**. The invariant
+  is **checked mechanically where the gate can see it**:
+  `scripts/check-parent-scope.mjs` finds the `Page.parentId` writes in `src/`
+  statically — 31 of them, the same 31 an independent TypeScript-parser
+  inventory finds — and fails when one of them stores a value the helper has
+  not proved. It is a safety net over the tests, not a proof: a write it
+  cannot recognise (a raw SQL write, a write outside `src/`, a member
+  assignment such as `data.parentId = …`, the callers of an allow-listed
+  helper) is not covered by it.
 - **R80.8** — **Bulk move ships as a pure-logic-first feature.** (a) Selection
   model added to `src/lib/page-tree.ts` (multi-select set, shift-range over
   `flattenVisible` order, "all selected editable" predicate) with unit tests

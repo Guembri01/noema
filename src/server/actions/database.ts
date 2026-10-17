@@ -370,7 +370,14 @@ export async function reorderRowsAction(
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
 
   const existing = await prisma.page.findMany({
-    where: { parentId: anchor.parentId, deletedAt: null },
+    // The rows belong to the database's workspace: a row that was linked across
+    // the boundary before the fix (B08) is not this workspace's row, and
+    // reordering must not write its `position` (a cross-tenant write).
+    where: {
+      parentId: anchor.parentId,
+      workspaceId: auth.page.workspaceId,
+      deletedAt: null,
+    },
     orderBy: { position: "asc" },
     select: { id: true },
   });

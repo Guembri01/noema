@@ -45,6 +45,16 @@ jobs:
         env:
           DATABASE_URL: postgresql://user:pass@127.0.0.1:5432/noema
 
+      # A `Page.parentId` may only be written through `assertScopedParent()`
+      # (or through an allow-listed path that holds the workspace equality by
+      # construction): the tenant boundary is enforced in the application, so a
+      # write path that skips the helper re-opens the cross-tenant hole.
+      # The gate is a pure source scan — no build, no database, no
+      # dependencies — so it runs *before* the slow steps: a violation then
+      # fails the job in a second instead of after the whole test suite.
+      - name: Parent scope
+        run: node scripts/check-parent-scope.mjs
+
       # = tsc --noEmit && eslint --quiet . && vitest run --changed --passWithNoTests
       # Note: in CI the checkout is clean, so `vitest --changed` sees no diff and
       # may run 0 tests; tsc + eslint still gate every push. Switching this line

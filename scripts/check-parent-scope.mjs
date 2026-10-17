@@ -10,7 +10,7 @@
 // nothing else. A later refactor that added an importer, or that touched one
 // of the call sites, silently re-opened the cross-tenant hole (B08).
 //
-// This gate makes the invariant mechanical:
+// This gate checks the write paths:
 //
 //   1. Every write of a `Page.parentId` must carry the value that
 //      `assertScopedParent()` proved — or be listed in the ALLOW_LIST below
@@ -19,10 +19,36 @@
 //      (`input.parentId`, `body.parentId`, …): the checked one is the only
 //      one that is known to live in the caller's workspace.
 //
+// It is a **safety net over the tests**, not a proof. What it sees:
+//
+//   - the files under `src/`; a write outside that tree is invisible,
+//   - the Prisma call forms `page.create | createMany | update | updateMany |
+//     upsert` (with any receiver — `prisma.`, `tx.`, …) and the payloads
+//     that carry a `Prisma.Page*Input` type,
+//   - the three ways a parent is written: the `parentId` property, its
+//     shorthand, and the Prisma relation form `parent: { connect: { id } }`.
+//
+// On the branch it finds **31** writes — the same 31 sites an independent
+// TypeScript-parser inventory of `src/` finds.
+//
+// What it does **not** see — a write it cannot recognise is *not* covered by
+// it, and the gate is no proof:
+//
+//   - a raw SQL write (`prisma.$executeRaw`); the repo has none,
+//   - a member assignment (`data.parentId = …`), which is not an object
+//     literal property,
+//   - a payload whose `parentId` is computed by a helper the gate does not
+//     follow (a value it cannot attribute to `assertScopedParent()` counts as
+//     unguarded, which is the safe direction),
+//   - the **callers** of an allow-listed helper: the gate matches a write by
+//     file, function and value, so a future caller that hands the helper a raw
+//     parent stays green (the helper itself is what rejects it).
+//
 // The gate reads the source statically; it needs no database, no build and no
 // running server. It is the mechanical counterpart of the tests in
 // `src/**\/*parent-scope*.test.ts` — the tests pin the behaviour, the gate
-// pins the *shape* of every write path, including the ones no test covers.
+// pins the *shape* of every write path it can see, including the ones no test
+// covers.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -131,62 +157,160 @@ const RAW_REQUEST_VALUE =
   /\b(input|body|args|params|payload|request|req|formData|form)\s*\.\s*parentId\b/;
 
 const PAGE_WRITE = /\bpage\.(create|createMany|update|updateMany|upsert)$/;
-const PRISMA_PAGE_INPUT = /Prisma\.Page(Create|Update)(Many)?Input/;
+const PRISMA_PAGE_INPUT = /Prisma\.Page(?:Unchecked)?(?:Create|Update)(?:Many)?Input/;
 
 /* ------------------------------------------------------------------ scanning */
 
 /**
- * Blank out the contents of strings, template literals and comments so the
- * bracket matching below cannot be fooled by them. The length is preserved,
- * so every offset stays valid for the original source.
+ * Words after which a `/` opens a regular expression instead of dividing.
+ */
+const REGEX_AFTER_WORD = new Set([
+  "return",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "case",
+  "do",
+  "else",
+  "yield",
+  "await",
+  "throw",
+]);
+
+/**
+ * Whether a `/` at this position opens a regular expression. The decision is
+ * made on the last significant character of code before it: a `/` after an
+ * identifier, a `)` or a `]` divides, everywhere else it opens a literal.
+ */
+function opensRegex(lastChar, word) {
+  if (!lastChar) return true;
+  if (/[A-Za-z0-9_$]/.test(lastChar)) return REGEX_AFTER_WORD.has(word);
+  if (lastChar === ")" || lastChar === "]") return false;
+  return true;
+}
+
+/**
+ * The end of the regular expression that starts at `start`, or -1 when there
+ * is none (a division after all).
+ */
+function regexEnd(text, start) {
+  let i = start + 1;
+  let inClass = false;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "\\") {
+      i += 2;
+      continue;
+    }
+    if (ch === "\n") return -1;
+    if (inClass) {
+      if (ch === "]") inClass = false;
+      i += 1;
+      continue;
+    }
+    if (ch === "[") {
+      inClass = true;
+      i += 1;
+      continue;
+    }
+    if (ch === "/") {
+      let end = i + 1;
+      while (end < text.length && /[A-Za-z]/.test(text[end])) end += 1;
+      return end;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+/**
+ * Blank out the contents of strings, template literals, regular expressions
+ * and comments so the bracket matching below cannot be fooled by them. The
+ * length is preserved, so every offset stays valid for the original source.
+ *
+ * The regular expressions matter: a masker that does not know them reads
+ * `/[*_`#]/g` as a division and then takes the backtick inside the character
+ * class for the start of a template literal — everything after it is masked
+ * away and the whole file becomes invisible to the gate. That is exactly what
+ * happened in `src/server/actions/chat.ts` (B08, round 3).
  */
 function mask(text) {
   const out = text.split("");
   let i = 0;
+  // The last significant character of code, and the word that ends there.
+  let lastChar = "";
+  let lastWord = "";
+  let word = "";
+
+  const blank = (from, to) => {
+    for (let k = from; k < to; k += 1) if (text[k] !== "\n") out[k] = " ";
+  };
+
   while (i < text.length) {
     const ch = text[i];
     const next = text[i + 1];
     if (ch === "/" && next === "/") {
-      while (i < text.length && text[i] !== "\n") {
-        out[i] = " ";
-        i += 1;
-      }
+      let end = i;
+      while (end < text.length && text[end] !== "\n") end += 1;
+      blank(i, end);
+      i = end;
       continue;
     }
     if (ch === "/" && next === "*") {
-      out[i] = " ";
-      out[i + 1] = " ";
-      i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
-        if (text[i] !== "\n") out[i] = " ";
-        i += 1;
-      }
-      out[i] = " ";
-      if (i + 1 < text.length) out[i + 1] = " ";
-      i += 2;
+      let end = i + 2;
+      while (end < text.length && !(text[end] === "*" && text[end + 1] === "/")) end += 1;
+      end = Math.min(text.length, end + 2);
+      blank(i, end);
+      i = end;
       continue;
     }
     if (ch === '"' || ch === "'" || ch === "`") {
       const quote = ch;
-      out[i] = " ";
-      i += 1;
-      while (i < text.length) {
-        if (text[i] === "\\") {
-          out[i] = " ";
-          if (i + 1 < text.length) out[i + 1] = " ";
-          i += 2;
+      let end = i + 1;
+      while (end < text.length) {
+        if (text[end] === "\\") {
+          end += 2;
           continue;
         }
-        if (text[i] === quote) {
-          out[i] = " ";
-          i += 1;
+        if (text[end] === quote) {
+          end += 1;
           break;
         }
-        out[i] = " ";
-        i += 1;
+        end += 1;
       }
+      blank(i, end);
+      i = end;
+      lastChar = quote;
+      lastWord = "";
+      word = "";
       continue;
     }
+    if (ch === "/" && opensRegex(lastChar, word || lastWord)) {
+      const end = regexEnd(text, i);
+      if (end > 0) {
+        blank(i, end);
+        i = end;
+        lastChar = "x";
+        lastWord = "";
+        word = "";
+        continue;
+      }
+    }
+    if (/[A-Za-z0-9_$]/.test(ch)) {
+      word += ch;
+      lastChar = ch;
+      i += 1;
+      continue;
+    }
+    if (word) {
+      lastWord = word;
+      word = "";
+    }
+    if (!/\s/.test(ch)) lastChar = ch;
     i += 1;
   }
   return out.join("");
@@ -223,6 +347,31 @@ function enclosingOpen(masked, index, openChar, closeChar) {
 }
 
 /**
+ * The kind of the bracket the position `index` sits in directly — `{` for an
+ * object literal, `(` for an argument list.
+ *
+ * It tells a property from an argument: `data: { parentId }` writes the
+ * parent, `nextPosition(workspaceId, parentId)` only mentions it. The write
+ * call is looked up through every enclosing call, so without this the
+ * argument of a helper *inside* a page write would count as a write too.
+ */
+function enclosingBracket(masked, index) {
+  const closers = [];
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const ch = masked[i];
+    if (ch === ")" || ch === "}" || ch === "]") {
+      closers.push(ch);
+      continue;
+    }
+    if (ch === "(" || ch === "{" || ch === "[") {
+      if (closers.length === 0) return ch;
+      closers.pop();
+    }
+  }
+  return "";
+}
+
+/**
  * The brace that opens the body of a function whose parameter list ends at
  * `from` — the return type annotation may carry braces of its own
  * (`Promise<Result<{ id: string }>>`), so the first brace is not the body.
@@ -256,6 +405,27 @@ function calleeBefore(masked, index) {
   const before = masked.slice(Math.max(0, index - 160), index);
   const match = /([A-Za-z0-9_$]+(?:\s*\.\s*[A-Za-z0-9_$]+)*)\s*$/.exec(before);
   return match ? match[1].replace(/\s+/g, "") : "";
+}
+
+/**
+ * The callees of every call the position `index` sits in — from the innermost
+ * one outwards.
+ *
+ * The write call is looked up through **all** of them, not only the nearest:
+ * a write in a conditional spread (`data: { …(cond ? { parentId } : {}) }`)
+ * sits inside the parentheses of the ternary, and only the outer call is the
+ * one that writes the page.
+ */
+function enclosingCallees(masked, index) {
+  const callees = [];
+  let cursor = index;
+  for (;;) {
+    const paren = enclosingOpen(masked, cursor, "(", ")");
+    if (paren < 0) break;
+    callees.push(calleeBefore(masked, paren));
+    cursor = paren;
+  }
+  return callees;
 }
 
 /** The key of the object literal the brace at `index` opens (`data`, `where`). */
@@ -370,18 +540,21 @@ function hasPrismaPageType(masked, index) {
  */
 function checkedNames(body) {
   const names = new Set();
-  const call = new RegExp(`(?:const|let|var)\\s+([A-Za-z0-9_$]+)\\s*=\\s*await\\s+${HELPER}\\(`).exec(
-    body,
-  );
-  if (!call) return names;
-  const result = call[1];
-  names.add(`${result}.parentId`);
-  const local = new RegExp(
-    `(?:const|let|var)\\s+([A-Za-z0-9_$]+)\\s*=\\s*[^;]*?\\b${result}\\.parentId\\b`,
+  const call = new RegExp(
+    `(?:const|let|var)\\s+([A-Za-z0-9_$]+)\\s*=\\s*await\\s*${HELPER}\\(`,
     "g",
   );
   let match;
-  while ((match = local.exec(body)) !== null) names.add(match[1]);
+  while ((match = call.exec(body)) !== null) {
+    const result = match[1];
+    names.add(`${result}.parentId`);
+    const local = new RegExp(
+      `(?:const|let|var)\\s+([A-Za-z0-9_$]+)\\s*=\\s*[^;]*?\\b${result}\\.parentId\\b`,
+      "g",
+    );
+    let found;
+    while ((found = local.exec(body)) !== null) names.add(found[1]);
+  }
   return names;
 }
 
@@ -397,6 +570,59 @@ function mentionsChecked(value, names) {
     if (pattern.test(value)) return true;
   }
   return false;
+}
+
+/**
+ * The variable an object literal is assigned to (`const payload = { … }`).
+ */
+function assignedVariable(masked, brace) {
+  const before = masked.slice(Math.max(0, brace - 160), brace);
+  const match =
+    /(?:^|[^\w$.])(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*(?::[^=]*?)?=\s*$/.exec(before);
+  return match ? match[1] : null;
+}
+
+/**
+ * Whether the name is used inside a page write call. That is what turns an
+ * object literal that is only *assigned* to a variable into a page write:
+ * the payload is handed to `page.create({ data })` further down.
+ */
+function usedInPageWrite(masked, name) {
+  const pattern = new RegExp(`(?<![.\\w$])${name}\\b`, "g");
+  let match;
+  while ((match = pattern.exec(masked)) !== null) {
+    if (enclosingCallees(masked, match.index).some((callee) => PAGE_WRITE.test(callee))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The Prisma relation form of a parent write — `parent: { connect: { id } }`
+ * writes the parent relation, and therefore `Page.parentId`, without ever
+ * naming the property. `parent: { disconnect: true }` clears it.
+ *
+ * Returns the span of the written id, or `"null"` for a disconnect.
+ */
+function relationWrite(masked, index) {
+  const colon = masked.indexOf(":", index);
+  if (colon < 0) return null;
+  const brace = masked.indexOf("{", colon);
+  if (brace < 0) return null;
+  const end = matchingClose(masked, brace);
+  if (end < 0) return null;
+  const body = masked.slice(brace + 1, end);
+  if (/^\s*disconnect\s*:\s*true\s*$/.test(body)) return { value: "null" };
+  const connect = /connect\s*:\s*\{/.exec(body);
+  if (!connect) return null;
+  const idBrace = brace + 1 + connect.index + connect[0].lastIndexOf("{");
+  const idEnd = matchingClose(masked, idBrace);
+  if (idEnd < 0) return null;
+  const id = /\bid\s*:/.exec(masked.slice(idBrace + 1, idEnd));
+  if (!id) return null;
+  const start = idBrace + 1 + id.index + id[0].length;
+  return { start, end: idEnd };
 }
 
 /* ------------------------------------------------------------------ the scan */
@@ -437,27 +663,68 @@ for (const path of collectFiles(root)) {
   const functions = namedFunctions(masked);
   const file = relative(".", path);
 
-  // `parentId: …` (key/value) and `parentId,` (the shorthand) are both writes.
+  // The candidates: `parentId: …` (key/value), `parentId,` (the shorthand)
+  // and `parent: { connect: { id } }` (the Prisma relation form).
+  const candidates = [];
   const properties = /(?:^|[{,\s(])parentId\b\s*(:?)/g;
   let match;
   while ((match = properties.exec(masked)) !== null) {
-    const index = match.index + match[0].length - "parentId".length;
-    const shorthand = match[1] !== ":";
+    candidates.push({
+      index: match.index + match[0].length - "parentId".length,
+      shorthand: match[1] !== ":",
+    });
+  }
+  const relations = /(?:^|[{,\s(])parent\b\s*:/g;
+  while ((match = relations.exec(masked)) !== null) {
+    const index = match.index + match[0].length - "parent".length;
+    const relation = relationWrite(masked, index);
+    if (!relation) continue;
+    candidates.push({ index, shorthand: false, relation });
+  }
+
+  for (const candidate of candidates) {
+    const index = candidate.index;
+    // A property of an object literal writes the parent; the same name as an
+    // argument (`nextPosition(workspaceId, parentId)`) only mentions it.
+    if (enclosingBracket(masked, index) !== "{") continue;
     const chain = keyChain(masked, index);
 
     // A read filter (`where`, `select`, …) is not a write.
     if (chain.some((key) => READ_KEYS.has(key))) continue;
 
-    const value = shorthand
-      ? "parentId"
-      : valueExpression(source, masked, match.index + match[0].length);
+    let value;
+    if (candidate.relation) {
+      value =
+        candidate.relation.value ??
+        source.slice(candidate.relation.start, candidate.relation.end).trim();
+    } else if (candidate.shorthand) {
+      value = "parentId";
+    } else {
+      value = valueExpression(source, masked, index + "parentId".length + 1);
+    }
     // A type annotation is not a value.
     if (TYPE_VALUE.test(value)) continue;
 
     // Is this a write of a *page* parent?
-    const paren = enclosingOpen(masked, index, "(", ")");
-    const callee = paren < 0 ? "" : calleeBefore(masked, paren);
-    const isPageWrite = PAGE_WRITE.test(callee) || hasPrismaPageType(masked, index);
+    let isPageWrite = enclosingCallees(masked, index).some((callee) => PAGE_WRITE.test(callee));
+    if (!isPageWrite) isPageWrite = hasPrismaPageType(masked, index);
+    if (!isPageWrite) {
+      // The payload may be built in a variable and handed to the write later.
+      let brace = enclosingOpen(masked, index, "{", "}");
+      while (brace >= 0) {
+        const variable = assignedVariable(masked, brace);
+        if (variable && usedInPageWrite(masked, variable)) {
+          isPageWrite = true;
+          break;
+        }
+        brace = enclosingOpen(masked, brace, "{", "}");
+      }
+    }
+    if (!isPageWrite) {
+      // … or by a helper that is called inside the write.
+      const builder = enclosingFunction(functions, index);
+      if (builder && usedInPageWrite(masked, builder.name)) isPageWrite = true;
+    }
     if (!isPageWrite) continue;
 
     const fn = enclosingFunction(functions, index);
@@ -474,6 +741,10 @@ for (const path of collectFiles(root)) {
       verdict = "allow-listed";
     } else if (value === "null") {
       verdict = "root";
+    } else if (RAW_REQUEST_VALUE.test(value)) {
+      // A raw request value in the expression — even next to a checked one
+      // (`parent.parentId ?? input.parentId`) — is a raw request value.
+      verdict = "unguarded";
     } else if (names.size > 0 && mentionsChecked(value, names)) {
       verdict = "guarded";
     } else {
