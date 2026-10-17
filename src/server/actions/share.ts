@@ -205,7 +205,17 @@ function recordUnlockFailure(token: string, now: number): void {
   sweepUnlockAttempts(now);
 }
 
-/** Drop stale entries and keep the store bounded. */
+/**
+ * Drop stale entries and keep the store bounded.
+ *
+ * The cap bounds the **number** of entries, not the length of a key: the key
+ * is the raw share token, so a caller controls how much a single entry costs
+ * (the token is a random 12-byte name, but the endpoint accepts whatever
+ * reaches it). The eviction drops the oldest entry, which may be a link that
+ * is currently locked — a flood of random tokens can therefore release one
+ * lock. That is the price of a bound, and it is the same trade-off the
+ * limiter's own store makes.
+ */
 function sweepUnlockAttempts(now: number): void {
   if (unlockAttempts.size >= UNLOCK_SWEEP_AT) {
     for (const [key, entry] of unlockAttempts) {

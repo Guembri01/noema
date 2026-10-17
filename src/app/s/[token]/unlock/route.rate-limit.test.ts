@@ -5,8 +5,8 @@ import { verifyShareUnlockToken } from "@/lib/secrets";
  * B44 - the share-link unlock endpoint is unauthenticated, so it needs the
  * same treatment as every other non-public route:
  *
- *  - `POST /s/<token>/unlock` is rate limited per share link, like the other
- *    routes use `rateLimit()`;
+ *  - `POST /s/<token]/unlock` is rate limited with a scope that names the
+ *    share link, like the other routes use `rateLimit()`;
  *  - failed password attempts are counted per share token, so a caller that
  *    rotates its forwarded ip still runs out of guesses;
  *  - a locked link compares no password at all (fail closed);
@@ -56,6 +56,16 @@ const PASSWORD = "correct-horse-battery-staple";
 const FIXED_NOW = 1_700_000_000_000;
 
 let route: RouteModule;
+
+/**
+ * Move the frozen clock forward. The lock window and the quiet window are
+ * published numbers (15 minutes, one hour), so they need a test that pins
+ * them: without it, shortening `UNLOCK_LOCK_MS` to a minute would leave the
+ * suite green.
+ */
+function at(ms: number): void {
+  vi.spyOn(Date, "now").mockReturnValue(FIXED_NOW + ms);
+}
 
 /** Fresh module per test: the limiter store and the attempt counter are module state. */
 async function loadFreshRoute(): Promise<void> {
@@ -180,6 +190,54 @@ describe("POST /s/<token>/unlock - brute force is throttled", () => {
     expect(other.headers.get("location")).toBe(
       `${ORIGIN}/s/tok_other?error=1`,
     );
+  });
+
+  it("holds the lock for 15 minutes and then lets a new attempt through", async () => {
+    for (let i = 0; i < 10; i += 1) {
+      expect((await post({ password: `guess-${i}`, ip: `10.0.4.${i}` })).status).toBe(303);
+    }
+    const locked = await post({ password: "guess", ip: "10.0.4.20" });
+    expect(locked.status).toBe(429);
+    expect(locked.headers.get("retry-after")).toBe("900");
+
+    // One second before the window is over, the link is still locked — and
+    // still no password is compared.
+    at(15 * 60_000 - 1_000);
+    const stillLocked = await post({ password: "guess", ip: "10.0.4.21" });
+    expect(stillLocked.status).toBe(429);
+    expect(auth.verifyPassword).toHaveBeenCalledTimes(10);
+
+    // At the end of the window the link is open again.
+    at(15 * 60_000);
+    expect((await post({ password: "guess", ip: "10.0.4.22" })).status).toBe(303);
+  });
+
+  it("keeps counting failures that are less than an hour apart", async () => {
+    for (let i = 0; i < 9; i += 1) {
+      await post({ password: `guess-${i}`, ip: `10.0.5.${i}` });
+    }
+    // A minute before the hour is up, the budget is still not restored: the
+    // tenth failure still locks the link. (Pinning the window from below as
+    // well keeps a shorter quiet window from passing unnoticed.)
+    at(59 * 60_000);
+    expect((await post({ password: "guess", ip: "10.0.5.20" })).status).toBe(303);
+    expect((await post({ password: "guess", ip: "10.0.5.21" })).status).toBe(429);
+  });
+
+  it("restores the budget after an hour of silence", async () => {
+    for (let i = 0; i < 9; i += 1) {
+      await post({ password: `guess-${i}`, ip: `10.0.6.${i}` });
+    }
+    // After an hour of silence the nine failures are forgotten: nine more
+    // failures lock the link, the tenth does not.
+    at(61 * 60_000);
+    for (let i = 0; i < 9; i += 1) {
+      await post({ password: `guess-${i}`, ip: `10.0.7.${i}` });
+    }
+    expect((await post({ password: "guess", ip: "10.0.7.20" })).status).toBe(303);
+    const locked = await post({ password: "guess", ip: "10.0.7.21" });
+    expect(locked.status).toBe(429);
+    expect(locked.headers.get("retry-after")).toBe("900");
   });
 
   it("clears the failure count after a successful unlock", async () => {

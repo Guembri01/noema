@@ -19,12 +19,13 @@ export async function POST(
   const origin = new URL(request.url).origin;
 
   // This endpoint is unauthenticated, so it needs the same rate limit as
-  // every other non-public route. The share token is not guessable, so it
-  // scopes the budget per link.
+  // every other non-public route.
   //
-  // The budget is scoped by the share token, so a caller that rotates its
-  // forwarded ip does not get a fresh budget. The attempt brake below is the
-  // second, token-bound limit that holds even if the scope key is guessed.
+  // The limiter's bucket is `share-unlock-<token>:<ip>`: the scope names the
+  // share link, the address part comes from the forwarding header. A caller
+  // that rotates its forwarded ip therefore *does* get a fresh rate-limit
+  // budget. The attempt brake below is the token-bound limit that holds
+  // across an ip rotation.
   const limited = rateLimit(request, `share-unlock-${token}`, 5, 60_000);
   if (limited) return limited;
 

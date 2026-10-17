@@ -133,7 +133,7 @@ Source: [`src/lib/api-guard.ts`](../src/lib/api-guard.ts) +
 rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
 ```
 
-- Fixed-window, **in-memory** (a plain map), keyed
+- Fixed-window, **in-memory** (`Map`), keyed
   `scope:firstXForwardedForHop` with fallback to `x-real-ip` then the
   literal `local` (→ every loopback caller shares one bucket when no proxy
   headers are set). Single-node only; the file header says to swap in Redis
@@ -965,10 +965,12 @@ public · rate scope `share-unlock-<token>` (5/min) · attempt brake per share l
 Form body: `password`. Delegates to `attemptShareUnlock(token, password)`
 (`src/server/actions/share.ts`).
 
-Two brakes guard the password, and **both are keyed by the share token**:
+Two brakes guard the password: the rate limit's **scope** names the share
+link, the attempt counter is **keyed** by it.
 
 1. **Rate limit** — scope `share-unlock-<token>`, 5 requests per minute
-   (`src/lib/api-guard.ts`). The bucket key is `share-unlock-<token>:<ip>`.
+   (`src/lib/api-guard.ts`). The bucket key is `share-unlock-<token>:<ip>`,
+   so a caller that rotates its forwarded ip gets a fresh rate-limit budget.
 2. **Attempt counter** — `attemptShareUnlock` counts failed attempts per
    share token, so rotating the forwarded ip does not reset the budget:
    10 failed attempts lock the link for 15 minutes, the budget is restored
