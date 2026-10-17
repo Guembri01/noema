@@ -44,6 +44,14 @@ cookie routes and a session cookie is not accepted by `/api/v1/*`).
 - Storage: only the SHA-256 hash (`tokenHash`, unique column) is persisted;
   comparison is timing-safe, and `lastUsedAt` is bumped on every call.
   Missing/malformed header or unknown token → `401 {"error":"Unauthorized"}`.
+- **Every token carries a deadline** (`expiresAt`, read in the same query that
+  verifies the token). A token past its deadline is refused exactly like an
+  unknown one — `401 {"error":"Unauthorized"}`, no hint that it once existed —
+  and its `lastUsedAt` is not touched. A token minted by the app gets the
+  default lifetime of **90 days** (`API_TOKEN_LIFETIME_MS`); a row without a
+  deadline (`expiresAt` is null) never expires, but nothing in the app mints
+  one. The deadline is also in the token list of the settings UI, as a badge
+  (how long it still lives; **Expired** once it is past).
 - The resolver returns the **granted scopes** next to the user id, read from
   the same query that verifies the token. Every `/api/v1/*` route enforces
   them (§6) with `hasScope()` from
@@ -64,13 +72,16 @@ cookie routes and a session cookie is not accepted by `/api/v1/*`).
    the one place where a token row is written): mints `noema_${randomToken(24)}`,
    stores `hashApiToken(token)` with a label (≤60 chars, default `"API token"`)
    **and the granted scopes** (`expandScopes(scopes)` — the picked list plus
-   everything it implies, so `write:pages` also grants `read:pages`), and
-   returns the **plaintext exactly once** (`{ token }`) — it is never
-   retrievable again. The scope picker sends the picked scopes along; a list
-   with an unknown or malformed entry is rejected as a whole
-   (`{ error: "Invalid scopes." }`).
+   everything it implies, so `write:pages` also grants `read:pages`), writes the
+   **deadline** (`expiresAt`, 90 days from now) and returns the **plaintext
+   exactly once** (`{ token }`) — it is never retrievable again. The scope
+   picker sends the picked scopes along; a list with an unknown or malformed
+   entry is rejected as a whole (`{ error: "Invalid scopes." }`).
 3. "Revoke" calls `revokeApiTokenAction(id)` → deletes the row scoped to the
-   current user (`{ ok: true }` or `{ error: "Token not found." }`).
+   current user (`{ ok: true }` or `{ error: "Token not found." }`). A deleted
+   row cannot authenticate, so the token is dead at once; the revoke leaves no
+   audit trail of its own — the deadline is what bounds a token that is
+   *not* revoked.
 
 A token created without a single picked scope carries an **empty grant**: it is
 refused with `403 insufficient_scope` by every `/api/v1/*` route and has to be
@@ -78,9 +89,9 @@ re-created with the scopes it needs. The token list marks such a row as
 **No access**.
 
 Tokens are also minted by the OAuth flow (§10) — same `ApiToken` table, named
-`OAuth: <app name>`. The OAuth **client secret** follows the same rule as the
-token itself: only its SHA-256 digest is persisted (`clientSecretHash`), the
-plaintext is shown once at registration (§10).
+`OAuth: <app name>`, with the same 90-day deadline. The OAuth **client secret**
+follows the same rule as the token itself: only its SHA-256 digest is persisted
+(`clientSecretHash`), the plaintext is shown once at registration (§10).
 
 ### 1.3 Cron secret (`/api/cron/templates`)
 
@@ -863,7 +874,8 @@ Form body: `grant_type=authorization_code`, `code`, `client_id`,
 **200**
 ```json
 { "access_token": "noema_<24 chars>", "token_type": "Bearer",
-  "scope": "read:pages write:pages read:databases write:databases …" }
+  "scope": "read:pages write:pages read:databases write:databases …",
+  "expires_in": 7776000 }
 ```
 | Error | Body |
 |---|---|
@@ -887,6 +899,13 @@ by the API. The OAuth flow negotiates no scopes yet (the consent screen offers
 no picker), so the list is fixed: every read and write scope of the catalogue
 ([`src/lib/api-token-scope.ts`](../src/lib/api-token-scope.ts)), without
 `admin:workspace`.
+
+The minted token carries the **same deadline** as a token the settings UI
+mints: `expires_in` (RFC 6749 §5.1) is the lifetime in seconds — 90 days — and
+the row's `expiresAt` is that instant. A token past its deadline is refused
+with `401 {"error":"Unauthorized"}` like an unknown one. There is no refresh
+token in the flow, so a third-party app re-runs the authorization once its
+access token has expired.
 
 **How the exchange is verified.** The client secret is compared against the
 stored digest in constant time — the digest is looked up by `clientId`, the
