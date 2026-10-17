@@ -5,6 +5,10 @@
 // files follow is not a control — so every shape that slips past the gate
 // lives here as a fixture, and the gate has to report it.
 //
+// B106 — the second channel of the same convention: a `window.open` call
+// opens a new tab without a `rel`, so the tokens have to travel in the
+// feature string. The fixtures below cover that channel as well.
+//
 // The fixtures below are the shapes that were measured: the link that writes
 // only `noreferrer` (the finding itself), the link that writes no `rel` at
 // all, the link that names one token only, the conditional `target` that a
@@ -173,6 +177,62 @@ export function Probe() {
     file: "src/probe.test.tsx",
     source: `export function Probe() {
   return <a href="https://x.test" target="_blank">x</a>;
+}
+`,
+    clean: true,
+  },
+  {
+    name: "a window.open without `noreferrer` is reported (B106)",
+    file: "src/probe.ts",
+    source: `export function open(href: string) {
+  window.open(href, "_blank", "noopener");
+}
+`,
+    expect: 'window.open(href, "_blank", "noopener") is missing noreferrer',
+  },
+  {
+    name: "a window.open without a feature string is reported",
+    file: "src/probe.ts",
+    source: `export function open(href: string) {
+  window.open(href, "_blank");
+}
+`,
+    expect: 'window.open(href, "_blank") is missing noopener and noreferrer',
+  },
+  {
+    name: "a window.open with a feature string the gate cannot read fails closed",
+    file: "src/probe.ts",
+    source: `const FEATURES = "noopener,noreferrer";
+
+export function open(href: string) {
+  window.open(href, "_blank", FEATURES);
+}
+`,
+    expect: 'window.open(href, "_blank", FEATURES) is missing noopener and noreferrer',
+  },
+  {
+    name: "a window.open with a conditional target is scanned",
+    file: "src/probe.ts",
+    source: `export function open(href: string, newTab: boolean) {
+  window.open(href, newTab ? "_blank" : "_self", "noopener");
+}
+`,
+    expect: 'window.open(href, newTab ? "_blank" : "_self", "noopener") is missing noreferrer',
+  },
+  {
+    name: "a window.open with both features is accepted",
+    file: "src/probe.ts",
+    source: `export function open(href: string) {
+  window.open(href, "_blank", "noopener,noreferrer");
+}
+`,
+    clean: true,
+  },
+  {
+    name: "a window.open that does not open a new tab is not scanned",
+    file: "src/probe.ts",
+    source: `export function open(href: string) {
+  window.open(href, "_self", "noopener");
 }
 `,
     clean: true,
