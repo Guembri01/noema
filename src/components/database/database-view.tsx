@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   useTransition,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { PromptDialog } from "@/components/prompt-dialog";
@@ -49,6 +50,7 @@ import {
   toggleSchemaLockAction,
   updatePageAction } from "@/server/actions/pages";
 import { cn } from "@/lib/utils";
+import { DUR, Z } from "@/lib/design-tokens";
 import { toast } from "sonner";
 import {
   applyView,
@@ -108,6 +110,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
+  OPTION_COLORS,
   type DBProperty,
   type DBRow,
   type DBView } from "@/components/database/database-types";
@@ -692,6 +695,19 @@ export function DatabaseView({
   const [editingProperty, setEditingProperty] = useState<string | null>(null);
   const [optionsEditor, setOptionsEditor] = useState<DBProperty | null>(null);
   const [peek, setPeek] = useState<DBRow | null>(null);
+  /**
+   * The side peek slides in once and mirrors out; it is kept mounted through the
+   * exit (`peekMounted`/`peekEntered`) instead of unmounting mid-frame, which is
+   * what made the drawer flicker while the open row was re-rendered. Keyed on
+   * the row id so handing back an equal row never replays the entrance.
+   */
+  const [peekMounted, setPeekMounted] = useState(false);
+  const [peekEntered, setPeekEntered] = useState(false);
+  // Retains the last opened row so the panel can animate out after `peek` clears.
+  const peekRowRef = useRef<DBRow | null>(null);
+  if (peek) peekRowRef.current = peek;
+  const shownPeek = peek ?? peekRowRef.current;
+  const peekId = peek?.id ?? null;
   const [deletedRows, setDeletedRows] = useState<
     { id: string; title: string; icon: string | null; deletedAt: string }[] | null
   >(null);
@@ -711,6 +727,21 @@ export function DatabaseView({
   useEffect(() => {
     setSchemaLockedState(schemaLocked);
   }, [schemaLocked]);
+
+  // Play the peek entrance once per row, then replay the mirror on close:
+  // `entered` drives `animate-slide-in-right`, and clearing it drives the token
+  // exit transition. The panel unmounts only after `--dur-3` has elapsed, so it
+  // never disappears mid-frame (the flicker the hand-rolled drawer had).
+  useEffect(() => {
+    if (peekId) {
+      setPeekMounted(true);
+      const raf = requestAnimationFrame(() => setPeekEntered(true));
+      return () => cancelAnimationFrame(raf);
+    }
+    setPeekEntered(false);
+    const timer = setTimeout(() => setPeekMounted(false), DUR.slow);
+    return () => clearTimeout(timer);
+  }, [peekId]);
 
   // The open tab is part of the view state: remember it per database so a
   // reload lands on the same tab instead of always resetting to the first one.
@@ -1743,7 +1774,7 @@ export function DatabaseView({
               aria-current={view.id === activeView.id ? "true" : undefined}
               onClick={() => selectView(view.id)}
               className={cn(
-                "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm",
+                "focus-ring u-colors flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm",
                 view.id === activeView.id
                   ? "-mb-px border-fg font-medium text-fg"
                   : "border-transparent text-muted hover:text-fg",
@@ -1759,7 +1790,7 @@ export function DatabaseView({
                     type="button"
                     aria-label={t(locale, "dbViewMenu")}
                     title={t(locale, "dbViewMenu")}
-                    className="-mb-px flex items-center justify-center rounded px-1.5 py-1.5 text-muted hover:bg-surface-2"
+                    className="-mb-px flex items-center justify-center rounded px-1.5 py-1.5 text-muted hover:bg-surface-2 focus-ring u-colors"
                   >
                     <Ellipsis className="h-3.5 w-3.5" />
                   </button>
@@ -1799,7 +1830,7 @@ export function DatabaseView({
               <button
                 type="button"
                 aria-label={t(locale, "addViewAria")}
-                className="-mb-px ml-1 flex items-center justify-center rounded px-2 py-1.5 text-muted hover:bg-surface-2"
+                className="-mb-px ml-1 flex items-center justify-center rounded px-2 py-1.5 text-muted hover:bg-surface-2 focus-ring u-colors"
               >
                 <Plus className="h-4 w-4" />
               </button>
@@ -1841,7 +1872,7 @@ export function DatabaseView({
             title={t(locale, "breadcrumbHint")}
             onClick={() => setNestSubItems((value) => !value)}
             className={cn(
-              "flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
+              "focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
               nestSubItems && "bg-surface-2 text-fg",
             )}
           >
@@ -1877,7 +1908,7 @@ export function DatabaseView({
               title={describeLock(lockState)}
               onClick={toggleSchemaLock}
               className={cn(
-                "flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
+                "focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
                 schemaLockedState && "bg-surface-2 text-fg",
               )}
             >
@@ -1909,7 +1940,7 @@ export function DatabaseView({
                   ? `${t(locale, "newRow")} — ${defaultTemplate.name}`
                   : undefined
               }
-              className="flex items-center gap-1 rounded bg-accent px-2.5 py-1 text-sm text-accent-fg hover:opacity-90"
+              className="focus-ring u-colors flex items-center gap-1 rounded bg-accent px-2.5 py-1 text-sm text-accent-fg hover:opacity-90"
             >
               <Plus className="h-4 w-4" />
               {t(locale, "newRow")}
@@ -1937,7 +1968,7 @@ export function DatabaseView({
                 <button
                   type="button"
                   aria-label={t(locale, "chooseTemplate")}
-                  className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
+                  className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
                 >
                   <LayoutTemplate className="h-4 w-4" />
                   {t(locale, "templates")}
@@ -1994,7 +2025,7 @@ export function DatabaseView({
                       </DropdownMenuSub>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
-                        className="text-red-600 dark:text-red-400"
+                        className="text-danger"
                         onSelect={() =>
                           startTransition(async () => {
                             const result = await deleteTemplateAction(template.id);
@@ -2017,7 +2048,7 @@ export function DatabaseView({
             <button
               type="button"
               onClick={() => setAddingProperty((v) => !v)}
-              className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
+              className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
             >
               <Plus className="h-4 w-4" />
               {t(locale, "newProperty")}
@@ -2027,7 +2058,7 @@ export function DatabaseView({
             <button
               type="button"
               onClick={duplicateDatabase}
-              className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
+              className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
             >
               <Copy className="h-4 w-4" />
               {t(locale, "duplicate")}
@@ -2036,7 +2067,7 @@ export function DatabaseView({
           <a
             href={`/api/export/database/${databasePageId}`}
             download
-            className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
+            className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
           >
             <Download className="h-4 w-4" />
             {t(locale, "exportCsv")}
@@ -2046,7 +2077,7 @@ export function DatabaseView({
               <button
                 type="button"
                 onClick={() => csvInputRef.current?.click()}
-                className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
+                className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
               >
                 <Upload className="h-4 w-4" />
                 {t(locale, "importCsv")}
@@ -2118,7 +2149,7 @@ export function DatabaseView({
               type="button"
               aria-label={t(locale, "close")}
               onClick={() => setDeletedRows(null)}
-              className="text-muted hover:text-fg"
+              className="focus-ring u-colors rounded-sm text-muted hover:text-fg"
             >
               <X className="h-4 w-4" />
             </button>
@@ -2142,7 +2173,7 @@ export function DatabaseView({
                     <button
                       type="button"
                       onClick={() => restoreRow(row.id)}
-                      className="flex items-center gap-1 rounded px-2 py-1 text-xs text-accent hover:bg-surface-2"
+                      className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-xs text-accent hover:bg-surface-2"
                     >
                       <RotateCcw className="h-3.5 w-3.5" /> {t(locale, "restore")}
                     </button>
@@ -2300,150 +2331,132 @@ export function DatabaseView({
         />
       )}
 
-      {peek && (
-        <aside
-          className="fixed inset-y-0 right-0 z-40 w-[26rem] overflow-y-auto border-l border-border bg-bg p-5 shadow-2xl"
-          aria-label={t(locale, "rowLabel")}
-        >
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted">
-              {t(locale, "rowLabel")}
-            </p>
-            <div className="flex items-center gap-3">
-              <Link
-                href={`/w/${workspaceSlug}/${peek.id}`}
-                title={t(locale, "openAsPage")}
-                // Navigating away should not leave the drawer hanging over the
-                // row's page.
-                onClick={() => setPeek(null)}
-                className="text-xs text-accent hover:underline"
-              >
-                {t(locale, "openAsPage")}
-              </Link>
-              <button
-                type="button"
-                aria-label={t(locale, "closeSidePeek")}
-                onClick={() => setPeek(null)}
-                className="text-muted hover:text-fg"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-          <h2 className="mb-4 text-xl font-semibold">
-            {peek.icon ? `${peek.icon} ` : ""}
-            {peek.title || t(locale, "untitled")}
-          </h2>
-          {/* R89.31 — the open row's dependency indicator: what blocks it and
-              what it blocks, resolved to titles where the view has them. Blank
-              (and rendered nothing) until the caller supplies edges. */}
-          {dependencySummary(peek.id) !== "" && (
-            <p className="mb-2 flex items-center gap-1.5 text-xs text-muted">
-              <Ban className="h-3.5 w-3.5" aria-hidden />
-              <span>{dependencySummary(peek.id)}</span>
-            </p>
-          )}
-          {(dependencyGraph.nodes.get(peek.id)?.blockedBy.length ?? 0) > 0 && (
-            <p className="mb-2 text-xs text-muted">
-              {t(locale, "relationBlockedBy")}:{" "}
-              {(dependencyGraph.nodes.get(peek.id)?.blockedBy ?? [])
-                .map((id) => rowsById.get(id)?.title ?? id)
-                .join(", ")}
-            </p>
-          )}
-          {/* R89.30 — sub-issue controls: fold children, read the rolled-up
-              estimate/done state, or promote a nested row to the top level.
-              No-ops until rows carry a `parentId`. */}
-          {nestSubItems && subItemChildrenOf(effectiveSubItemRows, peek.id).length > 0 && (
-            <button
-              type="button"
-              onClick={() => toggleSubItemCollapse(peek.id)}
-              className="mb-2 flex items-center gap-1.5 text-xs text-accent hover:underline"
-            >
-              <ChevronRight
-                className={cn(
-                  "h-3.5 w-3.5 transition-transform",
-                  !collapsedSubItemIds.has(peek.id) && "rotate-90",
-                )}
-              />
-              {collapsedSubItemIds.has(peek.id)
-                ? t(locale, "toggleExpand")
-                : t(locale, "toggleCollapse")}{" "}
-              ({subItemChildrenOf(effectiveSubItemRows, peek.id).length}{" "}
-              {t(locale, "subTicketMany")})
-            </button>
-          )}
-          {nestSubItems && subIssueRollupText(peek.id) !== null && (
-            <p className="mb-2 text-xs text-muted">{subIssueRollupText(peek.id)}</p>
-          )}
-          {nestSubItems &&
-            effectiveSubItemRows.find((row) => row.id === peek.id)?.parentId != null && (
-              <button
-                type="button"
-                aria-label={t(locale, "subticketsHeading")}
-                title={t(locale, "subticketsHeading")}
-                onClick={() => promoteSubIssue(peek.id)}
-                className="mb-2 flex items-center gap-1.5 text-xs text-accent hover:underline"
-              >
-                ↥
-              </button>
+      {peekMounted && shownPeek !== null && (
+        <>
+          {/* Token scrim: `--overlay` at `Z.overlay`, fading with `--dur-3`. */}
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-hidden="true"
+            data-testid="peek-scrim"
+            onClick={() => setPeek(null)}
+            className={peekScrimClass()}
+            style={peekScrimStyle(peekEntered)}
+          />
+          {/* `.surface-raised` supplies bg + border + `--shadow-2` + radius; the
+              panel rides `animate-slide-in-right` in and mirrors that out. */}
+          <aside
+            data-testid="peek-drawer"
+            data-state={peekEntered ? "open" : "closed"}
+            role="dialog"
+            aria-modal="false"
+            aria-label={t(locale, "rowLabel")}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setPeek(null);
+            }}
+            className={cn(
+              "surface-raised scrollbar-thin fixed inset-y-0 right-0 w-[26rem] overflow-y-auto p-5 outline-none",
+              "focus-ring",
+              peekPanelClass(peekEntered),
             )}
-          {mutualRelationsFor(peek.id) > 0 && (
-            <p className="mb-2 text-xs text-muted">
-              ↔ {mutualRelationsFor(peek.id)} {t(locale, "relationsHeading")}
-            </p>
-          )}
-          {/* Properties panel: one labelled row per property, editable in
-              place — computed values (formula, rollup, system) stay read-only. */}
-          <dl className="divide-y divide-border border-t border-border text-sm">
-            {properties.map((property) => {
-              const computed = computedFor(peek, property);
-              const isPrimary = property.id === primary?.id;
-              return (
-                <div
-                  key={property.id}
-                  className="grid grid-cols-[7.5rem_1fr] items-start gap-3 py-2"
+            style={peekPanelStyle(peekEntered)}
+          >
+            <PeekHeader
+              row={shownPeek}
+              locale={locale}
+              workspaceSlug={workspaceSlug}
+              rowColor={colorOf(shownPeek)}
+              onClose={() => setPeek(null)}
+            />
+            <h2 className="mb-4 text-xl font-semibold">
+              {shownPeek.icon ? `${shownPeek.icon} ` : ""}
+              {shownPeek.title || t(locale, "untitled")}
+            </h2>
+            {/* R89.31 — the open row's dependency indicator: what blocks it and
+                what it blocks, resolved to titles where the view has them. Blank
+                (and rendered nothing) until the caller supplies edges. */}
+            {dependencySummary(shownPeek.id) !== "" && (
+              <p className="mb-2 flex items-center gap-1.5 text-xs text-muted">
+                <Ban className="h-3.5 w-3.5" aria-hidden />
+                <span>{dependencySummary(shownPeek.id)}</span>
+              </p>
+            )}
+            {(dependencyGraph.nodes.get(shownPeek.id)?.blockedBy.length ?? 0) > 0 && (
+              <p className="mb-2 text-xs text-muted">
+                {t(locale, "relationBlockedBy")}:{" "}
+                {(dependencyGraph.nodes.get(shownPeek.id)?.blockedBy ?? [])
+                  .map((id) => rowsById.get(id)?.title ?? id)
+                  .join(", ")}
+              </p>
+            )}
+            {/* R89.30 — sub-issue controls: fold children, read the rolled-up
+                estimate/done state, or promote a nested row to the top level.
+                No-ops until rows carry a `parentId`. */}
+            {nestSubItems &&
+              subItemChildrenOf(effectiveSubItemRows, shownPeek.id).length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => toggleSubItemCollapse(shownPeek.id)}
+                  className="focus-ring u-colors mb-2 flex items-center gap-1.5 rounded-sm text-xs text-accent hover:underline"
                 >
-                  <dt
-                    className="flex items-center gap-1.5 truncate text-muted"
-                    title={property.name}
-                  >
-                    <span aria-hidden>{propertyIcon(property.type)}</span>
-                    <span className="truncate">{property.name}</span>
-                  </dt>
-                  <dd className="min-w-0">
-                    {isPrimary ? (
-                      <input
-                        defaultValue={peek.title}
-                        aria-label={t(locale, "nameLabel")}
-                        readOnly={!editable}
-                        placeholder={t(locale, "untitled")}
-                        onBlur={(event) =>
-                          event.target.value !== peek.title &&
-                          setPrimary(peek, event.target.value)
-                        }
-                        className="w-full bg-transparent outline-none placeholder:text-muted"
-                      />
-                    ) : computed !== undefined ? (
-                      <span className="text-muted">{computed}</span>
-                    ) : (
-                      <Cell
-                        locale={locale}
-                        property={property}
-                        value={valueFor(peek, property.id)}
-                        relationOptions={relationOptionsFor(property.id)}
-                        peopleOptions={members ?? []}
-                        workspaceId={workspaceId}
-                        editable={editable}
-                        onChange={(value) => setValue(peek.id, property.id, value)}
-                      />
+                  <ChevronRight
+                    className={cn(
+                      "h-3.5 w-3.5 transition-transform",
+                      !collapsedSubItemIds.has(shownPeek.id) && "rotate-90",
                     )}
-                  </dd>
-                </div>
-              );
-            })}
-          </dl>
-        </aside>
+                  />
+                  {collapsedSubItemIds.has(shownPeek.id)
+                    ? t(locale, "toggleExpand")
+                    : t(locale, "toggleCollapse")}{" "}
+                  ({subItemChildrenOf(effectiveSubItemRows, shownPeek.id).length}{" "}
+                  {t(locale, "subTicketMany")})
+                </button>
+              )}
+            {nestSubItems && subIssueRollupText(shownPeek.id) !== null && (
+              <p className="mb-2 text-xs text-muted">{subIssueRollupText(shownPeek.id)}</p>
+            )}
+            {nestSubItems &&
+              effectiveSubItemRows.find((entry) => entry.id === shownPeek.id)?.parentId !=
+                null && (
+                <button
+                  type="button"
+                  aria-label={t(locale, "subticketsHeading")}
+                  title={t(locale, "subticketsHeading")}
+                  onClick={() => promoteSubIssue(shownPeek.id)}
+                  className="focus-ring u-colors mb-2 flex items-center gap-1.5 rounded-sm text-xs text-accent hover:underline"
+                >
+                  ↥
+                </button>
+              )}
+            {mutualRelationsFor(shownPeek.id) > 0 && (
+              <p className="mb-2 text-xs text-muted">
+                ↔ {mutualRelationsFor(shownPeek.id)} {t(locale, "relationsHeading")}
+              </p>
+            )}
+            {/* Properties panel: one labelled row per property, editable in
+                place — computed values (formula, rollup, system) stay read-only.
+                Each row carries the same hover tint + rail as a table body row. */}
+            <dl className="divide-y divide-border border-t border-border text-sm">
+              {properties.map((property) => (
+                <PeekRow
+                  key={property.id}
+                  locale={locale}
+                  property={property}
+                  row={shownPeek}
+                  isPrimary={property.id === primary?.id}
+                  computed={computedFor(shownPeek, property)}
+                  value={valueFor(shownPeek, property.id)}
+                  relationOptions={relationOptionsFor(property.id)}
+                  peopleOptions={members ?? []}
+                  workspaceId={workspaceId}
+                  editable={editable}
+                  onChange={(value) => setValue(shownPeek.id, property.id, value)}
+                  onRenamePrimary={(text) => setPrimary(shownPeek, text)}
+                />
+              ))}
+            </dl>
+          </aside>
+        </>
       )}
 
       <Dialog
@@ -2545,6 +2558,210 @@ export function DatabaseView({
         }}
         onClose={() => setPromptState(null)}
       />
+    </div>
+  );
+}
+
+/*
+ * dw07 — the side peek's design-system layer.
+ *
+ * The peek used to be a hand-rolled `<aside>`: a raw `z-40`, a legacy
+ * `shadow-2xl`, and no scrim, entrance or exit. It now speaks the same
+ * vocabulary as every other overlay in the app:
+ *  - colour from tokens — the scrim is `--overlay` (`bg-overlay`), the panel
+ *    `.surface-raised` (`--shadow-2` + `--radius-lg`);
+ *  - layering from `Z.*` — scrim `Z.overlay`, panel `Z.modal`;
+ *  - motion from tokens — the panel enters on the named
+ *    `animate-slide-in-right` and mirrors it out on `--dur-3` / `--ease-smooth`,
+ *    while the scrim merely fades.
+ *
+ * The mappings are pure so the node tests can pin them without a browser.
+ */
+
+/**
+ * The tint a hovered/selected row shares between the table body
+ * (`view-renderers.tsx`) and the peek, so the two surfaces read as one.
+ */
+export const ROW_HOVER_TINT = "hover:bg-surface-2/60";
+
+/** The rail the open row carries when it has no colour of its own. */
+export const ROW_ACCENT_RAIL = "3px solid var(--accent)";
+
+/** The peek scrim: a fixed `--overlay` wash at `Z.overlay`. */
+export function peekScrimClass(): string {
+  return "fixed inset-0 bg-overlay u-colors";
+}
+
+/** The scrim's fade — token-only, so reduced-motion neutralises it globally. */
+export function peekScrimStyle(entered: boolean): CSSProperties {
+  return {
+    zIndex: Z.overlay,
+    opacity: entered ? 1 : 0,
+    transition: "opacity var(--dur-3) var(--ease-smooth)",
+  };
+}
+
+/** The entrance: the design system's named right-drawer animation. */
+export function peekPanelClass(entered: boolean): string {
+  return entered ? "animate-slide-in-right" : "";
+}
+
+/**
+ * The panel's inline motion. While open the named animation owns the transform;
+ * on the way out the exact mirror (`translateX(8px)` + fade) replays on the
+ * `--dur-3` token — no ad-hoc millisecond anywhere, and `Z.modal` either way.
+ */
+export function peekPanelStyle(entered: boolean): CSSProperties {
+  if (entered) return { zIndex: Z.modal };
+  return {
+    zIndex: Z.modal,
+    transform: "translateX(8px)",
+    opacity: 0,
+    transition:
+      "transform var(--dur-3) var(--ease-smooth), opacity var(--dur-3) var(--ease-smooth)",
+  };
+}
+
+/**
+ * The rail colour for a row: the table body's stripe hue when the row carries a
+ * colour (the same `OPTION_COLORS` map `view-renderers.tsx` uses), otherwise the
+ * accent token — so the peek's selected rail always matches the table.
+ */
+export function peekRail(rowColor?: string | null): string {
+  return rowColor ? `3px solid ${OPTION_COLORS[rowColor] ?? rowColor}` : ROW_ACCENT_RAIL;
+}
+
+/** A peek row's shared treatment: the table body tint + a colour transition. */
+export function peekRowClass(): string {
+  return cn("u-colors rounded-sm", ROW_HOVER_TINT);
+}
+
+/**
+ * The peek header — the open row's identity, carrying the same tint + accent
+ * rail as a hovered/selected table body row, plus the focus-ringed
+ * "Open as page" and close affordances. The rename affordance is the primary
+ * title {@link PeekRow} below.
+ */
+export function PeekHeader({
+  row,
+  locale,
+  workspaceSlug,
+  rowColor,
+  onClose,
+}: {
+  row: DBRow;
+  locale: string;
+  workspaceSlug: string;
+  rowColor: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <header
+      data-testid="peek-header"
+      className={cn(
+        "-mx-1 mb-4 flex items-center justify-between gap-3 rounded-sm py-1 pe-1 ps-3",
+        peekRowClass(),
+      )}
+      style={{ borderInlineStart: peekRail(rowColor) }}
+    >
+      <p className="text-xs font-medium uppercase tracking-wide text-muted">
+        {t(locale, "rowLabel")}
+      </p>
+      <div className="flex items-center gap-3">
+        <Link
+          href={`/w/${workspaceSlug}/${row.id}`}
+          title={t(locale, "openAsPage")}
+          // Navigating away should not leave the drawer hanging over the row's page.
+          onClick={onClose}
+          className="focus-ring u-colors rounded-sm text-xs text-accent hover:underline"
+        >
+          {t(locale, "openAsPage")}
+        </Link>
+        <button
+          type="button"
+          aria-label={t(locale, "closeSidePeek")}
+          onClick={onClose}
+          className="focus-ring u-colors rounded-sm text-muted hover:text-fg"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </header>
+  );
+}
+
+/**
+ * One labelled property row in the peek. Computed (formula/rollup/system)
+ * values stay read-only, and the primary property edits the row title in place
+ * — exactly as the panel did inline. Carries {@link peekRowClass} so it shares
+ * the table body's row treatment.
+ */
+export function PeekRow({
+  locale,
+  property,
+  row,
+  isPrimary,
+  computed,
+  value,
+  relationOptions,
+  peopleOptions,
+  workspaceId,
+  editable,
+  onChange,
+  onRenamePrimary,
+}: {
+  locale: string;
+  property: DBProperty;
+  row: DBRow;
+  isPrimary: boolean;
+  computed: string | undefined;
+  value: unknown;
+  relationOptions: { id: string; title: string; icon: string | null }[];
+  peopleOptions: { id: string; name: string }[];
+  workspaceId: string;
+  editable: boolean;
+  onChange: (value: unknown) => void;
+  onRenamePrimary: (text: string) => void;
+}) {
+  return (
+    <div
+      data-testid={`peek-row-${property.id}`}
+      className={cn(
+        "-mx-1 grid grid-cols-[7.5rem_1fr] items-start gap-3 rounded-sm px-1 py-2",
+        peekRowClass(),
+      )}
+    >
+      <dt className="flex items-center gap-1.5 truncate text-muted" title={property.name}>
+        <span aria-hidden>{propertyIcon(property.type)}</span>
+        <span className="truncate">{property.name}</span>
+      </dt>
+      <dd className="min-w-0">
+        {isPrimary ? (
+          <input
+            defaultValue={row.title}
+            aria-label={t(locale, "nameLabel")}
+            readOnly={!editable}
+            placeholder={t(locale, "untitled")}
+            onBlur={(event) =>
+              event.target.value !== row.title && onRenamePrimary(event.target.value)
+            }
+            className="focus-ring u-colors w-full rounded-sm bg-transparent outline-none placeholder:text-muted"
+          />
+        ) : computed !== undefined ? (
+          <span className="text-muted">{computed}</span>
+        ) : (
+          <Cell
+            locale={locale}
+            property={property}
+            value={value}
+            relationOptions={relationOptions}
+            peopleOptions={peopleOptions}
+            workspaceId={workspaceId}
+            editable={editable}
+            onChange={onChange}
+          />
+        )}
+      </dd>
     </div>
   );
 }
