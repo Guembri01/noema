@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MIN_AUTH_SECRET_LENGTH } from "./auth-secret";
 import {
   DEFAULT_NODE_MAJOR,
   EDITION_FEATURES,
@@ -34,7 +35,7 @@ import {
 /** A complete, healthy env for the two required descriptors. */
 const GOOD_ENV: Record<string, string> = {
   DATABASE_URL: "postgresql://noema:noema@localhost:5433/noema?schema=public",
-  AUTH_SECRET: "0123456789abcdef0123456789abcdef",
+  AUTH_SECRET: "4f8a1c9e2b7d3056f8a1c9e2b7d3056f4f8a1c9e2b7d3056f8a1c9e2b7d3056f",
 };
 
 /** Probe map where every declared service is reachable. */
@@ -157,7 +158,7 @@ describe("checkReadiness", () => {
     const entry = report.missing.find((item) => item.name === "AUTH_SECRET");
     expect(entry).toBeDefined();
     expect(entry?.reason).toContain("short");
-    expect(entry?.reason).toContain(String(MIN_SECRET_LENGTH));
+    expect(entry?.reason).toContain(String(MIN_AUTH_SECRET_LENGTH));
   });
 
   it("rejects placeholder secret values", () => {
@@ -239,14 +240,16 @@ describe("validateEnvFile", () => {
     "# Noema environment",
     "",
     "DATABASE_URL=postgresql://noema:noema@localhost:5433/noema",
-    'AUTH_SECRET="0123456789abcdef0123456789abcdef"',
+    'AUTH_SECRET="4f8a1c9e2b7d3056f8a1c9e2b7d3056f4f8a1c9e2b7d3056f8a1c9e2b7d3056f"',
     "SMTP_HOST=smtp.example.com",
   ].join("\n");
 
   it("parses keys and values, stripping surrounding quotes", () => {
     const report = validateEnvFile(FILE);
     expect(report.values.DATABASE_URL).toBe("postgresql://noema:noema@localhost:5433/noema");
-    expect(report.values.AUTH_SECRET).toBe("0123456789abcdef0123456789abcdef");
+    expect(report.values.AUTH_SECRET).toBe(
+      "4f8a1c9e2b7d3056f8a1c9e2b7d3056f4f8a1c9e2b7d3056f8a1c9e2b7d3056f",
+    );
     expect(report.ok).toBe(true);
     expect(report.issues).toEqual([]);
   });
@@ -260,10 +263,12 @@ describe("validateEnvFile", () => {
 
   it("accepts an `export` prefix", () => {
     const report = validateEnvFile(
-      "export DATABASE_URL=postgresql://noema@db\nAUTH_SECRET=0123456789abcdef",
+      "export DATABASE_URL=postgresql://noema@db\nAUTH_SECRET=4f8a1c9e2b7d3056f8a1c9e2b7d3056f",
     );
     expect(report.values.DATABASE_URL).toBe("postgresql://noema@db");
-    expect(report.values.AUTH_SECRET).toBe("0123456789abcdef");
+    expect(report.values.AUTH_SECRET).toBe(
+      "4f8a1c9e2b7d3056f8a1c9e2b7d3056f",
+    );
     expect(report.ok).toBe(true);
   });
 

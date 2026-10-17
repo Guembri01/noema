@@ -19,6 +19,7 @@
 // failed on behavior, not on imports — while these 30 stayed green.
 import { afterEach, describe, expect, it } from "vitest";
 import { SignJWT } from "jose";
+import { readFileSync } from "node:fs";
 import { WebSocket } from "ws";
 import * as Y from "yjs";
 import * as syncProtocol from "y-protocols/sync";
@@ -360,6 +361,30 @@ describe("verifySessionCookie (real session primitive)", () => {
       expect(await verifySessionCookie(`noema_session=${token}`)).toBeNull();
     });
     await withSecret("short", async () => {
+      expect(await verifySessionCookie(`noema_session=${token}`)).toBeNull();
+    });
+  });
+
+  it("fails closed for the placeholder that ships in .env.example (B55)", async () => {
+    // The placeholder is public: a cookie signed with it must not unlock a
+    // collaboration connection. The value is read out of the repository, so
+    // the check cannot pass for the wrong reason if the placeholder changes.
+    const placeholder = readFileSync(
+      new URL("../.env.example", import.meta.url),
+      "utf8",
+    )
+      .split(/\r?\n/)
+      .find((line) => line.startsWith("AUTH_SECRET="))
+      .slice("AUTH_SECRET=".length)
+      .trim()
+      .replace(/^["']|["']$/g, "");
+
+    const token = await signed(undefined, placeholder);
+    await withSecret(placeholder, async () => {
+      expect(await verifySessionCookie(`noema_session=${token}`)).toBeNull();
+    });
+    // …and in another spelling.
+    await withSecret(`  ${placeholder.toUpperCase()}  `, async () => {
       expect(await verifySessionCookie(`noema_session=${token}`)).toBeNull();
     });
   });

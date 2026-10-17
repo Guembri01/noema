@@ -42,8 +42,8 @@ import type { Keyring, SecretDecryptErrorCode } from "@/lib/secrets";
  * ambient process env (loaded `.env`, CI) must not influence assertions.
  */
 
-const SECRET_A = "b85-test-secret-a";
-const SECRET_B = "b85-test-secret-b";
+const SECRET_A = "b85-test-secret-a-0123456789abcdef";
+const SECRET_B = "b85-test-secret-b-0123456789abcdef";
 const PLAINTEXT = "sk-ant-api03-DEADBEEFcafe:with+colons/slash=equals🚀";
 const MARKER = "DEADBEEFcafe";
 
