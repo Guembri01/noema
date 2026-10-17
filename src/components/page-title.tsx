@@ -22,6 +22,7 @@ import {
   Star,
   Trash2,
   Undo2,
+  Upload,
 } from "lucide-react";
 import {
   archivePageAction,
@@ -87,9 +88,11 @@ import {
   GRADIENTS,
   coverCss,
   coverKey,
+  validateCover,
   type CoverValue,
   type GradientId,
 } from "@/lib/page-cover";
+import { isImage, uploadFile } from "@/lib/upload-client";
 import { pageToMarkdown } from "@/lib/serialize";
 import type { TextBlock } from "@/lib/text-stats";
 import { DUR, Z } from "@/lib/design-tokens";
@@ -633,8 +636,12 @@ export function PageTitleRow({
               aria-label={t(locale, "changeIcon")}
               className={cn(
                 "focus-ring u-interactive rounded p-0.5 leading-none hover:bg-surface-2 disabled:cursor-not-allowed",
-                icon.kind === "emoji" && "text-5xl",
-                icon.kind === "image" && "h-14 w-14 bg-cover bg-center bg-no-repeat",
+                // The page icon reads as an icon, not a logo: at `text-5xl`/`h-14` a filled
+                // emoji such as ✅ became a 48–56px tile that dominated the header. These
+                // are deliberately calm against the 28px title (`text-title`), which is
+                // also why the picker below is offset by `top-11` rather than `top-14`.
+                icon.kind === "emoji" && "text-4xl",
+                icon.kind === "image" && "h-10 w-10 bg-cover bg-center bg-no-repeat",
               )}
               style={iconStyle}
             >
@@ -774,6 +781,13 @@ export function PageTitle({
   const canEdit = editable && !locked;
   const [showEmoji, setShowEmoji] = useState(false);
   const [showCover, setShowCover] = useState(false);
+  /** Draft link for the cover's image field. */
+  const [coverUrlDraft, setCoverUrlDraft] = useState("");
+  /** A cover upload in flight (the button shows the pending state and cannot re-fire). */
+  const [coverUploading, setCoverUploading] = useState(false);
+  /** Why the last cover attempt was refused - shown inline, cleared on success. */
+  const [coverError, setCoverError] = useState<string | null>(null);
+  const coverFileRef = useRef<HTMLInputElement | null>(null);
   const titleRef = useRef<HTMLTextAreaElement | null>(null);
   const h1Ref = useRef<HTMLHeadingElement | null>(null);
   // The in-page `h1`'s offset inside the scroll container, cached so each scroll
@@ -938,6 +952,45 @@ export function PageTitle({
     setCover(value);
     setShowCover(false);
     save({ coverUrl: value });
+  };
+
+  /**
+   * Cover images. The model has always supported `{ type: "image", url }` (and
+   * Unsplash), but the menu only ever offered gradients, so an image cover was
+   * unreachable from the UI. Both paths below end at the same `validateCover` gate the
+   * persisted value passes through, so a hostile string still cannot become a banner.
+   */
+  const applyCoverImage = (url: string) => {
+    const trimmed = url.trim();
+    if (!validateCover({ type: "image", url: trimmed }).valid) {
+      setCoverError(t(locale, "coverInvalidUrl"));
+      return;
+    }
+    setCoverError(null);
+    setCoverUrlDraft("");
+    pickCover(coverCss({ type: "image", url: trimmed }));
+  };
+
+  const onCoverFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const chosen = event.target.files?.[0];
+    // Let the same file be picked twice in a row.
+    event.target.value = "";
+    if (!chosen) return;
+    if (!isImage(chosen)) {
+      setCoverError(t(locale, "coverInvalidUrl"));
+      return;
+    }
+    setCoverUploading(true);
+    setCoverError(null);
+    try {
+      const asset = await uploadFile(chosen, workspaceId);
+      applyCoverImage(asset.url);
+    } catch {
+      // The route answers with its own message; either way the cover is unchanged.
+      setCoverError(t(locale, "coverUploadFailed"));
+    } finally {
+      setCoverUploading(false);
+    }
   };
 
   // Optimistic follow toggle: the bell flips immediately and shows a pending
@@ -1241,11 +1294,11 @@ export function PageTitle({
             <div
               role="dialog"
               aria-label={showEmoji ? t(locale, "pickAnIcon") : t(locale, "pickACover")}
-              /* `top-14` clears the icon itself (h-14 = 56px): the row is only h-8,
+              /* `top-11` clears the icon itself (h-10 = 40px): the row is only h-8,
                  so the emoji overflows it and anchoring to the row left this panel
                  sitting on top of the glyph. Portalled so an ancestor cannot clip
                  or re-root it either. */
-              className="surface-raised absolute start-0 top-14 p-2"
+              className="surface-raised absolute start-0 top-11 p-2"
               style={{ zIndex: Z.popover, width: 288 }}
             >
               {showEmoji && (
@@ -1254,7 +1307,7 @@ export function PageTitle({
                     <button
                       key={emoji}
                       type="button"
-                      aria-label={`Set icon ${emoji}`}
+                      aria-label={`${t(locale, "setIcon")} ${emoji}`}
                       onClick={() => pickIcon(emoji)}
                       className="focus-ring grid h-8 w-8 place-items-center rounded text-lg hover:bg-surface-2"
                     >
@@ -1264,27 +1317,72 @@ export function PageTitle({
                 </div>
               )}
               {showCover && (
-                <div className="grid grid-cols-4 gap-2">
-                  {(Object.keys(GRADIENTS) as GradientId[]).map((id) => (
-                    <button
-                      key={id}
-                      type="button"
-                      aria-label={`Set cover ${id}`}
-                      aria-pressed={
-                        storedCover?.value.type === "gradient" &&
-                        storedCover.value.gradientId === id
-                      }
-                      onClick={() => pickCover(GRADIENTS[id])}
-                      className="focus-ring h-12 rounded-sm bg-cover"
-                      style={{
-                        backgroundImage: coverCss({
-                          type: "gradient",
-                          gradientId: id,
-                        }),
+                
+                <>
+                  <div className="mb-2 flex items-center gap-1">
+                    <input
+                      type="url"
+                      value={coverUrlDraft}
+                      onChange={(event) => setCoverUrlDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          applyCoverImage(coverUrlDraft);
+                        }
                       }}
+                      placeholder={t(locale, "coverImageUrl")}
+                      aria-label={t(locale, "coverImageUrl")}
+                      aria-invalid={coverError ? true : undefined}
+                      className="focus-ring h-8 min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 text-xs text-fg outline-none placeholder:text-muted/60"
                     />
-                  ))}
-                </div>
+                    <button
+                      type="button"
+                      onClick={() => applyCoverImage(coverUrlDraft)}
+                      disabled={coverUrlDraft.trim() === ""}
+                      className="focus-ring u-interactive h-8 shrink-0 rounded-sm bg-accent px-2 text-xs font-medium text-accent-fg disabled:opacity-40"
+                    >
+                      {t(locale, "useImage")}
+                    </button>
+                  </div>
+                  <div className="mb-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => coverFileRef.current?.click()}
+                      disabled={coverUploading || !canEdit}
+                      className="focus-ring u-interactive flex h-8 items-center gap-1.5 rounded-sm border border-border px-2 text-xs text-fg hover:bg-surface-2 disabled:opacity-50"
+                    >
+                      <Upload className="h-3.5 w-3.5" aria-hidden />
+                      {coverUploading ? t(locale, "uploading") : t(locale, "uploadImage")}
+                    </button>
+                    <input ref={coverFileRef} type="file" accept="image/*" onChange={onCoverFile} className="hidden" aria-hidden tabIndex={-1} />
+                    {coverError ? (
+                      <span role="alert" className="text-3xs text-danger">
+                        {coverError}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {(Object.keys(GRADIENTS) as GradientId[]).map((id) => (
+                      <button
+                        key={id}
+                        type="button"
+                        aria-label={`${t(locale, "setCover")} ${id}`}
+                        aria-pressed={
+                          storedCover?.value.type === "gradient" &&
+                          storedCover.value.gradientId === id
+                        }
+                        onClick={() => pickCover(GRADIENTS[id])}
+                        className="focus-ring h-12 rounded-sm bg-cover"
+                        style={{
+                          backgroundImage: coverCss({
+                            type: "gradient",
+                            gradientId: id,
+                          }),
+                        }}
+                      />
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           ) : null
