@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   NodeViewContent,
   NodeViewWrapper,
@@ -9,11 +9,15 @@ import {
 } from "@tiptap/react";
 import { CodeBlockLowlight, type CodeBlockLowlightOptions } from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
-import { ListOrdered } from "lucide-react";
+import { Check, Copy, ListOrdered, WrapText } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { codeLanguageLabel, searchCodeLanguages } from "@/lib/code-languages";
+import { CODE_LANGUAGES, codeLanguageLabel } from "@/lib/code-languages";
 import { formatCaption, normalizeLanguage, numberLines, validateCaption } from "@/lib/code-block";
 import { t } from "@/lib/i18n";
+import { Z } from "@/lib/design-tokens";
+import { Button } from "@/components/ui/button";
+import { Select, filterOptions, type SelectOption } from "@/components/ui/select";
+import { Tooltip } from "@/components/ui/tooltip";
 
 /**
  * Syntax highlighting with highlight.js' *common* language set only, so the
@@ -23,13 +27,140 @@ import { t } from "@/lib/i18n";
  */
 const lowlight = createLowlight(common);
 
+/* -------------------------------------------------------------------------- *
+ * Pure mappings — proven in `code-block.test.ts`
+ * -------------------------------------------------------------------------- */
+
+/**
+ * How long the Copy affordance keeps its success check before returning to the
+ * idle icon. One and a half seconds: long enough to register, short enough that
+ * the block never looks permanently changed.
+ */
+export const COPY_FEEDBACK_MS = 1500;
+
+/** The Copy affordance is either waiting (`idle`) or confirming (`copied`). */
+export type CodeCopyState = "idle" | "copied";
+
+/**
+ * Copy-button state machine. A `copy` always lands on `copied` (a second copy
+ * restarts the window rather than toggling off); `reset` — fired when the
+ * {@link COPY_FEEDBACK_MS} timer elapses — returns to `idle`. Pure so the view
+ * code and the test cannot drift.
+ */
+export function nextCopyState(state: CodeCopyState, event: "copy" | "reset"): CodeCopyState {
+  if (event === "reset") return "idle";
+  return "copied";
+}
+
+/** Colour for the Copy button per state: the success token while confirming. */
+export function copyButtonClass(state: CodeCopyState): string {
+  return state === "copied" ? "text-success" : "";
+}
+
+/**
+ * Picker options for the language `Select`, mapped from the shared registry so
+ * the menu, the lowlight grammar names and the stored `language` attribute can
+ * never fork. Aliases ride along as search keywords (`js`, `ts`, `py`, …).
+ */
+const LANGUAGE_OPTIONS: SelectOption[] = CODE_LANGUAGES.map((lang) => ({
+  value: lang.value,
+  label: lang.label,
+  keywords: lang.aliases ? [...lang.aliases] : undefined,
+}));
+
+/** Every selectable language (a fresh array is not needed; callers only read). */
+export function languageOptions(): SelectOption[] {
+  return LANGUAGE_OPTIONS;
+}
+
+/**
+ * Filter the language list with the shared `Select` ranking (prefix > word >
+ * substring > alias keyword), so the picker's search behaves exactly like every
+ * other combobox in the app.
+ */
+export function filterLanguages(query: string): SelectOption[] {
+  return filterOptions(languageOptions(), query);
+}
+
+/**
+ * Gutter metrics for the optional line-number stripe. `gap` is the 12 px offset
+ * between the numbers and the code; the ink is `--fg-subtle` (the tertiary
+ * text token) so the gutter recedes behind the highlighted source.
+ */
+export const CODE_GUTTER = { gap: 12, color: "var(--fg-subtle)" } as const;
+
+/** Inline style for the numbered gutter (colour + tabular figures). */
+export function codeGutterStyle(): CSSProperties {
+  return {
+    userSelect: "none",
+    pointerEvents: "none",
+    textAlign: "right",
+    color: CODE_GUTTER.color,
+    fontVariantNumeric: "tabular-nums",
+  };
+}
+
+/**
+ * Soft-wrap style for the code body. Wrapping is a *presentation* toggle held in
+ * the node view's local state, so the stored document (and its attributes) is
+ * never touched — see the "serialization unchanged" contract.
+ */
+export function codeWrapStyle(wrap: boolean): CSSProperties {
+  return wrap ? { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } : {};
+}
+
+/** Visibility inputs for the code block's affordances. */
+export type CodeChromeState = {
+  hovered?: boolean;
+  focused?: boolean;
+  selected?: boolean;
+};
+
+/** True when the chrome should be pinned visible (hover, focus or selection). */
+export function codeChromeVisible(state: CodeChromeState = {}): boolean {
+  return Boolean(state.hovered || state.focused || state.selected);
+}
+
+/**
+ * The chrome fade in on block hover and stay visible while the block holds
+ * focus or a node selection, so the keyboard path exposes the same affordances
+ * as the pointer (DESIGN_SYSTEM §8/§9). Colour/opacity only via `.u-colors`.
+ */
+export function codeChromeClass(state: CodeChromeState = {}): string {
+  return `noema-code-chrome u-colors u-transform ${codeChromeVisible(state) ? "opacity-100" : "opacity-0"}`;
+}
+
+/**
+ * Pointer/keyboard reveal rules for a chrome container. Applied alongside
+ * {@link codeChromeClass}: the base `opacity-0` reserves the space (the
+ * controls are absolutely positioned, so nothing shifts) and these lifted
+ * selectors fade it in on `group` hover, on focus-within, and while a control
+ * inside is focused.
+ */
+export const CODE_CHROME_REVEAL =
+  "group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100";
+
+/**
+ * Label for the wrap toggle. There is no dedicated `codeWrap` key in the i18n
+ * catalogue yet (that file is owned elsewhere), so the literal is centralised
+ * here pending the key — every other string rides `t(locale, …)`.
+ */
+export const CODE_WRAP_LABEL = "Wrap lines";
+
+/* -------------------------------------------------------------------------- *
+ * Extension
+ * -------------------------------------------------------------------------- */
+
 /**
  * Notion-style code block.
  *
  * Replaces StarterKit's stock codeBlock (which only *stores* a language) with
- * the lowlight-backed variant plus a corner language selector. The `language`
- * attribute is the standard TipTap one, so stored document JSON, markdown
- * export and the read-only DocRenderer keep working unchanged.
+ * the lowlight-backed variant plus a hover toolbar: a searchable language
+ * `Select`, a Copy button with a {@link COPY_FEEDBACK_MS} success state, the
+ * line-number gutter toggle and an optional wrap toggle. The `language`,
+ * `lineNumbers` and `caption` attributes are the standard TipTap ones, so
+ * stored document JSON, markdown export and the read-only DocRenderer keep
+ * working unchanged.
  */
 /** CodeBlockLowlight options plus the locale threaded from `page-editor.tsx`. */
 type CodeBlockOptions = CodeBlockLowlightOptions & { locale: string };
@@ -81,6 +212,197 @@ export const CodeBlock = CodeBlockLowlight.extend<CodeBlockOptions>({
   defaultLanguage: null,
 });
 
+/* -------------------------------------------------------------------------- *
+ * Chrome — presentational, no hooks (static-renderable)
+ * -------------------------------------------------------------------------- */
+
+export type CodeBlockChromeProps = {
+  locale?: string;
+  /** Visibility inputs (hover / focus / selection). */
+  state?: CodeChromeState;
+  /** Copy affordance state. */
+  copy?: CodeCopyState;
+  language?: string;
+  showNumbers?: boolean;
+  wrap?: boolean;
+  /** When false (read-only block) only the Copy affordance is shown. */
+  editable?: boolean;
+  onLanguageChange?: (value: string) => void;
+  onCopy?: () => void;
+  onToggleNumbers?: () => void;
+  onToggleWrap?: () => void;
+};
+
+/**
+ * The code block's hover toolbar: the language picker (top-start) and the
+ * Copy / line-numbers / wrap actions (top-end). Absolutely positioned inside
+ * the block's reserved padding, so revealing it never moves the code; all
+ * controls are `contentEditable={false}` so they stay out of the document.
+ * Read-only blocks keep the Copy affordance (useful on a shared page) and drop
+ * the editing controls.
+ */
+export function CodeBlockChrome({
+  locale = "en",
+  state = {},
+  copy = "idle",
+  language = "",
+  showNumbers = false,
+  wrap = false,
+  editable = true,
+  onLanguageChange,
+  onCopy,
+  onToggleNumbers,
+  onToggleWrap,
+}: CodeBlockChromeProps) {
+  const visible = codeChromeVisible(state);
+  return (
+    <>
+      {editable && (
+        <div
+          className={cn(
+            CODE_CHROME_REVEAL,
+            codeChromeClass(state),
+            "absolute start-2 top-1.5 inline-flex",
+          )}
+          data-code-language-picker=""
+          contentEditable={false}
+          style={{ zIndex: Z.sticky }}
+          // Keep the editor selection alive while the picker is used.
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          <Select
+            options={languageOptions()}
+            value={language}
+            onChange={(value) => onLanguageChange?.(value)}
+            placeholder={codeLanguageLabel(language)}
+            aria-label={t(locale, "codeLanguagesAria")}
+            searchPlaceholder={t(locale, "codeFilterLanguages")}
+            noResultsLabel={t(locale, "codeNoMatches")}
+            allowClear={false}
+            size="sm"
+            className="w-[180px]"
+            locale={locale}
+          />
+        </div>
+      )}
+
+      <div
+        className={cn(
+          CODE_CHROME_REVEAL,
+          codeChromeClass(state),
+          "absolute end-2 top-1.5 flex items-center gap-0.5",
+        )}
+        data-code-chrome=""
+        data-chrome-visible={visible ? "true" : "false"}
+        data-copy-state={copy}
+        contentEditable={false}
+        style={{ zIndex: Z.sticky }}
+        onMouseDown={(event) => event.preventDefault()}
+      >
+        <Tooltip label={t(locale, "copyCode")} side="top">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t(locale, "copyCode")}
+            data-testid="code-copy"
+            className={copyButtonClass(copy)}
+            onClick={onCopy}
+          >
+            {copy === "copied" ? (
+              <Check className="h-3.5 w-3.5" aria-hidden />
+            ) : (
+              <Copy className="h-3.5 w-3.5" aria-hidden />
+            )}
+          </Button>
+        </Tooltip>
+
+        {editable && (
+          <>
+            <Tooltip label={t(locale, "codeLineNumbers")} side="top">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-pressed={showNumbers}
+                aria-label={t(locale, "codeLineNumbers")}
+                data-testid="code-line-numbers"
+                className={cn(showNumbers && "bg-accent-soft text-accent")}
+                onClick={onToggleNumbers}
+              >
+                <ListOrdered className="h-3.5 w-3.5" aria-hidden />
+              </Button>
+            </Tooltip>
+
+            <Tooltip label={CODE_WRAP_LABEL} side="top">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-pressed={wrap}
+                aria-label={CODE_WRAP_LABEL}
+                data-testid="code-wrap"
+                className={cn(wrap && "bg-accent-soft text-accent")}
+                onClick={onToggleWrap}
+              >
+                <WrapText className="h-3.5 w-3.5" aria-hidden />
+              </Button>
+            </Tooltip>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* -------------------------------------------------------------------------- *
+ * Copy feedback hook
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Owns the {@link COPY_FEEDBACK_MS} success window: `copy(text)` writes to the
+ * clipboard (guarded as it is unavailable outside a secure browser context),
+ * flips to `copied` and schedules the `reset`. The timer is always cleared on
+ * unmount, so a removed block never fires.
+ */
+function useCopyFeedback(delayMs = COPY_FEEDBACK_MS) {
+  const [state, setState] = useState<CodeCopyState>("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  const copy = useCallback(
+    async (text: string) => {
+      try {
+        if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+        }
+      } catch {
+        // Clipboard permission denied / insecure context: still confirm the
+        // intent so the affordance never looks dead.
+      }
+      setState((current) => nextCopyState(current, "copy"));
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(
+        () => setState((current) => nextCopyState(current, "reset")),
+        delayMs,
+      );
+    },
+    [delayMs],
+  );
+
+  return { state, copy };
+}
+
+/* -------------------------------------------------------------------------- *
+ * Node view
+ * -------------------------------------------------------------------------- */
+
 function CodeBlockView({
   node,
   editor,
@@ -99,29 +421,15 @@ function CodeBlockView({
   const blockColor = attrs.blockColor ? String(attrs.blockColor) : null;
   const showNumbers = Boolean(attrs.lineNumbers);
   const caption = String(attrs.caption ?? "");
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
+  // Presentation-only toggles (never serialised).
+  const [wrap, setWrap] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   // Local caption draft: the box edits freely, the attribute only ever stores
   // the formatted caption, so collapsing whitespace can't fight the cursor.
   const [captionDraft, setCaptionDraft] = useState(caption);
   const [captionError, setCaptionError] = useState<string | null>(null);
-  const pickerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Focus the filter box whenever the menu opens.
-  useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
-
-  // Clicking anywhere else (including back into the code) closes the menu.
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (!pickerRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [open]);
+  const { state: copy, copy: copyCode } = useCopyFeedback();
 
   // Keep the caption box in step with the stored attribute (undo/redo, an
   // external collaborator, a reload) without clobbering live typing.
@@ -134,8 +442,6 @@ function CodeBlockView({
     // Canonicalise through the shared registry so a stored fence alias (`js`)
     // is always written in its full form (`javascript`).
     updateAttributes({ language: normalizeLanguage(value) });
-    setQuery("");
-    setOpen(false);
     // Return focus to the block so typing continues in the code.
     editor.chain().focus().run();
   };
@@ -150,115 +456,40 @@ function CodeBlockView({
     setCaptionError(null);
   };
 
-  const matches = searchCodeLanguages(query);
   const gutter = showNumbers ? numberLines(node.textContent) : [];
+  const preStyle: CSSProperties = {
+    ...(showNumbers ? { display: "flex", gap: CODE_GUTTER.gap, overflow: "visible" } : {}),
+    ...codeWrapStyle(wrap),
+  };
 
   return (
     <NodeViewWrapper
-      className={cn("noema-code-block", selected && "is-selected")}
+      className={cn("noema-code-block group", selected && "is-selected")}
       data-code-block=""
       data-language={language || undefined}
+      data-wrap={wrap ? "true" : undefined}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocusCapture={() => setFocused(true)}
+      onBlurCapture={() => setFocused(false)}
     >
-      <div className="noema-code-lang" contentEditable={false} ref={pickerRef}>
-        <button
-          type="button"
-          className="noema-code-lang-trigger"
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          // Keep the editor selection alive while toggling the menu.
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            setQuery("");
-            setOpen((current) => !current);
-          }}
-        >
-          {codeLanguageLabel(language)}
-        </button>
+      <CodeBlockChrome
+        locale={locale}
+        state={{ hovered, focused, selected }}
+        copy={copy}
+        language={language}
+        showNumbers={showNumbers}
+        wrap={wrap}
+        editable={editable}
+        onLanguageChange={choose}
+        onCopy={() => void copyCode(node.textContent)}
+        onToggleNumbers={() => updateAttributes({ lineNumbers: !showNumbers })}
+        onToggleWrap={() => setWrap((current) => !current)}
+      />
 
-        {open && (
-          <div className="noema-code-lang-menu" data-code-language-menu="">
-            <input
-              ref={inputRef}
-              className="noema-code-lang-filter"
-              type="text"
-              value={query}
-              placeholder={t(locale, "codeFilterLanguages")}
-              aria-label={t(locale, "codeFilterLanguagesAria")}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setOpen(false);
-                  editor.chain().focus().run();
-                } else if (event.key === "Enter") {
-                  event.preventDefault();
-                  if (matches[0]) choose(matches[0].value);
-                }
-              }}
-            />
-            {matches.length > 0 ? (
-              <div className="noema-code-lang-list" role="listbox" aria-label={t(locale, "codeLanguagesAria")}>
-                {matches.map((lang) => (
-                  <button
-                    key={lang.value}
-                    type="button"
-                    role="option"
-                    aria-selected={lang.value === language}
-                    className={cn(
-                      "noema-code-lang-option",
-                      lang.value === language && "is-active",
-                    )}
-                    // Don't blur the filter input mid-click.
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => choose(lang.value)}
-                  >
-                    {lang.label}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="noema-code-lang-empty">{t(locale, "codeNoMatches")}</p>
-            )}
-          </div>
-        )}
-      </div>
-
-      {editable && (
-        <button
-          type="button"
-          className="noema-code-lang-trigger"
-          style={{ position: "absolute", top: 7, right: 8, zIndex: 2 }}
-          aria-pressed={showNumbers}
-          // Reuses the closest shipped node-view labels; dedicated code-line /
-          // code-caption keys live in i18n.ts and are out of this slice's scope.
-          aria-label={t(locale, "numberWord")}
-          title={t(locale, "numberWord")}
-          contentEditable={false}
-          // Keep the editor selection alive while toggling the gutter.
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => updateAttributes({ lineNumbers: !showNumbers })}
-        >
-          <ListOrdered className="h-3.5 w-3.5" aria-hidden />
-        </button>
-      )}
-
-      <pre
-        data-block-color={blockColor ?? undefined}
-        style={showNumbers ? { display: "flex", gap: 12, overflow: "visible" } : undefined}
-      >
+      <pre data-block-color={blockColor ?? undefined} style={preStyle}>
         {showNumbers && (
-          <div
-            aria-hidden
-            contentEditable={false}
-            data-code-gutter=""
-            style={{
-              userSelect: "none",
-              pointerEvents: "none",
-              textAlign: "right",
-              color: "var(--muted)",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
+          <div aria-hidden contentEditable={false} data-code-gutter="" style={codeGutterStyle()}>
             {gutter.map((row, index) => (
               <div key={`${index}-${row.n ?? "wrap"}`}>{row.n === null ? "\u00a0" : row.n}</div>
             ))}
@@ -280,7 +511,7 @@ function CodeBlockView({
               className="noema-image-caption"
               value={captionDraft}
               placeholder={t(locale, "imageCaptionPlaceholder")}
-              aria-label={t(locale, "imageCaptionAria")}
+              aria-label={t(locale, "codeCaption")}
               aria-invalid={captionError ? true : undefined}
               onChange={(event) => {
                 setCaptionDraft(event.target.value);
@@ -297,7 +528,7 @@ function CodeBlockView({
             />
           </div>
           {captionError && (
-            <p role="alert" style={{ margin: "2px 6px 0", fontSize: 11, color: "#eb5757" }}>
+            <p role="alert" className="mt-0.5 px-1.5 text-xs text-danger">
               {captionError}
             </p>
           )}
