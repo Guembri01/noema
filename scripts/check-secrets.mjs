@@ -236,6 +236,10 @@ const ALLOWED_IN_TESTS = new Set([
   "xoxa-123456789012-abcdefghijkl", // src/lib/value-scrubbing.test.ts
   "xoxr-123456789012-abcdefghijkl", // src/lib/value-scrubbing.test.ts
   "deadbeefcafe", // src/lib/value-scrubbing.test.ts — the value in the query strings
+  // The fixtures of the rounds that came with the last merges.
+  "postgresql://noema:p@ssw0rd@127.0.0.1:5432/noema?schema=public", // src/lib/secrets.test.ts
+  "webhook-b21-secret-key-0123456789ab", // src/lib/webhooks.test.ts
+  "webhook-b21-secret-key-0123456789cd", // src/lib/webhooks.test.ts
   "b39-unit-secret-0123456789abcdef", // src/lib/auth-session-idle-timeout.test.ts
   "b39-two-factor-test-secret-0123456789", // src/server/actions/two-factor-revoke-sessions.test.ts
   "RECIPIENT_PASSWORD", // src/server/actions/ownership-transfer-actions.test.ts — a constant, not a secret
