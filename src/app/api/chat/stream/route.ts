@@ -89,7 +89,8 @@ export async function POST(request: Request) {
   // proposal that turn stored, so a confirmation that names nothing is refused
   // (B17).
   if (payload.confirm && payload.threadId) {
-    const proposalMessageId = (payload.proposalMessageId ?? "").trim();
+    const proposalMessageId =
+      typeof payload.proposalMessageId === "string" ? payload.proposalMessageId.trim() : "";
     if (!proposalMessageId) {
       return NextResponse.json(
         { error: "That confirmation must name the proposal it applies." },

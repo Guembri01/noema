@@ -170,6 +170,9 @@ export function readJobSteps(text, job) {
         continue;
       }
       if (next.text.length - next.text.trimStart().length <= indent) break;
+      // A comment inside the block is not a command: a commented-out
+      // `docker compose --profile app up` must not satisfy the gate.
+      if (next.text.trim().startsWith("#")) continue;
       collected.push({ text: next.text.trim(), line: next.line });
     }
     current.runLines = collected;

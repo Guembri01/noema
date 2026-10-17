@@ -797,6 +797,15 @@ export async function bulkUpdateTicketsAction(input: {
       return { error: "That project is not in this workspace." };
     }
   }
+  // The selection is caller-controlled: keep only the rows of the workspace the
+  // first ticket belongs to. The scalar update and the relation writes below
+  // must not be handed a foreign id, even when the caller mixes one in.
+  const scoped = await prisma.ticket.findMany({
+    where: { id: { in: input.ticketIds }, workspaceId: first.workspaceId },
+    select: { id: true },
+  });
+  const ticketIds = scoped.map((row) => row.id);
+  if (ticketIds.length === 0) return { ok: true, updated: 0 };
   if (input.status && STATUS_IDS.includes(input.status)) {
     data.status = input.status;
     data.completedAt = isClosed(input.status) ? new Date() : null;
@@ -838,7 +847,7 @@ export async function bulkUpdateTicketsAction(input: {
   if (input.assigneeId !== undefined && input.assigneeId !== null) {
     const changing = await prisma.ticket.findMany({
       where: {
-        id: { in: input.ticketIds },
+        id: { in: ticketIds },
         workspaceId: first.workspaceId,
         OR: [{ assigneeId: null }, { assigneeId: { not: input.assigneeId } }],
       },
@@ -850,25 +859,25 @@ export async function bulkUpdateTicketsAction(input: {
   let updated = 0;
   if (hasScalar) {
     const result = await prisma.ticket.updateMany({
-      where: { id: { in: input.ticketIds }, workspaceId: first.workspaceId },
+      where: { id: { in: ticketIds }, workspaceId: first.workspaceId },
       data,
     });
     updated = result.count;
   }
   if (addLabelIds.length > 0) {
     await prisma.ticketLabel.createMany({
-      data: input.ticketIds.flatMap((ticketId) =>
+      data: ticketIds.flatMap((ticketId) =>
         addLabelIds.map((labelId) => ({ ticketId, labelId })),
       ),
       skipDuplicates: true,
     });
-    updated = Math.max(updated, input.ticketIds.length);
+    updated = Math.max(updated, ticketIds.length);
   }
   if (removeLabelIds.length > 0) {
     await prisma.ticketLabel.deleteMany({
-      where: { ticketId: { in: input.ticketIds }, labelId: { in: removeLabelIds } },
+      where: { ticketId: { in: ticketIds }, labelId: { in: removeLabelIds } },
     });
-    updated = Math.max(updated, input.ticketIds.length);
+    updated = Math.max(updated, ticketIds.length);
   }
 
   const detail = {
@@ -876,7 +885,7 @@ export async function bulkUpdateTicketsAction(input: {
     ...(addLabelIds.length > 0 ? { labelsAdded: addLabelIds } : {}),
     ...(removeLabelIds.length > 0 ? { labelsRemoved: removeLabelIds } : {}),
   };
-  for (const ticketId of input.ticketIds) {
+  for (const ticketId of ticketIds) {
     await logActivity(ticketId, user.id, "bulk_updated", detail);
   }
   revalidatePath("/w", "layout");
@@ -909,12 +918,19 @@ export async function bulkArchiveTicketsAction(input: {
     return { error: "You do not have permission to edit tickets." };
   }
 
+  const scoped = await prisma.ticket.findMany({
+    where: { id: { in: input.ticketIds }, workspaceId: first.workspaceId },
+    select: { id: true },
+  });
+  const ticketIds = scoped.map((row) => row.id);
+  if (ticketIds.length === 0) return { ok: true, updated: 0 };
+
   const archived = input.archived ?? true;
   const result = await prisma.ticket.updateMany({
-    where: { id: { in: input.ticketIds }, workspaceId: first.workspaceId },
+    where: { id: { in: ticketIds }, workspaceId: first.workspaceId },
     data: { archived },
   });
-  for (const ticketId of input.ticketIds) {
+  for (const ticketId of ticketIds) {
     await logActivity(ticketId, user.id, archived ? "archived" : "restored");
   }
   revalidatePath("/w", "layout");

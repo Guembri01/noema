@@ -238,9 +238,11 @@ function imageMarkdown(node: RichNode, ctx: Ctx): string {
 }
 
 function linkMarkdown(node: RichNode): string {
-  const url = asString(node.attrs?.url);
-  const title = node.attrs?.title == null ? url : asString(node.attrs.title);
-  return `[${escapeInline(title || url)}](${url})`;
+  const raw = asString(node.attrs?.url);
+  const title = node.attrs?.title == null ? raw : asString(node.attrs.title);
+  const href = safeHref(raw);
+  if (!href) return escapeInline(title || "");
+  return `[${escapeInline(title || href)}](${href})`;
 }
 
 function pageEmbedMarkdown(node: RichNode): string {
@@ -575,6 +577,11 @@ export function fidelityReport(doc: unknown): FidelityReport {
 
     if (type === "mention") {
       addLost("mention", "only the @label survives; the linked target id is dropped");
+    } else if (type === "bookmark" || type === "embed") {
+      const url = node.attrs?.url;
+      if (typeof url === "string" && !safeHref(url)) {
+        addLost(type, "the target is not allowlisted; the title is written without a link");
+      }
     } else if (type === "pageEmbed") {
       approximated.add("page embeds become a title link to a /w/… placeholder");
     } else if (type === "callout") {

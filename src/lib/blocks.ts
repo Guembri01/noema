@@ -129,8 +129,10 @@ export function docToMarkdown(doc: unknown): string {
     } else if (type === "image") {
       lines.push(`![${String(node.attrs?.alt ?? "")}](${String(node.attrs?.src ?? "")})`);
     } else if (type === "bookmark" || type === "embed") {
-      const url = String(node.attrs?.url ?? "");
-      lines.push(`[${String(node.attrs?.title ?? url)}](${url})`);
+      const title = String(node.attrs?.title ?? "");
+      const href = safeHref(String(node.attrs?.url ?? ""));
+      if (href) lines.push(`[${title || href}](${href})`);
+      else if (title) lines.push(title);
     } else if (type === "pageEmbed") {
       lines.push(`/w/…/${String(node.attrs?.pageId ?? "")} — ${String(node.attrs?.title ?? "")}`);
     } else if (type === "blockMath") {

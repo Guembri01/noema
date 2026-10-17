@@ -222,7 +222,12 @@ export function safeUrl(
     }
     return allowedSchemes.has(name) ? raw : null;
   }
-  if (raw.includes(":") || /%3a/i.test(raw)) return null;
+  // Only the part before the path/query/fragment can name a scheme. A colon
+  // inside a relative path (`/api/files/ws/a:b.png`) is an ordinary filename
+  // character, not a scheme smuggler.
+  if (/^[/?#]/.test(raw)) return raw;
+  const head = raw.split(/[/?#]/, 1)[0];
+  if (head.includes(":") || /%3a/i.test(head)) return null;
   return raw;
 }
 

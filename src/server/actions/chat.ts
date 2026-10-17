@@ -548,7 +548,7 @@ async function resolveLabelIds(workspaceId: string, names: string[]): Promise<st
 async function loadPendingProposal(
   threadId: string,
   proposalMessageId: string,
-): Promise<ChatActionProposal | null> {
+): Promise<{ proposal: ChatActionProposal; meta: Record<string, unknown> } | null> {
   const message = await prisma.chatMessage.findUnique({
     where: { id: proposalMessageId },
     select: { threadId: true, meta: true },
@@ -561,7 +561,7 @@ async function loadPendingProposal(
   if (!meta || meta.applied === true) return null;
   const proposal = meta.proposal;
   if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) return null;
-  return proposal as ChatActionProposal;
+  return { proposal: proposal as ChatActionProposal, meta };
 }
 
 /**
@@ -596,15 +596,29 @@ export async function executeChatActionAction(input: {
 
   // The stored proposal is the one that may be applied — never the copy the
   // caller sent.
-  const proposalMessageId = (input.proposalMessageId ?? "").trim();
+  const proposalMessageId =
+    typeof input.proposalMessageId === "string" ? input.proposalMessageId.trim() : "";
   const stored = proposalMessageId
     ? await loadPendingProposal(thread.id, proposalMessageId)
     : null;
   if (!stored) return { error: "That proposal is no longer available." };
-  if (!sameProposal(stored, requested)) {
+  if (!sameProposal(stored.proposal, requested)) {
     return { error: "That proposal does not match the request." };
   }
-  const action = stored;
+  // Claim the proposal before acting. The check in `loadPendingProposal` is a
+  // read, so two confirmations that arrive together could both pass it; the
+  // conditional update makes exactly one of them the winner. The flag is put
+  // back if the action itself fails.
+  const claim = await prisma.chatMessage.updateMany({
+    where: {
+      id: proposalMessageId,
+      threadId: thread.id,
+      NOT: { meta: { path: ["applied"], equals: true } },
+    },
+    data: { meta: { ...stored.meta, applied: true } as Prisma.InputJsonValue },
+  });
+  if (claim.count !== 1) return { error: "That proposal is no longer available." };
+  const action = stored.proposal;
 
   let message: string;
   let activity: string;
@@ -743,6 +757,14 @@ export async function executeChatActionAction(input: {
         return { error: "That action is not supported." };
     }
   } catch (error) {
+    // The action did not run, so the proposal is still pending. Put the flag
+    // back; the next confirmation can try again.
+    await prisma.chatMessage
+      .update({
+        where: { id: proposalMessageId },
+        data: { meta: stored.meta as Prisma.InputJsonValue },
+      })
+      .catch(() => undefined);
     return { error: error instanceof Error ? error.message : "The action could not be applied." };
   }
 
@@ -756,21 +778,8 @@ export async function executeChatActionAction(input: {
     },
   });
 
-  // Hide the confirm button: the proposal turn is now applied.
-  const proposalMessage = await prisma.chatMessage.findUnique({
-    where: { id: proposalMessageId },
-    select: { threadId: true, meta: true },
-  });
-  if (proposalMessage && proposalMessage.threadId === thread.id) {
-    const meta =
-      proposalMessage.meta && typeof proposalMessage.meta === "object" && !Array.isArray(proposalMessage.meta)
-        ? (proposalMessage.meta as Record<string, unknown>)
-        : {};
-    await prisma.chatMessage.update({
-      where: { id: proposalMessageId },
-      data: { meta: { ...meta, applied: true } },
-    });
-  }
+  // The proposal turn is already marked applied by the claim above; the
+  // confirm button stays hidden from here on.
 
   revalidatePath("/w", "layout");
   return { ok: true, message };

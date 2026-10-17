@@ -51,7 +51,14 @@ try {
 
 if (out) {
   writeFileSync(out, plaintext, { mode: BACKUP_FILE_MODE });
-  chmodSync(out, BACKUP_FILE_MODE);
+  // `mode` is only a creation hint and chmod is unsupported on some mounts
+  // (FAT, some network shares). The dump is already on disk at this point, so a
+  // throw here must not leave the operator without the path to delete.
+  try {
+    chmodSync(out, BACKUP_FILE_MODE);
+  } catch {
+    // best effort: the file is still owner-created; document the mount limit
+  }
   console.error(
     `Wrote ${out} (${plaintext.length} bytes, mode 0600) — delete it once the restore succeeded.`,
   );

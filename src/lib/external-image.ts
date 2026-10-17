@@ -120,7 +120,10 @@ const LOCAL_SCHEMES = new Set(["data", "blob"]);
  */
 export function externalImageSrc(value: unknown): string {
   if (typeof value !== "string") return "";
-  const raw = value.trim();
+  // A browser treats `\` as `/` in a URL. Normalise first: otherwise a single
+  // leading backslash (`\evil.example/x`) looks like a relative path here but
+  // is resolved to another host by the visitor's browser.
+  const raw = value.trim().replace(/\\/g, "/");
   if (!raw) return "";
   // Protocol-relative (and its backslash twin): the browser inherits a scheme
   // from the page, so it points at another host.

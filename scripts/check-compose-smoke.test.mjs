@@ -148,7 +148,7 @@ describe("analyzeComposeSmoke", () => {
 
   it("flags a boot wrapper that serves before it migrates", () => {
     const bootWrapper = CURRENT_BOOT_WRAPPER.replace(
-      "await migrate();\n      startServer();",
+      /await migrate\(\);\r?\n      startServer\(\);/,
       "startServer();\n      await migrate();",
     );
     const findings = analyzeComposeSmoke(files({ bootWrapper }));

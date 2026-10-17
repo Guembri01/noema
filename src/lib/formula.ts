@@ -287,9 +287,11 @@ type RegexRepetition = {
 };
 
 /**
- * The repetitions of a pattern: the elements a quantifier (`*`, `+`,
- * `{n,m}`) applies to. A `?` is not one — a single optional element does
- * not let the engine split the text.
+ * The repetitions of a pattern: the elements a quantifier (`*`, `+`, `?`,
+ * `{n,m}`) applies to. A chain of optional elements is the same exponential
+ * split as a chain of stars, so it is counted too. A `?` that only makes the
+ * preceding quantifier lazy (`a*?`, `a{2,3}?`) or opens a group construct
+ * (`(?:`, `(?=`, `(?<`) is not a repetition of its own.
  */
 function findRepetitions(pattern: string): RegexRepetition[] {
   const repetitions: RegexRepetition[] = [];
@@ -311,10 +313,20 @@ function findRepetitions(pattern: string): RegexRepetition[] {
       i += 1;
       continue;
     }
-    if (char === "*" || char === "+" || char === "{") {
-      const element = repetitionElement(pattern, i);
-      if (element.source !== "") {
-        repetitions.push({ source: element.source, start: element.start, end: i + 1 });
+    if (char === "*" || char === "+" || char === "{" || char === "?") {
+      const previous = i > 0 ? pattern[i - 1] : "";
+      const isLazyModifier =
+        char === "?" &&
+        (previous === "*" ||
+          previous === "+" ||
+          previous === "}" ||
+          previous === "?" ||
+          previous === "(");
+      if (!isLazyModifier) {
+        const element = repetitionElement(pattern, i);
+        if (element.source !== "") {
+          repetitions.push({ source: element.source, start: element.start, end: i + 1 });
+        }
       }
       i += 1;
       continue;

@@ -2,6 +2,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writ
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+const itPosix = process.platform === "win32" ? it.skip : it;
 import {
   describeDevice,
   isSessionRevoked,
@@ -198,7 +200,7 @@ describe("session registry — the store is owner-only (B67)", () => {
     return process.env.SESSION_STORE_PATH;
   };
 
-  it("writes the store as a 0600 file inside a 0700 directory", () => {
+  itPosix("writes the store as a 0600 file inside a 0700 directory", () => {
     const file = storeIn("data");
     registerSession({ userId: "user-a", device: "Chrome on Windows" });
 
@@ -206,7 +208,7 @@ describe("session registry — the store is owner-only (B67)", () => {
     expect(statSync(dirname(file)).mode & 0o777).toBe(0o700);
   });
 
-  it("hardens a store that an older version created with the umask's modes", () => {
+  itPosix("hardens a store that an older version created with the umask's modes", () => {
     const file = storeIn("legacy");
     // An install from before the modes were set: the directory is 0755 and the
     // file in it 0644.

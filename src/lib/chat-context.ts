@@ -118,6 +118,21 @@ export function foldToLine(value: string): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 }
 
+/**
+ * Keep the line structure of a body excerpt while making it impossible for a
+ * line of content to pass for a block header: every line is indented, so it
+ * cannot start at column 0 with `CURRENT PAGE —`, `WORKSPACE OVERVIEW —`, and
+ * so on. Titles and single values still use {@link foldToLine}.
+ */
+export function indentBlock(value: string): string {
+  return typeof value === "string"
+    ? value
+        .split(/\r?\n/)
+        .map((line) => `  ${line}`)
+        .join("\n")
+    : "";
+}
+
 const INTENT_RULES: { id: ChatIntent; label: string; test: RegExp }[] = [
   {
     // "what page am I in?", "describe this", "where am I?" — questions about the
@@ -405,7 +420,7 @@ export function currentPageBlock(page: CurrentPageContext): string {
     );
   }
   if (page.excerpt) {
-    lines.push("", "Content of the current page:", foldToLine(page.excerpt));
+    lines.push("", "Content of the current page:", indentBlock(page.excerpt));
   } else if (page.type === "DATABASE") {
     lines.push("", "This page is a database: its properties and rows are listed above.");
   }
@@ -996,7 +1011,7 @@ export async function gatherChatIntel(input: {
     if (pinned) {
       blocks.push(
         `PINNED NOTE — this conversation is pinned to a different page\n- Title: "${foldToLine(pinned.title)}"\n- Path: ${pinned.path.map((title) => foldToLine(title)).join(" / ")}\n${
-          pinned.excerpt ? `Content:\n${foldToLine(pinned.excerpt).slice(0, 3000)}` : ""
+          pinned.excerpt ? `Content:\n${indentBlock(pinned.excerpt).slice(0, 3000)}` : ""
         }`,
       );
       addReferences([{ id: pinned.id, title: pinned.title, icon: pinned.icon }]);

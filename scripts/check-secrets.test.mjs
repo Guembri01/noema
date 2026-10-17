@@ -12,10 +12,11 @@ import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const GATE = new URL("./check-secrets.mjs", import.meta.url).pathname;
-const THIS_FILE = new URL("./check-secrets.test.mjs", import.meta.url).pathname;
+const GATE = fileURLToPath(new URL("./check-secrets.mjs", import.meta.url));
+const THIS_FILE = fileURLToPath(new URL("./check-secrets.test.mjs", import.meta.url));
 
 let repo;
 

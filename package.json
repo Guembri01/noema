@@ -70,6 +70,7 @@
     "check:audit": "node scripts/check-npm-audit.mjs",
     "check:workflow-permissions": "node scripts/check-workflow-permissions.mjs",
     "check:image-pins": "node scripts/check-image-pins.mjs",
+    "check:action-pins": "node scripts/check-action-pins.mjs",
     "check:use-server": "node scripts/check-use-server.mjs",
     "check:parent-scope": "node scripts/check-parent-scope.mjs",
     "check:target-blank": "node scripts/check-target-blank-links.mjs",

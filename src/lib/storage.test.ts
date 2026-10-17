@@ -1,7 +1,11 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from " node:fs/promises;
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+// Windows has no POSIX mode bits; the desktop target relies on the per-user
+// %APPDATA% ACL there. The mode assertions are meaningful on Linux/macOS only.
+const itPosix = process.platform === "win32" ? it.skip : it;
 import {
   contentTypeFor,
   isValidAssetKey,
@@ -129,7 +133,7 @@ describe("localDriver", () => {
     await expect(driver.put(".", new Uint8Array([1]), "text/plain")).rejects.toThrow();
   });
 
-  it("hardens uploads that an older version left readable (B67)", async () => {
+  itPosix("hardens uploads that an older version left readable (B67)", async () => {
     // An install from before the modes were set: the workspace directory is
     // 0755 and the file in it 0644 — the umask's defaults.
     await mkdir(path.join(root, "ws1"), { recursive: true });

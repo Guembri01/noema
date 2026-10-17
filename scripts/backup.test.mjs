@@ -25,6 +25,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// The suite builds a POSIX `pg_dump` shim and asserts POSIX mode bits; neither
+// exists on Windows. The production paths are still exercised on Linux CI.
+const describeBackup = process.platform === "win32" ? describe.skip : describe;
+
 const REPO = fileURLToPath(new URL("..", import.meta.url));
 const BACKUP = join(REPO, "scripts", "backup.mjs");
 const RESTORE = join(REPO, "scripts", "backup-restore.mjs");
@@ -196,7 +200,7 @@ afterEach(() => {
   for (const dir of workspaces.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-describe("backup without a passphrase (fail closed)", () => {
+describeBackup("backup without a passphrase (fail closed)", () => {
   it("writes nothing and says why", () => {
     const dir = workspace();
     const result = runBackup(dir);
@@ -216,7 +220,7 @@ describe("backup without a passphrase (fail closed)", () => {
   });
 });
 
-describe("backup with a passphrase", () => {
+describeBackup("backup with a passphrase", () => {
   it("writes a sealed dump with mode 0600 into a 0700 directory", () => {
     const dir = workspace();
     const result = runBackup(dir, { BACKUP_ENCRYPTION_KEY: SEAL_KEY });
@@ -255,7 +259,7 @@ describe("backup with a passphrase", () => {
   });
 });
 
-describe("restore", () => {
+describeBackup("restore", () => {
   it("opens the dump back to the rows it was taken from", () => {
     const dir = workspace();
     runBackup(dir, { BACKUP_ENCRYPTION_KEY: SEAL_KEY });

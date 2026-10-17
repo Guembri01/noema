@@ -103,8 +103,12 @@ export function collectServiceImages(text) {
     const indent = line.length - line.trimStart().length;
 
     if (servicesIndent >= 0) {
-      // The block ends at the first line that is not indented below it.
-      if (line.trim() !== "" && indent <= servicesIndent) {
+      // Blank and comment lines do not end the block: a `#` at column 0 is
+      // still part of the YAML document, not the next top-level key.
+      const trimmed = line.trim();
+      if (trimmed === "" || trimmed.startsWith("#")) continue;
+      // The block ends at the first real line that is not indented below it.
+      if (indent <= servicesIndent) {
         servicesIndent = -1;
         continue;
       }

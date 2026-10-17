@@ -217,6 +217,9 @@ export function runAudit(cwd = ROOT) {
     cwd,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
+    // `npm.cmd` is a batch shim; Node 24 refuses to spawn it without a shell
+    // (EINVAL) on Windows. The arguments are fixed, so the shell is safe here.
+    shell: process.platform === "win32",
   });
 
   if (result.error) return { report: null, error: result.error.message };

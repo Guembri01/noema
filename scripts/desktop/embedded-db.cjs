@@ -169,10 +169,11 @@ async function authenticate(socket, password, log) {
         socket.write("N");
         continue;
       }
-      if (length === 8 && code === CANCEL_REQUEST_CODE) {
-        // A cancel request carries no credentials and is answered by the
-        // engine itself.
-        return head;
+      if (length === 16 && code === CANCEL_REQUEST_CODE) {
+        // A Postgres CancelRequest is 16 bytes (length, code, pid, key), not
+        // the 8 bytes of an SSLRequest. Forward the whole packet; the engine
+        // answers it itself.
+        return Buffer.concat([head, await reader.read(8)]);
       }
       if (length < 8) throw new Error("the client sent a malformed startup packet");
       startup = Buffer.concat([head, await reader.read(length - 8)]);

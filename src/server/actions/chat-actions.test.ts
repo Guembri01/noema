@@ -18,6 +18,7 @@ const db = vi.hoisted(() => ({
   messageFindUnique: vi.fn(),
   messageCreate: vi.fn(),
   messageUpdate: vi.fn(),
+  messageUpdateMany: vi.fn(),
   ticketFindUnique: vi.fn(),
   ticketFindFirst: vi.fn(),
   ticketFindMany: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock("@/lib/db", () => ({
       findUnique: db.messageFindUnique,
       create: db.messageCreate,
       update: db.messageUpdate,
+      updateMany: db.messageUpdateMany,
     },
     ticket: {
       findUnique: db.ticketFindUnique,
@@ -131,6 +133,7 @@ beforeEach(() => {
   db.messageCreate.mockResolvedValue({ id: "msg-1" });
   db.messageFindUnique.mockResolvedValue(null);
   db.messageUpdate.mockResolvedValue({});
+  db.messageUpdateMany.mockResolvedValue({ count: 1 });
   db.ticketFindUnique.mockResolvedValue({ id: "t1", key: "DW-1", workspaceId: "ws-1" });
   db.ticketFindFirst.mockResolvedValue(null);
   db.ticketFindMany.mockResolvedValue([]);
@@ -236,8 +239,8 @@ describe("executeChatActionAction — create", () => {
       proposalMessageId: "msg-0",
     });
 
-    expect(db.messageUpdate).toHaveBeenCalledWith({
-      where: { id: "msg-0" },
+    expect(db.messageUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: "msg-0", threadId: "thread-1" }),
       data: { meta: expect.objectContaining({ applied: true }) },
     });
   });
