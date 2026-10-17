@@ -9,6 +9,8 @@ import { regenerateChatAnswerAction, saveChatAnswerAction } from "@/server/actio
 import { safeAction } from "@/lib/actions-client";
 import { markdownToText } from "@/lib/markdown";
 import { t } from "@/lib/i18n";
+import { Tag } from "@/components/ui/tag";
+import type { TagHue } from "@/lib/design-tokens";
 
 /** Minimal shape shared by Radix's dropdown and context-menu items. */
 type MenuItem = ComponentType<{
@@ -26,10 +28,74 @@ export type ChatAnswerTarget = {
   threadPageId?: string | null;
 };
 
+/* -------------------------------------------------------------------------- *
+ * Answer actions as a pure mapping
+ * -------------------------------------------------------------------------- */
+
+/** Every action the answer menu can offer. */
+export type ChatAnswerActionId =
+  | "copy"
+  | "copyPlain"
+  | "save"
+  | "followUp"
+  | "regenerate"
+  | "openNote"
+  | "openSaved";
+
+/** The `Tag` shown on the right of a menu row: a keyboard hint + a token hue. */
+export type AnswerActionTag = { hint: string; hue: TagHue };
+
 /**
- * The action set for one assistant answer. Rendered twice — as a right-click
- * context menu on the message and as a `⋯` dropdown button — so the same
- * actions are reachable by mouse, keyboard and touch alike.
+ * Pure, testable decoration for each action. A `null` tag means the row has no
+ * shortcut chip (the "open" rows). The hues come from the tag palette, never a
+ * raw colour, so light / dark / high-contrast all inherit from the tokens.
+ */
+export const ANSWER_ACTION_TAGS: Record<ChatAnswerActionId, AnswerActionTag | null> = {
+  copy: { hint: "⌘C", hue: "blue" },
+  copyPlain: { hint: "⇧⌘C", hue: "gray" },
+  save: { hint: "⌘S", hue: "green" },
+  followUp: { hint: "⌘⏎", hue: "purple" },
+  regenerate: { hint: "⌘R", hue: "orange" },
+  openNote: null,
+  openSaved: null,
+};
+
+/** The tag for an action, or `null` when the action has no hint. */
+export function answerActionTag(id: ChatAnswerActionId): AnswerActionTag | null {
+  return ANSWER_ACTION_TAGS[id] ?? null;
+}
+
+/** One menu row: decorative icon, label, and a right-aligned token `Tag`. */
+function ActionRow({
+  id,
+  icon,
+  label,
+}: {
+  id: ChatAnswerActionId;
+  icon: ReactNode;
+  label: ReactNode;
+}) {
+  const tag = answerActionTag(id);
+  return (
+    <span className="flex w-full min-w-0 items-center gap-2">
+      <span aria-hidden className="inline-flex shrink-0">
+        {icon}
+      </span>
+      <span className="truncate">{label}</span>
+      {tag ? (
+        <Tag size="sm" hue={tag.hue} className="ms-auto shrink-0">
+          {tag.hint}
+        </Tag>
+      ) : null}
+    </span>
+  );
+}
+
+/**
+ * The action set for one assistant answer. Rendered as a `⋯` dropdown button on
+ * the message (mouse, keyboard and touch). Every row carries the design-system
+ * icon ink and, where one exists, a keyboard-hint `Tag`; colours stay on tokens
+ * (`text-muted` / `text-accent`) — never a raw palette class.
  */
 export function ChatAnswerItems({
   Item,
@@ -83,19 +149,35 @@ export function ChatAnswerItems({
   return (
     <>
       <Item onSelect={() => void copy(message.body, "Answer copied")}>
-        <Quote className="h-4 w-4 text-muted" /> {t(locale, "chatCopyAnswer")}
+        <ActionRow
+          id="copy"
+          icon={<Quote className="h-4 w-4 text-muted" />}
+          label={t(locale, "chatCopyAnswer")}
+        />
       </Item>
       <Item onSelect={() => void copy(markdownToText(message.body), "Copied as plain text")}>
-        <Link2 className="h-4 w-4 text-muted" /> {t(locale, "chatCopyPlain")}
+        <ActionRow
+          id="copyPlain"
+          icon={<Link2 className="h-4 w-4 text-muted" />}
+          label={t(locale, "chatCopyPlain")}
+        />
       </Item>
       {Separator && <Separator />}
       {savedId ? (
         <Item onSelect={() => router.push(`/w/${slug}/${savedId}`)}>
-          <Sparkles className="h-4 w-4 text-accent" /> Open “{savedTitle ?? "note"}”
+          <ActionRow
+            id="openSaved"
+            icon={<Sparkles className="h-4 w-4 text-accent" />}
+            label={`Open “${savedTitle ?? "note"}”`}
+          />
         </Item>
       ) : (
         <Item onSelect={save} disabled={pending}>
-          <FilePlus2 className="h-4 w-4 text-muted" /> {pending ? "…" : t(locale, "chatSaveNote")}
+          <ActionRow
+            id="save"
+            icon={<FilePlus2 className="h-4 w-4 text-muted" />}
+            label={pending ? "…" : t(locale, "chatSaveNote")}
+          />
         </Item>
       )}
       <Item
@@ -105,7 +187,11 @@ export function ChatAnswerItems({
           )
         }
       >
-        <MessageSquarePlus className="h-4 w-4 text-muted" /> {t(locale, "chatFollowUp")}
+        <ActionRow
+          id="followUp"
+          icon={<MessageSquarePlus className="h-4 w-4 text-muted" />}
+          label={t(locale, "chatFollowUp")}
+        />
       </Item>
       {threadId && (
         <Item
@@ -123,12 +209,20 @@ export function ChatAnswerItems({
           }
           disabled={pending}
         >
-          <RefreshCw className="h-4 w-4 text-muted" /> {t(locale, "chatRegenerate")}
+          <ActionRow
+            id="regenerate"
+            icon={<RefreshCw className="h-4 w-4 text-muted" />}
+            label={t(locale, "chatRegenerate")}
+          />
         </Item>
       )}
       {message.threadPageId && (
         <Item onSelect={() => router.push(`/w/${slug}/${message.threadPageId}`)}>
-          <Sparkles className="h-4 w-4 text-muted" /> Open the note this discusses
+          <ActionRow
+            id="openNote"
+            icon={<Sparkles className="h-4 w-4 text-muted" />}
+            label="Open the note this discusses"
+          />
         </Item>
       )}
     </>
