@@ -44,8 +44,22 @@ a desktop app that needs nothing else installed.
 | [Implemented today](#implemented-today) — what works, area by area | [Project layout](#project-layout) — where the files live |
 | [Desktop app](#desktop-app) — the installable build | [Scripts](#scripts) — every gate and check |
 | [Quick start](#quick-start) — Docker, `.env`, `npm run dev` | [Where to read next](#where-to-read-next) — the full docs set |
-| [Screenshots](#screenshots) — the interface at a glance | [Contributing](#contributing) · [Security](#security) |
-| | [Authors](#authors) · [License](#license) |
+| [Demo](#demo) — the two-minute product film | [Contributing](#contributing) · [Security](#security) |
+| [Screenshots](#screenshots) — the interface at a glance | [Authors](#authors) · [License](#license) |
+
+## Demo
+
+[![Noema — the two-minute product film](./docs/Noema-demo-poster.jpg)](./docs/Noema-demo.mp4)
+
+**[▶ Watch the two-minute product film](./docs/Noema-demo.mp4)** — one pass over
+every area: the block editor, seven database views, conditional formatting,
+tickets with labels and estimates, cycles and burndown, projects and milestones,
+the workspace roadmap, grounded chat, comments, version history, sharing and the
+desktop build.
+
+The film is not a screen recording: every frame is composed from captured
+screenshots of the running app, so it is reproducible. The project lives in
+[`video/`](./video/README.md) — `npm install && npm run render`.
 
 ## Status
 
