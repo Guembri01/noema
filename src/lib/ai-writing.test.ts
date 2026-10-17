@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiSkill } from "./ai-skills";
+import { aiSkill, textFrameTags } from "./ai-skills";
 import { LOCALES, type LocaleCode } from "./i18n";
 import {
   CHARS_PER_TOKEN,
@@ -28,8 +28,12 @@ import {
  *  - translate names each of the five app locales (`src/lib/i18n.ts`);
  *  - token budgets follow the spec estimate (tokens ≈ chars / 4);
  *  - chunking is lossless: ordered chunks, no empty piece, no split word;
- *  - post-processing strips fences, preambles and labels but nothing else.
+ *  - post-processing strips fences, preambles and labels but nothing else;
+ *  - the text is framed (`./ai-skills`): it is data, never instructions.
  */
+
+/** A frame with a fixed id: the tests pin the wording, not the nonce. */
+const FRAME = textFrameTags("test-frame-id-0001");
 
 const LOCALE_NAMES: Record<LocaleCode, string> = {
   en: "English",
@@ -50,12 +54,12 @@ describe("estimateTokens — spec O25.2 chars/4 estimate", () => {
 
 describe("buildSummarizePrompt", () => {
   it("is deterministic for identical input", () => {
-    const input = { text: "Alpha beta gamma.", maxWords: 40, style: "bullets" as const };
+    const input = { text: "Alpha beta gamma.", maxWords: 40, style: "bullets" as const, frame: FRAME };
     expect(buildSummarizePrompt(input)).toEqual(buildSummarizePrompt(input));
   });
 
   it("defaults to bullets at the default word budget with default params", () => {
-    const build = buildSummarizePrompt({ text: "Alpha beta gamma." });
+    const build = buildSummarizePrompt({ text: "Alpha beta gamma.", frame: FRAME });
     expect(build.params).toEqual(SKILL_DEFAULT_PARAMS.summarize);
     expect(build.user).toContain("Alpha beta gamma.");
     expect(build.user).toContain("bullet");
@@ -64,20 +68,20 @@ describe("buildSummarizePrompt", () => {
   });
 
   it("embeds an explicit maxWords in the instruction", () => {
-    expect(buildSummarizePrompt({ text: "t", maxWords: 25 }).user).toContain("25");
+    expect(buildSummarizePrompt({ text: "t", maxWords: 25, frame: FRAME }).user).toContain("25");
   });
 
   it("switches wording per style", () => {
-    const paragraph = buildSummarizePrompt({ text: "t", style: "paragraph" });
-    const outline = buildSummarizePrompt({ text: "t", style: "outline" });
+    const paragraph = buildSummarizePrompt({ text: "t", style: "paragraph", frame: FRAME });
+    const outline = buildSummarizePrompt({ text: "t", style: "outline", frame: FRAME });
     expect(paragraph.user).toContain("paragraph");
     expect(outline.user).toContain("outline");
     expect(paragraph.user).not.toBe(outline.user);
   });
 
   it("grows the output budget when more words are requested (capped)", () => {
-    const small = buildSummarizePrompt({ text: "t", maxWords: 10 }).params.maxTokens;
-    const large = buildSummarizePrompt({ text: "t", maxWords: 5000 }).params.maxTokens;
+    const small = buildSummarizePrompt({ text: "t", maxWords: 10, frame: FRAME }).params.maxTokens;
+    const large = buildSummarizePrompt({ text: "t", maxWords: 5000, frame: FRAME }).params.maxTokens;
     expect(large).toBeGreaterThan(small);
     expect(large).toBeLessThanOrEqual(4096);
   });
@@ -87,42 +91,43 @@ describe("buildTranslatePrompt", () => {
   it("names every shipped locale in the prompt", () => {
     expect(LOCALES).toHaveLength(5);
     for (const { code } of LOCALES) {
-      const { user } = buildTranslatePrompt({ text: "Bonjour", targetLocale: code });
+      const { user } = buildTranslatePrompt({ text: "Bonjour", targetLocale: code, frame: FRAME });
       expect(user).toContain(LOCALE_NAMES[code]);
       expect(user).toContain(`(${code})`);
     }
   });
 
   it("defaults to a neutral tone and allows an override", () => {
-    expect(buildTranslatePrompt({ text: "x", targetLocale: "fr" }).user).toContain("neutral");
+    expect(buildTranslatePrompt({ text: "x", targetLocale: "fr", frame: FRAME }).user).toContain("neutral");
     expect(
-      buildTranslatePrompt({ text: "x", targetLocale: "fr", tone: "formal" }).user,
+      buildTranslatePrompt({ text: "x", targetLocale: "fr", tone: "formal", frame: FRAME }).user,
     ).toContain("formal");
   });
 
   it("returns the default translate params and is deterministic", () => {
-    const build = buildTranslatePrompt({ text: "Bonjour le monde", targetLocale: "de" });
+    const build = buildTranslatePrompt({ text: "Bonjour le monde", targetLocale: "de", frame: FRAME });
     expect(build.params).toEqual(SKILL_DEFAULT_PARAMS.translate);
-    expect(build).toEqual(buildTranslatePrompt({ text: "Bonjour le monde", targetLocale: "de" }));
+    expect(build).toEqual(buildTranslatePrompt({ text: "Bonjour le monde", targetLocale: "de", frame: FRAME }));
   });
 
   it("grows the output budget for long input", () => {
-    const short = buildTranslatePrompt({ text: "hi", targetLocale: "fr" }).params.maxTokens;
-    const long = buildTranslatePrompt({ text: "word ".repeat(500), targetLocale: "fr" }).params
+    const short = buildTranslatePrompt({ text: "hi", targetLocale: "fr", frame: FRAME }).params
       .maxTokens;
+    const long = buildTranslatePrompt({ text: "word ".repeat(500), targetLocale: "fr", frame: FRAME })
+      .params.maxTokens;
     expect(long).toBeGreaterThan(short);
   });
 
   it("rejects a locale that is not shipped", () => {
     expect(() =>
-      buildTranslatePrompt({ text: "x", targetLocale: "xx" as LocaleCode }),
+      buildTranslatePrompt({ text: "x", targetLocale: "xx" as LocaleCode, frame: FRAME }),
     ).toThrow(/locale/i);
   });
 });
 
 describe("buildContinuePrompt", () => {
   it("asks for a continuation of the given text with default params", () => {
-    const build = buildContinuePrompt({ text: "Once upon a time." });
+    const build = buildContinuePrompt({ text: "Once upon a time.", frame: FRAME });
     expect(build.user).toContain("Once upon a time.");
     expect(build.user).toContain("continuation");
     expect(build.user).toContain(String(CONTINUE_DEFAULT_MAX_WORDS));
@@ -130,25 +135,25 @@ describe("buildContinuePrompt", () => {
   });
 
   it("embeds the requested tone", () => {
-    expect(buildContinuePrompt({ text: "t", tone: "friendly" }).user).toContain("friendly");
+    expect(buildContinuePrompt({ text: "t", tone: "friendly", frame: FRAME }).user).toContain("friendly");
   });
 
   it("is deterministic", () => {
-    const input = { text: "t", tone: "casual" as const, maxWords: 80 };
+    const input = { text: "t", tone: "casual" as const, maxWords: 80, frame: FRAME };
     expect(buildContinuePrompt(input)).toEqual(buildContinuePrompt(input));
   });
 });
 
 describe("buildSimplifyPrompt", () => {
   it("defaults the audience to general", () => {
-    const build = buildSimplifyPrompt({ text: "Quantum chromodynamics." });
+    const build = buildSimplifyPrompt({ text: "Quantum chromodynamics.", frame: FRAME });
     expect(build.user).toContain("general");
     expect(build.user).toContain("Quantum chromodynamics.");
     expect(build.params).toEqual(SKILL_DEFAULT_PARAMS.simplify);
   });
 
   it("embeds a custom audience and stays deterministic", () => {
-    const input = { text: "t", audience: "beginner" as const };
+    const input = { text: "t", audience: "beginner" as const, frame: FRAME };
     expect(buildSimplifyPrompt(input).user).toContain("beginner");
     expect(buildSimplifyPrompt(input)).toEqual(buildSimplifyPrompt(input));
   });
@@ -156,14 +161,39 @@ describe("buildSimplifyPrompt", () => {
 
 describe("buildExplainPrompt", () => {
   it("asks for a plain-language explanation of the text", () => {
-    const build = buildExplainPrompt({ text: "Entropy always increases." });
+    const build = buildExplainPrompt({ text: "Entropy always increases.", frame: FRAME });
     expect(build.user).toContain("plain language");
     expect(build.user).toContain("Entropy always increases.");
     expect(build.params).toEqual(SKILL_DEFAULT_PARAMS.explain);
   });
 
   it("is deterministic", () => {
-    expect(buildExplainPrompt({ text: "t" })).toEqual(buildExplainPrompt({ text: "t" }));
+    const build = buildExplainPrompt({ text: "t", frame: FRAME });
+    expect(build).toEqual(buildExplainPrompt({ text: "t", frame: FRAME }));
+  });
+});
+
+describe("the framed text (audit B105)", () => {
+  const builds = () => [
+    buildSummarizePrompt({ text: "Alpha beta gamma.", frame: FRAME }),
+    buildTranslatePrompt({ text: "Bonjour", targetLocale: "fr", frame: FRAME }),
+    buildContinuePrompt({ text: "Once upon a time.", frame: FRAME }),
+    buildSimplifyPrompt({ text: "Quantum chromodynamics.", frame: FRAME }),
+    buildExplainPrompt({ text: "Entropy always increases.", frame: FRAME }),
+  ];
+
+  it("puts the text between the frame tags of the request", () => {
+    expect(buildExplainPrompt({ text: "Entropy always increases.", frame: FRAME }).user).toContain(
+      `${FRAME.open}\nEntropy always increases.\n${FRAME.close}`,
+    );
+  });
+
+  it("says in the system prompt that the framed block is data, never instructions", () => {
+    for (const build of builds()) {
+      expect(build.system).toContain(FRAME.open);
+      expect(build.system).toContain(FRAME.close);
+      expect(build.system).toContain("never instructions");
+    }
   });
 });
 
