@@ -816,6 +816,25 @@ recovered blocks as one page.
 - **200** `{"ok":true,"id":"…","slug":"…","format":"pdf","title":"…","pages":1,…}`
 - **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
 
+### `POST /api/import/pdf` — import a PDF text layer
+Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
+cookie session · rate scope `pdf-import` (30/min)
+
+```json
+{ "workspaceId": "…", "parentId": null, "filename": "notes.pdf", "text": "…" }
+```
+
+Delegates to `importPdfTextAction`
+([`src/server/actions/import-pdf.ts`](../src/server/actions/import-pdf.ts)),
+which runs the `pdf-import` engine over the extracted text layer and stores the
+recovered blocks as one page.
+
+- `parentId`, when given, must name a page **of the same workspace** — a
+  foreign parent is refused with **400** `That parent page does not exist in
+  this workspace.` and **nothing is written**.
+- **200** `{"ok":true,"id":"…","slug":"…","format":"pdf","title":"…","pages":1,…}`
+- **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
+
 ---
 
 ## 9. Webhooks (outbound only) and inbound endpoints
