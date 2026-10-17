@@ -10,7 +10,7 @@ Everything written about the project, in roughly the order people want it. The
 | [`FEATURE_MATRIX.md`](./FEATURE_MATRIX.md) | The exhaustive inventory of the product surface — 563 rows, each with an implementation status and a note. The source of truth for "does it do X?" |
 | [`GALLERY.md`](./GALLERY.md) | Every screen, captured from the seeded demo workspace by `npm run screenshots` — generated, so a surface that changes takes its screenshot with it. |
 | [`Noema-features.pdf`](./Noema-features.pdf) | The feature sheet: every area as bullet points, illustrated with all 44 screenshots. Built by `npm run features:pdf` from the README's feature tables and the screenshot report. |
-| [`Noema-demo.mp4`](./Noema-demo.mp4) | The two-minute product film — every area in one pass. Composed frame by frame from captured screenshots by the Remotion project in [`../video/`](../video/README.md). |
+| [`Noema-demo.mp4`](./Noema-demo.mp4) | The two-minute product film — every area in one pass. Composed frame by frame from captured screenshots by the Remotion project in [`../video/`](../video/README.md). The front page embeds [`Noema-demo-preview.gif`](./Noema-demo-preview.gif), a compact loop of its key beats. |
 | [`MISSING_FEATURES.md`](./MISSING_FEATURES.md) | Generated from the matrix: every row that is partial or out of scope, with a priority shortlist. Regenerate with `npm run docs:gaps`. |
 | [`ROADMAP.md`](./ROADMAP.md) | What comes next, ordered by dependency and impact, with every item mapped to matrix rows. |
 | [`GLOSSARY.md`](./GLOSSARY.md) | One word per idea. The vocabulary shared by interface copy, code, schema, docs and tests. |

@@ -47,9 +47,9 @@ a desktop app that needs nothing else installed.
 
 ## Demo
 
-[![Noema — the two-minute product film](./docs/Noema-demo-poster.jpg)](./docs/Noema-demo.mp4)
+[![Noema in motion — the editor, database views, tickets, cycles, chat and the desktop build](./docs/Noema-demo-preview.gif)](https://github.com/Guembri01/noema/releases/latest/download/Noema-demo.mp4)
 
-**[▶ Watch the two-minute product film](./docs/Noema-demo.mp4)** — one pass over
+**[▶ Watch the two-minute product film](https://github.com/Guembri01/noema/releases/latest/download/Noema-demo.mp4)** — one pass over
 every area: the block editor, seven database views, conditional formatting,
 tickets with labels and estimates, cycles and burndown, projects and milestones,
 the workspace roadmap, grounded chat, comments, version history, sharing and the

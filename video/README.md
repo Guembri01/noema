@@ -13,9 +13,16 @@ npm run dev            # Remotion Studio, scrubbable
 npm run render         # out/noema-promo.mp4        (with music)
 npm run render:nobgm   # out/noema-promo-nobgm.mp4  (music-free cut)
 npm run still -- --frame=900 out/qa/frame.png
+npm run preview        # docs/Noema-demo-preview.gif — the README's looping preview
 npm run check:audio    # every cue name resolves in public/audio/
 npm run typecheck
 ```
+
+`npm run preview` cuts the front page's animated GIF out of
+`docs/Noema-demo.mp4` with `ffmpeg`. The README needs it because GitHub will not
+play a repository-hosted MP4 inline: the `<video>` tag is stripped and raw file
+URLs are not served as media, so the preview is an image — which always renders —
+and the caption links to the full film.
 
 `render` runs `check:audio` first. The audio is not committed, so a typo in a cue
 name is otherwise invisible until Remotion is several thousand frames in and dies

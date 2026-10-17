@@ -9,6 +9,7 @@
     "render": "node scripts/check-audio.mjs && remotion render src/index.ts NoemaPromo out/noema-promo.mp4",
     "render:nobgm": "node scripts/check-audio.mjs && remotion render src/index.ts NoemaPromo out/noema-promo-nobgm.mp4 --props=props-nobgm.json",
     "still": "remotion still src/index.ts NoemaPromo out/qa/still.png",
+    "preview": "node scripts/preview.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
