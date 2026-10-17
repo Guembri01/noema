@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { emit } from "@tauri-apps/api/event";
 import {
   apiUrl,
   appVersion,
@@ -7,6 +9,7 @@ import {
   hideSiteOnlyChrome,
   invokeShell,
   isDesktop,
+  listenShell,
   nativeCapabilities,
   platform,
   resolveApiBase,
@@ -23,8 +26,15 @@ const bridge = {
 };
 
 afterEach(() => {
+  // The mocks live on the window — clear them before the window is gone.
+  try {
+    clearMocks();
+  } catch {
+    // No window in this test: nothing to clear.
+  }
   delete (globalThis as { window?: unknown }).window;
   delete (globalThis as { document?: unknown }).document;
+  delete (globalThis as { isTauri?: unknown }).isTauri;
   delete process.env.NEXT_PUBLIC_APP_VERSION;
 });
 
@@ -42,6 +52,25 @@ function withDocument(runtime: string | null) {
         name === "data-noema-runtime" ? runtime : null,
     },
   };
+}
+
+/**
+ * A window the way the shell hosts it: the mark `isTauri()` reads and the
+ * internals `@tauri-apps/api` talks to. The global API object is **not**
+ * there — `withGlobalTauri` is off.
+ */
+function withShell(
+  invoke?: (command: string, args?: Record<string, unknown>) => unknown,
+) {
+  (globalThis as unknown as { isTauri?: boolean }).isTauri = true;
+  (globalThis as unknown as { window: unknown }).window = {
+    crypto: globalThis.crypto,
+  };
+  mockIPC(
+    (command: string, args: unknown) =>
+      invoke ? invoke(command, args as Record<string, unknown>) : null,
+    { shouldMockEvents: true },
+  );
 }
 
 describe("runtime mode", () => {
@@ -99,22 +128,21 @@ describe("runtime mode", () => {
     expect(isDesktop()).toBe(false);
   });
 
-  it("falls back to Tauri's global when the document carries no mode", () => {
+  it("falls back to the shell's mark when the document carries no mode", () => {
+    // The shell marks every document it hosts; the global API object is gone
+    // (`withGlobalTauri` is off), so the mark is what is left to detect it.
     withWindow(undefined);
     withDocument(null);
     expect(isDesktop()).toBe(false);
-    (globalThis as unknown as { window: unknown }).window = {
-      __TAURI__: { core: { invoke: () => Promise.resolve(null) } },
-    };
+    withShell();
     expect(isDesktop()).toBe(true);
   });
 
-  it("treats an empty Tauri global as the site", () => {
-    // `withGlobalTauri` installs a populated object; anything else is a page
-    // that merely defined the name.
+  it("treats a document without the shell as the site", () => {
+    // A page that merely defines the name is not the shell.
     withWindow(undefined);
     withDocument(null);
-    (globalThis as unknown as { window: unknown }).window = { __TAURI__: {} };
+    (globalThis as unknown as { window: unknown }).window = {};
     expect(isDesktop()).toBe(false);
   });
 
@@ -140,18 +168,11 @@ describe("runtime mode", () => {
 });
 
 describe("invoking the shell", () => {
-  function withShell(invoke: unknown) {
-    (globalThis as unknown as { window: { __TAURI__?: unknown } }).window = {
-      __TAURI__: { core: { invoke } },
-    };
-  }
-
   it("is a no-op without a shell (SSR, the site, a plain browser)", () => {
     expect(invokeShell("set_theme", { theme: "dark" })).toBeNull();
     withWindow(undefined);
     expect(invokeShell("set_theme", { theme: "dark" })).toBeNull();
-    withShell(undefined);
-    expect(invokeShell("set_theme", { theme: "dark" })).toBeNull();
+    expect(listenShell("sidecar://event", () => {})).toBeNull();
   });
 
   it("passes the command and its arguments through", async () => {
@@ -167,5 +188,23 @@ describe("invoking the shell", () => {
   it("swallows a refusal instead of failing the caller", async () => {
     withShell(() => Promise.reject(new Error("no main window")));
     await expect(invokeShell("set_theme", { theme: "dark" })).resolves.toBeUndefined();
+  });
+});
+
+describe("listening to the shell", () => {
+  it("hands the payload of the event over and unsubscribes", async () => {
+    const seen: unknown[] = [];
+    withShell();
+    const stop = listenShell("sidecar://event", (payload) => seen.push(payload));
+    expect(stop).not.toBeNull();
+    // The subscription is asynchronous — give it a tick.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await emit("sidecar://event", { kind: "ready" });
+    expect(seen).toEqual([{ kind: "ready" }]);
+    stop?.();
+  });
+
+  it("is a no-op without a shell", () => {
+    expect(listenShell("sidecar://event", () => {})).toBeNull();
   });
 });
