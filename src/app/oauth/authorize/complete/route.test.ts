@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 
 /**
@@ -30,10 +30,14 @@ import { POST } from "./route";
 
 const CLIENT_ID = "noema_client123";
 const REDIRECT_URI = "https://app.example.test/cb";
+const APP_ORIGIN = "https://app.example.test";
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
-function approval(overrides: Record<string, string> = {}): Request {
+function approval(
+  overrides: Record<string, string> = {},
+  options: { origin?: string | null; requestOrigin?: string } = {},
+): Request {
   const body = new FormData();
   const fields = {
     client_id: CLIENT_ID,
@@ -43,11 +47,19 @@ function approval(overrides: Record<string, string> = {}): Request {
     ...overrides,
   };
   for (const [key, value] of Object.entries(fields)) body.append(key, value);
-  return new Request("http://localhost/oauth/authorize/complete", { method: "POST", body });
+  const origin = options.origin === undefined ? APP_ORIGIN : options.origin;
+  return new Request(`${options.requestOrigin ?? APP_ORIGIN}/oauth/authorize/complete`, {
+    method: "POST",
+    body,
+    ...(origin === null ? {} : { headers: { Origin: origin } }),
+  });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("APP_URL", APP_ORIGIN);
+  vi.stubEnv("APP_ORIGINS", "");
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", undefined);
   auth.getCurrentUser.mockResolvedValue({ id: "user-1", email: "dev@example.test" });
   db.oAuthAppFindUnique.mockResolvedValue({
     id: "app-1",
@@ -58,6 +70,10 @@ beforeEach(() => {
     requiresPkce: false,
   });
   db.oAuthCodeCreate.mockResolvedValue({ id: "code-1" });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("POST /oauth/authorize/complete", () => {
@@ -100,5 +116,62 @@ describe("POST /oauth/authorize/complete", () => {
 
     expect(res.status).toBe(401);
     expect(db.oAuthCodeCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a hostile sibling origin before issuing a code", async () => {
+    const res = await POST(approval({}, { origin: "https://attacker.example.test" }));
+
+    expect(res.status).toBe(403);
+    expect(db.oAuthCodeCreate).not.toHaveBeenCalled();
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("refuses a missing Origin before issuing a code", async () => {
+    const res = await POST(approval({}, { origin: null }));
+
+    expect(res.status).toBe(403);
+    expect(db.oAuthCodeCreate).not.toHaveBeenCalled();
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("refuses a malformed Origin before issuing a code", async () => {
+    const res = await POST(approval({}, { origin: "not an origin" }));
+
+    expect(res.status).toBe(403);
+    expect(db.oAuthCodeCreate).not.toHaveBeenCalled();
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("does not let an attacker-controlled Host establish a trusted origin", async () => {
+    const attackerOrigin = "https://attacker.example.test";
+    const res = await POST(
+      approval({}, { origin: attackerOrigin, requestOrigin: attackerOrigin }),
+    );
+
+    expect(res.status).toBe(403);
+    expect(db.oAuthCodeCreate).not.toHaveBeenCalled();
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("accepts the configured APP_ORIGINS when the public origin is a proxy", async () => {
+    vi.stubEnv("APP_URL", undefined);
+    vi.stubEnv("APP_ORIGINS", APP_ORIGIN);
+
+    const res = await POST(approval());
+
+    expect(res.status).toBe(303);
+    expect(new URL(res.headers.get("location") ?? "").searchParams.get("code")).not.toBeNull();
+    expect(db.oAuthCodeCreate).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat an explicitly configured HTTPS APP_ORIGINS entry as HTTP", async () => {
+    vi.stubEnv("APP_URL", undefined);
+    vi.stubEnv("APP_ORIGINS", APP_ORIGIN);
+
+    const res = await POST(approval({}, { origin: "http://app.example.test" }));
+
+    expect(res.status).toBe(403);
+    expect(db.oAuthCodeCreate).not.toHaveBeenCalled();
+    expect(res.headers.get("location")).toBeNull();
   });
 });
