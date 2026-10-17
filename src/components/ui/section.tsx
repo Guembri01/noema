@@ -29,18 +29,12 @@ export type SectionProps = {
    */
   title: ReactNode;
   description?: ReactNode;
-  action?: ReactNode;
-  tone?: "default" | "danger";
-  level?: 2 | 3 | 4;
-  className?: string;
-} & Omit<HTMLAttributes<HTMLElement>, "title" | "children">;
-  description?: ReactNode;
   /** Right-aligned control(s), e.g. a "Reset" button or a switch. */
   action?: ReactNode;
   tone?: SectionTone;
   /** Semantic heading level; styling stays identical at every level. */
   level?: 2 | 3 | 4;
-} & HTMLAttributes<HTMLElement>;
+} & Omit<HTMLAttributes<HTMLElement>, "title">;
 
 export function Section({
   title,
