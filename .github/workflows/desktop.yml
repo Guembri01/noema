@@ -78,7 +78,7 @@ jobs:
           workspaces: src-tauri
 
       - name: Cache the Tauri CLI
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-tauri*
           key: tauri-cli-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.toml') }}
