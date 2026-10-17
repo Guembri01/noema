@@ -1167,8 +1167,9 @@ neither its clock nor its identity is a project decision.
 The scope has to be the whole commit: the merge commit GitHub synthesises for
 a pull request is dated when GitHub rebuilt the ref, and it carries the
 *human's* address in its author field — an exemption that only covered the
-field holding the bot address left that commit failing the gate, and the gate
-is a required check, so every pull request was red.
+field holding the bot address left that commit failing the gate, and the CI
+runs the gate, so every pull request was red. Whether a red run blocks a merge
+is the repository's branch-protection setting, not a property of the gate.
 
 The converse does not hold: a commit whose *author* is a bot but whose
 committer is a human was not created by GitHub, so it is checked like any

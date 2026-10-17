@@ -234,7 +234,7 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 - The "Authoring windows" check no longer fails for every pull request. It
   collected its commits with `git log --all`, and CI checks out with
   `fetch-depth: 0`, which fetches every branch — so the open Dependabot
-  branches, authored by a bot, made the required check fail with identity
+  branches, authored by a bot, made the check fail in CI with identity
   violations that had nothing to do with the pull request under review. It
   now walks the commits of the ref under review. A commit that GitHub itself
   created is exempt as a whole — the anchor is its **committer** (an App
