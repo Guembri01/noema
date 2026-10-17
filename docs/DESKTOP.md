@@ -193,7 +193,52 @@ npm run desktop:smoke       # prove it boots + migrates + serves
 npm run desktop:bundle      # bundle (prepare re-runs, validated)
 ```
 
-## 5. Release process
+## 5. Installing what you built
+
+The build produces two installers in `src-tauri/target/release/bundle/`:
+
+| Artifact | Size | Notes |
+|---|---|---|
+| `nsis/Noema_1.4.0_x64-setup.exe` | ~63 MB | Per-user install — **no admin prompt**, no UAC |
+| `msi/Noema_1.4.0_x64_en-US.msi` | ~113 MB | For managed deployment (MSI/GPO) |
+
+Both contain the whole app: the Rust shell, the Next standalone server, the Prisma
+CLI, and a Node runtime. **Nothing has to be installed first.**
+
+First run:
+
+1. The window opens immediately on the shell's own page ("Noema is starting…").
+2. The bundled server starts on a loopback port and migrates the database.
+3. As soon as `/api/health` answers 200 the window swaps to your workspace.
+
+If step 3 does not happen, the page stays useful: open **Advanced: database
+connection**, paste a `DATABASE_URL`, and press **Save & restart**. **Copy
+diagnostics** puts a redacted report (host, port, app version, recent log lines —
+password never included) on the clipboard.
+
+Two environment variables are honoured, which is how a portable install or a
+support session works without touching the UI:
+
+```
+NOEMA_DATABASE_URL   the Postgres connection string
+NOEMA_DATA_DIR       where logs/ and backups/ live
+```
+
+Uninstall: **Settings → Apps → Noema → Uninstall**, or the `uninstall.exe` in the
+install directory. Your data directory is left behind on purpose.
+
+### A local database in one line
+
+The desktop app talks to Postgres (see §10 for why, and the plan to remove that):
+
+```bash
+docker run -d --name noema-db -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
+```
+
+Then the app's default `postgresql://postgres:postgres@127.0.0.1:5432/noema`
+works as-is once the `noema` database exists (`docker exec noema-db createdb -U postgres noema`).
+
+## 6. Release process
 
 1. Bump the version in **both** `package.json` and `src-tauri/tauri.conf.json`.
 2. `npm run desktop:bundle` (or the `desktop.yml` matrix, which does this on
@@ -203,7 +248,7 @@ npm run desktop:bundle      # bundle (prepare re-runs, validated)
 The app intentionally ships **unsigned** until certificates exist; §8 explains
 what that means for the user (SmartScreen) and what is already wired for signing.
 
-## 6. Testing
+## 7. Testing
 
 | Layer | What runs |
 |---|---|
@@ -214,7 +259,7 @@ what that means for the user (SmartScreen) and what is already wired for signing
 | Packaging | `desktop:preflight` on every run; `site.yml` asserts the site build never emits a standalone server |
 | Manual smoke | install → first run → the swap from "starting…" to the workspace → create a note → quit → relaunch (window geometry + theme restored) |
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -227,7 +272,7 @@ what that means for the user (SmartScreen) and what is already wired for signing
 | Icon error while bundling | icon set not generated | `npm run desktop:icons` |
 | Two copies fight over state | same data dir | set `NOEMA_DATA_DIR` per install |
 
-## 8. Verified on a real machine (Windows x64, this repo's environment)
+## 9. Verified on a real machine (Windows x64, this repo's environment)
 
 Recorded because "it builds in CI" and "it runs" are different claims:
 
@@ -240,7 +285,7 @@ Recorded because "it builds in CI" and "it runs" are different claims:
 | `npm run desktop:smoke` | the packaged payload boots on the bundled runtime, migrates the database, and serves `/login` over HTTP |
 | site version | `next build` succeeds (40 routes) and emits no `standalone/` output |
 
-## 9. Known limits (honest list)
+## 10. Known limits (honest list)
 
 - **The desktop app currently talks to Postgres.** The schema uses Postgres
   full-text search (`tsvector`, `pg_trgm`), so a self-contained desktop build
@@ -263,7 +308,7 @@ Recorded because "it builds in CI" and "it runs" are different claims:
   environment). macOS/Linux installers are produced by `desktop.yml` on native
   runners.
 
-## 10. Deferred, with the design already chosen
+## 11. Deferred, with the design already chosen
 
 - **Embedded database (the big one)** — two options, both already scoped:
   1. **SQLite**: a `schema.desktop.prisma` with `provider = "sqlite"`, replace
