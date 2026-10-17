@@ -89,6 +89,26 @@ membership). Policy helpers:
 
 This is intentionally centralized so a future public API can reuse it.
 
+**Page access has no inheritance.** The rule for a page is:
+
+- **read** — workspace membership. Every member reads every page of the
+  workspace; a `GUEST` reads only the pages inside their scope
+  (`src/lib/guest-access.ts`: the pages shared with them, the pages they
+  created and the pages of their teamspaces, plus those pages' subtree — never
+  an ancestor).
+- **edit** — the same membership plus the page's own `PagePermission` row,
+  which the page route reads as an edit lock (`editable`): a member whose row
+  is `READ` or `COMMENT` may open the page but not change it.
+
+A `PagePermission` row never reaches a child page: there is **no** page-tree
+inheritance in the product. An inheritance engine that implemented such a rule
+once sat behind `src/lib/tenant-guard.ts`; no production path ever called it
+and its role baseline was stricter than the product's (a `MEMBER` held no
+implicit baseline there, while the product grants every member read access to
+every page), so it was removed (B41). `scripts/check-access-rule.mjs` fails
+when an exported access helper has no production caller, so a second,
+unreachable rule cannot come back unnoticed.
+
 A second, separate guard covers the page *tree*: `assertScopedParent()`
 ([`src/lib/page-parent.ts`](../src/lib/page-parent.ts)) loads a parent
 **tenant-scoped** (`{ id, workspaceId, deletedAt: null }`) and refuses a parent

@@ -10,13 +10,11 @@ import {
   type TenantScope,
 } from "@/lib/tenancy";
 import {
-  resolveAccess as guardResolveAccess,
   runAtomicWrites,
   type AtomicExecutor,
   type AtomicWriteOutcome,
   type GuardedWriteStep,
 } from "@/lib/tenant-guard";
-import type { AccessLevel, AccessUser } from "@/lib/access-inheritance";
 import type { TransactionOperation } from "@/lib/tenant-scope";
 import type { RetryOptions, WriteResult } from "@/lib/atomic-writes";
 
@@ -165,81 +163,4 @@ export async function atomicTransaction<T = unknown>(
     });
 
   return runAtomicWrites(scope, guarded, execute, options);
-}
-
-/* -------------------------------------------------------------------------- *
- * Page access resolution (wires `access-inheritance.ts` into the DB layer)
- *
- * Fetches the page's ancestry, its `PagePermission` grants and its `ShareLink`
- * rows, then routes the decision through the canonical `effectiveAccess`
- * engine (via the tenant guard). `notFound()`/deny callers get `null`.
- * -------------------------------------------------------------------------- */
-
-const MAX_ANCESTRY_DEPTH = 100;
-
-/** Walk `parentId` links up from `pageId`, nearest parent first. */
-async function pageAncestry(pageId: string | null): Promise<string[]> {
-  const ancestry: string[] = [];
-  let cursor = pageId;
-  while (cursor && ancestry.length < MAX_ANCESTRY_DEPTH) {
-    ancestry.push(cursor);
-    const parent = await prisma.page.findUnique({
-      where: { id: cursor },
-      select: { parentId: true },
-    });
-    cursor = parent?.parentId ?? null;
-  }
-  return ancestry;
-}
-
-export type PageAccessQuery = {
-  /** The viewer's user id, or `null` for an anonymous visitor. */
-  userId: string | null;
-  /** The viewer's workspace role, or `null` when not a member. */
-  role: AccessUser["role"];
-  /** The page being opened. */
-  pageId: string;
-  /** Evaluation instant for link expiry; defaults to now. */
-  now?: Date;
-};
-
-/**
- * The effective access a viewer holds on `pageId`, resolved through the
- * inheritance engine. Returns `null` (fail closed) when the page does not
- * exist or nothing grants access.
- */
-export async function resolvePageAccess(
-  query: PageAccessQuery,
-): Promise<AccessLevel | null> {
-  const page = await prisma.page.findUnique({
-    where: { id: query.pageId },
-    select: { id: true, parentId: true },
-  });
-  if (!page) return null;
-
-  const ancestry = await pageAncestry(page.parentId);
-  const chain = [page.id, ...ancestry];
-
-  const [grants, linkShares] = await Promise.all([
-    prisma.pagePermission.findMany({
-      where: { pageId: { in: chain } },
-      select: { pageId: true, userId: true, level: true },
-    }),
-    prisma.shareLink.findMany({
-      where: { pageId: page.id },
-      select: { pageId: true, permission: true, expiresAt: true },
-    }),
-  ]);
-
-  const user: AccessUser | null =
-    query.userId === null ? null : { id: query.userId, role: query.role };
-
-  return guardResolveAccess({
-    user,
-    page: { id: page.id },
-    ancestry,
-    grants,
-    linkShares,
-    now: query.now,
-  });
 }

@@ -435,8 +435,8 @@ export async function getDatabase(
        * scope.
        *
        * The read scope is the set of pages the viewer may read: the pages
-       * shared with them plus their whole subtree, never an ancestor - the
-       * canonical inheritance rule of `lib/access-inheritance.ts`. So a guest
+       * shared with them plus their whole subtree, never an ancestor — the
+       * guest read scope of `lib/guest-access.ts`. So a guest
        * who was given a single row of the target database does **not** get the
        * database above it, while a guest who was given a parent page does get
        * the database below it.

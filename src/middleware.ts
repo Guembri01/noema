@@ -68,9 +68,10 @@ import {
  *    ignored, so a configured allowlist denies every request (fail closed)
  *    until the proxy is declared. See `headerClientIp` in
  *    `src/lib/tenant-guard.ts` for the exact hop arithmetic.
- *  - Access resolution (`access-inheritance.ts`) is exposed to route handlers
- *    through the same guard; middleware stays DB-free so it does not resolve
- *    grants itself.
+ *  - Access resolution is not a middleware concern: the page-access rule is
+ *    the workspace role (`src/lib/permissions.ts`) plus the guest scope
+ *    (`src/lib/guest-access.ts`), both of which need the database. Middleware
+ *    stays DB-free, so it resolves no grants itself.
  */
 
 /** Env vars checked, in order, for the private-surface IP allowlist. */

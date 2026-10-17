@@ -8,9 +8,6 @@
  *                              the canonical planner for scoped write batches.
  *  - `atomic-writes.ts`      — plan/retry/partial-write audit for a multi-step
  *                              write; {@link runAtomicWrites} is the pipeline.
- *  - `access-inheritance.ts` — CANONICAL page/workspace access resolution;
- *                              {@link resolveAccess} / {@link assertPageAccess}
- *                              are the only access decisions callers need.
  *  - `ip-allowlist.ts`       — CANONICAL CIDR allowlist arithmetic;
  *                              {@link decideIpAllowlist} is the fail-closed gate.
  *
@@ -18,6 +15,13 @@
  * `process` dependency (the IP gate reads its allowlist from a value the caller
  * passes in, not from the environment), so `src/middleware.ts` can import it
  * without pulling Prisma into the Edge runtime.
+ *
+ * The page-access rule is **not** here: it is the workspace role
+ * (`src/lib/permissions.ts`) plus the guest scope (`src/lib/guest-access.ts`).
+ * The inheritance engine that used to sit behind this seam was removed (B41):
+ * no production path ever called it, and its rule was stricter than the
+ * product's — a MEMBER holds no implicit baseline there, while the product
+ * grants every member read access to every page.
  *
  * Reconciliation (item 2 of the wiring task): `tenancy.ts` is canonical and
  * `tenant-scope.ts` is the adapter. The two modules overlap on row scoping
@@ -48,12 +52,6 @@ import {
   type TransactionOperation,
   type TransactionPlan,
 } from "./tenant-scope";
-import {
-  effectiveAccess,
-  isSharePermission,
-  type AccessLevel,
-  type EffectiveAccessInput,
-} from "./access-inheritance";
 import { matchAny, normalizeIp, validateCidr } from "./ip-allowlist";
 import {
   assertNoPartialWrite,
@@ -151,62 +149,6 @@ export function planScopedWrites<T extends ScopedWrite>(
   workspaceId: string,
 ): TransactionPlan<T> {
   return withTransaction(operations, workspaceId);
-}
-
-/* ------------------------------------------------------------------ *
- * Access resolution (access-inheritance.ts)
- * ------------------------------------------------------------------ */
-
-/** Access levels strongest-last; mirrors the `SharePermission` enum order. */
-const ACCESS_ORDER: readonly AccessLevel[] = ["READ", "COMMENT", "EDIT", "FULL"];
-
-/** Rank an access level for comparison; unknown/forged levels rank last. */
-export function accessRank(level: AccessLevel): number {
-  return ACCESS_ORDER.indexOf(level);
-}
-
-/**
- * Whether `level` grants at least `required`. Fail closed: a `null` level, or a
- * forged value on either side, denies.
- */
-export function accessAllows(level: AccessLevel | null, required: AccessLevel = "READ"): boolean {
-  if (level === null || !isSharePermission(level) || !isSharePermission(required)) return false;
-  return accessRank(level) >= accessRank(required);
-}
-
-/** Resolve the caller's effective access to a page (canonical). */
-export function resolveAccess(input: EffectiveAccessInput): AccessLevel | null {
-  return effectiveAccess(input);
-}
-
-/** Thrown by {@link assertPageAccess} when the resolved level is insufficient. */
-export class AccessDeniedError extends Error {
-  readonly status = 403;
-  readonly required: AccessLevel;
-  readonly pageId: string;
-
-  constructor(required: AccessLevel, pageId: string) {
-    super(`Access denied: "${required}" is required for page "${pageId}".`);
-    this.name = "AccessDeniedError";
-    this.required = required;
-    this.pageId = pageId;
-  }
-}
-
-/**
- * Resolve access and throw {@link AccessDeniedError} unless it grants at least
- * `required`. The one fail-closed page/workspace access check callers should
- * route through.
- */
-export function assertPageAccess(
-  input: EffectiveAccessInput,
-  required: AccessLevel = "READ",
-): AccessLevel {
-  const level = resolveAccess(input);
-  if (!accessAllows(level, required)) {
-    throw new AccessDeniedError(required, input.page?.id ?? "");
-  }
-  return level as AccessLevel;
 }
 
 /* ------------------------------------------------------------------ *

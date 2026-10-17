@@ -67,6 +67,14 @@ jobs:
       - name: Coherence gate
         run: node scripts/check-coherence.mjs
 
+      # An exported access helper that no production path calls is a second,
+      # competing access rule: it drifts from the real one and misleads every
+      # reader who trusts the name (B41 — the access-inheritance engine was
+      # such a helper). The gate is a pure source scan — no build, no database.
+      # Its own regression test runs with it.
+      - name: Access rule
+        run: node scripts/check-access-rule.mjs && node scripts/check-access-rule.test.mjs
+
       # The repository is published as-is, so a committed credential is public the
       # moment it lands. Value-shaped patterns — see the script for the reasoning.
       - name: Secret gate

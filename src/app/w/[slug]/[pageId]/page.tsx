@@ -75,9 +75,8 @@ export default async function PageRoute({
    *   down to a shared child. It stays the scope of every other page type -
    *   this change does not widen what a guest may open.
    * - the **read** scope (`guestReadablePageIds`) contains the shared pages
-   *   and their whole subtree, never an ancestor. That is the canonical
-   *   inheritance rule (`access-inheritance.ts`): a grant covers the page
-   *   itself and its children.
+   *   and their whole subtree, never an ancestor. That is the guest rule of
+   *   `lib/guest-access.ts`: a grant covers the page itself and its children.
    *
    * A **database** page follows the read scope: a guest who was given a single
    * row of a database must not open the database above it (that was the
