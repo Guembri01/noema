@@ -877,7 +877,7 @@ Source: [`src/app/api/ai/route.ts`](../src/app/api/ai/route.ts)
   "prompt": "…",      // ≤4000 chars, required for ask/autofill
   "context": "…",     // ≤8000 chars, required for summarize
   "maxTokens": 2000,  // optional, clamped to 64…8000
-  "workspaceId": "…" } // optional: a workspace id (cuid)
+  "workspaceId": "…" } // optional: a workspace id
 ```
 
 - Modes: `ask` (grounded Q&A), `summarize` (context → Markdown summary),

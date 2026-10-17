@@ -107,9 +107,17 @@ describe("authentication and validation", () => {
     expect((await ask({ prompt: "hi", mode: "translate" })).status).toBe(400);
   });
 
-  it("rejects a workspace id that is not an id", async () => {
-    expect((await ask({ prompt: "hi", workspaceId: "not-a-cuid" })).status).toBe(400);
-    expect(ai.chatComplete).not.toHaveBeenCalled();
+  it("lets the access check answer a workspace id it does not know", async () => {
+    // The id format is not enforced by the schema: a foreign or malformed id
+    // is answered by the access check, not by a 400.
+    db.workspaceMember.findUnique.mockResolvedValue(null);
+    db.workspace.findUnique.mockResolvedValue(null);
+
+    const response = await ask({ prompt: "hi", workspaceId: "not-a-cuid" });
+
+    expect(response.status).toBe(200);
+    expect(ai.chatComplete).toHaveBeenCalled();
+    expect(db.aiProviderConfig.findUnique).not.toHaveBeenCalled();
   });
 
   it("rejects a missing prompt", async () => {

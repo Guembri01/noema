@@ -217,14 +217,22 @@ export const aiRequestSchema = z.object({
   prompt: z.string().max(AI_TEXT_MAX_CHARS).optional(),
   context: z.string().max(AI_TEXT_MAX_CHARS).optional(),
   mode: z.enum(["ask", "summarize", "autofill"]).optional(),
-  workspaceId: z.string().cuid().nullish(),
+  // The id format is deliberately not enforced: the route asks the access
+  // check whether the caller may use that workspace, and a stricter schema
+  // would turn a foreign or malformed id into a 400 instead of the answer the
+  // access check gives.
+  workspaceId: z.string().min(1).nullish(),
   maxTokens: z.number().int().optional(),
 });
 
 export const aiSkillRequestSchema = z.object({
   skillId: z.string().max(64).optional(),
   text: z.string().max(AI_TEXT_MAX_CHARS).optional(),
-  workspaceId: z.string().cuid().nullish(),
+  // The id format is deliberately not enforced: the route asks the access
+  // check whether the caller may use that workspace, and a stricter schema
+  // would turn a foreign or malformed id into a 400 instead of the answer the
+  // access check gives.
+  workspaceId: z.string().min(1).nullish(),
   targetLocale: z.string().max(16).optional(),
   tone: z.string().max(32).optional(),
   style: z.string().max(32).optional(),

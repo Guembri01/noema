@@ -85,7 +85,10 @@ describe("authentication and validation", () => {
   });
 
   it("rejects a body that does not match the schema", async () => {
-    expect((await postSkill({ skillId: "proofread", text: "hi", workspaceId: "nope" })).status).toBe(400);
+    // The workspace id is not part of the schema's shape check — an unknown
+    // id is answered by the access check. A body whose *type* does not fit
+    // is refused.
+    expect((await postSkill({ skillId: "proofread", text: 42 })).status).toBe(400);
     expect(ai.chatComplete).not.toHaveBeenCalled();
   });
 
