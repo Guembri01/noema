@@ -512,7 +512,6 @@ noema/
 ├─ scripts/
 │  ├─ LOOP_PLAYBOOK.md     # how the parity loop runs (gates, locks, slots)
 │  └─ check-*.mjs          # the check:* gates above
-├─ rea-analysis/           # REA evidence from analysing the Notion web bundle
 └─ docker-compose.yml
 ```
 
@@ -528,14 +527,6 @@ See **[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)**. Highlights:
   `Page.content`, with plaintext/Markdown helpers in `src/lib/blocks.ts`.
 - **Typed databases.** `Property` + `PropertyValue` (JSON per type) + `DatabaseView`
   decouple the schema from the views (table/board/list/…).
-
-## Reverse-engineering notes
-
-`rea-analysis/` contains REA (Reverse Engineer Anything) evidence gathered while
-investigating the public Notion web bundle — see
-[`rea-analysis/REA_FINDINGS.md`](./rea-analysis/REA_FINDINGS.md). The public
-bundle exposes only the marketing site; the workspace feature model is
-auth-gated, so the parity tracker is built from publicly documented behaviour.
 
 ## Security
 
