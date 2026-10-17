@@ -164,7 +164,7 @@ Other deliberate choices:
 | Webview ↔ server | explicit `APP_ORIGINS` allow-list (the loopback origin) + CSP in `tauri.conf.json` |
 | Webview ↔ shell | only the commands in `src-tauri/src/commands.rs`; the served app's IPC is granted to the loopback origin by `desktop-remote.json` (a capability with `remote.urls`) |
 | Secrets | a database password can live in the connection string; it is **redacted** before diagnostics leave the shell (unit-tested in `commands.rs`) |
-| Capabilities | `default.json` = least privilege for boot; `desktop-everything.json` = the broad set the product asked for (filesystem, dialogs, shell, opener) — **local only**, for the shell's own page; `desktop-remote.json` = the served app's narrow set (the five shell commands it calls + the two `core:event` permissions `listenShell` needs), **no** filesystem, shell, store, opener, dialog, `os` or `log` — and no `core:default` either. Drop `desktop-everything.json` for a hardened build |
+| Capabilities | `default.json` = least privilege for boot; `desktop-everything.json` = the broad set the product asked for (dialogs, shell, opener) — **local only**, for the shell's own page; `desktop-remote.json` = the served app's narrow set (the five shell commands it calls + the two `core:event` permissions `listenShell` needs), **no** filesystem, shell, store, opener, dialog, `os` or `log` — and no `core:default` either. Drop `desktop-everything.json` for a hardened build |
 | Telemetry | off (`NEXT_TELEMETRY_DISABLED=1`) |
 | Updates | **deferred on purpose** — see §9 |
 
