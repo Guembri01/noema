@@ -17,9 +17,9 @@ export const runtime = "nodejs";
  *   { action: "block",      workspaceId, templateId,               parentId? }
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "templates", 30, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "templates", 30, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let body: {

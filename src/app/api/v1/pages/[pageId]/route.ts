@@ -11,9 +11,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ pageId: string }> },
 ) {
-  const limited = rateLimit(request, "v1");
-  if (limited) return limited;
   const auth = await authenticateApiRequest(request);
+  const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
+  if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { pageId } = await params;
