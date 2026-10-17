@@ -333,11 +333,11 @@
   written before this change keep the permissions they were created with and
   have to be rewritten to get the new ones.
 
-- The share-link unlock endpoint is now rate limited per share link and counts
-  failed password attempts per token, so a share password can no longer be
-  brute-forced by rotating the forwarded IP. A link is locked for 15 minutes
-  after 10 failed attempts, and no password is compared at all while it is
-  locked.
+- The share-link unlock endpoint now has a rate limit whose scope names the
+  share link, and it counts failed password attempts per share token, so a
+  share password can no longer be brute-forced by rotating the forwarded IP.
+  A link is locked for 15 minutes after 10 failed attempts, and no password is
+  compared at all while it is locked.
 
 ### Changed
 
