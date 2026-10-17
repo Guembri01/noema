@@ -23,6 +23,12 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   not). The stored URL now passes the shared href allowlist (`http`, `https`,
   `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
   editor as well as in the read-only renderer.
+- `GET /api/invites` enforced workspace membership only, while its own contract
+  said "admins only": a guest or a plain member received `200` with an empty
+  delivery list instead of a `403`. The route now asks the role matrix
+  (`inviteMember`, i.e. owner/admin) before it lists anything and answers
+  `403 Forbidden` to everyone below admin, so the endpoint no longer relies on
+  the second, weaker gate inside `listEmailDeliveries` to stay closed.
 
 ## [1.4.1] — 2026-10-17
 
