@@ -19,7 +19,13 @@ const pdf = vi.hoisted(() => ({ docToPdf: vi.fn() }));
 
 vi.mock("@/lib/db", () => ({ prisma: { page: { findUnique: db.pageFindUnique } } }));
 vi.mock("@/lib/auth", () => ({ getCurrentUser: edge.getCurrentUser }));
-vi.mock("@/lib/permissions", () => ({ getWorkspaceAccess: edge.getWorkspaceAccess }));
+// Only the membership lookup is mocked — the role predicates run for real, so
+// a guest-vs-member difference in the export route is exercised rather than
+// asserted by the mock.
+vi.mock("@/lib/permissions", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/permissions")>();
+  return { ...actual, getWorkspaceAccess: edge.getWorkspaceAccess };
+});
 vi.mock("@/lib/pdf", () => ({ docToPdf: pdf.docToPdf }));
 
 import { GET as exportPage } from "./[pageId]/route";

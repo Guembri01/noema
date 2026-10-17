@@ -66,10 +66,17 @@ export type EmailSummary = {
   hasPassword: boolean;
 };
 
+/**
+ * The workspace's SMTP configuration.
+ *
+ * The host, the username and the sender address are workspace management
+ * data: the settings screen only shows them to an admin, so the read asks the
+ * same question — a `GUEST` (an external collaborator) never receives them.
+ */
 export async function getEmailSummary(workspaceId: string): Promise<EmailSummary | null> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
-  if (!access) return null;
+  if (!access || !canManageMembers(access.role)) return null;
 
   const stored = await prisma.emailConfig.findUnique({
     where: { workspaceId },

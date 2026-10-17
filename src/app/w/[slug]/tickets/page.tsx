@@ -1,6 +1,10 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import {
+  canEditContent,
+  canPerformWorkspaceAction,
+  getWorkspaceAccess,
+} from "@/lib/permissions";
 import {
   getLabels,
   getTicketsPage,
@@ -32,11 +36,19 @@ export default async function TicketsPage({
   if (!workspace) notFound();
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) notFound();
+  // The tracker is not page-scoped: `GET /api/tickets` and every ticket action
+  // refuse a `GUEST` with a 403, so the page must refuse them too — otherwise
+  // the new gates are cosmetic and the roster below leaks with them.
+  if (!canEditContent(access.role)) notFound();
+  // The roster carries every member's name: it needs its own permission.
+  const directory = canPerformWorkspaceAction(access.role, "viewMemberDirectory");
 
   const [ticketPage, labels, members, projects, views, cycles] = await Promise.all([
     getTicketsPage(workspace.id, { take: 100 }),
     getLabels(workspace.id),
-    getWorkspaceMembers(workspace.id),
+    directory
+      ? getWorkspaceMembers(workspace.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getWorkspaceMembers>>),
     getProjects(workspace.id),
     getTicketViews(workspace.id),
     getCycles(workspace.id),

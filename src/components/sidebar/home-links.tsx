@@ -123,13 +123,70 @@ type QuickLink = {
   tone?: "neutral" | "accent";
 };
 
-type HomeQuickLinksProps = {
-  workspace: { slug: string };
+export type QuickLinkInput = {
+  workspace: { slug: string; role?: string };
   projects: { id: string; name: string; icon: string | null }[];
   openTickets: number;
   unreadCount: number;
   locale: string;
 };
+
+type HomeQuickLinksProps = QuickLinkInput;
+
+/**
+ * The quick links the sidebar offers.
+ *
+ * The tracker is not page-scoped: its pages refuse a `GUEST` (they answer
+ * 404), so the sidebar does not offer the door in the first place. The
+ * library and the inbox stay — the library is page-scoped and the inbox
+ * carries the caller's own notifications.
+ */
+export function quickLinksFor({
+  workspace,
+  projects,
+  openTickets,
+  unreadCount,
+  locale,
+}: QuickLinkInput): QuickLink[] {
+  const tracker = workspace.role !== "GUEST";
+  return [
+    ...(tracker
+      ? [
+          {
+            href: `/w/${workspace.slug}/projects`,
+            label: t(locale, "projectsHeading"),
+            icon: FolderKanban,
+            count: projects.length,
+          },
+          {
+            href: `/w/${workspace.slug}/tickets`,
+            label: t(locale, "tickets"),
+            icon: CircleDot,
+            count: openTickets,
+          },
+          {
+            href: `/w/${workspace.slug}/cycles`,
+            label: t(locale, "cycles"),
+            icon: CalendarRange,
+          },
+        ]
+      : []),
+    {
+      href: `/w/${workspace.slug}/library`,
+      label: t(locale, "library"),
+      icon: BookOpen,
+      exact: true,
+    },
+    {
+      href: `/w/${workspace.slug}/inbox`,
+      label: t(locale, "inbox"),
+      icon: Bell,
+      exact: true,
+      count: unreadCount,
+      tone: "accent" as const,
+    },
+  ];
+}
 
 const QUICK_LINK_BASE =
   "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted u-colors focus-ring hover:bg-surface-2 hover:text-fg";
@@ -157,49 +214,11 @@ function QuickLinkRow({ link }: { link: QuickLink }) {
   );
 }
 
-export function HomeQuickLinks({
-  workspace,
-  projects,
-  openTickets,
-  unreadCount,
-  locale,
-}: HomeQuickLinksProps) {
-  const links: QuickLink[] = [
-    {
-      href: `/w/${workspace.slug}/projects`,
-      label: t(locale, "projectsHeading"),
-      icon: FolderKanban,
-      count: projects.length,
-    },
-    {
-      href: `/w/${workspace.slug}/tickets`,
-      label: t(locale, "tickets"),
-      icon: CircleDot,
-      count: openTickets,
-    },
-    {
-      href: `/w/${workspace.slug}/cycles`,
-      label: t(locale, "cycles"),
-      icon: CalendarRange,
-    },
-    {
-      href: `/w/${workspace.slug}/library`,
-      label: t(locale, "library"),
-      icon: BookOpen,
-      exact: true,
-    },
-    {
-      href: `/w/${workspace.slug}/inbox`,
-      label: t(locale, "inbox"),
-      icon: Bell,
-      exact: true,
-      count: unreadCount,
-      tone: "accent",
-    },
-  ];
+export function HomeQuickLinks(props: HomeQuickLinksProps) {
+  const links = quickLinksFor(props);
 
   return (
-    <nav aria-label={t(locale, "home")} className="flex flex-col gap-px px-2 pt-1">
+    <nav aria-label={t(props.locale, "home")} className="flex flex-col gap-px px-2 pt-1">
       {links.map((link) => (
         <QuickLinkRow key={link.href} link={link} />
       ))}

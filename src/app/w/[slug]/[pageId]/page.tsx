@@ -7,7 +7,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { groupReactions } from "@/lib/comments";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { getWorkspaceAccess, canPerformWorkspaceAction } from "@/lib/permissions";
 import { pageScopeFor } from "@/lib/guest-access";
 import { buildVersionRecord } from "@/lib/version-history";
 import {
@@ -48,6 +48,9 @@ export default async function PageRoute({
   // Guests may only open pages that were shared with them (or their own).
   const visiblePageIds = await pageScopeFor(user.id, workspace.id, access.role);
   if (visiblePageIds && !visiblePageIds.has(pageId)) notFound();
+  // The roster carries every member's name: it needs its own permission, so a
+  // guest never receives it — not even in the RSC payload.
+  const directory = canPerformWorkspaceAction(access.role, "viewMemberDirectory");
 
   const page = await getPageDetail(pageId);
   if (!page || page.workspaceId !== workspace.id || page.deletedAt) {
@@ -73,12 +76,21 @@ export default async function PageRoute({
       select: { id: true },
     }),
     prisma.page.findMany({
-      where: { workspaceId: workspace.id, type: "DATABASE", deletedAt: null },
+      // The database list is a page list, so it carries the guest scope: a
+      // guest never receives the title of a database they cannot open.
+      where: {
+        workspaceId: workspace.id,
+        type: "DATABASE",
+        deletedAt: null,
+        ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+      },
       orderBy: { position: "asc" },
       select: { id: true, title: true, icon: true },
     }),
     getUserWorkspaces(user.id),
-    getWorkspaceMembers(workspace.id),
+    directory
+      ? getWorkspaceMembers(workspace.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getWorkspaceMembers>>),
     prisma.pagePermission.findMany({
       where: { pageId: page.id, userId: user.id },
       select: { level: true },
