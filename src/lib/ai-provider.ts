@@ -12,6 +12,7 @@ import { prisma } from "./db";
 import { decryptSecret } from "./secrets";
 import { providerDefaultBaseUrl, normalizeBaseUrl } from "./ai-providers";
 import { checkBudget, estimateTokens, recordUsage, type BudgetRecord } from "./ai-cost";
+import { getWorkspaceAccess } from "./permissions";
 
 export const AI_NOT_CONFIGURED =
   "AI is not configured. Add a provider in workspace settings (AI) or set AI_API_KEY / AI_BASE_URL / AI_MODEL.";
@@ -135,6 +136,28 @@ export async function resolveAiConfig(
     }
   }
   return envConfig();
+}
+
+/**
+ * Resolve the provider config a *user* is allowed to use.
+ *
+ * A workspace's stored provider (endpoint + decrypted API key) belongs to that
+ * workspace, so it may only be used when the caller actually has access to it.
+ * `resolveAiConfig` has no user context, so every route that takes a
+ * workspace id from the client must go through this helper — otherwise any
+ * signed-in account could make the server call another workspace's provider
+ * with that workspace's key and token budget (audit B13). Without access the
+ * environment defaults apply; the foreign provider row is never even read.
+ */
+export async function resolveAiConfigForUser(
+  userId: string,
+  workspaceId?: string | null,
+): Promise<AiRuntimeConfig | null> {
+  if (workspaceId) {
+    const access = await getWorkspaceAccess(userId, workspaceId);
+    if (access) return resolveAiConfig(workspaceId);
+  }
+  return resolveAiConfig(null);
 }
 
 /** Run a chat completion against an OpenAI-compatible endpoint. */
