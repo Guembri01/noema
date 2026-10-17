@@ -7,11 +7,16 @@ import { toast } from "sonner";
 import { createPageAction } from "@/server/actions/pages";
 import { sendWorkspaceInviteAction } from "@/server/actions/email";
 import { safeAction } from "@/lib/actions-client";
+import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
 
 /**
  * Project actions: start a note that belongs to the project, and invite an
  * external client to it (view-only guest, scoped to this project).
+ *
+ * Both actions ride the design-system `Button`, so hover / focus-visible /
+ * active / disabled / loading are the shared vocabulary rather than bespoke
+ * classes, and every colour comes from a token.
  */
 export function ProjectActions({
   workspaceId,
@@ -80,48 +85,49 @@ export function ProjectActions({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <button
+        <Button
           type="button"
-          disabled={pending}
+          variant="secondary"
+          loading={pending}
           onClick={addNote}
-          className="flex h-9 items-center gap-1 rounded border border-border px-3 text-sm hover:bg-surface-2 disabled:opacity-50"
+          leftIcon={<FilePlus2 className="h-4 w-4" />}
         >
-          <FilePlus2 className="h-4 w-4" /> {t(locale, "newNoteInProject")}
-        </button>
-        <button
+          {t(locale, "newNoteInProject")}
+        </Button>
+        <Button
           type="button"
+          variant="secondary"
           disabled={pending}
+          aria-expanded={inviteOpen}
           onClick={() => setInviteOpen((value) => !value)}
-          className="flex h-9 items-center gap-1 rounded border border-border px-3 text-sm hover:bg-surface-2 disabled:opacity-50"
+          leftIcon={<UserPlus className="h-4 w-4" />}
         >
-          <UserPlus className="h-4 w-4" /> {t(locale, "inviteAClient")}
-        </button>
+          {t(locale, "inviteAClient")}
+        </Button>
       </div>
 
       {inviteOpen && (
-        <div className="rounded-lg border border-border p-3">
+        <div className="rounded-lg border border-border bg-surface p-3">
           <p className="mb-2 flex items-center gap-2 text-sm font-medium">
             <Mail className="h-4 w-4" /> {t(locale, "clientAccessTo")} {projectName}
           </p>
-          <p className="mb-2 text-xs text-muted">
-            {t(locale, "clientInviteIntro")}
-          </p>
+          <p className="mb-2 text-xs text-muted">{t(locale, "clientInviteIntro")}</p>
           <div className="flex flex-wrap items-center gap-2">
             <input
+              type="email"
               value={email}
               aria-label={t(locale, "clientEmailAria")}
               placeholder="client@company.com"
               onChange={(event) => setEmail(event.target.value)}
-              className="h-9 w-64 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
+              className="h-9 w-64 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
             />
-            <button
+            <Button
               type="button"
               disabled={pending || !email.trim()}
               onClick={invite}
-              className="h-9 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
             >
               {t(locale, "sendInvitation")}
-            </button>
+            </Button>
           </div>
           {link && <p className="mt-2 truncate text-xs text-muted">{link}</p>}
         </div>

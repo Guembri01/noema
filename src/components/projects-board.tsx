@@ -1,14 +1,33 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import Link from "next/link";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, CircleDot, FolderKanban, Gauge, Pause, Plus, Target } from "lucide-react";
+import {
+  CheckCircle2,
+  CircleDot,
+  FolderKanban,
+  Gauge,
+  Pause,
+  Plus,
+  RefreshCw,
+  Target,
+} from "lucide-react";
 import { toast } from "sonner";
 import { createProjectAction } from "@/server/actions/projects";
 import { safeAction } from "@/lib/actions-client";
 import { EMPTY_GROUP_KEY, type BoardGroup, type BoardRow } from "@/lib/board-groups";
 import { t } from "@/lib/i18n";
+import type { AvatarUser } from "@/lib/avatars";
+import {
+  Badge,
+  type BadgeTone,
+} from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { AvatarGroup } from "@/components/ui/avatar";
+import { Progress, type ProgressTone } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   canMoveRow,
   checkWip,
@@ -36,42 +55,149 @@ export type ProjectCard = {
   dueDate: string | null;
   pageCount: number;
   milestones: { id: string; name: string; status: string; dueDate: string | null }[];
-};
-
-const STATUS_STYLES: Record<string, string> = {
-  active: "bg-emerald-500/10 text-emerald-600",
-  paused: "bg-amber-500/10 text-amber-600",
-  done: "bg-accent/10 text-accent",
-  archived: "bg-surface-2 text-muted",
+  /** Members shown as an avatar stack on the card. */
+  members?: readonly AvatarUser[];
 };
 
 /** The board's columns: one per project status, in declaration order. */
-const STATUS_ORDER = ["active", "paused", "done", "archived"] as const;
+export const STATUS_ORDER = ["active", "paused", "done", "archived"] as const;
 
-const STATUS_LABELS: Record<string, string> = {
+export const STATUS_LABELS: Record<string, string> = {
   active: "Active",
   paused: "Paused",
   done: "Done",
   archived: "Archived",
 };
 
+/**
+ * Status → badge tone. Green reads "moving", amber "paused", accent "finished",
+ * neutral "archived"; an unknown status falls back to neutral so a card can
+ * never render an unstyled pill.
+ */
+export const PROJECT_STATUS_TONE: Record<string, BadgeTone> = {
+  active: "success",
+  paused: "warning",
+  done: "accent",
+  archived: "neutral",
+};
+
+export function projectStatusTone(status: string): BadgeTone {
+  return PROJECT_STATUS_TONE[status] ?? "neutral";
+}
+
+/** Human label for a status, falling back to the raw value. */
+export function projectStatusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status;
+}
+
+/** Milestone-derived progress: how many are done, out of how many. */
+export type MilestoneProgress = { total: number; done: number; percent: number };
+
+/**
+ * Milestone progress maths: `done / total` as a whole percent (0 for an empty
+ * list, so a project without milestones shows an empty bar rather than NaN).
+ */
+export function milestoneProgress(
+  milestones: readonly { status: string }[],
+): MilestoneProgress {
+  const total = milestones.length;
+  const done = milestones.filter((milestone) => milestone.status === "done").length;
+  return { total, done, percent: total === 0 ? 0 : Math.round((done / total) * 100) };
+}
+
+/** A finished project reads green; anything else stays on the accent. */
+export function progressTone(percent: number): ProgressTone {
+  return percent >= 100 ? "success" : "accent";
+}
+
+/** How many days before the due date the chip starts warning. */
+export const DUE_SOON_DAYS = 3;
+
+function startOfDay(value: Date): number {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+}
+
+/**
+ * Whether a due date is already in the past (day granularity). A missing or
+ * unparseable date is never overdue.
+ */
+export function isOverdue(
+  dueDate: string | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!dueDate) return false;
+  const date = new Date(dueDate);
+  if (Number.isNaN(date.getTime())) return false;
+  return startOfDay(date) < startOfDay(now);
+}
+
+/**
+ * Tone for the due-date chip: `danger` once overdue, `warning` within
+ * {@link DUE_SOON_DAYS} days, `neutral` otherwise. Missing dates read neutral.
+ */
+export function dueTone(
+  dueDate: string | null | undefined,
+  now: Date = new Date(),
+): BadgeTone {
+  if (!dueDate) return "neutral";
+  const date = new Date(dueDate);
+  if (Number.isNaN(date.getTime())) return "neutral";
+  const due = startOfDay(date);
+  const today = startOfDay(now);
+  if (due < today) return "danger";
+  if (due <= today + DUE_SOON_DAYS * 24 * 60 * 60 * 1000) return "warning";
+  return "neutral";
+}
+
+/**
+ * Adapt the project cards into the column shape `@/lib/kanban-wip` grades:
+ * one bucket per status (plus a trailing "Other" bucket for unknown values,
+ * mirroring `@/lib/board-groups`). Rows only need an id — WIP counting never
+ * reads cell values.
+ */
+function projectStatusGroups(projects: readonly ProjectCard[]): BoardGroup<BoardRow>[] {
+  const groups: BoardGroup<BoardRow>[] = STATUS_ORDER.map((status) => ({
+    key: status,
+    label: STATUS_LABELS[status] ?? status,
+    optionId: status,
+    rows: [],
+  }));
+  const byStatus = new Map<string, BoardGroup<BoardRow>>();
+  for (const group of groups) byStatus.set(group.key, group);
+  const other: BoardGroup<BoardRow> = {
+    key: EMPTY_GROUP_KEY,
+    label: "Other",
+    optionId: null,
+    rows: [],
+  };
+  for (const project of projects) {
+    const row: BoardRow = { id: project.id, propertyValues: [] };
+    (byStatus.get(project.status) ?? other).rows.push(row);
+  }
+  return [...groups, other];
+}
+
 /** WIP badge colours keyed by `checkWip`'s grade. */
 const WIP_STYLES: Record<WipStatus, string> = {
   ok: "border-border text-muted",
-  at: "border-amber-500/50 text-amber-600",
-  over: "border-red-500/50 text-red-600",
+  at: "border-warning/50 text-warning",
+  over: "border-danger/50 text-danger",
 };
 
 /** Ticket-derived health grades for a project card. */
-type ProjectHealthGrade = "done" | "on-track" | "at-risk" | "off-track";
+export type ProjectHealthGrade = "done" | "on-track" | "at-risk" | "off-track";
 
-/** Badge colours keyed by `ProjectHealthGrade`. */
-const HEALTH_STYLES: Record<ProjectHealthGrade, string> = {
-  done: "bg-emerald-500/10 text-emerald-600",
-  "on-track": "bg-sky-500/10 text-sky-600",
-  "at-risk": "bg-amber-500/10 text-amber-600",
-  "off-track": "bg-red-500/10 text-red-600",
+/** Badge tone keyed by `ProjectHealthGrade`. */
+const HEALTH_TONE: Record<ProjectHealthGrade, BadgeTone> = {
+  done: "success",
+  "on-track": "accent",
+  "at-risk": "warning",
+  "off-track": "danger",
 };
+
+export function healthTone(grade: ProjectHealthGrade): BadgeTone {
+  return HEALTH_TONE[grade];
+}
 
 const HEALTH_LABELS: Record<ProjectHealthGrade, string> = {
   done: "Done",
@@ -81,7 +207,7 @@ const HEALTH_LABELS: Record<ProjectHealthGrade, string> = {
 };
 
 /** A project's ticket-derived health, or `null` when there is nothing to show. */
-type ProjectHealth = {
+export type ProjectHealth = {
   grade: ProjectHealthGrade;
   progress: TicketProgress;
   rollup: EstimateRollup;
@@ -112,31 +238,120 @@ function projectHealth(tickets: readonly RollupTicket[] | undefined): ProjectHea
 }
 
 /**
- * Adapt the project cards into the column shape `@/lib/kanban-wip` grades:
- * one bucket per status (plus a trailing "Other" bucket for unknown values,
- * mirroring `@/lib/board-groups`). Rows only need an id — WIP counting never
- * reads cell values.
+ * One project as a design-system card: a status `Badge`, a milestone `Progress`
+ * bar, a due-date chip that turns `danger` when overdue, a member `AvatarGroup`
+ * and hover lift via `Card`'s `interactive` variant (`.u-interactive`). Pure and
+ * router-free, so it renders (and is asserted) on its own.
  */
-function projectStatusGroups(projects: readonly ProjectCard[]): BoardGroup<BoardRow>[] {
-  const groups: BoardGroup<BoardRow>[] = STATUS_ORDER.map((status) => ({
-    key: status,
-    label: STATUS_LABELS[status] ?? status,
-    optionId: status,
-    rows: [],
-  }));
-  const byStatus = new Map<string, BoardGroup<BoardRow>>();
-  for (const group of groups) byStatus.set(group.key, group);
-  const other: BoardGroup<BoardRow> = {
-    key: EMPTY_GROUP_KEY,
-    label: "Other",
-    optionId: null,
-    rows: [],
-  };
-  for (const project of projects) {
-    const row: BoardRow = { id: project.id, propertyValues: [] };
-    (byStatus.get(project.status) ?? other).rows.push(row);
-  }
-  return [...groups, other];
+export function ProjectCardTile({
+  project,
+  slug,
+  locale,
+  now = new Date(),
+  health = null,
+}: {
+  project: ProjectCard;
+  slug: string;
+  locale: string;
+  now?: Date;
+  /** Ticket health, already derived by the board (kept out of the tile). */
+  health?: ProjectHealth | null;
+}) {
+  const { total, done, percent } = milestoneProgress(project.milestones);
+  const next = project.milestones.find((milestone) => milestone.status !== "done");
+  const due = project.dueDate ? new Date(project.dueDate) : null;
+  const members = project.members ?? [];
+
+  return (
+    <Card
+      as="a"
+      href={`/w/${slug}/projects/${project.id}`}
+      variant="interactive"
+      padding="md"
+      data-testid="project-card"
+      data-status={project.status}
+      className="flex h-full flex-col gap-3"
+    >
+      <div className="flex items-center gap-2">
+        <span aria-hidden>{project.icon ?? "🚀"}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{project.name}</span>
+        <Badge
+          data-testid="project-status-badge"
+          tone={projectStatusTone(project.status)}
+          size="sm"
+        >
+          {projectStatusLabel(project.status)}
+        </Badge>
+        {health && (
+          <Badge
+            data-testid="project-health-badge"
+            data-health={health.grade}
+            tone={healthTone(health.grade)}
+            size="sm"
+            title={`${health.progress.done}/${health.progress.total} tickets done · ${health.progress.percent}%${
+              health.rollup.total > 0 ? ` · ${health.rollup.remaining} left` : ""
+            }`}
+          >
+            {HEALTH_LABELS[health.grade]}
+          </Badge>
+        )}
+      </div>
+
+      {project.description && (
+        <p className="line-clamp-1 text-xs text-muted">{project.description}</p>
+      )}
+      {project.summary && <p className="line-clamp-2 text-xs text-muted">{project.summary}</p>}
+
+      <Progress
+        value={percent}
+        max={100}
+        size="sm"
+        tone={progressTone(percent)}
+        showValue
+        label={`${done}/${total} ${t(locale, "milestonesComplete")}`}
+      />
+
+      <div className="mt-auto flex flex-wrap items-center gap-2 text-[11px] text-muted">
+        {project.status === "done" ? (
+          <CheckCircle2 className="h-3.5 w-3.5" />
+        ) : project.status === "paused" ? (
+          <Pause className="h-3.5 w-3.5" />
+        ) : (
+          <CircleDot className="h-3.5 w-3.5" />
+        )}
+        <span>
+          {project.pageCount} note{project.pageCount === 1 ? "" : "s"}
+        </span>
+        {due && (
+          <Badge
+            data-testid="project-due-chip"
+            data-overdue={isOverdue(project.dueDate, now) ? "true" : undefined}
+            tone={dueTone(project.dueDate, now)}
+            size="sm"
+            icon={<Target className="h-3 w-3" />}
+          >
+            {t(locale, "dueWord")} {due.toLocaleDateString()}
+          </Badge>
+        )}
+        {members.length > 0 && (
+          <AvatarGroup
+            data-testid="project-avatar-stack"
+            users={members}
+            size={24}
+            max={4}
+            className="ms-auto"
+          />
+        )}
+      </div>
+
+      {next && (
+        <p className="flex items-center gap-1.5 text-xs text-muted">
+          <Target className="h-3.5 w-3.5" />
+          Next: {next.name}
+        </p>
+      )}
+    </Card>
+  );
 }
 
 /**
@@ -171,13 +386,9 @@ function WipLimitsEditor({
         <div className="flex items-center gap-2">
           <p className="text-[11px] text-muted">Local only — leave blank for no limit.</p>
           {limited && (
-            <button
-              type="button"
-              onClick={onClear}
-              className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted hover:bg-surface-2"
-            >
+            <Button type="button" variant="secondary" size="xs" onClick={onClear}>
               Clear
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -197,12 +408,12 @@ function WipLimitsEditor({
                 placeholder="∞"
                 aria-label={`${label} WIP limit`}
                 onChange={(event) => onChange(status, event.target.value)}
-                className="h-8 w-16 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
+                className="h-8 w-16 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
               />
               {grade === "over" ? (
-                <span className="text-[11px] text-red-600">over</span>
+                <span className="text-[11px] text-danger">over</span>
               ) : grade === "at" ? (
-                <span className="text-[11px] text-amber-600">at limit</span>
+                <span className="text-[11px] text-warning">at limit</span>
               ) : null}
             </li>
           );
@@ -222,6 +433,9 @@ export function ProjectsBoard({
   wipLimits,
   wipOverride = false,
   onMoveProject,
+  loading = false,
+  error = null,
+  onRetry,
 }: {
   workspaceId: string;
   slug: string;
@@ -246,12 +460,19 @@ export function ProjectsBoard({
   wipOverride?: boolean;
   /** Called when a card is moved to another status column. */
   onMoveProject?: (projectId: string, status: string) => void | Promise<void>;
+  /** `loading` state: a skeleton grid matching the final card layout. */
+  loading?: boolean;
+  /** `error` state: message + retry, shown above the list. */
+  error?: string | null;
+  /** Retry handler for the `error` state. */
+  onRetry?: () => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [name, setName] = useState("");
   const [summary, setSummary] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const nameRef = useRef<HTMLInputElement>(null);
   // WIP limits are edited locally so the strip and move guards are reachable
   // without a persisted config. Seeded once from the optional prop; an unset
   // prop means no limits, exactly as before.
@@ -309,6 +530,8 @@ export function ProjectsBoard({
       router.refresh();
     });
 
+  const focusCreate = () => nameRef.current?.focus();
+
   return (
     <div>
       <div className="mb-6 rounded-xl border border-border p-4">
@@ -317,34 +540,35 @@ export function ProjectsBoard({
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <input
+            ref={nameRef}
             value={name}
             aria-label={t(locale, "projectName")}
             placeholder={t(locale, "projectName")}
             onChange={(event) => setName(event.target.value)}
-            className="h-9 w-56 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
+            className="h-9 w-56 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
           />
           <input
             value={summary}
             aria-label={t(locale, "projectSummary")}
             placeholder={t(locale, "projectSummary")}
             onChange={(event) => setSummary(event.target.value)}
-            className="h-9 w-72 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
+            className="h-9 w-72 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
           />
           <input
             type="date"
             value={dueDate}
             aria-label={t(locale, "projectDue")}
             onChange={(event) => setDueDate(event.target.value)}
-            className="h-9 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
+            className="h-9 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
           />
-          <button
+          <Button
             type="button"
             disabled={pending || !name.trim()}
             onClick={create}
-            className="flex h-9 items-center gap-1 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
+            leftIcon={<Plus className="h-4 w-4" />}
           >
-            <Plus className="h-4 w-4" /> Create
-          </button>
+            Create
+          </Button>
         </div>
       </div>
 
@@ -394,120 +618,91 @@ export function ProjectsBoard({
         </div>
       )}
 
-      {projects.length === 0 ? (
-        <p className="text-sm text-muted">
-          No projects yet — create one, then attach notes from the sidebar
-          (right-click a page → Add to project).
-        </p>
+      {error && (
+        <div
+          role="alert"
+          className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger bg-danger-soft px-3 py-2 text-sm text-danger"
+        >
+          <span>{error}</span>
+          {onRetry && (
+            <Button
+              type="button"
+              variant="danger"
+              tone="soft"
+              size="sm"
+              onClick={onRetry}
+              leftIcon={<RefreshCw className="h-4 w-4" />}
+            >
+              Retry
+            </Button>
+          )}
+        </div>
+      )}
+
+      {loading ? (
+        <ul aria-hidden data-testid="projects-skeleton" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }, (_, index) => (
+            <li key={index}>
+              <Skeleton variant="card" />
+            </li>
+          ))}
+        </ul>
+      ) : projects.length === 0 ? (
+        <EmptyState
+          data-testid="projects-empty"
+          icon={<FolderKanban className="h-6 w-6" />}
+          title="No projects yet"
+          description="Create a project to track deliverables with milestones, then attach the notes that belong to it."
+          primaryAction={
+            <Button
+              type="button"
+              onClick={focusCreate}
+              leftIcon={<Plus className="h-4 w-4" />}
+            >
+              New project
+            </Button>
+          }
+          tip="Right-click a page in the sidebar and choose “Add to project”."
+        />
       ) : (
         <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {projects.map((project) => {
-            const total = project.milestones.length;
-            const done = project.milestones.filter((m) => m.status === "done").length;
-            const progress = total === 0 ? 0 : Math.round((done / total) * 100);
-            const next = project.milestones.find((m) => m.status !== "done");
-            const health = projectHealth(ticketsByProject?.[project.id]);
-            return (
-              <li key={project.id}>
-                <div className="flex h-full flex-col">
-                <Link
-                  href={`/w/${slug}/projects/${project.id}`}
-                  className="flex flex-1 flex-col gap-3 rounded-xl border border-border p-4 transition hover:bg-surface-2"
-                >
-                  <div className="flex items-center gap-2">
-                    <span aria-hidden>{project.icon ?? "🚀"}</span>
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                      {project.name}
-                    </span>
-                    <span
-                      className={`rounded px-1.5 py-0.5 text-[10px] uppercase ${
-                        STATUS_STYLES[project.status] ?? STATUS_STYLES.active
-                      }`}
-                    >
-                      {project.status}
-                    </span>
-                    {health && (
-                      <span
-                        data-testid="project-health-badge"
-                        data-health={health.grade}
-                        title={`${health.progress.done}/${health.progress.total} tickets done · ${health.progress.percent}%${
-                          health.rollup.total > 0 ? ` · ${health.rollup.remaining} left` : ""
-                        }`}
-                        className={`rounded px-1.5 py-0.5 text-[10px] uppercase ${HEALTH_STYLES[health.grade]}`}
+          {projects.map((project) => (
+            <li key={project.id} className="flex flex-col">
+              <ProjectCardTile
+                project={project}
+                slug={slug}
+                locale={locale}
+                health={projectHealth(ticketsByProject?.[project.id])}
+              />
+              {movable && (
+                <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px]">
+                  <span className="text-muted">Move to</span>
+                  {STATUS_ORDER.filter((status) => status !== project.status).map((status) => {
+                    const allowed = canMoveRow(groups, limits, project.id, status, {
+                      override: wipOverride,
+                    });
+                    const label = STATUS_LABELS[status] ?? status;
+                    return (
+                      <button
+                        key={status}
+                        type="button"
+                        disabled={!allowed || pending}
+                        title={
+                          allowed
+                            ? `Move ${project.name} to ${label}`
+                            : `${label} is at its WIP limit`
+                        }
+                        onClick={() => moveTo(project.id, status)}
+                        className="rounded border border-border px-1.5 py-0.5 text-muted u-interactive hover:bg-surface-2 focus-ring disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        {HEALTH_LABELS[health.grade]}
-                      </span>
-                    )}
-                  </div>
-                  {project.description && (
-                    <p className="line-clamp-1 text-xs text-muted">{project.description}</p>
-                  )}
-                  {project.summary && (
-                    <p className="line-clamp-2 text-xs text-muted">{project.summary}</p>
-                  )}
-                  <div>
-                    <div className="h-1.5 w-full overflow-hidden rounded bg-surface-2">
-                      <div
-                        className="h-full rounded bg-accent transition-all"
-                        style={{ width: `${progress}%` }}
-                      />
-                    </div>
-                    <p className="mt-1 text-[11px] text-muted">
-                      {done}/{total} milestones · {project.pageCount} note
-                      {project.pageCount === 1 ? "" : "s"}
-                      {project.dueDate
-                        ? ` · due ${new Date(project.dueDate).toLocaleDateString()}`
-                        : ""}
-                    </p>
-                  </div>
-                  {next && (
-                    <p className="flex items-center gap-1.5 text-xs text-muted">
-                      <Target className="h-3.5 w-3.5" />
-                      Next: {next.name}
-                    </p>
-                  )}
-                  <div className="mt-auto flex items-center gap-2 text-[11px] text-muted">
-                    {project.status === "done" ? (
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                    ) : project.status === "paused" ? (
-                      <Pause className="h-3.5 w-3.5" />
-                    ) : (
-                      <CircleDot className="h-3.5 w-3.5" />
-                    )}
-                    {total} milestone{total === 1 ? "" : "s"}
-                  </div>
-                </Link>
-                {movable && (
-                  <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px]">
-                    <span className="text-muted">Move to</span>
-                    {STATUS_ORDER.filter((status) => status !== project.status).map((status) => {
-                      const allowed = canMoveRow(groups, limits, project.id, status, {
-                        override: wipOverride,
-                      });
-                      const label = STATUS_LABELS[status] ?? status;
-                      return (
-                        <button
-                          key={status}
-                          type="button"
-                          disabled={!allowed || pending}
-                          title={
-                            allowed
-                              ? `Move ${project.name} to ${label}`
-                              : `${label} is at its WIP limit`
-                          }
-                          onClick={() => moveTo(project.id, status)}
-                          className="rounded border border-border px-1.5 py-0.5 text-muted hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
-              </li>
-            );
-          })}
+              )}
+            </li>
+          ))}
         </ul>
       )}
     </div>

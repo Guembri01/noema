@@ -1,0 +1,133 @@
+import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  GANTT_MAX_STAGGER_STEPS,
+  GANTT_STAGGER_MS,
+  GANTT_TONE_CLASS,
+  buildGanttAxis,
+  ganttBarGeometry,
+  ganttStagger,
+  ganttStatusTone,
+  milestoneMarkers,
+  percentAlong,
+  type GanttMilestone,
+} from "@/components/project-gantt";
+
+/**
+ * Gantt — the pure axis/bar/marker geometry and stagger maths, plus a static
+ * render of a chart with two milestone bars (Radix tooltips need a provider, so
+ * the render is wrapped in one exactly like the app layout does).
+ */
+
+const { ProjectGantt } = await import("@/components/project-gantt");
+
+const h = createElement;
+
+const NOW = new Date("2026-04-10T00:00:00");
+const START = "2026-04-01T00:00:00";
+const DUE = "2026-04-20T00:00:00";
+
+describe("gantt axis", () => {
+  it("spans every supplied date plus today", () => {
+    const axis = buildGanttAxis([START, DUE], NOW);
+    expect(percentAlong(axis, START)).toBe(0);
+    expect(percentAlong(axis, DUE)).toBe(100);
+    expect(axis.from).toBeLessThan(axis.to);
+  });
+
+  it("widens a single-point range to a week and floors the span at a day", () => {
+    const axis = buildGanttAxis([], NOW);
+    expect(axis.to - axis.from).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(axis.span).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000);
+  });
+
+  it("ignores blank and unparseable dates", () => {
+    const axis = buildGanttAxis([null, "nope", START], NOW);
+    expect(percentAlong(axis, START)).toBe(0);
+  });
+});
+
+describe("gantt bar geometry", () => {
+  const axis = buildGanttAxis([START, DUE], NOW);
+
+  it("computes left/width from start → end percentages", () => {
+    const span = ganttBarGeometry(axis, START, DUE);
+    expect(span.left).toBe(0);
+    expect(span.width).toBeCloseTo(100, 5);
+  });
+
+  it("pins a missing start to the left edge and a missing end to the right", () => {
+    expect(ganttBarGeometry(axis, null, null)).toEqual({ left: 0, width: 100 });
+    expect(ganttBarGeometry(axis, START, null).width).toBeCloseTo(100, 5);
+  });
+
+  it("never collapses a bar below the minimum width", () => {
+    const span = ganttBarGeometry(axis, START, START);
+    expect(span.width).toBeGreaterThanOrEqual(2);
+    expect(span.width).toBeLessThanOrEqual(100);
+  });
+});
+
+describe("milestone markers", () => {
+  it("positions dated milestones and drops undated ones", () => {
+    const axis = buildGanttAxis([START, DUE], NOW);
+    const milestones: GanttMilestone[] = [
+      { id: "m1", name: "Spec", status: "done", dueDate: START },
+      { id: "m2", name: "Build", status: "planned", dueDate: null },
+    ];
+    const markers = milestoneMarkers(axis, milestones);
+    expect(markers).toHaveLength(1);
+    expect(markers[0]).toMatchObject({ id: "m1", left: 0, status: "done" });
+  });
+});
+
+describe("status tones + stagger", () => {
+  it("maps statuses onto token fills", () => {
+    expect(ganttStatusTone("done")).toBe("success");
+    expect(ganttStatusTone("in_progress")).toBe("accent");
+    expect(ganttStatusTone("planned")).toBe("muted");
+    expect(GANTT_TONE_CLASS.success).toContain("bg-success");
+  });
+
+  it("staggers at ≤40ms and caps the total delay", () => {
+    expect(GANTT_STAGGER_MS).toBeLessThanOrEqual(40);
+    expect(ganttStagger(0)).toBe(0);
+    expect(ganttStagger(1)).toBe(GANTT_STAGGER_MS);
+    expect(ganttStagger(999)).toBe(GANTT_MAX_STAGGER_STEPS * GANTT_STAGGER_MS);
+    expect(ganttStagger(Number.NaN)).toBe(0);
+  });
+});
+
+describe("renderToStaticMarkup — two bars", () => {
+  const milestones: GanttMilestone[] = [
+    { id: "m1", name: "Spec", status: "done", dueDate: "2026-04-05T00:00:00" },
+    { id: "m2", name: "Build", status: "in_progress", dueDate: "2026-04-15T00:00:00" },
+  ];
+  const html = renderToStaticMarkup(
+    h(
+      TooltipProvider,
+      null,
+      h(ProjectGantt, { name: "Apollo", startDate: START, dueDate: DUE, milestones, locale: "en" }),
+    ),
+  );
+
+  it("renders one status-toned bar per milestone", () => {
+    expect(html.match(/data-testid="gantt-milestone"/g)).toHaveLength(2);
+    expect(html).toContain('data-status="done"');
+    expect(html).toContain('data-status="in_progress"');
+    expect(html).toContain("bg-success");
+    expect(html).toContain("bg-accent");
+  });
+
+  it("draws the today marker in danger and the project bar in accent", () => {
+    expect(html).toContain('data-testid="gantt-today"');
+    expect(html).toContain("border-danger");
+    expect(html).toContain('data-testid="gantt-project-bar"');
+  });
+
+  it("animates mounts with the rise token", () => {
+    expect(html).toContain("animate-rise");
+  });
+});
