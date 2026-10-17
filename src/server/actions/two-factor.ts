@@ -2,10 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { getSessionId, requireUser } from "@/lib/auth";
 import { generateTotpSecret, otpauthUrl, verifyTotp } from "@/lib/totp";
 import { authLimitMessage, checkTwoFactorLimit } from "@/lib/rate-limit";
 import { encryptTwoFactorSecret, openTwoFactorSecret } from "@/lib/secrets";
+import { revokeAllSessionsForUser } from "@/lib/session-store";
 
 /** Begin 2FA setup: generate a secret (not yet enabled) and its otpauth URI. */
 export async function startTwoFactorAction(): Promise<
@@ -92,6 +93,13 @@ export async function disableTwoFactorAction(
   if (!verifyTotp(stored.secret, code)) {
     return { error: "That code is not valid." };
   }
+  // B39: turning 2FA off lowers the bar for every session of this account —
+  // a session that was opened while 2FA was on must not survive it. Every
+  // other device is signed out; the calling device keeps its own session.
+  // The revocation runs before the write, so a failing registry leaves the
+  // 2FA enabled (fail-safe) instead of silently keeping the sessions alive.
+  const currentSid = await getSessionId();
+  revokeAllSessionsForUser(user.id, { exceptSid: currentSid ?? undefined });
   await prisma.user.update({
     where: { id: user.id },
     data: { twoFactorEnabled: false, twoFactorSecret: null },

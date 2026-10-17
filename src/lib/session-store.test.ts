@@ -234,6 +234,46 @@ describe("session registry — fail-closed validation (validateSession)", () => 
   });
 });
 
+describe("session registry — policy-aware validation (B39)", () => {
+  const hour = 60 * 60 * 1000;
+  const day = 24 * hour;
+  const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+  const policy = { idleTimeoutMs: 12 * hour, maxLifetimeMs: 30 * day };
+
+  it("rejects a session that saw no activity within the idle window", () => {
+    const record = registerSession({ userId: "user-a", device: "Chrome", now: t0 });
+
+    // Inside the window: alive.
+    expect(validateSession(record.sid, t0 + 11 * hour, policy)?.sid).toBe(record.sid);
+    // Past the window: dead — although the stored 30-day deadline is still far away.
+    expect(validateSession(record.sid, t0 + 13 * hour, policy)).toBeNull();
+  });
+
+  it("measures the idle window from the last activity", () => {
+    const record = registerSession({ userId: "user-a", device: "Chrome", now: t0 });
+    touchSession(record.sid, t0 + 6 * hour, policy);
+
+    // The activity at t0 + 6h restarts the window (deadline t0 + 18h).
+    expect(validateSession(record.sid, t0 + 17 * hour, policy)?.sid).toBe(record.sid);
+    expect(validateSession(record.sid, t0 + 19 * hour, policy)).toBeNull();
+  });
+
+  it("never outlives the absolute cap, however active the session is", () => {
+    const record = registerSession({ userId: "user-a", device: "Chrome", now: t0 });
+    const capped = { idleTimeoutMs: 30 * day, maxLifetimeMs: 10 * day };
+
+    expect(validateSession(record.sid, t0 + 9 * day, capped)?.sid).toBe(record.sid);
+    expect(validateSession(record.sid, t0 + 10 * day, capped)).toBeNull();
+  });
+
+  it("without a policy only the stored deadline counts (legacy behaviour)", () => {
+    const record = registerSession({ userId: "user-a", device: "Chrome", now: t0 });
+
+    // 13 hours in: inside the 30-day fixed window, so the legacy check says alive.
+    expect(validateSession(record.sid, t0 + 13 * hour)?.sid).toBe(record.sid);
+  });
+});
+
 describe("session registry — revoke-all keeps the current device", () => {
   it("exceptSid spares the caller's session and stamps revokedAt at the injected now", () => {
     const t0 = Date.parse("2026-01-01T00:00:00.000Z");
