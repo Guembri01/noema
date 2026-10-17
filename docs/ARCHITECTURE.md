@@ -69,6 +69,10 @@ The central decision is **"everything is a page."**
 
 - Passwords: bcrypt, cost 12 (`src/lib/auth.ts`).
 - Sessions: HS256 JWT (`jose`) in an httpOnly, SameSite=Lax cookie, 30-day expiry.
+- The session registry (`src/lib/session-store.ts`) is the authority on whether
+  a session is still alive: the request path rejects a revoked session and one
+  that saw no activity for the idle window (12 h), and activity slides the
+  deadline — never past the 30-day ceiling.
 - `requireUser()` redirects unauthenticated users; every server action then
   re-derives authorization — the JWT only carries the user id.
 - The sign-in, the sign-up and the 2FA check are server actions, so they never

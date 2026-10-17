@@ -6,14 +6,31 @@ import { resolveAuthSecret } from "./auth-secret";
 import { prisma } from "./db";
 import {
   describeDevice,
-  isSessionRevoked,
+  findSession,
   registerSession,
   revokeSessionForUser,
   touchSession,
+  validateSession,
 } from "./session-store";
 
 const COOKIE_NAME = "noema_session";
 const SESSION_DAYS = 30;
+/**
+ * B39 — the idle window of a session: a cookie that sees no activity for
+ * this long is dead on its next request. The absolute ceiling stays the
+ * JWT's 30 days, so sliding expiry can never keep a session alive forever.
+ */
+const SESSION_IDLE_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * The session policy the request path enforces (B39): an idle session dies
+ * after `SESSION_IDLE_MS`, no session outlives `SESSION_DAYS` from its
+ * creation. The registry slides the very same policy on activity.
+ */
+const SESSION_POLICY = {
+  idleTimeoutMs: SESSION_IDLE_MS,
+  maxLifetimeMs: SESSION_DAYS * 24 * 60 * 60 * 1000,
+};
 
 /**
  * The HMAC key for the session cookie.
@@ -107,11 +124,19 @@ export async function getSessionUserId(): Promise<string | null> {
     if (typeof payload.sub !== "string") return null;
     const sid = typeof payload.sid === "string" ? payload.sid : null;
     if (sid) {
-      // Best-effort: an unreadable registry fails OPEN (auth stays up) — it
-      // never turns a storage hiccup into a mass sign-out.
+      // B39: the registry decides whether this session is still alive. A
+      // revoked or expired (idle) record is rejected even though the JWT is
+      // still valid; an unknown sid fails OPEN, so a legacy session (no
+      // registry row) or an unavailable registry never signs every device out.
       try {
-        if (isSessionRevoked(sid)) return null;
-        touchSession(sid);
+        const now = Date.now();
+        const record = validateSession(sid, now, SESSION_POLICY);
+        if (record) {
+          // Activity renews the idle window — never past the absolute cap.
+          touchSession(sid, now, SESSION_POLICY);
+        } else if (findSession(sid)) {
+          return null;
+        }
       } catch {
         /* registry unavailable → revocation lags a request */
       }
