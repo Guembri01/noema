@@ -130,9 +130,10 @@ beforeEach(() => {
         ];
       }
       // The rows of those databases.
-      if (where.parentId && typeof where.parentId === "object" && Array.isArray(where.parentId.in)) {
+      const parentFilter = where.parentId;
+      if (parentFilter && typeof parentFilter === "object" && Array.isArray(parentFilter.in)) {
         return ROWS.filter((row) => {
-          if (!where.parentId.in.includes(row.parentId ?? "")) return false;
+          if (!parentFilter.in.includes(row.parentId ?? "")) return false;
           // The real database filters by the workspace when the query asks for
           // it — and returns the foreign row when it does not.
           if (where.workspaceId !== undefined && row.workspaceId !== where.workspaceId) return false;

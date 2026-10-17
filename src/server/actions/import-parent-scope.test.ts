@@ -260,7 +260,7 @@ describe("importCsvDatabaseAction — parent scope (B08)", () => {
       workspaceId: WORKSPACE_A,
       parentId: DATABASE_B,
       title: "Imported",
-      properties: [{ name: "Name", type: "TEXT" }],
+      properties: [{ id: "Name", name: "Name", type: "TEXT" }],
       csv: "Name\nA\n",
     });
 
