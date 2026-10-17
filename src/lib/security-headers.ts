@@ -26,6 +26,14 @@
  * - `img/media-src` allow `data:`/`blob:` (editor previews, uploads) +
  *   `https:` (external markdown/bookmark images); `connect-src 'self'`
  *   covers same-origin fetch/SSE + dev HMR websocket.
+ * - `connect-src` ALSO admits Tauri's IPC endpoint, but **only when this
+ *   process is the desktop app's own server** (`insideDesktopShell`). The
+ *   installed app is a webview pointed at this server, so the page reaches the
+ *   shell's commands over `ipc:`/`http://ipc.localhost` — and a page that could
+ *   not reach the IPC could not ask the shell for anything at all (the window
+ *   theme was the first casualty). The hosted site keeps `'self'`: `.localhost`
+ *   resolves to loopback in a browser, so admitting it there would let a page
+ *   talk to whatever is listening on the user's 127.0.0.1.
  * - `frame-src` mirrors exactly the hosts `detectEmbed()`
  *   (`src/lib/embeds.ts`) can emit as an iframe `src` (Noema embeds OTHERS).
  *   Noema is never embedded, hence `frame-ancestors 'none'` + XFO DENY.
@@ -68,13 +76,33 @@ const FRAME_SRC = [
 ].join(" ");
 
 /**
+ * True when this process is the **desktop app's own server**, rather than the
+ * hosted site. The shell marks its child (`NOEMA_RUNTIME=desktop`, see
+ * `src-tauri/src/sidecar.rs`) and the payload build sets `NOEMA_STANDALONE=1`
+ * (`scripts/desktop/prepare.mjs`), so the baked policy and the running server
+ * always agree — this is deliberately not a client-side check, because only the
+ * server can tell what the page is embedded in.
+ */
+export function insideDesktopShell(): boolean {
+  return (
+    process.env.NOEMA_RUNTIME === "desktop" || process.env.NOEMA_STANDALONE === "1"
+  );
+}
+
+/**
  * Build the full CSP header value.
  *
  * @param nonce Per-response base64 nonce; omit for the static policy
  *   (`script-src 'self'` only - middleware-skipped/static fallback).
+ * @param options.dev  Loosen `script-src` for the dev runtime (see above).
+ * @param options.shell Admit Tauri's IPC endpoint in `connect-src` — pass
+ *   `insideDesktopShell()`; the site must never widen this.
  *   Same directive order as B61 so live diffs are reviewable.
  */
-export function buildCsp(nonce?: string | null, options: { dev?: boolean } = {}): string {
+export function buildCsp(
+  nonce?: string | null,
+  options: { dev?: boolean; shell?: boolean } = {},
+): string {
   // Development needs `'unsafe-eval'`: Next's dev runtime evaluates module
   // boundaries, and without it the *whole page* fails to hydrate — the markup renders
   // (SSR) so it looks fine, but nothing is interactive. Measured, not assumed: the
@@ -101,7 +129,16 @@ export function buildCsp(nonce?: string | null, options: { dev?: boolean } = {})
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
-    "connect-src 'self'",
+    [
+      "connect-src",
+      "'self'",
+      // Tauri's IPC transport (`withGlobalTauri`): both spellings, matching the
+      // shell's own policy in `src-tauri/tauri.conf.json`.
+      options.shell ? "ipc:" : null,
+      options.shell ? "http://ipc.localhost" : null,
+    ]
+      .filter(Boolean)
+      .join(" "),
     "media-src 'self' blob: data: https:",
     FRAME_SRC,
   ].join("; ");
@@ -127,7 +164,7 @@ export function cspNonce(csp: string): string | null {
  * (B98), which takes precedence on the paths it runs for.
  */
 export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
-  "Content-Security-Policy": buildCsp(),
+  "Content-Security-Policy": buildCsp(undefined, { shell: insideDesktopShell() }),
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
   "Referrer-Policy": "strict-origin-when-cross-origin",

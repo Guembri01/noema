@@ -1,10 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Core permissions the shell needs to boot the app: its own window, the local server, dialogs for file picking, and logging.",
+  "description": "Core permissions the shell needs to boot the app: its own window, the local server, dialogs for file picking, logging — and `default`, the app's own permission set (every command in `src/commands.rs`), which is what the shell's first-run/diagnostics page (`dist/index.html`) calls. Declaring the app manifest in `build.rs` switched the ACL on for local origins too, so this replaced their former implicit access.",
   "local": true,
   "windows": ["main"],
   "permissions": [
+    "default",
     "core:default",
     "core:window:allow-start-dragging",
     "core:window:allow-set-title",

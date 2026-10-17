@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildCsp, NONCE_HEADER } from "./lib/security-headers";
+import { buildCsp, insideDesktopShell, NONCE_HEADER } from "./lib/security-headers";
 import {
   decideIpAllowlist,
   headerClientIp,
@@ -112,7 +112,12 @@ export function middleware(request: NextRequest): NextResponse {
   // `'unsafe-eval'` leaves every page rendered but *inert* — no hydration, no
   // interactivity. Only development loosens it; a production build (and the static
   // map, which passes no options) keeps `'unsafe-eval'` out.
-  const csp = buildCsp(nonce, { dev: process.env.NODE_ENV !== "production" });
+  const csp = buildCsp(nonce, {
+    dev: process.env.NODE_ENV !== "production",
+    // Under the desktop shell the page must be able to reach the shell's
+    // commands (the window theme is one); the hosted site must not.
+    shell: insideDesktopShell(),
+  });
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set(NONCE_HEADER, nonce);

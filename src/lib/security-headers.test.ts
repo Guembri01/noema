@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import nextConfig, { SECURITY_HEADERS } from "../../next.config";
-import { buildCsp, cspNonce, THEME_SCRIPT_SHA256 } from "./security-headers";
+import { buildCsp, cspNonce, insideDesktopShell, THEME_SCRIPT_SHA256 } from "./security-headers";
 
 /**
  * B61 - security headers on EVERY response (docs/audits/security-1.md M9,
@@ -84,6 +84,55 @@ describe("security headers (next.config.ts)", () => {
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("https://www.youtube.com");
     expect(csp).toContain("https://w.soundcloud.com");
+  });
+
+  it("keeps Tauri's IPC endpoint out of the site's policy", () => {
+    // `.localhost` resolves to loopback *in a browser*, so admitting it in the
+    // hosted site would let a page (or an XSS in one) reach whatever is
+    // listening on the user's 127.0.0.1. Only the desktop server widens this.
+    const connectSrc = (csp: string) =>
+      csp
+        .split(";")
+        .map((d) => d.trim())
+        .find((d) => d.startsWith("connect-src"));
+    expect(connectSrc(buildCsp())).toBe("connect-src 'self'");
+    expect(connectSrc(buildCsp(null, { dev: true }))).toBe("connect-src 'self'");
+    expect(connectSrc(buildCsp("nonce-value"))).toBe("connect-src 'self'");
+  });
+
+  it("admits the IPC endpoint when this process is the desktop's own server", () => {
+    // The installed app is a webview pointed at this server: without the IPC it
+    // cannot reach a single shell command, so the window chrome silently
+    // stopped tracking the workspace theme.
+    const shellPolicy = buildCsp(null, { shell: true });
+    expect(shellPolicy).toContain("connect-src 'self' ipc: http://ipc.localhost");
+    // Exactly one directive differs from the site policy.
+    expect(shellPolicy).toBe(
+      buildCsp().replace(
+        "connect-src 'self'",
+        "connect-src 'self' ipc: http://ipc.localhost",
+      ),
+    );
+
+    const savedRuntime = process.env.NOEMA_RUNTIME;
+    const savedStandalone = process.env.NOEMA_STANDALONE;
+    try {
+      delete process.env.NOEMA_RUNTIME;
+      delete process.env.NOEMA_STANDALONE;
+      expect(insideDesktopShell()).toBe(false);
+      // The shell sets this for its child process (src-tauri/src/sidecar.rs)…
+      process.env.NOEMA_RUNTIME = "desktop";
+      expect(insideDesktopShell()).toBe(true);
+      // …and the payload build is what bakes the static map.
+      delete process.env.NOEMA_RUNTIME;
+      process.env.NOEMA_STANDALONE = "1";
+      expect(insideDesktopShell()).toBe(true);
+    } finally {
+      if (savedRuntime === undefined) delete process.env.NOEMA_RUNTIME;
+      else process.env.NOEMA_RUNTIME = savedRuntime;
+      if (savedStandalone === undefined) delete process.env.NOEMA_STANDALONE;
+      else process.env.NOEMA_STANDALONE = savedStandalone;
+    }
   });
 
   it("wires the map through headers() for every path", async () => {

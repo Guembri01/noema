@@ -1,13 +1,24 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop-everything",
-  "description": "Broad, explicit permissions for the installed app: read/write the user's files, open any URL/path in the OS, pick files, and run its own bundled server. Deliberately permissive per product decision — the app is local-first with a single user. A hardened build drops this capability and keeps only `default`.",
+  "description": "Broad, explicit permissions for the installed app: read/write the user's files, open any URL/path in the OS, pick files, and run its own bundled server. Deliberately permissive per product decision — the app is local-first with a single user. A hardened build drops this capability and keeps only `default`. The served web app is also granted the shell commands that shape its own window and read its own diagnostics; the server lifecycle (`restart_server`, `stop_server`, `set_database_url`, `quit`) and the preference store (`get_pref`, `set_pref`, which holds the unredacted connection string) stay with the shell's own page.",
   "local": true,
   "windows": ["main"],
   "remote": {
     "urls": ["http://127.0.0.1:*"]
   },
   "permissions": [
+    "allow-check-update",
+    "allow-desktop-info",
+    "allow-log-file-path",
+    "allow-open-data-dir",
+    "allow-open-data-subdir",
+    "allow-recent-logs",
+    "allow-set-decorations",
+    "allow-set-theme",
+    "allow-set-window-title",
+    "allow-set-zoom",
+
     "core:default",
     "core:window:allow-start-dragging",
     "core:window:allow-set-title",

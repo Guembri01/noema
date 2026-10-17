@@ -236,6 +236,13 @@ pub fn set_theme(app: AppHandle, theme: String) -> Result<(), String> {
         state::prefs::THEME,
         serde_json::Value::String(theme.clone()),
     );
+    // On disk as well as on screen: when the window chrome and the page
+    // disagree, this line is what says which of the two the shell believes.
+    logging::line(
+        &app,
+        "lifecycle",
+        &format!("window theme set to \"{theme}\" by the app"),
+    );
     apply_theme(&app, &theme)
 }
 
@@ -292,5 +299,54 @@ mod tests {
         assert_eq!(theme_from_name(""), None);
         assert_eq!(theme_from_name("DARK"), None);
         assert_eq!(theme_from_name("solarized"), None);
+    }
+
+    #[test]
+    fn every_command_is_declared_for_the_acl() {
+        // `build.rs` declares this list to Tauri so an `allow-<command>`
+        // permission exists for each one; a capability can only hand out
+        // permissions that exist, and a command with no permission is
+        // unreachable from the served app (that is how `set_theme` first came
+        // back as "Command set_theme not allowed by ACL"). A command missing
+        // from the list would fail at runtime, in the installed app, where no
+        // test runs — so the two are checked against each other here.
+        let source = include_str!("commands.rs");
+        let build_script = include_str!("../build.rs");
+
+        // Match the attribute as a *whole line*: every real one is on its own
+        // line, while the marker also appears inside this test's own text.
+        let lines: Vec<&str> = source.lines().collect();
+        let mut declared = Vec::new();
+        for (index, line) in lines.iter().enumerate() {
+            if line.trim() != "#[tauri::command]" {
+                continue;
+            }
+            let signature = lines[index + 1..]
+                .iter()
+                .take(4)
+                .find(|next| next.contains("fn "))
+                .expect("a #[tauri::command] with no fn after it");
+            let after_fn = &signature[signature.find("fn ").unwrap() + "fn ".len()..];
+            let name: String = after_fn
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            assert!(!name.is_empty(), "could not read the command name");
+            declared.push(name);
+        }
+
+        assert!(
+            declared.len() >= 15,
+            "only found {} commands — is the attribute still spelled `#[tauri::command]`?",
+            declared.len()
+        );
+        for name in &declared {
+            assert!(
+                build_script.contains(&format!("\"{name}\"")),
+                "`{name}` has no entry in build.rs APP_COMMANDS, so no `allow-{}` \
+                 permission exists for it",
+                name.replace('_', "-")
+            );
+        }
     }
 }
