@@ -193,6 +193,7 @@ const ALLOWED = new Set([
   "postgresql://user:password@127.0.0.1:5432/noema", // src-tauri/dist/index.html placeholder
   "postgresql://u:p@host:5432/db?schema=public", // src-tauri/src/state.rs fixture
   "postgresql://user:pw@host:5432/db", // src/lib/secrets.ts, the masking example
+  "postgresql://user:pw@host/db", // src/lib/redaction.ts, the shape of a connection string in a comment
   "postgresql://noema:sup3r-secret@db.example.com:5432/noema?schema=public", // src-tauri/src/commands.rs, the redaction fixture
   // The database URL of the embedded engine. The password is a template — the
   // launch's own random one — and the host is the loopback.
@@ -218,6 +219,14 @@ const ALLOWED_IN_TESTS = new Set([
   "sk-transcribe-abcdef1234567890", // src/app/api/ai/transcribe/route.test.ts
   "sk-proj-zzzzzzzzzzzzzzzz", // src/lib/ai-provider.error.test.ts
   "sk-live-abcdefghijklmno", // src/lib/error-reporting.test.ts, src/lib/error-tracking.test.ts
+  "sk-live-abcdefghijklmnop", // src/lib/observability.test.ts, src/lib/redaction.test.ts
+  "postgresql://noema:pw@localhost:5433/noema", // src/lib/observability.test.ts
+  "postgresql://noema:supersecretpw@localhost:5433/noema", // src/lib/redaction.test.ts
+  "whsec-inbound-rules-fixture", // src/app/api/webhooks/inbound/route.rules.test.ts
+  "b39-unit-secret-0123456789abcdef", // src/lib/auth-session-idle-timeout.test.ts
+  "b39-two-factor-test-secret-0123456789", // src/server/actions/two-factor-revoke-sessions.test.ts
+  "RECIPIENT_PASSWORD", // src/server/actions/ownership-transfer-actions.test.ts — a constant, not a secret
+  "not-the-password", // src/server/actions/ownership-transfer-actions.test.ts — the wrong password
   "sk-live-9f2c7a4b8e1d6205cafebabe", // src/lib/secrets.test.ts
   "sk-ant-api03-DEADBEEFcafe", // src/lib/secrets.test.ts
   "ghp_abcdefghijklmnopqrstuvwx", // src/lib/ai-provider.error.test.ts
