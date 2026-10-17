@@ -1428,6 +1428,7 @@ export function PageTitle({
             cover={cover}
             data={menuData}
             notifyLevel={notifyLevel}
+            workspaceId={workspaceId}
             appearance={appearance}
             content={blocks ?? undefined}
             workspaces={workspaces}

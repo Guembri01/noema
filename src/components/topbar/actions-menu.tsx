@@ -16,7 +16,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTheme } from "next-themes";
-import { ArrowLeft, Check, ChevronRight, Lock, LockOpen } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Lock, LockOpen, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Z } from "@/lib/design-tokens";
 import {
@@ -60,6 +60,7 @@ import {
   type GradientId,
 } from "@/lib/page-cover";
 import { PAGE_ICON_EMOJI, isEmoji, isImageIcon } from "@/lib/page-icon";
+import { isImage, uploadFile } from "@/lib/upload-client";
 import { computeStats, type TextBlock } from "@/lib/text-stats";
 import {
   AUDIT_RULES,
@@ -456,6 +457,8 @@ type ActionsMenuProps = {
   cover: string | null;
   data: PageMenuData | null;
   notifyLevel: NotifyLevel;
+  /** The workspace this page belongs to: an uploaded cover is filed under it. */
+  workspaceId: string;
   /** Resolved page appearance; falls back to the legacy font/smallText props. */
   appearance?: PageAppearance;
   /** Document block tree for the text-stats footer, when available. */
@@ -497,6 +500,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
     cover,
     data,
     notifyLevel,
+    workspaceId,
     appearance,
     content,
     workspaces,
@@ -1189,14 +1193,18 @@ export function ActionsMenu(props: ActionsMenuProps) {
     inputRef.current?.focus();
   };
 
-  // Persist through the existing onPickCover path: a null clears the cover,
-  // otherwise the tagged value is validated and re-encoded as a CSS string so
-  // page-title's `background` render and the server column are unchanged.
+  // Persist through the existing onPickCover path: an explicit null clears the
+  // cover, otherwise the tagged value is validated and re-encoded as a CSS string
+  // so page-title's `background` render and the server column are unchanged. A
+  // value that fails validation is *ignored*, never read as a clear: now that the
+  // panel has an image field, "that link is not an image" must not delete the
+  // cover the reader is looking at.
   const pickCoverValue = (value: CoverValue | null) => {
-    if (value === null || !validateCover(value).valid) {
+    if (value === null) {
       onPickCover(null);
       return;
     }
+    if (!validateCover(value).valid) return;
     onPickCover(writeCover(value, coverPosition));
   };
 
@@ -1480,6 +1488,8 @@ export function ActionsMenu(props: ActionsMenuProps) {
               cover={storedCover}
               position={coverPosition}
               locale={locale}
+              workspaceId={workspaceId}
+              canEdit={editable}
               onPickIcon={pickIcon}
               onPickCover={pickCoverValue}
               onPickPosition={pickCoverPosition}
@@ -1583,6 +1593,10 @@ export type CustomizePanelProps = {
   /** Decoded stored cover, or `null` when the page has none. */
   cover: ResolvedCover | null;
   position: CoverPosition;
+  /** The workspace an image cover is filed under (the upload route re-checks access). */
+  workspaceId: string;
+  /** A read-only page may look at covers but not bring a new image in. */
+  canEdit: boolean;
   onPickIcon: (candidate: string) => void;
   onPickCover: (value: CoverValue | null) => void;
   onPickPosition: (position: CoverPosition) => void;
@@ -1606,11 +1620,62 @@ export function CustomizePanel({
   contrastLabel,
   cover,
   position,
+  workspaceId,
+  canEdit,
   onPickIcon,
   onPickCover,
   onPickPosition,
 }: CustomizePanelProps) {
   const themeValue = theme ?? "system";
+  /** Draft link for the cover image field. */
+  const [coverUrlDraft, setCoverUrlDraft] = useState("");
+  /** A cover upload in flight (the button shows the pending state and cannot re-fire). */
+  const [coverUploading, setCoverUploading] = useState(false);
+  /** Why the last cover attempt was refused — shown inline, cleared on success. */
+  const [coverError, setCoverError] = useState<string | null>(null);
+  const coverFileRef = useRef<HTMLInputElement | null>(null);
+
+  /**
+   * Image covers.
+   *
+   * The model has always supported `{ type: "image", url }`, and this menu already
+   * decoded and re-encoded one (`readCover` / `writeCover`), but the only way to
+   * *choose* one was the gradient grid — so an image cover was unreachable from
+   * the topbar. Both paths below pass the same `validateCover` gate the persisted
+   * value passes through, so a hostile string still cannot become a banner.
+   */
+  const applyCoverUrl = (raw: string) => {
+    const url = raw.trim();
+    if (!validateCover({ type: "image", url }).valid) {
+      setCoverError(t(locale, "coverInvalidUrl"));
+      return;
+    }
+    setCoverError(null);
+    setCoverUrlDraft("");
+    onPickCover({ type: "image", url });
+  };
+
+  const onCoverFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const chosen = event.target.files?.[0];
+    // Let the same file be picked twice in a row.
+    event.target.value = "";
+    if (!chosen) return;
+    if (!isImage(chosen)) {
+      setCoverError(t(locale, "coverInvalidUrl"));
+      return;
+    }
+    setCoverUploading(true);
+    setCoverError(null);
+    try {
+      const asset = await uploadFile(chosen, workspaceId);
+      applyCoverUrl(asset.url);
+    } catch {
+      // The route answers with its own message; either way the cover is unchanged.
+      setCoverError(t(locale, "coverUploadFailed"));
+    } finally {
+      setCoverUploading(false);
+    }
+  };
 
   return (
     <div className="flex max-h-80 flex-col gap-3 overflow-y-auto p-2">
@@ -1633,6 +1698,56 @@ export function CustomizePanel({
       <Separator />
 
       <Section title="Cover" level={3} className="gap-2">
+        <div className="flex items-center gap-1">
+          <input
+            type="url"
+            value={coverUrlDraft}
+            onChange={(event) => setCoverUrlDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                applyCoverUrl(coverUrlDraft);
+              }
+            }}
+            placeholder={t(locale, "coverImageUrl")}
+            aria-label={t(locale, "coverImageUrl")}
+            aria-invalid={coverError ? true : undefined}
+            className="focus-ring h-7 min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 text-xs text-fg outline-none placeholder:text-muted/60"
+          />
+          <button
+            type="button"
+            onClick={() => applyCoverUrl(coverUrlDraft)}
+            disabled={coverUrlDraft.trim() === ""}
+            className="focus-ring u-interactive u-colors h-7 shrink-0 rounded-sm bg-accent px-2 text-xs font-medium text-accent-fg disabled:opacity-40"
+          >
+            {t(locale, "useImage")}
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => coverFileRef.current?.click()}
+            disabled={coverUploading || !canEdit}
+            className="focus-ring u-interactive u-colors flex h-7 items-center gap-1.5 rounded-sm border border-border px-2 text-xs text-fg hover:bg-surface-2 disabled:opacity-50"
+          >
+            <Upload className="h-3.5 w-3.5" aria-hidden />
+            {coverUploading ? t(locale, "uploading") : t(locale, "uploadImage")}
+          </button>
+          <input
+            ref={coverFileRef}
+            type="file"
+            accept="image/*"
+            onChange={onCoverFile}
+            className="hidden"
+            aria-hidden
+            tabIndex={-1}
+          />
+          {coverError ? (
+            <span role="alert" className="text-3xs text-danger">
+              {coverError}
+            </span>
+          ) : null}
+        </div>
         <div className="grid grid-cols-4 gap-1">
           {GRADIENT_IDS.map((id) => {
             const selected =

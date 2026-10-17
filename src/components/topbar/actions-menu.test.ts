@@ -195,6 +195,8 @@ const baseProps: CustomizePanelProps = {
   contrastLabel: "14.0:1 body text",
   cover: null,
   position: { ...DEFAULT_COVER_POSITION },
+  workspaceId: "ws_test",
+  canEdit: true,
   onPickIcon: () => {},
   onPickCover: () => {},
   onPickPosition: () => {},
@@ -241,5 +243,41 @@ describe("CustomizePanel render", () => {
     const html = render({ highContrast: true });
     expect(html).toContain('aria-checked="true"');
     expect(html).toContain("data-state=\"checked\"");
+  });
+
+  /**
+   * The `<button …>` that owns a label. The panel nests no buttons, so the
+   * nearest opening tag before the label is the one that wraps it.
+   *
+   * Assertions below look for `disabled=""`, not the bare word: every control's
+   * class list ends in `disabled:opacity-50`, so a substring test would say yes
+   * to all of them.
+   */
+  const buttonFor = (html: string, label: string): string => {
+    const at = html.indexOf(label);
+    expect(at).toBeGreaterThan(-1);
+    return html.slice(html.lastIndexOf("<button", at), at);
+  };
+
+  it("offers an image cover, not only gradients", () => {
+    // `{ type: "image", url }` has always been in the model — and this menu could
+    // already read and write it — but the grid of gradients was the whole cover
+    // story, so an image cover was unreachable here. The link field and the
+    // upload button are the route to it; both end at `validateCover`.
+    const html = render();
+    expect(html).toContain('type="url"');
+    expect(html).toContain('accept="image/*"');
+    expect(html).toContain('aria-label="Paste an image URL"');
+    expect(buttonFor(html, "Upload")).toContain("focus-ring");
+    expect(html).toContain("Use image");
+  });
+
+  it("keeps the Set button inert until there is a link to use", () => {
+    expect(buttonFor(render(), "Use image")).toContain('disabled=""');
+  });
+
+  it("lets a read-only page look at covers, but not upload one", () => {
+    expect(buttonFor(render(), "Upload")).not.toContain('disabled=""');
+    expect(buttonFor(render({ canEdit: false }), "Upload")).toContain('disabled=""');
   });
 });
