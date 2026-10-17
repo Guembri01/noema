@@ -28,6 +28,12 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+// The app's own mask, not a second one: the URL parser splits the credentials
+// at the LAST `@`, so a password that contains a raw `@` is masked as well —
+// the regex this replaced stopped at the FIRST `@` and left the password in
+// the log. The module is TypeScript, so this script runs under `tsx`
+// (see the `desktop:smoke*` scripts in package.json).
+import { maskConnString } from "../../src/lib/secrets.ts";
 import { nodeSidecarPath, targetTriple } from "./prepare.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -114,7 +120,7 @@ async function main() {
       console.error("No DATABASE_URL found (.env, NOEMA_DATABASE_URL or DATABASE_URL).");
       process.exit(1);
     }
-    check(true, "database URL resolved", url.replace(/\/\/[^@]*@/, "//***@"));
+    check(true, "database URL resolved", maskConnString(url));
   }
 
   const dataDir = mkdtempSync(join(tmpdir(), "noema-smoke-"));
