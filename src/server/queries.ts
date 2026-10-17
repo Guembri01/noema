@@ -17,7 +17,8 @@ import {
   mergeRanked,
   parseHeadline,
   planSearch,
-  trigramFallback,
+  scoreTrigramCandidates,
+  TRIGRAM_CANDIDATE_LIMIT,
   type RankedInput,
   type SqlFragment,
 } from "@/lib/fts";
@@ -449,7 +450,7 @@ function toSearchHit(
 // Search engine — the pure Postgres FTS builder (`src/lib/fts.ts`) is the real
 // path: `planSearch` picks the tier, `buildSearchSql` composes the ranked
 // `to_tsquery`/`ts_rank_cd`/`ts_headline` SQL, `mergeRanked` blends the exact
-// and type-ahead passes and `trigramFallback` supplies the `pg_trgm` typo tier.
+// and type-ahead passes, with a local trigram typo tier for misspellings.
 // ---------------------------------------------------------------------------
 
 /** The row shape a `buildSearchSql` pass returns (its `SELECT` list). */
@@ -461,7 +462,7 @@ type SearchWindow = { offset: number; take: number };
 /**
  * Whether the FTS GIN index (`Page_searchText_idx`) exists, probed once per
  * process. `setup:search` creates it; when missing, `planSearch` routes the
- * search to the bounded ILIKE/trigram tiers instead of an unindexed
+ * search to the bounded ILIKE and local-typo tiers instead of an unindexed
  * `to_tsvector` scan. A probe failure is not cached, so a transient error can
  * never permanently disable the fast path.
  */
@@ -521,7 +522,7 @@ function withLimit(fragment: SqlFragment, limit: number): SqlFragment {
 
 /**
  * Run a parameterised ranked SQL fragment, returning `[]` on any error. A
- * malformed/empty tsquery, a missing `pg_trgm` or a dropped index must not throw
+ * malformed/empty tsquery, a missing index or a dropped index must not throw
  * out of search — the caller falls through to the next tier.
  */
 async function runRankedSearch(fragment: SqlFragment): Promise<RankedSearchRow[]> {
@@ -590,10 +591,15 @@ async function fullTextHits(
 }
 
 /**
- * The `pg_trgm` typo tier (spec R78.8 / Dec5): runs only when the FTS passes come
- * back empty, ranking by similarity above the builder's fixed threshold. The
- * `similarity(…) >= …` predicate comes from {@link trigramFallback}; the query
- * is parameterised and the guest scope is applied in SQL.
+ * The typo tier (spec R78.8 / Dec5): runs only when the FTS passes come back
+ * empty, ranking candidates by trigram similarity **computed in TypeScript**.
+ *
+ * This used to be `pg_trgm`'s `similarity(…)` in SQL. It is now local for one
+ * decisive reason: the desktop build runs on an embedded Postgres (PGlite) that
+ * does not ship `pg_trgm`, and a search feature must not decide whether the
+ * installer can work on a machine with nothing installed. The trade is a bounded
+ * candidate scan (the workspace's most recently updated pages, guest-scoped) —
+ * this tier is a last resort, so the common paths are unaffected.
  */
 async function trigramHits(
   query: string,
@@ -601,33 +607,31 @@ async function trigramHits(
   visiblePageIds: Set<string> | null,
   window: SearchWindow,
 ): Promise<{ id: string; snippet: string }[]> {
-  const clause = trigramFallback(query);
-  if (!clause.text) return [];
-  const params: unknown[] = [...clause.params, workspaceId];
-  const where: string[] = [
-    `WHERE p."workspaceId" = $${params.length}`,
-    `  AND p."deletedAt" IS NULL`,
-    `  AND ${clause.text}`,
-  ];
-  if (visiblePageIds) {
-    params.push([...visiblePageIds]);
-    where.push(`  AND p."id" = ANY($${params.length})`);
-  }
-  const limit = window.offset + window.take + 1;
-  params.push(limit);
-  const text = [
-    `SELECT p."id",`,
-    `       coalesce(p."searchText", p."title") AS "snippet",`,
-    `       similarity(coalesce(p."searchText", p."title"), $1) AS "rank"`,
-    `FROM "Page" p`,
-    ...where,
-    `ORDER BY "rank" DESC, p."updatedAt" DESC, p."id" ASC`,
-    `LIMIT $${params.length}`,
-  ].join("\n");
-  const rows = await runRankedSearch({ text, params });
-  return rows
+  const candidates = await prisma.page.findMany({
+    where: {
+      workspaceId,
+      deletedAt: null,
+      ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+    },
+    orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+    take: TRIGRAM_CANDIDATE_LIMIT,
+    select: { id: true, title: true, searchText: true, updatedAt: true },
+  });
+  const scored = scoreTrigramCandidates(
+    query,
+    candidates.map((page) => ({
+      id: page.id,
+      text: `${page.title} ${page.searchText ?? ""}`,
+      updatedAt: page.updatedAt,
+    })),
+  ).sort((a, b) => b.rank - a.rank);
+  const byId = new Map(candidates.map((page) => [page.id, page]));
+  return scored
     .slice(window.offset, window.offset + window.take + 1)
-    .map((row) => ({ id: row.id, snippet: row.snippet }));
+    .map((hit) => ({
+      id: hit.id,
+      snippet: makeSnippet(byId.get(hit.id)?.searchText ?? byId.get(hit.id)?.title ?? "", query),
+    }));
 }
 
 /**
@@ -717,15 +721,16 @@ export async function searchPages(
     // 1+2. Exact and type-ahead passes, blended by `mergeRanked` (Dec5).
     hits = await fullTextHits(q, workspaceId, visiblePageIds, window);
     if (hits.length === 0) {
-      // 3a. Both FTS passes empty: the `pg_trgm` typo tier (Dec5).
+      // 3a. Both FTS passes empty: the typo tier (trigram similarity, in TS).
       hits = await trigramHits(q, workspaceId, visiblePageIds, window);
     }
-  } else if (plan.strategy === "trigram") {
-    // Large, un-indexed table: the trigram tier is cheaper than a full ILIKE.
-    hits = await trigramHits(q, workspaceId, visiblePageIds, window);
   } else if (plan.strategy === "ilike") {
-    // Small, un-indexed table: a bounded substring scan.
+    // No FTS index: a bounded, ordered substring scan (never a full-table scan),
+    // then the local typo tier so a misspelling still lands.
     hits = await substringHits(q, workspaceId, visiblePageIds, window);
+    if (hits.length === 0) {
+      hits = await trigramHits(q, workspaceId, visiblePageIds, window);
+    }
   }
 
   // 3b. Mirror not backfilled yet? The substring scan is the last resort.

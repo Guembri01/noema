@@ -84,7 +84,7 @@ function analyse(rawTrigger, rawPanel) {
     problems.push(`overflows the bottom (${Math.round(panel.bottom - VIEWPORT.height)}px)`);
   }
   if (panel.width < 80) problems.push(`suspiciously narrow (${Math.round(panel.width)}px)`);
-  return { problems, gapTop, flippedUp, vertical };
+  return { problems, gapTop, gapRight, beside, below };
 }
 
 

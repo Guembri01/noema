@@ -67,7 +67,8 @@
     "collab": "node scripts/collab-server.mjs",
     "postinstall": "prisma generate",
     "check:popovers": "node scripts/check-popovers.mjs",
-    "check:chat": "node scripts/check-chat-live.mjs"
+    "check:chat": "node scripts/check-chat-live.mjs",
+    "check:csp": "node scripts/check-csp.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

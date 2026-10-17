@@ -35,18 +35,20 @@
 export const NONCE_HEADER = "x-nonce";
 
 /**
- * Pinned hash of the ONE inline script React will not nonce: the
- * next-themes theme-bootstrap injected by `<ThemeProvider>`
- * (`src/components/theme-provider.tsx`, client component - off-limits in
- * this batch, and next-themes has no nonce pass-through there). Its content
- * is a fixed template built from the provider's static props (verified
- * byte-identical across responses), so a CSP hash source is the standard
- * strict-CSP allowance for fixed third-party inline scripts. If
- * next-themes/props ever change, this hash stops matching -> the live test
- * in security-headers.test.ts (hash every unnonced inline script actually
- * served) fails instead of silently blocking the script in the browser.
+ * Pinned hash of the next-themes bootstrap — the one inline script React does not
+ * nonce, needed only for responses served **without** a nonce (middleware-skipped
+ * or static fallback). Document requests get the nonce instead, and the provider
+ * passes it through (see `components/theme-provider.tsx`).
+ *
+ * Refresh it from a production server, never by hand:
+ *
+ *     npm run check:csp -- --base <production url>
+ *
+ * The check prints `BLOCKED script needs sha256-…` for exactly this value. It was
+ * stale once — the pin no longer matched the injected script, so browsers blocked
+ * the theme bootstrap in production while `next dev` (a laxer policy) hid it.
  */
-export const THEME_SCRIPT_SHA256 = "sha256-UnthrFpGFotkvMOTp/ghVMSXoZZj9Y6epaMsaBAbUtg=";
+export const THEME_SCRIPT_SHA256 = "sha256-J9cZHZf5nVZbsm7Pqxc8RsURv1AIXkMgbhfrZvoOs/A=";
 
 /** `'self'` + exactly the hosts detectEmbed() can emit an iframe src for. */
 const FRAME_SRC = [

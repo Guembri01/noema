@@ -6,7 +6,8 @@ import {
   parseHeadline,
   planSearch,
   toTsQuery,
-  trigramFallback,
+  scoreTrigramCandidates,
+  trigramSimilarity,
   TRIGRAM_THRESHOLD,
   type RankedInput,
   type SearchRow,
@@ -155,21 +156,67 @@ describe("buildSearchSql", () => {
   });
 });
 
-describe("trigramFallback", () => {
-  it("produces a pg_trgm similarity clause for typo tolerance", () => {
-    const { text, params } = trigramFallback("Noetbook");
-    expect(text).toContain("similarity(");
-    expect(text).toContain(String(TRIGRAM_THRESHOLD));
-    expect(params).toEqual(["noetbook"]);
+describe("trigramSimilarity (the typo tier, computed in TypeScript)", () => {
+  // This replaces the SQL `pg_trgm` tier: the desktop build runs on an embedded
+  // Postgres that does not ship the extension, so the metric is local. These pin
+  // the behaviour the extension used to provide.
+  it("is 1 for identical text and 0 for unrelated text", () => {
+    expect(trigramSimilarity("quarterly roadmap", "quarterly roadmap")).toBe(1);
+    // Not exactly 0: any two English strings share some trigrams ("q", "r",
+    // word-boundary spaces). What matters is that it falls below the threshold.
+    expect(trigramSimilarity("quarterly roadmap", "zzzzz qqqqq")).toBeLessThan(TRIGRAM_THRESHOLD);
   });
 
-  it("normalises case and collapsed whitespace in the bound value", () => {
-    const { params } = trigramFallback("  Quarterly   Roadmap  ");
-    expect(params).toEqual(["quarterly roadmap"]);
+  it("stays above the threshold for a single-character typo", () => {
+    expect(trigramSimilarity("noetbook", "notebook")).toBeGreaterThanOrEqual(TRIGRAM_THRESHOLD);
+    expect(trigramSimilarity("roadmpa", "roadmap")).toBeGreaterThanOrEqual(TRIGRAM_THRESHOLD);
   });
 
-  it("returns an empty fragment for a blank input", () => {
-    expect(trigramFallback("   ")).toEqual({ text: "", params: [] });
+  it("ignores case, punctuation and collapsed whitespace", () => {
+    expect(trigramSimilarity("  Quarterly   Roadmap  ", "quarterly roadmap")).toBe(1);
+    expect(trigramSimilarity("Q1: Roadmap!", "q1 roadmap")).toBe(1);
+  });
+
+  it("compares whole mirror text, so a typo in a long page still scores", () => {
+    const page = "Onboarding checklist quarterly roadmap owners and dates";
+    expect(trigramSimilarity("quaterly roadmap", page)).toBeGreaterThan(TRIGRAM_THRESHOLD);
+  });
+
+  it("an empty input never matches anything", () => {
+    expect(trigramSimilarity("", "notebook")).toBe(0);
+    expect(trigramSimilarity("   ", "notebook")).toBe(0);
+  });
+});
+
+describe("scoreTrigramCandidates", () => {
+  const candidates = [
+    { id: "p1", text: "Notebook of ideas" },
+    { id: "p2", text: "Quarterly roadmap" },
+    { id: "p3", text: "Zzz unrelated" },
+  ];
+
+  it("keeps only candidates at or above the threshold, best first", () => {
+    const scored = scoreTrigramCandidates("noetbook", candidates).sort((a, b) => b.rank - a.rank);
+    expect(scored.map((hit) => hit.id)).toEqual(["p1"]);
+  });
+
+  it("returns nothing for a blank query", () => {
+    expect(scoreTrigramCandidates("  ", candidates)).toEqual([]);
+  });
+
+  it("honours an explicit threshold and limit", () => {
+    // A 0.99 threshold rejects a candidate whose text merely contains the query…
+    expect(scoreTrigramCandidates("notebook", candidates, { threshold: 0.99 })).toEqual([]);
+    // …but accepts an exact match at 1.0.
+    expect(
+      scoreTrigramCandidates("notebook", [{ id: "p1", text: "notebook" }], { threshold: 0.99 }).map((h) => h.id),
+    ).toEqual(["p1"]);
+    expect(scoreTrigramCandidates("roadmap", candidates, { limit: 1 })).toHaveLength(1);
+  });
+
+  it("carries updatedAt through so the merge can tie-break deterministically", () => {
+    const scored = scoreTrigramCandidates("notebook", [{ id: "p1", text: "Notebook", updatedAt: "2026-01-02T00:00:00Z" }]);
+    expect(scored[0].updatedAt).toBe("2026-01-02T00:00:00Z");
   });
 });
 
@@ -270,10 +317,14 @@ describe("planSearch", () => {
     );
   });
 
-  it("uses the trigram tier on a large un-indexed table", () => {
+  it("uses the bounded substring scan on a large un-indexed table", () => {
+    // There is no SQL trigram tier any more (the typo tier is TypeScript, so the
+    // app does not need the pg_trgm extension): a large table gets the same
+    // bounded ILIKE scan, with the prefix pass still worthwhile.
     const plan = planSearch({ query: "roadmap", hasIndex: false, estimatedRows: 500_000 });
-    expect(plan.strategy).toBe("trigram");
-    expect(plan.prefix).toBe(false);
+    expect(plan.strategy).toBe("ilike");
+    expect(plan.prefix).toBe(true);
+    expect(plan.reason).toBe("large-unindexed-table");
   });
 
   it("treats a missing or non-finite row estimate as small", () => {

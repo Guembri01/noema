@@ -100,20 +100,20 @@ describe("searchPages — FTS builder adoption (R78.8)", () => {
     expect(params).toEqual(["roadmap:*", "ws1", ["p1", "p2"], 5]);
   });
 
-  it("runs the pg_trgm tier only after both FTS passes come back empty", async () => {
-    db.queryRawUnsafe.mockImplementation(async (text: string) =>
-      text.includes("similarity(coalesce(")
-        ? [{ id: "p9", snippet: "notebook", rank: 0.62 }]
-        : [],
-    );
+  it("ranks a misspelling with the local typo tier, without touching SQL for it", async () => {
+    // Both FTS passes come back empty; the typo tier is now computed in
+    // TypeScript over a bounded candidate window (no `pg_trgm`, so the embedded
+    // desktop database can support it too).
+    db.queryRawUnsafe.mockResolvedValue([]);
     db.pageFindMany.mockResolvedValue([page({ id: "p9", title: "Notebook" })]);
 
     const results = await searchPages("ws1", "noetbook", null, { take: 5 });
 
-    expect(db.queryRawUnsafe).toHaveBeenCalledTimes(3);
-    const [text, ...params] = db.queryRawUnsafe.mock.calls[2];
-    expect(text).toContain(`similarity(coalesce(p."searchText", p."title"), $1) >= 0.3`);
-    expect(params).toEqual(["noetbook", "ws1", 6]);
+    // Exactly the two FTS passes hit the database as SQL; the typo tier did not.
+    expect(db.queryRawUnsafe).toHaveBeenCalledTimes(2);
+    for (const [text] of db.queryRawUnsafe.mock.calls) {
+      expect(text).not.toContain("similarity(");
+    }
     expect(results.map((row) => row.id)).toEqual(["p9"]);
   });
 });

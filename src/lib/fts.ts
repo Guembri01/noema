@@ -197,25 +197,98 @@ export function buildSearchSql(options: BuildSearchSqlOptions): SqlFragment {
   return { text, params };
 }
 
-/** Similarity threshold used by the `pg_trgm` typo tier. */
+/**
+ * Similarity threshold for the typo tier.
+ *
+ * The tier used to be `pg_trgm`'s `similarity(…) >= 0.3` in SQL. It is now
+ * computed in TypeScript (see {@link trigramSimilarity}) for one decisive reason:
+ * `pg_trgm` is an extension, and the desktop build runs on an embedded Postgres
+ * (PGlite) that does not ship it — a search feature must not decide whether the
+ * installer can work with nothing installed.
+ */
 export const TRIGRAM_THRESHOLD = 0.3;
 
 /**
- * Build the `pg_trgm` similarity clause for typo tolerance.
+ * How many pages the typo tier will look at.
  *
- * Used only when the FTS and prefix passes both come back empty (spec Dec5).
- * The input is lowercased and whitespace-collapsed, then compared against the
- * plain-text mirror with `similarity(…) >= 0.3` — an explicit threshold rather
- * than the `%` operator so behaviour does not depend on the
- * `pg_trgm.similarity_threshold` GUC. A blank input yields an empty fragment.
+ * The tier only runs when the full-text passes found nothing (a typo, a term that
+ * does not appear, or a page whose mirror predates the index), so a bounded scan
+ * of the workspace's most recently updated pages is a fair trade for dropping an
+ * extension dependency. Raise it for very large workspaces; the exact and prefix
+ * passes are unaffected.
  */
-export function trigramFallback(input: string): SqlFragment {
-  const normalized = (input ?? "").trim().replace(/\s+/g, " ").toLowerCase();
-  if (!normalized) return { text: "", params: [] };
-  return {
-    text: `similarity(coalesce(p."searchText", p."title"), $1) >= ${TRIGRAM_THRESHOLD}`,
-    params: [normalized],
-  };
+export const TRIGRAM_CANDIDATE_LIMIT = 400;
+
+/** Character trigrams of a string, in pg_trgm's padded-word style. */
+function trigrams(value: string): Set<string> {
+  const words = (value ?? "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const set = new Set<string>();
+  for (const word of words) {
+    // pg_trgm pads each word with two leading and one trailing space, so word
+    // boundaries produce their own trigrams ("  cat ", " cat", "cat ").
+    const padded = `  ${word} `;
+    for (let i = 0; i + 3 <= padded.length; i += 1) set.add(padded.slice(i, i + 3));
+  }
+  return set;
+}
+
+/**
+ * Sørensen–Dice similarity over character trigrams — the same metric and the same
+ * `0…1` range `pg_trgm`'s `similarity()` reports, computed locally.
+ *
+ * Pure and deterministic: identical strings are `1`, strings with no shared
+ * trigram are `0`, and a single-character typo in a word of any length stays well
+ * above {@link TRIGRAM_THRESHOLD}.
+ */
+export function trigramSimilarity(a: string, b: string): number {
+  const left = trigrams(a);
+  const right = trigrams(b);
+  if (left.size === 0 || right.size === 0) {
+    // Nothing to compare trigram-wise; fall back to exact (case-insensitive) match.
+    return (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase() ? 1 : 0;
+  }
+  let shared = 0;
+  for (const gram of left) if (right.has(gram)) shared += 1;
+  return (2 * shared) / (left.size + right.size);
+}
+
+/** A page the typo tier may score. */
+export type TrigramCandidate = {
+  id: string;
+  /** Title + plain-text mirror, exactly what the SQL tier compared. */
+  text: string;
+  updatedAt?: string | number | Date;
+};
+
+/**
+ * Rank candidates by trigram similarity, dropping those below the threshold.
+ * Returns the same {@link RankedInput} shape the other tiers produce, so the
+ * caller merges them identically.
+ */
+export function scoreTrigramCandidates(
+  input: string,
+  candidates: readonly TrigramCandidate[],
+  options: { threshold?: number; limit?: number } = {},
+): RankedInput[] {
+  const query = (input ?? "").trim();
+  if (!query) return [];
+  const threshold =
+    typeof options.threshold === "number" && Number.isFinite(options.threshold)
+      ? options.threshold
+      : TRIGRAM_THRESHOLD;
+  const scored: RankedInput[] = [];
+  for (const candidate of candidates) {
+    const rank = trigramSimilarity(query, candidate.text);
+    if (rank >= threshold) {
+      scored.push({ id: candidate.id, rank, updatedAt: candidate.updatedAt });
+    }
+  }
+  const limit = typeof options.limit === "number" && options.limit > 0 ? options.limit : undefined;
+  return limit ? scored.slice(0, limit) : scored;
 }
 
 /** A `ts_headline` snippet split into plain text and its matched terms. */
@@ -300,7 +373,7 @@ export function highlightRanks(rows: readonly SearchRow[]): HighlightedRow[] {
 }
 
 /** Which engine {@link planSearch} should use. */
-export type SearchStrategy = "fts" | "trigram" | "ilike" | "none";
+export type SearchStrategy = "fts" | "ilike" | "none";
 
 /** The chosen strategy plus why it was chosen and whether to prefix. */
 export type SearchPlan = {
@@ -325,13 +398,14 @@ export type PlanSearchInput = {
 };
 
 /**
- * Choose between the full-text, trigram and `ILIKE` engines.
+ * Choose between the full-text and `ILIKE` engines.
  *
  * A blank query plans `none`. When the GIN index exists, FTS (with the prefix
- * pass) is always cheapest. Without an index a small table is fine with a
- * substring `ILIKE`, while a large table prefers the `pg_trgm` similarity tier
- * (bounded, ranked) over a full-table `ILIKE '%…%'` scan. Missing, negative or
- * non-finite estimates are treated as `0` (the safe, small-table branch).
+ * pass) is always cheapest. Without an index, a **bounded** `ILIKE` scan is the
+ * only option — there is no longer a SQL trigram tier to prefer for large tables,
+ * because the typo tier now scores candidates in TypeScript (see
+ * {@link scoreTrigramCandidates}) so the app does not depend on the `pg_trgm`
+ * extension. Missing, negative or non-finite estimates are treated as `0`.
  */
 export function planSearch(input: PlanSearchInput): SearchPlan {
   const query = (input?.query ?? "").trim();
@@ -346,7 +420,7 @@ export function planSearch(input: PlanSearchInput): SearchPlan {
   if (rows <= ILIKE_MAX_ROWS) {
     return { strategy: "ilike", prefix: true, reason: "small-unindexed-table" };
   }
-  return { strategy: "trigram", prefix: false, reason: "large-unindexed-table" };
+  return { strategy: "ilike", prefix: true, reason: "large-unindexed-table" };
 }
 
 /** A hit fed to {@link mergeRanked}: a stable id, a rank and an optional time. */

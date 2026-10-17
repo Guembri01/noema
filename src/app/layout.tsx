@@ -7,7 +7,9 @@ import { UndoRedoProvider } from "@/components/providers/undo-redo-provider";
 import { ActionErrorGuard } from "@/components/action-error-guard";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
+import { headers } from "next/headers";
 import { getCurrentUser } from "@/lib/auth";
+import { NONCE_HEADER } from "@/lib/security-headers";
 import { directionOf } from "@/lib/i18n";
 
 export const metadata: Metadata = {
@@ -36,10 +38,15 @@ export default async function RootLayout({
     locale = "en";
   }
   const dir = directionOf(locale);
+  // The middleware mints a nonce per document request; handing it to next-themes
+  // is what lets its inline bootstrap run under `script-src 'self' 'nonce-…'`.
+  const nonce = await headers()
+    .then((store) => store.get(NONCE_HEADER) ?? undefined)
+    .catch(() => undefined);
   return (
     <html lang={locale} dir={dir} suppressHydrationWarning>
       <body className="min-h-screen bg-bg text-fg antialiased">
-        <ThemeProvider>
+        <ThemeProvider nonce={nonce}>
           <TooltipProvider delayDuration={400}>
             <OfflineProvider>
               <a href="#main" className="skip-link">
