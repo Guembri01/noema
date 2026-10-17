@@ -4,13 +4,11 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   COLOR_CHOICES,
-  CONTROL_CLASS,
   type DBProperty,
   type PropertyConfig,
 } from "@/components/database/database-types";
 import { updatePropertyAction } from "@/server/actions/database";
 import { useAction } from "@/lib/actions-client";
-import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import { formatUniqueId, isValidPrefix, type UniqueIdConfig } from "@/lib/unique-id";
 import { formatGeo, normalizeGeo, parseGeo } from "@/lib/geo";
@@ -44,10 +42,61 @@ import {
   type ButtonConfig,
   type ButtonNotifyLevel,
 } from "@/lib/row-buttons";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DialogContent } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Stepper } from "@/components/ui/stepper";
+import { Switch } from "@/components/ui/switch";
+import { Tag } from "@/components/ui/tag";
+import { Tooltip } from "@/components/ui/tooltip";
 import { FormulaEditor } from "@/components/editor/formula-editor";
+import { Plus, X } from "lucide-react";
 
 type OptionDraft = { id: string; name: string; color: string; group?: string };
+
+/**
+ * A property's option colour, authored as a row of `Tag` hue chips (the Tag
+ * primitive). Selecting a chip persists the same `color` string a `<select>`
+ * used to, so the stored option shape is unchanged.
+ */
+function OptionColorPicker({
+  locale,
+  value,
+  name,
+  disabled,
+  onSelect,
+}: {
+  locale: string;
+  value: string;
+  name: string;
+  disabled?: boolean;
+  onSelect: (color: string) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={`${t(locale, "optionColorLabel")}: ${name}`}
+      className="flex flex-wrap items-center gap-1"
+    >
+      {COLOR_CHOICES.map((color) => (
+        <Tag
+          key={color}
+          hue={color}
+          size="sm"
+          dot
+          selected={value === color}
+          disabled={disabled}
+          aria-label={color}
+          onSelectedChange={() => onSelect(color)}
+        >
+          {color}
+        </Tag>
+      ))}
+    </div>
+  );
+}
 
 const DEFAULT_ZERO_PAD = 4;
 const DEFAULT_START_AT = 1;
@@ -650,15 +699,17 @@ export function PropertyOptionsEditor({
       </h2>
 
       {isOptions && (
-        <>
-          <ul className="mt-4 space-y-2">
-            {draft.map((option, index) => (
-              <li
-                key={option.id}
-                className="flex items-center gap-2 rounded border border-border p-2"
-              >
-                <input
+        <ul className="mt-4 space-y-2">
+          {draft.map((option, index) => (
+            <li
+              key={option.id}
+              className="space-y-2 rounded border border-border p-2"
+            >
+              <div className="flex items-center gap-2">
+                <Input
                   value={option.name}
+                  size="sm"
+                  className="flex-1"
                   aria-label={`${t(locale, "optionNameLabel")}: ${option.name}`}
                   onChange={(event) =>
                     setDraft((current) =>
@@ -675,70 +726,72 @@ export function PropertyOptionsEditor({
                       event.currentTarget.blur();
                     }
                   }}
-                  className="h-8 flex-1 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
                 />
-                <select
-                  value={option.color}
-                  aria-label={`${t(locale, "optionColorLabel")}: ${option.name}`}
-                  onChange={(event) =>
-                    saveOptions(
-                      pending.current.map((entry, i) =>
-                        i === index ? { ...entry, color: event.target.value } : entry,
-                      ),
-                    )
-                  }
-                  className="h-8 rounded border border-border bg-bg px-1 text-xs outline-none"
-                >
-                  {COLOR_CHOICES.map((color) => (
-                    <option key={color} value={color}>
-                      {color}
-                    </option>
-                  ))}
-                </select>
                 {property.type === "STATUS" && (
-                  <select
-                    value={option.group ?? ""}
-                    aria-label={`${t(locale, "group")}: ${option.name}`}
-                    onChange={(event) =>
-                      saveOptions(
-                        pending.current.map((entry, i) =>
-                          i === index
-                            ? { ...entry, group: event.target.value || undefined }
-                            : entry,
-                        ),
-                      )
-                    }
-                    className="h-8 rounded border border-border bg-bg px-1 text-xs outline-none"
-                  >
-                    <option value="">—</option>
-                    <option value="todo">{t(locale, "statusGroupTodo")}</option>
-                    <option value="doing">{t(locale, "statusGroupDoing")}</option>
-                    <option value="done">{t(locale, "statusGroupDone")}</option>
-                  </select>
+                  <span className="w-32 shrink-0">
+                    <Select
+                      size="sm"
+                      options={[
+                        { value: "", label: "—" },
+                        { value: "todo", label: t(locale, "statusGroupTodo") },
+                        { value: "doing", label: t(locale, "statusGroupDoing") },
+                        { value: "done", label: t(locale, "statusGroupDone") },
+                      ]}
+                      value={option.group ?? ""}
+                      allowClear={false}
+                      aria-label={`${t(locale, "group")}: ${option.name}`}
+                      onChange={(value) =>
+                        saveOptions(
+                          pending.current.map((entry, i) =>
+                            i === index
+                              ? { ...entry, group: value || undefined }
+                              : entry,
+                          ),
+                        )
+                      }
+                    />
+                  </span>
                 )}
-                <button
-                  type="button"
-                  aria-label={`${t(locale, "removeOption")}: ${option.name}`}
-                  onClick={() => saveOptions(pending.current.filter((_, i) => i !== index))}
-                  className="text-muted hover:text-red-500"
-                >
-                  ×
-                </button>
-              </li>
-            ))}
-            {draft.length === 0 && (
-              <li className="text-sm text-muted">{t(locale, "noOptionsYet")}</li>
-            )}
-          </ul>
-        </>
+                <Tooltip label={`${t(locale, "removeOption")}: ${option.name}`}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`${t(locale, "removeOption")}: ${option.name}`}
+                    onClick={() =>
+                      saveOptions(pending.current.filter((_, i) => i !== index))
+                    }
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                </Tooltip>
+              </div>
+              <OptionColorPicker
+                locale={locale}
+                value={option.color}
+                name={option.name}
+                onSelect={(color) =>
+                  saveOptions(
+                    pending.current.map((entry, i) =>
+                      i === index ? { ...entry, color } : entry,
+                    ),
+                  )
+                }
+              />
+            </li>
+          ))}
+          {draft.length === 0 && (
+            <li className="text-sm text-muted">{t(locale, "noOptionsYet")}</li>
+          )}
+        </ul>
       )}
 
       {isUniqueId && (
         <section className="mt-4 space-y-3" data-testid="unique-id-config">
           <h3 className="text-sm font-medium">Unique ID</h3>
-          <label className="flex items-center gap-2 text-xs text-muted">
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Prefix</span>
-            <input
+            <Input
               data-testid="unique-id-prefix"
               aria-label="Unique ID prefix"
               value={prefix}
@@ -746,47 +799,43 @@ export function PropertyOptionsEditor({
                 setPrefix(event.target.value);
                 commitUniqueId({ prefix: event.target.value });
               }}
-              className={cn(CONTROL_CLASS, "flex-1")}
+              className="flex-1"
             />
-          </label>
+          </div>
           {prefix !== "" && !isValidPrefix(prefix) && (
-            <p className="text-xs text-red-500" data-testid="unique-id-prefix-error">
+            <p className="text-xs text-danger" data-testid="unique-id-prefix-error">
               Letters, digits and underscores only.
             </p>
           )}
-          <label className="flex items-center gap-2 text-xs text-muted">
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Zero-pad</span>
-            <input
-              data-testid="unique-id-zero-pad"
+            <Stepper
+              value={zeroPadValue}
+              min={1}
               aria-label="Unique ID zero-pad width"
-              type="number"
-              min={1}
-              value={zeroPadText}
-              onChange={(event) => {
-                setZeroPadText(event.target.value);
-                commitUniqueId({ zeroPad: event.target.value });
+              className="w-28"
+              onValueChange={(next) => {
+                setZeroPadText(String(next));
+                commitUniqueId({ zeroPad: String(next) });
               }}
-              className={cn(CONTROL_CLASS, "w-24")}
             />
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted">
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Start at</span>
-            <input
-              data-testid="unique-id-start-at"
-              aria-label="Unique ID start number"
-              type="number"
+            <Stepper
+              value={startAtValue}
               min={1}
-              value={startAtText}
-              onChange={(event) => {
-                setStartAtText(event.target.value);
-                commitUniqueId({ startAt: event.target.value });
+              aria-label="Unique ID start number"
+              className="w-28"
+              onValueChange={(next) => {
+                setStartAtText(String(next));
+                commitUniqueId({ startAt: String(next) });
               }}
-              className={cn(CONTROL_CLASS, "w-24")}
             />
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted">
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Separator</span>
-            <input
+            <Input
               data-testid="unique-id-separator"
               aria-label="Unique ID separator"
               value={separator}
@@ -794,9 +843,9 @@ export function PropertyOptionsEditor({
                 setSeparator(event.target.value);
                 commitUniqueId({ separator: event.target.value });
               }}
-              className={cn(CONTROL_CLASS, "w-24")}
+              className="w-24"
             />
-          </label>
+          </div>
           <p className="text-xs text-muted">
             Preview:{" "}
             <span className="font-mono" data-testid="unique-id-preview">
@@ -809,9 +858,9 @@ export function PropertyOptionsEditor({
       {isPlace && (
         <section className="mt-4 space-y-3" data-testid="place-config">
           <h3 className="text-sm font-medium">Place</h3>
-          <label className="flex items-center gap-2 text-xs text-muted">
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Latitude</span>
-            <input
+            <Input
               data-testid="place-lat"
               aria-label="Default latitude"
               value={latText}
@@ -819,12 +868,12 @@ export function PropertyOptionsEditor({
                 setLatText(event.target.value);
                 commitPlace({ lat: event.target.value });
               }}
-              className={cn(CONTROL_CLASS, "w-28")}
+              className="w-28"
             />
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted">
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Longitude</span>
-            <input
+            <Input
               data-testid="place-lng"
               aria-label="Default longitude"
               value={lngText}
@@ -832,28 +881,26 @@ export function PropertyOptionsEditor({
                 setLngText(event.target.value);
                 commitPlace({ lng: event.target.value });
               }}
-              className={cn(CONTROL_CLASS, "w-28")}
+              className="w-28"
             />
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted">
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Zoom</span>
-            <input
-              data-testid="place-zoom"
-              aria-label="Default zoom"
-              type="number"
+            <Stepper
+              value={Number.isFinite(Number(zoomText)) ? Number(zoomText) : MIN_ZOOM}
               min={MIN_ZOOM}
               max={MAX_ZOOM}
-              value={zoomText}
-              onChange={(event) => {
-                setZoomText(event.target.value);
-                commitPlace({ zoom: event.target.value });
+              aria-label="Default zoom"
+              className="w-28"
+              onValueChange={(next) => {
+                setZoomText(String(next));
+                commitPlace({ zoom: String(next) });
               }}
-              className={cn(CONTROL_CLASS, "w-24")}
             />
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted">
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Label</span>
-            <input
+            <Input
               data-testid="place-label"
               aria-label="Default place label"
               placeholder="e.g. HQ"
@@ -862,11 +909,11 @@ export function PropertyOptionsEditor({
                 setLabelText(event.target.value);
                 commitPlace({ label: event.target.value });
               }}
-              className={cn(CONTROL_CLASS, "flex-1")}
+              className="flex-1"
             />
-          </label>
+          </div>
           {placeError && (
-            <p className="text-xs text-red-500" data-testid="place-error">
+            <p className="text-xs text-danger" data-testid="place-error">
               {placeError}
             </p>
           )}
@@ -882,33 +929,31 @@ export function PropertyOptionsEditor({
       {isDate && (
         <section className="mt-4 space-y-3" data-testid="date-config">
           <h3 className="text-sm font-medium">Date</h3>
-          <label className="flex items-center gap-2 text-xs text-muted">
-            <input
-              data-testid="date-allow-range"
-              type="checkbox"
+          <div data-testid="date-allow-range">
+            <Switch
               checked={allowRange}
-              onChange={(event) => {
-                setAllowRange(event.target.checked);
-                commitDate({ allowRange: event.target.checked });
+              label="Allow an end date (range)"
+              aria-label="Allow an end date (range)"
+              onCheckedChange={(next) => {
+                setAllowRange(next);
+                commitDate({ allowRange: next });
               }}
             />
-            <span>Allow an end date (range)</span>
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted">
-            <input
-              data-testid="date-allday"
-              type="checkbox"
+          </div>
+          <div data-testid="date-allday">
+            <Switch
               checked={allDay}
-              onChange={(event) => {
-                setAllDay(event.target.checked);
-                commitDate({ allDay: event.target.checked });
+              label="All-day by default"
+              aria-label="All-day by default"
+              onCheckedChange={(next) => {
+                setAllDay(next);
+                commitDate({ allDay: next });
               }}
             />
-            <span>All-day by default</span>
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted">
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Time zone</span>
-            <input
+            <Input
               data-testid="date-time-zone"
               aria-label="Default time zone"
               placeholder="e.g. Europe/Paris"
@@ -917,11 +962,11 @@ export function PropertyOptionsEditor({
                 setTimeZoneText(event.target.value);
                 commitDate({ timeZone: event.target.value });
               }}
-              className={cn(CONTROL_CLASS, "flex-1")}
+              className="flex-1"
             />
-          </label>
+          </div>
           {!timeZoneValid && (
-            <p className="text-xs text-red-500" data-testid="date-time-zone-error">
+            <p className="text-xs text-danger" data-testid="date-time-zone-error">
               Not a recognised time zone.
             </p>
           )}
@@ -944,78 +989,69 @@ export function PropertyOptionsEditor({
                 className="flex items-center gap-1"
                 data-testid="date-reminder-row"
               >
-                <input
-                  data-testid="date-reminder-amount"
-                  aria-label={`Reminder amount (${describeOffset(reminder)})`}
-                  type="number"
+                <Stepper
+                  value={reminder.amount}
                   min={0}
-                  value={String(reminder.amount)}
-                  onChange={(event) => {
-                    const amount = Number.parseInt(event.target.value, 10);
-                    if (Number.isInteger(amount) && amount >= 0) {
-                      updateReminder(index, { amount });
-                    }
-                  }}
-                  className={cn(CONTROL_CLASS, "w-16")}
+                  aria-label={`Reminder amount (${describeOffset(reminder)})`}
+                  className="w-24"
+                  onValueChange={(amount) => updateReminder(index, { amount })}
                 />
-                <select
-                  data-testid="date-reminder-unit"
-                  aria-label="Reminder unit"
+                <Select
+                  size="sm"
+                  options={REMINDER_UNITS.map((unit) => ({ value: unit, label: unit }))}
                   value={reminder.unit}
-                  onChange={(event) => {
-                    const unit = REMINDER_UNITS.find(
-                      (candidate) => candidate === event.target.value,
-                    );
+                  allowClear={false}
+                  aria-label="Reminder unit"
+                  className="w-24"
+                  onChange={(value) => {
+                    const unit = REMINDER_UNITS.find((candidate) => candidate === value);
                     if (unit) updateReminder(index, { unit });
                   }}
-                  className={cn(CONTROL_CLASS, "w-24")}
-                >
-                  {REMINDER_UNITS.map((unit) => (
-                    <option key={unit} value={unit}>
-                      {unit}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  data-testid="date-reminder-direction"
-                  aria-label="Reminder direction"
+                />
+                <Select
+                  size="sm"
+                  options={REMINDER_DIRECTIONS.map((direction) => ({
+                    value: direction,
+                    label: direction,
+                  }))}
                   value={reminder.direction}
-                  onChange={(event) => {
+                  allowClear={false}
+                  aria-label="Reminder direction"
+                  className="w-24"
+                  onChange={(value) => {
                     const direction = REMINDER_DIRECTIONS.find(
-                      (candidate) => candidate === event.target.value,
+                      (candidate) => candidate === value,
                     );
                     if (direction) updateReminder(index, { direction });
                   }}
-                  className={cn(CONTROL_CLASS, "w-20")}
-                >
-                  {REMINDER_DIRECTIONS.map((direction) => (
-                    <option key={direction} value={direction}>
-                      {direction}
-                    </option>
-                  ))}
-                </select>
+                />
                 <span className="flex-1 text-xs text-muted" data-testid="date-reminder-label">
                   {describeOffset(reminder)}
                 </span>
-                <button
-                  type="button"
-                  data-testid="date-reminder-remove"
-                  aria-label={`Remove reminder: ${describeOffset(reminder)}`}
-                  onClick={() => removeReminder(index)}
-                  className="text-muted hover:text-red-500"
-                >
-                  ×
-                </button>
+                <Tooltip label={`Remove reminder: ${describeOffset(reminder)}`}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    data-testid="date-reminder-remove"
+                    aria-label={`Remove reminder: ${describeOffset(reminder)}`}
+                    onClick={() => removeReminder(index)}
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                </Tooltip>
               </div>
             ))}
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               data-testid="date-reminder-add"
+              leftIcon={<Plus className="h-3 w-3" aria-hidden />}
               onClick={addReminder}
-              className="flex items-center gap-1 text-xs text-accent"
             >
-              + Add reminder
-            </button>
+              Add reminder
+            </Button>
             {reminders.length > 0 && (
               <p className="text-xs text-muted">
                 Sample due {PREVIEW_START}:{" "}
@@ -1031,63 +1067,70 @@ export function PropertyOptionsEditor({
       {isNumber && (
         <section className="mt-4 space-y-3" data-testid="number-format-config">
           <h3 className="text-sm font-medium">Number</h3>
-          <label className="flex items-center gap-2 text-xs text-muted">
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Style</span>
-            <select
-              data-testid="number-format-style"
-              aria-label="Number format style"
-              value={numberFormat.style}
-              onChange={(event) => commitNumberFormat({ style: event.target.value })}
-              className={cn(CONTROL_CLASS, "flex-1")}
-            >
-              <option value="decimal">Number</option>
-              <option value="percent">Percent</option>
-              <option value="currency">Currency</option>
-              <option value="compact">Compact</option>
-            </select>
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted">
+            <span className="flex-1" data-testid="number-format-style">
+              <Select
+                size="sm"
+                allowClear={false}
+                aria-label="Number format style"
+                value={numberFormat.style}
+                options={[
+                  { value: "decimal", label: "Number" },
+                  { value: "percent", label: "Percent" },
+                  { value: "currency", label: "Currency" },
+                  { value: "compact", label: "Compact" },
+                ]}
+                onChange={(value) => commitNumberFormat({ style: value })}
+              />
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Decimals</span>
-            <select
-              data-testid="number-format-decimals"
-              aria-label="Number format decimals"
-              value={numberFormat.decimals === undefined ? "" : String(numberFormat.decimals)}
-              onChange={(event) =>
-                commitNumberFormat({
-                  decimals: event.target.value === "" ? undefined : Number(event.target.value),
-                })
-              }
-              className={cn(CONTROL_CLASS, "w-24")}
-            >
-              <option value="">Default</option>
-              {NUMBER_DECIMAL_CHOICES.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </label>
+            <span data-testid="number-format-decimals">
+              <Select
+                size="sm"
+                allowClear={false}
+                aria-label="Number format decimals"
+                value={
+                  numberFormat.decimals === undefined ? "" : String(numberFormat.decimals)
+                }
+                placeholder="Default"
+                options={[
+                  { value: "", label: "Default" },
+                  ...NUMBER_DECIMAL_CHOICES.map((value) => ({
+                    value: String(value),
+                    label: String(value),
+                  })),
+                ]}
+                onChange={(value) =>
+                  commitNumberFormat({
+                    decimals: value === "" ? undefined : Number(value),
+                  })
+                }
+              />
+            </span>
+          </div>
           {numberFormat.style === "currency" && (
-            <label className="flex items-center gap-2 text-xs text-muted">
+            <div className="flex items-center gap-2 text-xs text-muted">
               <span className="w-24 shrink-0">Currency</span>
-              <select
-                data-testid="number-format-currency"
-                aria-label="Currency"
-                value={numberFormat.currency ?? "USD"}
-                onChange={(event) => {
-                  if (isCurrencyCode(event.target.value)) {
-                    commitNumberFormat({ currency: event.target.value });
-                  }
-                }}
-                className={cn(CONTROL_CLASS, "flex-1")}
-              >
-                {CURRENCIES.map((currency) => (
-                  <option key={currency.code} value={currency.code}>
-                    {currency.name} ({currency.code})
-                  </option>
-                ))}
-              </select>
-            </label>
+              <span className="flex-1" data-testid="number-format-currency">
+                <Select
+                  size="sm"
+                  searchable
+                  allowClear={false}
+                  aria-label="Currency"
+                  value={numberFormat.currency ?? "USD"}
+                  options={CURRENCIES.map((currency) => ({
+                    value: currency.code,
+                    label: `${currency.name} (${currency.code})`,
+                  }))}
+                  onChange={(value) => {
+                    if (isCurrencyCode(value)) commitNumberFormat({ currency: value });
+                  }}
+                />
+              </span>
+            </div>
           )}
           <p className="text-xs text-muted">
             Preview:{" "}
@@ -1104,159 +1147,156 @@ export function PropertyOptionsEditor({
       {isButton && (
         <section className="mt-4 space-y-3" data-testid="button-config">
           <h3 className="text-sm font-medium">Button</h3>
-          <label className="flex items-center gap-2 text-xs text-muted">
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Label</span>
-            <input
+            <Input
               data-testid="button-label"
               aria-label="Button label"
               value={buttonDraft.label}
               onChange={(event) => commitButton({ label: event.target.value })}
-              className={cn(CONTROL_CLASS, "flex-1")}
+              className="flex-1"
             />
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted">
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Icon</span>
-            <input
+            <Input
               data-testid="button-icon"
               aria-label="Button icon"
               placeholder="e.g. 🔗"
               value={buttonDraft.icon}
               onChange={(event) => commitButton({ icon: event.target.value })}
-              className={cn(CONTROL_CLASS, "w-24")}
+              className="w-24"
             />
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted">
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted">
             <span className="w-24 shrink-0">Action</span>
-            <select
-              data-testid="button-action-kind"
-              aria-label="Button action"
-              value={buttonDraft.kind}
-              onChange={(event) => {
-                const spec = BUTTON_ACTION_CATALOG.find(
-                  (candidate) => candidate.kind === event.target.value,
-                );
-                if (spec) commitButton({ kind: spec.kind });
-              }}
-              className={cn(CONTROL_CLASS, "flex-1")}
-            >
-              {BUTTON_ACTION_CATALOG.map((spec) => (
-                <option key={spec.kind} value={spec.kind}>
-                  {spec.label}
-                </option>
-              ))}
-            </select>
-          </label>
+            <span className="flex-1" data-testid="button-action-kind">
+              <Select
+                size="sm"
+                allowClear={false}
+                aria-label="Button action"
+                value={buttonDraft.kind}
+                options={BUTTON_ACTION_CATALOG.map((spec) => ({
+                  value: spec.kind,
+                  label: spec.label,
+                }))}
+                onChange={(value) => {
+                  const spec = BUTTON_ACTION_CATALOG.find(
+                    (candidate) => candidate.kind === value,
+                  );
+                  if (spec) commitButton({ kind: spec.kind });
+                }}
+              />
+            </span>
+          </div>
           {buttonSpec && <p className="text-xs text-muted">{buttonSpec.description}</p>}
 
           {buttonDraft.kind === "open_url" && (
             <>
-              <label className="flex items-center gap-2 text-xs text-muted">
+              <div className="flex items-center gap-2 text-xs text-muted">
                 <span className="w-24 shrink-0">URL</span>
-                <input
+                <Input
                   data-testid="button-url"
                   aria-label="Button URL"
                   placeholder="https://…"
                   value={buttonDraft.url}
                   onChange={(event) => commitButton({ url: event.target.value })}
-                  className={cn(CONTROL_CLASS, "flex-1")}
+                  className="flex-1"
                 />
-              </label>
-              <label className="flex items-center gap-2 text-xs text-muted">
-                <input
-                  data-testid="button-open-new-tab"
-                  type="checkbox"
+              </div>
+              <div data-testid="button-open-new-tab">
+                <Switch
                   checked={buttonDraft.openInNewTab}
-                  onChange={(event) =>
-                    commitButton({ openInNewTab: event.target.checked })
-                  }
+                  label="Open in a new tab"
+                  aria-label="Open in a new tab"
+                  onCheckedChange={(next) => commitButton({ openInNewTab: next })}
                 />
-                <span>Open in a new tab</span>
-              </label>
+              </div>
             </>
           )}
 
           {buttonDraft.kind === "set_property" && (
             <>
-              <label className="flex items-center gap-2 text-xs text-muted">
+              <div className="flex items-center gap-2 text-xs text-muted">
                 <span className="w-24 shrink-0">Property ID</span>
-                <input
+                <Input
                   data-testid="button-property-id"
                   aria-label="Button target property id"
                   value={buttonDraft.propertyId}
                   onChange={(event) =>
                     commitButton({ propertyId: event.target.value })
                   }
-                  className={cn(CONTROL_CLASS, "flex-1")}
+                  className="flex-1"
                 />
-              </label>
-              <label className="flex items-center gap-2 text-xs text-muted">
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted">
                 <span className="w-24 shrink-0">Value</span>
-                <input
+                <Input
                   data-testid="button-value"
                   aria-label="Button property value"
                   value={buttonDraft.value}
                   onChange={(event) => commitButton({ value: event.target.value })}
-                  className={cn(CONTROL_CLASS, "flex-1")}
+                  className="flex-1"
                 />
-              </label>
+              </div>
             </>
           )}
 
           {buttonDraft.kind === "insert_template" && (
-            <label className="flex items-center gap-2 text-xs text-muted">
+            <div className="flex items-center gap-2 text-xs text-muted">
               <span className="w-24 shrink-0">Template ID</span>
-              <input
+              <Input
                 data-testid="button-template-id"
                 aria-label="Button template id"
                 value={buttonDraft.templateId}
                 onChange={(event) =>
                   commitButton({ templateId: event.target.value })
                 }
-                className={cn(CONTROL_CLASS, "flex-1")}
+                className="flex-1"
               />
-            </label>
+            </div>
           )}
 
           {buttonDraft.kind === "notify" && (
             <>
-              <label className="flex items-center gap-2 text-xs text-muted">
+              <div className="flex items-center gap-2 text-xs text-muted">
                 <span className="w-24 shrink-0">Message</span>
-                <input
+                <Input
                   data-testid="button-message"
                   aria-label="Button notification message"
                   value={buttonDraft.message}
                   onChange={(event) => commitButton({ message: event.target.value })}
-                  className={cn(CONTROL_CLASS, "flex-1")}
+                  className="flex-1"
                 />
-              </label>
-              <label className="flex items-center gap-2 text-xs text-muted">
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted">
                 <span className="w-24 shrink-0">Level</span>
-                <select
-                  data-testid="button-notify-level"
-                  aria-label="Button notification level"
-                  value={buttonDraft.level}
-                  onChange={(event) => {
-                    const level = BUTTON_NOTIFY_LEVELS.find(
-                      (candidate) => candidate === event.target.value,
-                    );
-                    if (level) commitButton({ level });
-                  }}
-                  className={cn(CONTROL_CLASS, "flex-1")}
-                >
-                  {BUTTON_NOTIFY_LEVELS.map((level) => (
-                    <option key={level} value={level}>
-                      {level}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <span className="flex-1" data-testid="button-notify-level">
+                  <Select
+                    size="sm"
+                    allowClear={false}
+                    aria-label="Button notification level"
+                    value={buttonDraft.level}
+                    options={BUTTON_NOTIFY_LEVELS.map((level) => ({
+                      value: level,
+                      label: level,
+                    }))}
+                    onChange={(value) => {
+                      const level = BUTTON_NOTIFY_LEVELS.find(
+                        (candidate) => candidate === value,
+                      );
+                      if (level) commitButton({ level });
+                    }}
+                  />
+                </span>
+              </div>
             </>
           )}
 
           {buttonIssues.length > 0 && (
             <ul className="space-y-1" data-testid="button-issues">
               {buttonIssues.map((issue) => (
-                <li key={issue.path} className="text-xs text-red-500">
+                <li key={issue.path} className="text-xs text-danger">
                   {issue.message}
                 </li>
               ))}
@@ -1295,60 +1335,62 @@ export function PropertyOptionsEditor({
         <section className="mt-4 space-y-3" data-testid="property-default-config">
           <h3 className="text-sm font-medium">Default value</h3>
           {(isTextLike || isDate) && (
-            <label className="flex items-center gap-2 text-xs text-muted">
+            <div className="flex items-center gap-2 text-xs text-muted">
               <span className="w-24 shrink-0">Value</span>
-              <input
+              <Input
                 data-testid="property-default-text"
                 aria-label="Default value"
                 type={isDate ? "date" : "text"}
                 value={defaultString}
                 onChange={(event) => commitDefault(event.target.value)}
-                className={cn(CONTROL_CLASS, "flex-1")}
+                className="flex-1"
               />
-            </label>
+            </div>
           )}
           {isNumber && (
-            <label className="flex items-center gap-2 text-xs text-muted">
+            <div className="flex items-center gap-2 text-xs text-muted">
               <span className="w-24 shrink-0">Value</span>
-              <input
+              <Input
                 data-testid="property-default-number"
                 aria-label="Default value"
                 type="number"
                 value={defaultString}
                 onChange={(event) => commitDefault(event.target.value)}
-                className={cn(CONTROL_CLASS, "w-32")}
+                className="w-32"
               />
-            </label>
+            </div>
           )}
           {isDefaultCheckbox && (
-            <label className="flex items-center gap-2 text-xs text-muted">
-              <input
-                data-testid="property-default-checkbox"
-                type="checkbox"
+            <div data-testid="property-default-checkbox">
+              <Switch
                 checked={defaultChecked}
-                onChange={(event) => commitDefault(event.target.checked)}
+                label="Checked by default"
+                aria-label="Checked by default"
+                onCheckedChange={(next) => commitDefault(next)}
               />
-              <span>Checked by default</span>
-            </label>
+            </div>
           )}
           {isDefaultSelect && (
-            <label className="flex items-center gap-2 text-xs text-muted">
+            <div className="flex items-center gap-2 text-xs text-muted">
               <span className="w-24 shrink-0">Option</span>
-              <select
-                data-testid="property-default-select"
-                aria-label="Default option"
-                value={defaultString}
-                onChange={(event) => commitDefault(event.target.value)}
-                className={cn(CONTROL_CLASS, "flex-1")}
-              >
-                <option value="">None</option>
-                {options.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <span className="flex-1" data-testid="property-default-select">
+                <Select
+                  size="sm"
+                  allowClear={false}
+                  aria-label="Default option"
+                  placeholder="None"
+                  value={defaultString}
+                  options={[
+                    { value: "", label: "None" },
+                    ...options.map((option) => ({
+                      value: option.id,
+                      label: option.name,
+                    })),
+                  ]}
+                  onChange={(value) => commitDefault(value)}
+                />
+              </span>
+            </div>
           )}
           {isDefaultMulti && (
             <fieldset className="space-y-1" data-testid="property-default-multi">
@@ -1359,31 +1401,27 @@ export function PropertyOptionsEditor({
               {options.map((option) => {
                 const checked = defaultOptionIds.includes(option.id);
                 return (
-                  <label
+                  <Checkbox
                     key={option.id}
-                    className="flex items-center gap-2 text-xs text-muted"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() =>
-                        commitDefault(
-                          checked
-                            ? defaultOptionIds.filter((id) => id !== option.id)
-                            : [...defaultOptionIds, option.id],
-                        )
-                      }
-                    />
-                    <span>{option.name}</span>
-                  </label>
+                    size="sm"
+                    checked={checked}
+                    label={option.name}
+                    onCheckedChange={() =>
+                      commitDefault(
+                        checked
+                          ? defaultOptionIds.filter((id) => id !== option.id)
+                          : [...defaultOptionIds, option.id],
+                      )
+                    }
+                  />
                 );
               })}
             </fieldset>
           )}
           {isDefaultPeople && (
-            <label className="flex items-center gap-2 text-xs text-muted">
+            <div className="flex items-center gap-2 text-xs text-muted">
               <span className="w-24 shrink-0">Names</span>
-              <input
+              <Input
                 data-testid="property-default-people"
                 aria-label="Default people"
                 placeholder="Comma-separated"
@@ -1396,9 +1434,9 @@ export function PropertyOptionsEditor({
                       .filter((name) => name !== ""),
                   )
                 }
-                className={cn(CONTROL_CLASS, "flex-1")}
+                className="flex-1"
               />
-            </label>
+            </div>
           )}
           <p className="text-xs text-muted">
             Preview:{" "}
@@ -1411,9 +1449,12 @@ export function PropertyOptionsEditor({
 
       <div className="mt-4 flex items-center justify-between">
         {isOptions ? (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="add-option"
+            leftIcon={<Plus className="h-3 w-3" aria-hidden />}
             onClick={() =>
               saveOptions([
                 ...pending.current,
@@ -1425,22 +1466,15 @@ export function PropertyOptionsEditor({
                 },
               ])
             }
-            className="flex items-center gap-1 text-xs text-accent"
           >
-            + {t(locale, "addOption")}
-          </button>
+            {t(locale, "addOption")}
+          </Button>
         ) : (
           <span />
         )}
-        <button
-          type="button"
-          onClick={onClose}
-          className={cn(
-            "h-8 rounded border border-border px-3 text-sm text-muted hover:bg-surface-2",
-          )}
-        >
+        <Button type="button" variant="secondary" size="sm" onClick={onClose}>
           {t(locale, "close")}
-        </button>
+        </Button>
       </div>
     </DialogContent>
   );
