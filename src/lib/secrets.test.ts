@@ -1115,6 +1115,16 @@ describe("maskConnString", () => {
     expect(masked).toContain("schema=public");
   });
 
+  it("masks a password that contains a raw @ (the parser splits at the last @)", () => {
+    const masked = maskConnString(
+      "postgresql://noema:p@ssw0rd@127.0.0.1:5432/noema?schema=public",
+    );
+    expect(masked).not.toContain("ssw0rd");
+    expect(masked).toBe(
+      "postgresql://noema:***@127.0.0.1:5432/noema?schema=public",
+    );
+  });
+
   it("leaves a credential-free connection string unchanged", () => {
     const plain = "postgresql://localhost:5432/noema?schema=public";
     expect(maskConnString(plain)).toBe(plain);
