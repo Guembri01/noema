@@ -52,7 +52,15 @@ pub const RESTART_BACKOFF: [Duration; 4] = [
 ];
 
 /// Where the server entry point lives inside the installed app.
-pub const SERVER_ENTRY: &str = "server/server.js";
+///
+/// This is the boot wrapper, **not** `server.js`. The wrapper is what makes the
+/// install self-contained: it resolves a database (an explicitly configured URL,
+/// then the embedded PGlite engine, then a Docker-managed Postgres), migrates it,
+/// generates a per-install session secret, and only then requires `server.js` in
+/// the same process. Launching `server.js` directly skipped all of that, so the
+/// app depended on whatever `DATABASE_URL` and `AUTH_SECRET` the payload happened
+/// to carry — which is exactly what `scripts/desktop/prepare.mjs` no longer ships.
+pub const SERVER_ENTRY: &str = "server/start.cjs";
 
 /// What the webview is told about the running server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -472,7 +480,10 @@ mod tests {
 
     #[test]
     fn the_server_entry_is_inside_the_resource_dir() {
-        assert_eq!(SERVER_ENTRY, "server/server.js");
+        // The boot wrapper, so a fresh install provisions its own database. See
+        // SERVER_ENTRY for why `server.js` is the wrong entry.
+        assert_eq!(SERVER_ENTRY, "server/start.cjs");
+        assert!(SERVER_ENTRY.starts_with("server/"));
     }
 
     #[test]

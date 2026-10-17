@@ -44,6 +44,11 @@ yarn-error.log*
 .env*
 !.env.example
 
+# the desktop boot wrapper's per-install session secret (scripts/desktop/boot-wrapper.cjs).
+# It normally lives in the app's data directory; this covers running the wrapper
+# from a checkout, where it would otherwise be one `git add` away from a commit.
+auth-secret
+
 # vercel
 .vercel
 

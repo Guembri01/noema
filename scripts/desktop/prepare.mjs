@@ -5,8 +5,9 @@
  *   1. `next build` with `output: "standalone"`      → .next/standalone
  *   2. copy `.next/static` and `public/` into it     (Next does not do this itself)
  *   3. copy the Prisma CLI + engines into it         (so first run can migrate)
- *   4. write `start.cjs`                             (migrate, then serve)
- *   5. copy the Node runtime to src-tauri/binaries/  (the sidecar Tauri ships)
+ *   4. write `start.cjs`                             (database → migrate → serve)
+ *   5. strip the `.env` Next copied in               (it carries the dev URL + secrets)
+ *   6. copy the Node runtime to src-tauri/binaries/  (the sidecar Tauri ships)
  *
  * Why a bundled runtime and not a Node Single Executable Application: the Next
  * standalone server resolves its dependency graph from `node_modules` with
@@ -178,6 +179,65 @@ function assertPayload(required = REQUIRED_PAYLOAD) {
   );
 }
 
+/**
+ * Resolve a package the way Node does, walking up from `from` to the repo root.
+ * Hoisting is the normal case; the walk keeps a nested layout working too.
+ */
+function resolvePackageDir(name, from = root) {
+  let dir = from;
+  for (;;) {
+    const candidate = join(dir, "node_modules", name);
+    if (existsSync(join(candidate, "package.json"))) return candidate;
+    if (dir === root) return null;
+    const parent = dirname(dir);
+    if (!parent.startsWith(root)) return null;
+    dir = parent;
+  }
+}
+
+/**
+ * Stage a package together with the dependency closure it actually imports.
+ *
+ * `node_modules/prisma` is not self-contained: its CLI is a thin shell around
+ * `@prisma/config` and third-party packages (`effect`, `jiti`, …) that a hoisted
+ * node_modules keeps at the top level. Next's trace only covers what the *app*
+ * imports, so none of them ship by default — and the breakage is invisible from a
+ * checkout, because Node resolves the missing package from the repo's own
+ * node_modules. On a user's machine it is fatal: `migrate deploy` dies with
+ * `Cannot find module 'effect'`, no schema is created, and the app answers 503.
+ * That is measured, on a fresh install with no Postgres running.
+ *
+ * An unresolvable *required* dependency fails the build here, deliberately: a
+ * loud packager beats an installer that cannot migrate.
+ */
+function bundlePackageClosure(roots, destination = join(standalone, "node_modules")) {
+  const visited = new Set();
+  const copied = [];
+  const queue = roots.map((name) => ({ name, from: root }));
+  while (queue.length) {
+    const { name, from } = queue.shift();
+    if (visited.has(name)) continue;
+    visited.add(name);
+
+    const source = resolvePackageDir(name, from);
+    if (!source) throw new Error(`cannot resolve '${name}' from ${from} — the payload needs it`);
+    const target = join(destination, name);
+    if (!existsSync(target)) {
+      mkdirSync(dirname(target), { recursive: true });
+      cpSync(source, target, { recursive: true });
+      copied.push(name);
+    }
+
+    // Only runtime dependencies: dev and optional ones are not needed to migrate,
+    // and an optional platform binary is resolved from the app when it exists.
+    const manifest = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
+    for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+      queue.push({ name: dependency, from: source });
+    }
+  }
+  return copied;
+}
+
 function copyRuntimeAssets() {
   // Next's own docs are explicit: static assets and `public/` are NOT traced
   // into the standalone output. Without these two copies the app boots and then
@@ -236,6 +296,51 @@ function copyRuntimeAssets() {
     const generatedTo = join(nodeModules, ".prisma");
     rmSync(generatedTo, { recursive: true, force: true });
     cpSync(generatedFrom, generatedTo, { recursive: true });
+  }
+
+  // …and the CLI needs its own dependencies, which Next never traces (they are
+  // only reachable from `node_modules/prisma`, not from the app).
+  const closure = bundlePackageClosure(["prisma"]);
+  if (closure.length) {
+    console.log(`· bundled the Prisma CLI's dependencies → ${closure.length} package(s)`);
+  }
+}
+
+/**
+ * Remove the development `.env` from the payload.
+ *
+ * Next's standalone output copies `.env` files into `.next/standalone` itself, so
+ * without this step the installer would ship the *developer's* environment: the
+ * development `DATABASE_URL` (which is why an install used to insist on a Postgres
+ * on `localhost:5433`), a single `AUTH_SECRET` shared by every copy of the
+ * installer, and the AI API keys.
+ *
+ * A packaged install needs none of it: the boot wrapper provisions its own
+ * database and generates its own session secret, and anything a user configures
+ * travels through the app's own settings. `.env.example` stays, because it is
+ * documentation rather than configuration.
+ *
+ * The check afterwards is the point of the function: a future Next release (or a
+ * rename) that starts copying something else must fail the build, not ship a
+ * secret.
+ */
+function stripDevelopmentEnv() {
+  const kept = new Set([".env.example"]);
+  const removed = readdirSync(standalone).filter(
+    (entry) => (entry === ".env" || entry.startsWith(".env.")) && !kept.has(entry),
+  );
+  for (const entry of removed) rmSync(join(standalone, entry), { force: true });
+  if (removed.length) console.log(`· stripped development env from the payload (${removed.join(", ")})`);
+
+  const leaked = readdirSync(standalone).filter((entry) => entry === ".env" || entry.startsWith(".env."));
+  const surprising = leaked.filter((entry) => !kept.has(entry));
+  if (surprising.length) {
+    throw new Error(
+      [
+        `the payload would ship environment files (${surprising.join(", ")}).`,
+        "They carry the development database URL and secrets; strip them in prepare.mjs.",
+      ].join("\n"),
+    );
   }
 }
 
@@ -323,6 +428,7 @@ function main() {
   assertPayload([["server.js", "the Next standalone server entry"]]);
   copyRuntimeAssets();
   writeBootScript();
+  stripDevelopmentEnv();
   // …and after the copies, everything the installer ships must be present.
   assertPayload();
   copyNodeRuntime();

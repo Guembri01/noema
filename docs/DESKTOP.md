@@ -71,12 +71,16 @@ surgery, no admin rights — and the installer stays a single double-click.
 
 ### Why a boot wrapper
 
-`server/start.cjs` (written by `scripts/desktop/prepare.mjs`) runs
-`prisma migrate deploy` and then requires the Next server. Migrations therefore
-happen on **every launch**: idempotent, cheap, and it means an app update can
-never leave the schema behind the code. If the database is unreachable the server
-still boots, `/api/health` reports not-ready, and the app's own bootstrap page
-explains it instead of showing a white window.
+`server/start.cjs` (written by `scripts/desktop/prepare.mjs`, from
+`scripts/desktop/boot-wrapper.cjs`) is what the shell launches — **not**
+`server.js`. It resolves a database first (a configured `DATABASE_URL`, else the
+embedded PGlite engine, else a Docker-managed Postgres), runs
+`prisma migrate deploy`, and only then requires the Next server **in the same
+process**, so there is no second process to orphan. Migrations therefore happen on
+**every launch**: idempotent, cheap, and it means an app update can never leave the
+schema behind the code. If the database is unreachable the server still boots,
+`/api/health` reports not-ready, and the app's own bootstrap page explains it
+instead of showing a white window.
 
 Other deliberate choices:
 
@@ -89,6 +93,16 @@ Other deliberate choices:
   the database is unreachable) — and the supervisor distinguishes the two failures:
   "answered but unhealthy" sends the user to the database field on the bootstrap
   page, "never answered" is a real bug worth a report.
+- **The payload ships no `.env`.** Next's standalone output copies `.env` files
+  into `.next/standalone` by itself, so `prepare.mjs` strips them — and fails the
+  build if one would still ship. Without that step the installer carried the
+  developer's `DATABASE_URL` (which is why an install used to insist on a Postgres
+  on `localhost:5433`) and the AI keys.
+- **The session secret is generated per install.** With no shipped `AUTH_SECRET`
+  the wrapper writes a 32-byte secret to `<data dir>/auth-secret` (`0600`) on first
+  launch and reuses it afterwards, so sessions survive a restart while one
+  install's cookies are worthless on another. A configured `AUTH_SECRET`, like a
+  configured database, still wins.
 - **Migrations are self-healing.** The boot wrapper runs `prisma migrate deploy`
   and, on `P3005` (tables without migration history — what `prisma db push`
   leaves behind), falls back to `db push` so an existing database is adopted

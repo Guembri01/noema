@@ -141,13 +141,20 @@ check("sidebar groups pages under the teamspace", pageHtml.includes("Check Teams
 const settingsHtml = await fetch(`${base}/w/${workspace.slug}/settings`, { headers: { cookie: `noema_session=${session}` } }).then((r) => r.text());
 check("settings exposes teamspace management", settingsHtml.includes("Teamspaces") && settingsHtml.includes("Check Teamspace"));
 
-// --- AI transcription (unconfigured) ------------------------------------
+// --- AI transcription ---------------------------------------------------
+// Whether a transcription provider is configured is the *server's* business, not
+// this check's: the same script runs against a development server (which starts
+// with the repo's `.env`) and against a packaged payload, which deliberately ships
+// no `.env` at all. Both answers are correct — 503 with guidance when unset, 400
+// when configured but the request carries no audio — and both prove the route does
+// not quietly borrow the chat provider's key. Anything else (200, 401, 500) is a
+// defect. Reading `AI_TRANSCRIBE_API_KEY` here instead compared this process's
+// environment with the server's, which is not the same thing.
 const transcribe = await fetch(`${base}/api/ai/transcribe`, { method: "POST", headers: { cookie: `noema_session=${session}` }, body: new FormData() });
+console.log(`transcribe → ${transcribe.status} (400 configured · 503 unconfigured)`);
 check(
-  "transcribe requires its own provider (503 when unset, validation when set)",
-  Boolean(process.env.AI_TRANSCRIBE_API_KEY)
-    ? transcribe.status === 400
-    : transcribe.status === 503,
+  "transcribe requires its own provider (refuses without one, validates with one)",
+  transcribe.status === 400 || transcribe.status === 503,
 );
 
 const transcribeAnon = await fetch(`${base}/api/ai/transcribe`, { method: "POST", body: new FormData() });

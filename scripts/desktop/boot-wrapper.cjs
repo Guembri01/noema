@@ -1,5 +1,5 @@
-// Boot wrapper for the packaged desktop server: get the database ready, then
-// hand over to the Next standalone server.
+// Boot wrapper for the packaged desktop server: get the database and the
+// per-install session secret ready, then hand over to the Next standalone server.
 //
 // This is a real file in the repo (copied into the payload by
 // `scripts/desktop/prepare.mjs`), not generated text: it is linted, reviewable,
@@ -18,6 +18,7 @@
 // never be answered. That was measured, not guessed — the first attempt failed
 // with `P1001: Can't reach database server` for exactly this reason.
 const { spawn } = require("node:child_process");
+const crypto = require("node:crypto");
 const path = require("node:path");
 const fs = require("node:fs");
 
@@ -175,6 +176,46 @@ function startServer() {
 }
 
 /**
+ * The session-signing secret, generated once per install.
+ *
+ * A packaged build must never carry the developer's `AUTH_SECRET`: one secret
+ * shared by every copy of the installer would make a session cookie minted by
+ * any install valid on all of them. So the payload ships no `.env` at all (see
+ * `stripDevelopmentEnv` in prepare.mjs), and the first launch writes a secret of
+ * its own into the app's data directory — next to the other per-install state,
+ * `0600` like the rest. Later launches read it back, which is what keeps a
+ * signed-in user signed in across a restart.
+ *
+ * An explicitly configured `AUTH_SECRET` still wins, so a shared server, a
+ * portable install and a support session can all pin one.
+ */
+function ensureAuthSecret() {
+  const configured = (process.env.AUTH_SECRET || "").trim();
+  if (configured) return configured;
+
+  const dir = process.env.NOEMA_DATA_DIR || process.cwd();
+  const file = path.join(dir, "auth-secret");
+  try {
+    const existing = fs.readFileSync(file, "utf8").trim();
+    if (existing) return existing;
+  } catch {
+    // Nothing stored yet (or unreadable) — generate below.
+  }
+
+  const secret = crypto.randomBytes(32).toString("base64url");
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, `${secret}\n`, { mode: 0o600 });
+    console.log("[noema] generated a session secret for this install");
+  } catch (error) {
+    // Refusing to boot would be worse: sessions that end at the next restart
+    // still beat an app that will not start. Say so rather than hide it.
+    console.warn("[noema] could not persist the session secret:", error && error.message);
+  }
+  return secret;
+}
+
+/**
  * Close the embedded database on the way out.
  *
  * Postgres recovers from WAL after a hard kill, but a graceful close is cheap and
@@ -199,6 +240,9 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 }
 
 function main() {
+  // Before anything reads it: the app signs sessions with this, and the server
+  // it hands over to is required in this same process.
+  process.env.AUTH_SECRET = ensureAuthSecret();
   resolveDatabaseUrl()
     .then(async (url) => {
       process.env.DATABASE_URL = url;
