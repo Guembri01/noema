@@ -211,6 +211,11 @@ export function ScopeChips({
 /**
  * The scope picker: one checkbox per catalogue scope plus a live preview of the
  * effective grant (a write scope implies its read, admin implies everything).
+ *
+ * With nothing picked the preview is replaced by a hint: the token would carry
+ * an empty grant, and every `/api/v1/*` route refuses such a token with
+ * `403 insufficient_scope`. The hint says so before the token exists, so the
+ * empty grant is never a surprise.
  */
 export function ScopePicker({
   selected,
@@ -249,7 +254,11 @@ export function ScopePicker({
         <div className="mt-3" data-testid="token-effective-scopes">
           <ScopeChips scopes={effective} />
         </div>
-      ) : null}
+      ) : (
+        <p className="mt-2 text-xs text-muted" data-testid="token-scope-empty-hint">
+          {t(locale, "tokenNoScopeHint")}
+        </p>
+      )}
     </fieldset>
   );
 }
@@ -328,6 +337,7 @@ export function TokenRow({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const expiryLabel = now === null ? "" : tokenExpiryLabel(token.expiresAt, now);
   const expiryTone = tokenExpiryTone(token.expiresAt, now ?? 0);
+  const scopes = token.scopes ?? [];
 
   return (
     <li
@@ -351,7 +361,21 @@ export function TokenRow({
             </Badge>
           ) : null}
         </span>
-        <ScopeChips scopes={token.scopes ?? []} className="mt-1" />
+        {scopes.length > 0 ? (
+          <ScopeChips scopes={scopes} className="mt-1" />
+        ) : (
+          // An empty grant is a real state, not an absence: the `/api/v1/*`
+          // routes refuse such a token with 403 `insufficient_scope`, so the
+          // row says so instead of rendering an empty line.
+          <Badge
+            tone="warning"
+            size="sm"
+            className="mt-1"
+            data-testid="token-no-scopes"
+          >
+            {t(locale, "tokenNoScopes")}
+          </Badge>
+        )}
       </span>
 
       <span className="hidden w-24 shrink-0 text-xs text-muted sm:block">
@@ -641,9 +665,11 @@ export function ApiTokenManager({
 }
 
 /**
- * feat/r15 widens the token-create action to accept the picked scopes as a
- * second argument. Binding it to that two-argument shape lets the shared body
- * forward the picker's selection while staying additive: a server action that
- * does not read the argument yet simply ignores it.
+ * The settings-home entry point binds the token-create action to the
+ * two-argument shape the shared body calls. The action validates the picked
+ * scopes and stores them, so the token the picker creates carries exactly the
+ * grant the user chose. A token created without a single picked scope carries
+ * none — the `/api/v1/*` routes refuse such a grant with
+ * `403 insufficient_scope`.
  */
 const createTokenWithScopes: TokenCreateAction = createApiTokenAction;

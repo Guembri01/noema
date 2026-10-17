@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
-import { authenticateApiRequest, hashApiToken } from "@/lib/api-auth";
+import { authenticateApiRequest } from "@/lib/api-auth";
 import { rateLimit } from "@/lib/api-guard";
 import { prisma } from "@/lib/db";
 import {
@@ -46,22 +46,6 @@ function textResult(value: unknown, isError = false): Record<string, unknown> {
     content: [{ type: "text", text: JSON.stringify(value) }],
     isError,
   };
-}
-
-/**
- * The API scopes the caller's bearer token holds. `authenticateApiRequest`
- * intentionally returns only the user id, so the scope list is resolved here
- * against the same hash it verified.
- */
-async function resolveScopes(request: Request): Promise<string[]> {
-  const header = request.headers.get("authorization") ?? "";
-  const token = /^Bearer\s+(.+)$/i.exec(header)?.[1]?.trim();
-  if (!token) return [];
-  const record = await prisma.apiToken.findUnique({
-    where: { tokenHash: hashApiToken(token) },
-    select: { scopes: true },
-  });
-  return record?.scopes ?? [];
 }
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
@@ -362,7 +346,10 @@ export async function POST(request: Request) {
   const url = new URL(request.url);
   const allowWrite = url.searchParams.get("allowWrite") === "true";
   const workspaceId = url.searchParams.get("workspaceId") ?? asString(params.workspaceId);
-  const scopes = await resolveScopes(request);
+  // `authenticateApiRequest` resolves the token row once and hands over the
+  // granted scopes with it, so the grant is read from the same row the token
+  // was verified against — no second lookup, no second query.
+  const scopes = auth.scopes;
 
   if (method === "initialize") {
     return rpcOk(id, {

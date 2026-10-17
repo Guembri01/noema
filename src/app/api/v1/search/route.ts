@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authenticateApiRequest } from "@/lib/api-auth";
+import { hasScope } from "@/lib/api-token-scope";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { searchPagesPage } from "@/server/queries";
 import { rateLimit } from "@/lib/api-guard";
@@ -35,12 +36,22 @@ function parseSearchType(raw: string | null): "PAGE" | "DATABASE" | null {
  * `PageType`; omitting it (or an unknown value) searches every type. The
  * engine keyset still drives the walk, so `has_more` / `next_cursor` are
  * unchanged and a scoped walk neither skips nor repeats a hit.
+ *
+ * The bearer token must hold the `read:pages` scope; a token without it is
+ * refused with 403 `insufficient_scope` before the workspace is even looked
+ * up.
  */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "v1");
   if (limited) return limited;
   const auth = await authenticateApiRequest(request);
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!hasScope(auth.scopes, "read:pages")) {
+    return NextResponse.json(
+      { error: "insufficient_scope", required: "read:pages" },
+      { status: 403 },
+    );
+  }
 
   const url = new URL(request.url);
   const workspaceId = url.searchParams.get("workspaceId");

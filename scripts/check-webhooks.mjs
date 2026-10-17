@@ -29,6 +29,10 @@ await prisma.apiToken.create({
     userId: user.id,
     name: "webhook-check",
     tokenHash: createHash("sha256").update(raw).digest("hex"),
+    // The v1 API enforces the grant of the bearer token: the page below is
+    // created through `POST /api/v1/pages`, which needs `write:pages`
+    // (`src/lib/api-token-scope.ts` — the catalogue the app knows).
+    scopes: ["write:pages"],
   },
 });
 const hook = await prisma.webhook.create({
