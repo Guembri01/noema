@@ -12,8 +12,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * The rule is the one the linked-database actions already follow (B90): the
  * **read** scope of `lib/guest-access.ts` — the pages shared with the guest
- * plus their whole subtree, never an ancestor (the canonical inheritance rule
- * of `lib/access-inheritance.ts`). It is *not* the display scope
+ * plus their whole subtree, never an ancestor (a grant covers the page itself
+ * and its descendants). It is *not* the display scope
  * (`pageScopeFor` / `guestVisiblePageIds`), which also carries the ancestors
  * of the shared pages so the sidebar can draw the breadcrumb chain.
  *

@@ -191,11 +191,10 @@ export async function pageScopeFor(
  *   ancestor to draw the tree is not the same as being allowed to read it.
  * - `guestReadablePageIds` is the **read** scope: the shared pages, the pages
  *   the guest created, the pages in their teamspaces and every **descendant**
- *   of those — the canonical inheritance rule of `access-inheritance.ts`
- *   ("a `PagePermission` on the page itself or on any ancestor applies" ⇒ the
- *   grant covers the page's subtree), never an ancestor. A guest who was given
- *   a single row of a database therefore does **not** get the database, while a
- *   guest who was given the database gets its rows.
+ *   of those — a grant covers the page itself and its subtree, never its
+ *   ancestors. A guest who was given a single row of a database therefore does
+ *   **not** get the database, while a guest who was given the database gets its
+ *   rows.
  *
  * The inheritance is not re-implemented here: the pages are handed to the pure
  * helper `visiblePageIdsForGuest`, so the rule has exactly one implementation.
@@ -258,9 +257,8 @@ export async function guestReadablePageIds(
  * The helpers below resolve a guest's scope from an in-memory page list, with
  * no database. They model *permission* propagation: a grant on a page covers
  * its whole subtree (descendants inherit it) but never its ancestors — knowing
- * a child exists does not let a guest open its parent, matching the "no
- * existence oracle" rule (`access-inheritance.ts` resolves grants along an
- * explicit ancestry chain the same way, nearest grant winning).
+ * a child exists does not let a guest open its parent, the "no existence
+ * oracle" rule.
  *
  * NOTE: this is intentionally stricter than `withAncestors`, which adds
  * ancestor *rows* so the sidebar can render a breadcrumb path. Reaching an

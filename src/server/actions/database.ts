@@ -85,8 +85,8 @@ async function authorizeDatabase(
    * The read scope is not the display scope (`pageScopeFor` /
    * `guestVisiblePageIds`): the display scope also carries the *ancestors* of
    * the shared pages, because the sidebar has to draw the breadcrumb chain
-   * down to a shared child. The inheritance rule is the canonical one of
-   * `src/lib/access-inheritance.ts` — a grant covers the page itself and its
+   * down to a shared child. The read scope is the guest rule of
+   * `src/lib/guest-access.ts` — a grant covers the page itself and its
    * descendants, never its ancestors — so a guest who was given a single row
    * of a database does not get the database above it, while a guest who was
    * given a parent page does get the database below it.

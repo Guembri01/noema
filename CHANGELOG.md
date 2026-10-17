@@ -1004,6 +1004,21 @@ list marks it as **No access**.
 
 ### Changed
 
+- The access-inheritance engine is gone. `src/lib/access-inheritance.ts` — and
+  the `db.ts` / `tenant-guard.ts` wrappers around it — resolved a page's
+  effective access (a role baseline, grants inherited along the page tree,
+  link shares), but **no production path ever called it**: not the page route,
+  not a server action, not an API route. Its rule was also stricter than the
+  product's — there a `MEMBER` holds no implicit baseline, while the product
+  grants every member read access to every page — so wiring it in would have
+  denied every member every page. The engine was removed instead, and the rule
+  it claimed to be is now stated where it lives: the workspace role
+  (`src/lib/permissions.ts`), the guest scope (`src/lib/guest-access.ts`) and
+  the page's own `PagePermission` row, which is an **edit lock on that page**,
+  not a read restriction. There is no permission inheritance: a
+  `PagePermission` row never reaches a child page. `scripts/check-access-rule.mjs`
+  fails when an exported access helper has no production caller, so a second,
+  unreachable rule cannot come back unnoticed.
 - The Linux desktop build no longer fails at the AppImage step because the
   payload carried sharp's musl binary on a glibc runner. `desktop:prepare`
   now keeps only the sharp variant for the machine being packaged, so
