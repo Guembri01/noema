@@ -1216,9 +1216,12 @@ export function ActionsMenu(props: ActionsMenuProps) {
     );
   }
 
-  return (
-    <div ref={wrapperRef} className="relative">
-      <TriggerButton open onToggleOpen={() => setOpen(false)} />
+  // The panel is portalled to <body> below. It must NOT be a DOM child of the
+  // page header: that header has `backdrop-blur`, and a backdrop filter makes the
+  // header the *containing block* for `position: fixed` descendants — which is
+  // why this menu used to appear in the corner of the header instead of under its
+  // button, its viewport coordinates having been silently re-rooted.
+  const panel = (
       <div
         role="dialog"
         aria-modal="true"
@@ -1552,6 +1555,13 @@ export function ActionsMenu(props: ActionsMenuProps) {
           </>
         )}
       </div>
+  );
+
+  const portalTarget = typeof document === "undefined" ? null : document.body;
+  return (
+    <div ref={wrapperRef} className="relative">
+      <TriggerButton open onToggleOpen={() => setOpen(false)} />
+      {portalTarget ? createPortal(panel, portalTarget) : panel}
     </div>
   );
 }

@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { EMOJI_SHORTCODES, emojiCandidates } from "@/lib/emoji";
 import {
   DEFAULT_TOP_LIMIT,
@@ -11,6 +19,9 @@ import {
 } from "@/lib/emoji-frecency";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { floatingStyle, placeFloating, type Placement } from "@/lib/floating";
+import { FloatingLayer } from "@/components/ui/floating-layer";
+import { Z } from "@/lib/design-tokens";
 
 /**
  * Emoji picker with a per-user "frequently used" strip.
@@ -36,6 +47,19 @@ export const EMOJI_RECENT_LIMIT = DEFAULT_TOP_LIMIT;
 
 /** localStorage namespace for the frecency list. */
 export const EMOJI_FRECENCY_NAMESPACE = "noema:emoji-frecency";
+
+/** The picker panel's design bounds, used for placement and for the box itself. */
+const EMOJI_PANEL_WIDTH = 272;
+const EMOJI_PANEL_HEIGHT = 320;
+/** Rendered before the first measurement lands (one frame). */
+const EMOJI_PANEL_FALLBACK: Placement = {
+  top: 0,
+  left: 0,
+  side: "bottom",
+  flipped: false,
+  cramped: false,
+  maxHeight: EMOJI_PANEL_HEIGHT,
+};
 
 /** The minimal storage surface the picker needs (satisfied by `localStorage`). */
 export type EmojiStorage = Pick<Storage, "getItem" | "setItem">;
@@ -263,6 +287,8 @@ export function EmojiPicker({
 }) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
   const open = controlledOpen ?? uncontrolledOpen;
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const [placement, setPlacement] = useState<Placement | null>(null);
   const [query, setQuery] = useState("");
   const { recent, record } = useEmojiFrecency({ storageKey, userId });
   const catalog = useMemo(() => filterEmojiCatalog(query), [query]);
@@ -286,8 +312,40 @@ export function EmojiPicker({
 
   const toggle = () => setOpen(!open);
 
+  // Place against the trigger: flipped up when there is no room below, clamped
+  // inside the viewport, and portalled (see FloatingLayer) so an ancestor with
+  // `backdrop-blur` or `transform` cannot re-root it. The panel used to be
+  // `absolute left-0 top-7` with a magic z-index, which clipped at the window
+  // edge and drifted inside the blurred page header.
+  useEffect(() => {
+    if (!open) {
+      setPlacement(null);
+      return;
+    }
+    const resolve = () => {
+      const rect = anchorRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setPlacement(
+        placeFloating({
+          anchor: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
+          size: { width: EMOJI_PANEL_WIDTH, height: EMOJI_PANEL_HEIGHT },
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          preferred: "bottom",
+          align: "start",
+        }),
+      );
+    };
+    resolve();
+    window.addEventListener("resize", resolve);
+    window.addEventListener("scroll", resolve, true);
+    return () => {
+      window.removeEventListener("resize", resolve);
+      window.removeEventListener("scroll", resolve, true);
+    };
+  }, [open]);
+
   return (
-    <span className={cn("relative inline-flex", className)}>
+    <span ref={anchorRef} className={cn("relative inline-flex", className)}>
       {trigger ? (
         trigger({ open, toggle, label, controls: dialogId })
       ) : (
@@ -305,12 +363,18 @@ export function EmojiPicker({
         </button>
       )}
       {open && (
+        <FloatingLayer>
         <div
           id={dialogId}
           role="dialog"
           aria-label={label}
           data-testid="emoji-picker"
-          className="absolute left-0 top-7 z-30 w-64 rounded-lg border border-border bg-bg p-2 shadow-xl"
+          style={{
+            ...floatingStyle(placement ?? EMOJI_PANEL_FALLBACK),
+            zIndex: Z.popover,
+            width: EMOJI_PANEL_WIDTH,
+          }}
+          className="surface-raised scrollbar-thin overflow-y-auto rounded-lg p-2"
         >
           <input
             autoFocus
@@ -355,6 +419,7 @@ export function EmojiPicker({
             ))}
           </div>
         </div>
+          </FloatingLayer>
       )}
     </span>
   );

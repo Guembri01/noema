@@ -48,6 +48,7 @@ import { formatCaption, validateCaption } from "@/lib/code-block";
 import { buildBlockDeepLink } from "@/lib/deep-links";
 import { selectionToMarkdown, type RichBlock } from "@/lib/markdown";
 import { t } from "@/lib/i18n";
+import { FloatingLayer } from "@/components/ui/floating-layer";
 import {
   CONVERSION_GROUPS,
   allowedTargets,
@@ -689,6 +690,11 @@ export function BlockContextMenu({
   return (
     <div onContextMenuCapture={onContextMenu} className="relative">
       {children}
+      {/* The anchor span below is `position: fixed` at the pointer, so it has to
+          be a child of <body>: an ancestor with a `transform` (the editor animates
+          blocks) would make "fixed" mean "fixed inside that ancestor", and the menu
+          would open away from the click. */}
+      <FloatingLayer>
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
           <span
@@ -834,6 +840,7 @@ export function BlockContextMenu({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      </FloatingLayer>
 
       {/*
        * Caption prompt for the code-block "Caption" toggle. `PromptDialog` is
