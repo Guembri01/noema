@@ -77,7 +77,7 @@ const ask = (body: unknown) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  process.env.AUTH_SECRET = "test-secret";
+  process.env.AUTH_SECRET = "test-secret-that-is-long-enough-for-the-rule";
   process.env.AI_API_KEY = "env-key";
   process.env.AI_BASE_URL = "https://env.example/v1";
   process.env.AI_MODEL = "env-model";
