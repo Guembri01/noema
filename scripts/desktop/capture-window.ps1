@@ -31,8 +31,23 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 function Get-NoemaWindow {
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
     while ((Get-Date) -lt $deadline) {
-        $proc = Get-Process noema-desktop -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($proc -and $proc.MainWindowHandle -ne 0) { return $proc }
+        # Re-read the process list every pass: PowerShell snapshots a process
+        # object, so a handle cached from before the window existed never updates.
+        foreach ($proc in (Get-Process noema-desktop -ErrorAction SilentlyContinue)) {
+            if ($proc.MainWindowHandle -eq 0) { continue }
+            $r = New-Object Win+RECT
+            [void][Win]::GetWindowRect($proc.MainWindowHandle, [ref]$r)
+            # Tauri also owns tiny hidden helper windows; the app's window is the
+            # large visible one, and capturing a 15x15 helper produced a blank PNG
+            # that looked like "the app did not render".
+            if (
+                [Win]::IsWindowVisible($proc.MainWindowHandle) -and
+                ($r.Right - $r.Left) -ge 400 -and
+                ($r.Bottom - $r.Top) -ge 300
+            ) {
+                return $proc
+            }
+        }
         Start-Sleep -Milliseconds 800
     }
     return $null

@@ -98,6 +98,15 @@ Other deliberate choices:
   build if one would still ship. Without that step the installer carried the
   developer's `DATABASE_URL` (which is why an install used to insist on a Postgres
   on `localhost:5433`) and the AI keys.
+- **Uploads, sessions and backups live in the data directory, not beside the
+  code.** The shell passes `STORAGE_DIR`, `SESSION_STORE_PATH` and `BACKUP_DIR`
+  (`src/lib/storage.ts`, `src/lib/session-store.ts`,
+  `src/app/api/cron/backups/route.ts`) pointing inside `<data dir>`, because all
+  three fall back to the *working* directory — the program folder, for a packaged
+  install, where an update or an uninstall takes them. For the same
+  reason `prepare.mjs` strips `uploads/`, `.data/` and `backups/` from the payload
+  (Next copies them in on a machine where the app has been used) and fails the
+  build if they would still ship, the way it does for `.env`.
 - **The session secret is generated per install.** With no shipped `AUTH_SECRET`
   the wrapper writes a 32-byte secret to `<data dir>/auth-secret` (`0600`) on first
   launch and reuses it afterwards, so sessions survive a restart while one
@@ -133,6 +142,7 @@ Other deliberate choices:
 <data dir>/                 (%APPDATA%\app.noema.desktop on Windows)
   logs/                     noema.log — the shell and the server share it
   uploads/                  uploaded files
+  sessions.json             this machine's session store
   backups/                  automatic backups
   preferences.json          window state, theme, database URL
 ```

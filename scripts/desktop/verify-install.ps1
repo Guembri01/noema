@@ -69,17 +69,31 @@ Write-Output "`n  launching…"
 $app = Start-Process -FilePath $exe -PassThru
 Step ($app.Id -gt 0) "launched" "pid $($app.Id)"
 
-# Wait for the supervised server: find the loopback port its child listens on.
+# Wait for the supervised server: find the loopback port its child answers HTTP
+# on. The child listens twice - the web server, and the database socket when the
+# install provisions its own embedded PostgreSQL - and netstat's order is not
+# stable (it flipped between runs), so "the first listening port" reported a
+# healthy install as broken. Ask each candidate which one speaks HTTP.
 $port = $null
 $deadline = (Get-Date).AddSeconds($ReadyTimeoutSeconds)
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 2
     if ($app.HasExited) { break }
     $child = Get-Process noema-node -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($child) {
-        $hit = netstat -ano | Select-String "127\.0\.0\.1:(\d+)\s+.*LISTENING\s+$($child.Id)" | Select-Object -First 1
-        if ($hit) { $port = [regex]::Match($hit.Line, "127\.0\.0\.1:(\d+)").Groups[1].Value; break }
+    if (-not $child) { continue }
+    $candidates = netstat -ano |
+        Select-String "127\.0\.0\.1:(\d+)\s+.*LISTENING\s+$($child.Id)\s*$" |
+        ForEach-Object { [regex]::Match($_.Line, "127\.0\.0\.1:(\d+)").Groups[1].Value } |
+        Select-Object -Unique
+    foreach ($candidate in $candidates) {
+        try {
+            $probe = Invoke-WebRequest "http://127.0.0.1:$candidate/api/health" -UseBasicParsing -TimeoutSec 3
+            if ($probe.StatusCode -eq 200) { $port = $candidate; break }
+        } catch {
+            # The database socket answers no HTTP: keep looking.
+        }
     }
+    if ($port) { break }
 }
 Step (-not $app.HasExited) "shell still running" $(if ($app.HasExited) { "exited $($app.ExitCode)" } else { "" })
 Step ($null -ne $port) "supervised server listening on loopback" $(if ($port) { "port $port" } else { "not found" })

@@ -239,7 +239,46 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   });
 }
 
+/**
+ * Adopt the uploaded files an older build left in the *program* folder.
+ *
+ * The shell used to pass `UPLOAD_DIR`, which the app never reads, so uploads fell
+ * back to `<cwd>/uploads` - next to the code. That is a data-loss trap (an update
+ * or an uninstall takes the folder with it) and the reason an installer used to
+ * carry the builder's own uploads. Files are copied, never moved: the old copy is
+ * harmless, and a copy that is interrupted must not lose anything. New uploads go
+ * to `STORAGE_DIR`, so this only ever has work to do for a legacy install.
+ */
+function adoptLegacyUploads() {
+  const target = process.env.STORAGE_DIR;
+  if (!target) return;
+  const legacy = path.join(root, "uploads");
+  let entries;
+  try {
+    entries = fs.readdirSync(legacy);
+  } catch {
+    return;
+  }
+  let adopted = 0;
+  for (const entry of entries) {
+    const from = path.join(legacy, entry);
+    const to = path.join(target, entry);
+    try {
+      if (!fs.statSync(from).isFile() || fs.existsSync(to)) continue;
+      fs.mkdirSync(target, { recursive: true });
+      fs.copyFileSync(from, to);
+      adopted += 1;
+    } catch {
+      // A locked file or a read-only payload is not worth failing a boot over.
+    }
+  }
+  if (adopted > 0) {
+    console.log(`[noema] adopted ${adopted} uploaded file(s) from the previous layout`);
+  }
+}
+
 function main() {
+  adoptLegacyUploads();
   // Before anything reads it: the app signs sessions with this, and the server
   // it hands over to is required in this same process.
   process.env.AUTH_SECRET = ensureAuthSecret();

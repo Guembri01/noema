@@ -421,6 +421,39 @@ function stageIntoTauri() {
   console.log(`· staged payload → src-tauri/server/ (${mb(size(target))})`);
 }
 
+/**
+ * Remove the app's *runtime* state from the payload.
+ *
+ * Next traces the app's own `path.join(process.cwd(), …)` expressions, so a build
+ * on a machine where the app has been used copies the builder's uploaded files,
+ * session file and backups into `.next/standalone` - and the installer then ships
+ * them. A packaged install keeps this state in its data directory (the shell
+ * passes `STORAGE_DIR` and `SESSION_STORE_PATH`), so none of it belongs here.
+ *
+ * The check afterwards is the point: a tracing change must fail the build, not
+ * ship someone else's files.
+ */
+const RUNTIME_STATE = ["uploads", ".data", "backups"];
+
+function stripRuntimeState() {
+  const present = RUNTIME_STATE.filter((entry) => existsSync(join(standalone, entry)));
+  for (const entry of present) {
+    rmSync(join(standalone, entry), { recursive: true, force: true });
+  }
+  if (present.length) console.log(`· stripped runtime state from the payload (${present.join(", ")})`);
+
+  const leaked = RUNTIME_STATE.filter((entry) => existsSync(join(standalone, entry)));
+  if (leaked.length) {
+    throw new Error(
+      [
+        `the payload would ship the builder's runtime state (${leaked.join(", ")}).`,
+        "A packaged install keeps uploads, sessions and backups in its data directory;",
+        "strip them in prepare.mjs.",
+      ].join("\n"),
+    );
+  }
+}
+
 function main() {
   if (process.env.NOEMA_SKIP_BUILD === "1") assertBuildIsFresh();
   else buildStandalone();
@@ -429,6 +462,7 @@ function main() {
   copyRuntimeAssets();
   writeBootScript();
   stripDevelopmentEnv();
+  stripRuntimeState();
   // …and after the copies, everything the installer ships must be present.
   assertPayload();
   copyNodeRuntime();

@@ -124,8 +124,20 @@ pub fn db_path(data_dir: &Path) -> PathBuf {
 }
 
 /// Where uploaded files live (served by `/api/files/...`).
+///
+/// Also sent as `STORAGE_DIR`, the name the app actually reads
+/// (`src/lib/storage.ts`). It must be inside the data directory: the app falls
+/// back to `<working dir>/uploads`, and a packaged install's working directory is
+/// the *program* folder - an update or an uninstall would take the files with it.
 pub fn uploads_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("uploads")
+}
+
+/// The app's own session store, sent as `SESSION_STORE_PATH`
+/// (`src/lib/session-store.ts`). Beside the program folder by mistake once: a
+/// reinstall signed everyone out and the payload shipped the builder's sessions.
+pub fn sessions_file(data_dir: &Path) -> PathBuf {
+    data_dir.join("sessions.json")
 }
 
 /// Where logs live.
@@ -217,9 +229,16 @@ pub fn server_env(
             "NOEMA_DATA_DIR".into(),
             data_dir.to_string_lossy().into_owned(),
         ),
+        // The names the app itself reads (`src/lib/storage.ts`,
+        // `src/lib/session-store.ts`) - not `UPLOAD_DIR`, which nothing read, so
+        // uploads and sessions quietly landed in the program folder instead.
         (
-            "UPLOAD_DIR".into(),
+            "STORAGE_DIR".into(),
             uploads_dir(data_dir).to_string_lossy().into_owned(),
+        ),
+        (
+            "SESSION_STORE_PATH".into(),
+            sessions_file(data_dir).to_string_lossy().into_owned(),
         ),
         (
             "BACKUP_DIR".into(),
@@ -460,6 +479,7 @@ mod tests {
         let root = Path::new("/tmp/noema-test");
         assert_eq!(db_path(root), root.join("noema.db"));
         assert_eq!(uploads_dir(root), root.join("uploads"));
+        assert_eq!(sessions_file(root), root.join("sessions.json"));
         assert_eq!(logs_dir(root), root.join("logs"));
         assert_eq!(backups_dir(root), root.join("backups"));
     }
@@ -507,6 +527,24 @@ mod tests {
         assert_eq!(get("APP_ORIGINS"), "http://127.0.0.1:1234");
         assert_eq!(get("DATABASE_URL"), "postgresql://u@h:5432/db");
         assert_eq!(get("NEXT_TELEMETRY_DISABLED"), "1");
+        // The names the app reads, all inside the data directory. `UPLOAD_DIR`
+        // was sent once and read by nobody, so uploads and the session file fell
+        // back to the working directory - which for an install is the program
+        // folder, where an update or an uninstall takes them.
+        let data_dir = Path::new("/data/noema");
+        assert_eq!(get("NOEMA_DATA_DIR"), data_dir.to_string_lossy().to_string());
+        assert_eq!(
+            get("STORAGE_DIR"),
+            uploads_dir(data_dir).to_string_lossy().to_string()
+        );
+        assert_eq!(
+            get("SESSION_STORE_PATH"),
+            sessions_file(data_dir).to_string_lossy().to_string()
+        );
+        assert_eq!(
+            get("BACKUP_DIR"),
+            backups_dir(data_dir).to_string_lossy().to_string()
+        );
     }
 
     /// With no configured URL the variable is *absent* — that is the signal for
@@ -525,7 +563,7 @@ mod tests {
             "an empty DATABASE_URL must not be passed — unset is what selects the embedded database"
         );
         // The rest of the environment is unaffected.
-        assert_eq!(env.len(), 9);
+        assert_eq!(env.len(), 10);
     }
 
     #[test]
