@@ -73,18 +73,42 @@ const COLOR_KEYS: Record<string, I18nKey> = {
   Red: "colorRed",
 };
 
+/**
+ * Text-colour swatches: the tag *foreground* token per hue. The editor's nine
+ * Notion hues map one-to-one onto the design-system tag palette (the same map
+ * `bubble-toolbar.tsx` uses), so a text colour is `var(--tag-<hue>-fg)` and a
+ * background is `var(--tag-<hue>-bg)`. No raw hex reaches the component, and
+ * light / dark / high-contrast all follow the tokens.
+ *
+ * Legacy → token mapping (the value is passed straight to `setColor`, so a
+ * stored mark now carries the token where it used to carry the hex):
+ *   gray   #787774 → var(--tag-gray-fg)    brown  #9f6b53 → var(--tag-brown-fg)
+ *   orange #d9730d → var(--tag-orange-fg)  yellow #cb912f → var(--tag-yellow-fg)
+ *   green  #448361 → var(--tag-green-fg)   blue   #337ea9 → var(--tag-blue-fg)
+ *   purple #9065b0 → var(--tag-purple-fg)  pink   #c14c8a → var(--tag-pink-fg)
+ *   red    #d44c47 → var(--tag-red-fg)
+ */
 const TEXT_COLORS: { labelKey: I18nKey; value: string | null }[] = [
   { labelKey: "colorDefault", value: null },
-  { labelKey: "colorGray", value: "#787774" },
-  { labelKey: "colorBrown", value: "#9f6b53" },
-  { labelKey: "colorOrange", value: "#d9730d" },
-  { labelKey: "colorYellow", value: "#cb912f" },
-  { labelKey: "colorGreen", value: "#448361" },
-  { labelKey: "colorBlue", value: "#337ea9" },
-  { labelKey: "colorPurple", value: "#9065b0" },
-  { labelKey: "colorPink", value: "#c14c8a" },
-  { labelKey: "colorRed", value: "#d44c47" },
+  { labelKey: "colorGray", value: "var(--tag-gray-fg)" },
+  { labelKey: "colorBrown", value: "var(--tag-brown-fg)" },
+  { labelKey: "colorOrange", value: "var(--tag-orange-fg)" },
+  { labelKey: "colorYellow", value: "var(--tag-yellow-fg)" },
+  { labelKey: "colorGreen", value: "var(--tag-green-fg)" },
+  { labelKey: "colorBlue", value: "var(--tag-blue-fg)" },
+  { labelKey: "colorPurple", value: "var(--tag-purple-fg)" },
+  { labelKey: "colorPink", value: "var(--tag-pink-fg)" },
+  { labelKey: "colorRed", value: "var(--tag-red-fg)" },
 ];
+
+/**
+ * Colour rows build on the shared `DropdownMenuItem`, which already carries
+ * hover (`data-[highlighted]:bg-surface-2`), keyboard highlight and disabled
+ * (`data-[disabled]:opacity-50`) states from `ui/dropdown-menu.tsx`; this adds
+ * the `:focus-visible` ring (design system §8) so keyboard navigation is always
+ * visible.
+ */
+const COLOR_ITEM_CLASS = "focus-ring";
 
 const BLOCK_SELECTOR =
   "p, h1, h2, h3, h4, h5, h6, pre, blockquote, li, [data-callout], .noema-toggle";
@@ -195,6 +219,66 @@ const TURN_TARGET_LABELS: Partial<Record<BlockType, I18nKey>> = {
 
 /** Every graph type in canonical menu order (the union of `CONVERSION_GROUPS`). */
 const ALL_TARGET_TYPES: readonly BlockType[] = CONVERSION_GROUPS.flatMap((group) => group.types);
+
+/**
+ * The colour submenu body: text-colour swatches, the block-background grid and
+ * the clear-highlight row. Extracted and exported so `renderToStaticMarkup` can
+ * pin the token-only swatches without a portal; the live menu renders it inside
+ * `DropdownMenuSubContent`, whose shared chrome supplies `.surface-raised` +
+ * `animate-rise` + `Z.popover`. Every row is a `DropdownMenuItem` (hover /
+ * focus-visible / disabled states) via {@link COLOR_ITEM_CLASS}.
+ */
+export function BlockColorMenu({
+  locale,
+  onPickText,
+  onPickBackground,
+  onClearHighlight,
+}: {
+  locale: string;
+  onPickText: (value: string | null) => void;
+  onPickBackground: (value: string | null) => void;
+  onClearHighlight: () => void;
+}) {
+  return (
+    <>
+      {TEXT_COLORS.map((color) => (
+        <DropdownMenuItem
+          key={color.labelKey}
+          className={COLOR_ITEM_CLASS}
+          onSelect={() => onPickText(color.value)}
+        >
+          <span
+            className="h-4 w-4 rounded-sm border border-border"
+            style={{ background: color.value ?? "transparent" }}
+          />
+          {t(locale, color.labelKey)}
+        </DropdownMenuItem>
+      ))}
+      <DropdownMenuSeparator />
+      <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted">
+        {t(locale, "backgroundLabel")}
+      </p>
+      {BLOCK_COLORS.map((color) => (
+        <DropdownMenuItem
+          key={color.label}
+          className={COLOR_ITEM_CLASS}
+          aria-label={`${t(locale, COLOR_KEYS[color.label])} ${t(locale, "backgroundLabel")}`}
+          onSelect={() => onPickBackground(color.value)}
+        >
+          <span
+            className="h-4 w-4 rounded-sm border border-border"
+            style={{ background: color.tint }}
+          />
+          {t(locale, COLOR_KEYS[color.label])}
+        </DropdownMenuItem>
+      ))}
+      <DropdownMenuSeparator />
+      <DropdownMenuItem className={COLOR_ITEM_CLASS} onSelect={onClearHighlight}>
+        {t(locale, "clearHighlight")}
+      </DropdownMenuItem>
+    </>
+  );
+}
 
 /**
  * Notion-style block menu: right-click anywhere in the editor to act on the
@@ -652,39 +736,12 @@ export function BlockContextMenu({
               <Palette className="h-4 w-4 text-muted" /> {t(locale, "colorLabel")}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
-              {TEXT_COLORS.map((color) => (
-                <DropdownMenuItem
-                  key={color.labelKey}
-                  onSelect={() => paint(color.value, "text")}
-                >
-                  <span
-                    className="h-4 w-4 rounded border border-border"
-                    style={{ background: color.value ?? "transparent" }}
-                  />
-                  {t(locale, color.labelKey)}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-              <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted">
-                {t(locale, "backgroundLabel")}
-              </p>
-              {BLOCK_COLORS.map((color) => (
-                <DropdownMenuItem
-                  key={color.label}
-                  aria-label={`${t(locale, COLOR_KEYS[color.label])} ${t(locale, "backgroundLabel")}`}
-                  onSelect={() => paint(color.value, "background")}
-                >
-                  <span
-                    className="h-4 w-4 rounded border border-border"
-                    style={{ background: color.tint }}
-                  />
-                  {t(locale, COLOR_KEYS[color.label])}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => paint(null, "highlight")}>
-                {t(locale, "clearHighlight")}
-              </DropdownMenuItem>
+              <BlockColorMenu
+                locale={locale}
+                onPickText={(value) => paint(value, "text")}
+                onPickBackground={(value) => paint(value, "background")}
+                onClearHighlight={() => paint(null, "highlight")}
+              />
             </DropdownMenuSubContent>
           </DropdownMenuSub>
 
