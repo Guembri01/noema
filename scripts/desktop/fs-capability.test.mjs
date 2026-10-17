@@ -8,10 +8,13 @@ import { describe, expect, it } from "vitest";
 // scope reaches the file system, and `fs:allow-remove` / `fs:allow-rename` /
 // `fs:allow-copy-file` turn that into the power to delete or overwrite the
 // user's files. Nothing in this app uses the JavaScript face of the plugin —
-// the shell reads and writes its files server-side, in Rust — so the broad
-// capability must not hand it out at all. `fs:default` in the local-only
-// `default` capability stays: that one is the plugin's own narrow set over
-// the app's own data directories.
+// the shell reads and writes its files server-side, in Rust — so no capability
+// may hand it out at all. `fs:default` in the local-only `default` capability
+// used to stay, as the plugin's own narrow set over the app's own data
+// directories; since B59 it is gone too: the page that capability covers
+// (`src-tauri/dist/index.html`) never calls the plugin either, so the grant
+// bought nothing and only handed out a read of the app's data directory — the
+// database, the sessions and the uploads included.
 const here = dirname(fileURLToPath(import.meta.url));
 const capabilitiesDir = join(here, "..", "..", "src-tauri", "capabilities");
 
@@ -127,11 +130,15 @@ describe("desktop capability file-system permissions", () => {
     }
   });
 
-  it("keeps the plugin's own narrow default in the local-only capability", () => {
-    const local = capabilityFiles.find((entry) => entry.name === "default.json");
-    expect(local).toBeDefined();
-    expect(fsPermissions(local.capability)).toEqual(["fs:default"]);
-    expect(fsScopePaths(local.capability)).toEqual([]);
+  it("grants no capability the file-system plugin at all", () => {
+    // The plugin's JavaScript face is unused — the shell reads and writes its
+    // files in Rust, where the ACL does not gate it — so the permission buys
+    // nothing and only widens what a document can reach. The narrow
+    // `fs:default` in the local-only `default` capability is gone with it
+    // (B59): that page never calls the plugin either.
+    for (const { name, capability } of allCapabilities) {
+      expect(fsPermissions(capability), name).toEqual([]);
+    }
   });
 
   it("no longer advertises file access in the broad capability's description", () => {
