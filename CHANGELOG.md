@@ -23,6 +23,18 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   not). The stored URL now passes the shared href allowlist (`http`, `https`,
   `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
   editor as well as in the read-only renderer.
+- The AI proxy routes `/api/ai` and `/api/ai/skills` resolved a workspace's
+  stored provider — its endpoint and its decrypted API key — for whatever
+  `workspaceId` the client sent, so any signed-in account could name a
+  workspace it did not belong to and have the server call that workspace's
+  provider with that workspace's key and token budget. A workspace's provider
+  is now used only when the caller actually has access to that workspace; the
+  environment configuration applies otherwise, and the foreign provider row is
+  not even read. Both routes validate their request body with Zod as well, so
+  a `mode` outside `ask` / `summarize` / `autofill`, or a body that does not
+  fit the schema, is refused with 400 before the request reaches the provider.
+  The id format is deliberately not part of that check: a foreign or malformed
+  workspace id is answered by the access check, not by a 400.
 
 ## [1.4.1] — 2026-10-17
 

@@ -12,14 +12,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = vi.hoisted(() => ({ getCurrentUser: vi.fn() }));
 const guard = vi.hoisted(() => ({ rateLimit: vi.fn() }));
-const ai = vi.hoisted(() => ({ resolveAiConfig: vi.fn(), chatComplete: vi.fn() }));
+const ai = vi.hoisted(() => ({ resolveAiConfigForUser: vi.fn(), chatComplete: vi.fn() }));
 
 vi.mock("@/lib/auth", () => ({ getCurrentUser: auth.getCurrentUser }));
 vi.mock("@/lib/api-guard", () => ({ rateLimit: guard.rateLimit }));
 vi.mock("@/lib/ai-provider", () => ({
   AI_NOT_CONFIGURED: "AI is not configured.",
   chatComplete: ai.chatComplete,
-  resolveAiConfig: ai.resolveAiConfig,
+  resolveAiConfigForUser: ai.resolveAiConfigForUser,
 }));
 
 import { GET, POST } from "./route";
@@ -31,6 +31,9 @@ const CONFIG = {
   apiKey: "k",
   source: "env" as const,
 };
+
+/** A workspace id in the shape Prisma's `cuid()` produces. */
+const WORKSPACE_ID = "clx1a2b3c4d5e6f7g8h9i0jkl";
 
 type SkillResponse = {
   text?: string;
@@ -53,7 +56,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   auth.getCurrentUser.mockResolvedValue({ id: "u1" });
   guard.rateLimit.mockReturnValue(null);
-  ai.resolveAiConfig.mockResolvedValue(CONFIG);
+  ai.resolveAiConfigForUser.mockResolvedValue(CONFIG);
   ai.chatComplete.mockResolvedValue({ ok: true, text: "MODEL OUTPUT" });
 });
 
@@ -77,8 +80,38 @@ describe("authentication and validation", () => {
   });
 
   it("reports AI as unconfigured with 503", async () => {
-    ai.resolveAiConfig.mockResolvedValue(null);
+    ai.resolveAiConfigForUser.mockResolvedValue(null);
     expect((await postSkill({ skillId: "summarize", text: "hi" })).status).toBe(503);
+  });
+
+  it("rejects a body that does not match the schema", async () => {
+    // The workspace id is not part of the schema's shape check — an unknown
+    // id is answered by the access check. A body whose *type* does not fit
+    // is refused.
+    expect((await postSkill({ skillId: "proofread", text: 42 })).status).toBe(400);
+    expect(ai.chatComplete).not.toHaveBeenCalled();
+  });
+
+  it("trims a long selection instead of rejecting the body", async () => {
+    const response = await postSkill({ skillId: "proofread", text: "x".repeat(50_000) });
+
+    expect(response.status).toBe(200);
+    const input = ai.chatComplete.mock.calls[0]?.[0] as { user?: string };
+    expect(input.user?.endsWith("x".repeat(8000))).toBe(true);
+  });
+
+  it("reads a null workspace id as 'no workspace'", async () => {
+    const response = await postSkill({ skillId: "proofread", text: "hi", workspaceId: null });
+
+    expect(response.status).toBe(200);
+    expect(ai.resolveAiConfigForUser).toHaveBeenCalledWith("u1", null);
+  });
+});
+
+describe("workspace scoping of the provider config", () => {
+  it("resolves the provider config for the signed-in user, not for a bare workspace id", async () => {
+    await postSkill({ skillId: "proofread", text: "hi", workspaceId: WORKSPACE_ID });
+    expect(ai.resolveAiConfigForUser).toHaveBeenCalledWith("u1", WORKSPACE_ID);
   });
 });
 

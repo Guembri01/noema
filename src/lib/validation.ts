@@ -152,5 +152,53 @@ export const commentSchema = z.object({
   quote: z.string().max(500).optional(),
 });
 
+/**
+ * Upper bound for a free-text field of an AI request body.
+ *
+ * The routes trim the text they use — a prompt to 4000 characters, a context
+ * and a skill text to 8000 — so this bound is only a guard against an absurd
+ * body. It sits far above those trimming limits on purpose: a long selection
+ * (the editor sends the raw text of what the user selected) must still be
+ * trimmed by the route, not refused with 400.
+ */
+const AI_TEXT_MAX_CHARS = 200_000;
+
+/**
+ * Request bodies of the AI proxy routes (`/api/ai`, `/api/ai/skills`).
+ *
+ * The routes used to cast `request.json()` straight into a TypeScript type,
+ * which let a client send anything — including the `workspaceId` of a
+ * workspace it does not belong to (audit B13). These schemas pin the shape:
+ * a body that does not match is refused with 400 before it reaches the
+ * provider. A missing or null `workspaceId` means "no workspace" — the
+ * environment configuration — as it did before the schemas.
+ */
+export const aiRequestSchema = z.object({
+  prompt: z.string().max(AI_TEXT_MAX_CHARS).optional(),
+  context: z.string().max(AI_TEXT_MAX_CHARS).optional(),
+  mode: z.enum(["ask", "summarize", "autofill"]).optional(),
+  // The id format is deliberately not enforced: the route asks the access
+  // check whether the caller may use that workspace, and a stricter schema
+  // would turn a foreign or malformed id into a 400 instead of the answer the
+  // access check gives.
+  workspaceId: z.string().min(1).nullish(),
+  maxTokens: z.number().int().optional(),
+});
+
+export const aiSkillRequestSchema = z.object({
+  skillId: z.string().max(64).optional(),
+  text: z.string().max(AI_TEXT_MAX_CHARS).optional(),
+  // The id format is deliberately not enforced: the route asks the access
+  // check whether the caller may use that workspace, and a stricter schema
+  // would turn a foreign or malformed id into a 400 instead of the answer the
+  // access check gives.
+  workspaceId: z.string().min(1).nullish(),
+  targetLocale: z.string().max(16).optional(),
+  tone: z.string().max(32).optional(),
+  style: z.string().max(32).optional(),
+  audience: z.string().max(32).optional(),
+  maxWords: z.number().int().optional(),
+});
+
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
