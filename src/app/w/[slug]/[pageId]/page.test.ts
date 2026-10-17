@@ -171,21 +171,6 @@ beforeEach(() => {
   );
   db.pageFindMany.mockImplementation(async (args: { select?: Record<string, boolean> }) => {
     const select = args?.select ?? {};
-    // The read scope (B90) reads the pages *with* their permissions
-    // relation — the guest's grant sits on `shared-page`. It comes first:
-    // that query selects the teamspace id as well.
-    if (select.permissions) {
-      return [
-        { id: "ts-root", parentId: null, teamspaceId: "teamspace-1", createdById: "owner-1", permissions: [] },
-        {
-          id: "shared-page",
-          parentId: "ts-root",
-          teamspaceId: "teamspace-1",
-          createdById: "owner-1",
-          permissions: [{ userId: "guest-1", level: "READ" }],
-        },
-      ];
-    }
     // The guest scope: every page of the workspace.
     if (select.teamspaceId) {
       return [

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
+import { assertScopedParent } from "@/lib/page-parent";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfig } from "@/lib/ai-provider";
 import { parseAiAutofillConfig, validateAiAutofillConfig } from "@/lib/ai-autofill";
@@ -89,6 +90,20 @@ export async function runAiAutofillAction(input: {
     return { ok: false, error: "That row does not belong to this workspace." };
   }
 
+  // B08/B99: the row's parent is the database that decides where the generated
+  // value may be written. It has to be a live page of the caller's workspace
+  // as well: a legacy row can carry the caller's `workspaceId` while its
+  // `parentId` still points at another tenant's database, and binding the
+  // target to that foreign database would write into it. The checked parent is
+  // the only id used from here on.
+  const rowParent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: row.parentId,
+  });
+  if ("error" in rowParent || !rowParent.parentId) {
+    return { ok: false, error: "That row does not belong to this workspace." };
+  }
+
   // B99: the column the generated value is written into has to belong to the
   // row's **own** database — the database the row hangs under. The target id
   // comes out of the stored, untrusted column config and used to be written
@@ -102,7 +117,7 @@ export async function runAiAutofillAction(input: {
   // cannot write is not worth a model call.
   const targetPropertyId = config.targetPropertyId ?? property.id;
   const targetProperty = await prisma.property.findFirst({
-    where: { id: targetPropertyId, databasePageId: row.parentId ?? "" },
+    where: { id: targetPropertyId, databasePageId: rowParent.parentId },
     select: { id: true },
   });
   if (!targetProperty) {

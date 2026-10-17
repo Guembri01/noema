@@ -66,7 +66,7 @@ export async function POST(request: Request) {
       // failure is reduced to its status plus a stable code, and only that
       // class reaches the log.
       const failure = providerFailure(response.status, text, KEY);
-      logProviderFailure(failure, { model: MODEL, apiKey: KEY });
+      logProviderFailure(failure);
       return NextResponse.json(
         { error: `Transcription failed (${response.status}): ${failure.code}` },
         { status: 502 },
@@ -80,6 +80,6 @@ export async function POST(request: Request) {
     // even scrubbed, since a scrubber only knows credential *shapes* and the
     // tail of a key with an interior newline is no shape at all. The class
     // goes to the client, the class goes to the log.
-    return NextResponse.json({ error: transportFailure({ model: MODEL, apiKey: KEY }) }, { status: 502 });
+    return NextResponse.json({ error: transportFailure() }, { status: 502 });
   }
 }

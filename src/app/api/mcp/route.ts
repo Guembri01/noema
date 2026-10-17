@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { authenticateApiRequest } from "@/lib/api-auth";
 import { rateLimit } from "@/lib/api-guard";
-import { intersectScopes } from "@/lib/api-token-scope";
 import {
   bodyReadError,
   MAX_CONTENT_BODY_BYTES,
   readJsonBody,
 } from "@/lib/body-limit";
+import { intersectScopes } from "@/lib/api-token-scope";
 import { prisma } from "@/lib/db";
 import { pageScopeFor } from "@/lib/guest-access";
 import {

@@ -15,6 +15,7 @@ const db = vi.hoisted(() => ({
   propertyFindUnique: vi.fn(),
   propertyFindFirst: vi.fn(),
   pageFindUnique: vi.fn(),
+  pageFindFirst: vi.fn(),
   valueUpsert: vi.fn(),
 }));
 const auth = vi.hoisted(() => ({ requireUser: vi.fn() }));
@@ -24,7 +25,7 @@ const ai = vi.hoisted(() => ({ resolveAiConfig: vi.fn(), chatComplete: vi.fn() }
 vi.mock("@/lib/db", () => ({
   prisma: {
     property: { findUnique: db.propertyFindUnique, findFirst: db.propertyFindFirst },
-    page: { findUnique: db.pageFindUnique },
+    page: { findUnique: db.pageFindUnique, findFirst: db.pageFindFirst },
     propertyValue: { upsert: db.valueUpsert },
   },
 }));
@@ -118,6 +119,23 @@ beforeEach(() => {
     title: "Launch plan",
     propertyValues: [{ value: { text: "Body text" }, property: { name: "Notes" } }],
   });
+  // The row's parent database, found only when it is in the caller's workshop
+  // and alive — the same filter `assertScopedParent` applies.
+  db.pageFindFirst.mockImplementation(
+    async (args: {
+      where: { id?: string; workspaceId?: string; deletedAt?: null };
+    }) => {
+      const where = args.where ?? {};
+      if (
+        where.id === "db1" &&
+        (where.workspaceId === undefined || where.workspaceId === "ws1") &&
+        (where.deletedAt === undefined || where.deletedAt === null)
+      ) {
+        return { id: "db1" };
+      }
+      return null;
+    },
+  );
   db.valueUpsert.mockResolvedValue({});
   ai.resolveAiConfig.mockResolvedValue(CONFIG);
   ai.chatComplete.mockResolvedValue({ ok: true, text: "  generated value  " });
@@ -207,6 +225,30 @@ describe("writing the target property", () => {
     await expect(runAiAutofillAction(INPUT)).resolves.toEqual({
       ok: false,
       error: "That target property does not belong to this database.",
+    });
+    expect(ai.chatComplete).not.toHaveBeenCalled();
+    expect(db.valueUpsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a legacy row whose parent is another workspace's database", async () => {
+    // The row carries the caller's workspace id but still hangs under `db2`;
+    // binding the target to the row's parent would write into that database.
+    db.pageFindUnique.mockResolvedValue({
+      id: "row1",
+      workspaceId: "ws1",
+      parentId: "db2",
+      title: "Launch plan",
+      propertyValues: [],
+    });
+    mockColumn({
+      id: "p1",
+      type: "AI_AUTOFILL",
+      config: { prompt: "Summarize the row.", targetPropertyId: "p3" },
+      databasePage: { workspaceId: "ws1" },
+    });
+    await expect(runAiAutofillAction(INPUT)).resolves.toEqual({
+      ok: false,
+      error: "That row does not belong to this workspace.",
     });
     expect(ai.chatComplete).not.toHaveBeenCalled();
     expect(db.valueUpsert).not.toHaveBeenCalled();

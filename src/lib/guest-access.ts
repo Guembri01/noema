@@ -140,8 +140,9 @@ export async function guestVisiblePageIds(
 }
 
 /**
- * The scope of a viewer: `null` when the viewer sees the whole workspace (every
- * role but `GUEST`), the guest scope otherwise.
+ * The scope of a viewer: `null` when the viewer sees the whole workspace (the
+ * full-access roles), the guest scope for a `GUEST`, and an **empty** scope for
+ * a role that is not a known workspace role — it fails closed, never wide.
  *
  * Callers hand `scope.pageIds` to the page queries (`getPageTree`,
  * `getFavorites`, `searchPages`) and `scope.teamspaceIds` to the teamspace

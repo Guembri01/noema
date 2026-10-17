@@ -29,8 +29,11 @@ import * as decoding from "lib0/decoding";
 import {
   CLOSE_FORBIDDEN,
   CLOSE_UNAUTHORIZED,
+  SHIPPED_AUTH_SECRET_PLACEHOLDERS,
+  WEAK_AUTH_SECRETS,
   createCollabServer,
   decideAccess,
+  isUsableAuthSecret,
   parseRoomPageId,
   verifySessionCookie,
 } from "./collab-server.mjs";
@@ -387,6 +390,52 @@ describe("verifySessionCookie (real session primitive)", () => {
     await withSecret(`  ${placeholder.toUpperCase()}  `, async () => {
       expect(await verifySessionCookie(`noema_session=${token}`)).toBeNull();
     });
+  });
+
+  it("refuses every shipped placeholder, not only the .env.example one (B55)", async () => {
+    // The self-hosting documentation ships a 32-character hex example, which
+    // passes a length-only check. It is just as public as the .env.example
+    // placeholder, so the relay must refuse it too.
+    expect(SHIPPED_AUTH_SECRET_PLACEHOLDERS).toContain(
+      "0123456789abcdef0123456789abcdef",
+    );
+    for (const placeholder of SHIPPED_AUTH_SECRET_PLACEHOLDERS) {
+      expect(isUsableAuthSecret(placeholder), placeholder).toBe(false);
+      expect(isUsableAuthSecret(placeholder.toUpperCase()), placeholder).toBe(false);
+    }
+    for (const weak of WEAK_AUTH_SECRETS) {
+      expect(isUsableAuthSecret(weak), weak).toBe(false);
+    }
+    // A real secret is still accepted.
+    expect(
+      isUsableAuthSecret(
+        "492ab3e1125d19ee06fc1f72772e35ebbfd522c4953da50ab325e03cd5956d49",
+      ),
+    ).toBe(true);
+  });
+
+  it("mirrors the application's placeholder and weak lists (B55)", () => {
+    // `scripts/collab-server.mjs` cannot import the TypeScript module, so its
+    // lists are a copy. This test reads the application's lists and fails if
+    // the copy drifts — a placeholder added there must be refused here too.
+    const source = readFileSync(
+      new URL("../src/lib/auth-secret.ts", import.meta.url),
+      "utf8",
+    );
+    const canonical = (value) =>
+      value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+    const tsList = (name) => {
+      const match = new RegExp(`${name}[^=]*=\\s*\\[([\\s\\S]*?)\\];`).exec(source);
+      if (!match) throw new Error(`${name} not found in auth-secret.ts`);
+      return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
+    };
+
+    expect(new Set(SHIPPED_AUTH_SECRET_PLACEHOLDERS.map(canonical))).toEqual(
+      new Set(tsList("SHIPPED_AUTH_SECRET_PLACEHOLDERS").map(canonical)),
+    );
+    expect(new Set(WEAK_AUTH_SECRETS.map(canonical))).toEqual(
+      new Set(tsList("WEAK_AUTH_SECRETS").map(canonical)),
+    );
   });
 
   it("rejects a token without a subject", async () => {

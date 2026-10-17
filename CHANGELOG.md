@@ -13,6 +13,20 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ### Security
 
+- `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
+  HMAC, the envelope key for stored provider keys and 2FA seeds, the
+  share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
+  A missing value, a value shorter than **32** characters, a placeholder this
+  repository ships (`.env.example`, the self-hosting examples) or a well-known
+  weak value (`changeme`, `your-secret-here`, …) is refused, case-insensitively
+  and regardless of separators; the error names the reason, never the value.
+  The `.env.example` placeholder was 35 characters, so the old 16-character
+  check accepted it verbatim — every instance that copied it shared a public
+  session-signing key. **This is a breaking change:** a deployment whose
+  `AUTH_SECRET` is shorter than 32 characters now refuses to start. The
+  documented 64-hex-character value and the 43-character generator output are
+  both above the floor, and the compose smoke test now generates a real secret
+  instead of copying the placeholder.
 - A stored bookmark URL is no longer rendered as a link without a scheme check.
   The editor's bookmark card took the stored `attrs.url` straight into an
   anchor `href`, so a document stored before the write-time href gate existed
@@ -248,7 +262,50 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   attribute is no longer mistaken for the checked one). The shapes that *are*
   closed are pinned by the gate's own regression test
   (`scripts/check-parent-scope.test.mjs`), which holds every allow-list entry
-  to the one path it describes.
+  to the one path it describes. The gate and its suite normalise path
+  separators and line endings, so a Windows checkout makes the same decision
+  as the Linux CI job.
+- A cell value is bound to the database of its row. The property id came from
+  the client and was written into the table unchecked, so a member of workspace
+  A could file a value under a column of workspace B; the foreign value was
+  invisible in B but advanced B's `UNIQUE_ID` counter. The column is now
+  resolved by `id` and the row's `databasePageId`, and AI autofill checks the
+  row's parent against the caller's workspace first, so a legacy row that still
+  points at another tenant's database cannot be used to reach it either.
+- A workspace role that is not `OWNER`, `ADMIN`, `MEMBER` or `GUEST` now sees
+  nothing. `viewerScopeFor()` treated every non-guest role as a full member, so
+  a forged or stale role read the whole workspace; it now fails closed with an
+  empty scope.
+- A malformed or empty API-token digest can no longer throw a `500` or match
+  an empty buffer. `apiTokenMatches()` refuses a value that is not a non-empty
+  string before it calls `Buffer.from`.
+- The desktop shell no longer grants `tauri-plugin-store` to any webview.
+  `store|load` performs no scope check and takes an absolute path, so a script
+  in a granted origin could read or overwrite any JSON file; the shell reaches
+  the store through Rust, which the ACL does not gate. The unredacted database
+  connection string is therefore no longer reachable from the webview, and the
+  `database_url` command returns the redacted form.
+- The desktop shell no longer believes any server that answers `200` on its
+  loopback port. It chose the port by binding `127.0.0.1:0`, reading the port
+  and closing the socket again, so a program on the same machine could take the
+  port first, answer `/api/health` with `200`, and have the window load *its*
+  page — on an origin the Tauri capability covers, with the app's IPC rights.
+  The shell now hands the server a random 32-byte token per start through
+  `NOEMA_SHELL_TOKEN`; the server echoes it in the `x-noema-shell-token`
+  response header, and the supervisor waits for that token before it trusts the
+  port. A squatter that wins the race never sees the token, because the server
+  it displaced never runs to echo it; a restart issues a new token. The token is
+  per start and never enters the frozen health body or the log, so a caller
+  that reads it from the running server cannot replay it against the next
+  start.
+- The ops gate spends the rate-limit budget before it compares the shared
+  secret. `/api/metrics` was the remaining route that compared first, so a
+  wrong secret was answered `401` without a limit; it now follows the same
+  `safeSecretEqual` and budget order as the cron and readiness routes.
+- The AI failure log no longer writes a provider's key as context. The
+  attribution carries the key only to test it, and the provider, model and
+  workspace values are dropped from the log when any part of them echoes the
+  key; the transcription route logs only the class.
 - The workspace export and the trash purge now refuse storage keys that belong
   to another workspace. A page can reference an upload of a different
   workspace — a URL that leaked through a share link, a copied image — and the

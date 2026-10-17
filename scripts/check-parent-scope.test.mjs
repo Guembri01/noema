@@ -973,7 +973,9 @@ function mutate(source, testCase) {
  * the proof is gone.
  */
 function assertAllowList(testCase) {
-  const source = readFileSync(join(ROOT, testCase.file), "utf8");
+  // The mutation fixtures spell their anchors with `\n`; a Windows checkout
+  // has `\r\n`. Normalise the source so the same case runs on every platform.
+  const source = readFileSync(join(ROOT, testCase.file), "utf8").replaceAll("\r\n", "\n");
 
   // The unmodified file: the entry holds, the gate is green.
   const green = gateOver({ [testCase.file]: source });

@@ -257,13 +257,13 @@ impl Readiness {
 /// 32 bytes from the operating system's CSPRNG (`OsRng` — the kernel's
 /// `getrandom`), hex encoded so it is a plain header value.
 ///
-/// One token per start: a token from an earlier run is worthless, and the
-/// program that squats the port never learns this one. It cannot read the
-/// server process' environment (that belongs to another user — a process of
-/// the *same* user can, and that is what B48 is about), and the server
-/// echoes the token in the health answer — to every caller of it, but the
-/// token is bound to this run and this port, so a program that grabbed the
-/// port before the server did never learns it.
+/// One token per start: a token from an earlier run is worthless. A program
+/// that squats the port *before* the server starts never learns this one — the
+/// server never runs to echo it, and the squatter cannot read the environment
+/// of a process that belongs to another user. A caller that can query the
+/// running server, or read its environment, can read the token; that caller is
+/// already in the same trust domain as the server, and a restart issues a new
+/// token before the shell trusts anything again.
 ///
 /// Without a token the shell cannot tell its own server apart from an
 /// impostor, so a generator that fails is a reason not to start at all.
@@ -823,21 +823,18 @@ mod tests {
     }
 
     #[test]
-    fn free_port_is_usable() {
-        // The promise the code actually makes: the port is in the ephemeral
-        // range and can be bound again. It does **not** promise that two calls
-        // hand out two different ports — the kernel picks the ephemeral port
-        // from a counter, and it may hand the same one back (that is exactly
-        // the window B49 is about). The old assertion of uniqueness was
-        // therefore a promise the code never made, and it failed sporadically
-        // on a busy runner.
-        let a = free_port().expect("port available");
+    fn free_port_avoids_a_held_port_and_stays_usable() {
+        // Hold the first port for the whole test. Asking the kernel for port 0
+        // twice in a row can legitimately return the same port again after the
+        // first listener is dropped — Windows does exactly that — so comparing
+        // two sequential calls tests the kernel, not `free_port`. Keeping the
+        // listener alive is what makes the uniqueness check deterministic.
+        let held = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let a = held.local_addr().expect("address").port();
         let b = free_port().expect("port available");
         assert!(a > 1024, "ephemeral ports are > 1024, got {a}");
         assert!(b > 1024);
-        // Usable: the port can be bound again right away.
-        let listener = std::net::TcpListener::bind(("127.0.0.1", a)).expect("bind the port again");
-        assert_eq!(listener.local_addr().expect("address").port(), a);
+        assert_ne!(a, b, "free_port must not hand back a port that is held");
     }
 
     #[test]

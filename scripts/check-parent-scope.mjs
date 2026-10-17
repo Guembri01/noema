@@ -1393,7 +1393,10 @@ for (const path of collectFiles(root)) {
   const source = readFileSync(path, "utf8");
   const masked = mask(source);
   const functions = namedFunctions(masked);
-  const file = relative(".", path);
+  // The allow-list and every diagnostic use POSIX separators. `relative()`
+  // returns `\` on Windows, so normalise it here: the gate must make the same
+  // decision on every platform.
+  const file = relative(".", path).replaceAll("\\", "/");
   scanned.push({ file, source, masked, functions });
 
   // The candidates: `parentId: …` (key/value), `parentId,` (the shorthand)
