@@ -1,4 +1,4 @@
-# Capture the running Noema desktop window to a PNG, so "does the app actually
+﻿# Capture the running Noema desktop window to a PNG, so "does the app actually
 # render" can be answered by looking at it rather than inferring from HTTP.
 #
 # Two strategies, because WebView2 composes through DWM:

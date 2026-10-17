@@ -81,6 +81,9 @@
      coincidences. */
   --text-title: 1.75rem; /* 28px — page headings */
   --tracking-title: -0.02em; /* page headings */
+  /* …and the same is true one step down: eleven panel/section headings shared
+     one tracking value. */
+  --tracking-heading: -0.01em; /* panel + section headings */
 }
 
 .dark {

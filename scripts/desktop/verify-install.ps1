@@ -1,4 +1,4 @@
-# Verify the *installed* Noema desktop app, end to end, and print a report.
+﻿# Verify the *installed* Noema desktop app, end to end, and print a report.
 #
 #   powershell -File scripts/desktop/verify-install.ps1                 # check what is installed
 #   powershell -File scripts/desktop/verify-install.ps1 -Setup <setup.exe>   # reinstall first

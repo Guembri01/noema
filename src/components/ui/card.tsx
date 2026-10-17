@@ -109,7 +109,7 @@ export function CardTitle({
 }: HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h3
-      className={cn("truncate text-sm font-semibold tracking-[-0.01em]", className)}
+      className={cn("truncate text-sm font-semibold tracking-heading", className)}
       {...props}
     >
       {children}

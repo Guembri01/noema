@@ -233,7 +233,7 @@ export function docReadingMeasure(doc: unknown): string {
 /** Token classes for one read-side block or inline kind. */
 export const DOC_BLOCK_CLASS = {
   paragraph: "my-1 leading-[1.6] text-fg",
-  heading: "mt-4 mb-1 font-semibold tracking-[-0.01em] text-fg",
+  heading: "mt-4 mb-1 font-semibold tracking-heading text-fg",
   bulletList: "my-1 list-disc ps-6",
   orderedList: "my-1 list-decimal ps-6",
   taskList: "my-1 list-none ps-0",

@@ -212,7 +212,7 @@ export function ConfirmDialog({
           {icon}
         </span>
         <div className="min-w-0 flex-1">
-          <DialogPrimitive.Title className="text-xl font-semibold tracking-[-0.01em]">
+          <DialogPrimitive.Title className="text-xl font-semibold tracking-heading">
             {title}
           </DialogPrimitive.Title>
           {description ? (

@@ -386,7 +386,7 @@ export function Sheet({
               {title ? (
                 <h2
                   id={titleId}
-                  className="truncate text-xl font-semibold tracking-[-0.01em]"
+                  className="truncate text-xl font-semibold tracking-heading"
                 >
                   {title}
                 </h2>

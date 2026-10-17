@@ -454,7 +454,7 @@ export function TicketComposerDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent aria-label={t(composer.locale, "newTicket")} className="p-5">
-        <h2 className="mb-4 text-xl font-semibold tracking-[-0.01em] text-fg">
+        <h2 className="mb-4 text-xl font-semibold tracking-heading text-fg">
           {t(composer.locale, "newTicket")}
         </h2>
         <TicketComposerForm

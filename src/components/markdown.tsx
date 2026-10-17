@@ -39,7 +39,7 @@ export const MARKDOWN_COPY_FEEDBACK_MS = 1500;
 /** Token classes for one Markdown block or inline kind. */
 export const MARKDOWN_BLOCK_CLASS = {
   paragraph: "my-1.5 leading-[1.6] text-fg",
-  heading: "mt-4 mb-1 font-semibold tracking-[-0.01em] text-fg",
+  heading: "mt-4 mb-1 font-semibold tracking-heading text-fg",
   blockquote: "my-2 ps-3.5 text-muted",
   list: "my-1 ps-6",
   rule: "my-4 border-0 border-t border-border",

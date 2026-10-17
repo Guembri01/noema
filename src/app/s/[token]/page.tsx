@@ -45,7 +45,7 @@ function UnavailableState() {
         <span className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-lg bg-surface-2 text-muted">
           <Link2 className="h-4 w-4" aria-hidden />
         </span>
-        <h1 className="text-xl font-semibold tracking-[-0.01em]">
+        <h1 className="text-xl font-semibold tracking-heading">
           This link is no longer available
         </h1>
         <p className="mt-2 text-sm text-muted">
@@ -107,7 +107,7 @@ export default async function PublicSharedPage({
           <span className="mb-3 grid h-10 w-10 place-items-center rounded-lg bg-surface-2 text-muted">
             <Lock className="h-4 w-4" aria-hidden />
           </span>
-          <h1 className="text-xl font-semibold tracking-[-0.01em]">Password required</h1>
+          <h1 className="text-xl font-semibold tracking-heading">Password required</h1>
           <p className="mb-4 mt-1 text-sm text-muted">
             This page is protected. Enter the password to continue.
           </p>

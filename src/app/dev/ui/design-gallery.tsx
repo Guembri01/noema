@@ -283,7 +283,7 @@ function DialogDemo() {
       </DialogTrigger>
       <DialogContent>
         <div className="p-5">
-          <h3 className="text-xl font-semibold tracking-[-0.01em]">
+          <h3 className="text-xl font-semibold tracking-heading">
             Dialog title
           </h3>
           <p className="mt-1 text-sm text-muted">
@@ -488,7 +488,7 @@ function GallerySection({
   return (
     <section id={section.id} className="flex scroll-mt-28 flex-col gap-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border pb-2">
-        <h2 className="text-xl font-semibold tracking-[-0.01em]">
+        <h2 className="text-xl font-semibold tracking-heading">
           {section.title}
         </h2>
         <code className="text-xs text-muted">

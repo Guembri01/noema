@@ -20,7 +20,7 @@ export const SECTION_TONES: Record<SectionTone, string> = {
 
 /** The canonical section-title type ramp (see design doc §3). */
 export const SECTION_HEADING_CLASS =
-  "text-xl font-semibold tracking-[-0.01em]";
+  "text-xl font-semibold tracking-heading";
 
 export type SectionProps = {
   /**
