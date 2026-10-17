@@ -569,6 +569,21 @@ export async function setPropertyValueAction(
   if (!row) return { error: "Row not found." };
   const auth = await authorizeDatabase(row.parentId ?? "");
   if ("error" in auth) return auth;
+  // B96: the row has to belong into the same workspace as the database it
+  // hangs under. A row that was linked across the boundary before the
+  // workspace check existed keeps a foreign `workspaceId`; the read side
+  // filters such a row out of every view, so it must not be written either —
+  // otherwise a member of the database's workspace writes a cell value into
+  // another workspace's row and the activity entry is filed under that
+  // foreign workspace.
+  //
+  // The check runs *before* the role check so the answer for such a row is
+  // character-for-character the answer for a row that does not exist
+  // ("Row not found."): the caller must not learn that the row is there —
+  // neither as a member nor as a guest.
+  if (row.workspaceId !== auth.page.workspaceId) {
+    return { error: "Row not found." };
+  }
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
   if (!fileUrlsAreAppOwned(value)) {
     return { error: "That file link is not allowed." };
@@ -708,6 +723,14 @@ export async function deleteRowAction(rowId: string): Promise<Result> {
   if (!row?.parentId) return { error: "Row not found." };
   const auth = await authorizeDatabase(row.parentId);
   if ("error" in auth) return auth;
+  // B96: same scope rule as `setPropertyValueAction` — a legacy row whose
+  // `workspaceId` differs from the workspace of its database is filtered out
+  // of every read path, so it must not be soft-deleted either. The answer is
+  // the same as for a row that does not exist (no existence oracle), and it
+  // comes before the role check so it is the same for every caller.
+  if (row.workspaceId !== auth.page.workspaceId) {
+    return { error: "Row not found." };
+  }
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
   // Soft delete: the row leaves every view (queries filter `deletedAt`) but
   // stays restorable from the database's "Deleted rows" panel and the
