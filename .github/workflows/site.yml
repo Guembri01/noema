@@ -64,6 +64,10 @@ jobs:
       # passes tsc, passes tests, and works in `next dev` — and then fails
       # `next build` with UnhandledSchemeError. That happened once; never again.
       - run: npm run check:client
+      # Every t(locale, "key") must exist in the catalogue. During a parallel
+      # refactor this failed as 29 cryptic `tsc` "not assignable" errors; the
+      # gate names the missing keys and the files that reference them.
+      - run: npm run check:i18n
       # Design-system + motion ratchets. Both are pure file scans (no DB, no
       # browser) and their baselines are 0, so any new raw hex, magic z-index,
       # ad-hoc duration, legacy palette class or literal easing fails the build.

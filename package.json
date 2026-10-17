@@ -71,7 +71,8 @@
     "check:csp": "node scripts/check-csp.mjs",
     "audit:frontend": "node scripts/audit-frontend.mjs",
     "audit:parity": "node scripts/audit-notion-parity.mjs",
-    "audit:spec": "node scripts/audit-spec-coverage.mjs"
+    "audit:spec": "node scripts/audit-spec-coverage.mjs",
+    "check:i18n": "node scripts/check-i18n-keys.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
