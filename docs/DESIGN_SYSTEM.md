@@ -88,9 +88,39 @@ Density is user-selectable later; today the default is comfortable.
 | Token | Duration | Used for |
 |---|---|---|
 | `--dur-1` / `DUR.fast` | 120 ms | hover, press, colour, small fades |
-| `--dur-2` / `DUR.base` | 180 ms | menus, toggles, expand/collapse |
-| `--dur-3` / `DUR.slow` | 240 ms | drawers, sheets, route content |
+| `--dur-2` / `DUR.base` | 180 ms | menus, toggles, expand/collapse, layout shifts, route content, cover crossfade |
+| `--dur-3` / `DUR.slow` | 240 ms | drawers, sheets |
 | `--dur-4` / `DUR.slower` | 320 ms | large surface enter |
+
+**Motion is measured, not asserted from class names.** `npm run check:animation`
+drives a real browser and reads the *computed* timings: hover feedback must be the
+micro tier, the sidebar's width the panel tier, the route-content fade the page tier
+(150–250 ms per the design spec — it used to be `--dur-1`, which read as a blink), and
+`u-no-transition` must reduce a 1000 ms transition to 0. It then repeats every
+measurement in a context launched with `prefers-reduced-motion: reduce` and requires
+the durations to collapse. A class name is not evidence; a computed duration is.
+
+**Things that move are not things that change state.** A hover or an open menu is one
+element changing its own styles, so CSS handles it. A reorder, an insert, a delete or a
+group expanding moves elements that did *not* change — there is nothing to put a
+`transition:` on, and they jump. `src/lib/layout-shift.ts` is the one answer to that:
+`useFlipList(containerRef, deps)` measures marked children before and after the update
+and slides the ones that moved. Three rules are enforced inside it rather than left to
+callers:
+
+- children carry `data-flip-id="<stable id>"`, and callers pass the **ordered ids** as
+  `deps` — never the content, so a keystroke can never animate under a caret;
+- it stands down while `document.body.dataset.dragging === "1"`, because a drag gives
+  the pointer 1:1 control and a slide would fight it;
+- it stands down under `prefers-reduced-motion: reduce`, where items simply appear in
+  place — which is the correct reduced experience, not a faster animation.
+
+Two related decisions, recorded so they are not re-litigated as bugs: a database **view
+switch stays instant** (a cross-fade flashes the table, and the spec's requirement is
+"without flashing"), and **`max-height` reveals are not used** — the expandable
+surfaces transition metrics we actually know (`width`, `grid-template-rows`), so
+swapping in `max-height` would change technique without changing what anyone sees.
+
 
 Easings: `--ease-smooth` (default), `--ease-in-out-soft`, `--ease-spring` (popovers,
 drag settle).
