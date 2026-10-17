@@ -20,7 +20,8 @@
  *    compose stack) the app takes 5434, and so on.
  *  · **A generated password**, stored in the data directory with restrictive
  *    intent — a local-only database with the default `postgres/postgres` is a
- *    habit worth not having.
+ *    habit worth not having. It never reaches the argument list of the docker
+ *    process: an argument is world-readable, an environment is not.
  *  · **Non-destructive**: the volume is never removed, and a stopped container is
  *    started rather than recreated.
  *  · **Docker Desktop is started if the engine is down** — on Windows that is the
@@ -249,28 +250,39 @@ function verifyCredentials(password) {
  * own compose stack publishes 5433, which is the very first candidate — and the
  * install would then fail with "port is already allocated", a message nobody can
  * act on. Letting Docker pick removes the whole class.
+ *
+ * The password rides in the **environment** of the docker process, not in its
+ * argument list: an argument is world-readable (`/proc/<pid>/cmdline`), an
+ * environment is not. `--env POSTGRES_PASSWORD` — the name without a value —
+ * takes the value from the environment of the docker client, so the name is in
+ * the argument list and the secret is not.
  */
 async function createContainer(password, volume) {
   log(`creating ${CONTAINER} (${IMAGE}) on the volume ${volume}`);
-  const created = docker([
-    "run",
-    "-d",
-    "--name",
-    CONTAINER,
-    "-e",
-    `POSTGRES_USER=${DB_USER}`,
-    "-e",
-    `POSTGRES_PASSWORD=${password}`,
-    "-e",
-    `POSTGRES_DB=${DB_NAME}`,
-    "-p",
-    "127.0.0.1::5432",
-    "-v",
-    `${volume}:/var/lib/postgresql/data`,
-    "--restart",
-    "unless-stopped",
-    IMAGE,
-  ]);
+  const created = docker(
+    [
+      "run",
+      "-d",
+      "--name",
+      CONTAINER,
+      "-e",
+      `POSTGRES_USER=${DB_USER}`,
+      "-e",
+      "POSTGRES_PASSWORD",
+      "-e",
+      `POSTGRES_DB=${DB_NAME}`,
+      "-p",
+      "127.0.0.1::5432",
+      "-v",
+      `${volume}:/var/lib/postgresql/data`,
+      "--restart",
+      "unless-stopped",
+      IMAGE,
+    ],
+    // The environment of a spawned process *replaces* the one it inherits, so
+    // the rest of the environment has to be handed on explicitly.
+    { env: { ...process.env, POSTGRES_PASSWORD: password } },
+  );
   if (created.status !== 0) {
     log(`could not create the container: ${dockerError(created)}`);
     // Never leave a half-created container behind: the next attempt would find a
