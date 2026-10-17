@@ -454,7 +454,7 @@ x-noema-signature: t=<unixMs>,v1=<hex HMAC-SHA256 of "<t>.<rawBody>", when a sec
 
 { "deliveryId": "…", "event": "page.created", "workspaceId": "…",
   "data": { "pageId": "…", "via": "api" },
-  "sentAt": "2026-10-15T12:00:00.000Z" }
+  "sentAt": "2026-10-15T17:00:00.000Z" }
 ```
 
 Verify (v2) by recomputing `HMAC-SHA256(secret, "<t>.<rawBody>")` and comparing
@@ -538,7 +538,7 @@ Rate scope `tickets-read` (120/min).
   "tickets": [ { "id":"…", "key":"ACS-12", "number":12, "title":"Ship it",
                  "type":"task", "status":"in_progress", "priority":"high",
                  "estimate":3, "estimateUnit":"points",
-                 "startDate":null, "dueDate":"2026-10-20", "completedAt":null,
+                 "startDate":null, "dueDate":"2026-10-21", "completedAt":null,
                  "updatedAt":"…", "parentId":null, "cycleId":null,
                  "project":{"id":"…","name":"Web","icon":"🌐"},
                  "milestone":null,
@@ -598,7 +598,7 @@ cookie session · backing actions `src/server/actions/calendar.ts`.
   "feeds":  [ { "id":"…", "name":"Team", "icsUrl":"https://…/basic.ics",
                 "color":"#3b82f6", "_count":{"events":24} } ],
   "events": [ { "id":"…", "title":"Sprint review",
-                "start":"2026-10-16T09:00:00.000Z", "end":"…",
+                "start":"2026-10-16T17:00:00.000Z", "end":"…",
                 "allDay":false, "location":"Room 2", "url":null,
                 "notesPageId":null,
                 "feed": { "name":"Team", "color":"#3b82f6" } } ]

@@ -117,7 +117,7 @@ const DEFAULT_REMINDER: ReminderOffset = {
 };
 
 /** Fixed sample bounds so the DATE preview never depends on the wall clock. */
-const PREVIEW_START = "2026-03-03";
+const PREVIEW_START = "2026-03-04";
 const PREVIEW_END = "2026-03-05";
 
 /** Fixed sample so the NUMBER preview never depends on the wall clock. */

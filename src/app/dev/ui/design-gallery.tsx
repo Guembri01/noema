@@ -908,8 +908,8 @@ export function DesignGallery() {
             <CalendarGrid
               year={2026}
               month={2}
-              today="2026-03-15"
-              value={{ start: "2026-03-10", end: "2026-03-14" }}
+              today="2026-03-11"
+              value={{ start: "2026-03-12", end: "2026-03-14" }}
               onSelectDay={() => {}}
               onHoverDay={() => {}}
               onShiftMonth={() => {}}
