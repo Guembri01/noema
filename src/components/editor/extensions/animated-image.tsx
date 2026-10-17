@@ -19,6 +19,7 @@ import {
   type PlaybackPolicy,
 } from "@/lib/animated-media";
 import { t } from "@/lib/i18n";
+import { sanitizeHref } from "@/lib/validation";
 
 /**
  * Animated-image block. `src/lib/animated-media.ts` is the pure brain: it sniffs
@@ -157,7 +158,11 @@ export const AnimatedImage = Node.create<{ locale: string }>({
   },
 });
 
-function AnimatedImageView({ node, deleteNode, locale }: NodeViewProps & { locale: string }) {
+/**
+ * The node view of the animated-media block. Exported so the rendered markup
+ * (the media "file" link in particular) can be asserted without a DOM.
+ */
+export function AnimatedImageView({ node, deleteNode, locale }: NodeViewProps & { locale: string }) {
   const attrs = node.attrs as Record<string, unknown>;
   const kind = mediaKindAttr(attrs.mediaType) ?? mediaKindOf(String(attrs.src ?? ""), attrs.mediaType);
   const staticFallback = attrs.staticFallback === true;
@@ -174,6 +179,10 @@ function AnimatedImageView({ node, deleteNode, locale }: NodeViewProps & { local
 
   const src = String(attrs.src ?? "");
   const alt = String(attrs.alt ?? "");
+  // A stored `src` is user-controlled and the media "file" block renders it
+  // as an anchor href, so it must pass the shared href allowlist first. A
+  // `javascript:` URL is dropped instead of becoming a clickable link.
+  const fileHref = kind === "file" ? sanitizeHref(src) : null;
 
   return (
     <NodeViewWrapper
@@ -210,10 +219,10 @@ function AnimatedImageView({ node, deleteNode, locale }: NodeViewProps & { local
         {kind === "audio" && (
           <audio src={src} controls preload="metadata" className="noema-media-audio block w-full max-w-full" />
         )}
-        {kind === "file" && (
+        {kind === "file" && fileHref !== null && (
           <a
             className="noema-media-file inline-flex max-w-full items-center gap-2 rounded-md border border-[var(--border)] px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--hover)]"
-            href={src}
+            href={fileHref}
             download={alt || fileNameOf(src)}
             target="_blank"
             rel="noreferrer"
