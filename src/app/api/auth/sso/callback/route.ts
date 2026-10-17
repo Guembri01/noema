@@ -44,6 +44,17 @@ function ssoFailure(origin: string): NextResponse {
   return NextResponse.redirect(`${origin}/login?error=sso`);
 }
 
+/**
+ * The address already belongs to an account that never proved it (B07): the
+ * sign-in may not land there — the account may have been registered by
+ * somebody else before the real owner showed up, and linking would hand it
+ * (and everything it owns) to that somebody. The user gets its own message
+ * instead of the generic SSO failure.
+ */
+function ssoEmailTaken(origin: string): NextResponse {
+  return NextResponse.redirect(`${origin}/login?error=sso_email_taken`);
+}
+
 /** OIDC callback: exchange the code, verify the id_token, sign the user in. */
 export async function GET(request: Request) {
   const env: AuthEnv = process.env;
@@ -147,7 +158,9 @@ export async function GET(request: Request) {
   const existingUsers = identity.email
     ? await prisma.user.findMany({
         where: { email: identity.email },
-        select: { id: true, email: true },
+        // `emailVerified` is what decides whether the account may be linked
+        // (B07) — without it every match would look unproven.
+        select: { id: true, email: true, emailVerified: true },
       })
     : [];
   const decision = linkOrCreate({
@@ -166,12 +179,23 @@ export async function GET(request: Request) {
         email: identity.email,
         name: identity.name || identity.email.split("@")[0],
         passwordHash: `sso:${randomToken(24)}`,
+        // The id_token carried the address, so the provider vouched for it
+        // (B07). The account has no local password — the sentinel above is
+        // not one — so it is only reachable through this provider, and a
+        // later provider sign-in may link it. The provider is the trust root
+        // for the address here: an IdP that hands out addresses it has not
+        // verified weakens this, which is why the SAML spec asks IdPs to
+        // mark their addresses `email_verified`.
+        emailVerified: true,
       },
       select: { id: true },
     });
     userId = created.id;
   } else {
     // conflict (missing/contested email): never auto-link or create.
+    if (decision.reason === "email_taken_unverified") {
+      return ssoEmailTaken(origin);
+    }
     return ssoFailure(origin);
   }
 

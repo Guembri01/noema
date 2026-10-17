@@ -423,6 +423,17 @@ curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 # 9. restart the cron driver + `npm run collab` so they pick up new code/env
 ```
 
+**Migration `20261019000000_user_email_verified` (the SSO link guard):**
+
+It **adds** the column `User.emailVerified` and backfills it for the accounts
+the SSO callback created (`passwordHash LIKE 'sso:%'`); every other account
+keeps the default `false` — an address nobody proved. The upgrade order is
+one-directional: the **old build keeps working** on the migrated database (an
+added column is invisible to it), but the **new build needs the column to
+exist** — its SSO callback reads it, and a missing column is a query error,
+not a fallback. So apply the migration *before* the new build starts serving.
+`npm run db:push` does the same thing without the migration history.
+
 ## 9. Incident quick reference
 
 | Symptom | First checks |

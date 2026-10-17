@@ -36,7 +36,16 @@ export async function signupAction(
   }
 
   const user = await prisma.user.create({
-    data: { name, email, passwordHash: await hashPassword(password) },
+    data: {
+      name,
+      email,
+      // A local signup proves nothing about the address it registers (B07):
+      // the account stays unverified until the owner proves it, so a later
+      // provider sign-in may not link it silently — the address may have
+      // been registered by somebody else before the real owner showed up.
+      emailVerified: false,
+      passwordHash: await hashPassword(password),
+    },
   });
 
   const workspace = await prisma.workspace.create({

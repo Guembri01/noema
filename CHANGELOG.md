@@ -39,6 +39,30 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- A single sign-on no longer links a local account whose e-mail address was
+  never verified: an attacker who pre-registers the address of a victim can
+  no longer reach that account through the identity provider. Newly registered
+  local accounts count as unverified, accounts created through SSO count as
+  verified.
+- The proof lives in the new column `User.emailVerified` (migration
+  `20261019000000_user_email_verified`). A local sign-up writes `false`
+  explicitly — a sign-up proves nothing about the address it registers — and
+  the SSO callback writes `true` for the account it creates, because that
+  address came out of a signed id_token. A provider sign-in links an existing
+  account only when the account proved its own address; a vouching provider is
+  no longer enough, because it vouches for the address it was given, not for
+  whoever registered that address first. A sign-in that meets an unverified
+  account lands on the login page with `?error=sso_email_taken` instead of
+  taking the account over silently.
+- A consequence worth naming: a local account whose address was never proven
+  is **not** reachable through single sign-on — it signs in with its password.
+  The guarantee rests on the identity provider's address policy: the
+  `email_verified` claim of the id_token is not read, so a provider that lets
+  a user type an arbitrary address can still pre-register it on its own
+  channel.
+  Noema has no address-verification flow yet, so a deployment that wants its
+  users on single sign-on has to let them arrive through the identity provider
+  in the first place.
 
 ## [1.4.1] — 2026-10-17
 
