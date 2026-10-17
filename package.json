@@ -69,7 +69,8 @@
     "check:popovers": "node scripts/check-popovers.mjs",
     "check:chat": "node scripts/check-chat-live.mjs",
     "check:csp": "node scripts/check-csp.mjs",
-    "audit:frontend": "node scripts/audit-frontend.mjs"
+    "audit:frontend": "node scripts/audit-frontend.mjs",
+    "audit:parity": "node scripts/audit-notion-parity.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

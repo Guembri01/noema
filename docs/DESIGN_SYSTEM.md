@@ -266,6 +266,18 @@ it:
 - a panel positioned with `absolute` and static offsets must **stay inline** (absolute
   already resolves against its positioned ancestor; portalling it moves it to the body);
 - never use a magic z-index for a panel — place it at `Z.popover`.
+- **anchoring convention**: every anchored popup renders through
+  `FloatingLayer` + `placeFloating`, and its trigger is the element the placement
+  is measured from. The reference implementation marks those triggers with
+  `data-popup-origin`; we get the same guarantee structurally (the placement call
+  takes the trigger's rect), so a popup cannot silently anchor to the wrong node.
+- **structure vs drag**: structural size changes (sidebar collapse, pane toggles)
+  animate on a token — `width var(--dur-2) var(--ease-smooth)` — while a
+  *drag* resize must disable the transition (`u-no-transition`) so the edge
+  tracks the cursor 1:1 instead of lagging behind it.
+- **long documents**: the editor body carries a large bottom padding (30vh) so the
+  last block can be scrolled to the middle of the viewport; without it, writing at
+  the end of a long page pins you to the bottom edge.
 
 Companion gates: `npm run check:coherence`, `npm run check:use-server`,
 `npm run check:client` (no client component may reach a `node:` built-in — the
