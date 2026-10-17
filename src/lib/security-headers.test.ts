@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import nextConfig, { SECURITY_HEADERS } from "../../next.config";
-import { buildCsp, cspNonce, insideDesktopShell, THEME_SCRIPT_SHA256 } from "./security-headers";
+import {
+  buildCsp,
+  cspNonce,
+  hstsHeader,
+  insideDesktopShell,
+  parseHstsMaxAge,
+  THEME_SCRIPT_SHA256,
+} from "./security-headers";
 
 /**
  * B61 - security headers on EVERY response (M9,
@@ -28,6 +35,20 @@ const HEADER_NAMES = [
 
 /** Dev server by default; overridable so the maintainers can point elsewhere. */
 const BASE_URL = process.env.SEC_HEADERS_BASE_URL ?? "http://localhost:3201";
+
+/**
+ * B33 — the HSTS header follows the environment, so the environment is pinned
+ * for this whole file: the assertions below must not depend on the shell the
+ * suite happens to run in.
+ */
+beforeEach(() => {
+  vi.stubEnv("HSTS_MAX_AGE", undefined);
+  vi.stubEnv("HSTS_INCLUDE_SUBDOMAINS", undefined);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("security headers (next.config.ts)", () => {
   it("exports exactly the audited header map", () => {
@@ -138,7 +159,12 @@ describe("security headers (next.config.ts)", () => {
   it("wires the map through headers() for every path", async () => {
     const entries = await nextConfig.headers!();
     expect(entries.length).toBeGreaterThan(0);
-    const expected = Object.entries(SECURITY_HEADERS).map(([key, value]) => ({ key, value }));
+    // B33: the map plus the HSTS entry, which the deployment sends by
+    // default (one year).
+    const expected = [
+      ...Object.entries(SECURITY_HEADERS).map(([key, value]) => ({ key, value })),
+      { key: "Strict-Transport-Security", value: "max-age=31536000" },
+    ];
     for (const entry of entries) {
       expect(entry.headers, `entry ${entry.source}`).toEqual(expected);
     }
@@ -221,4 +247,88 @@ describe("security headers (next.config.ts)", () => {
       expect(api.headers.get("X-Content-Type-Options")).toBe("nosniff");
     }
   }, 60_000);
+});
+
+/**
+ * B33 — `Strict-Transport-Security` (HSTS).
+ *
+ * The header is sent **by default** — with one year — so a deployment that is
+ * served over HTTPS pins HTTPS. A deployment that is not served over HTTPS
+ * loses nothing: a browser ignores an STS header that arrives over plain HTTP
+ * (RFC 6797 §7.2). `HSTS_MAX_AGE=0` is the documented way out.
+ *
+ * These assertions are on the **evaluated configuration** — the header list
+ * `next.config.ts` hands to Next — not on a helper: the finding was that the
+ * header was never sent, so what matters is what goes on the wire.
+ */
+describe("HSTS (next.config.ts)", () => {
+  /** The HSTS value the configuration sends, or `null` when it sends none. */
+  async function sentHsts(): Promise<string | null> {
+    const entries = await nextConfig.headers!();
+    const found = entries
+      .flatMap((entry) => entry.headers)
+      .find((header) => header.key === "Strict-Transport-Security");
+    return found ? found.value : null;
+  }
+
+  it("sends the header by default (one year)", async () => {
+    expect(await sentHsts()).toBe("max-age=31536000");
+  });
+
+  it("sends no header when the deployment says HSTS_MAX_AGE=0", async () => {
+    vi.stubEnv("HSTS_MAX_AGE", "0");
+    expect(await sentHsts()).toBeNull();
+  });
+
+  it("sends the max-age the environment declares", async () => {
+    vi.stubEnv("HSTS_MAX_AGE", "63072000");
+    expect(await sentHsts()).toBe("max-age=63072000");
+  });
+
+  it("adds includeSubDomains only when it is asked for", async () => {
+    vi.stubEnv("HSTS_MAX_AGE", "31536000");
+    expect(await sentHsts()).toBe("max-age=31536000");
+    vi.stubEnv("HSTS_INCLUDE_SUBDOMAINS", "1");
+    expect(await sentHsts()).toBe("max-age=31536000; includeSubDomains");
+  });
+
+  it("refuses a malformed or out-of-range max-age (fail closed)", async () => {
+    for (const raw of ["-1", "abc", "1.5", "007", "63072001", "999999999999"]) {
+      vi.stubEnv("HSTS_MAX_AGE", raw);
+      expect(await sentHsts(), `HSTS_MAX_AGE=${JSON.stringify(raw)}`).toBeNull();
+    }
+  });
+
+  it("reads the default, the way out and the declared value", () => {
+    // Unset or blank: the default (one year).
+    expect(parseHstsMaxAge(undefined)).toBe(31536000);
+    expect(parseHstsMaxAge(null)).toBe(31536000);
+    expect(parseHstsMaxAge("")).toBe(31536000);
+    expect(parseHstsMaxAge("   ")).toBe(31536000);
+    // "0": the documented way out.
+    expect(parseHstsMaxAge("0")).toBeNull();
+    // A plain positive integer up to the two-year cap.
+    expect(parseHstsMaxAge("31536000")).toBe(31536000);
+    expect(parseHstsMaxAge(" 31536000 ")).toBe(31536000);
+    expect(parseHstsMaxAge("63072000")).toBe(63072000);
+    // Everything else is refused.
+    for (const raw of ["-1", "+1", "1.5", "abc", "007", "63072001"]) {
+      expect(parseHstsMaxAge(raw), `HSTS_MAX_AGE=${JSON.stringify(raw)}`).toBeNull();
+    }
+  });
+
+  it("keeps the HSTS entry out of the static map", () => {
+    // The static map is the part that is the same everywhere; the HSTS entry
+    // is composed per deployment (its value follows the environment).
+    expect(Object.keys(SECURITY_HEADERS)).not.toContain("Strict-Transport-Security");
+    expect(hstsHeader({})).toEqual({
+      key: "Strict-Transport-Security",
+      value: "max-age=31536000",
+    });
+    expect(hstsHeader({ HSTS_MAX_AGE: "0" })).toBeNull();
+    expect(hstsHeader({ HSTS_MAX_AGE: "31536000" })).toEqual({
+      key: "Strict-Transport-Security",
+      value: "max-age=31536000",
+    });
+  });
 });

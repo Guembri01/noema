@@ -71,6 +71,7 @@ is empty until you sign up.
 | `AUTH_SECRET` | recommended | generated into `/data` | Session-cookie signing key. Set it explicitly on a server so a container rebuild does not sign everyone out. |
 | `APP_ORIGINS` | behind a proxy | — | Comma-separated `host:port` values the browser uses. The boot wrapper folds these into the Server Action origin allowlist at **run** time. |
 | `TRUSTED_PROXY_HOPS` | behind a proxy | `0` | Number of trusted reverse-proxy hops. `0` ignores `X-Forwarded-For`/`X-Real-IP`. The Edge middleware reads it at **build** time, so pass it as a build arg as well. |
+| `HSTS_MAX_AGE` | no | `31536000` | The `Strict-Transport-Security` max-age in **seconds** (`31536000` = one year). `0` = no HSTS header. The header list is written into the build, so pass it as a build arg as well. |
 | `PORT` | no | `3000` | Listen port. |
 | `HOSTNAME` | no | `0.0.0.0` | Listen address. |
 | `NOEMA_SKIP_MIGRATE` | no | — | Set to `1` to skip `prisma migrate deploy` (use with an external migration job). |
@@ -119,6 +120,29 @@ docker run --rm -p 3000:3000 -e TRUSTED_PROXY_HOPS=1 ... noema:local
 
 With compose, put `TRUSTED_PROXY_HOPS=1` in `.env`; the compose file passes it
 to the build and to the running container.
+
+### HTTPS and HSTS
+
+The container speaks plain HTTP — TLS is terminated at the proxy in front of
+it. The browser sees HTTPS, and the app tells it to pin HTTPS: every response
+carries `Strict-Transport-Security: max-age=31536000` (one year). A browser
+ignores that header when it arrives over plain HTTP, so an installation
+without TLS is not affected by it.
+
+`HSTS_MAX_AGE=0` is the way out for an installation that is deliberately
+served over plain HTTP: no `Strict-Transport-Security` header at all.
+`HSTS_MAX_AGE=<seconds>` sets the max-age (the two-year cap a browser honours
+is `63072000`). The header list is written into the build, so the value is a
+build arg:
+
+```bash
+docker build --build-arg HSTS_MAX_AGE=0 -t noema:local .
+```
+
+With compose, put `HSTS_MAX_AGE=0` in `.env`; the compose file passes it to
+the build. `HSTS_INCLUDE_SUBDOMAINS=1` additionally binds every subdomain of
+the host to HTTPS — off by default, because it breaks a sibling that is still
+HTTP-only.
 
 ### Migrations
 

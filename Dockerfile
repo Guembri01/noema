@@ -54,12 +54,19 @@ ENV NOEMA_STANDALONE=1
 # when the image sits behind N trusted reverse proxies; 0/empty ignores
 # X-Forwarded-For entirely.
 ARG TRUSTED_PROXY_HOPS=""
+# The HSTS header is sent by default (one year); `HSTS_MAX_AGE` sets the
+# max-age in seconds and `HSTS_MAX_AGE=0` switches the header off. The header
+# list is written into the build, so the value is a build arg.
+ARG HSTS_MAX_AGE=""
+ARG HSTS_INCLUDE_SUBDOMAINS=""
 # `prisma generate` needs DATABASE_URL for schema env resolution, and
 # `next build` prerenders server modules that read AUTH_SECRET at module scope.
 # Both values are fake; .env is dockerignored.
 RUN DATABASE_URL="postgresql://noema:build-dummy@127.0.0.1:5432/noema?schema=public" \
     AUTH_SECRET="b74-build-time-dummy-secret-not-a-real-key" \
     TRUSTED_PROXY_HOPS="$TRUSTED_PROXY_HOPS" \
+    HSTS_MAX_AGE="$HSTS_MAX_AGE" \
+    HSTS_INCLUDE_SUBDOMAINS="$HSTS_INCLUDE_SUBDOMAINS" \
     npm run build
 # Reuse the desktop packager to copy .next/static + public/ + Prisma CLI +
 # migrations into .next/standalone, write start.cjs, strip any .env/runtime

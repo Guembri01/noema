@@ -153,6 +153,118 @@ export function cspNonce(csp: string): string | null {
   return csp.match(/'nonce-([A-Za-z0-9+/_-]+={0,2})'/)?.[1] ?? null;
 }
 
+/* ------------------------------------------------------------------ *
+ * B33 — Strict-Transport-Security (HSTS)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Name of the environment variable that sets the HSTS `max-age` in
+ * **seconds**.
+ *
+ * The header is sent **by default** — with {@link HSTS_DEFAULT_MAX_AGE} (one
+ * year) — because a deployment that is served over HTTPS must pin HTTPS, and
+ * a deployment that is *not* served over HTTPS loses nothing: a browser MUST
+ * ignore an STS header that arrives over plain HTTP (RFC 6797 §7.2), so the
+ * desktop app on `http://127.0.0.1:<port>` and an HTTP-only self-host are
+ * not affected.
+ *
+ * `HSTS_MAX_AGE=0` is the one documented way out: no `Strict-Transport-Security`
+ * header at all, for an installation that is deliberately served over plain
+ * HTTP.
+ */
+export const HSTS_MAX_AGE_ENV = "HSTS_MAX_AGE";
+
+/**
+ * Name of the environment variable that adds `includeSubDomains` to the HSTS
+ * header. Off by default: the directive binds **every** subdomain of the host
+ * to HTTPS, which breaks a sibling that is still HTTP-only. The accepted
+ * values are the usual truthy ones (`1`, `true`, `on`, `yes`).
+ */
+export const HSTS_INCLUDE_SUBDOMAINS_ENV = "HSTS_INCLUDE_SUBDOMAINS";
+
+/**
+ * The `max-age` a deployment sends when it says nothing: one year. It is the
+ * value the header carries by default, and the shortest period the spec
+ * recommends (RFC 6797 §6.1.2).
+ */
+export const HSTS_DEFAULT_MAX_AGE = 31536000;
+
+/**
+ * The longest `max-age` a browser honours — two years. RFC 6797 §6.1.2 tells
+ * implementations to ignore a longer one, so a bigger number would be a
+ * promise the browser does not keep.
+ */
+const HSTS_MAX_MAX_AGE = 63072000;
+
+/** The values that switch a flag on (same convention as `auth-strategies.ts`). */
+const TRUTHY_ENV = new Set(["1", "true", "on", "yes"]);
+
+/**
+ * The effective HSTS `max-age` of a deployment (in seconds), or `null` when
+ * no header may be sent.
+ *
+ * The rules, in the order they are applied:
+ *
+ *   - **unset or blank** → {@link HSTS_DEFAULT_MAX_AGE} (one year). The header
+ *     is sent; a deployment that does not want it says `0`.
+ *   - **`0`** → `null`: no header at all. That is the documented way out for
+ *     an installation that is deliberately served over plain HTTP.
+ *   - **a plain positive integer** up to the two-year cap → that many
+ *     seconds. Surrounding whitespace is trimmed.
+ *   - **anything else** (`"-1"`, `"abc"`, `"1.5"`, `"007"`, a value above the
+ *     cap) → `null`: no header. A value that cannot be parsed is **refused**,
+ *     not clamped — clamping would silently reinterpret a typo and declare a
+ *     policy nobody wrote — and it is not silently replaced by the default
+ *     either, because that would hide the typo. A refused value sends no
+ *     header, never a broken one.
+ *
+ * @param raw The raw environment value.
+ * @returns The max-age in seconds, or `null` when no header may be sent.
+ */
+export function parseHstsMaxAge(raw: string | null | undefined): number | null {
+  if (typeof raw !== "string") return HSTS_DEFAULT_MAX_AGE;
+  const text = raw.trim();
+  if (text === "") return HSTS_DEFAULT_MAX_AGE;
+  if (text === "0") return null;
+  if (!/^[1-9][0-9]{0,9}$/.test(text)) return null;
+  const seconds = Number(text);
+  if (!Number.isSafeInteger(seconds) || seconds > HSTS_MAX_MAX_AGE) return null;
+  return seconds;
+}
+
+/**
+ * The environment a header is computed from. `Record<string, string |
+ * undefined>` and not `NodeJS.ProcessEnv`: Next's types make `NODE_ENV` a
+ * **required** property of the latter, which would make every caller pass a
+ * full process environment (the same shape `auth-strategies.ts` uses).
+ */
+export type HeaderEnv = Record<string, string | undefined>;
+
+/**
+ * The `Strict-Transport-Security` header of this deployment, or `null` when
+ * the header must not be sent (`HSTS_MAX_AGE=0`, or a value that is refused).
+ *
+ * The header belongs to the **map** in `next.config.ts` (`headers()`), not to
+ * the middleware: HSTS is a property of the *host*, not of a response class,
+ * and the map reaches every response — static pages, dynamic RSC renders,
+ * route handlers and the public `/s/<token>` share pages alike.
+ *
+ * @param env The environment to read; defaults to this process'.
+ */
+export function hstsHeader(
+  env: HeaderEnv = process.env,
+): { key: string; value: string } | null {
+  const seconds = parseHstsMaxAge(env[HSTS_MAX_AGE_ENV]);
+  if (seconds === null) return null;
+  const includeSubDomains = TRUTHY_ENV.has(
+    (env[HSTS_INCLUDE_SUBDOMAINS_ENV] ?? "").trim().toLowerCase(),
+  );
+  return {
+    key: "Strict-Transport-Security",
+    value: includeSubDomains ? `max-age=${seconds}; includeSubDomains` : `max-age=${seconds}`,
+  };
+}
+
 /**
  * B61 - security headers on EVERY response (M9,
  * roadmap R10), applied via `headers()` in `next.config.ts` so static pages,
@@ -162,6 +274,11 @@ export function cspNonce(csp: string): string | null {
  * `Content-Security-Policy` here is the STATIC (nonce-less) policy;
  * document responses are upgraded to the nonce variant by `src/middleware.ts`
  * (B98), which takes precedence on the paths it runs for.
+ *
+ * B33: this map is the part every deployment sends. The HSTS header is **not**
+ * in it — its value depends on the deployment (`HSTS_MAX_AGE`, one year by
+ * default), so `next.config.ts` adds it. It is sent unless the deployment
+ * says `HSTS_MAX_AGE=0`.
  */
 export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "Content-Security-Policy": buildCsp(undefined, { shell: insideDesktopShell() }),

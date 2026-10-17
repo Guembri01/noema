@@ -95,6 +95,15 @@ jobs:
       - name: Server boundaries
         run: node scripts/check-use-server.mjs
 
+      # The HSTS header follows the environment (`HSTS_MAX_AGE`), so the gate
+      # evaluates the real configuration instead of reading a source: the
+      # default must send one year, `HSTS_MAX_AGE=0` must send no header at
+      # all, a declared max-age must send exactly that one, and a value that
+      # cannot be parsed must send none (fail closed). The configuration is
+      # TypeScript, hence `tsx`.
+      - name: HSTS header
+        run: npm run check:hsts
+
       - name: Client bundle
         run: node scripts/check-client-bundle.mjs
 

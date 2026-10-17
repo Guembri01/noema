@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { SECURITY_HEADERS } from "./src/lib/security-headers";
+import { hstsHeader, SECURITY_HEADERS } from "./src/lib/security-headers";
 // Next.js only accepts a Server Action POST when the request's `Origin` matches
 // the `Host` header (CSRF protection), so this machine's own addresses have to be
 // listed explicitly — otherwise browsing at `http://<lan-ip>:3200` (or `127.0.0.1`
@@ -88,11 +88,30 @@ const nextConfig: NextConfig = {
   // misses the map above. B98: on document paths src/middleware.ts
   // supersedes the CSP with the per-response nonce variant; api/, _next/
   // and favicon keep serving exactly this static policy.
+  //
+  // B33: `Strict-Transport-Security` is the one header that is **not** in the
+  // map above, because its value depends on the deployment (`HSTS_MAX_AGE`,
+  // plus the optional `HSTS_INCLUDE_SUBDOMAINS`). It is sent by default —
+  // with one year — so a deployment that is served over HTTPS pins HTTPS; a
+  // deployment that is not loses nothing, because a browser ignores an STS
+  // header that arrives over plain HTTP (RFC 6797 §7.2). `HSTS_MAX_AGE=0` is
+  // the documented way out (no header at all), and `hstsHeader()` refuses a
+  // malformed value (fail closed): no header, never a broken policy.
+  //
+  // The value is read when `headers()` runs, and Next writes the result into
+  // `routes-manifest.json` at BUILD time — so in production the variable has
+  // to be present for the build (`npm run build`, `docker build`), not only
+  // for the start. That is the same freeze the Edge middleware has (see
+  // docs/OPERATIONS.md §1.1).
   async headers() {
+    const hsts = hstsHeader();
     return [
       {
         source: "/:path*",
-        headers: Object.entries(SECURITY_HEADERS).map(([key, value]) => ({ key, value })),
+        headers: [
+          ...Object.entries(SECURITY_HEADERS).map(([key, value]) => ({ key, value })),
+          ...(hsts ? [hsts] : []),
+        ],
       },
     ];
   },
