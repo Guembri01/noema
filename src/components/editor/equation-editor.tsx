@@ -16,6 +16,7 @@ import {
   insertSnippet,
   searchMathSymbols,
   type MathCategory,
+  type MathSymbol,
 } from "@/lib/math-symbols";
 import {
   applyDirAttr,
@@ -167,6 +168,209 @@ function equationStops(root: HTMLElement): {
   return { stops, nodes };
 }
 
+/* ------------------------------------------------------------------------- *
+ * Presentational surface
+ *
+ * The chrome is split out of `EquationEditor` (which owns the portal + state)
+ * so the node tests can `renderToStaticMarkup` the valid/invalid source and
+ * preview panes — a portal needs a live DOM, this component does not.
+ * ------------------------------------------------------------------------- */
+
+/** One palette section: a category plus its (already-filtered) symbols. */
+export type EquationSymbolGroup = {
+  category: MathCategory;
+  symbols: readonly MathSymbol[];
+};
+
+export type EquationDialogSurfaceProps = {
+  /** Whether the dialog edits an inline or a block equation. */
+  kind: "inline" | "block";
+  /** The current LaTeX source. */
+  latex: string;
+  /** Which pane is showing. */
+  view: EquationView;
+  /** KaTeX's message for the current source, or `null` when it parses. */
+  error: string | null;
+  /** The rendered preview markup (empty when the source does not parse). */
+  preview: string;
+  /** Per-block direction for the source and its preview. */
+  direction: DirAttr & { hint: DirectionHint; mixed: boolean };
+  /** Current symbol-search query. */
+  symbolQuery: string;
+  /** Matched symbols, bucketed into their sections. */
+  symbolGroups: readonly EquationSymbolGroup[];
+  /** Active locale for the chrome strings. */
+  locale: string;
+  /** Id shared by the source box and its error message. */
+  errorId: string;
+  /** The source `<textarea>`, owned by the stateful wrapper. */
+  inputRef: React.RefObject<HTMLTextAreaElement | null>;
+  onLatexChange: (value: string) => void;
+  onViewChange: (view: EquationView) => void;
+  onSymbolQueryChange: (value: string) => void;
+  onInsertSymbol: (command: string) => void;
+  onCommit: () => void;
+  onClose: () => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => void;
+};
+
+/**
+ * The equation dialog chrome. Token-only by construction: the `surface-raised-strong`
+ * panel on a `bg-overlay` scrim at `Z.modal`, the `Segmented` LaTeX/Preview
+ * switch, and the danger-ring source error (`border-danger` / `text-danger`).
+ */
+export function EquationDialogSurface({
+  kind,
+  latex,
+  view,
+  error,
+  preview,
+  direction,
+  symbolQuery,
+  symbolGroups,
+  locale,
+  errorId,
+  inputRef,
+  onLatexChange,
+  onViewChange,
+  onSymbolQueryChange,
+  onInsertSymbol,
+  onCommit,
+  onClose,
+  onKeyDown,
+}: EquationDialogSurfaceProps) {
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center bg-overlay p-4"
+      style={{ zIndex: Z.modal }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={t(locale, "equationTitle")}
+      onKeyDown={onKeyDown}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="surface-raised-strong animate-scale-in w-full max-w-md p-4">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium">
+            {kind === "block" ? t(locale, "blockEquationTitle") : t(locale, "inlineEquation")}
+          </p>
+          <Segmented
+            options={EQUATION_VIEW_OPTIONS}
+            value={view}
+            onValueChange={onViewChange}
+            ariaLabel={t(locale, "equationTitle")}
+            size="sm"
+          />
+        </div>
+        <p className="mt-0.5 text-xs text-muted">
+          {t(locale, "latexSyntaxHint")} <code>{"c = \\sqrt{a^2 + b^2}"}</code>
+        </p>
+
+        {view === "source" ? (
+          <>
+            <textarea
+              ref={inputRef}
+              rows={3}
+              value={latex}
+              dir={direction.dir}
+              aria-label={t(locale, "latexSourceAria")}
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? errorId : undefined}
+              placeholder="\frac{a}{b}"
+              onChange={(event) => onLatexChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  onCommit();
+                }
+              }}
+              className={cn(
+                "focus-ring mt-3 w-full rounded-md border bg-bg px-3 py-2 font-mono text-sm text-fg",
+                error ? "border-danger" : "border-border",
+                direction.className,
+              )}
+            />
+            {error ? (
+              <p id={errorId} role="alert" className="mt-1 text-xs text-danger">
+                {error}
+              </p>
+            ) : null}
+            <div className="mt-3 rounded-md border border-border">
+              <div className="border-b border-border px-3 py-2">
+                <input
+                  type="search"
+                  value={symbolQuery}
+                  onChange={(event) => onSymbolQueryChange(event.target.value)}
+                  aria-label={t(locale, "search")}
+                  placeholder="Search symbols…"
+                  className="focus-ring h-8 w-full rounded-sm border border-border bg-bg px-2 text-xs text-fg"
+                />
+              </div>
+              <div className="scrollbar-thin max-h-52 overflow-y-auto px-3 py-2">
+                {symbolGroups.length === 0 ? (
+                  <p className="py-2 text-center text-xs text-muted">No matching symbols</p>
+                ) : (
+                  symbolGroups.map((group) => (
+                    <div key={group.category} className="mb-2 last:mb-0">
+                      <p className="mb-1 text-xs font-medium text-muted">
+                        {CATEGORY_LABELS[group.category]}
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {group.symbols.map((symbol) => (
+                          <button
+                            key={symbol.latex}
+                            type="button"
+                            title={symbol.label}
+                            aria-label={`${symbol.label} (${symbol.latex})`}
+                            onClick={() => onInsertSymbol(symbol.latex)}
+                            className="focus-ring u-colors rounded-sm border border-border px-1.5 py-1 font-mono text-xs text-fg hover:bg-surface-2"
+                          >
+                            {symbol.latex}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div
+            dir={direction.dir}
+            className={cn(
+              "mt-3 min-h-32 overflow-x-auto rounded-md border border-border bg-surface px-3 py-6 text-center",
+              direction.className,
+            )}
+            aria-live="polite"
+            dangerouslySetInnerHTML={{ __html: error ? "" : preview }}
+          />
+        )}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm text-muted hover:bg-surface-2"
+          >
+            {t(locale, "cancel")}
+          </button>
+          <button
+            type="button"
+            onClick={onCommit}
+            disabled={!latex.trim()}
+            className="focus-ring u-colors h-9 rounded-sm bg-accent px-3 text-sm font-medium text-accent-fg hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {t(locale, "apply")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function EquationEditor({ editor, locale = "en" }: { editor: Editor; locale?: string }) {
   const [request, setRequest] = useState<EquationRequest | null>(null);
   const [latex, setLatex] = useState("");
@@ -311,134 +515,26 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
   };
 
   return createPortal(
-    <div
-      className="fixed inset-0 flex items-center justify-center bg-overlay p-4"
-      style={{ zIndex: Z.modal }}
-      role="dialog"
-      aria-modal="true"
-      aria-label={t(locale, "equationTitle")}
+    <EquationDialogSurface
+      kind={request.kind}
+      latex={latex}
+      view={view}
+      error={error}
+      preview={preview}
+      direction={direction}
+      symbolQuery={symbolQuery}
+      symbolGroups={symbolGroups}
+      locale={locale}
+      errorId={errorId}
+      inputRef={inputRef}
+      onLatexChange={setLatex}
+      onViewChange={setView}
+      onSymbolQueryChange={setSymbolQuery}
+      onInsertSymbol={insertSymbol}
+      onCommit={commit}
+      onClose={close}
       onKeyDown={onDialogKeyDown}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) close();
-      }}
-    >
-      <div className="surface-raised-strong animate-scale-in w-full max-w-md p-4">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-sm font-medium">
-            {request.kind === "block" ? t(locale, "blockEquationTitle") : t(locale, "inlineEquation")}
-          </p>
-          <Segmented
-            options={EQUATION_VIEW_OPTIONS}
-            value={view}
-            onValueChange={setView}
-            ariaLabel={t(locale, "equationTitle")}
-            size="sm"
-          />
-        </div>
-        <p className="mt-0.5 text-xs text-muted">
-          {t(locale, "latexSyntaxHint")} <code>c = \sqrt&#123;a^2 + b^2&#125;</code>
-        </p>
-
-        {view === "source" ? (
-          <>
-            <textarea
-              ref={inputRef}
-              rows={3}
-              value={latex}
-              dir={direction.dir}
-              aria-label={t(locale, "latexSourceAria")}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? errorId : undefined}
-              placeholder="\frac{a}{b}"
-              onChange={(event) => setLatex(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  commit();
-                }
-              }}
-              className={cn(
-                "focus-ring mt-3 w-full rounded-md border bg-bg px-3 py-2 font-mono text-sm text-fg",
-                error ? "border-danger" : "border-border",
-                direction.className,
-              )}
-            />
-            {error ? (
-              <p id={errorId} role="alert" className="mt-1 text-xs text-danger">
-                {error}
-              </p>
-            ) : null}
-            <div className="mt-3 rounded-md border border-border">
-              <div className="border-b border-border px-3 py-2">
-                <input
-                  type="search"
-                  value={symbolQuery}
-                  onChange={(event) => setSymbolQuery(event.target.value)}
-                  aria-label={t(locale, "search")}
-                  placeholder="Search symbols…"
-                  className="focus-ring h-8 w-full rounded-sm border border-border bg-bg px-2 text-xs text-fg"
-                />
-              </div>
-              <div className="scrollbar-thin max-h-52 overflow-y-auto px-3 py-2">
-                {symbolGroups.length === 0 ? (
-                  <p className="py-2 text-center text-xs text-muted">No matching symbols</p>
-                ) : (
-                  symbolGroups.map((group) => (
-                    <div key={group.category} className="mb-2 last:mb-0">
-                      <p className="mb-1 text-xs font-medium text-muted">
-                        {CATEGORY_LABELS[group.category]}
-                      </p>
-                      <div className="flex flex-wrap gap-1">
-                        {group.symbols.map((symbol) => (
-                          <button
-                            key={symbol.latex}
-                            type="button"
-                            title={symbol.label}
-                            aria-label={`${symbol.label} (${symbol.latex})`}
-                            onClick={() => insertSymbol(symbol.latex)}
-                            className="focus-ring u-colors rounded-sm border border-border px-1.5 py-1 font-mono text-xs text-fg hover:bg-surface-2"
-                          >
-                            {symbol.latex}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </>
-        ) : (
-          <div
-            dir={direction.dir}
-            className={cn(
-              "mt-3 min-h-32 overflow-x-auto rounded-md border border-border bg-surface px-3 py-6 text-center",
-              direction.className,
-            )}
-            aria-live="polite"
-            dangerouslySetInnerHTML={{ __html: error ? "" : preview }}
-          />
-        )}
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={close}
-            className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm text-muted hover:bg-surface-2"
-          >
-            {t(locale, "cancel")}
-          </button>
-          <button
-            type="button"
-            onClick={commit}
-            disabled={!latex.trim()}
-            className="focus-ring u-colors h-9 rounded-sm bg-accent px-3 text-sm font-medium text-accent-fg hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {t(locale, "apply")}
-          </button>
-        </div>
-      </div>
-    </div>,
+    />,
     document.body,
   );
 }
