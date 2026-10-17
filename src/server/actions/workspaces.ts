@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { requireUser, verifyPassword } from "@/lib/auth";
 import { workspaceSchema } from "@/lib/validation";
 import { uniqueWorkspaceSlug } from "@/server/unique";
 import { welcomeDoc } from "@/lib/welcome";
@@ -602,12 +602,48 @@ export async function startOwnershipTransferAction(input: {
 }
 
 /**
+ * B14 — compare a candidate password with the stored hash of the account that
+ * acts.
+ *
+ * The candidate travels from the client; the verdict does not: it is the
+ * server's own comparison against `User.passwordHash`, so a client can no
+ * longer assert that a password was confirmed. A stored value that is not a
+ * bcrypt hash — an SSO account's `sso:<token>`, for instance — can never match
+ * a password, and `bcrypt.compare` throws on some of those values; such an
+ * account therefore fails closed.
+ */
+async function verifyAccountPassword(
+  userId: string,
+  candidate: string | undefined,
+): Promise<boolean> {
+  const account = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { passwordHash: true },
+  });
+  const stored = account?.passwordHash;
+  if (!stored) return false;
+  try {
+    return await verifyPassword(candidate ?? "", stored);
+  } catch {
+    // A hash bcrypt cannot work with (unknown variant, illegal cost) can
+    // never match a password — the comparison fails closed.
+    return false;
+  }
+}
+
+/**
  * Accept a pending transfer as its recipient. On success the recipient becomes
  * OWNER and the previous owner is demoted to ADMIN, in one transaction.
+ *
+ * B14 — the password step is the server's own. The client sends the candidate
+ * password; the server compares it with the stored hash of the account that
+ * acts (the recipient, never the sender) and hands only the *result* to the
+ * engine. The old `passwordOk` option is gone: a client that claims the
+ * password was confirmed is ignored.
  */
 export async function acceptOwnershipTransferAction(
   transferId: string,
-  options: { passwordOk?: boolean } = {},
+  options: { password?: string } = {},
 ): Promise<WorkspaceResult> {
   const user = await requireUser();
   const request = transferRequests.get(transferId);
@@ -630,10 +666,17 @@ export async function acceptOwnershipTransferAction(
   });
   if (!target) return { error: "That person is no longer a member of this workspace." };
 
+  // The verdict belongs to the server: the candidate is compared with the
+  // acting account's own hash. A non-recipient is never asked for a password.
+  const passwordOk =
+    request.requirePassword === true && user.id === request.toUserId
+      ? await verifyAccountPassword(user.id, options.password)
+      : undefined;
+
   const accepted = acceptTransfer(request, {
     byUserId: user.id,
     now,
-    passwordOk: options.passwordOk,
+    passwordOk,
     memberRole: target.role,
   });
   if (!accepted.ok) return { error: accepted.error };

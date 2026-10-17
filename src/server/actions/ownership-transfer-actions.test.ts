@@ -7,13 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * recipient-only accept, the atomic swap and lazy expiry.
  */
 
-const auth = vi.hoisted(() => ({ user: { id: "actor-1" } }));
+const auth = vi.hoisted(() => ({ user: { id: "actor-1" }, verifyPassword: vi.fn() }));
 
 const db = vi.hoisted(() => ({
   memberFindUnique: vi.fn(),
   memberFindFirst: vi.fn(),
   memberUpdate: vi.fn(),
   memberUpdateMany: vi.fn(),
+  userFindUnique: vi.fn(),
   workspaceFindUnique: vi.fn(),
   workspaceUpdate: vi.fn(),
   transaction: vi.fn(),
@@ -27,11 +28,15 @@ vi.mock("@/lib/db", () => ({
       update: db.memberUpdate,
       updateMany: db.memberUpdateMany,
     },
+    user: { findUnique: db.userFindUnique },
     workspace: { findUnique: db.workspaceFindUnique, update: db.workspaceUpdate },
     $transaction: db.transaction,
   },
 }));
-vi.mock("@/lib/auth", () => ({ requireUser: vi.fn(async () => auth.user) }));
+vi.mock("@/lib/auth", () => ({
+  requireUser: vi.fn(async () => auth.user),
+  verifyPassword: auth.verifyPassword,
+}));
 vi.mock("@/lib/activity", () => ({ logActivity: vi.fn(async () => undefined) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -54,12 +59,25 @@ function workspaceWithMembers(id: string) {
   };
 }
 
+/** The two accounts' stored hashes — only the recipient's may be compared. */
+const RECIPIENT_HASH = "stored-hash-of-the-recipient";
+const SENDER_HASH = "stored-hash-of-the-sender";
+/** The password that matches the recipient's hash. */
+const RECIPIENT_PASSWORD = "the-recipients-password";
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
   auth.user = { id: "actor-1" };
   vi.clearAllMocks();
   db.memberFindUnique.mockResolvedValue({ role: "OWNER" });
+  db.userFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+    where.id === "user-2" ? { passwordHash: RECIPIENT_HASH } : { passwordHash: SENDER_HASH },
+  );
+  auth.verifyPassword.mockImplementation(
+    async (candidate: string, hash: string) =>
+      candidate === RECIPIENT_PASSWORD && hash === RECIPIENT_HASH,
+  );
   db.workspaceFindUnique.mockImplementation(
     async (args: { where: { id: string }; select?: { members?: unknown } }) =>
       args?.select?.members ? workspaceWithMembers(args.where.id) : { ownerId: "actor-1" },
@@ -118,6 +136,114 @@ describe("acceptOwnershipTransferAction", () => {
       where: { workspaceId: "ws-accept", userId: "actor-1" },
       data: { role: "ADMIN" },
     });
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("acceptOwnershipTransferAction — the password step (B14)", () => {
+  /** Open a transfer that demands a password and hand it to the recipient. */
+  async function passwordTransfer(workspaceId: string) {
+    auth.user = { id: "actor-1" };
+    const started = await startOwnershipTransferAction({
+      workspaceId,
+      toUserId: "user-2",
+      requirePassword: true,
+    });
+    if (!("ok" in started)) throw new Error(started.error);
+    auth.user = { id: "user-2" };
+    return started.id;
+  }
+
+  it("refuses an accept whose 'password confirmed' flag comes from the client", async () => {
+    const id = await passwordTransfer("ws-b14-forged");
+
+    // The client used to be able to send `passwordOk: true` and the server
+    // believed it. The option is gone; the verdict is the server's own.
+    const forged = { passwordOk: true } as unknown as { password?: string };
+    await expect(acceptOwnershipTransferAction(id, forged)).resolves.toEqual({
+      error: "A password is required to accept this transfer.",
+    });
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it("accepts when the recipient's own password is correct", async () => {
+    const id = await passwordTransfer("ws-b14-ok");
+
+    await expect(
+      acceptOwnershipTransferAction(id, { password: RECIPIENT_PASSWORD }),
+    ).resolves.toEqual({ ok: true });
+    // The recipient's own account is verified — the sender's hash is never
+    // compared, and the owner stays an ADMIN.
+    expect(db.userFindUnique).toHaveBeenCalledWith({
+      where: { id: "user-2" },
+      select: { passwordHash: true },
+    });
+    expect(auth.verifyPassword).toHaveBeenCalledWith(RECIPIENT_PASSWORD, RECIPIENT_HASH);
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+    expect(db.memberUpdate).toHaveBeenCalledWith({ where: { id: "m2" }, data: { role: "OWNER" } });
+  });
+
+  it("refuses a wrong password", async () => {
+    const id = await passwordTransfer("ws-b14-wrong");
+
+    await expect(
+      acceptOwnershipTransferAction(id, { password: "not-the-password" }),
+    ).resolves.toEqual({ error: "A password is required to accept this transfer." });
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses a missing password", async () => {
+    const id = await passwordTransfer("ws-b14-missing");
+
+    await expect(acceptOwnershipTransferAction(id)).resolves.toEqual({
+      error: "A password is required to accept this transfer.",
+    });
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the stored hash cannot be compared", async () => {
+    const id = await passwordTransfer("ws-b14-broken");
+    // An SSO account's `sso:<token>` and a hash with an unknown variant make
+    // `bcrypt.compare` reject; such an account must never pass the step.
+    auth.verifyPassword.mockRejectedValue(new Error("Invalid salt revision: z$"));
+
+    await expect(
+      acceptOwnershipTransferAction(id, { password: RECIPIENT_PASSWORD }),
+    ).resolves.toEqual({ error: "A password is required to accept this transfer." });
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it("does not ask a non-recipient for a password", async () => {
+    auth.user = { id: "actor-1" };
+    const started = await startOwnershipTransferAction({
+      workspaceId: "ws-b14-other",
+      toUserId: "user-2",
+      requirePassword: true,
+    });
+    if (!("ok" in started)) throw new Error(started.error);
+
+    // The sender is not the recipient: the refusal names that, and no
+    // password is compared for it.
+    await expect(
+      acceptOwnershipTransferAction(started.id, { password: RECIPIENT_PASSWORD }),
+    ).resolves.toEqual({ error: "Only the intended recipient can accept this transfer." });
+    expect(auth.verifyPassword).not.toHaveBeenCalled();
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it("still accepts a transfer that asks for no password", async () => {
+    auth.user = { id: "actor-1" };
+    const started = await startOwnershipTransferAction({
+      workspaceId: "ws-b14-open",
+      toUserId: "user-2",
+    });
+    if (!("ok" in started)) throw new Error(started.error);
+
+    // The request asks for no password, so none is compared — the transfer
+    // works exactly as it did before.
+    auth.user = { id: "user-2" };
+    await expect(acceptOwnershipTransferAction(started.id)).resolves.toEqual({ ok: true });
+    expect(auth.verifyPassword).not.toHaveBeenCalled();
     expect(db.transaction).toHaveBeenCalledTimes(1);
   });
 });
