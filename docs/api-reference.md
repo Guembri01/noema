@@ -314,6 +314,30 @@ Errors: **400** `workspaceId is required` · **403** `Forbidden` · 401 · 429.
 **201** `{"page":{"id":"…","title":"New doc","type":"PAGE"}}`
 Errors: 400 (`Invalid JSON body`, `workspaceId is required`) · 401 · 403 · 429.
 
+#### Retrying safely — `Idempotency-Key`
+
+Send an `Idempotency-Key: <opaque>` header and a retry cannot create the page
+twice ([`src/lib/idempotency.ts`](../src/lib/idempotency.ts)):
+
+| situation | result |
+|---|---|
+| no header | the handler runs, nothing is remembered |
+| first request | runs, outcome stored for 24 h |
+| repeat, same key + same body | the stored status and body are replayed, with `Idempotency-Replayed: true` |
+| repeat while the first is still running | **409** `idempotency_in_progress` (honours `Retry-After: 1`) |
+| same key, different method/path/user/body | **422** `idempotency_key_reuse` |
+
+A stored response is replayed verbatim, including a **4xx** — so a rejected
+request stays rejected rather than becoming a surprise second attempt. A **5xx**
+and a **429** are deliberately *not* stored: a crash is not an outcome, and rate
+limiting belongs to the attempt, not to the mutation.
+
+Keys are scoped to the authenticated principal and the endpoint, so two clients
+may pick the same key without colliding. Storage is process-local (a bounded
+24 h FIFO map), which suits the single-process server and the standalone desktop
+build; behind multiple instances it would move to a shared store with no change
+to this contract.
+
 ### `GET /api/v1/pages/[pageId]` — read one page incl. document
 [`route.ts`](../src/app/api/v1/pages/[pageId]/route.ts)
 
