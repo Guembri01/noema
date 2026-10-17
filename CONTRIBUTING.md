@@ -53,6 +53,7 @@ workflow-permission gate runs there as part of `npm test`.
 | `npm run check:i18n` | Every `t(locale, "key")` exists in the catalogue |
 | `npm run check:client` | No server-only module leaked into a client bundle |
 | `npm run check:use-server` | Every server action file is marked correctly |
+| `npm run check:hooks` | The pre-commit hook is documented as the optional local convenience it is, and CI still enforces the secret and authoring-window checks |
 
 `npm run check:fast` is the inner loop: typecheck + lint + the unit tests that
 touch your changed files. It is the one to run while you work.
@@ -61,6 +62,26 @@ Some checks need a running server and are not part of the static set:
 `check:a11y`, `check:routes`, `check:storage`, `check:search`,
 `check:chat-stream`, `check:tickets`, `check:mail`, `check:providers` and the
 Playwright suite (`npm run e2e`, which expects the production server on `:3200`).
+
+### The local pre-commit hook (optional)
+
+The repository ships `.githooks/pre-commit`: it runs the secret gate and the
+authoring-window check before a commit is made. It is a **convenience, not the
+check** — in a fresh clone it does not run at all, because `core.hooksPath` is
+a local Git setting that a repository cannot version, and
+`git commit --no-verify` skips it. Enable it once per clone if you want it:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+**CI runs the same two checks.** The `check` job in
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs the secret gate
+and the authoring-window gate on every push and every pull request, and
+neither step is allowed to fail silently. The hook only saves you the
+round-trip; whether a red CI run blocks the merge is the repository's
+branch-protection setting. `npm run check:hooks` reports whether the hook is
+active in your clone and fails if CI ever stops enforcing the two checks.
 
 ### Commit metadata
 

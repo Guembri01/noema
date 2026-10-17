@@ -1101,9 +1101,17 @@ not a bot, and the policy applies to it like to any other human.
 
 ### 11.3 Making a commit
 
-The versioned hook `.githooks/pre-commit` (enable once with
-`git config core.hooksPath .githooks`) refuses a commit that would be stamped
-with the current wall clock. Declare an in-window timestamp instead:
+The versioned hook `.githooks/pre-commit` refuses a commit that would be stamped
+with the current wall clock, and it runs the secret gate too. It is
+**optional**: `core.hooksPath` is a local Git setting, so the repository cannot
+switch it on for you — enable it once per clone with
+`git config core.hooksPath .githooks` — and `git commit --no-verify` skips it
+altogether. The check that is enforced is the CI step:
+`.github/workflows/ci.yml` runs the secret gate and the authoring-window gate
+on every push and every pull request, and neither step is allowed to fail
+silently.
+
+Declare an in-window timestamp instead:
 
 ```sh
 GIT_AUTHOR_DATE="2026-10-17T19:00:00+02:00" \

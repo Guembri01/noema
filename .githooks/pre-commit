@@ -1,5 +1,12 @@
 #!/bin/sh
-# Noema pre-commit gate (versioned via `core.hooksPath = .githooks`).
+# Noema pre-commit hook — an opt-in convenience, NOT the check.
+#
+# It does not run in a fresh clone: `core.hooksPath` is a local Git setting, so
+# the repository cannot switch it on for you. Enable it once per clone with
+#   git config core.hooksPath .githooks
+# and remember that `git commit --no-verify` skips this hook. The check that is
+# enforced is the CI step (.github/workflows/ci.yml): the secret gate and the
+# authoring-window gate run there on every push and every pull request.
 #
 # Two checks only, both fast and both about publishing:
 #   1. authoring-window policy — the pending commit must declare an in-window

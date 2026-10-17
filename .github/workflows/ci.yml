@@ -3,8 +3,10 @@
 # gate. Deliberately NO e2e: Playwright needs a real postgres (prisma db push +
 # seed) and the suite runs serially (workers: 1, shared demo workspace) — see the
 # commented follow-up at the bottom of this file.
-# The same secret gate ships as a plain git hook: .githooks/pre-commit
-# (versioned via `git config core.hooksPath .githooks`).
+# The secret gate also ships as an optional local git hook: .githooks/pre-commit
+# (enable it with `git config core.hooksPath .githooks` — a local setting a
+# repository cannot version, and `git commit --no-verify` skips it). The step
+# below is the check.
 name: CI
 
 on:
@@ -83,6 +85,13 @@ jobs:
       # author field.
       - name: Authoring windows
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-commit-dates.mjs
+
+      # The pre-commit hook is a convenience of the clone, not a check:
+      # `core.hooksPath` is a local setting and `--no-verify` skips it. The two
+      # steps above are the check. This one keeps the documentation saying so,
+      # and keeps the two steps from quietly losing their teeth.
+      - name: Hook gate
+        run: node scripts/check-hook-gate.mjs
 
       # The remaining static gates. All are offline and take seconds; they are
       # required locally, so a pull request that fails one fails here too.
