@@ -11,6 +11,17 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Security
+
+- When a page is created or moved, its parent is now checked against the
+  workspace: a page can no longer be filed under a page of another workspace.
+  It therefore no longer turns up in that workspace's database view or in its
+  CSV/JSON export, and it is no longer swept along by the foreign workspace's
+  cascade delete. The database and export views filter their rows by the
+  workspace as well.
+
+
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour

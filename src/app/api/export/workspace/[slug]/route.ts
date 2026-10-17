@@ -105,7 +105,10 @@ export async function GET(
           orderBy: { position: "asc" },
         }),
         prisma.page.findMany({
-          where: { parentId: page.id, deletedAt: null },
+          // A database's rows belong to the database's own workspace: a row
+          // that was linked across workspaces (the unchecked `parentId` hole,
+          // B08) must not leak into the export.
+          where: { parentId: page.id, workspaceId: workspace.id, deletedAt: null },
           orderBy: { position: "asc" },
           include: { propertyValues: true },
         }),

@@ -7,6 +7,7 @@ import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { assembleDoc, describeImport, type PdfImportSummary } from "@/lib/pdf-import";
 import { extractedTextToPages, pdfBlocksToRichNodes } from "@/lib/pdf-import-blocks";
+import { assertScopedParent } from "@/lib/page-parent";
 import type { ImportCounts } from "@/lib/importers";
 
 /**
@@ -86,6 +87,13 @@ export async function importPdfTextAction(input: {
   });
   if (!workspace) return { error: "Workspace not found." };
 
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported page into another
+  // tenant's tree (B08). The parent comes straight from the request body
+  // (`POST /api/import/pdf`), so it is checked before anything is written.
+  const parent = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  if ("error" in parent) return parent;
+
   const pages = extractedTextToPages(text);
   const doc = assembleDoc(pages);
   const content = pdfBlocksToRichNodes(doc.blocks);
@@ -93,7 +101,7 @@ export async function importPdfTextAction(input: {
     return { error: "No text-layer content could be recovered from that input." };
   }
 
-  const parentId = input.parentId ?? null;
+  const parentId = parent.parentId;
   const title = (titleFromFilename(input.filename) ?? doc.title).slice(0, 200) || "Imported PDF";
 
   let pageId = "";

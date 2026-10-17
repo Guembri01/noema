@@ -10,6 +10,7 @@ import { linkifyReferences } from "@/lib/chat-context";
 import { buildChatRequest } from "@/lib/chat-runtime";
 import { chatComplete, resolveAiConfig } from "@/lib/ai-provider";
 import { effectiveChatModel } from "@/lib/chat-model";
+import { assertScopedParent } from "@/lib/page-parent";
 import {
   planChatAction,
   proposalBody,
@@ -295,7 +296,15 @@ export async function saveChatAnswerAction(
     "AI answer";
 
   // Sit next to the discussion's own page when it has one, otherwise at the root.
-  const parentId = message.thread.pageId ?? null;
+  // `ChatThread.pageId` is a plain foreign key, so the thread row does not prove
+  // that the page lives in the thread's workspace — check it before the new
+  // page is written under it (B08).
+  const parent = await assertScopedParent({
+    workspaceId: message.thread.workspaceId,
+    parentId: message.thread.pageId ?? null,
+  });
+  if ("error" in parent) return parent;
+  const parentId = parent.parentId;
   const last = await prisma.page.findFirst({
     where: { workspaceId: message.thread.workspaceId, parentId },
     orderBy: { position: "desc" },
