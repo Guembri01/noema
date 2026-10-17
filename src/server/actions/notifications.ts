@@ -97,6 +97,11 @@ export async function updateNotificationPrefs(
  * filtered against the last 24 h of `page.updated` rows for the page so a busy
  * document notifies each follower **at most once per day** (R82.12).
  *
+ * The followers are re-checked against the workspace's current members first: a
+ * `PageFollow` row outlives the membership that justified it, and the notice
+ * carries the page's title — so a person who was removed from the workspace (or
+ * who left) is told nothing about its pages any more.
+ *
  * Safety: the only server-action entry point besides the read/prefs helpers, so
  * it re-derives the actor from the session and re-checks that they may edit the
  * page — a forged call cannot notify another workspace's followers. It never
@@ -230,16 +235,29 @@ export async function notifyPageUpdated(pageId: string): Promise<void> {
       .filter((id) => id !== actor.id);
     if (followerIds.length === 0) return;
 
+    // A `PageFollow` row outlives the membership that justified it: a person
+    // who was removed from the workspace (or who left) still has the row, so
+    // the followers are re-checked against the workspace's current members
+    // before anybody is notified. The notice carries the page's title, so it
+    // is a read of the workspace — only its members may receive it.
+    const members = await prisma.workspaceMember.findMany({
+      where: { workspaceId: page.workspaceId, userId: { in: followerIds } },
+      select: { userId: true },
+    });
+    const memberIds = new Set(members.map((member) => member.userId));
+    const currentFollowers = followerIds.filter((id) => memberIds.has(id));
+    if (currentFollowers.length === 0) return;
+
     const now = new Date();
     const [users, recent] = await Promise.all([
       prisma.user.findMany({
-        where: { id: { in: followerIds } },
+        where: { id: { in: currentFollowers } },
         select: { id: true, notificationPrefs: true },
       }),
       prisma.notification.findMany({
         where: {
           type: "page.updated",
-          userId: { in: followerIds },
+          userId: { in: currentFollowers },
           createdAt: { gte: new Date(now.getTime() - PAGE_UPDATED_DEDUPE_MS) },
           payload: { path: ["pageId"], equals: pageId },
         },
@@ -255,7 +273,7 @@ export async function notifyPageUpdated(pageId: string): Promise<void> {
     const alreadyNotified = new Set(recent.map((row) => row.userId));
     const recipients = resolveRecipients(
       { type: "page.updated", pageId, actorId: actor.id, at: now },
-      { followers: followerIds, prefs },
+      { followers: currentFollowers, prefs },
     ).filter((id) => !alreadyNotified.has(id));
 
     if (recipients.length === 0) return;

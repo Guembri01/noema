@@ -20,6 +20,7 @@ const PAGE_ID = "page-1";
 const db = vi.hoisted(() => ({
   pageFindUnique: vi.fn(),
   pageFollowFindMany: vi.fn(),
+  workspaceMemberFindMany: vi.fn(),
   userFindMany: vi.fn(),
   notificationFindMany: vi.fn(),
   notificationCreateMany: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     page: { findUnique: db.pageFindUnique },
     pageFollow: { findMany: db.pageFollowFindMany },
+    workspaceMember: { findMany: db.workspaceMemberFindMany },
     user: { findMany: db.userFindMany },
     notification: {
       findMany: db.notificationFindMany,
@@ -74,6 +76,11 @@ beforeEach(() => {
     deletedAt: null,
   });
   db.pageFollowFindMany.mockResolvedValue([]);
+  db.workspaceMemberFindMany.mockResolvedValue([
+    { userId: "f1" },
+    { userId: "f2" },
+    { userId: "f3" },
+  ]);
   db.userFindMany.mockResolvedValue([]);
   db.notificationFindMany.mockResolvedValue([]);
   db.notificationCreateMany.mockResolvedValue({ count: 0 });
@@ -196,5 +203,58 @@ describe("notifyPageUpdated — guards", () => {
     db.userFindMany.mockResolvedValue([{ id: "f1", notificationPrefs: null }]);
     db.notificationCreateMany.mockRejectedValue(new Error("db down"));
     await expect(notifyPageUpdated(PAGE_ID)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * B37 — a follow row outlives the membership that justified it, so the
+ * followers are re-checked before anybody is notified. The notice carries the
+ * page's title, so a person who was removed from the workspace (or who left)
+ * must not be told about its pages any more.
+ */
+describe("notifyPageUpdated — the membership re-check (B37)", () => {
+  const SECRET_TITLE = "Board strategy Q3";
+
+  beforeEach(() => {
+    db.pageFindUnique.mockResolvedValue({
+      id: PAGE_ID,
+      workspaceId: "ws-1",
+      title: SECRET_TITLE,
+      deletedAt: null,
+    });
+    db.pageFollowFindMany.mockResolvedValue([{ userId: "f1" }]);
+    db.userFindMany.mockResolvedValue([{ id: "f1", notificationPrefs: null }]);
+  });
+
+  it("tells a follower who is still a member of the workspace", async () => {
+    db.workspaceMemberFindMany.mockResolvedValue([{ userId: "f1" }]);
+
+    await notifyPageUpdated(PAGE_ID);
+
+    expect(writtenRecipients()).toEqual(["f1"]);
+    expect(db.notificationCreateMany.mock.calls[0][0].data[0]).toMatchObject({
+      payload: { workspaceId: "ws-1", pageId: PAGE_ID, title: SECRET_TITLE },
+    });
+  });
+
+  it("tells a follower who was removed from the workspace nothing", async () => {
+    db.workspaceMemberFindMany.mockResolvedValue([]);
+
+    await notifyPageUpdated(PAGE_ID);
+
+    expect(db.notificationCreateMany).not.toHaveBeenCalled();
+  });
+
+  it("drops the removed follower but keeps the member", async () => {
+    db.pageFollowFindMany.mockResolvedValue([{ userId: "f1" }, { userId: "f2" }]);
+    db.userFindMany.mockResolvedValue([
+      { id: "f1", notificationPrefs: null },
+      { id: "f2", notificationPrefs: null },
+    ]);
+    db.workspaceMemberFindMany.mockResolvedValue([{ userId: "f2" }]);
+
+    await notifyPageUpdated(PAGE_ID);
+
+    expect(writtenRecipients()).toEqual(["f2"]);
   });
 });
