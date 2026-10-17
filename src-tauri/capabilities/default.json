@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Core permissions the shell needs to boot the app: its own window, the local server, dialogs for file picking, logging — and `default`, the app's own permission set (every command in `src/commands.rs`), which is what the shell's first-run/diagnostics page (`dist/index.html`) calls. Declaring the app manifest in `build.rs` switched the ACL on for local origins too, so this replaced their former implicit access.",
+  "description": "Core permissions the shell needs to boot the app: its own window, the local server, dialogs for file picking, logging — and `default`, the app's own permission set (every command in `src/commands.rs`), which is what the shell's first-run/diagnostics page (`dist/index.html`) calls. Declaring the app manifest in `build.rs` switched the ACL on for local origins too, so this replaced their former implicit access. The store plugin is deliberately **not** granted: `tauri-plugin-store` does no scope check of its own (`store|load` takes any path, absolute or not), and the store it keeps (`preferences.json`) holds the unredacted database connection string. The shell reaches the store through Rust (`state::set_pref`), which the ACL does not gate, so the permission would expose the password and buy nothing.",
   "local": true,
   "windows": ["main"],
   "permissions": [
@@ -42,7 +42,6 @@
     "opener:allow-reveal-item-in-dir",
     "dialog:default",
     "fs:default",
-    "store:default",
     "log:default",
     "window-state:default"
   ]

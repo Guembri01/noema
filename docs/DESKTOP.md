@@ -163,8 +163,8 @@ Other deliberate choices:
 | Server exposure | loopback only, no `0.0.0.0`; the port is this install's own (stable origin) or a free ephemeral one when it is taken |
 | Webview ↔ server | explicit `APP_ORIGINS` allow-list (the loopback origin) + CSP in `tauri.conf.json` |
 | Webview ↔ shell | only the commands in `src-tauri/src/commands.rs`; the served app's IPC is granted to the loopback origin by `desktop-remote.json` (a capability with `remote.urls`) |
-| Secrets | a database password can live in the connection string; it is **redacted** before diagnostics leave the shell (unit-tested in `commands.rs`) |
-| Capabilities | `default.json` = least privilege for boot; `desktop-everything.json` = the broad set the product asked for (dialogs, shell, opener) — **local only**, for the shell's own page; `desktop-remote.json` = the served app's narrow set (the five shell commands it calls + the two `core:event` permissions `listenShell` needs), **no** filesystem, shell, store, opener, dialog, `os` or `log` — and no `core:default` either. Drop `desktop-everything.json` for a hardened build |
+| Secrets | a database password can live in the connection string; it is **redacted** before it leaves the shell at all — `database_url` hands out the redacted form, and `get_pref` refuses the key outright (unit-tested in `commands.rs`) |
+| Capabilities | `default.json` = least privilege for boot; `desktop-everything.json` = the broad set the product asked for (dialogs, shell, opener) — **local only**, for the shell's own page; `desktop-remote.json` = the served app's narrow set (the five shell commands it calls + the two `core:event` permissions `listenShell` needs), **no** filesystem, shell, store, opener, dialog, `os` or `log` — and no `core:default` either. The **store plugin is granted to nobody**: `tauri-plugin-store` does no scope check of its own (`store|load` takes any path), the shell reaches the store through Rust — which the ACL does not gate — and the store's `preferences.json` holds the unredacted connection string. Drop `desktop-everything.json` for a hardened build |
 | Telemetry | off (`NEXT_TELEMETRY_DISABLED=1`) |
 | Updates | **deferred on purpose** — see §9 |
 
@@ -202,6 +202,16 @@ menu-item id reaches the commands in `src-tauri/src/shell.rs`, which dispatches
 on the raw id) and to the path plugin (it resolves the user's home directory).
 The broad set stays with the shell's own page in
 `capabilities/desktop-everything.json`, which grants no remote URL.
+
+The **store plugin** is the one permission no origin holds at all — not the
+served app, not the shell's own page. `tauri-plugin-store` checks no scope of
+its own: `store|load` takes any path (an absolute one is used as it is), so
+`store:default` would be a read — and `store|save` a write — primitive over
+any JSON file on the machine. The store this app keeps holds the **unredacted**
+connection string, and nothing needs the plugin's JavaScript face: the shell
+reads and writes the store through Rust (`state::set_pref`), which the ACL does
+not gate. The preference store stays reachable for the shell's own page — as
+the audited app commands `get_pref`/`set_pref`.
 
 `scripts/desktop/capabilities.test.mjs` pins the split — across the capability
 **files** *and* the capabilities declared inline in `tauri.conf.json`
