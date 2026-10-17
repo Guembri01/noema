@@ -15,7 +15,7 @@ import { encryptTwoFactorSecret, openTwoFactorSecret } from "@/lib/secrets";
 import { verifyTotp } from "@/lib/totp";
 import { welcomeDoc } from "@/lib/welcome";
 import { uniqueWorkspaceSlug } from "@/server/unique";
-import { passwordStrategyEnabled } from "@/lib/auth-strategies";
+import { isSafeReturnTo, passwordStrategyEnabled } from "@/lib/auth-strategies";
 import {
   authLimitMessage,
   authLockoutMs,
@@ -359,9 +359,11 @@ export async function loginAction(
     orderBy: { createdAt: "asc" },
   });
   const slug = membership?.workspace.slug ?? owned?.slug;
-  // Only allow same-site relative destinations (no open redirects).
+  // B28 — only same-site relative destinations (no open redirects). The
+  // hardened check refuses a backslash and a percent-encoded "//" as well, so
+  // a `next` that only looks like a path never leaves the origin.
   const next = String(formData.get("next") ?? "").trim();
-  const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : null;
+  const safeNext = isSafeReturnTo(next) ? next : null;
   redirect(safeNext ?? (slug ? `/w/${slug}` : "/app"));
 }
 
