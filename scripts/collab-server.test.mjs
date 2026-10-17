@@ -17,6 +17,12 @@
 // origin check. They were written BEFORE any of that surface existed and use
 // only B53 exports + literal close codes (4429 / 4400), so the first run
 // failed on behavior, not on imports — while these 30 stayed green.
+//
+// B64 (red-first AGAIN): the last block pins the network posture of the relay
+// — the default bind address (loopback, not every interface), the per-message
+// payload cap and the fail-closed origin policy. It was written BEFORE the
+// fix, so the first run failed on the old permissive origin rule and on the
+// missing `resolveHost` / `MAX_PAYLOAD_BYTES` exports.
 import { afterEach, describe, expect, it } from "vitest";
 import { SignJWT } from "jose";
 import { readFileSync } from "node:fs";
@@ -29,12 +35,18 @@ import * as decoding from "lib0/decoding";
 import {
   CLOSE_FORBIDDEN,
   CLOSE_UNAUTHORIZED,
+  DEFAULT_HOST,
+  MAX_PAYLOAD_BYTES,
   SHIPPED_AUTH_SECRET_PLACEHOLDERS,
   WEAK_AUTH_SECRETS,
   createCollabServer,
   decideAccess,
+  isLoopbackOrigin,
+  isOriginAllowed,
   isUsableAuthSecret,
+  parseAppOrigins,
   parseRoomPageId,
+  resolveHost,
   verifySessionCookie,
 } from "./collab-server.mjs";
 
@@ -883,13 +895,138 @@ describe("origin check (APP_ORIGINS)", () => {
     });
   });
 
-  it("stays permissive when APP_ORIGINS is unset (documented default posture)", async () => {
+  it("fails closed when APP_ORIGINS is unset: only the loopback origin connects (B64)", async () => {
     await withAppOrigins(undefined, async () => {
       const server = await startServer();
-      const any = connectRaw(server.url, "pageA", "user=alice", {
+
+      // A foreign origin — any page in the network — is refused BEFORE the
+      // session check (4400, not 4401).
+      const foreign = connectRaw(server.url, "pageA", undefined, {
         Origin: "https://evil.example",
       });
-      expect(await waitCloseWithOpen(any)).toBe(true);
+      const closed = await waitClose(foreign);
+      expect(closed.code).toBe(4400);
+      expect(closed.reason).toBe("origin not allowed");
+
+      // The app served from this machine still connects.
+      const local = connectRaw(server.url, "pageA", "user=alice", {
+        Origin: "http://localhost:3200",
+      });
+      expect(await waitCloseWithOpen(local)).toBe(true);
+      expect(server.rooms.has("page:pageA")).toBe(true);
     });
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * B64 — the network posture of the relay
+ * ------------------------------------------------------------------ */
+
+describe("resolveHost (default bind address, B64)", () => {
+  it("binds to the loopback interface when the operator names no host", () => {
+    expect(resolveHost({})).toBe("127.0.0.1");
+    expect(resolveHost({ HOST: undefined })).toBe("127.0.0.1");
+    expect(DEFAULT_HOST).toBe("127.0.0.1");
+  });
+
+  it("treats an empty or blank HOST as unset (it would bind to EVERY interface)", () => {
+    // `server.listen(port, "")` binds to every interface — the exact hole the
+    // default closes. So an empty HOST must not be passed through.
+    expect(resolveHost({ HOST: "" })).toBe("127.0.0.1");
+    expect(resolveHost({ HOST: "   " })).toBe("127.0.0.1");
+  });
+
+  it("keeps HOST=0.0.0.0 as an explicit opt-in", () => {
+    expect(resolveHost({ HOST: "0.0.0.0" })).toBe("0.0.0.0");
+    expect(resolveHost({ HOST: "192.168.1.10" })).toBe("192.168.1.10");
+    expect(resolveHost({ HOST: "::" })).toBe("::");
+  });
+
+  it("does not default to 0.0.0.0 in the source any more (regression guard)", () => {
+    const source = readFileSync(new URL("./collab-server.mjs", import.meta.url), "utf8");
+    expect(source).not.toMatch(/process\.env\.HOST\s*\?\?/);
+    expect(source).toMatch(/DEFAULT_HOST\s*=\s*"127\.0\.0\.1"/);
+  });
+
+  it("binds the relay where resolveHost says — the default, not every interface", async () => {
+    // No `host` option: the server takes the module default, i.e. exactly the
+    // wiring the source guard above watches. (With the old code this bound
+    // 0.0.0.0.)
+    const server = createCollabServer({ port: 0 });
+    await new Promise((resolve, reject) => {
+      server.wss.once("listening", resolve);
+      server.wss.once("error", reject);
+    });
+    servers.push(server);
+    expect(server.wss.address().address).toBe(resolveHost(process.env));
+  });
+});
+
+describe("message size cap (B64)", () => {
+  it("caps a single WebSocket message", async () => {
+    // The app's own budget for a page's content in one request.
+    expect(MAX_PAYLOAD_BYTES).toBe(4 * 1024 * 1024);
+    const server = await startServer();
+    expect(server.wss.options.maxPayload).toBe(MAX_PAYLOAD_BYTES);
+  });
+
+  it("closes a connection that sends more than the cap with 1009", async () => {
+    const server = await startServer();
+    const alice = connectRaw(server.url, "pageA", "user=alice");
+    await waitOpen(alice);
+    await nextMessage(alice); // the server's sync step 1 after the join
+
+    alice.send(Buffer.alloc(MAX_PAYLOAD_BYTES + 1024, 0x41));
+    const closed = await waitClose(alice);
+    expect(closed.code).toBe(1009);
+    // `ws` closes with the status code only — the message goes to the
+    // server-side 'error' event, not into the close frame.
+    expect(closed.reason).toBe("");
+  });
+});
+
+describe("isOriginAllowed (fail closed, B64)", () => {
+  it("refuses a foreign origin when APP_ORIGINS is unset", () => {
+    expect(isOriginAllowed("https://evil.example", [])).toBe(false);
+    expect(isOriginAllowed("http://192.168.1.10:3200", [])).toBe(false);
+    expect(isOriginAllowed("http://noema.example.com", [])).toBe(false);
+    expect(isOriginAllowed("null", [])).toBe(false); // sandboxed frame
+  });
+
+  it("accepts the loopback origin when APP_ORIGINS is unset", () => {
+    expect(isOriginAllowed("http://localhost:3000", [])).toBe(true);
+    expect(isOriginAllowed("http://127.0.0.1:3000", [])).toBe(true);
+    expect(isOriginAllowed("http://localhost:3200", [])).toBe(true);
+    expect(isOriginAllowed("http://[::1]:3200", [])).toBe(true);
+    expect(isOriginAllowed("https://localhost", [])).toBe(true);
+  });
+
+  it("refuses an EMPTY Origin header and accepts a MISSING one (native client)", () => {
+    // Present but empty: names no origin, and no browser sends one.
+    expect(isOriginAllowed("", [])).toBe(false);
+    // Absent: only a native client (the CLI smoke test, the desktop
+    // sidecar) sends no Origin — and it still has to pass the session check.
+    expect(isOriginAllowed(undefined, [])).toBe(true);
+  });
+
+  it("keeps the APP_ORIGINS allow-list exclusive (no regression)", () => {
+    const allowed = parseAppOrigins("noema.example.test, https://app.other.test/");
+    expect(isOriginAllowed("https://noema.example.test", allowed)).toBe(true);
+    expect(isOriginAllowed("http://app.other.test", allowed)).toBe(true);
+    expect(isOriginAllowed("https://evil.example", allowed)).toBe(false);
+    // The loopback origin is NOT special once a policy is configured.
+    expect(isOriginAllowed("http://localhost:3000", allowed)).toBe(false);
+    expect(isOriginAllowed("", allowed)).toBe(false);
+    expect(isOriginAllowed(undefined, allowed)).toBe(false);
+  });
+
+  it("recognizes the loopback hosts and nothing else", () => {
+    expect(isLoopbackOrigin("http://localhost:3200")).toBe(true);
+    expect(isLoopbackOrigin("http://127.0.0.1")).toBe(true);
+    expect(isLoopbackOrigin("http://[::1]:3200")).toBe(true);
+    expect(isLoopbackOrigin("http://192.168.1.10:3200")).toBe(false);
+    expect(isLoopbackOrigin("http://localhost.evil.example")).toBe(false);
+    expect(isLoopbackOrigin("")).toBe(false);
+    expect(isLoopbackOrigin(undefined)).toBe(false);
   });
 });
