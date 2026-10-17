@@ -5,11 +5,8 @@ import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
-  useRef,
   useState,
   useTransition,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
   CalendarDays,
@@ -46,12 +43,12 @@ import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   SIDEBAR_STEP,
+  SIDEBAR_STEP_LARGE,
   SIDEBAR_WIDTH_STORAGE_KEY,
   clampSidebarWidth,
-  dragSidebarWidth,
-  nudgeSidebarWidth,
   parseStoredSidebarWidth,
 } from "@/lib/sidebar-layout";
+import { ResizablePanel } from "@/components/ui/resizable-panel";
 
 type SidebarProps = {
   workspace: {
@@ -98,8 +95,6 @@ export function Sidebar({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [width, setWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
-  const [resizing, setResizing] = useState(false);
-  const widthRef = useRef(width);
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(tree.filter((p) => p.parentId === null).map((p) => p.id)),
   );
@@ -107,7 +102,9 @@ export function Sidebar({
   const [createOpen, setCreateOpen] = useState(false);
   const [tab, setTab] = useState<"home" | "chat" | "meetings">("home");
 
-  // --- Sidebar width: restore, persist, drag + keyboard resize ------------
+  // --- Sidebar width: restore + persist -----------------------------------
+  // The drag/keyboard/reset behaviour itself lives in `ResizablePanel`; this
+  // component only owns the persisted width and the storage round-trip.
   useEffect(() => {
     try {
       setWidth(parseStoredSidebarWidth(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)));
@@ -116,59 +113,15 @@ export function Sidebar({
     }
   }, []);
 
-  useEffect(() => {
-    widthRef.current = width;
-  }, [width]);
-
   const commitWidth = useCallback((value: number) => {
     const next = clampSidebarWidth(value);
     setWidth(next);
-    widthRef.current = next;
     try {
       window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(next));
     } catch {
       /* ignore storage failures */
     }
   }, []);
-
-  const startResize = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      const startX = event.clientX;
-      const startWidth = widthRef.current;
-      setResizing(true);
-      const onMove = (move: PointerEvent) => {
-        setWidth(dragSidebarWidth(startWidth, move.clientX - startX));
-      };
-      const onUp = () => {
-        setResizing(false);
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        window.removeEventListener("pointercancel", onUp);
-        commitWidth(widthRef.current);
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-      window.addEventListener("pointercancel", onUp);
-    },
-    [commitWidth],
-  );
-
-  const resizeByKeyboard = useCallback(
-    (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      const shift = event.shiftKey;
-      let next: number;
-      if (event.key === "ArrowLeft") next = nudgeSidebarWidth(widthRef.current, -SIDEBAR_STEP, shift);
-      else if (event.key === "ArrowRight") next = nudgeSidebarWidth(widthRef.current, SIDEBAR_STEP, shift);
-      else if (event.key === "Home") next = SIDEBAR_MIN_WIDTH;
-      else if (event.key === "End") next = SIDEBAR_MAX_WIDTH;
-      else return;
-      event.preventDefault();
-      commitWidth(next);
-    },
-    [commitWidth],
-  );
 
   const discuss = (pageId: string) =>
     startTransition(async () => {
@@ -211,17 +164,22 @@ export function Sidebar({
   };
 
   return (
-    <aside
-      data-testid="sidebar"
-      style={{
-        width,
-        // Animate structural width changes (keyboard nudges, collapse/expand) on a
-        // token, but never while dragging: a transitioned width would lag the
-        // cursor instead of tracking it 1:1. This mirrors the reference app, which
-        // animates the sidebar and disables the transition for the drag.
-        transition: resizing ? "none" : "width var(--dur-2) var(--ease-smooth)",
-      }}
-      className="relative flex h-screen shrink-0 flex-col border-r border-border bg-sidebar"
+    <ResizablePanel
+      as="aside"
+      testId="sidebar"
+      width={width}
+      defaultWidth={SIDEBAR_DEFAULT_WIDTH}
+      min={SIDEBAR_MIN_WIDTH}
+      max={SIDEBAR_MAX_WIDTH}
+      step={SIDEBAR_STEP}
+      largeStep={SIDEBAR_STEP_LARGE}
+      onResize={setWidth}
+      onResizeEnd={commitWidth}
+      label={t(locale, "resizeSidebar")}
+      handleTitle={t(locale, "resizePanelHint")}
+      handleTestId="sidebar-resize"
+      handleClassName="z-[var(--z-sidebar)]"
+      className="flex h-screen shrink-0 flex-col border-r border-border bg-sidebar"
     >
       <WorkspaceSwitcher
         workspace={workspace}
@@ -374,30 +332,6 @@ export function Sidebar({
         workspaceId={workspace.id}
         slug={workspace.slug}
       />
-
-      {/* Drag to resize. Keyboard-reachable: arrows nudge, Shift widens the
-        step, Home/End jump to the min/max. */}
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label={t(locale, "resizeSidebar")}
-        aria-valuemin={SIDEBAR_MIN_WIDTH}
-        aria-valuemax={SIDEBAR_MAX_WIDTH}
-        aria-valuenow={width}
-        tabIndex={0}
-        data-testid="sidebar-resize"
-        onPointerDown={startResize}
-        onKeyDown={resizeByKeyboard}
-        onDoubleClick={() => commitWidth(SIDEBAR_DEFAULT_WIDTH)}
-        title="Drag to resize · double-click to reset"
-        className={cn(
-          "absolute inset-y-0 -right-1 z-[var(--z-sidebar)] w-2 cursor-col-resize touch-none select-none",
-          "after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent",
-          "hover:after:bg-accent/50 focus-visible:after:bg-accent focus-visible:outline-none",
-          // Dragging is 1:1: never let a transition lag the cursor while active.
-          resizing && "u-no-transition after:w-0.5 after:bg-accent",
-        )}
-      />
-    </aside>
+    </ResizablePanel>
   );
 }

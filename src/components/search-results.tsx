@@ -9,12 +9,13 @@ import { t } from "@/lib/i18n";
 import { highlightSnippet } from "@/lib/fuzzy";
 import { nextIndex, rovingTabIndex } from "@/lib/keyboard-nav";
 import { refineByRelevance } from "@/lib/search-ranking";
-import { offsetForIndex, scrollToIndex, totalHeight, visibleRange } from "@/lib/virtual-list";
+import { scrollToIndex } from "@/lib/virtual-list";
 import { cn } from "@/lib/utils";
 import { type TagHue } from "@/lib/design-tokens";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tag } from "@/components/ui/tag";
+import { VirtualList } from "@/components/ui/virtual-list";
 import {
   DEFAULT_SUMMARY_LENGTH,
   extractDescription,
@@ -26,10 +27,11 @@ import {
 /*
  * Windowed mode geometry. The list pages without bound ("Load more"), so past
  * VIRTUAL_THRESHOLD rows we mount only the slice in view inside a fixed-height
- * scroller, using src/lib/virtual-list (visibleRange/totalHeight/offsetForIndex)
- * for the math. Rows stay real <li>s, absolutely positioned at their true
- * offset over a spacer <ul> carrying totalHeight, so list semantics, teasers and
- * the load-more flow are unchanged.
+ * scroller through the shared `VirtualList` primitive (`ui/virtual-list`), which
+ * wraps src/lib/virtual-list (visibleRange/totalHeight/offsetForIndex) for the
+ * math. Rows stay real <li>s, absolutely positioned at their true offset over a
+ * spacer <ul> carrying totalHeight, so list semantics, teasers and the load-more
+ * flow are unchanged.
  *
  * Unlike the trash rows (uniform by design), a result's height depends on its
  * teaser: a row with none is a single title line, a row with one wraps to
@@ -252,17 +254,6 @@ export function SearchResults({
 
   // Long lists mount only the visible slice; short lists keep the plain <ul>.
   const windowed = filteredRows.length > VIRTUAL_THRESHOLD;
-  const range = windowed
-    ? visibleRange({
-        scrollTop,
-        viewportSize: VIEWPORT_HEIGHT,
-        itemHeight: ROW_BASE_HEIGHT,
-        itemCount: filteredRows.length,
-        overscan: OVERSCAN,
-        heightOf,
-      })
-    : { start: 0, end: 0 };
-  const visible = windowed ? filteredRows.slice(range.start, range.end) : filteredRows;
   // The single tab stop of the roving model; `-1` (no row focusable) when empty.
   const activeRow = rovingTabIndex(activeIndex, filteredRows.length);
 
@@ -274,7 +265,7 @@ export function SearchResults({
     if (!element) return;
     element.focus();
     pendingFocus.current = null;
-  }, [activeIndex, range.start, range.end, windowed]);
+  }, [activeIndex, scrollTop, filteredRows.length, windowed]);
 
   // Move the roving cursor to `next`, scrolling a windowed row into the window
   // and focusing its link so the visible ring follows the cursor.
@@ -399,36 +390,26 @@ export function SearchResults({
           />
         </div>
       ) : windowed ? (
-        <div
-          ref={scrollerRef}
-          role="region"
-          aria-label={t(locale, "searchResults")}
-          tabIndex={-1}
-          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-          onKeyDown={onListKeyDown}
+        <VirtualList
+          items={filteredRows}
+          scrollTop={scrollTop}
+          onScrollTopChange={setScrollTop}
+          viewportHeight={VIEWPORT_HEIGHT}
+          itemHeight={ROW_BASE_HEIGHT}
+          heightOf={heightOf}
+          overscan={OVERSCAN}
+          getKey={(page) => page.id}
+          renderItem={(page, index) => resultBody(page, teasers[index] ?? "", index)}
+          scrollerRef={scrollerRef}
+          scrollerProps={{
+            role: "region",
+            "aria-label": t(locale, "searchResults"),
+            tabIndex: -1,
+            onKeyDown: onListKeyDown,
+          }}
           className="mt-4 overflow-y-auto rounded-lg border border-border"
-          style={{ height: VIEWPORT_HEIGHT }}
-        >
-          <ul
-            className="relative"
-            style={{ height: totalHeight(filteredRows.length, ROW_BASE_HEIGHT, heightOf) }}
-          >
-            {visible.map((page, offsetInWindow) => {
-              const index = range.start + offsetInWindow;
-              return (
-                <li
-                  key={page.id}
-                  // Absolute rows stacked at their true offset: the spacer <ul>
-                  // carries the full height so the scrollbar matches the list.
-                  className="absolute inset-x-0 border-b border-border"
-                  style={{ top: offsetForIndex(index, ROW_BASE_HEIGHT, heightOf) }}
-                >
-                  {resultBody(page, teasers[index] ?? "", index)}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+          rowClassName="absolute inset-x-0 border-b border-border"
+        />
       ) : (
         <ul
           onKeyDown={onListKeyDown}

@@ -63,7 +63,16 @@ pub async fn desktop_info(app: AppHandle) -> Result<DesktopInfo, String> {
         ready: info.is_some(),
         port: info.map(|i| i.port),
         log_file: logging::current_file().map(|p| p.to_string_lossy().into_owned()),
-        database_url: redact(&state::database_url(&app)),
+        database_url: {
+            // No configured URL means the bundled server is running its own
+            // embedded database; say so rather than printing an empty field.
+            let resolved = state::database_url(&app);
+            if resolved.trim().is_empty() {
+                "embedded (in-app PostgreSQL)".to_string()
+            } else {
+                redact(&resolved)
+            }
+        },
     })
 }
 

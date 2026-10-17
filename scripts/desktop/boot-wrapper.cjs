@@ -11,7 +11,13 @@
 // migration history — which is exactly what `prisma db push` (this project's own
 // setup path) leaves behind — and refusing to start on that would punish the
 // operator for a database that is already correct.
-const { spawnSync } = require("node:child_process");
+//
+// Why the Prisma CLI is spawned *asynchronously* rather than with spawnSync: the
+// embedded database runs **inside this process** (PGlite is WebAssembly), so a
+// synchronous child would block the event loop and the CLI's own connection could
+// never be answered. That was measured, not guessed — the first attempt failed
+// with `P1001: Can't reach database server` for exactly this reason.
+const { spawn } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
 
@@ -25,24 +31,59 @@ try {
   console.warn("[noema] managed-database helper unavailable:", error && error.message);
 }
 
+// The embedded database (real PostgreSQL in WebAssembly). Also required
+// defensively, for the same reason.
+let startEmbeddedDatabase = null;
+try {
+  ({ startEmbeddedDatabase } = require("./embedded-db.cjs"));
+} catch (error) {
+  console.warn("[noema] embedded-database helper unavailable:", error && error.message);
+}
+
 const root = __dirname;
 
+/** Set once the embedded database is running, so shutdown can close it. */
+let embedded = null;
+
 /**
- * Which database to use.
+ * Which database to use, first match wins.
  *
  *  1. an explicit `DATABASE_URL` (from the environment or the app's settings)
- *     always wins — that is how a shared server, a CI run, or a support session
- *     points the app somewhere specific;
- *  2. otherwise, a Postgres this app manages with Docker (see docker-db.cjs):
- *     created once, reused afterwards, credentials kept in the data directory;
- *  3. otherwise the conventional local URL, so an existing Postgres still works
- *     and the app's bootstrap page can take over.
+ *     always wins — that is how a shared server, a CI run, a portable install or
+ *     a support session points the app somewhere specific;
+ *  2. **the embedded database** (PGlite, PostgreSQL compiled to WebAssembly):
+ *     nothing to install, no daemon, no network. This is the default, and it is
+ *     what makes the installer self-contained — not even Postgres is required;
+ *  3. a Postgres this app manages with Docker (see docker-db.cjs), for anyone who
+ *     wants a full server engine without configuring one;
+ *  4. the conventional local URL, so an existing Postgres still works and the
+ *     app's bootstrap page can take over if nothing else is available.
+ *
+ * Set `NOEMA_NO_EMBEDDED_DB=1` to skip step 2 (useful when debugging the Docker
+ * path, or on a platform where WebAssembly memory is constrained).
  */
 async function resolveDatabaseUrl() {
   const configured = process.env.DATABASE_URL;
   if (configured && configured.trim() !== "") {
     console.log("[noema] using the configured DATABASE_URL");
     return configured;
+  }
+
+  if (startEmbeddedDatabase && process.env.NOEMA_NO_EMBEDDED_DB !== "1") {
+    try {
+      embedded = await startEmbeddedDatabase({
+        dataDir: process.env.NOEMA_DATA_DIR,
+        log: console,
+      });
+      console.log(
+        `[noema] using the embedded database on 127.0.0.1:${embedded.port} (nothing to install)`,
+      );
+      return embedded.url;
+    } catch (error) {
+      // Fall through: a usable app on a configured database beats no app at all.
+      console.error("[noema] embedded database unavailable:", error && error.message);
+      embedded = null;
+    }
   }
 
   const managed = await ensureManagedDatabase({ dataDir: process.env.NOEMA_DATA_DIR });
@@ -52,7 +93,7 @@ async function resolveDatabaseUrl() {
   }
 
   const fallback = "postgresql://postgres:postgres@127.0.0.1:5432/noema?schema=public";
-  console.log("[noema] Docker is unavailable — falling back to a local Postgres URL");
+  console.log("[noema] no embedded database and no Docker — falling back to a local Postgres URL");
   return fallback;
 }
 
@@ -63,16 +104,37 @@ function prismaCli() {
   return { cli, schema };
 }
 
+/**
+ * Run the Prisma CLI and resolve with its result.
+ *
+ * Asynchronous on purpose: with the embedded database in this process, a
+ * synchronous spawn would deadlock (the database could not answer the CLI).
+ */
 function runPrisma(cli, schema, args) {
-  return spawnSync(process.execPath, [cli, ...args, "--schema", schema], {
-    cwd: root,
-    stdio: "pipe",
-    encoding: "utf8",
-    env: process.env,
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [cli, ...args, "--schema", schema], {
+      cwd: root,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      resolve({ status: 1, stdout, stderr: `${stderr}${error && error.message}` });
+    });
+    child.on("close", (status) => {
+      resolve({ status: status === null ? 1 : status, stdout, stderr });
+    });
   });
 }
 
-function migrate() {
+async function migrate() {
   if (process.env.NOEMA_SKIP_MIGRATE === "1") return;
   const resolved = prismaCli();
   if (!resolved) {
@@ -82,7 +144,7 @@ function migrate() {
   const { cli, schema } = resolved;
 
   console.log("[noema] prisma migrate deploy…");
-  const deployed = runPrisma(cli, schema, ["migrate", "deploy"]);
+  const deployed = await runPrisma(cli, schema, ["migrate", "deploy"]);
   if (deployed.status === 0) {
     if (deployed.stdout) process.stdout.write(deployed.stdout);
     return;
@@ -95,7 +157,7 @@ function migrate() {
     // a user's columns is not acceptable. `db push` without it applies additive
     // changes and refuses destructive ones, which is the right failure mode for
     // someone's real database.
-    const pushed = runPrisma(cli, schema, ["db", "push", "--skip-generate"]);
+    const pushed = await runPrisma(cli, schema, ["db", "push", "--skip-generate"]);
     if (pushed.stdout) process.stdout.write(pushed.stdout);
     if (pushed.status === 0) return;
     console.error("[noema] db push exited with status", pushed.status, pushed.stderr || "");
@@ -108,19 +170,47 @@ function migrate() {
   if (deployed.stderr) console.error(deployed.stderr);
 }
 
+function startServer() {
+  require(path.join(root, "server.js"));
+}
+
+/**
+ * Close the embedded database on the way out.
+ *
+ * Postgres recovers from WAL after a hard kill, but a graceful close is cheap and
+ * leaves no recovery work for the next launch.
+ */
+let shuttingDown = false;
+async function shutdown(reason) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  if (embedded) {
+    await embedded.stop();
+    console.log(`[noema] embedded database closed (${reason})`);
+  }
+}
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(signal, () => {
+    shutdown(signal).then(
+      () => process.exit(0),
+      () => process.exit(0),
+    );
+  });
+}
+
 function main() {
   resolveDatabaseUrl()
-    .then((url) => {
+    .then(async (url) => {
       process.env.DATABASE_URL = url;
-      migrate();
-      require(path.join(root, "server.js"));
+      await migrate();
+      startServer();
     })
-    .catch((error) => {
+    .catch(async (error) => {
       // The server still starts (with whatever DATABASE_URL says) so /api/health
       // can report the problem and the app's bootstrap page can offer the fix.
       console.error("[noema] database setup failed:", error && error.message);
-      migrate();
-      require(path.join(root, "server.js"));
+      await migrate().catch(() => {});
+      startServer();
     });
 }
 

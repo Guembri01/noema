@@ -6,7 +6,7 @@ One codebase, two shipped products:
 |---|---|---|
 | What | the hosted web app | the installable desktop app |
 | Runtime | Next.js server + Postgres | Tauri 2 (Rust) shell + a bundled Node runtime running the same Next server |
-| Database | Postgres | Postgres (same schema) — **provisioned by Docker** on first run, or pointed anywhere via a connection string |
+| Database | Postgres | Postgres (same schema) — **embedded (PGlite) and provisioned on first run**, or pointed anywhere via a connection string |
 | Build | `npm run site:build` → `next start`, or `docker compose up --build` | `npm run desktop:bundle` → `Noema_x.y.z_x64-setup.exe` (NSIS) + `.msi` |
 | Users | many accounts, workspaces, SSO | one local user, no account required |
 | Entry | `npm run dev` | `npm run desktop:dev` / `npm run desktop:build` |
@@ -193,36 +193,73 @@ npm run desktop:smoke       # prove it boots + migrates + serves
 npm run desktop:bundle      # bundle (prepare re-runs, validated)
 ```
 
-## 5. The database (Docker-provisioned)
+## 5. The database — embedded by default
 
-The schema is Postgres (full-text search, `pg_trgm`), so a desktop install needs a
-Postgres. Rather than asking you to install one, the desktop build provisions its
-own **on first run**:
+The schema is Postgres (full-text search), so a desktop install needs a Postgres.
+Rather than asking you to install one, the desktop build **carries one inside
+itself**:
 
 1. **A configured URL always wins** — `NOEMA_DATABASE_URL`, or the value saved in
    the app's settings / pasted on the bootstrap page. That is how you point the app
-   at a shared server, or at the compose stack you already run.
-2. **Otherwise the app manages a container**: `noema-postgres`
-   (`postgres:16-alpine`) with its own named volume `noema-pgdata`. Docker is
-   started automatically if the engine is not running (Windows: Docker Desktop).
-3. **Otherwise** it falls back to `postgresql://postgres:postgres@127.0.0.1:5432/noema`,
-   so an existing local Postgres still works, and the bootstrap page can take over.
+   at a shared server, at the compose stack you already run, or at a managed
+   database.
+2. **Otherwise the app runs an embedded PostgreSQL** — [PGlite](https://pglite.dev),
+   real Postgres compiled to WebAssembly, started by the boot wrapper and exposed
+   on loopback so Prisma connects over the ordinary wire protocol. Data lives in
+   `pgdata/` inside the app's data directory, so updates and uninstalls leave it
+   alone. **Nothing has to be installed: no Postgres, no Docker, no service.**
+3. **Otherwise** it manages a container: `noema-postgres` (`postgres:16-alpine`)
+   with its own named volume `noema-pgdata`. Docker is started automatically if the
+   engine is not running (Windows: Docker Desktop). This stays available — and is
+   the path `NOEMA_NO_EMBEDDED_DB=1` selects — for anyone who wants a full server
+   engine without configuring one.
+4. **Otherwise** the conventional `postgresql://postgres:postgres@127.0.0.1:5432/noema`,
+   so an existing local Postgres still works and the bootstrap page can take over.
 
-Why it is built that way:
+### Limits of the embedded engine (worth knowing before you rely on it)
+
+| Limit | Consequence, and what to do |
+|---|---|
+| **One client at a time** | PGlite queues every connection onto a single PostgreSQL session, so Prisma's prepared-statement names are global to it. The boot path never hits this (the migration finishes before the server starts, and the server itself uses `connection_limit=1`), but a second *external* client — a psql session, an admin script, `prisma studio` — can collide with the running app (`prepared statement "s0" already exists`). Stop the app, or point it at a real Postgres with `NOEMA_DATABASE_URL`. |
+| **No `pg_dump`** | it is a WebAssembly engine, not a server with binaries beside it, so `npm run backup` (which shells out to `pg_dump`) cannot dump it. The backup unit is the **data directory** (`pgdata/` inside the app data folder) — copy it while the app is stopped. Point the app at a real Postgres if you need `pg_dump`-style dumps and GFS retention. |
+| **First launch initialises it** | a few seconds once, on the machine's disk, with no network. Later launches reuse `pgdata/`. |
+| **Not for multiple machines** | it is a local file-backed database. For shared workspaces use a real Postgres via `NOEMA_DATABASE_URL`. |
+
+### Why the embedded engine is the default
+
+The spike (and then the real smoke test) answered the questions that mattered, so
+this is measured rather than assumed: PostgreSQL semantics including `tsvector` and
+GIN indexes, JSON columns, enums, cascades, and the project's **own migration**
+applied cleanly with zero schema changes. The one gap the spike found was
+`pg_trgm`, which this app no longer uses — the fuzzy-match tier is pure TypeScript
+(`src/lib/fts.ts`).
+
+Two constraints fell out of building it, and both are load-bearing:
+
+| Constraint | Why |
+|---|---|
+| The Prisma CLI must be spawned **asynchronously** | the database runs *in the boot wrapper's process*, so `spawnSync` would block the event loop and the CLI's own connection could never be answered — the first attempt failed with `P1001: Can't reach database server` for exactly this reason |
+| The shell must **not** inject a default `DATABASE_URL` | `server_env` omits it when nothing is configured. An injected `localhost:5432` would take branch 1 and the embedded engine would never start |
+
+Why the other decisions are what they are:
 
 | Decision | Reason |
 |---|---|
+| Embedded data in `pgdata/` under the **data directory** | an update or uninstall must not take the user's data with it, and the install directory is not writable per-user on every machine |
+| `connection_limit=1` in the generated URL | PGlite executes one query at a time; a wider pool would only queue |
+| Graceful close on `SIGINT`/`SIGTERM`/`SIGHUP` | Postgres recovers from WAL after a hard kill, but a clean close leaves no recovery work |
 | Container `noema-postgres`, volume `noema-pgdata` | **never** the project's own `noema-db`: a desktop install must not adopt, restart or delete the developer's database |
 | Docker chooses the host port (`-p 127.0.0.1::5432`) | any fixed port can collide — the compose stack publishes 5433, the first candidate — and the install would fail with "port is already allocated" |
 | A **generated** password, stored in the data directory | a local database with `postgres/postgres` is a habit worth not having |
 | The volume is never removed; a stopped container is started, a broken one recreated | the user's data outlives the app's lifecycle decisions |
 | `--restart unless-stopped` | the database comes back with the machine, without the app running |
 
-Inspect or pre-provision it without launching the app:
+Inspect or pre-provision the Docker path without launching the app:
 
 ```bash
 npm run desktop:db          # docker? engine up? container? credentials? port?
 npm run desktop:db:ensure   # create/start it now and print the URL
+npm run desktop:smoke:embedded  # empty data dir → embedded PostgreSQL → migrate → serve (nothing installed)
 npm run desktop:smoke:fresh # empty database → Docker → migrate → serve (end to end)
 ```
 

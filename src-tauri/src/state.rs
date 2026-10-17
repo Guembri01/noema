@@ -33,14 +33,19 @@ pub fn normalise_database_url(value: &str) -> String {
         .to_string()
 }
 
-/// The database the local server should use.
+/// The database the local server should use, or an **empty string** when the user
+/// has not configured one.
 ///
 /// Resolution order, first match wins:
 ///  1. `NOEMA_DATABASE_URL` — for CI, portable installs and support ("try this
 ///     connection string");
-///  2. the value saved by the first-run screen / Settings;
-///  3. [`crate::sidecar::DEFAULT_DATABASE_URL`], so a fresh install against a
-///     local Postgres just works.
+///  2. the value saved by the first-run screen / Settings.
+///
+/// Returning empty is deliberate, and it is what makes "nothing has to be
+/// installed" true: with no URL, the bundled server provisions **its own embedded
+/// PostgreSQL** (PGlite — real Postgres compiled to WebAssembly, see
+/// `scripts/desktop/embedded-db.cjs`). Defaulting to `localhost:5432` here is
+/// exactly what used to force every user to bring their own database.
 pub fn database_url(app: &AppHandle) -> String {
     if let Ok(explicit) = std::env::var("NOEMA_DATABASE_URL") {
         let cleaned = normalise_database_url(&explicit);
@@ -48,12 +53,7 @@ pub fn database_url(app: &AppHandle) -> String {
             return cleaned;
         }
     }
-    let saved = normalise_database_url(&pref::<String>(app, prefs::DATABASE_URL, String::new()));
-    if saved.is_empty() {
-        crate::sidecar::DEFAULT_DATABASE_URL.to_string()
-    } else {
-        saved
-    }
+    normalise_database_url(&pref::<String>(app, prefs::DATABASE_URL, String::new()))
 }
 
 /// The per-user data directory (`…/Application Support/app.noema.desktop` on

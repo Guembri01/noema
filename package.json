@@ -72,7 +72,8 @@
     "audit:frontend": "node scripts/audit-frontend.mjs",
     "audit:parity": "node scripts/audit-notion-parity.mjs",
     "audit:spec": "node scripts/audit-spec-coverage.mjs",
-    "check:i18n": "node scripts/check-i18n-keys.mjs"
+    "check:i18n": "node scripts/check-i18n-keys.mjs",
+    "desktop:smoke:embedded": "node scripts/desktop/smoke.mjs --embedded"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -81,6 +82,8 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
+    "@electric-sql/pglite": "^0.5.10",
+    "@electric-sql/pglite-socket": "^0.2.13",
     "@prisma/client": "^6.19.3",
     "@radix-ui/react-context-menu": "^2.4.1",
     "@radix-ui/react-dialog": "^1.3.1",

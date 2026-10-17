@@ -137,6 +137,9 @@ export const REQUIRED_PAYLOAD = [
   ["prisma/schema.prisma", "the database schema"],
   ["start.cjs", "the boot wrapper (database → migrate → serve)"],
   ["docker-db.cjs", "the managed-database helper"],
+  ["embedded-db.cjs", "the embedded-database helper"],
+  ["node_modules/@electric-sql/pglite", "the embedded PostgreSQL engine (WASM)"],
+  ["node_modules/@electric-sql/pglite-socket", "the wire protocol Prisma connects over"],
 ];
 
 /**
@@ -207,8 +210,17 @@ function copyRuntimeAssets() {
 
   // The Prisma CLI (and its engines) are what make `migrate deploy` possible on
   // first run. `@prisma/client` is already traced in; these are not.
+  //
+  // The embedded database is here for the same reason: Next never sees it (the
+  // boot wrapper requires it), so its packages must be staged explicitly — and it
+  // must ship, or a fresh install has no database at all.
   const nodeModules = join(standalone, "node_modules");
-  for (const pkg of ["prisma", "@prisma"]) {
+  for (const pkg of [
+    "prisma",
+    "@prisma",
+    "@electric-sql/pglite",
+    "@electric-sql/pglite-socket",
+  ]) {
     const from = join(root, "node_modules", pkg);
     if (!existsSync(from)) continue;
     const to = join(nodeModules, pkg);
@@ -237,12 +249,12 @@ function writeBootScript() {
   }
   const boot = join(standalone, "start.cjs");
   copyFileSync(source, boot);
-  // The boot wrapper requires this next to itself.
-  copyFileSync(
-    join(root, "scripts", "desktop", "docker-db.cjs"),
-    join(standalone, "docker-db.cjs"),
-  );
-  console.log("· copied boot wrapper → start.cjs (managed database → migrate → serve)");
+  // The boot wrapper requires these next to itself (defensively, so an older
+  // payload still boots without them).
+  for (const helper of ["docker-db.cjs", "embedded-db.cjs"]) {
+    copyFileSync(join(root, "scripts", "desktop", helper), join(standalone, helper));
+  }
+  console.log("· copied boot wrapper → start.cjs (embedded PostgreSQL → Docker → migrate → serve)");
 }
 
 function copyNodeRuntime() {

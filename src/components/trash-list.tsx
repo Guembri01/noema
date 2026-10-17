@@ -16,12 +16,13 @@ import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import { stableTime } from "@/lib/time";
 import { truncateMiddle } from "@/lib/truncate";
-import { offsetForIndex, totalHeight, visibleRange } from "@/lib/virtual-list";
+import { useScrollRestore } from "@/lib/scroll-restore";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { VirtualList } from "@/components/ui/virtual-list";
 import {
   buildTrashView,
   describeDeleteImpact,
@@ -244,8 +245,12 @@ export function TrashList({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [confirmingEmpty, setConfirmingEmpty] = useState(false);
-  // Top of the windowed scroller; only read in windowed mode.
+  // Top of the windowed scroller; only read in windowed mode. Restored per
+  // workspace when the user comes back to the trash, saved on every scroll.
   const [scrollTop, setScrollTop] = useState(0);
+  const restoreScroll = useScrollRestore(`trash:${workspaceId}`, {
+    onRestore: setScrollTop,
+  });
 
   // Trash retention window. One source for the purge rule and this hint, so the
   // "auto-deletes in N days" copy cannot drift from what the policy enforces.
@@ -416,16 +421,6 @@ export function TrashList({
 
   // Long lists mount only the visible slice; short lists keep the plain <ul>.
   const windowed = items.length > VIRTUAL_THRESHOLD;
-  const range = windowed
-    ? visibleRange({
-        scrollTop,
-        viewportSize: VIEWPORT_HEIGHT,
-        itemHeight: ROW_HEIGHT,
-        itemCount: items.length,
-        overscan: OVERSCAN,
-      })
-    : { start: 0, end: items.length };
-  const visible = windowed ? items.slice(range.start, range.end) : items;
 
   /**
    * The shared row body — the plain and windowed lists render byte-identical
@@ -517,43 +512,44 @@ export function TrashList({
       </div>
 
       {windowed ? (
-        <div
-          role="region"
-          aria-label={t(locale, "trash")}
-          aria-busy={pending || undefined}
-          tabIndex={0}
-          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        <VirtualList
+          items={items}
+          scrollTop={scrollTop}
+          onScrollTopChange={(top) => {
+            setScrollTop(top);
+            restoreScroll.save(top);
+          }}
+          viewportHeight={VIEWPORT_HEIGHT}
+          itemHeight={ROW_HEIGHT}
+          overscan={OVERSCAN}
+          getKey={(item) => item.id}
+          renderItem={(item) => rowBody(item)}
+          scrollerRef={restoreScroll.ref}
+          scrollerProps={{
+            role: "region",
+            "aria-label": t(locale, "trash"),
+            "aria-busy": pending || undefined,
+            tabIndex: 0,
+          }}
           className="overflow-y-auto rounded-xl border border-border"
-          style={{ height: VIEWPORT_HEIGHT }}
-        >
-          <ul className="relative" style={{ height: totalHeight(items.length, ROW_HEIGHT) }}>
-            {visible.map((item, offset) => {
-              const index = range.start + offset;
-              // Absolute items stacked at their true offset: the spacer <ul>
-              // carries the full height so the scrollbar matches the list.
-              return (
-                <li
-                  key={item.id}
-                  data-trash-row=""
-                  className={cn(
-                    "relative flex items-center gap-3 overflow-hidden px-4 u-colors hover:bg-surface-2",
-                    "absolute inset-x-0",
-                    nestedIndentClass(item.nested),
-                  )}
-                  style={{ top: offsetForIndex(index, ROW_HEIGHT), height: ROW_HEIGHT }}
-                >
-                  {rowBody(item)}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+          // Absolute items stacked at their true offset: the spacer <ul> carries
+          // the full height so the scrollbar matches the list.
+          rowClassName={(item) =>
+            cn(
+              "relative flex items-center gap-3 overflow-hidden px-4 u-colors hover:bg-surface-2",
+              "absolute inset-x-0",
+              nestedIndentClass(item.nested),
+            )
+          }
+          rowAttributes={() => ({ "data-trash-row": "" })}
+          rowStyle={{ height: ROW_HEIGHT }}
+        />
       ) : (
         <ul
           aria-busy={pending || undefined}
           className="divide-y divide-border overflow-hidden rounded-xl border border-border"
         >
-          {visible.map((item) => (
+          {items.map((item) => (
             <li
               key={item.id}
               data-trash-row=""

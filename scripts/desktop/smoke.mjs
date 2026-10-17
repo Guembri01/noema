@@ -12,10 +12,13 @@
  * version uses. `DATABASE_URL` from `.env` is used unless `NOEMA_DATABASE_URL`
  * is set.
  *
- * Two modes:
- *   npm run desktop:smoke              configured database (DATABASE_URL / .env)
- *   npm run desktop:smoke -- --managed the Docker-provisioned database, from an
- *                                      empty schema — the fresh-install path
+ * Three modes:
+ *   npm run desktop:smoke                configured database (DATABASE_URL / .env)
+ *   npm run desktop:smoke -- --managed   the Docker-provisioned database
+ *   npm run desktop:smoke -- --embedded  the **embedded** database (PGlite), from
+ *                                        an empty data directory — the path a
+ *                                        fresh install takes, with nothing
+ *                                        installed and no URL configured
  *
  *   npm run desktop:smoke
  */
@@ -33,6 +36,8 @@ const runtime = nodeSidecarPath(targetTriple());
 const READY_TIMEOUT_MS = 300_000;
 /** `--managed`: use the Docker-provisioned database instead of a configured one. */
 const MANAGED = process.argv.includes("--managed");
+/** `--embedded`: use the in-process PGlite database (nothing installed). */
+const EMBEDDED = process.argv.includes("--embedded");
 /** `--fresh`: drop and recreate the managed database first (empty schema). */
 const FRESH = process.argv.includes("--fresh");
 const MANAGED_CONTAINER = "noema-postgres";
@@ -70,6 +75,18 @@ const check = (ok, label, detail = "") => {
   if (!ok) problems.push(label);
 };
 
+/**
+ * Every model the *staged* schema declares.
+ *
+ * Assertions compare a database against this list rather than against a count:
+ * "more than ten tables" was satisfied by a schema missing 28 models, and that is
+ * not a mistake worth being able to repeat.
+ */
+function expectedModels() {
+  const schema = readFileSync(join(payload, "prisma", "schema.prisma"), "utf8");
+  return [...schema.matchAll(/^model (\w+)/gm)].map((match) => match[1]);
+}
+
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 async function main() {
@@ -87,7 +104,9 @@ async function main() {
   check(true, "payload staged (server.js + start.cjs)");
 
   let url = "";
-  if (MANAGED) {
+  if (EMBEDDED) {
+    check(true, "embedded mode: the app provisions PostgreSQL inside itself (PGlite)");
+  } else if (MANAGED) {
     check(true, "managed mode: the app provisions Postgres with Docker");
   } else {
     url = databaseUrl();
@@ -125,7 +144,10 @@ async function main() {
       NODE_ENV: "production",
       NOEMA_RUNTIME: "desktop",
       NOEMA_DATA_DIR: dataDir,
-      ...(url ? { DATABASE_URL: url } : {}),
+      // Explicitly empty for the modes that must *not* use a configured database:
+      // an inherited DATABASE_URL would silently take the first branch of the boot
+      // wrapper's resolution order and the mode would prove nothing.
+      ...(EMBEDDED || MANAGED ? { DATABASE_URL: "" } : url ? { DATABASE_URL: url } : {}),
       NEXT_TELEMETRY_DISABLED: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -184,20 +206,91 @@ async function main() {
 
     if (MANAGED) {
       // The wrapper must have created the schema inside the container it provisions.
-      const tables = spawnSync(
+      // Compared against the schema's own model list rather than a magic floor: a
+      // "< 20 tables" check is exactly what let 28 models ship without tables.
+      const listed = spawnSync(
         "docker",
         ["exec", MANAGED_CONTAINER, "psql", "-U", MANAGED_USER, "-d", MANAGED_DB, "-tAc",
-         "select count(*) from information_schema.tables where table_schema = 'public'"],
+         "select tablename from pg_tables where table_schema = 'public'"],
         { encoding: "utf8" },
       );
-      const count = Number((tables.stdout || "0").trim());
-      check(count > 10, "migrations created the schema in the managed container", `${count} tables`);
+      const names = (listed.stdout || "").split("\n").map((line) => line.trim()).filter(Boolean);
+      const missing = expectedModels().filter((model) => !names.includes(model));
+      check(
+        missing.length === 0,
+        "migrations created every model's table in the managed container",
+        missing.length
+          ? `${missing.length} missing: ${missing.slice(0, 6).join(", ")}`
+          : `${names.length} tables for ${expectedModels().length} models`,
+      );
+    }
+
+    if (EMBEDDED) {
+      // The wrapper must have started the embedded engine and applied the schema
+      // *to it* — with nothing installed and no URL configured.
+      check(
+        /using the embedded database on 127\.0\.0\.1:\d+/.test(output),
+        "boot log shows the embedded database was used",
+        /embedded database on ([^\s]+)/.exec(output)?.[1] ?? "not found in the log",
+      );
+      const pgdata = join(dataDir, "pgdata");
+      check(existsSync(pgdata), "the embedded data directory was created", pgdata);
+      const embeddedPort = (output.match(/embedded database on 127\.0\.0\.1:(\d+)/) || [])[1];
+      check(Boolean(embeddedPort), "the embedded database reported a loopback port", embeddedPort ? `port ${embeddedPort}` : "not found");
+      check(
+        /All migrations have been successfully applied/.test(output),
+        "the migration ran against the embedded database",
+        /All migrations have been successfully applied/.test(output) ? "" : "see the server output above",
+      );
     }
   }
 
   child.kill();
   await sleep(300);
-  rmSync(dataDir, { recursive: true, force: true });
+
+  // Opening the embedded database's files *after* the server has exited proves two
+  // things at once — that the migration created the schema, and that it survived to
+  // disk — without racing a second client for the engine's single session (Prisma's
+  // prepared-statement names are global to that session, which is a real limitation
+  // of the embedded engine; see docs/DESKTOP.md). A terminating kill can hold the
+  // files for a moment, hence the retries.
+  if (EMBEDDED) {
+    let verified = false;
+    for (let attempt = 0; attempt < 6 && !verified; attempt += 1) {
+      try {
+        const { PGlite } = await import("@electric-sql/pglite");
+        const db = new PGlite(join(dataDir, "pgdata"));
+        await db.waitReady;
+        const listed = await db.query("select tablename from pg_tables where schemaname = 'public'");
+        const names = listed.rows.map((row) => row.tablename);
+        const missing = expectedModels().filter((model) => !names.includes(model));
+        check(
+          missing.length === 0,
+          "every model has a table on disk in the embedded database",
+          missing.length
+            ? `${missing.length} missing: ${missing.slice(0, 6).join(", ")}`
+            : `${names.length} tables for ${expectedModels().length} models (the schema survived to disk)`,
+        );
+        await db.close();
+        verified = true;
+      } catch (error) {
+        if (attempt === 5) {
+          check(false, "the schema is on disk in the embedded database", error && error.message);
+        } else {
+          await sleep(500);
+        }
+      }
+    }
+  }
+
+  // The embedded database's files live in here; on Windows a file handle can
+  // outlive the process by a moment, and a leftover temp directory is not worth
+  // failing a smoke test over.
+  try {
+    rmSync(dataDir, { recursive: true, force: true });
+  } catch (error) {
+    console.log(`  note: could not remove ${dataDir} (${error && error.code})`);
+  }
 
   console.log("");
   if (problems.length) {

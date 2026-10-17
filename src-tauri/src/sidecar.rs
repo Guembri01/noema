@@ -54,15 +54,6 @@ pub const RESTART_BACKOFF: [Duration; 4] = [
 /// Where the server entry point lives inside the installed app.
 pub const SERVER_ENTRY: &str = "server/server.js";
 
-/// The connection string used when the user has not configured one.
-///
-/// The desktop build talks to a Postgres like the site build does (the schema
-/// uses Postgres full-text search). `NOEMA_DATABASE_URL` or the first-run screen
-/// overrides it, which is what makes the installed app usable against a local
-/// container, a remote server, or a managed database.
-pub const DEFAULT_DATABASE_URL: &str =
-    "postgresql://postgres:postgres@127.0.0.1:5432/noema?schema=public";
-
 /// What the webview is told about the running server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SidecarInfo {
@@ -198,13 +189,18 @@ pub fn api_base(port: u16) -> String {
 
 /// Environment handed to the server. Kept in one place so the site build and the
 /// desktop build cannot drift.
+///
+/// `DATABASE_URL` is included **only when one is actually configured**. Unset is
+/// the signal that makes the bundled server provision its own embedded database,
+/// so a fresh install needs nothing installed — not even Postgres. (An empty
+/// value would work too, but an absent variable is unambiguous.)
 pub fn server_env(
     port: u16,
     data_dir: &Path,
     origin: &str,
     database_url: &str,
 ) -> Vec<(String, String)> {
-    vec![
+    let mut env = vec![
         ("PORT".into(), port.to_string()),
         ("HOSTNAME".into(), "127.0.0.1".into()),
         ("NODE_ENV".into(), "production".into()),
@@ -213,7 +209,6 @@ pub fn server_env(
             "NOEMA_DATA_DIR".into(),
             data_dir.to_string_lossy().into_owned(),
         ),
-        ("DATABASE_URL".into(), database_url.into()),
         (
             "UPLOAD_DIR".into(),
             uploads_dir(data_dir).to_string_lossy().into_owned(),
@@ -225,7 +220,11 @@ pub fn server_env(
         // The webview origin must be able to call the loopback server.
         ("APP_ORIGINS".into(), origin.into()),
         ("NEXT_TELEMETRY_DISABLED".into(), "1".into()),
-    ]
+    ];
+    if !database_url.trim().is_empty() {
+        env.push(("DATABASE_URL".into(), database_url.to_string()));
+    }
+    env
 }
 
 /// Ask the OS for a free loopback port.
@@ -482,7 +481,7 @@ mod tests {
             1234,
             Path::new("/data/noema"),
             "http://127.0.0.1:1234",
-            DEFAULT_DATABASE_URL,
+            "postgresql://u@h:5432/db",
         );
         let get = |key: &str| {
             env.iter()
@@ -495,9 +494,27 @@ mod tests {
         assert_eq!(get("NODE_ENV"), "production");
         assert_eq!(get("NOEMA_RUNTIME"), "desktop");
         assert_eq!(get("APP_ORIGINS"), "http://127.0.0.1:1234");
-        assert_eq!(get("DATABASE_URL"), DEFAULT_DATABASE_URL);
-        assert!(get("DATABASE_URL").starts_with("postgresql://"));
+        assert_eq!(get("DATABASE_URL"), "postgresql://u@h:5432/db");
         assert_eq!(get("NEXT_TELEMETRY_DISABLED"), "1");
+    }
+
+    /// With no configured URL the variable is *absent* — that is the signal for
+    /// the bundled server to provision its own embedded PostgreSQL, which is what
+    /// lets a fresh install run with nothing installed.
+    #[test]
+    fn an_unconfigured_database_url_is_left_out_entirely() {
+        let env = server_env(
+            1234,
+            Path::new("/data/noema"),
+            "http://127.0.0.1:1234",
+            "",
+        );
+        assert!(
+            !env.iter().any(|(key, _)| key == "DATABASE_URL"),
+            "an empty DATABASE_URL must not be passed — unset is what selects the embedded database"
+        );
+        // The rest of the environment is unaffected.
+        assert_eq!(env.len(), 9);
     }
 
     #[test]
