@@ -293,17 +293,22 @@ whose own shape matches the act it plays under:
 
 | Film | Track | Act |
 | --- | --- | --- |
-| 0:00 – 0:16 | 0:00 | the cold open — the track's own build |
-| 0:16 – 1:04 | 0:16 | the drop, under the write and structure chapters |
+| 0:00 – 1:04 | 0:00 | build and drop together — the cold open, the wordmark, write, structure. The drop lands on frame 480, where the editor cuts in |
 | 1:04 – 1:42 | 2:34 | the climax, under ship and together |
 | 1:42 – 1:56.7 | 3:20 | the outro |
 
 Each join is an equal-power crossfade over 14 frames (0.47 s): gains follow
-`sin`/`cos` rather than a straight line, because two linear ramps sum to a −3 dB
-suck-out in the middle of every splice. Levels were checked, not assumed —
-per-second RMS of the source measured with `ffmpeg volumedetect`, at the four
-join points, reads −18.5, −18.9, −18.5 and −18.5 dB mean, so the joins do not
-step. Segment gains run 0.31–0.36.
+`sin`/`cos` rather than a straight line, because two linear ramps sum to a
+−3 dB suck-out in the middle of every splice. Levels were checked, not assumed —
+per-second RMS of the source measured with `ffmpeg volumedetect`, at the join
+points, reads −18.5 and −18.5 dB mean, so the joins do not step.
+
+There were four segments to begin with. The first two were contiguous in the
+source, which made that join a crossfade of a signal with *itself*: the two copies
+sum coherently, so the equal-power law gives a **+3 dB swell** across the splice
+instead of a flat join. One segment from 0:00 to 1:04 removes the join, the
+artefact, and a moving part — equal-power is only the right law when the two
+halves are uncorrelated, which is true of the two joins that remain.
 
 **A hand-built sidechain.** Every cue at volume ≥ 0.4 ducks the bed to 62 % on a
 ±20-frame triangle. It is a dozen lines of arithmetic rather than a compressor
@@ -328,9 +333,10 @@ here the music and every cue are mixed by Remotion inside the same timeline as t
 picture, so a cue written at frame *N* is at frame *N*. The only judgement left is
 where *N* should be, and that is the table.
 
-**The mix, measured.** `ebur128` on the finished file: **−18.0 LUFS** integrated,
-2.9 LU range, true peak −2.2 dBFS. The music-free cut measures −24.3 LUFS, which
-is the quickest way to confirm the `bgm` prop is doing something.
+**The mix, measured.** `ebur128` on the finished file: **−18.1 LUFS** integrated,
+3.5 LU range, true peak −2.3 dBFS. The music-free cut measures −24.3 LUFS, which
+is the quickest way to confirm the `bgm` prop is doing something. Both cuts carry
+an identical picture — the `bgm` flag only ever gates the bed.
 
 ## 7 — Review
 

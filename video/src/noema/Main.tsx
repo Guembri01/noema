@@ -336,25 +336,33 @@ export const SFX: Cue[] = [
  * breakdown and the film's finale played over its quiet middle. The loudest
  * twenty seconds of the track were never used at all.
  *
- * So the bed is now cut, not laid. Four segments of the same track, each
+ * So the bed is now cut, not laid. Three segments of the same track, each
  * measured (a per-second RMS map — `video/README.md` has the method) and placed
  * so its own shape matches the act it plays under:
  *
- *   0:00–0:16  the build   → the cold open and the wordmark
- *   0:16–1:04  the drop    → the write and structure chapters
- *   2:34–3:12  the climax  → the ship and together chapters (the board included)
- *   3:20–end   the outro   → own it, the installer and the close
+ *   0:00–1:04  build + drop  → the cold open, the wordmark, write, structure
+ *   2:34–3:12  the climax    → ship and together, the board included
+ *   3:20–end   the outro     → own it, the installer and the close
  *
- * Segments overlap by 14 frames on equal-power ramps, so a splice is a musical
- * crossfade rather than a cut.
+ * The first two segments of the four-segment version were contiguous in the
+ * source, which made their join a crossfade of a signal with *itself*: the two
+ * copies sum coherently, so equal-power ramps produce a +3 dB swell across the
+ * splice rather than a flat join. Playing 0:00–1:04 as one segment removes the
+ * join and the artefact with it, and the drop still lands on frame 480 because
+ * the source is continuous there.
+ *
+ * The remaining two joins are between different sections, where equal-power is
+ * the correct law — the two halves are uncorrelated, and two linear ramps would
+ * sum to a −3 dB suck-out in the middle.
  */
 type BedSegment = { at: number; from: number; dur: number; gain: number };
 
 const XFADE = 14;
 
 const BED: BedSegment[] = [
-  { at: 0, from: 0, dur: 480, gain: 0.36 }, // 0:00 → 0:16, the build
-  { at: 480, from: 480, dur: 1440, gain: 0.34 }, // 0:16 → 1:04, the drop
+  // 0:00 → 1:04, the build and the drop, continuous in the source: the drop
+  // still lands on frame 480, which is where the editor shot cuts in.
+  { at: 0, from: 0, dur: 1920, gain: 0.34 },
   { at: 1920, from: 4620, dur: 1140, gain: 0.33 }, // 2:34 → 3:12, the climax
   { at: 3060, from: 6000, dur: FILM_TOTAL - 3060, gain: 0.31 }, // 3:20 →, the outro
 ];
