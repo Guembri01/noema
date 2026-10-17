@@ -1,17 +1,18 @@
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useTransition, useState } from "react";
-import { Archive, MessageSquare, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useTransition, useState, type ReactNode } from "react";
+import { Archive, MessageSquare, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   addTicketCommentAction,
   archiveTicketAction,
   deleteTicketAction,
   linkTicketsAction,
+  restoreTicketAction,
   toggleTicketLabelAction,
 } from "@/server/actions/tickets";
 import { deleteTicketConfirmLabel } from "@/lib/ticket-delete";
 import { assignTicketToCycleAction } from "@/server/actions/cycles";
-import { safeAction } from "@/lib/actions-client";
+import { safeAction, withUndo } from "@/lib/actions-client";
 import { DESCRIPTION_MAX } from "@/lib/description";
 import {
   convert,
@@ -28,19 +29,25 @@ import {
   TICKET_PRIORITIES,
   TICKET_STATUSES,
   UNASSIGNED_BUCKET,
+  statusMeta,
   typeMeta,
 } from "@/lib/tickets";
 import { cn } from "@/lib/utils";
 import { applyDirAttr } from "@/lib/bidi";
-import {
-  focusableSelector,
-  resolveReturnTarget,
-  trapPlan,
-  type Focusable,
-  type FocusPlan,
-} from "@/lib/focus-trap";
+import { trapPlan, type Focusable, type FocusPlan } from "@/lib/focus-trap";
+import { Avatar } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DatePicker } from "@/components/ui/date-picker";
+import { Select, type SelectOption } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Sheet } from "@/components/ui/sheet";
+import { Stepper } from "@/components/ui/stepper";
+import { Tag } from "@/components/ui/tag";
+import { Tooltip } from "@/components/ui/tooltip";
 import { StatusPill } from "./ticket-bits";
-import { LABEL_TONES, type LabelRow, type TicketRow } from "./ticket-types";
+import { type LabelRow, type TicketRow } from "./ticket-types";
 
 /** Whether a raw estimate is a usable number (missing/non-finite = absent). */
 const hasFiniteEstimate = (value: number | null | undefined): value is number =>
@@ -113,14 +120,108 @@ function activityIso(value: string | number | Date): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
-/* ------------------------------------------------------------------------- *
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+/** `YYYY-MM-DD` for the local calendar day of an instant, or `null` if invalid. */
+function dayKey(value: string | number | Date): string | null {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+/** A run of activity entries that share one calendar day. */
+export type ActivityGroup = {
+  /** Stable key: the `YYYY-MM-DD` day, or `"unknown"` for unparsable times. */
+  key: string;
+  /** Human label: "Today", "Yesterday", or the locale date. */
+  label: string;
+  entries: TicketActivityRow[];
+};
+
+/**
+ * Group an activity trail by calendar day, preserving both the incoming entry
+ * order and the first-appearance day order. Pure and total (`now` is injected
+ * so the Today/Yesterday labels are deterministic in tests). Each group renders
+ * under one heading with the timeline indent guide beneath it.
+ */
+export function groupActivity(
+  entries: readonly TicketActivityRow[],
+  now: Date | number = Date.now(),
+): ActivityGroup[] {
+  const nowDate = new Date(now);
+  const todayKey = dayKey(nowDate);
+  const yesterdayKey = dayKey(new Date(nowDate.getTime() - 24 * 60 * 60 * 1000));
+
+  const order: string[] = [];
+  const buckets = new Map<string, ActivityGroup>();
+  for (const entry of entries) {
+    const key = dayKey(entry.createdAt) ?? "unknown";
+    let group = buckets.get(key);
+    if (!group) {
+      const label =
+        key === todayKey
+          ? "Today"
+          : key === yesterdayKey
+            ? "Yesterday"
+            : key === "unknown"
+              ? "Unknown"
+              : new Date(entry.createdAt).toLocaleDateString();
+      group = { key, label, entries: [] };
+      buckets.set(key, group);
+      order.push(key);
+    }
+    group.entries.push(entry);
+  }
+  return order.map((key) => buckets.get(key)!);
+}
+
+/* -------------------------------------------------------------------------- *
+ * Property row → control (the pure mapping)
+ * ------------------------------------------------------------------------- */
+
+/** The ticket properties the drawer edits. */
+export type TicketPropertyField =
+  | "status"
+  | "priority"
+  | "assignee"
+  | "project"
+  | "cycle"
+  | "estimate"
+  | "startDate"
+  | "dueDate"
+  | "labels";
+
+/** Which design-system control a property row is rendered with. */
+export type TicketPropertyControl = "select" | "date" | "stepper" | "tags";
+
+/**
+ * Property → control map. Pure and total, so the node test can pin that every
+ * property resolves to a sanctioned primitive (and the drawer renders the same
+ * table it advertises).
+ */
+export const PROPERTY_CONTROL: Record<TicketPropertyField, TicketPropertyControl> = {
+  status: "select",
+  priority: "select",
+  assignee: "select",
+  project: "select",
+  cycle: "select",
+  estimate: "stepper",
+  startDate: "date",
+  dueDate: "date",
+  labels: "tags",
+};
+
+/** The control kind for one property. */
+export function propertyControl(field: TicketPropertyField): TicketPropertyControl {
+  return PROPERTY_CONTROL[field];
+}
+
+/* -------------------------------------------------------------------------- *
  * Focus management (shared kernel: @/lib/focus-trap)
  *
- * The ticket drawer is a hand-rolled slide-over — it bypasses `ui/dialog` — so
- * it owns its own Tab trap: every tabbable field, control and link is mapped to
- * a `Focusable` descriptor, `trapPlan` decides the next stop (wrapping at the
- * ends), and `resolveReturnTarget` restores focus to the invoking control when
- * the drawer closes. Escape is left alone: the drawer never closed on Escape.
+ * The drawer chrome now lives on `ui/sheet`, which owns the Tab trap, Escape,
+ * the body-scroll lock and focus restore. `planTicketDrawerTab` is kept as the
+ * door onto the shared trap kernel for the existing overlay-wiring check.
  * ------------------------------------------------------------------------- */
 
 /**
@@ -139,21 +240,598 @@ export function planTicketDrawerTab(
   });
 }
 
-/** The drawer's real tabbable elements, tagged with their index as the id. */
-function drawerStops(root: HTMLElement): {
-  stops: Focusable[];
-  nodes: HTMLElement[];
-} {
-  const nodes = Array.from(root.querySelectorAll<HTMLElement>(focusableSelector));
-  const stops = nodes.map((element, index) => ({
-    id: String(index),
-    disabled:
-      element.hasAttribute("disabled") ||
-      element.getAttribute("aria-disabled") === "true",
-    hidden: element.hidden || element.getAttribute("aria-hidden") === "true",
-    tabIndex: element.tabIndex,
+/** A labelled property row: an uppercase micro-label over its control. */
+function PropertyRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className="text-[11px] uppercase tracking-wide text-muted">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+/** A sectioned block: a heading over a body. */
+function DrawerSection({
+  title,
+  icon,
+  children,
+  className,
+}: {
+  title: ReactNode;
+  icon?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={cn("min-w-0", className)}>
+      <p className="mb-2 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+        {icon}
+        {title}
+      </p>
+      {children}
+    </section>
+  );
+}
+
+export type TicketDrawerBodyProps = {
+  ticket: TicketRow;
+  labels: LabelRow[];
+  members: { id: string; name: string }[];
+  projects: { id: string; name: string; icon: string | null }[];
+  allTickets: TicketRow[];
+  activity: TicketActivityRow[];
+  cycles: { id: string; name: string }[];
+  slug: string;
+  locale: string;
+  /** Persist a field patch on this ticket. */
+  onPatch: (data: Record<string, unknown>, label?: string) => void;
+  /** Open another ticket in the same drawer. */
+  onOpen: (ticketId: string) => void;
+  /** Create a sub-ticket of this one. */
+  onAddChild: (title: string) => void;
+  /** Schedule (or unschedule) the ticket in a cycle. */
+  onCycleChange: (cycleId: string | null) => void;
+  /** Toggle a label relation. */
+  onToggleLabel: (labelId: string) => void;
+  /** Link a related ticket. */
+  onLinkTicket: (toId: string, type: string) => void;
+  /** Post a comment. */
+  onAddComment: (body: string) => void;
+};
+
+/**
+ * The drawer body — Properties / Description / Comments / Activity — as a
+ * self-contained, router-free component so it can be rendered statically
+ * (`renderToStaticMarkup` in the node test) and so `TicketDrawer` stays a thin
+ * wiring shell around `ui/sheet`.
+ *
+ * Property rows use the design-system controls (`Select` / `DatePicker` /
+ * `Stepper` / `Tag` / `Avatar`); the activity trail renders grouped under day
+ * headings with an indent guide and muted timestamps.
+ */
+export function TicketDrawerBody({
+  ticket,
+  labels,
+  members,
+  projects,
+  allTickets,
+  activity,
+  cycles,
+  slug,
+  locale,
+  onPatch,
+  onOpen,
+  onAddChild,
+  onCycleChange,
+  onToggleLabel,
+  onLinkTicket,
+  onAddComment,
+}: TicketDrawerBodyProps) {
+  const [comment, setComment] = useState("");
+  const [relationQuery, setRelationQuery] = useState("");
+  const [relationType, setRelationType] = useState("relates");
+
+  // Debounced description autosave: local state while typing, one save per
+  // quiet period (or on blur). Reset only when another ticket is opened.
+  const [description, setDescription] = useState(ticket.description ?? "");
+  const [descriptionFocused, setDescriptionFocused] = useState(false);
+  const savedDescription = useRef(ticket.description ?? "");
+  const descriptionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasDescription = description.trim().length > 0;
+  const titleDirection = applyDirAttr(ticket.title);
+  const descriptionDirection = applyDirAttr(description);
+
+  useEffect(() => {
+    setDescription(ticket.description ?? "");
+    savedDescription.current = ticket.description ?? "";
+  }, [ticket.id]); // eslint-disable-line react-hooks/exhaustive-deps -- reset per opened ticket only
+
+  useEffect(
+    () => () => {
+      if (descriptionTimer.current) clearTimeout(descriptionTimer.current);
+    },
+    [],
+  );
+
+  const saveDescription = (value: string) => {
+    if (value === savedDescription.current) return;
+    savedDescription.current = value;
+    onPatch({ description: value });
+  };
+
+  const onDescriptionChange = (value: string) => {
+    const next = value.length > DESCRIPTION_MAX ? value.slice(0, DESCRIPTION_MAX) : value;
+    setDescription(next);
+    if (descriptionTimer.current) clearTimeout(descriptionTimer.current);
+    descriptionTimer.current = setTimeout(() => saveDescription(next), 800);
+  };
+
+  const flushDescription = (value: string) => {
+    if (descriptionTimer.current) clearTimeout(descriptionTimer.current);
+    saveDescription(value);
+  };
+
+  const related = ticket.labelIds;
+  const parent = ticket.parentId
+    ? allTickets.find((row) => row.id === ticket.parentId) ?? null
+    : null;
+  const children = allTickets.filter((row) => row.parentId === ticket.id);
+
+  // Roll the direct children up through the shared sub-ticket engine instead of
+  // a flat sum: `rollupEstimate` gives total/remaining, `progressOf` the done
+  // split, `rollupByAssignee` the per-assignee share. The engine is unit-blind
+  // (one bare number per tree), so first collapse mixed child units onto one
+  // "dominant" unit — `sumEstimates` picks the children's most common unit
+  // (ties broken by `ESTIMATE_UNITS`) — convert every row with `convert`, then
+  // label the totals with that unit. With no child estimate we fall back to the
+  // ticket's own unit, so the label never silently defaults to points.
+  const childEstimates = children.map((child) => ({
+    estimate: child.estimate,
+    estimateUnit: child.estimateUnit,
   }));
-  return { stops, nodes };
+  const childSummary = sumEstimates(childEstimates);
+  const childUnit: EstimateUnit = childEstimates.some((child) => hasFiniteEstimate(child.estimate))
+    ? childSummary.unit
+    : isEstimateUnit(ticket.estimateUnit)
+      ? ticket.estimateUnit
+      : "points";
+  const childTickets = children.map((child) => ({
+    id: child.id,
+    parentId: child.parentId,
+    estimate: estimateInUnit(child.estimate, child.estimateUnit, childUnit),
+    state: child.status,
+    assigneeId: child.assigneeId,
+  }));
+  const childRollup = rollupEstimate(childTickets);
+  const childProgress = progressOf(childTickets);
+  const childByAssignee = rollupByAssignee(childTickets);
+  const assigneeNames = new Map(members.map((member) => [member.id, member.name]));
+
+  const candidates = relationQuery
+    ? allTickets
+        .filter(
+          (candidate) =>
+            candidate.id !== ticket.id &&
+            `${candidate.key} ${candidate.title}`.toLowerCase().includes(relationQuery.toLowerCase()),
+        )
+        .slice(0, 5)
+    : [];
+
+  const statusOptions: SelectOption[] = TICKET_STATUSES.map((status) => ({
+    value: status.id,
+    label: status.label,
+    tag: status.color,
+  }));
+  const priorityOptions: SelectOption[] = TICKET_PRIORITIES.map((priority) => ({
+    value: priority.id,
+    label: priority.label,
+    tag: priority.color,
+  }));
+  const assigneeOptions: SelectOption[] = members.map((member) => ({
+    value: member.id,
+    label: member.name,
+    icon: <Avatar user={{ id: member.id, name: member.name }} size={16} />,
+  }));
+  const projectOptions: SelectOption[] = projects.map((project) => ({
+    value: project.id,
+    label: project.name,
+    icon: project.icon ? <span aria-hidden>{project.icon}</span> : undefined,
+  }));
+  const cycleOptions: SelectOption[] = cycles.map((cycle) => ({
+    value: cycle.id,
+    label: cycle.name,
+  }));
+  const activityGroups = useMemo(() => groupActivity(activity), [activity]);
+
+  return (
+    <>
+      <DrawerSection title="Properties">
+        <div className="grid grid-cols-2 gap-3">
+          <PropertyRow label={t(locale, "statusWord")}>
+            <Select
+              aria-label={t(locale, "ticketStatusAria")}
+              value={ticket.status}
+              options={statusOptions}
+              onChange={(value) => onPatch({ status: value }, t(locale, "statusUpdated"))}
+            />
+          </PropertyRow>
+
+          <PropertyRow label={t(locale, "priorityWord")}>
+            <Select
+              aria-label={t(locale, "ticketPriorityAria")}
+              value={ticket.priority}
+              options={priorityOptions}
+              onChange={(value) => onPatch({ priority: value }, t(locale, "priorityUpdated"))}
+            />
+          </PropertyRow>
+
+          <PropertyRow label={t(locale, "assigneeWord")}>
+            <Select
+              aria-label={t(locale, "ticketAssigneeAria")}
+              value={ticket.assigneeId ?? ""}
+              options={assigneeOptions}
+              placeholder={t(locale, "unassigned")}
+              onChange={(value) =>
+                onPatch({ assigneeId: value || null }, t(locale, "assigneeUpdated"))
+              }
+            />
+          </PropertyRow>
+
+          <PropertyRow label={t(locale, "projectWord")}>
+            <Select
+              aria-label={t(locale, "ticketProjectAria")}
+              value={ticket.projectId ?? ""}
+              options={projectOptions}
+              placeholder={t(locale, "noProject")}
+              onChange={(value) =>
+                onPatch({ projectId: value || null }, t(locale, "projectUpdated"))
+              }
+            />
+          </PropertyRow>
+
+          <PropertyRow label={t(locale, "scheduledIn")}>
+            <Select
+              aria-label={t(locale, "ticketCycleAria")}
+              value={ticket.cycleId ?? ""}
+              options={cycleOptions}
+              placeholder={t(locale, "notScheduled")}
+              onChange={(value) => onCycleChange(value || null)}
+            />
+          </PropertyRow>
+
+          <PropertyRow label={t(locale, "estimateWord")}>
+            <div className="flex items-stretch gap-1" role="group" aria-label={t(locale, "ticketEstimateAria")}>
+              <Stepper
+                value={ticket.estimate ?? 0}
+                min={0}
+                step={0.5}
+                onValueChange={(value) =>
+                  onPatch({ estimate: value }, t(locale, "estimateUpdated"))
+                }
+                className="min-w-0 flex-1"
+              />
+              <Select
+                aria-label={t(locale, "estimateUnitAria")}
+                className="w-24"
+                value={ticket.estimateUnit ?? "points"}
+                options={ESTIMATE_UNITS.map((unit) => ({ value: unit, label: unit }))}
+                allowClear={false}
+                searchable={false}
+                onChange={(value) => onPatch({ estimateUnit: value })}
+              />
+            </div>
+          </PropertyRow>
+
+          <PropertyRow label={t(locale, "startWord")}>
+            <DatePicker
+              mode="date"
+              value={{ date: ticket.startDate?.slice(0, 10) ?? null }}
+              placeholder={t(locale, "noStart")}
+              locale={locale}
+              onChange={(next) => onPatch({ startDate: next.date ?? null })}
+              className="w-full"
+            />
+          </PropertyRow>
+
+          <PropertyRow label={t(locale, "dueLabel")}>
+            <DatePicker
+              mode="date"
+              value={{ date: ticket.dueDate?.slice(0, 10) ?? null }}
+              placeholder={t(locale, "noDueDate")}
+              locale={locale}
+              onChange={(next) => onPatch({ dueDate: next.date ?? null })}
+              className="w-full"
+            />
+          </PropertyRow>
+        </div>
+
+        <div className="mt-4">
+          <DrawerSection title={t(locale, "labelsHeading")}>
+            <div className="flex flex-wrap gap-1.5">
+              {labels.map((label) => {
+                const on = related.includes(label.id);
+                return (
+                  <Tag
+                    key={label.id}
+                    hue={label.color}
+                    size="sm"
+                    selected={on}
+                    onSelectedChange={() => onToggleLabel(label.id)}
+                  >
+                    {label.name}
+                  </Tag>
+                );
+              })}
+              {labels.length === 0 && (
+                <p className="text-xs text-muted">{t(locale, "noLabelsInSettings")}</p>
+              )}
+            </div>
+          </DrawerSection>
+        </div>
+      </DrawerSection>
+
+      <Separator />
+
+      <DrawerSection title="Description">
+        <textarea
+          data-testid={hasDescription ? "ticket-description-box" : undefined}
+          value={description}
+          dir={descriptionDirection.dir}
+          aria-label={t(locale, "ticketDescriptionAria")}
+          rows={Math.min(12, description.split("\n").length + 1)}
+          placeholder={t(locale, "addDescription")}
+          onChange={(event) => onDescriptionChange(event.target.value)}
+          onFocus={() => setDescriptionFocused(true)}
+          onBlur={(event) => {
+            setDescriptionFocused(false);
+            flushDescription(event.target.value);
+          }}
+          className={cn(
+            "focus-ring w-full resize-y rounded-md px-3 py-2 text-sm text-fg outline-none placeholder:text-muted u-colors",
+            descriptionDirection.className,
+            hasDescription || descriptionFocused
+              ? "border border-border bg-bg"
+              : "border border-dashed border-border bg-transparent",
+          )}
+        />
+      </DrawerSection>
+
+      <Separator />
+
+      <DrawerSection title={t(locale, "subticketsHeading")}>
+        {parent && (
+          <button
+            type="button"
+            onClick={() => onOpen(parent.id)}
+            className="focus-ring u-colors mb-2 flex w-full items-center gap-1.5 rounded-sm border border-border px-2 py-1 text-left text-xs hover:bg-surface-2"
+          >
+            <span className="text-muted">{t(locale, "partOf")}</span>
+            <span className="font-mono text-muted">{parent.key}</span>
+            <span className="min-w-0 flex-1 truncate">{parent.title}</span>
+          </button>
+        )}
+
+        {children.length > 0 ? (
+          <>
+            <p className="mb-1.5 flex flex-wrap items-center gap-1 text-[11px] text-muted">
+              <Badge tone="neutral" size="sm" count={childRollup.count} />
+              <span>{t(locale, "estimateTotal")}:</span>
+              <span className="text-fg">{formatEstimate(childRollup.total, childUnit)}</span>
+              <span>· {t(locale, "remaining")}:</span>
+              <span className="text-fg">{formatEstimate(childRollup.remaining, childUnit)}</span>
+              <span>· {childProgress.open} {t(locale, "openWord")} · {childProgress.percent}%</span>
+            </p>
+            {childByAssignee.length > 1 && (
+              <ul className="mb-2 space-y-0.5">
+                {childByAssignee.map((bucket) => (
+                  <li
+                    key={bucket.assigneeId}
+                    className="flex items-center justify-between gap-2 text-[11px] text-muted"
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {bucket.assigneeId === UNASSIGNED_BUCKET
+                        ? t(locale, "unassigned")
+                        : (assigneeNames.get(bucket.assigneeId) ?? bucket.assigneeId)}
+                    </span>
+                    <span className="shrink-0">
+                      {formatEstimate(bucket.points, childUnit)} · {bucket.open}{" "}
+                      {t(locale, "openWord")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <ul className="mb-2 divide-y divide-border rounded-md border border-border">
+              {children.map((child) => (
+                <li key={child.id}>
+                  <button
+                    type="button"
+                    onClick={() => onOpen(child.id)}
+                    className="focus-ring u-colors flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-surface-2"
+                  >
+                    <span className="font-mono text-muted">{child.key}</span>
+                    <span className="min-w-0 flex-1 truncate">{child.title}</span>
+                    <span className="text-muted">
+                      {formatEstimate(child.estimate, child.estimateUnit ?? "points")}
+                    </span>
+                    <StatusPill status={child.status} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <p className="mb-2 text-xs text-muted">{t(locale, "noSubTickets")}</p>
+        )}
+
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const input = event.currentTarget.elements.namedItem("child") as HTMLInputElement;
+            const title = input.value.trim();
+            if (!title) return;
+            input.value = "";
+            onAddChild(title);
+          }}
+        >
+          <input
+            name="child"
+            aria-label={t(locale, "newSubTicketAria")}
+            placeholder={t(locale, "addSubTicketPlaceholder")}
+            className="focus-ring u-colors h-8 min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 text-xs outline-none placeholder:text-muted"
+          />
+          <Button type="submit" size="sm" variant="secondary">
+            {t(locale, "add")}
+          </Button>
+        </form>
+      </DrawerSection>
+
+      <Separator />
+
+      <DrawerSection title={t(locale, "relationsHeading")}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            aria-label={t(locale, "relationTypeAria")}
+            className="w-40"
+            size="sm"
+            value={relationType}
+            searchable={false}
+            allowClear={false}
+            options={[
+              { value: "relates", label: t(locale, "relationRelates") },
+              { value: "blocks", label: t(locale, "relationBlocks") },
+              { value: "blocked_by", label: t(locale, "relationBlockedBy") },
+              { value: "duplicates", label: t(locale, "relationDuplicates") },
+            ]}
+            onChange={setRelationType}
+          />
+          <input
+            value={relationQuery}
+            aria-label={t(locale, "findTicketAria")}
+            placeholder={t(locale, "findTicketPlaceholder")}
+            onChange={(event) => setRelationQuery(event.target.value)}
+            className="focus-ring u-colors h-8 min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 text-xs outline-none placeholder:text-muted focus:border-accent"
+          />
+        </div>
+        {candidates.length > 0 && (
+          <ul className="mt-2 space-y-1">
+            {candidates.map((candidate) => (
+              <li key={candidate.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onLinkTicket(candidate.id, relationType);
+                    setRelationQuery("");
+                  }}
+                  className="focus-ring u-colors w-full rounded-sm border border-border px-2 py-1 text-left text-xs hover:bg-surface-2"
+                >
+                  <span className="font-mono text-muted">{candidate.key}</span> {candidate.title}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </DrawerSection>
+
+      <Separator />
+
+      <DrawerSection
+        title={
+          <>
+            <MessageSquare className="h-3 w-3" aria-hidden /> {t(locale, "commentsHeading")}
+            <Badge tone="neutral" size="sm" count={ticket.commentCount} />
+          </>
+        }
+      >
+        <div className="flex items-end gap-2">
+          <textarea
+            value={comment}
+            aria-label={t(locale, "addTicketCommentAria")}
+            rows={2}
+            placeholder={t(locale, "leaveCommentPlaceholder")}
+            onChange={(event) => setComment(event.target.value)}
+            className="focus-ring u-colors w-full rounded-sm border border-border bg-bg px-2 py-1.5 text-sm outline-none placeholder:text-muted focus:border-accent"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="primary"
+            disabled={!comment.trim()}
+            onClick={() => {
+              onAddComment(comment);
+              setComment("");
+            }}
+          >
+            {t(locale, "comment")}
+          </Button>
+        </div>
+      </DrawerSection>
+
+      <Separator />
+
+      <DrawerSection title={t(locale, "activityHeading")}>
+        {activity.length === 0 ? (
+          <p className="text-xs text-muted">{t(locale, "youAreAllCaughtUp")}</p>
+        ) : (
+          <div className="space-y-3" data-testid="ticket-activity">
+            {activityGroups.map((group) => (
+              <div key={group.key}>
+                <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                  {group.label}
+                </p>
+                <ol className="relative space-y-1.5 border-s border-border ps-3">
+                  {group.entries.map((entry) => {
+                    const detail = activityDetail(entry.detail);
+                    const iso = activityIso(entry.createdAt);
+                    return (
+                      <li key={entry.id} className="relative flex items-baseline gap-1.5 text-xs">
+                        <span
+                          aria-hidden
+                          className="absolute -start-[15px] top-1.5 h-1.5 w-1.5 rounded-full bg-border-strong"
+                        />
+                        <span className="shrink-0 text-fg">{activityVerb(entry.kind)}</span>
+                        {entry.actor && (
+                          <span className="shrink-0 text-muted">{entry.actor.name}</span>
+                        )}
+                        {detail && (
+                          <span className="min-w-0 flex-1 truncate text-muted">{detail}</span>
+                        )}
+                        <time
+                          dateTime={iso}
+                          title={iso}
+                          className="ms-auto shrink-0 text-[11px] text-muted"
+                        >
+                          {formatRelativeTime(entry.createdAt, { locale })}
+                        </time>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+            ))}
+          </div>
+        )}
+      </DrawerSection>
+
+      <Separator />
+
+      <DrawerSection title={t(locale, "whereThisLivesHeading")} className="rounded-lg border border-border p-3">
+        <p className="text-xs text-muted">
+          {ticket.projectName
+            ? `${t(locale, "projectColon")} ${ticket.projectName}`
+            : t(locale, "notInProject")}
+          {ticket.milestoneName
+            ? ` · ${t(locale, "milestoneColon")} ${ticket.milestoneName}`
+            : ""}
+          {ticket.assigneeName ? ` · ${t(locale, "assignedTo")} ${ticket.assigneeName}` : ""}
+        </p>
+        <p className="mt-1 text-[11px] text-muted">
+          {t(locale, "permalinkLabel")} /w/{slug}?ticket={ticket.key}
+        </p>
+      </DrawerSection>
+    </>
+  );
 }
 
 /** Right-hand drawer with every ticket field, relations, comments, activity. */
@@ -190,91 +868,34 @@ export function TicketDrawer({
   patch: (ticketId: string, data: Record<string, unknown>, label?: string) => void;
 }) {
   const router = useRouter();
-  const [, startTransition] = useTransition();
-  const [comment, setComment] = useState("");
-  const [relationQuery, setRelationQuery] = useState("");
-  const [relationType, setRelationType] = useState("relates");
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const dialogRef = useRef<HTMLElement | null>(null);
-  const invokerRef = useRef<HTMLElement | null>(null);
+  const [pending, startTransition] = useTransition();
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
-  // Record the invoking control, move focus into the drawer, and restore the
-  // invoker on unmount (only while it is still connected).
-  useEffect(() => {
-    const active = document.activeElement;
-    if (active instanceof HTMLElement && active !== document.body) {
-      invokerRef.current = active;
-    }
-    dialogRef.current?.focus();
-    return () => {
-      const invoker = invokerRef.current;
-      invokerRef.current = null;
-      const target = resolveReturnTarget({
-        invoker: invoker
-          ? { id: "ticket-invoker", connected: invoker.isConnected }
-          : null,
-      });
-      if (target) invoker?.focus();
-    };
-  }, []);
+  const onPatch = (data: Record<string, unknown>, label?: string) =>
+    patch(ticket.id, data, label);
 
-  const onDialogKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
-    if (event.key !== "Tab") return;
-    const { stops, nodes } = drawerStops(event.currentTarget);
-    const active = document.activeElement;
-    const activeIndex = active instanceof HTMLElement ? nodes.indexOf(active) : -1;
-    const plan = planTicketDrawerTab(stops, {
-      activeId: activeIndex >= 0 ? String(activeIndex) : null,
-      shift: event.shiftKey,
+  const archive = () =>
+    startTransition(async () => {
+      const outcome = await safeAction(() => archiveTicketAction(ticket.id), { locale });
+      if (!outcome.ok) {
+        toast.error(outcome.error);
+        return;
+      }
+      if ("error" in outcome.value) {
+        toast.error(outcome.value.error);
+        return;
+      }
+      toast.success(
+        t(locale, "ticketArchived"),
+        withUndo({
+          label: t(locale, "archiveTicket"),
+          undo: () => restoreTicketAction(ticket.id),
+          locale,
+        }),
+      );
+      onClose();
+      router.refresh();
     });
-    if (!plan) return;
-    const target = nodes[Number(plan.target.id)];
-    if (!target) return;
-    event.preventDefault();
-    target.focus();
-  };
-
-  // Debounced description autosave: local state while typing, one save per
-  // quiet period (or on blur). Reset only when another ticket is opened.
-  const [description, setDescription] = useState(ticket.description ?? "");
-  const [descriptionFocused, setDescriptionFocused] = useState(false);
-  const savedDescription = useRef(ticket.description ?? "");
-  const descriptionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hasDescription = description.trim().length > 0;
-  // Per-block direction (shared bidi engine): a Latin title/summary that
-  // embeds Arabic (or the reverse) gets its own `dir` + `dir-*` class.
-  const titleDirection = applyDirAttr(ticket.title);
-  const descriptionDirection = applyDirAttr(description);
-
-  useEffect(() => {
-    setDescription(ticket.description ?? "");
-    savedDescription.current = ticket.description ?? "";
-  }, [ticket.id]); // eslint-disable-line react-hooks/exhaustive-deps -- reset per opened ticket only
-
-  useEffect(
-    () => () => {
-      if (descriptionTimer.current) clearTimeout(descriptionTimer.current);
-    },
-    [],
-  );
-
-  const saveDescription = (value: string) => {
-    if (value === savedDescription.current) return;
-    savedDescription.current = value;
-    patch(ticket.id, { description: value });
-  };
-
-  const onDescriptionChange = (value: string) => {
-    const next = value.length > DESCRIPTION_MAX ? value.slice(0, DESCRIPTION_MAX) : value;
-    setDescription(next);
-    if (descriptionTimer.current) clearTimeout(descriptionTimer.current);
-    descriptionTimer.current = setTimeout(() => saveDescription(next), 800);
-  };
-
-  const flushDescription = (value: string) => {
-    if (descriptionTimer.current) clearTimeout(descriptionTimer.current);
-    saveDescription(value);
-  };
 
   const permanentlyDelete = () =>
     startTransition(async () => {
@@ -288,651 +909,142 @@ export function TicketDrawer({
         return;
       }
       toast.success("Ticket deleted");
+      setDeleteOpen(false);
       onClose();
       router.refresh();
     });
 
-  const related = ticket.labelIds;
-  const parent = ticket.parentId ? allTickets.find((row) => row.id === ticket.parentId) ?? null : null;
-  const children = allTickets.filter((row) => row.parentId === ticket.id);
-  // Roll the direct children up through the shared sub-ticket engine instead of
-  // a flat sum: `rollupEstimate` gives total/remaining, `progressOf` the done
-  // split, `rollupByAssignee` the per-assignee share. The engine is unit-blind
-  // (one bare number per tree), so first collapse mixed child units onto one
-  // "dominant" unit — `sumEstimates` picks the children's most common unit
-  // (ties broken by `ESTIMATE_UNITS`) — convert every row with `convert`, then
-  // label the totals with that unit. With no child estimate we fall back to the
-  // ticket's own unit, so the label never silently defaults to points.
-  const childEstimates = children.map((child) => ({
-    estimate: child.estimate,
-    estimateUnit: child.estimateUnit,
-  }));
-  const childSummary = sumEstimates(childEstimates);
-  const childUnit: EstimateUnit = childEstimates.some((child) => hasFiniteEstimate(child.estimate))
-    ? childSummary.unit
-    : isEstimateUnit(ticket.estimateUnit)
-      ? ticket.estimateUnit
-      : "points";
-  const childTickets = children.map((child) => ({
-    id: child.id,
-    parentId: child.parentId,
-    estimate: estimateInUnit(child.estimate, child.estimateUnit, childUnit),
-    state: child.status,
-    assigneeId: child.assigneeId,
-  }));
-  const childRollup = rollupEstimate(childTickets);
-  const childProgress = progressOf(childTickets);
-  const childByAssignee = rollupByAssignee(childTickets);
-  const assigneeNames = new Map(members.map((member) => [member.id, member.name]));
-  const candidates = relationQuery
-    ? allTickets
-        .filter(
-          (candidate) =>
-            candidate.id !== ticket.id &&
-            `${candidate.key} ${candidate.title}`.toLowerCase().includes(relationQuery.toLowerCase()),
-        )
-        .slice(0, 5)
-    : [];
+  const changeCycle = (cycleId: string | null) =>
+    startTransition(async () => {
+      const outcome = await safeAction(() => assignTicketToCycleAction(ticket.id, cycleId), {
+        locale,
+      });
+      if (!outcome.ok) toast.error(outcome.error);
+      else if ("error" in outcome.value) toast.error(outcome.value.error);
+      router.refresh();
+    });
+
+  const toggleLabel = (labelId: string) =>
+    startTransition(async () => {
+      const outcome = await safeAction(() => toggleTicketLabelAction(ticket.id, labelId), {
+        locale,
+      });
+      if (!outcome.ok) toast.error(outcome.error);
+      else if ("error" in outcome.value) toast.error(outcome.value.error);
+      router.refresh();
+    });
+
+  const linkTicket = (toId: string, type: string) =>
+    startTransition(async () => {
+      const outcome = await safeAction(
+        () => linkTicketsAction({ fromId: ticket.id, toId, type }),
+        { locale },
+      );
+      if (!outcome.ok) toast.error(outcome.error);
+      else if ("error" in outcome.value) toast.error(outcome.value.error);
+      else toast.success(t(locale, "linkedToast"));
+      router.refresh();
+    });
+
+  const addComment = (body: string) =>
+    startTransition(async () => {
+      const outcome = await safeAction(() => addTicketCommentAction(ticket.id, body), { locale });
+      if (!outcome.ok) toast.error(outcome.error);
+      else if ("error" in outcome.value) toast.error(outcome.value.error);
+      else toast.success(t(locale, "commentAdded"));
+      router.refresh();
+    });
+
+  const archiveLabel = t(locale, "archiveTicket");
+  const deleteLabel = t(locale, "delete");
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <button
-        type="button"
-        aria-label={t(locale, "closeTicket")}
-        onClick={onClose}
-        className="absolute inset-0 bg-black/30"
-      />
-      <aside
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={`${t(locale, "ticketWord")} ${ticket.key}`}
-        tabIndex={-1}
-        onKeyDown={onDialogKeyDown}
-        className="relative z-10 flex h-full w-full max-w-lg flex-col border-l border-border bg-bg shadow-2xl outline-none"
-      >
-        <header className="flex items-center gap-2 border-b border-border px-4 py-3">
-          <span aria-hidden>{typeMeta(ticket.type).icon}</span>
-          <span className="font-mono text-xs text-muted">{ticket.key}</span>
-          <span className="flex-1" />
-          <button
-            type="button"
-            aria-label={t(locale, "archiveTicket")}
-            onClick={() =>
-              startTransition(async () => {
-                const outcome = await safeAction(
-                  () => archiveTicketAction(ticket.id),
-                  { locale },
-                );
-                if (!outcome.ok) toast.error(outcome.error);
-                else toast.success(t(locale, "ticketArchived"));
-                onClose();
-                router.refresh();
-              })
-            }
-            className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
-          >
-            <Archive className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            aria-label={t(locale, "delete")}
-            title={t(locale, "delete")}
-            onClick={() => setConfirmingDelete(true)}
-            className="flex h-7 w-7 items-center justify-center rounded text-muted hover:text-red-500"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            aria-label={t(locale, "close")}
-            onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </header>
-
-        <div className="flex-1 space-y-4 overflow-y-auto p-4">
-          {confirmingDelete && (
-            <div
-              role="alertdialog"
-              aria-label={t(locale, "delete")}
-              data-testid="ticket-delete-confirm"
-              className="flex flex-wrap items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/5 px-3 py-2 text-xs"
-            >
-              <span className="min-w-0 flex-1 text-red-500">
-                {deleteTicketConfirmLabel(ticket.key, ticket.title)}
-              </span>
-              <button
+    <>
+      <Sheet
+        open
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+        side="right"
+        size="lg"
+        title={
+          <span className="flex min-w-0 items-center gap-2">
+            <span aria-hidden>{typeMeta(ticket.type).icon}</span>
+            <span className="shrink-0 font-mono text-xs text-muted">{ticket.key}</span>
+            <span className="truncate">{ticket.title}</span>
+          </span>
+        }
+        description={statusMeta(ticket.status).label}
+        actions={
+          <>
+            <Tooltip label={archiveLabel}>
+              <Button
                 type="button"
-                onClick={permanentlyDelete}
-                className="flex items-center gap-1 rounded border border-red-500/40 px-2 py-1 font-medium text-red-500 hover:bg-red-500/10"
-              >
-                <Trash2 className="h-3.5 w-3.5" /> Delete permanently
-              </button>
-              <button
+                variant="ghost"
+                size="icon"
+                aria-label={archiveLabel}
+                disabled={pending}
+                leftIcon={<Archive className="h-4 w-4" aria-hidden />}
+                onClick={archive}
+              />
+            </Tooltip>
+            <Tooltip label={deleteLabel}>
+              <Button
                 type="button"
-                onClick={() => setConfirmingDelete(false)}
-                className="rounded border border-border px-2 py-1 text-muted hover:bg-surface-2"
-              >
-                {t(locale, "cancel")}
-              </button>
-            </div>
-          )}
-
-          <textarea
-            defaultValue={ticket.title}
-            dir={titleDirection.dir}
-            aria-label={t(locale, "ticketTitle")}
-            rows={2}
-            onBlur={(event) =>
-              event.target.value !== ticket.title &&
-              patch(ticket.id, { title: event.target.value }, t(locale, "renamed"))
-            }
-            className={cn(
-              "w-full resize-none rounded-lg border border-border bg-bg px-3 py-2 text-lg font-medium outline-none focus:border-accent",
-              titleDirection.className,
-            )}
-          />
-
-          {/* Notion-style description: a bare placeholder line while empty
-              (no empty box) — the box (and testid) appears only with content.
-              One element throughout, so typing never remounts and loses focus. */}
-          <textarea
-            data-testid={hasDescription ? "ticket-description-box" : undefined}
-            value={description}
-            dir={descriptionDirection.dir}
-            aria-label={t(locale, "ticketDescriptionAria")}
-            rows={Math.min(12, description.split("\n").length + 1)}
-            placeholder={t(locale, "addDescription")}
-            onChange={(event) => onDescriptionChange(event.target.value)}
-            onFocus={() => setDescriptionFocused(true)}
-            onBlur={(event) => {
-              setDescriptionFocused(false);
-              flushDescription(event.target.value);
-            }}
-            className={cn(
-              "w-full resize-none px-3 py-2 text-sm text-fg outline-none placeholder:text-muted",
-              descriptionDirection.className,
-              hasDescription || descriptionFocused
-                ? "rounded-lg border border-border bg-bg"
-                : "border border-transparent bg-transparent",
-            )}
-          />
-
-          <div className="grid grid-cols-2 gap-2">
-            <label className="text-[11px] uppercase tracking-wide text-muted">
-              {t(locale, "statusWord")}
-              <select
-                value={ticket.status}
-                aria-label={t(locale, "ticketStatusAria")}
-                onChange={(event) =>
-                  patch(
-                    ticket.id,
-                    { status: event.target.value },
-                    t(locale, "statusUpdated"),
-                  )
-                }
-                className="mt-1 h-8 w-full rounded border border-border bg-bg px-2 text-sm text-fg"
-              >
-                {TICKET_STATUSES.map((status) => (
-                  <option key={status.id} value={status.id}>
-                    {status.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-[11px] uppercase tracking-wide text-muted">
-              {t(locale, "priorityWord")}
-              <select
-                value={ticket.priority}
-                aria-label={t(locale, "ticketPriorityAria")}
-                onChange={(event) =>
-                  patch(
-                    ticket.id,
-                    { priority: event.target.value },
-                    t(locale, "priorityUpdated"),
-                  )
-                }
-                className="mt-1 h-8 w-full rounded border border-border bg-bg px-2 text-sm text-fg"
-              >
-                {TICKET_PRIORITIES.map((priority) => (
-                  <option key={priority.id} value={priority.id}>
-                    {priority.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-[11px] uppercase tracking-wide text-muted">
-              {t(locale, "assigneeWord")}
-              <select
-                value={ticket.assigneeId ?? ""}
-                aria-label={t(locale, "ticketAssigneeAria")}
-                onChange={(event) =>
-                  patch(
-                    ticket.id,
-                    { assigneeId: event.target.value || null },
-                    t(locale, "assigneeUpdated"),
-                  )
-                }
-                className="mt-1 h-8 w-full rounded border border-border bg-bg px-2 text-sm text-fg"
-              >
-                <option value="">{t(locale, "unassigned")}</option>
-                {members.map((member) => (
-                  <option key={member.id} value={member.id}>
-                    {member.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-[11px] uppercase tracking-wide text-muted">
-              {t(locale, "projectWord")}
-              <select
-                value={ticket.projectId ?? ""}
-                aria-label={t(locale, "ticketProjectAria")}
-                onChange={(event) =>
-                  patch(
-                    ticket.id,
-                    { projectId: event.target.value || null },
-                    t(locale, "projectUpdated"),
-                  )
-                }
-                className="mt-1 h-8 w-full rounded border border-border bg-bg px-2 text-sm text-fg"
-              >
-                <option value="">{t(locale, "noProject")}</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-[11px] uppercase tracking-wide text-muted">
-              {t(locale, "scheduledIn")}
-              <select
-                value={ticket.cycleId ?? ""}
-                aria-label={t(locale, "ticketCycleAria")}
-                onChange={(event) =>
-                  startTransition(async () => {
-                    const outcome = await safeAction(
-                      () =>
-                        assignTicketToCycleAction(ticket.id, event.target.value || null),
-                      { locale },
-                    );
-                    if (!outcome.ok) toast.error(outcome.error);
-                    else if ("error" in outcome.value) toast.error(outcome.value.error);
-                    router.refresh();
-                  })
-                }
-                className="mt-1 h-8 w-full rounded border border-border bg-bg px-2 text-sm text-fg"
-              >
-                <option value="">{t(locale, "notScheduled")}</option>
-                {cycles.map((cycle) => (
-                  <option key={cycle.id} value={cycle.id}>
-                    {cycle.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-[11px] uppercase tracking-wide text-muted">
-              {t(locale, "estimateWord")}
-              <span className="mt-1 flex gap-1">
-                <input
-                  type="number"
-                  step="0.5"
-                  min="0"
-                  defaultValue={ticket.estimate ?? ""}
-                  aria-label={t(locale, "ticketEstimateAria")}
-                  onBlur={(event) =>
-                    patch(
-                      ticket.id,
-                      { estimate: event.target.value === "" ? null : Number(event.target.value) },
-                      t(locale, "estimateUpdated"),
-                    )
-                  }
-                  className="h-8 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
-                />
-                <select
-                  value={ticket.estimateUnit ?? "points"}
-                  aria-label={t(locale, "estimateUnitAria")}
-                  onChange={(event) => patch(ticket.id, { estimateUnit: event.target.value })}
-                  className="h-8 rounded border border-border bg-bg px-1 text-xs"
-                >
-                  {ESTIMATE_UNITS.map((unit) => (
-                    <option key={unit} value={unit}>
-                      {unit}
-                    </option>
-                  ))}
-                </select>
-              </span>
-            </label>
-            <label className="text-[11px] uppercase tracking-wide text-muted">
-              {t(locale, "startWord")}
-              <input
-                type="date"
-                defaultValue={ticket.startDate?.slice(0, 10) ?? ""}
-                aria-label={t(locale, "startDateAria")}
-                onChange={(event) => patch(ticket.id, { startDate: event.target.value || null })}
-                className="mt-1 h-8 w-full rounded border border-border bg-bg px-2 text-sm"
+                variant="ghost"
+                size="icon"
+                aria-label={deleteLabel}
+                data-testid="ticket-delete"
+                leftIcon={<Trash2 className="h-4 w-4" aria-hidden />}
+                onClick={() => setDeleteOpen(true)}
+                className="text-danger hover:bg-danger-soft hover:text-danger"
               />
-            </label>
-            <label className="text-[11px] uppercase tracking-wide text-muted">
-              {t(locale, "dueLabel")}
-              <input
-                type="date"
-                defaultValue={ticket.dueDate?.slice(0, 10) ?? ""}
-                aria-label={t(locale, "dueDateAria")}
-                onChange={(event) => patch(ticket.id, { dueDate: event.target.value || null })}
-                className="mt-1 h-8 w-full rounded border border-border bg-bg px-2 text-sm"
-              />
-            </label>
-          </div>
-
-          <section>
-            <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">
-              {t(locale, "subticketsHeading")}
-            </p>
-            {parent && (
-              <button
-                type="button"
-                onClick={() => onOpen(parent.id)}
-                className="mb-2 flex w-full items-center gap-1.5 rounded border border-border px-2 py-1 text-left text-xs hover:bg-surface-2"
-              >
-                <span className="text-muted">{t(locale, "partOf")}</span>
-                <span className="font-mono text-muted">{parent.key}</span>
-                <span className="min-w-0 flex-1 truncate">{parent.title}</span>
-              </button>
-            )}
-
-            {children.length > 0 ? (
-              <>
-                <p className="mb-1.5 text-[11px] text-muted">
-                  {childRollup.count}{" "}
-                  {childRollup.count === 1
-                    ? t(locale, "subTicketOne")
-                    : t(locale, "subTicketMany")}{" "}
-                  · {childProgress.open} {t(locale, "openWord")} ·{" "}
-                  {t(locale, "estimateTotal")}:{" "}
-                  <span className="text-fg">{formatEstimate(childRollup.total, childUnit)}</span> ·{" "}
-                  {t(locale, "remaining")}:{" "}
-                  <span className="text-fg">{formatEstimate(childRollup.remaining, childUnit)}</span>{" "}
-                  · {childProgress.percent}%
-                </p>
-                {childByAssignee.length > 1 && (
-                  <ul className="mb-2 space-y-0.5">
-                    {childByAssignee.map((bucket) => (
-                      <li
-                        key={bucket.assigneeId}
-                        className="flex items-center justify-between gap-2 text-[11px] text-muted"
-                      >
-                        <span className="min-w-0 flex-1 truncate">
-                          {bucket.assigneeId === UNASSIGNED_BUCKET
-                            ? t(locale, "unassigned")
-                            : (assigneeNames.get(bucket.assigneeId) ?? bucket.assigneeId)}
-                        </span>
-                        <span className="shrink-0">
-                          {formatEstimate(bucket.points, childUnit)} · {bucket.open}{" "}
-                          {t(locale, "openWord")}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <ul className="mb-2 divide-y divide-border rounded border border-border">
-                  {children.map((child) => (
-                    <li key={child.id}>
-                      <button
-                        type="button"
-                        onClick={() => onOpen(child.id)}
-                        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-surface-2"
-                      >
-                        <span className="font-mono text-muted">{child.key}</span>
-                        <span className="min-w-0 flex-1 truncate">{child.title}</span>
-                        <span className="text-muted">
-                          {formatEstimate(child.estimate, child.estimateUnit ?? "points")}
-                        </span>
-                        <StatusPill status={child.status} />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p className="mb-2 text-xs text-muted">{t(locale, "noSubTickets")}</p>
-            )}
-
-            <form
-              className="flex items-center gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const input = event.currentTarget.elements.namedItem("child") as HTMLInputElement;
-                const title = input.value.trim();
-                if (!title) return;
-                input.value = "";
-                onAddChild(title);
-              }}
-            >
-              <input
-                name="child"
-                aria-label={t(locale, "newSubTicketAria")}
-                placeholder={t(locale, "addSubTicketPlaceholder")}
-                className="h-8 flex-1 rounded border border-border bg-bg px-2 text-xs outline-none focus:border-accent"
-              />
-              <button
-                type="submit"
-                className="h-8 rounded border border-border px-2 text-xs hover:bg-surface-2"
-              >
-                {t(locale, "add")}
-              </button>
-            </form>
-          </section>
-
-          <section>
-            <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">{t(locale, "labelsHeading")}</p>            <div className="flex flex-wrap gap-1.5">
-              {labels.map((label) => {
-                const on = related.includes(label.id);
-                return (
-                  <button
-                    key={label.id}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() =>
-                      startTransition(async () => {
-                        const outcome = await safeAction(
-                          () => toggleTicketLabelAction(ticket.id, label.id),
-                          { locale },
-                        );
-                        if (!outcome.ok) toast.error(outcome.error);
-                        else if ("error" in outcome.value) toast.error(outcome.value.error);
-                        router.refresh();
-                      })
-                    }
-                    className={cn(
-                      "rounded-full border px-2 py-0.5 text-[11px]",
-                      on
-                        ? cn("border-transparent", LABEL_TONES[label.color] ?? LABEL_TONES.gray)
-                        : "border-border text-muted hover:bg-surface-2",
-                    )}
-                  >
-                    {label.name}
-                  </button>
-                );
-              })}
-              {labels.length === 0 && (
-                <p className="text-xs text-muted">{t(locale, "noLabelsInSettings")}</p>
-              )}
-            </div>
-          </section>
-
-          <section>
-            <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">{t(locale, "relationsHeading")}</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={relationType}
-                aria-label={t(locale, "relationTypeAria")}
-                onChange={(event) => setRelationType(event.target.value)}
-                className="h-8 rounded border border-border bg-bg px-2 text-xs"
-              >
-                <option value="relates">{t(locale, "relationRelates")}</option>
-                <option value="blocks">{t(locale, "relationBlocks")}</option>
-                <option value="blocked_by">{t(locale, "relationBlockedBy")}</option>
-                <option value="duplicates">{t(locale, "relationDuplicates")}</option>
-              </select>
-              <input
-                value={relationQuery}
-                aria-label={t(locale, "findTicketAria")}
-                placeholder={t(locale, "findTicketPlaceholder")}
-                onChange={(event) => setRelationQuery(event.target.value)}
-                className="h-8 w-48 rounded border border-border bg-bg px-2 text-xs outline-none focus:border-accent"
-              />
-            </div>
-            {candidates.length > 0 && (
-              <ul className="mt-2 space-y-1">
-                {candidates.map((candidate) => (
-                  <li key={candidate.id}>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        startTransition(async () => {
-                          const outcome = await safeAction(
-                            () =>
-                              linkTicketsAction({
-                                fromId: ticket.id,
-                                toId: candidate.id,
-                                type: relationType,
-                              }),
-                            { locale },
-                          );
-                          if (!outcome.ok) toast.error(outcome.error);
-                          else if ("error" in outcome.value) toast.error(outcome.value.error);
-                          else {
-                            toast.success(t(locale, "linkedToast"));
-                            setRelationQuery("");
-                          }
-                          router.refresh();
-                        })
-                      }
-                      className="w-full rounded border border-border px-2 py-1 text-left text-xs hover:bg-surface-2"
-                    >
-                      <span className="font-mono text-muted">{candidate.key}</span> {candidate.title}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section>
-            <p className="mb-2 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
-              <MessageSquare className="h-3 w-3" /> {t(locale, "commentsHeading")} (
-              {ticket.commentCount})
-            </p>
-            <div className="flex items-end gap-2">
-              <textarea
-                value={comment}
-                aria-label={t(locale, "addTicketCommentAria")}
-                rows={2}
-                placeholder={t(locale, "leaveCommentPlaceholder")}
-                onChange={(event) => setComment(event.target.value)}
-                className="w-full rounded border border-border bg-bg px-2 py-1.5 text-sm outline-none focus:border-accent"
-              />
-              <button
-                type="button"
-                disabled={!comment.trim()}
-                onClick={() =>
-                  startTransition(async () => {
-                    const outcome = await safeAction(
-                      () => addTicketCommentAction(ticket.id, comment),
-                      { locale },
-                    );
-                    if (!outcome.ok) toast.error(outcome.error);
-                    else if ("error" in outcome.value) toast.error(outcome.value.error);
-                    else {
-                      setComment("");
-                      toast.success(t(locale, "commentAdded"));
-                    }
-                    router.refresh();
-                  })
-                }
-                className="h-8 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
-              >
-                {t(locale, "comment")}
-              </button>
-            </div>
-          </section>
-
-          <section data-testid="ticket-activity">
-            <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">
-              {t(locale, "activityHeading")}
-            </p>
-            {activity.length === 0 ? (
-              <p className="text-xs text-muted">{t(locale, "youAreAllCaughtUp")}</p>
-            ) : (
-              <ol className="space-y-1.5">
-                {activity.map((entry) => {
-                  const detail = activityDetail(entry.detail);
-                  const iso = activityIso(entry.createdAt);
-                  return (
-                    <li key={entry.id} className="flex items-baseline gap-1.5 text-xs">
-                      <span className="shrink-0 text-fg">{activityVerb(entry.kind)}</span>
-                      {entry.actor && (
-                        <span className="shrink-0 text-muted">{entry.actor.name}</span>
-                      )}
-                      {detail && <span className="min-w-0 flex-1 truncate text-muted">{detail}</span>}
-                      <time
-                        dateTime={iso}
-                        title={iso}
-                        className="ml-auto shrink-0 text-[11px] text-muted"
-                      >
-                        {formatRelativeTime(entry.createdAt, { locale })}
-                      </time>
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
-          </section>
-
-          <section>
-            <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">
-              {t(locale, "timelineDatesHeading")}
-            </p>
-            <p className="text-xs text-muted">
-              {ticket.startDate
-                ? new Date(ticket.startDate).toLocaleDateString()
-                : t(locale, "noStart")}{" "}
-              →{" "}
-              {ticket.dueDate
-                ? new Date(ticket.dueDate).toLocaleDateString()
-                : t(locale, "noDueDate")}{" "}
-              ·{" "}
+            </Tooltip>
+          </>
+        }
+        footer={
+          <div className="flex items-center justify-between gap-2">
+            <span className="min-w-0 truncate text-xs text-muted">
               {formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")} ·{" "}
-              {t(locale, "viewTheTabA")}{" "}
-              <span className="text-fg">{t(locale, "timelineLabel")}</span>{" "}
-              {t(locale, "viewTheTabB")}
-            </p>
-          </section>
+              {ticket.commentCount} {t(locale, "commentsHeading").toLowerCase()}
+            </span>
+            <Button type="button" size="sm" variant="secondary" onClick={onClose}>
+              {t(locale, "close")}
+            </Button>
+          </div>
+        }
+        bodyClassName="space-y-5"
+      >
+        <TicketDrawerBody
+          ticket={ticket}
+          labels={labels}
+          members={members}
+          projects={projects}
+          allTickets={allTickets}
+          activity={activity}
+          cycles={cycles}
+          slug={slug}
+          locale={locale}
+          onPatch={onPatch}
+          onOpen={onOpen}
+          onAddChild={onAddChild}
+          onCycleChange={changeCycle}
+          onToggleLabel={toggleLabel}
+          onLinkTicket={linkTicket}
+          onAddComment={addComment}
+        />
+      </Sheet>
 
-          <section className="rounded-lg border border-border p-3">
-            <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">
-              {t(locale, "whereThisLivesHeading")}
-            </p>
-            <p className="text-xs text-muted">
-              {ticket.projectName
-                ? `${t(locale, "projectColon")} ${ticket.projectName}`
-                : t(locale, "notInProject")}
-              {ticket.milestoneName
-                ? ` · ${t(locale, "milestoneColon")} ${ticket.milestoneName}`
-                : ""}
-              {ticket.assigneeName ? ` · ${t(locale, "assignedTo")} ${ticket.assigneeName}` : ""}
-            </p>
-            <p className="mt-1 text-[11px] text-muted">
-              {t(locale, "permalinkLabel")} /w/{slug}?ticket={ticket.key}
-            </p>
-          </section>
-        </div>
-      </aside>
-    </div>
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        tone="danger"
+        title={t(locale, "delete")}
+        description={deleteTicketConfirmLabel(ticket.key, ticket.title)}
+        confirmLabel="Delete permanently"
+        pending={pending}
+        onConfirm={() => void permanentlyDelete()}
+      />
+    </>
   );
 }
