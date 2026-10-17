@@ -56,10 +56,12 @@ export function isGalleryAccent(value: unknown): value is GalleryAccent {
 export type TemplatePreview = {
   /** The safe accent (unknown values fall back to `gray`). */
   accent: GalleryAccent;
-  /** A subtle token gradient for the preview frame. */
+  /**
+   * A subtle token gradient for the preview frame. The tint alone defines the
+   * preview: it carries no accent-coloured edge, so a card can never read as a
+   * selected/highlighted surface (the accent border is reserved for selection).
+   */
   gradient: string;
-  /** The preview frame's border colour token. */
-  border: string;
   /** Which mini-layout to draw — a board when the template groups by a property. */
   shape: "board" | "table";
 };
@@ -72,7 +74,8 @@ export function templatePreviewShape(boardBy?: string | null): "board" | "table"
 /**
  * Map a template's accent onto its preview styling. The hue is validated
  * against the tag palette first, so an unknown value can never render an
- * unstyled (or raw-hex) frame.
+ * unstyled (or raw-hex) frame. The preview paints a tinted gradient and nothing
+ * else — never a tag-coloured edge, which would read as a selected surface.
  */
 export function templatePreview(
   accent: string | null | undefined,
@@ -83,7 +86,6 @@ export function templatePreview(
   return {
     accent: safe,
     gradient: `linear-gradient(135deg, var(--tag-${hue}-bg) 0%, var(--surface-2) 100%)`,
-    border: `var(--tag-${hue}-bd)`,
     shape: templatePreviewShape(boardBy),
   };
 }
@@ -156,7 +158,7 @@ function TemplatePreview({ accent, boardBy }: { accent: GalleryAccent; boardBy?:
       data-testid="template-preview"
       data-shape={preview.shape}
       className="p-2"
-      style={{ backgroundImage: preview.gradient, border: `1px solid ${preview.border}` }}
+      style={{ backgroundImage: preview.gradient }}
     >
       {preview.shape === "board" ? <MiniBoard /> : <MiniTable />}
     </div>
