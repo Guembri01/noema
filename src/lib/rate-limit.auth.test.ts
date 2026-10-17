@@ -30,17 +30,40 @@ describe("authentication limits", () => {
   beforeEach(() => resetAuthLimits());
 
   describe("client key", () => {
-    it("derives the address from the forwarding headers", () => {
+    it("ignores the forwarding headers when no proxy is declared", () => {
+      // Without `TRUSTED_PROXY_HOPS` the headers are written by the client
+      // itself, so they must not decide the address — every caller of the
+      // scope shares one bucket.
+      delete process.env.TRUSTED_PROXY_HOPS;
       expect(
         clientKeyFromHeaders(
           new Headers({ "x-forwarded-for": "1.2.3.4, 5.6.7.8" }),
           "auth",
         ),
-      ).toBe("auth:1.2.3.4");
+      ).toBe("auth:local");
       expect(
         clientKeyFromHeaders(new Headers({ "x-real-ip": "9.9.9.9" }), "auth"),
-      ).toBe("auth:9.9.9.9");
+      ).toBe("auth:local");
       expect(clientKeyFromHeaders(new Headers(), "auth")).toBe("auth:local");
+    });
+
+    it("derives the address from the forwarding headers when a proxy is declared", () => {
+      // With one trusted proxy the last hop of the chain is the real client.
+      process.env.TRUSTED_PROXY_HOPS = "1";
+      try {
+        expect(
+          clientKeyFromHeaders(
+            new Headers({ "x-forwarded-for": "1.2.3.4, 5.6.7.8" }),
+            "auth",
+          ),
+        ).toBe("auth:5.6.7.8");
+        expect(
+          clientKeyFromHeaders(new Headers({ "x-real-ip": "9.9.9.9" }), "auth"),
+        ).toBe("auth:9.9.9.9");
+        expect(clientKeyFromHeaders(new Headers(), "auth")).toBe("auth:local");
+      } finally {
+        delete process.env.TRUSTED_PROXY_HOPS;
+      }
     });
   });
 
