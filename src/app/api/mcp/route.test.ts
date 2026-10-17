@@ -70,7 +70,7 @@ vi.mock("@/lib/permissions", async (importOriginal) => {
 
 import { POST } from "./route";
 
-const call = (args: Record<string, unknown>) =>
+const call = (args: Record<string, unknown>, name = "create_page") =>
   POST(
     new Request("http://localhost/api/mcp?workspaceId=ws-a&allowWrite=true", {
       method: "POST",
@@ -82,7 +82,7 @@ const call = (args: Record<string, unknown>) =>
         jsonrpc: "2.0",
         id: 1,
         method: "tools/call",
-        params: { name: "create_page", arguments: args },
+        params: { name, arguments: args },
       }),
     }),
   );
@@ -366,5 +366,55 @@ describe("POST /api/mcp — resources/read needs the token's scope (B89)", () =>
     expect(body.error?.code).toBe(-32003);
     expect(body.error?.data).toMatchObject({ missing: ["read:databases"] });
     expect(db.pageFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/mcp — append_blocks validates the blocks (B137)", () => {
+  it("stores a block whose href is outside the allowlist without the href", async () => {
+    // B137: the tool writes the blocks it is given. The editor's save path
+    // (and the import, B110) put the document through the allowlist — an
+    // `attrs.href` with a scheme outside it loses its value there. Here it
+    // would be stored verbatim.
+    const response = await call(
+      {
+        pageId: PAGE_A,
+        blocks: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "text",
+                text: "click",
+                marks: [{ type: "link", attrs: { href: "javascript:alert(1)" } }],
+              },
+            ],
+          },
+        ],
+      },
+      "append_blocks",
+    );
+
+    expect(response.status).toBe(200);
+    expect(db.pageUpdate).toHaveBeenCalledTimes(1);
+    const written = db.pageUpdate.mock.calls[0][0].data.content as {
+      content: { content?: { marks?: { attrs?: Record<string, unknown> }[] }[] }[];
+    };
+    const mark = written.content[0].content?.[0].marks?.[0];
+    expect(mark?.attrs?.href).toBeUndefined();
+  });
+
+  it("refuses a document that is bigger than the editor's limit", async () => {
+    const response = await call(
+      {
+        pageId: PAGE_A,
+        blocks: [{ type: "paragraph", content: [{ type: "text", text: "x".repeat(2_100_000) }] }],
+      },
+      "append_blocks",
+    );
+
+    expect(response.status).toBe(200);
+    const result = await toolResult(response);
+    expect(String(result.error ?? "")).toContain("too large");
+    expect(db.pageUpdate).not.toHaveBeenCalled();
   });
 });

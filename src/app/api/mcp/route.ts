@@ -23,6 +23,7 @@ import {
 } from "@/lib/mcp-server";
 import { apiScopesForRole, canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { assertScopedParent } from "@/lib/page-parent";
+import { MAX_PAGE_CONTENT_BYTES, parsePageContent } from "@/lib/validation";
 import { searchPagesPage } from "@/server/queries";
 
 export const runtime = "nodejs";
@@ -306,9 +307,20 @@ async function runWriteTool(name: string, args: RpcParams, ctx: ExecContext): Pr
           : {};
       const existing = Array.isArray(doc.content) ? doc.content : [];
       const content = { ...doc, type: "doc", content: [...existing, ...blocks] };
+      // B137: the blocks go through the same gate as the content of every
+      // other write path — the editor's save (the schema of the document, the
+      // size limit and the href allowlist) and the import (B110). Without it
+      // the tool stores what the caller sent: an `attrs.href` with a scheme
+      // outside the allowlist, a document that is bigger than the editor's
+      // limit, a block of a shape the editor never produces.
+      if (JSON.stringify(content).length > MAX_PAGE_CONTENT_BYTES) {
+        throw new Error("That page is too large to save (2 MB limit).");
+      }
+      const parsed = parsePageContent(content);
+      if (!parsed.ok) throw new Error(parsed.error);
       await prisma.page.update({
         where: { id: page.id },
-        data: { content: content as unknown as Prisma.InputJsonValue },
+        data: { content: parsed.doc as unknown as Prisma.InputJsonValue },
       });
       return { pageId: page.id, appended: blocks.length };
     }
