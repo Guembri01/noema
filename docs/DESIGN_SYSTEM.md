@@ -46,14 +46,22 @@ Usage:
 
 | Role | Class | Size / line-height |
 |---|---|---|
+| Dense chrome (kbd, count badges) | `text-3xs` | 10 / 12 |
+| Metadata, captions | `text-2xs` | 11 / 14 |
 | Micro (kbd, badges) | `text-xs` | 12 / 16 |
+| Secondary body copy | `text-md` | 13 / 20 |
 | UI (menus, cells, labels) | `text-sm` | 13–14 / 20 |
 | Prose (editor body) | `text-base` | 16 / 26 |
 | Section title | `text-xl font-semibold tracking-[-0.01em]` | 20 |
-| Page title | `text-[28px] font-semibold tracking-[-0.02em]` | 28 |
+| Page title / page heading | `text-title font-semibold tracking-title` | 28 / 1.2 |
 
 Rules: **never** invent a size; headings use tighter tracking, body never. Numbers in
 tables use `tabular-nums`. Truncate rows with `truncate` + a `title` attribute.
+
+`text-title` + `tracking-title` are tokens (`--text-title`, `--tracking-title`) for the
+same reason the small steps are: twelve surfaces wrote the identical pair as arbitrary
+values, which is a token waiting to be named rather than twelve coincidences. A user
+*heading* uses them; a *section* title inside a panel uses `text-xl`.
 
 ## 4. Spacing & layout
 
@@ -244,6 +252,35 @@ fails if any total exceeds its baseline):
 baseline is now 0 — so the ratchet only turns one way: any new raw hex, magic
 z-index, ad-hoc duration/radius/shadow or legacy palette class fails
 `npm run check:design` in CI (`site.yml`).
+
+`npm run audit:frontend` is the *classified* list of what a token cannot catch by
+itself (copy, labels, type, rings, hand-rolled popups). It went from
+**289 DEFECT / 190 INCONSISTENCY / 119 DEBT** to **0 / 0 / 113** as this wave landed:
+
+| Rule | Before | Now |
+|---|---|---|
+| Untranslated user-facing copy | 243 | **0** |
+| Icon-only controls with no accessible name | 46 | **0** |
+| Type/spacing off the token scale | 127 | **0** |
+| Buttons without the shared focus ring | 63 | **0** |
+| Inline static styles | 8 | **0** |
+| Routes with no `loading.tsx` | 12 | **0** |
+| Legacy `.notion-*` / `.noema-*` rules | 95 | 95 — deliberate |
+| Hand-rolled anchored popovers | 6 | 6 — 3 explained (absolute + static offsets) |
+| Duplicated helpers / colour catalogues | 10 | 12 — the canonical catalogue is one of them |
+
+The remaining DEBT is a documented backlog, not a defect list: every one of the 95
+legacy rules is still referenced (deleting one is a visual regression — the families
+that need them are recorded in `globals.css`), and the duplicate-helper heuristic
+counts `src/lib/palette.ts` *because* that module is the single catalogue.
+
+**Trust the audit no further than its red test.** Three of the checker's own false
+positives surfaced while closing this list: classes held in a constant
+(`className={button}`), a composed expression (`className={cn(BASE, tone)}`), and a
+local class builder (`const classes = buttonClasses({…})` returning `cn(BUTTON_BASE, …)`)
+— plus literal classes being dropped when a composition was expanded. Each fix ships
+with a synthetic ring-less button that the rule must still catch, because a checker
+that quietly stops catching real findings is worse than none.
 
 `npm run check:motion` is at 0 for its five hard rules *and* its three soft
 smells (`transition: all`, ad-hoc durations, inline animation durations, literal
