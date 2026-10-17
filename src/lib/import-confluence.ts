@@ -40,6 +40,7 @@
  */
 
 import type { BlockMark, RichBlock } from "./markdown";
+import { underHtmlScanBudget } from "@/lib/html-budget";
 import { stripTags } from "./html-sanitize";
 import { sanitizeHref } from "./validation";
 
@@ -158,6 +159,14 @@ function parseAttrs(source: string): Record<string, string> {
 
 /** Tolerant, DOM-free parse into a node tree. Unmatched closes are ignored. */
 function tokenize(html: string): RawElement {
+  // B130: the tokenizer's regular expression backtracks at every tag start
+  // (the attribute group reads forward to the next ">" and gives the work
+  // back one character at a time when there is none). A document built to
+  // make that work would block the event loop for minutes — measured: 35 KB
+  // of "<script" cost 8.3 s, 70 KB cost 31 s. The budget refuses such a
+  // document before the scan starts.
+  if (!underHtmlScanBudget(html)) {
+    return { kind: "element", tag: "#root", attrs: {}, children: [] };  }
   const root: RawElement = { kind: "element", tag: "#root", attrs: {}, children: [] };
   const stack: RawElement[] = [root];
   const clean = html
@@ -915,6 +924,9 @@ export function parseConfluenceExport(input: ConfluenceImportInput): ConfluenceI
   });
 
   if (!html.trim()) return { pages: [], meta: emptyMeta() };
+  // B130: a document that is built to make the tokenizer's backtracking work
+  // is refused — the import yields no page at all, not an empty one.
+  if (!underHtmlScanBudget(html)) return { pages: [], meta: emptyMeta() };
 
   const root = tokenize(html);
   const containers: ContainerHit[] = [];
