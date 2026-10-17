@@ -156,6 +156,10 @@ async function loadSubjectRecords(
         theme: true,
         passwordHash: true,
         notificationPrefs: true,
+        // B05: what the column holds is the SEALED envelope
+        // (`v1:iv:tag:payload`), never the raw base32 seed. The field is
+        // `exportable: false` in the registry, so it is used for the erasure
+        // plan only and never reaches the export bundle.
         twoFactorSecret: true,
         twoFactorEnabled: true,
         createdAt: true,
@@ -202,6 +206,8 @@ async function loadSubjectRecords(
         theme: user.theme,
         passwordHash: user.passwordHash,
         notificationPrefs: user.notificationPrefs,
+        // The sealed envelope (B05) — not the seed. It is not exportable, so
+        // it is only ever read to plan the erasure of the column.
         twoFactorSecret: user.twoFactorSecret,
         twoFactorEnabled: user.twoFactorEnabled,
         createdAt: user.createdAt.toISOString(),

@@ -23,6 +23,16 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   not). The stored URL now passes the shared href allowlist (`http`, `https`,
   `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
   editor as well as in the read-only renderer.
+- The two-factor seed is now sealed at rest (AES-256-GCM, `v1:iv:tag:payload`,
+  key derived from `AUTH_SECRET`) instead of being stored in cleartext in
+  `User.twoFactorSecret`; a database dump no longer yields a usable 2FA seed.
+  Existing plaintext seeds are re-sealed on the next sign-in or re-enrolment,
+  and a one-off backfill (`npm run backfill:2fa`) seals the rows that are still
+  plaintext — it never deletes or overwrites a row it cannot seal, and it
+  writes nothing at all unless it can prove that the `AUTH_SECRET` of this
+  environment is the key the app uses: it probes the sealed AI-provider keys
+  and the sealed SMTP password for that (the same `AUTH_SECRET` seals them),
+  and an operator who has verified the key by hand can pass `--confirm-key`.
 
 ## [1.4.1] — 2026-10-17
 

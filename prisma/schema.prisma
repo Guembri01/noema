@@ -85,6 +85,7 @@ model User {
   locale       String   @default("en")
   theme        String   @default("system")
   notificationPrefs Json?
+  // B05: a sealed `v1:` envelope (AES-256-GCM), never the raw base32 seed.
   twoFactorSecret  String?
   twoFactorEnabled Boolean @default(false)
   createdAt    DateTime @default(now())
