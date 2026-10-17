@@ -156,6 +156,9 @@ export async function GET(
 
   // Attachments: bundle every upload referenced by an exported page's content
   // or cover, best-effort — a missing blob skips that file, never the export.
+  // Only uploads of *this* workspace are bundled: a page may reference an
+  // upload of another workspace (a leaked share link), and those bytes are not
+  // ours to hand out (B38).
   const attachmentUrls = new Set<string>();
   for (const page of exported) {
     for (const url of collectFileUrls({ content: page.content, coverUrl: page.coverUrl })) {
@@ -164,7 +167,7 @@ export async function GET(
   }
   const driver = storageDriver();
   for (const url of attachmentUrls) {
-    const key = fileKeyFromUrl(url);
+    const key = fileKeyFromUrl(url, workspace.id);
     const zipPath = attachmentZipPath(url);
     if (!key || !zipPath) continue;
     const stored = await driver.get(key).catch(() => null);

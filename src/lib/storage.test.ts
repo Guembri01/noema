@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -109,5 +109,14 @@ describe("localDriver", () => {
   it("refuses to escape its root", async () => {
     await expect(driver.put("../escape.txt", new Uint8Array([1]), "text/plain")).rejects.toThrow();
     expect(await driver.get("../escape.txt")).toBeNull();
+  });
+
+  it("stores uploads owner-only: a 0600 file inside a 0700 directory (B38)", async () => {
+    await driver.put("ws1/secret.png", new Uint8Array([1]), "image/png");
+
+    const file = await stat(path.join(root, "ws1", "secret.png"));
+    expect(file.mode & 0o777).toBe(0o600);
+    const dir = await stat(path.join(root, "ws1"));
+    expect(dir.mode & 0o777).toBe(0o700);
   });
 });

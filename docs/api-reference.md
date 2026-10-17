@@ -520,6 +520,8 @@ cookie session · no rate limit
 Walks every non-trashed page: `type: "DATABASE"` → `<path>.csv`, otherwise
 `<path>.md` (path = title ancestry, deduplicated with ` (n)` suffixes,
 depth-guarded at 50), plus a `README.md`.
+The referenced uploads are bundled under `attachments/` — only uploads of the
+exported workspace; a reference to another workspace's upload is skipped.
 **200** `application/zip` +
 `content-disposition: attachment; filename="<workspace>.zip"`.
 Errors: **404** `Not found` (unknown slug) · 401 · 403 `Forbidden` (no
