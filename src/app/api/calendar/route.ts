@@ -4,6 +4,7 @@ import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { rateLimit } from "@/lib/api-guard";
 import { prisma } from "@/lib/db";
 import { buildCalendar, type CalendarEventInput } from "@/lib/ics";
+import { sanitizeHref } from "@/lib/validation";
 import {
   applyPull,
   applyPush,
@@ -34,6 +35,13 @@ type UpcomingEvent = Awaited<ReturnType<typeof getUpcomingEvents>>[number];
  * Map a stored calendar event onto the RFC 5545 export shape. All-day rows use
  * a bare `YYYY-MM-DD` (UTC calendar date) so the builder emits `VALUE=DATE`;
  * timed rows keep the full ISO 8601 instant and are rendered as UTC.
+ *
+ * The stored `url` is re-validated here with the same `sanitizeHref` allowlist
+ * the parser applies on import (`src/lib/ics.ts`). A row written before the
+ * parser was fixed — or a value that reached the database by any other way —
+ * would otherwise leave the server again as `URL:javascript:…`, and a CRLF in
+ * it would inject ICS properties into the exported document. What the export
+ * emits is therefore exactly what the parser would have stored.
  */
 function toCalendarEvent(event: UpcomingEvent): CalendarEventInput {
   const iso = (value: Date): string =>
@@ -45,8 +53,18 @@ function toCalendarEvent(event: UpcomingEvent): CalendarEventInput {
     allDay: event.allDay,
     summary: event.title,
     location: event.location ?? undefined,
-    url: event.url ?? undefined,
+    url: sanitizeHref(event.url) ?? undefined,
   };
+}
+
+/**
+ * The stored `url` of an event, re-validated against the same allowlist the
+ * parser applies on import (`src/lib/ics.ts`). A row stored before the parser
+ * was fixed can hold a `javascript:` URL; that value must not leave the server
+ * — neither as an ICS property nor as an API field.
+ */
+function withSafeUrl(event: UpcomingEvent): UpcomingEvent {
+  return { ...event, url: sanitizeHref(event.url) };
 }
 
 /* ---------------------------------------------------------------------- */
@@ -255,7 +273,7 @@ export async function GET(request: Request) {
     getCalendarFeeds(workspaceId),
     getUpcomingEvents(workspaceId),
   ]);
-  return NextResponse.json({ feeds, events });
+  return NextResponse.json({ feeds, events: events.map(withSafeUrl) });
 }
 
 /**
