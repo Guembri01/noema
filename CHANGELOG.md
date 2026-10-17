@@ -351,6 +351,30 @@
   budget lives in its **own** store, so a flood of forged client addresses
   cannot evict it and cannot reset an exhausted user window.
 
+- **The REST API enforces the scope grant of the bearer token.** The
+  `/api/v1/*` routes check the scopes the token was granted: a token without
+  `read:pages` (respectively `write:pages`) gets `403 insufficient_scope`
+  instead of full access. The scope check runs *before* the workspace check, so
+  a token without the scope gets `403` without any information about the
+  workspace.
+
+- **OAuth tokens carry an explicit scope list.** The token endpoint mints the
+  token with the read and write scopes of the catalogue (without
+  `admin:workspace`) and returns that list in the `scope` field of the
+  response, instead of the hard-coded `"read write"`. Such a token can now
+  also be used on the MCP transport (`/api/mcp`), which checks the same grant:
+  before, the empty grant it carried was refused by every MCP tool.
+
+- **The settings UI stores the scopes it asks for.** A token created on
+  `/w/[slug]/settings` used to be persisted without any scope at all, so it
+  would have been unable to call the API once the grant was enforced. The
+  picked scopes are now stored with the token.
+**Note for existing tokens:** a token that was created without a scope keeps
+its (empty) grant — no migration hands out permissions behind the operator's
+back — so it has to be re-created with the scopes it needs. Until then it is
+refused with `403 insufficient_scope` by every `/api/v1/*` route; the token
+list marks it as **No access**.
+
 ### Changed
 
 - The app's own write path accepts only the app's own `/api/files/...` asset
