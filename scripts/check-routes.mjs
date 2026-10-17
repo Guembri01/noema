@@ -60,10 +60,15 @@ for (const [path, headers] of routes) {
 // action resolution, so this tests the security property without executing any
 // real action (no side effects, no Prisma noise in the server log).
 // Next.js rejects a cross-origin Server Action POST with a digest that changes
-// between releases. Match the stable message (and any digest) instead of
-// pinning a version-specific constant, so this stays a behavioural assertion.
+// between releases. Do NOT pin that digest: in production Next redacts the message
+// and returns `"digest":"<hash>@E80"`, where `E80` is the stable error code attached
+// to this specific rejection (verified in the server log: "does not match `origin`
+// header ... Aborting the action"). Match the code, the message (dev builds), the
+// legacy digest, or a 403 — a version bump must not turn a real rejection into a
+// reported failure again.
 const ORIGIN_REJECTION_DIGEST = "3283235668";
 const ORIGIN_REJECTION_MESSAGE = "Invalid Server Actions request";
+const ORIGIN_REJECTION_CODE = "@E80";
 const bogusActionId = "0".repeat(40);
 const pageUrl = `${base}/w/${workspace.slug}/${page.id}`;
 const lanAddress = Object.values(networkInterfaces())
@@ -90,7 +95,8 @@ for (const [label, origin, mustBeRejected] of originCases) {
   const rejected =
     res.status === 403 ||
     body.includes(ORIGIN_REJECTION_MESSAGE) ||
-    body.includes(ORIGIN_REJECTION_DIGEST);
+    body.includes(ORIGIN_REJECTION_DIGEST) ||
+    body.includes(ORIGIN_REJECTION_CODE);
   const ok = mustBeRejected ? rejected : !rejected;
   if (!ok) failures += 1;
   console.log(
