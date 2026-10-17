@@ -3,6 +3,11 @@
 # turns into a wall of line-ending changes.
 * text=auto
 
+# Shell scripts (git hooks, CI helpers) must stay LF on every platform, so `sh`
+# never chokes on a CRLF shebang.
+.githooks/* text eol=lf
+*.sh text eol=lf
+
 # Binary assets: never converted, never diffed as text.
 *.png binary
 *.jpg binary

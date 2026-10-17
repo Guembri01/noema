@@ -1,0 +1,13 @@
+#!/bin/sh
+# Noema pre-commit gate (versioned via `core.hooksPath = .githooks`).
+#
+# Two checks only, both fast and both about publishing:
+#   1. authoring-window policy — the pending commit must declare an in-window
+#      timestamp instead of silently stamping "now" (see docs/OPERATIONS.md).
+#   2. secret gate — the repository is published as-is, so a credential
+#      committed once is public forever.
+#
+# `check:fast` (tsc + eslint + tests) stays a manual/CI step: it is far too slow
+# for every commit and CI already runs the full suite.
+node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-commit-dates.mjs --pending || exit 1
+node scripts/check-secrets.mjs || exit 1
