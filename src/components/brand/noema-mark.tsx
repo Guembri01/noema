@@ -5,8 +5,12 @@
  * with a 2.4 stroke, so on the 20px Ask-AI button the ink covered ~46% of the
  * square and read as a thin glyph rattling inside a large circle. The geometry
  * below is measured rather than eyeballed — `noema-mark.test.ts` pins the ink
- * coverage, the centring and the stroke weight — and it is exported so the
- * button, the assistant's header and the app icon all draw one letterform.
+ * coverage, the centring and the stroke weight — and it is exported so every
+ * in-app surface that shows the mark (the Ask-AI button, the assistant's
+ * header, the sidebar's assistant row) draws one letterform. The desktop app
+ * icon is *not* wired to it yet: `scripts/desktop/make-icon.mjs` still writes
+ * the placeholder `assets/icon.png`, and `npm run desktop:icons` derives the
+ * bundle icons from that.
  *
  * It stays an inline SVG (not an image file) and paints with `currentColor`, so
  * it is legible in light, dark and high-contrast themes without a second asset.
