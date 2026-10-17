@@ -8,7 +8,6 @@ import {
   createShareLinkAction,
   getShareLinkStateAction,
   revokeShareLinkAction,
-  type ShareLinkState,
   type ShareOptions,
 } from "@/server/actions/share";
 import { useAction } from "@/lib/actions-client";
@@ -24,15 +23,13 @@ import { AccessList } from "@/components/who-has-access";
  */
 type PublishSettings = {
   allowEditing?: boolean;
-  allowDuplicate?: boolean;
   indexing?: boolean;
-  exportRestricted?: boolean;
 };
 
 /**
  * Additive superset of the action's `ShareOptions`. `allowEditing` is persisted
- * today; the other three flags are forwarded so the read-only action module
- * (`src/server/actions/share.ts`) can opt in to storing them without a UI
+ * today; `indexing` is forwarded so the read-only action module
+ * (`src/server/actions/share.ts`) can opt in to storing it without a UI
  * change. Declaring the superset locally keeps this panel additive and free of
  * `any`.
  */
@@ -41,15 +38,15 @@ type PublishOptions = ShareOptions & PublishSettings;
 /* ------------------------------------------------------------------------- *
  * Pure publish-settings model
  *
- * The panel renders three switches; each one's state has to become exactly one
+ * The panel renders its switches; each one's state has to become exactly one
  * patch key on the wire. That mapping is the only logic here, so it lives as a
  * pure function the node test can pin.
  * ------------------------------------------------------------------------- */
 
-/** The three publish settings the switches own, in render order. */
-export type PublishToggleId = "allowDuplicate" | "indexing" | "exportRestricted";
+/** The publish settings the switches own, in render order. */
+export type PublishToggleId = "indexing";
 
-/** The live switch state (what the three toggles show). */
+/** The live switch state (what the switches show). */
 export type PublishSettingsState = Record<PublishToggleId, boolean>;
 
 /** Label + explanatory hint per switch. Plain English until i18n catches up. */
@@ -59,19 +56,9 @@ export const PUBLISH_TOGGLES: readonly {
   hint: string;
 }[] = [
   {
-    id: "allowDuplicate",
-    label: "Allow duplicate",
-    hint: "Viewers can copy the published page into their own workspace.",
-  },
-  {
     id: "indexing",
     label: "Search-engine indexing",
     hint: "Let crawlers index this public page in search results.",
-  },
-  {
-    id: "exportRestricted",
-    label: "Export restricted",
-    hint: "Disable exporting the published page to PDF, HTML or Markdown.",
   },
 ];
 
@@ -79,15 +66,15 @@ export const PUBLISH_TOGGLES: readonly {
  * One toggle's state as a single-key `ShareOptions` patch — never touching the
  * link's password, expiry or edit mode. Unknown ids yield `{}` so a bad caller
  * cannot smuggle an unrelated field onto the wire.
+ *
+ * Only the settings the public share page can actually honour are offered: the
+ * page has no export and no "copy into my workspace", so the switches that
+ * promised them were removed instead of lying (B36).
  */
 export function publishTogglePatch(id: PublishToggleId, value: boolean): PublishOptions {
   switch (id) {
-    case "allowDuplicate":
-      return { allowDuplicate: value };
     case "indexing":
       return { indexing: value };
-    case "exportRestricted":
-      return { exportRestricted: value };
     default:
       return {};
   }
@@ -171,8 +158,8 @@ export function Switch({
 }
 
 /**
- * The three publish switches with their explanatory hints. A single-field patch
- * per toggle is produced by {@link publishTogglePatch}.
+ * The publish switches with their explanatory hints. A single-field patch
+ * per switch is produced by {@link publishTogglePatch}.
  */
 export function PublishSettingsSection({
   settings,
@@ -351,9 +338,7 @@ export function ShareDialog({
   const [days, setDays] = useState("");
   const [created, setCreated] = useState<string | null>(null);
   const [allowEditing, setAllowEditing] = useState(false);
-  const [allowDuplicate, setAllowDuplicate] = useState(false);
   const [indexing, setIndexing] = useState(false);
-  const [exportRestricted, setExportRestricted] = useState(false);
   const [confirmUnpublish, setConfirmUnpublish] = useState(false);
 
   // The stored link choices travel with the link, so re-read them every time
@@ -367,13 +352,7 @@ export function ShareDialog({
       .then((state) => {
         if (!live) return;
         setAllowEditing(state.allowEditing);
-        // Forward-compatible read-back: the action currently returns only
-        // `allowEditing`, so the extra settings stay at their defaults until
-        // `getShareLinkStateAction` opts in (named follow-up).
-        const extra: ShareLinkState & Partial<PublishSettings> = state;
-        setAllowDuplicate(extra.allowDuplicate ?? false);
-        setIndexing(extra.indexing ?? false);
-        setExportRestricted(extra.exportRestricted ?? false);
+        setIndexing(state.indexing);
       })
       .catch(() => {
         // Fail closed: keep the default read-only choice on any error.
@@ -409,9 +388,7 @@ export function ShareDialog({
       password: password.trim() || undefined,
       expiresInDays: days.trim() ? Number(days) : undefined,
       allowEditing,
-      ...publishTogglePatch("allowDuplicate", allowDuplicate),
       ...publishTogglePatch("indexing", indexing),
-      ...publishTogglePatch("exportRestricted", exportRestricted),
     };
     return run(() => createShareLinkAction(pageId, options), {
       onSuccess: (result) => {
@@ -440,9 +417,7 @@ export function ShareDialog({
   /** One switch → one single-field patch, mirrored locally on success. */
   const toggleSetting = (id: PublishToggleId, value: boolean) => {
     const apply = () => {
-      if (id === "allowDuplicate") setAllowDuplicate(value);
-      else if (id === "indexing") setIndexing(value);
-      else setExportRestricted(value);
+      if (id === "indexing") setIndexing(value);
     };
     saveSetting(publishTogglePatch(id, value), apply);
   };
@@ -454,9 +429,7 @@ export function ShareDialog({
       onSuccess: () => {
         setCreated(null);
         setAllowEditing(false);
-        setAllowDuplicate(false);
         setIndexing(false);
-        setExportRestricted(false);
         onTokenChange(null);
         router.refresh();
       },
@@ -569,7 +542,7 @@ export function ShareDialog({
             <>
               <ShareSection title="Publish settings">
                 <PublishSettingsSection
-                  settings={{ allowDuplicate, indexing, exportRestricted }}
+                  settings={{ indexing }}
                   pending={pending}
                   onToggle={toggleSetting}
                 />

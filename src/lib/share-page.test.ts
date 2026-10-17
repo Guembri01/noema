@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { GRADIENTS } from "@/lib/page-cover";
 import {
+  GENERIC_SHARED_TITLE,
   PROSE_MEASURE,
   WIDE_MEASURE,
   coverBannerStyle,
   documentHasDatabase,
   isSharedPageUnavailable,
   readingMeasure,
+  sharedPageTitle,
   usesWideMeasure,
 } from "./share-page";
 
@@ -50,6 +52,43 @@ describe("isSharedPageUnavailable", () => {
   it("never hides a live page on an unparseable expiry", () => {
     expect(isSharedPageUnavailable({ expiresAt: "not-a-date" }, { deletedAt: null }, NOW)).toBe(
       false,
+    );
+  });
+});
+
+describe("sharedPageTitle", () => {
+  it("names an open page", () => {
+    expect(
+      sharedPageTitle({ passwordHash: null, expiresAt: null }, { title: "Open page" }),
+    ).toBe("Open page");
+  });
+
+  it("withholds the title of a password-protected page until it is unlocked", () => {
+    const link = { passwordHash: "$2a$12$hash", expiresAt: null };
+    const page = { title: "Locked page" };
+
+    expect(sharedPageTitle(link, page)).toBe(GENERIC_SHARED_TITLE);
+    expect(sharedPageTitle(link, page, { unlocked: false })).toBe(GENERIC_SHARED_TITLE);
+    expect(sharedPageTitle(link, page, { unlocked: true })).toBe("Locked page");
+  });
+
+  it("withholds the title of an expired or deleted page", () => {
+    expect(
+      sharedPageTitle({ passwordHash: null, expiresAt: "2026-10-15T11:59:59.000Z" }, { title: "Gone" }),
+    ).toBe(GENERIC_SHARED_TITLE);
+    expect(
+      sharedPageTitle({ passwordHash: null, expiresAt: null }, { title: "Gone", deletedAt: NOW }),
+    ).toBe(GENERIC_SHARED_TITLE);
+  });
+
+  it("stays generic for a missing link or page", () => {
+    expect(sharedPageTitle(null, { title: "Gone" })).toBe(GENERIC_SHARED_TITLE);
+    expect(sharedPageTitle({ passwordHash: null, expiresAt: null }, null)).toBe(GENERIC_SHARED_TITLE);
+  });
+
+  it("falls back to the generic title for an untitled page", () => {
+    expect(sharedPageTitle({ passwordHash: null, expiresAt: null }, { title: "" })).toBe(
+      GENERIC_SHARED_TITLE,
     );
   });
 });
