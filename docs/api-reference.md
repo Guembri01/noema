@@ -606,6 +606,14 @@ cookie session · backing actions `src/server/actions/calendar.ts`.
 ```
 Upcoming events: top 25. Errors: **401** · **404** `Workspace not found` · 429.
 
+`url` is the event's `URL:` property from the feed. Only an `http`, `https`,
+`mailto` or `tel` URL is imported and rendered — every other scheme, a
+`javascript:` URL for instance, is dropped and the field is `null` for it. A
+relative path (`/w/acme/page`) and a same-document target (`?q=1`, `#section`)
+are kept. The stored value is checked again on the way out: this response
+and the ICS export (`?format=ics`) leave out a URL that is not on the
+allowlist, so an event stored before the fix cannot leak one either.
+
 ### `POST /api/calendar` — scope `calendar-write` (30/min)
 
 ```jsonc
