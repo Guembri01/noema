@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import type { PropertyType } from "@prisma/client";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,7 @@ import {
   getWorkspaceBySlug,
   getWorkspaceMembers,
 } from "@/server/queries";
-import { getPageReferences } from "@/server/backlinks";
+import { getPageReferences, type PageReferences } from "@/server/backlinks";
 import { PageEditor } from "@/components/editor/page-editor";
 import { PageTitle } from "@/components/page-title";
 import { CommentPanel, type CommentNode } from "@/components/comment-panel";
@@ -53,9 +54,19 @@ export default async function PageRoute({
     notFound();
   }
 
-  const [database, references, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces, versionLabels] = await Promise.all([
+  // The reference scan walks the workspace's link graph (up to 1000 pages), so
+  // it is started alongside the other reads but deliberately NOT awaited here:
+  // it streams into the `Backlinks` panel below (same query, same guest-scoping
+  // guard) so the editor paints first while the panel shows its own skeleton.
+  const referencesPromise = getPageReferences(
+    workspace.id,
+    page.id,
+    page.title,
+    visiblePageIds,
+  );
+
+  const [database, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces, versionLabels] = await Promise.all([
     page.type === "DATABASE" ? getDatabase(page.id) : Promise.resolve(null),
-    getPageReferences(workspace.id, page.id, page.title, visiblePageIds),
     getAncestorTrail(workspace.id, page.id),
     prisma.pageFollow.findUnique({
       where: { userId_pageId: { userId: user.id, pageId: page.id } },
@@ -228,12 +239,22 @@ export default async function PageRoute({
         />
       )}
 
-      <Backlinks
-        items={references.linked}
-        unlinked={references.unlinked}
-        workspaceSlug={workspace.slug}
-        locale={locale}
-      />
+      <Suspense
+        fallback={
+          <Backlinks
+            items={[]}
+            workspaceSlug={workspace.slug}
+            locale={locale}
+            loading
+          />
+        }
+      >
+        <PageReferencesPanel
+          references={referencesPromise}
+          workspaceSlug={workspace.slug}
+          locale={locale}
+        />
+      </Suspense>
 
       <section className="mt-12 border-t border-border pt-6">
         <VersionHistory
@@ -277,5 +298,47 @@ export default async function PageRoute({
         canComment={editable}
       />
     </div>
+  );
+}
+
+/**
+ * The reference lists stream in after the page shell. `getPageReferences` walks
+ * the workspace's link graph, so awaiting it inside the `<Suspense>` boundary
+ * above lets the editor paint first while `Backlinks` shows its skeleton; a
+ * failed scan renders the panel's own error + retry state (docs/DESIGN_SYSTEM.md
+ * §8) rather than taking the whole route down, and `showEmpty` surfaces the
+ * actionable empty state when a page genuinely has no references yet.
+ */
+async function PageReferencesPanel({
+  references,
+  workspaceSlug,
+  locale,
+}: {
+  references: Promise<PageReferences>;
+  workspaceSlug: string;
+  locale: string;
+}) {
+  // `references` is the route's own scan (started with the other reads above);
+  // a rejected scan resolves to `null` here so the panel can retry in place.
+  const data = await references.catch(() => null);
+  if (data === null) {
+    return (
+      <Backlinks
+        items={[]}
+        workspaceSlug={workspaceSlug}
+        locale={locale}
+        error={t(locale, "somethingWentWrong")}
+        showEmpty
+      />
+    );
+  }
+  return (
+    <Backlinks
+      items={data.linked}
+      unlinked={data.unlinked}
+      workspaceSlug={workspaceSlug}
+      locale={locale}
+      showEmpty
+    />
   );
 }
