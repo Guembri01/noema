@@ -27,6 +27,7 @@
     "node_modules",
     "src-tauri/server",
     "src-tauri/target",
-    ".next"
+    ".next",
+    "video"
   ]
 }

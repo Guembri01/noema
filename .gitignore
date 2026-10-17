@@ -78,3 +78,15 @@ scripts/_capture.cjs
 
 # Scratch/debug files an agent or a human leaves behind: never commit these.
 scripts/_*
+
+# The product film (video/) is its own Remotion project: the app's tsconfig and
+# ESLint exclude it, and it has its own package.json. Its dependencies, the
+# generated 2x page textures it captures, the third-party audio it borrows and the
+# rendered MP4 are all reproducible or external — the film *source* is tracked, the
+# artefacts are not.
+/video/node_modules/
+/video/out/
+/video/public/textures/
+/video/public/cutouts/
+/video/public/audio/
+/video/.remotion/
