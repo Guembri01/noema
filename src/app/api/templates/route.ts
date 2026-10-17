@@ -38,6 +38,14 @@ export async function POST(request: Request) {
   const workspaceId = String(body.workspaceId ?? "");
   const parentId = body.parentId ?? null;
 
+  // The parent is checked by the template actions themselves — and only
+  // *after* they have established that the caller may write in the
+  // workspace. A parent check in front of the membership check would answer
+  // "does this page id exist in that workspace?" to a caller who is not even a
+  // member of it: an existence oracle across the tenant boundary (B08).
+  // `Page.parentId` is a plain foreign key, so the actions call
+  // `assertScopedParent` before anything is written.
+
   let result: { ok: true; id: string; slug: string } | { error: string };
   switch (body.action) {
     case "quickstart":

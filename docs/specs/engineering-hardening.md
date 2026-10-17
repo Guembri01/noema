@@ -417,6 +417,7 @@ R28.25). Everything else is behavior, not schema.
 | `AUTH_SECRET` rotated | All sessions die (already true today) **and** envelopes become unreadable → documented two-step rotation (dual-key window) in R28.26; not silently swallowed |
 | Failure mid-`signupAction` | No user, no workspace, no welcome page — or all three (R28.6/R28.7) |
 | Failure mid-`updatePageAction` | Page unchanged **and** no `PageVersion` row (R28.8) |
+| Page created / moved with a `parentId` from another workspace | Refused with a typed error, **nothing written**; the foreign parent is never read, so the error never names it. The invariant: *a `parentId` always points inside the same workspace*. One helper — `assertScopedParent()` in `src/lib/page-parent.ts` — is the single gate every write path passes a parent through; the read side filters a database's rows by the database's workspace. Note: the check is **application-side** (no composite `(parentId, workspaceId)` constraint in the schema), so a new write path that bypasses the helper re-opens the hole (B08) |
 | Duplicate a block / paste a doc with ids | Copy gets fresh ids; collisions re-minted (R28.4) |
 | Legacy doc (no ids) opens | `ensureBlockIds` assigns on load, next save persists one version; comments fall back to quote anchors (R28.2/R28.5) |
 | DB down | `/api/health` → 503; compose marks `app` unhealthy; app process itself keeps its existing behavior (no new crash paths) (R28.24) |

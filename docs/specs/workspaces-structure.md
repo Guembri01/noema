@@ -184,6 +184,23 @@ the drift (§13).
   test with a foreign-workspace `parentId` (mocked prisma, pattern of
   `src/server/actions/workspaces.test.ts`), plus the existing cycle-walk tests
   cited by id.
+  **Shipped (B08), and widened to every write path.** The check is one
+  helper — `assertScopedParent({ workspaceId, parentId, pageId? })` in
+  `src/lib/page-parent.ts` — that loads the parent **tenant-scoped**
+  (`{ id, workspaceId }`), so a foreign parent is never read and the refusal
+  (`That parent page does not exist in this workspace.`) never names it. It
+  guards `createPageAction`, `movePageAction`, `POST /api/v1/pages`, the MCP
+  tool `create_page`, the template routes and actions, every importer
+  (Notion, Docx, Trello, Zip, Markdown, CSV, HTML, PDF), the chat-answer save
+  and the page/database duplicate paths. The **invariant** it enforces:
+  *a `parentId` always points inside the same workspace*. The read side
+  follows: `getDatabase`, both export routes, the "Deleted rows" panel, the
+  database duplicate and the chat context filter a database's rows by the
+  database's workspace, so a row that was linked across workspaces before
+  the fix no longer surfaces in the foreign workspace's views — and the
+  duplicate no longer copies such a row **with its content**. The invariant
+  is enforced mechanically by `scripts/check-parent-scope.mjs`, which fails
+  when a `Page.parentId` is written outside the helper.
 - **R80.8** — **Bulk move ships as a pure-logic-first feature.** (a) Selection
   model added to `src/lib/page-tree.ts` (multi-select set, shift-range over
   `flattenVisible` order, "all selected editable" predicate) with unit tests
