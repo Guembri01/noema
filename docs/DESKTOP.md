@@ -511,12 +511,20 @@ works as-is once the `noema` database exists (`docker exec noema-db createdb -U 
 ## 7. Release process
 
 1. Bump the version in **both** `package.json` and `src-tauri/tauri.conf.json`.
-2. `npm run desktop:bundle` (or the `desktop.yml` matrix, which does this on
-   Windows, macOS and Linux and uploads the artifacts to a draft release).
+2. `npm run desktop:bundle` (or push the `v*` tag, which runs the
+   `desktop.yml` matrix on Windows, macOS and Linux and uploads the artifacts
+   to a draft release).
 3. Ship the NSIS `.exe` (per-user install, no admin prompt) and/or the `.msi`.
 
 The app intentionally ships **unsigned** until certificates exist; §8 explains
 what that means for the user (SmartScreen) and what is already wired for signing.
+
+A tag push runs the workflow's `release` job: it is the only job that holds a
+write-scoped token (to open the draft release) and the signing secrets (the
+bundle is signed while it is built). Everything a pull request can reach runs
+with a read-only token and no secret at all, and no checkout keeps its
+credentials — a pull request must never be able to read a token or a signing
+key out of the tree it ships.
 
 ## 8. Testing
 
@@ -587,7 +595,8 @@ Two environment notes worth keeping:
   shipping none, so the menu item resolves to "up to date" and `docs/DESKTOP.md`
   §9 records the plan.
 - **Unsigned binaries.** Windows SmartScreen will warn until a code-signing
-  certificate is installed; `desktop.yml` already threads the signing secrets.
+  certificate is installed; the desktop workflow's `release` job (tag pushes
+  only) already threads the signing secrets.
 - **macOS**: closing the window hides the app; **File → Quit** (⌘Q) really quits.
   Native, but surprising for Windows users.
 - **`desktop-everything.json` is deliberately broad** (product decision) and
