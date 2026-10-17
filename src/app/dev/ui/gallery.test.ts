@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GALLERY_SECTIONS, galleryCoveredFiles } from "./gallery-manifest";
+import { GALLERY_SECTIONS, NON_VISUAL_PRIMITIVES, galleryCoveredFiles } from "./gallery-manifest";
 
 /**
  * Completeness test for the internal design gallery (`/dev/ui`).
@@ -24,6 +24,9 @@ function primitiveFiles(): string[] {
   return readdirSync(uiDir)
     .filter((name) => name.endsWith(".tsx") && !name.endsWith(".test.tsx"))
     .map((name) => name.slice(0, -".tsx".length))
+    // Portal/behaviour helpers have no visual form to showcase (see the manifest
+    // for why each one is listed): everything else must still be covered.
+    .filter((name) => !NON_VISUAL_PRIMITIVES.includes(name))
     .sort();
 }
 

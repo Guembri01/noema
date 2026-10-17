@@ -287,6 +287,16 @@ export type GallerySection = (typeof GALLERY_SECTIONS)[number];
 export type GallerySectionId = GallerySection["id"];
 
 /** Every primitive source file the gallery claims, as a flat sorted list. */
+/**
+ * Files in `src/components/ui` that have **no visual form**, so the gallery has
+ * nothing to show: `FloatingLayer` is a portal helper (it renders its children
+ * into `document.body` and has no markup or style of its own).
+ *
+ * The completeness test subtracts these, and only these — every *visual* primitive
+ * still fails the test if it is not showcased, which is the point of the rule.
+ */
+export const NON_VISUAL_PRIMITIVES: readonly string[] = ["floating-layer"];
+
 export function galleryCoveredFiles(): string[] {
   return [...new Set(GALLERY_SECTIONS.flatMap((section) => section.files))].sort();
 }
