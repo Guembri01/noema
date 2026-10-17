@@ -155,6 +155,31 @@ describe("connectCalendarFeedAction - SSRF guard (H4)", () => {
     expect(dns.lookup).toHaveBeenCalledWith("example.com", expect.objectContaining({ all: true }));
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects oversized response streams by byte count without creating a feed", async () => {
+    // Two million UTF-16 code units but four million UTF-8 bytes.
+    fetchSpy.mockResolvedValue(new Response("💩".repeat(1_000_000)));
+    const result = await connectCalendarFeedAction({
+      workspaceId: "ws-1", name: "Team", icsUrl: "https://example.com/feed.ics",
+    });
+    expect(failureOf(result)).toBe("That calendar feed is too large.");
+    expect(db.calendarFeedCreate).not.toHaveBeenCalled();
+    expect(db.calendarEventUpsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing body", new Response(null)],
+    ["read failure", new Response(new ReadableStream({
+      start(controller) { controller.error(new Error("read failed")); },
+    }))],
+  ])("returns a controlled error for %s", async (_label, response) => {
+    fetchSpy.mockResolvedValue(response);
+    const result = await connectCalendarFeedAction({
+      workspaceId: "ws-1", name: "Team", icsUrl: "https://example.com/feed.ics",
+    });
+    expect(failureOf(result)).toBe("Could not read that calendar feed.");
+    expect(db.calendarFeedCreate).not.toHaveBeenCalled();
+  });
 });
 
 describe("refreshCalendarFeedsAction - SSRF guard (H4)", () => {
@@ -177,5 +202,34 @@ describe("refreshCalendarFeedsAction - SSRF guard (H4)", () => {
     const result = await refreshCalendarFeedsAction("ws-1");
     expect(result).toEqual({ ok: true, refreshed: 1 });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips oversized feeds without importing events", async () => {
+    db.calendarFeedFindMany.mockResolvedValue([
+      { id: "f1", icsUrl: "http://93.184.216.34/cal.ics" },
+    ]);
+    fetchSpy.mockResolvedValue(new Response("💩".repeat(1_000_000)));
+    const result = await refreshCalendarFeedsAction("ws-1");
+    expect(result).toEqual({ ok: true, refreshed: 0 });
+    expect(db.calendarEventUpsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing body", new Response(null)],
+    ["read failure", new Response(new ReadableStream({
+      start(controller) { controller.error(new Error("read failed")); },
+    }))],
+    ["cancel failure", new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new Uint8Array(2_000_001)); },
+      cancel() { throw new Error("cancel failed"); },
+    }))],
+  ])("skips a feed with %s", async (_label, response) => {
+    db.calendarFeedFindMany.mockResolvedValue([
+      { id: "f1", icsUrl: "http://93.184.216.34/cal.ics" },
+    ]);
+    fetchSpy.mockResolvedValue(response);
+    const result = await refreshCalendarFeedsAction("ws-1");
+    expect(result).toEqual({ ok: true, refreshed: 0 });
+    expect(db.calendarEventUpsert).not.toHaveBeenCalled();
   });
 });

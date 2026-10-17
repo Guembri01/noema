@@ -22,6 +22,33 @@ const MAX_FEED_BYTES = 2_000_000;
  */
 const FEED_READ_ERROR = "Could not read that calendar feed.";
 
+/** Read at most the configured byte limit, cancelling the stream on overflow. */
+async function readFeedBody(
+  response: Response,
+): Promise<{ body: string } | { tooLarge: true } | { error: true }> {
+  const reader = response.body?.getReader();
+  if (!reader) return { error: true };
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let body = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return { body: body + decoder.decode() };
+      bytes += value.byteLength;
+      if (bytes > MAX_FEED_BYTES) {
+        await reader.cancel();
+        return { tooLarge: true };
+      }
+      body += decoder.decode(value, { stream: true });
+    }
+  } catch {
+    return { error: true };
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /** Subscribe to an iCalendar feed and materialise its upcoming events. */
 export async function connectCalendarFeedAction(input: {
   workspaceId: string;
@@ -46,12 +73,13 @@ export async function connectCalendarFeedAction(input: {
   if (!response?.ok) {
     return { error: FEED_READ_ERROR };
   }
-  const body = await response.text();
-  if (body.length > MAX_FEED_BYTES) {
+  const result = await readFeedBody(response);
+  if ("error" in result) return { error: FEED_READ_ERROR };
+  if ("tooLarge" in result) {
     return { error: "That calendar feed is too large." };
   }
 
-  const events = parseIcsEvents(body).slice(0, 500);
+  const events = parseIcsEvents(result.body).slice(0, 500);
   if (events.length === 0) {
     return { error: "No events were found in that calendar." };
   }
@@ -118,7 +146,9 @@ export async function refreshCalendarFeedsAction(
       signal: AbortSignal.timeout(15_000),
     });
     if (!response?.ok) continue;
-    const events = parseIcsEvents(await response.text()).slice(0, 500);
+    const result = await readFeedBody(response);
+    if ("error" in result || "tooLarge" in result) continue;
+    const events = parseIcsEvents(result.body).slice(0, 500);
     for (const event of events) {
       await prisma.calendarEvent.upsert({
         where: { workspaceId_uid: { workspaceId, uid: event.uid } },
