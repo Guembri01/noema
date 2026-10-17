@@ -11,6 +11,7 @@ import {
   type ListItem,
 } from "@/lib/markdown";
 import { formatCaption, numberLines } from "@/lib/code-block";
+import { DOC_PRINT_CLASS, ReadPrintStyles } from "@/components/doc-renderer";
 import {
   blocksToQuote,
   formatPullQuote,
@@ -23,10 +24,49 @@ import {
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
+/** How long the copy button shows its success (check) state, in ms. */
+export const MARKDOWN_COPY_FEEDBACK_MS = 1500;
+
+/* -------------------------------------------------------------------------- *
+ * Design-system mappings (docs/DESIGN_SYSTEM.md §1–§3).
+ *
+ * Pure and DOM-free, so node tests pin the tokens each Markdown kind renders.
+ * No component below carries a raw hex, an ad-hoc radius or a magic spacing
+ * value — every value is a token (`--surface-2`, `--radius-md`, the 4 px grid,
+ * `--accent`) or a `print:` variant.
+ * -------------------------------------------------------------------------- */
+
+/** Token classes for one Markdown block or inline kind. */
+export const MARKDOWN_BLOCK_CLASS = {
+  paragraph: "my-1.5 leading-[1.6] text-fg",
+  heading: "mt-4 mb-1 font-semibold tracking-[-0.01em] text-fg",
+  blockquote: "my-2 ps-3.5 text-muted",
+  list: "my-1 ps-6",
+  rule: "my-4 border-0 border-t border-border",
+  table: "w-full border-collapse text-sm",
+  tableCell: "border border-border px-2 py-1.5 align-top",
+  tableHeader: "bg-surface-2 text-start font-medium",
+  link: "text-accent underline decoration-accent-soft underline-offset-2 hover:decoration-accent",
+  inlineCode: "rounded-xs bg-surface-2 px-1 py-0.5 font-mono text-[0.86em] text-danger",
+  ref: "align-middle",
+  codeBlock: "rounded-md border border-border bg-surface-2 font-mono",
+  codeLang: "uppercase tracking-[0.04em]",
+  image: "mx-auto h-auto max-w-full rounded-md",
+  imageCaption: "mt-1 text-center text-xs text-muted",
+} as const;
+
+export type MarkdownKind = keyof typeof MARKDOWN_BLOCK_CLASS;
+
+/** Token classes for a Markdown kind. */
+export function markdownBlockClass(kind: MarkdownKind): string {
+  return MARKDOWN_BLOCK_CLASS[kind];
+}
+
 /**
  * Renders AI answers (and any Markdown) as React elements — never as HTML
- * strings, so model output can never inject markup. Styling lives in
- * `globals.css` under `.notion-markdown`, which mirrors the editor typography.
+ * strings, so model output can never inject markup. Typography tokens come
+ * from `MARKDOWN_BLOCK_CLASS` above (mirroring the editor); the `@media print`
+ * block is shared with the doc renderer via {@link ReadPrintStyles}.
  */
 export function Markdown({
   text,
@@ -56,7 +96,14 @@ export function Markdown({
     if (consumed) index += 1;
   }
   return (
-    <div className={cn("notion-markdown", compact && "notion-markdown-compact", className)}>
+    <div
+      className={cn(
+        "notion-markdown print:max-w-none",
+        compact && "notion-markdown-compact",
+        className,
+      )}
+    >
+      <ReadPrintStyles />
       {rendered}
     </div>
   );
@@ -207,18 +254,17 @@ function resolvePullQuote(
 function renderPullQuote(quote: PullQuote): React.ReactNode {
   return (
     <blockquote
-      className="notion-pull-quote"
+      className={cn(
+        "notion-pull-quote text-[1.5em] font-semibold leading-[1.45]",
+        DOC_PRINT_CLASS.block,
+      )}
       data-pull-quote=""
       data-size="large"
-      style={{ fontSize: "1.5em", fontWeight: 600, lineHeight: 1.45 }}
       title={formatPullQuote(quote)}
     >
       {quote.text}
       {quote.attribution !== undefined && (
-        <footer
-          className="notion-pull-quote-attribution"
-          style={{ fontSize: "0.9em", fontWeight: 400, opacity: 0.75, textAlign: "right" }}
-        >
+        <footer className="notion-pull-quote-attribution text-end text-[0.9em] font-normal opacity-75">
           {"\u2014 "}
           {quote.attribution}
         </footer>
@@ -241,10 +287,18 @@ function BlockView({
   switch (block.type) {
     case "heading": {
       const Tag = (`h${Math.min(block.level, 4)}`) as "h1" | "h2" | "h3" | "h4";
-      return <Tag>{renderInline(block.content, slug)}</Tag>;
+      return (
+        <Tag className={cn(markdownBlockClass("heading"), DOC_PRINT_CLASS.heading)}>
+          {renderInline(block.content, slug)}
+        </Tag>
+      );
     }
     case "paragraph":
-      return <p>{renderInline(block.content, slug)}</p>;
+      return (
+        <p className={cn(markdownBlockClass("paragraph"), DOC_PRINT_CLASS.block)}>
+          {renderInline(block.content, slug)}
+        </p>
+      );
     case "code": {
       const { lineNumbers, caption } = codeBlockOptions(block);
       return (
@@ -262,7 +316,10 @@ function BlockView({
       // paragraph) renders at display scale; everything else is unchanged.
       if (quote) return renderPullQuote(quote);
       return (
-        <blockquote>
+        <blockquote
+          className={cn(markdownBlockClass("blockquote"), DOC_PRINT_CLASS.block)}
+          style={{ borderLeft: "3px solid var(--border-strong)" }}
+        >
           {block.blocks.map((inner, index) => (
             <BlockView key={index} block={inner} slug={slug} locale={locale} />
           ))}
@@ -274,11 +331,18 @@ function BlockView({
     case "table":
       return (
         <div className="notion-markdown-table">
-          <table>
+          <table className={cn(markdownBlockClass("table"), DOC_PRINT_CLASS.block)}>
             <thead>
               <tr>
                 {block.header.map((cell, index) => (
-                  <th key={index} style={{ textAlign: block.align[index] ?? "left" }}>
+                  <th
+                    key={index}
+                    className={markdownBlockClass("tableHeader")}
+                    style={{
+                      textAlign: block.align[index] ?? "left",
+                      background: "var(--surface-2)",
+                    }}
+                  >
                     {renderInline(cell, slug)}
                   </th>
                 ))}
@@ -288,7 +352,11 @@ function BlockView({
               {block.rows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   {row.map((cell, cellIndex) => (
-                    <td key={cellIndex} style={{ textAlign: block.align[cellIndex] ?? "left" }}>
+                    <td
+                      key={cellIndex}
+                      className={markdownBlockClass("tableCell")}
+                      style={{ textAlign: block.align[cellIndex] ?? "left" }}
+                    >
                       {renderInline(cell, slug)}
                     </td>
                   ))}
@@ -299,7 +367,19 @@ function BlockView({
         </div>
       );
     case "hr":
-      return <hr />;
+      return <hr className={markdownBlockClass("rule")} />;
+    case "image":
+      return (
+        <figure className={cn("notion-markdown-image", DOC_PRINT_CLASS.block)}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={block.src} alt={block.alt} className={markdownBlockClass("image")} />
+          {block.caption !== null && block.caption !== "" && (
+            <figcaption className={markdownBlockClass("imageCaption")}>
+              {block.caption}
+            </figcaption>
+          )}
+        </figure>
+      );
   }
 }
 
@@ -307,7 +387,13 @@ function ListView({ list, slug }: { list: ListBlock; slug?: string }) {
   const isTask = list.items.some((item) => item.checked !== null);
   const Tag = list.ordered ? "ol" : "ul";
   return (
-    <Tag className={cn(isTask && "notion-markdown-tasks")}>
+    <Tag
+      className={cn(
+        markdownBlockClass("list"),
+        isTask && "notion-markdown-tasks",
+        DOC_PRINT_CLASS.block,
+      )}
+    >
       {list.items.map((item, index) => (
         <ListItemView key={index} item={item} slug={slug} />
       ))}
@@ -350,34 +436,33 @@ function CodeBlock({
   const [copied, setCopied] = useState(false);
   const gutter = lineNumbers ? numberLines(value) : [];
   return (
-    <div className="notion-code">
-      <div className="notion-code-head">
-        <span className="notion-code-lang">{lang || "text"}</span>
+    <div
+      className={cn("notion-code", markdownBlockClass("codeBlock"), "print:break-inside-avoid")}
+      style={{ background: "var(--surface-2)" }}
+    >
+      <div className="notion-code-head print:hidden">
+        <span className={cn("notion-code-lang", markdownBlockClass("codeLang"))}>
+          {lang || "text"}
+        </span>
         <button
           type="button"
           aria-label={t(locale, "copyCode")}
           onClick={() => {
             void navigator.clipboard?.writeText(value);
             setCopied(true);
-            window.setTimeout(() => setCopied(false), 1500);
+            window.setTimeout(() => setCopied(false), MARKDOWN_COPY_FEEDBACK_MS);
           }}
-          className="notion-code-copy"
+          className="notion-code-copy focus-ring u-colors"
         >
           {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
           {copied ? t(locale, "copiedWord") : t(locale, "copy")}
         </button>
       </div>
-      <pre style={lineNumbers ? { display: "flex", gap: 12, overflow: "visible" } : undefined}>
+      <pre className={cn(lineNumbers && "flex gap-3 overflow-visible")}>
         {lineNumbers && (
           <div
             aria-hidden
-            className="notion-code-gutter"
-            style={{
-              userSelect: "none",
-              textAlign: "right",
-              color: "var(--muted)",
-              fontVariantNumeric: "tabular-nums",
-            }}
+            className="notion-code-gutter select-none text-end text-muted tabular-nums"
           >
             {gutter.map((row, index) => (
               <div key={`${index}-${row.n ?? "wrap"}`}>{row.n === null ? "\u00a0" : row.n}</div>
@@ -406,7 +491,11 @@ function renderInline(nodes: Inline[], slug?: string): React.ReactNode[] {
         return <del key={index}>{renderInline(node.children, slug)}</del>;
       case "code":
         return (
-          <code key={index} className="notion-inline-code">
+          <code
+            key={index}
+            className={cn("notion-inline-code", markdownBlockClass("inlineCode"))}
+            style={{ background: "var(--surface-2)", color: "var(--danger)" }}
+          >
             {node.value}
           </code>
         );
@@ -414,12 +503,21 @@ function renderInline(nodes: Inline[], slug?: string): React.ReactNode[] {
         return <br key={index} />;
       case "link": {
         const external = /^https?:/i.test(node.href);
+        const linkClass = markdownBlockClass("link");
+        const linkStyle = { color: "var(--accent)" };
         return external ? (
-          <a key={index} href={node.href} target="_blank" rel="noopener noreferrer nofollow">
+          <a
+            key={index}
+            href={node.href}
+            className={linkClass}
+            style={linkStyle}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+          >
             {renderInline(node.children, slug)}
           </a>
         ) : (
-          <Link key={index} href={node.href}>
+          <Link key={index} href={node.href} className={linkClass} style={linkStyle}>
             {renderInline(node.children, slug)}
           </Link>
         );
