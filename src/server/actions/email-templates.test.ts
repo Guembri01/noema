@@ -29,6 +29,8 @@ const h = vi.hoisted(() => {
     transport,
     createTransport: vi.fn(() => transport),
     requireUser: vi.fn(),
+    /** The request headers a caller could try to steer the link origin with. */
+    requestHeader: vi.fn((): string | null => null),
     prisma: {
       workspaceMemberFindUnique: vi.fn(),
       workspaceFindUnique: vi.fn(),
@@ -62,11 +64,11 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/auth", () => ({ requireUser: h.requireUser }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("next/headers", () => ({ headers: vi.fn(async () => ({ get: () => null })) }));
+vi.mock("next/headers", () => ({ headers: vi.fn(async () => ({ get: h.requestHeader })) }));
 
-import { MAIL_NOT_CONFIGURED } from "@/lib/mailer";
+import { MAIL_NOT_CONFIGURED, escapeHtml } from "@/lib/mailer";
 import { hashToken } from "@/lib/secrets";
-import { sendWorkspaceInviteAction, testEmailAction } from "./email";
+import { appOrigin, sendWorkspaceInviteAction, testEmailAction } from "./email";
 import { inviteTeamspaceMemberAction } from "./teamspace-invites";
 
 type Payload = {
@@ -151,6 +153,7 @@ beforeEach(() => {
   h.transport.sendMail.mockResolvedValue({ messageId: "m1" });
   h.transport.verify.mockResolvedValue(true);
   h.requireUser.mockResolvedValue({ id: "user-1", name: "Bilel G", email: "bilel@example.test" });
+  h.requestHeader.mockReturnValue(null);
   h.prisma.workspaceMemberFindUnique.mockResolvedValue({ role: "OWNER" });
   h.prisma.workspaceFindUnique.mockResolvedValue({
     name: "Acme",
@@ -207,7 +210,7 @@ describe("workspace invite template (sendWorkspaceInviteAction)", () => {
     expect(payload.html).toContain("You're invited to Acme");
     expect(payload.html).toContain('href="' + res.link + '"');
     expect(payload.html).toContain(">Accept invitation</a>");
-    expect(payload.html).toContain("If you weren't expecting this, you can ignore the email.");
+    expect(payload.html).toContain(escapeHtml("If you weren't expecting this, you can ignore the email."));
     expect(payload.from).toBe('"Noema Env" <noema@example.test>');
 
     expect(deliveryRow()).toMatchObject({
@@ -449,6 +452,48 @@ describe("SMTP test email (testEmailAction)", () => {
     expect(h.transport.verify).not.toHaveBeenCalled();
     expect(h.createTransport).not.toHaveBeenCalled();
     expect(h.transport.sendMail).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The link origin: the deployment configuration, never the request host
+// ---------------------------------------------------------------------------
+
+describe("appOrigin — the link origin comes from the configuration", () => {
+  it("uses APP_URL and drops its trailing slash", async () => {
+    process.env.APP_URL = "https://app.example.test/";
+    expect(await appOrigin()).toBe("https://app.example.test");
+  });
+
+  it("never takes the origin from a request header", async () => {
+    delete process.env.APP_URL;
+    delete process.env.NEXT_PUBLIC_APP_URL;
+    h.requestHeader.mockReturnValue('"><img src=x onerror=alert(1)>');
+
+    const origin = await appOrigin();
+
+    expect(origin).not.toContain("onerror");
+    expect(origin).not.toContain("<");
+    expect(origin).toBe("http://localhost:3200"); // the documented local fallback
+  });
+
+  it("keeps a hostile request host out of the invitation link", async () => {
+    configureSmtp();
+    delete process.env.APP_URL;
+    delete process.env.NEXT_PUBLIC_APP_URL;
+    h.requestHeader.mockReturnValue('"><img src=x onerror=alert(1)>');
+
+    const res = await sendWorkspaceInviteAction({
+      workspaceId: "ws-1",
+      email: "new@example.test",
+    });
+    if ("error" in res) fail(`expected ok, got error: ${res.error}`);
+    const payload = lastPayload();
+
+    expect(payload.html).not.toContain("<img");
+    expect(payload.html).not.toContain("onerror");
+    expect(payload.html).toContain('href="http://localhost:3200/invite/');
+    expect(res.link.startsWith("http://localhost:3200/invite/")).toBe(true);
   });
 });
 

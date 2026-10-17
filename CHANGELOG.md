@@ -212,6 +212,20 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   value is missing. `.env.example` ships the password empty, and a gate
   (`scripts/check-compose-exposure.mjs`) fails when a database is published
   without a loopback address or carries a fixed password.
+- The invitation e-mail no longer interpolates its values unescaped, and its
+  link origin no longer comes from the request. `emailTemplate` wrote the CTA
+  URL into the `href` attribute and the footer into the text of the mail
+  without escaping them, while the origin of that URL was taken from the
+  `Host`/`X-Forwarded-Host` header of the request that asked for the
+  invitation. A caller that sent such a header therefore decided which host
+  the link in the mail pointed at, and the payload of the header could close
+  the attribute and open a tag of its own — in a mail a third party reads. The
+  template now escapes every value it interpolates (the CTA URL in attribute
+  context, the CTA label and the footer in text context), and the origin comes
+  from the configuration only (`APP_URL`, then `NEXT_PUBLIC_APP_URL`).
+  **This is a breaking change for a deployment that does not set `APP_URL`:**
+  its invitation links now point at the local development origin instead of
+  the request host.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
