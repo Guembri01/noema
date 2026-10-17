@@ -183,7 +183,9 @@ docker run --rm -p 3000:3000 \
   noema:local
 ```
 
-The build is multi-stage and pins the Node base image by digest. The `.env`
+The build is multi-stage and pins the Node base image by digest — as does the
+Postgres service of the compose file, and the gate `npm run check:image-pins`
+fails when an image the repository pulls is named by tag alone. The `.env`
 file is excluded from the build context by `.dockerignore` and is never copied
 into a layer; only the fake build-time values inside the Dockerfile are
 present.
