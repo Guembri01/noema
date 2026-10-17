@@ -317,3 +317,79 @@ export function assembleContext(input: AssembleInput): AssembledContext {
 
   return { prompt, usedTokens: estimateTokens(prompt), dropped };
 }
+
+/* -------------------------------------------------------------------------- *
+ * Workspace blocks
+ *
+ * Workspace content is *data*: a page title or an excerpt may carry an
+ * instruction, and a model that reads it as one obeys it. The block is
+ * therefore framed by two tags, and the system prompt says what the block is.
+ *
+ * The tags carry an id that is minted per request. A fixed tag is one the
+ * content can simply write — a note that ends the block and continues in its
+ * own voice is a prompt injection that needs no cleverness at all. With an id
+ * the content cannot know, the frame cannot be closed from the inside.
+ * -------------------------------------------------------------------------- */
+
+/** The name of the tag that frames a block of workspace content. */
+export const WORKSPACE_BLOCK_TAG = "workspace-matches";
+
+/**
+ * An id a block tag may carry: URL-safe and long enough to be unguessable.
+ *
+ * The id is what the content cannot know, so it is what makes the frame
+ * unforgeable — a short or guessable one would leave the frame decorative.
+ */
+const BLOCK_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
+
+/** The two tags that frame a block of workspace content. */
+export type WorkspaceBlockTags = {
+  /** The opening tag, e.g. `<workspace-matches id="…">`. */
+  open: string;
+  /** The closing tag, e.g. `</workspace-matches id="…">`. */
+  close: string;
+};
+
+/**
+ * The tags that frame a block of workspace content.
+ *
+ * The id must be URL-safe and long enough to be unguessable. An id that does
+ * not fit is refused rather than escaped: a weak id would make the frame
+ * look like a frame without being one, and a frame that only looks like one
+ * is worse than none.
+ */
+export function workspaceBlockTags(id: string): WorkspaceBlockTags {
+  if (typeof id !== "string" || !BLOCK_ID_PATTERN.test(id)) {
+    throw new Error(
+      `workspaceBlockTags: the id must match ${BLOCK_ID_PATTERN} (16-64 URL-safe characters)`,
+    );
+  }
+  return {
+    open: `<${WORKSPACE_BLOCK_TAG} id="${id}">`,
+    close: `</${WORKSPACE_BLOCK_TAG} id="${id}">`,
+  };
+}
+
+/**
+ * Frame a block of workspace content for the model.
+ *
+ * Two things keep the frame honest, and neither of them is the model's
+ * cooperation:
+ *
+ *  - the tags carry an id the content cannot know (`workspaceBlockTags`);
+ *  - the text that could pass for a tag is removed from the content, so the
+ *    content cannot end the block even for a model that ignores the id.
+ *
+ * The frame is put around the *fitted* content, so a token budget can never
+ * cut the closing tag off: what the model sees is always a whole block.
+ */
+export function frameWorkspaceBlock(content: string, id: string): string {
+  const { open, close } = workspaceBlockTags(id);
+  const body = typeof content === "string" ? content : "";
+  // A complete tag first — so it leaves no tail behind — and the bare name
+  // after it, so nothing that could pass for a tag survives.
+  const cleaned = body
+    .replace(new RegExp(`</?${WORKSPACE_BLOCK_TAG}\\s*>`, "gi"), "")
+    .replace(new RegExp(`</?${WORKSPACE_BLOCK_TAG}`, "gi"), "");
+  return `${open}\n${cleaned}\n${close}`;
+}
