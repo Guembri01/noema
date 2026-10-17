@@ -126,6 +126,7 @@
     "check:layering": "node scripts/check-layering.mjs",
     "check:chat": "node scripts/check-chat-live.mjs",
     "check:csp": "node scripts/check-csp.mjs",
+    "check:csp-gate": "node scripts/check-csp-gate.mjs",
     "audit:frontend": "node scripts/audit-frontend.mjs",
     "check:i18n": "node scripts/check-i18n-keys.mjs",
     "desktop:smoke:embedded": "node scripts/desktop/smoke.mjs --embedded",
