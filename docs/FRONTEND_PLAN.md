@@ -260,7 +260,7 @@ to TSX by `src/lib/design-tokens.ts` (`Z`, `DUR`, `EASE`, `RADIUS`, `SHADOW`,
 | 8.7 | Page templates gallery + save-as-template | ✅ |
 | 8.8 | Import (Notion, Trello, CSV, Markdown, HTML, Asana, Evernote, GDocs, Confluence, PDF) with preview + progress | ✅ |
 | 8.9 | Export (Markdown, HTML, PDF, CSV, workspace zip) | ✅ |
-| 8.10 | Project / milestone / Gantt surfaces | ✅ |
+| 8.10 | Project / milestone / Gantt surfaces | ✅ reschedulable bars (drag, edge grips, arrow keys) |
 | 8.11 | Tickets board (list/board/timeline, filters, saved views, bulk, archive, delete) | ✅ (delete in flight) |
 | 8.12 | Cycles / sprints board | ✅ |
 | 8.13 | Roadmap (cross-project timeline) | ✅ |

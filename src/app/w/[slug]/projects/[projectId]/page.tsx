@@ -2,8 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { requireUser } from "@/lib/auth";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { getProjectDetail, getProjectTickets, getWorkspaceBySlug } from "@/server/queries";
+import { updateMilestoneAction, updateProjectAction } from "@/server/actions/projects";
 import { ProjectDetail } from "@/components/project-detail";
 import { ProjectActions } from "@/components/project-actions";
 import { ProjectGantt } from "@/components/project-gantt";
@@ -61,6 +62,10 @@ export default async function ProjectPage({
           startDate={project.startDate?.toISOString() ?? null}
           dueDate={project.dueDate?.toISOString() ?? null}
           locale={user.locale ?? "en"}
+          projectId={project.id}
+          canEdit={canEditContent(access.role)}
+          onProjectDates={updateProjectAction}
+          onMilestoneDue={updateMilestoneAction}
           milestones={project.milestones.map((milestone) => ({
             id: milestone.id,
             name: milestone.name,

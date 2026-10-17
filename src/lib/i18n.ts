@@ -732,6 +732,8 @@ const en = {
   timelineLabel: "Timeline",
   noDate: "no date",
   ganttLegend: "Dashed line = today · ● milestones (grey planned, blue in progress, green done). Set dates on milestones or the project to place them.",
+  ganttDragHint:
+    "Drag the project bar or a milestone's dot to reschedule it · drag a project edge to change its dates.",
   timelineNeedsDate: "Timeline view needs a Date property.",
   noDatedRows: "No dated rows in range.",
   chartNeedsSelect: "Chart view needs a select, status or multi-select property.",
@@ -1952,6 +1954,8 @@ const DICTS: Record<LocaleCode, Dict> = {
     timelineLabel: "Chronologie",
     noDate: "sans date",
     ganttLegend: "Ligne pointillée = aujourd’hui · ● jalons (gris planifié, bleu en cours, vert terminé). Définissez des dates sur les jalons ou le projet pour les placer.",
+    ganttDragHint:
+      "Faites glisser la barre du projet ou le point d’un jalon pour le replanifier · faites glisser un bord du projet pour modifier ses dates.",
     timelineNeedsDate: "La vue Chronologie a besoin d’une propriété Date.",
     noDatedRows: "Aucune ligne datée dans la plage.",
     chartNeedsSelect: "La vue Graphique a besoin d’une propriété de type Sélection, Statut ou Sélection multiple.",
@@ -3167,6 +3171,8 @@ const DICTS: Record<LocaleCode, Dict> = {
     timelineLabel: "Cronología",
     noDate: "sin fecha",
     ganttLegend: "Línea discontinua = hoy · ● hitos (gris planificado, azul en curso, verde completado). Establece fechas en los hitos o en el proyecto para colocarlos.",
+    ganttDragHint:
+      "Arrastra la barra del proyecto o el punto de un hito para reprogramarlo · arrastra un borde del proyecto para cambiar sus fechas.",
     timelineNeedsDate: "La vista Cronología necesita una propiedad Fecha.",
     noDatedRows: "No hay filas con fecha en el rango.",
     chartNeedsSelect: "La vista Gráfico necesita una propiedad de selección, estado o selección múltiple.",
@@ -4382,6 +4388,8 @@ const DICTS: Record<LocaleCode, Dict> = {
     timelineLabel: "Zeitachse",
     noDate: "kein Datum",
     ganttLegend: "Gestrichelte Linie = heute · ● Meilensteine (grau geplant, blau laufend, grün erledigt). Legen Sie Termine auf den Meilensteinen oder im Projekt fest, um sie zu platzieren.",
+    ganttDragHint:
+      "Ziehen Sie den Projektbalken oder den Punkt eines Meilensteins, um ihn neu zu planen · ziehen Sie eine Projektkante, um die Termine zu ändern.",
     timelineNeedsDate: "Die Zeitachsenansicht benötigt eine Datumeigenschaft.",
     noDatedRows: "Keine datierten Zeilen im Bereich.",
     chartNeedsSelect: "Die Diagrammansicht benötigt eine Auswähl-, Status- oder Mehrfachauswahleigenschaft.",
@@ -5597,6 +5605,8 @@ const DICTS: Record<LocaleCode, Dict> = {
     timelineLabel: "الجدول الزمني",
     noDate: "بدون تاريخ",
     ganttLegend: "الخط المتقطع = اليوم · ● المعالم (رمادي مخطط، أزرق قيد التنفيذ، أخضر مكتمل). حدد تواريخًا على المعالم أو المشروع لتموضعها.",
+    ganttDragHint:
+      "اسحب شريط المشروع أو نقطة المعلم لإعادة جدولته · اسحب حافة المشروع لتغيير تواريخه.",
     timelineNeedsDate: "تحتاج عرض الجدول الزمني إلى خاصية تاريخ.",
     noDatedRows: "لا صفوف مؤرخة في النطاق.",
     chartNeedsSelect: "تحتاج عرض الرسم البياني إلى خاصية اختيار أو حالة أو اختيار متعدد.",

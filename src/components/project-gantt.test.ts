@@ -1,9 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { TooltipProvider } from "@/components/ui/tooltip";
+
+// A rendered chart calls `useRouter().refresh()` after it persists a drag; there
+// is no app-router context under `renderToStaticMarkup`, so the hook is stubbed.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: () => undefined }),
+}));
+
 import {
   GANTT_MAX_STAGGER_STEPS,
+  GANTT_RUNWAY_MIN_DAYS,
   GANTT_STAGGER_MS,
   GANTT_TONE_CLASS,
   buildGanttAxis,
@@ -11,9 +19,11 @@ import {
   ganttStagger,
   ganttStatusTone,
   milestoneMarkers,
+  padGanttAxis,
   percentAlong,
   type GanttMilestone,
 } from "@/components/project-gantt";
+import { daysBetween, shiftDays } from "@/lib/gantt-schedule";
 
 /**
  * Gantt — the pure axis/bar/marker geometry and stagger maths, plus a static
@@ -46,6 +56,31 @@ describe("gantt axis", () => {
   it("ignores blank and unparseable dates", () => {
     const axis = buildGanttAxis([null, "nope", START], NOW);
     expect(percentAlong(axis, START)).toBe(0);
+  });
+});
+
+describe("gantt runway", () => {
+  it("gives a fitted axis room to drag outward on both sides", () => {
+    const fitted = buildGanttAxis([START, DUE], NOW);
+    const axis = padGanttAxis(fitted);
+
+    expect(daysBetween(axis.from, fitted.from)).toBeGreaterThanOrEqual(GANTT_RUNWAY_MIN_DAYS);
+    expect(daysBetween(fitted.to, axis.to)).toBeGreaterThanOrEqual(GANTT_RUNWAY_MIN_DAYS);
+    // The data no longer touches the edges, which is what lets a bar move.
+    expect(percentAlong(axis, START)).toBeGreaterThan(0);
+    expect(percentAlong(axis, DUE)).toBeLessThan(100);
+    expect(percentAlong(axis, START)).toBeLessThan(percentAlong(axis, DUE));
+  });
+
+  it("scales the runway with a long span", () => {
+    const long = buildGanttAxis([START, new Date(2027, 3, 20).toISOString()], NOW);
+    const padded = padGanttAxis(long);
+    expect(daysBetween(padded.from, long.from)).toBeGreaterThan(GANTT_RUNWAY_MIN_DAYS);
+  });
+
+  it("keeps a unit span drawable", () => {
+    const axis = padGanttAxis({ from: 0, to: 0, span: 0 }, 0);
+    expect(axis.span).toBeGreaterThan(0);
   });
 });
 
@@ -129,5 +164,82 @@ describe("renderToStaticMarkup — two bars", () => {
 
   it("animates mounts with the rise token", () => {
     expect(html).toContain("animate-rise");
+  });
+});
+
+/**
+ * The reschedule contract: a chart without the write callbacks (a client seat, or
+ * a caller that only wants the picture) must render today's read-only chart — no
+ * handles, no tab stops, no "drag me" copy — while one handed the callbacks gets
+ * grips and live sliders. Permission itself is decided by the page (it passes
+ * `canEditContent`), so the component only has to honour what it is given.
+ */
+describe("renderToStaticMarkup — reschedule contract", () => {
+  const milestones: GanttMilestone[] = [
+    { id: "m1", name: "Spec", status: "planned", dueDate: "2026-04-05T00:00:00" },
+    { id: "m2", name: "Build", status: "planned", dueDate: null },
+  ];
+
+  function render(props: Record<string, unknown>): string {
+    return renderToStaticMarkup(
+      h(
+        TooltipProvider,
+        null,
+        h(ProjectGantt, {
+          name: "Apollo",
+          startDate: START,
+          dueDate: DUE,
+          milestones,
+          locale: "en",
+          ...props,
+        }),
+      ),
+    );
+  }
+
+  const writable = {
+    projectId: "p1",
+    canEdit: true,
+    onProjectDates: async () => ({ ok: true }),
+    onMilestoneDue: async () => ({ ok: true }),
+  };
+
+  it("is read-only without the callbacks: no grips and nothing focusable", () => {
+    const html = render({});
+
+    expect(html).not.toContain("gantt-project-resize-start");
+    expect(html).not.toContain("gantt-project-resize-end");
+    expect(html).not.toContain("cursor-grab");
+    expect(html).not.toContain("Drag the project bar");
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).toContain('tabindex="-1"');
+  });
+
+  it("stays read-only for a viewer who may not edit", () => {
+    const html = render({ ...writable, canEdit: false });
+
+    expect(html).not.toContain("gantt-project-resize-start");
+    expect(html).toContain('aria-disabled="true"');
+  });
+
+  it("grows grips and focusable sliders for an editor", () => {
+    const html = render(writable);
+
+    expect(html).toContain('data-testid="gantt-project-resize-start"');
+    expect(html).toContain('data-testid="gantt-project-resize-end"');
+    expect(html).toContain("cursor-ew-resize");
+    expect(html).toContain("cursor-grab");
+    // project bar + two grips + the one dated milestone's dot
+    expect(html.match(/role="slider"/g)).toHaveLength(4);
+    expect(html).toContain('tabindex="0"');
+  });
+
+  it("announces the chart's dates and states the drag affordance", () => {
+    const html = render(writable);
+
+    expect(html).toContain("Move timeline item");
+    expect(html).toContain("Drag the project bar");
+    // An undated milestone has no dot to grab, so it is not a stop in the tab order.
+    expect(html.match(/data-testid="gantt-milestone"/g)).toHaveLength(1);
   });
 });
