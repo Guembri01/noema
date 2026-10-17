@@ -34,6 +34,12 @@ const h = vi.hoisted(() => {
     teamspaceMember: [],
     page: [],
     pagePermission: [],
+    // The other membership rows the removal deletes as well (the findings
+    // B37, B115 and B116) — the mock has to offer them.
+    pageFollow: [],
+    favorite: [],
+    projectMember: [],
+    project: [],
   };
   /** Every call the mock received — the queries the code under test ran. */
   const calls: { model: string; op: string; args: Row }[] = [];
@@ -54,6 +60,9 @@ vi.mock("@/lib/db", () => {
   const RELATIONS: Record<string, Record<string, { model: Model; key: string }>> = {
     pagePermission: { page: { model: "page", key: "pageId" } },
     teamspaceMember: { teamspace: { model: "teamspace", key: "teamspaceId" } },
+    pageFollow: { page: { model: "page", key: "pageId" } },
+    favorite: { page: { model: "page", key: "pageId" } },
+    projectMember: { project: { model: "project", key: "projectId" } },
   };
 
   const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -164,6 +173,16 @@ vi.mock("@/lib/db", () => {
       pagePermission: {
         findMany: (args: Record<string, unknown>) => findMany("pagePermission", args),
         deleteMany: (args: Record<string, unknown>) => deleteMany("pagePermission", args),
+      },
+      pageFollow: {
+        deleteMany: (args: Record<string, unknown>) => deleteMany("pageFollow", args),
+      },
+      favorite: {
+        deleteMany: (args: Record<string, unknown>) => deleteMany("favorite", args),
+      },
+      project: { findMany: (args: Record<string, unknown>) => findMany("project", args) },
+      projectMember: {
+        deleteMany: (args: Record<string, unknown>) => deleteMany("projectMember", args),
       },
     },
   };

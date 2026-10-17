@@ -97,6 +97,11 @@ vi.mock("@/lib/db", () => ({
       },
     },
     pagePermission: { deleteMany: async () => ({ count: 0 }) },
+    // The other membership rows the removal deletes as well (the findings
+    // B37 and B115) — the mock has to offer them.
+    pageFollow: { deleteMany: async () => ({ count: 0 }) },
+    favorite: { deleteMany: async () => ({ count: 0 }) },
+    teamspaceMember: { deleteMany: async () => ({ count: 0 }) },
   },
 }));
 vi.mock("@/lib/auth", () => ({ requireUser: async () => ({ id: auth.userId }) }));
