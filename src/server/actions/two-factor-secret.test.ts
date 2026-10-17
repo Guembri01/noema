@@ -92,7 +92,7 @@ beforeEach(async () => {
     resetAuthLimits?: () => void;
   };
   rateLimit.resetAuthLimits?.();
-  process.env.AUTH_SECRET = "b05-two-factor-test-secret";
+  process.env.AUTH_SECRET = "b05-two-factor-test-secret-0123456789";
   auth.requireUser.mockResolvedValue(USER);
   auth.verifyPassword.mockResolvedValue(true);
   db.userUpdate.mockResolvedValue({ id: USER.id });

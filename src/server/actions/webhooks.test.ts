@@ -34,7 +34,7 @@ const ORIGINAL_AUTH_SECRET = process.env.AUTH_SECRET;
 
 beforeAll(() => {
   // The signing secret is sealed with the keyring (R28.17) - it needs a key.
-  process.env.AUTH_SECRET = "webhook-ssrf-test-key";
+  process.env.AUTH_SECRET = "webhook-ssrf-test-key-0123456789ab";
 });
 
 afterAll(() => {

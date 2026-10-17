@@ -442,7 +442,17 @@ jobs:
           persist-credentials: false
 
       - name: Prepare environment
-        run: cp .env.example .env
+        # The app refuses the placeholder that ships in .env.example (B55):
+        # the session signing key must be a secret of the operator's own, and
+        # every instance that copies the placeholder shares the same, public
+        # one. The key is generated here and never written to the log.
+        run: |
+          cp .env.example .env
+          python3 - <<'PY'
+          import pathlib, re, secrets
+          p = pathlib.Path(".env")
+          p.write_text(re.sub(r'(?m)^AUTH_SECRET=.*$', 'AUTH_SECRET="%s"' % secrets.token_hex(32), p.read_text()))
+          PY
 
       - name: Start the stack
         run: docker compose --profile app up -d --build
