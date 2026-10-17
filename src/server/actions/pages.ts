@@ -16,6 +16,7 @@ import {
 import { pageScopeFor } from "@/lib/guest-access";
 import { parsePageContent } from "@/lib/validation";
 import { assertScopedParent } from "@/lib/page-parent";
+import { assertScopedProject } from "@/lib/page-project";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { prosemirrorToText } from "@/lib/blocks";
 import { fileKeyFromUrl, purgeableError, staleFileUrls, subtreeClosure } from "@/lib/trash";
@@ -91,6 +92,16 @@ export async function createPageAction(input: {
   if ("error" in parent) return parent;
   const parentId = parent.parentId;
 
+  // The project must live in the same workspace, for the same reason the
+  // parent must: `Page.projectId` is a plain foreign key, so nothing but
+  // this check keeps the page inside its tenant. A foreign project is
+  // refused before anything is written.
+  const project = await assertScopedProject({
+    workspaceId: input.workspaceId,
+    projectId: input.projectId,
+  });
+  if ("error" in project) return project;
+
   // Sibling ordering: place the new page after the current maximum.
   const last = await prisma.page.findFirst({
     where: { workspaceId: input.workspaceId, parentId },
@@ -102,7 +113,7 @@ export async function createPageAction(input: {
     data: {
       workspaceId: input.workspaceId,
       parentId,
-      ...(input.projectId ? { projectId: input.projectId } : {}),
+      ...(project.projectId ? { projectId: project.projectId } : {}),
       type: input.type ?? "PAGE",
       title:
         input.title ?? (input.type === "DATABASE" ? "New database" : "Untitled"),
