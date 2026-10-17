@@ -1,4 +1,4 @@
-//! Tauri commands the webview calls (via `window.__TAURI__` or the JS API).
+//! Tauri commands the webview calls (via `@tauri-apps/api`, the JS API).
 //!
 //! Everything here is a thin, well-typed wrapper over the shell. The webview
 //! never touches the filesystem or the process table directly except through

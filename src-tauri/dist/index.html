@@ -169,17 +169,33 @@
     </main>
 
     <script>
-      // `withGlobalTauri: true`, so the bridge is on the window without an import.
-      const tauri = window.__TAURI__ ? window.__TAURI__.core : null;
-      const events = window.__TAURI__ ? window.__TAURI__.event : null;
+      // `withGlobalTauri` is off, so the global API object is not on the
+      // window: the app binds through `@tauri-apps/api`, and this page — which
+      // has no build step and therefore no import — talks to the very transport
+      // the package itself uses: the internals the shell installs in every
+      // document it hosts. Which commands may be called is still decided by the
+      // capabilities, not by this page.
+      const internals = window.__TAURI_INTERNALS__ || null;
       const detail = document.getElementById("detail");
       const title = document.getElementById("title");
       const lead = document.getElementById("lead");
       const root = document.documentElement;
 
       async function invoke(command, args) {
-        if (!tauri) throw new Error("The native bridge is unavailable (withGlobalTauri is off).");
-        return tauri.invoke(command, args);
+        if (!internals) throw new Error("The native bridge is unavailable.");
+        return internals.invoke(command, args);
+      }
+
+      // The event plugin of the same package: the callback is registered with
+      // the shell and the listener is bound to the event name.
+      function listen(name, handler) {
+        if (!internals) return null;
+        const id = internals.transformCallback(handler);
+        return internals.invoke("plugin:event|listen", {
+          event: name,
+          target: { kind: "Any" },
+          handler: id,
+        });
       }
 
       function showFailure(message) {
@@ -199,18 +215,22 @@
         if (info && info.api_base) window.location.replace(info.api_base);
       }
 
-      if (events) {
-        events.listen("sidecar://event", (event) => {
-          const payload = event.payload || {};
-          if (payload.kind === "ready") showReady(payload.info);
-          else if (payload.kind === "failed") showFailure(payload.message);
-          else if (payload.kind === "crashed" && !payload.will_restart) {
-            showFailure("The server stopped unexpectedly (code " + payload.code + ").");
-          } else if (payload.kind === "starting") {
-            root.dataset.state = "starting";
-            title.textContent = "Noema is starting…";
-          }
-        });
+      if (internals) {
+        // A refusal (the shell says no) must not break the page: the status
+        // line then stays as it is.
+        void Promise.resolve(
+          listen("sidecar://event", (event) => {
+            const payload = (event && event.payload) || {};
+            if (payload.kind === "ready") showReady(payload.info);
+            else if (payload.kind === "failed") showFailure(payload.message);
+            else if (payload.kind === "crashed" && !payload.will_restart) {
+              showFailure("The server stopped unexpectedly (code " + payload.code + ").");
+            } else if (payload.kind === "starting") {
+              root.dataset.state = "starting";
+              title.textContent = "Noema is starting…";
+            }
+          }),
+        ).catch(() => {});
       }
 
       document.getElementById("save").addEventListener("click", async () => {

@@ -77,8 +77,8 @@ const SHELL_PAGE_ONLY = [
 
 /**
  * The only `core:` permissions a remote origin may hold — exactly what
- * `listenShell` (`window.__TAURI__.event.listen`) needs to subscribe to the
- * shell's menu events, plus the unlisten that subscription returns.
+ * `listenShell` (the event plugin of `@tauri-apps/api`) needs to subscribe to
+ * the shell's menu events, plus the unlisten that subscription returns.
  *
  * An allow-list, not a deny-list. `core:default` expands to the image plugin
  * (`plugin:image|from_path` is a bare `std::fs::read` with no scope check), to
@@ -395,7 +395,7 @@ describe("desktop capabilities (B46)", () => {
 
   it("lets the served app listen for the shell's menu events", () => {
     const remote = readCapability("desktop-remote.json");
-    // `listenShell` (`window.__TAURI__.event.listen`) needs
+    // `listenShell` (the event plugin of `@tauri-apps/api`) needs
     // `core:event:allow-listen`, and the unlisten it returns needs
     // `core:event:allow-unlisten`; without them the native menu goes dead
     // inside the app.
