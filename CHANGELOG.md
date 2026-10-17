@@ -113,6 +113,18 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   headers, while the server sets this one itself. `next.config.ts` now sets
   `poweredByHeader: false`, and `npm run check:powered-by` fails when the
   switch is missing or is not `false`.
+- The AI proxy now frames the workspace grounding and declares it as data. The
+  grounding block was appended to the context without a delimiter
+  (`Workspace matches:\n…`), and its content is workspace content: a page
+  title and a snippet, written by whoever owns the page, not by whoever asks
+  the question. A title that carries an instruction therefore read like an
+  instruction. The block now carries two tags that name the request —
+  `<workspace-matches id="…">` … `</workspace-matches id="…">` — with an id
+  that is minted per request, so the content cannot know which tag closes
+  the block; the text that could pass for a tag is removed from the content;
+  and the system prompt says what the block is: data to quote, never
+  instructions. The framing happens after the token budget is applied, so
+  the budget can never cut the closing tag off.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
