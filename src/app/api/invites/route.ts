@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
+import { canMembersAction } from "@/lib/workspace-role-map";
 import { rateLimit } from "@/lib/api-guard";
 import { listEmailDeliveries, sendWorkspaceInviteAction } from "@/server/actions/email";
 import { inviteTeamspaceMemberAction } from "@/server/actions/teamspace-invites";
@@ -17,6 +18,13 @@ export async function GET(request: Request) {
   const workspaceId = new URL(request.url).searchParams.get("workspaceId") ?? "";
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  // The listing is the workspace's invitation log — every address it ever
+  // invited — so it is admin-only, exactly as the doc comment says. The role
+  // comes from the enforcement matrix (`inviteMember` → owner/admin), asked
+  // through the persisted→engine bridge, and an unknown role fails closed.
+  if (!canMembersAction(access.role, "inviteMember")) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   return NextResponse.json({ deliveries: await listEmailDeliveries(workspaceId, 25) });
 }

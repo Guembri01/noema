@@ -662,10 +662,11 @@ Returns the 25 most recent email deliveries:
                     "createdAt":"…" } ] }
 ```
 
-Permission quirk: the route only requires workspace membership, but
-`listEmailDeliveries` internally requires a member-managing role and returns
-`[]` otherwise (fail-closed, not an error). Errors: 401 · 404
-`Workspace not found` · 429.
+Permission: admin only — the route asks the role matrix (`inviteMember`, i.e.
+owner/admin) before it lists anything, so a member or a guest gets 403
+`Forbidden` and the deliveries are never read. `listEmailDeliveries` keeps its
+own member-managing check as the second line of defence. Errors: 401 · 403
+`Forbidden` · 404 `Workspace not found` · 429.
 
 ### `POST /api/invites` — scope `invites-write` (20/min)
 
