@@ -164,26 +164,6 @@
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
-- When a page is created or moved, its parent is now checked against the
-  workspace: a page can no longer be filed under a page of another workspace.
-  It therefore no longer turns up in that workspace's database view or in its
-  CSV/JSON export, and it is no longer swept along by the foreign workspace's
-  cascade delete. The database and export views filter their rows by the
-  workspace as well — and so do the "Deleted rows" panel, the database
-  duplicate (which copies a database's rows **with their content**) and the
-  chat context that is sent to the AI, so a row that was linked across
-  workspaces before the check existed no longer surfaces there. The invariant is
-  checked mechanically where the repository gate can see it
-  (`scripts/check-parent-scope.mjs`): the gate finds the `Page.parentId` writes
-  in `src/` statically and fails when one of them stores a value the helper has
-  not proved. It is a safety net over the tests, not a proof — a write it
-  cannot recognise is not covered by it. The holes that are known today are
-  listed in the gate's own docstring, and that list is a safety net, not an
-  enumeration: a new shape of write can open a new hole, and the list only
-  grows when somebody measures one. The shapes that *are* closed are pinned by
-  the gate's own regression test (`scripts/check-parent-scope.test.mjs`).
-
-- The guest scope is now applied to every surface that hands workspace content
   to a `GUEST`, not only to the API routes. A guest could list, search, read
   and export every page and database of the workspace, including the ones
   never shared with them; the API and export routes resolve the role scope and
@@ -457,17 +437,6 @@ list marks it as **No access**.
   users on single sign-on has to let them arrive through the identity provider
   in the first place.
 
-- When a page is created or moved, its parent is now checked against the
-  workspace: a page can no longer be filed under a page of another workspace.
-  It therefore no longer turns up in that workspace's database view or in its
-  CSV/JSON export, and it is no longer swept along by the foreign workspace's
-  cascade delete. The database and export views filter their rows by the
-  workspace as well — and so do the "Deleted rows" panel, the database
-  duplicate (which copies a database's rows **with their content**) and the
-  chat context that is sent to the AI, so a row that was linked across
-  workspaces before the check existed no longer surfaces there. The invariant
-  is enforced by a repository gate (`scripts/check-parent-scope.mjs`).
-- A failed AI call handed the workspace's provider key to the client. On a
   non-2xx answer the provider's error body was sliced to 200 characters and
   returned verbatim in the `error` field, and several OpenAI-compatible
   gateways (vLLM, LiteLLM, Ollama, Azure API Management) fill that body with
@@ -559,29 +528,6 @@ list marks it as **No access**.
   closed are pinned by the gate's own regression test
   (`scripts/check-parent-scope.test.mjs`), which holds every allow-list entry
   to the one path it describes.
-- The parent-scope gate no longer releases a write by the **name** of its
-  value. An allow-list entry used to match on the file, the function and the
-  written value — so the local behind that value could change its origin
-  (the parent taken straight from the request) and the gate stayed green, and
-  so could the authorization the entry relies on (it could be deleted) — while
-  not a single test turned red. Every entry now names the **proof** it relies
-  on and the gate checks it: the entry for `createRowAction()`, for instance,
-  holds only while `authorizeDatabase(databasePageId)` is still in that
-  function. The taint of a raw request value is transitive now as well: a
-  local derived from a tainted local is tainted too, the taint is found in a
-  destructuring and in a re-assignment, and a read of `.parentId` from a
-  receiver whose origin the gate cannot see (a parameter, a module-level
-  name) is a raw value — whatever that receiver is called.
-
-
-
-
-
-
-
-### Changed
-
-- The app's own write path accepts only the app's own `/api/files/...` asset
   URLs for a FILES value. A FILES entry whose URL is not an app-owned asset
   path is therefore **removed** from the cell the next time a file is
   attached to it, without a notice. Such an entry can come from a client
