@@ -15,7 +15,7 @@
  * Shipping `node.exe` costs ~60 MB and requires nothing of the user.
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { arch, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -176,71 +176,26 @@ function copyRuntimeAssets() {
 }
 
 function writeBootScript() {
+  // The wrapper is a real file in the repo, not generated text: generating it
+  // with a template literal meant a stray ${ or backtick in the generated code
+  // broke the packager itself. Copying keeps it lintable and reviewable.
+  const source = join(root, "scripts", "desktop", "boot-wrapper.cjs");
+  if (!existsSync(source)) {
+    throw new Error("scripts/desktop/boot-wrapper.cjs is missing (it is the payload's entry point)");
+  }
   const boot = join(standalone, "start.cjs");
-  writeFileSync(
-    boot,
-    `// Boot wrapper: get the database ready, then hand over to the Next server.
-//
-// This is what makes a fresh install usable: ` + "`prisma migrate deploy`" + ` is
-// idempotent, so running it on every launch is cheap and means the schema is
-// always current (including after an app update).
-const { spawnSync } = require("node:child_process");
-const path = require("node:path");
-const fs = require("node:fs");
-
-const root = __dirname;
-
-function migrate() {
-  if (process.env.NOEMA_SKIP_MIGRATE === "1") return;
-  const cli = path.join(root, "node_modules", "prisma", "build", "index.js");
-  const schema = path.join(root, "prisma", "schema.prisma");
-  if (!fs.existsSync(cli) || !fs.existsSync(schema)) {
-    console.warn("[noema] prisma CLI/schema not bundled — skipping migrations");
-    return;
-  }
-
-  const run = (args) =>
-    spawnSync(process.execPath, [cli, ...args, "--schema", schema], {
-      cwd: root,
-      stdio: "pipe",
-      encoding: "utf8",
-      env: process.env,
-    });
-
-  console.log("[noema] prisma migrate deploy…");
-  const deployed = run(["migrate", "deploy"]);
-  if (deployed.status === 0) {
-    if (deployed.stdout) process.stdout.write(deployed.stdout);
-    return;
-  }
-
-  // P3005: the database has tables but no migration history. That happens
-  // whenever the schema was created with `db push` (which is exactly how this
-  // project's own setup script creates it), and it is not a failure the user can
-  // act on — syncing the schema is the right fallback.
-  const output = `${deployed.stdout || ""}${deployed.stderr || ""}`;
-  if (output.includes("P3005")) {
-    console.log("[noema] existing schema without migration history — syncing with db push…");
-    const pushed = run(["db", "push", "--skip-generate", "--accept-data-loss"]);
-    if (pushed.stdout) process.stdout.write(pushed.stdout);
-    if (pushed.status === 0) return;
-    console.error("[noema] db push exited with status", pushed.status, pushed.stderr || "");
-    return;
-  }
-
-  console.error("[noema] migrations exited with status", deployed.status);
-  if (deployed.stderr) console.error(deployed.stderr);
+  copyFileSync(source, boot);
+  console.log("· copied boot wrapper → start.cjs (migrate → serve)");
 }
 
-function main() {
-  migrate();
-  require(path.join(root, "server.js"));
-}
-
-main();
-`,
-  );
-  console.log("· wrote start.cjs (migrate → serve)");
+function copyNodeRuntime() {
+  const triple = targetTriple();
+  mkdirSync(binariesDir, { recursive: true });
+  const target = nodeSidecarPath(triple);
+  // `process.execPath` is the Node that is running this script, so the runtime
+  // we ship always matches the runtime we built with.
+  cpSync(process.execPath, target);
+  console.log(`· node runtime → src-tauri/binaries/${target.split(/[\\/]/).pop()} (${mb(size(target))})`);
 }
 
 function stageIntoTauri() {
@@ -259,16 +214,6 @@ function stageIntoTauri() {
   rmSync(target, { recursive: true, force: true });
   renameSync(staging, target);
   console.log(`· staged payload → src-tauri/server/ (${mb(size(target))})`);
-}
-
-function copyNodeRuntime() {
-  const triple = targetTriple();
-  mkdirSync(binariesDir, { recursive: true });
-  const target = nodeSidecarPath(triple);
-  // `process.execPath` is the Node that is running this script, so the runtime
-  // we ship always matches the runtime we built with.
-  cpSync(process.execPath, target);
-  console.log(`· node runtime → src-tauri/binaries/${target.split(/[\\/]/).pop()} (${mb(size(target))})`);
 }
 
 function main() {

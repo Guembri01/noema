@@ -2,7 +2,7 @@
 //!
 //! The shell never renders the app itself: it starts the bundled Node runtime
 //! (`noema-node`, a real `node` binary shipped as a Tauri sidecar) on the
-//! standalone server in the app's resources, waits until `/api/ready` answers,
+//! standalone server in the app's resources, waits until `/api/health` answers,
 //! then points the window at it.
 //!
 //! Why a real Node runtime instead of a Node SEA single executable: `next build
@@ -34,7 +34,7 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::Mutex;
 
-/// How long the shell waits for `/api/ready` before surfacing an error.
+/// How long the shell waits for `/api/health` before surfacing an error.
 pub const READY_TIMEOUT: Duration = Duration::from_secs(90);
 /// How often readiness is polled.
 pub const READY_POLL: Duration = Duration::from_millis(300);
@@ -389,7 +389,7 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
             // this (the database connection string), so navigating would hide the
             // remedy behind a broken app.
             let message = readiness.message();
-            logging::line(app, "lifecycle", &message);
+            crate::logging::line(app, "lifecycle", &message);
             let _ = app.emit(
                 "sidecar://event",
                 SidecarEvent::Failed {
@@ -455,7 +455,15 @@ mod tests {
     #[test]
     fn loopback_urls_never_use_localhost() {
         assert_eq!(api_base(47821), "http://127.0.0.1:47821");
-        assert_eq!(ready_url(47821), "http://127.0.0.1:47821/api/ready");
+        assert_eq!(ready_url(47821), "http://127.0.0.1:47821/api/health");
+    }
+
+    #[test]
+    fn readiness_explains_itself_to_the_user() {
+        assert_eq!(Readiness::Ready.message(), "ready");
+        assert!(Readiness::Unhealthy(503).message().contains("503"));
+        assert!(Readiness::Unhealthy(503).message().contains("database"));
+        assert!(Readiness::Silent.message().contains("did not answer"));
     }
 
     #[test]
