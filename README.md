@@ -136,9 +136,30 @@ in [`docs/DESKTOP.md`](./docs/DESKTOP.md).
 
 ## Screenshots
 
-| Home, templates and recent activity | Workspace settings and members |
+Every screen is captured from the seeded demo workspace by
+[`scripts/screenshots.mjs`](./scripts/screenshots.mjs) — generated, not
+hand-taken, so a surface that changes takes its screenshot with it. The full set
+of 44, with captions, is in [`docs/GALLERY.md`](./docs/GALLERY.md).
+
+| Workspace home | The block editor |
 | --- | --- |
-| ![The workspace home](./docs/screenshots/03-workspace-home.png) | ![Workspace settings](./docs/screenshots/07-settings.png) |
+| ![Workspace home — quick starts and the template gallery](./docs/screenshots/03-home.png) | ![The block editor — headings, callouts, toggles, code, tables, backlinks](./docs/screenshots/06-editor.png) |
+
+| A database — table view | The same rows as a board |
+| --- | --- |
+| ![Database — table view with relations, a rollup and a percent property](./docs/screenshots/11-db-table.png) | ![Database — board view grouped by status](./docs/screenshots/12-db-board.png) |
+
+| Tickets | Cycles — burndown and scope |
+| --- | --- |
+| ![Tickets — list view with filters and saved views](./docs/screenshots/19-tickets-list.png) | ![Cycles — burndown, scope and progress](./docs/screenshots/23-cycles.png) |
+
+| Chat, with the notes it cites | Settings |
+| --- | --- |
+| ![Chat — a workspace conversation, with the notes it cites](./docs/screenshots/29-chat.png) | ![Settings — general, members, roles and invites](./docs/screenshots/38-settings.png) |
+
+| Dark mode | About — version, credits and licence |
+| --- | --- |
+| ![The workspace home in dark mode](./docs/screenshots/04-home-dark.png) | ![About — version, credits and licence, from Help → About](./docs/screenshots/44-about.png) |
 
 The landing page sits at the top of this file. The rest of the interface —
 search, databases, tickets, chat, the editor, sharing — is specified in
@@ -437,6 +458,8 @@ password: password123
 | `npm run check:mail` | SMTP end-to-end check against a throwaway SMTP server (invitation received, link inside, hashed storage, delivery log) |
 | `npm run check:providers` | Verifies **every** configured provider (DeepSeek + OpenAI) live, and exercises the transcription route with real audio |
 | `npm run check:tickets` | Tickets end-to-end: labels, keys, estimates, dates, board movement, relations, comments, bulk edits, activity log |
+| `npm run check:embedded-db` | Embedded-database robustness: a real PGlite engine, 24 handshakes aborted mid-flight, then two more Prisma clients — no Postgres, no Docker, no Tauri |
+| `npm run screenshots` | Regenerates the gallery in `docs/screenshots/` and `docs/GALLERY.md` from the seeded demo workspace (drives the installed Edge) |
 | `npm run check:search` | Proves ranking, prefix matching, snippets, trashed-page exclusion, re-indexing and the public API path |
 | `npm run check:storage` | Storage round trip through the API: upload, byte-for-byte read, guards (auth, traversal, missing, bad type) |
 | `npm run check:chat-stream` | Proves answers stream in chunks, arrive before completion, and persist exactly once |
@@ -444,7 +467,7 @@ password: password123
 | `npm run audit` | Static coherence inventory (same rules as `check:coherence`) → `docs/_audit-raw.json` |
 | `npm run check:matrix` | Recount the parity scoreboard (read-only; add `-- --write` to update the doc) |
 | `node --env-file=.env scripts/check-notion.mjs` | Notion API importer check (uses a local mock Notion server) |
-| `npm run seed:tickets` | Optional demo backlog: 7 workspace labels + 8 tickets with estimates, dates, relations and comments (skips if tickets already exist) |
+| `npm run seed:tickets` | Optional demo backlog: 11 workspace labels, 3 cycles and 34 tickets with estimates, dates, relations, comments and activity (skips if tickets already exist) |
 | `npm run docs:gaps` | Regenerates **`docs/MISSING_FEATURES.md`** — every partial/planned row, grouped by area, with the priority shortlist |
 | `npm run docs:counts` | Recomputes the `FEATURE_MATRIX` scoreboard |
 

@@ -64,14 +64,16 @@ next-env.d.ts
 docs/_audit-raw.json
 /backups/
 
-# Local verification artefacts (screenshots captured by scripts/_capture.cjs).
-# The handful the README showcases are re-included below. The pattern is `*`
-# rather than a bare directory: ignoring `docs/screenshots/` would ignore the
-# directory itself, and no negation can reach inside an ignored directory.
-docs/screenshots/*
-!docs/screenshots/01-landing.png
-!docs/screenshots/03-workspace-home.png
-!docs/screenshots/07-settings.png
+# The screenshot gallery *is* tracked: `npm run screenshots` regenerates it from
+# the seeded demo workspace, so it is reproducible output rather than local
+# scratch, and it is what the README and docs/GALLERY.md link to. One-off captures
+# still do not belong here — write those anywhere else.
+#
+# The *subdirectories* are the opposite: they are per-run output from the browser
+# checks (`check:floating`, `check:layering`, `check:popovers`, `check:motion`,
+# the a11y/visual audits), regenerated every time one of them runs. Ignoring the
+# directories rather than the whole tree is what keeps the two apart.
+docs/screenshots/*/
 scripts/_capture.cjs
 
 # Scratch/debug files an agent or a human leaves behind: never commit these.
