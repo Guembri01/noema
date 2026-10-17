@@ -50,7 +50,7 @@ jobs:
       DATABASE_URL: postgresql://noema:noema@127.0.0.1:5432/noema?schema=public
       AUTH_SECRET: ci-only-secret-not-used-in-production-000000
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
@@ -94,7 +94,7 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         if: startsWith(github.ref, 'refs/tags/')
@@ -126,7 +126,7 @@ jobs:
     runs-on: ubuntu-22.04
     if: github.event_name != 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Start the stack
         run: |
           cp .env.example .env 2>/dev/null || true

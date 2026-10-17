@@ -60,7 +60,7 @@ jobs:
             bundles: dmg,app
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -191,7 +191,7 @@ jobs:
       DATABASE_URL: postgresql://noema:noema@127.0.0.1:5432/noema?schema=public
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
