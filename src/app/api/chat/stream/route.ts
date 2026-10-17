@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { prisma } from "@/lib/db";
 import { resolveAiConfig, chatCompleteStream, providerClass } from "@/lib/ai-provider";
 import { buildChatRequest } from "@/lib/chat-runtime";
@@ -72,9 +77,9 @@ export async function POST(request: Request) {
     model?: string | null;
   };
   try {
-    payload = (await request.json()) as typeof payload;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    payload = await readJsonBody<typeof payload>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body");
   }
 
   // --- Confirmation: apply a previously proposed action ---------------------

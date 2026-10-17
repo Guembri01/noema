@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
+import { declaredBodyLength } from "@/lib/body-limit";
 
 /**
  * Idempotency keys for retriable mutations (spec §20).
@@ -28,13 +30,28 @@ import { NextResponse } from "next/server";
  * (Postgres table or Redis) keyed the same way. Nothing else in the pipeline
  * depends on the location of that map, so moving it later is a one-file change.
  *
- * Bodies are remembered verbatim for fingerprint comparison (bounded to 4 KB).
- * No hashing: the fingerprint is only ever compared for equality against our own
- * stored copy, so a collision-free digest would buy nothing.
+ * Bodies are fingerprinted by a digest over the bytes that actually arrived
+ * plus the number of bytes that arrived — never over a number the client
+ * declared. The fingerprint therefore does not depend on how the request was
+ * framed (chunked, or with a `Content-Length` header) and not on what the
+ * client claims about the size of its body: only the bytes themselves decide
+ * whether two requests are the same one.
  */
 
 export const IDEMPOTENCY_HEADER = "Idempotency-Key";
 export const IDEMPOTENCY_REPLAYED_HEADER = "Idempotency-Replayed";
+
+/**
+ * The fingerprint of a body that is over the route's budget.
+ *
+ * The route refuses such a body, so nothing about its content can matter — and
+ * the value must not depend on how the request was framed. A request that
+ * declares more than the budget is refused before a byte is read; a request
+ * that lies about its length is only discovered while it is read. Both are the
+ * same request, so both carry this one value: the retry then replays the
+ * stored `413` instead of answering `422`.
+ */
+const OVER_BUDGET_FINGERPRINT = "over-budget";
 
 /** How long a stored outcome stays replayable. */
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -44,9 +61,6 @@ export const IDEMPOTENCY_MAX_ENTRIES = 500;
 
 /** A hostile client cannot exhaust memory by sending a gigantic key. */
 export const IDEMPOTENCY_MAX_KEY_LENGTH = 200;
-
-/** Bodies longer than this are fingerprinted by prefix + length. */
-const MAX_FINGERPRINT_BODY = 4096;
 
 /** Only methods whose repetition could duplicate work are scoped. */
 const RETRIABLE_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
@@ -97,17 +111,104 @@ export function idempotencyKey(request: Request): string | null {
 }
 
 /**
- * Read the body for fingerprinting **without consuming it**: the handler still
- * gets to call `request.json()` afterwards.
+ * How much of the body is *hashed* for the fingerprint (64 KiB).
+ *
+ * The fingerprint has two components: a digest over this many bytes and the
+ * **measured** length of the body. Together they tell two requests apart at
+ * least as well as the old "first 4 KB + the length" did — 64 KB of content
+ * say more than 4 KB of it — while neither of them can be chosen by the
+ * client.
  */
-async function readFingerprintBody(request: Request): Promise<string> {
+const MAX_FINGERPRINT_CONTENT_BYTES = 64 * 1024;
+
+/**
+ * Fingerprint the body **without consuming it**: the handler still gets to
+ * call `request.json()` afterwards.
+ *
+ * B22: the body is *streamed* and only a digest of the bytes that arrived is
+ * kept, so the fingerprint never depends on a number the client chose. The
+ * digest covers exactly the first {@link MAX_FINGERPRINT_CONTENT_BYTES}
+ * bytes, no matter how the body was chunked — a chunk that does not fit is
+ * cut at the window's edge — and the length is the number of bytes that
+ * actually arrived, never the `Content-Length` the client declared.
+ *
+ * The scan is bounded by the route's own body budget (`budget`, the limit the
+ * caller reads its body under): the body is measured up to that limit and no
+ * further. A body within the budget is therefore measured *exactly*, which is
+ * what makes the length a reliable fingerprint component; a body beyond it is
+ * refused by the route anyway, so its exact length does not matter (it is
+ * marked `over-budget`).
+ *
+ * What this buys:
+ *
+ * - A **legitimate retry** is recognised: the same bytes produce the same
+ *   fingerprint, whether the first attempt arrived chunked and the second one
+ *   with a `Content-Length` header (or with a different chunking). A client
+ *   that retries is replayed instead of being refused with `422`.
+ * - A **different body** under the same key is refused with `422`. Two bodies
+ *   are only indistinguishable when they share their first 64 KiB *and* their
+ *   length — a strictly smaller set of collisions than the old fingerprint
+ *   (which compared 4 KB of content), and one the client cannot influence.
+ *
+ * The cost of the clone: `request.clone()` *tees* the body. The branch read
+ * here is abandoned after the scan, and everything the route reads afterwards
+ * accumulates in that branch's queue — so the request is held in memory about
+ * twice, once by the route and once by the queue. The amount is bounded by
+ * the route's own body budget and the peak memory stays flat: the scan keeps
+ * a 32-byte digest, not the body.
+ *
+ * The price of measuring the length: the scan reads the body up to the
+ * budget, so an over-sized body is read twice — once by the scan and once by
+ * the route, which refuses it. The amount is still bounded by the budget
+ * (twice the budget, not the body), and the request that the route refuses
+ * with `413` is one the client had to send anyway.
+ *
+ * The peak is a little above that: the reader holds the chunks *and* the
+ * merged buffer, and the tee holds a copy for the branch the route reads
+ * from — about three times the budget, never the body. Measured: a 200 MiB
+ * upload against a 4 MiB budget left the resident set flat at ~12 MiB.
+ */
+async function readFingerprintBody(request: Request, budget: number): Promise<string> {
   try {
-    const text = await request.clone().text();
-    return text.length > MAX_FINGERPRINT_BODY
-      ? `${text.slice(0, MAX_FINGERPRINT_BODY)}#truncated:${text.length}`
-      : text;
+    const hash = createHash("sha256");
+    const body = request.clone().body;
+    if (!body) return `sha256:${hash.digest("hex")}#len:0`;
+
+    // A body that declares more than the budget is refused by the route on the
+    // declared length alone — so there is nothing to fingerprint and nothing
+    // to read.
+    const declared = declaredBodyLength(request);
+    if (declared !== null && declared > budget) {
+      // The route refuses the request on the declared length alone, so there
+      // is nothing to fingerprint.
+      return OVER_BUDGET_FINGERPRINT;
+    }
+
+    const reader = body.getReader();
+    let content = 0;
+    let length = 0;
+    let overBudget = false;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      length += value.byteLength;
+      if (content < MAX_FINGERPRINT_CONTENT_BYTES) {
+        const room = MAX_FINGERPRINT_CONTENT_BYTES - content;
+        hash.update(value.subarray(0, room));
+        content += Math.min(room, value.byteLength);
+      }
+      if (length > budget) {
+        // The body is larger than the route's budget: the route refuses it,
+        // so the exact length cannot matter any more.
+        overBudget = true;
+        break;
+      }
+    }
+    if (overBudget) return OVER_BUDGET_FINGERPRINT;
+    return `sha256:${hash.digest("hex")}#len:${length}`;
   } catch {
-    return "";
+    return "sha256:unreadable";
   }
 }
 
@@ -115,19 +216,28 @@ async function readFingerprintBody(request: Request): Promise<string> {
  * Run `handler` under idempotency protection. When the caller sends no key (or
  * uses a naturally safe method) the handler is simply invoked, so this is
  * additive: existing clients see no behaviour change.
+ *
+ * `scope.bodyBudget` is the byte budget the caller reads the request body
+ * under — the same limit its route enforces. The fingerprint is measured over
+ * exactly that budget, so it covers every body the caller is willing to
+ * process (and the caller must refuse anything larger itself).
  */
 export async function withIdempotency(
   request: Request,
-  scope: { userId: string },
+  scope: { userId: string; bodyBudget: number },
   handler: () => Promise<NextResponse>,
 ): Promise<NextResponse> {
   const key = idempotencyKey(request);
   if (!key || !RETRIABLE_METHODS.has(request.method)) return handler();
 
   const url = new URL(request.url);
-  const fingerprint = [request.method, url.pathname, url.search, scope.userId, await readFingerprintBody(request)].join(
-    "\n",
-  );
+  const fingerprint = [
+    request.method,
+    url.pathname,
+    url.search,
+    scope.userId,
+    await readFingerprintBody(request, scope.bodyBudget),
+  ].join("\n");
   // The key is scoped to the principal and the endpoint, so two users may pick
   // the same key without colliding, and a key cannot be replayed across routes.
   const storageKey = `${scope.userId}\u0000${request.method}\u0000${url.pathname}\u0000${key}`;

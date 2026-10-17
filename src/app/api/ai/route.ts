@@ -4,6 +4,11 @@ import { getWorkspaceAccess } from "@/lib/permissions";
 import { pageScopeFor } from "@/lib/guest-access";
 import { searchPagesForPrompt } from "@/server/queries";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfigForUser } from "@/lib/ai-provider";
 import { redactSecrets } from "@/lib/error-reporting";
 import { assembleContext, estimateTokens, type ContextDoc } from "@/lib/ai-context";
@@ -51,9 +56,9 @@ export async function POST(request: Request) {
 
   let raw: unknown;
   try {
-    raw = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    raw = await readJsonBody<unknown>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body");
   }
   const parsed = aiRequestSchema.safeParse(raw);
   if (!parsed.success) {

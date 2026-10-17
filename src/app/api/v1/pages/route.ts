@@ -6,6 +6,11 @@ import { pageScopeFor } from "@/lib/guest-access";
 import { prisma } from "@/lib/db";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_CONTENT_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
 import { buildBreadcrumb } from "@/lib/breadcrumb";
 import { assertScopedParent } from "@/lib/page-parent";
@@ -147,12 +152,12 @@ export async function POST(request: Request) {
     );
   }
 
-  return withIdempotency(request, { userId: auth.userId }, async () => {
+  return withIdempotency(request, { userId: auth.userId, bodyBudget: MAX_CONTENT_BODY_BYTES }, async () => {
     let body: Record<string, unknown>;
     try {
-      body = (await request.json()) as Record<string, unknown>;
-    } catch {
-      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+      body = await readJsonBody<Record<string, unknown>>(request, MAX_CONTENT_BODY_BYTES);
+    } catch (error) {
+      return bodyReadError(error, "Invalid JSON body");
     }
 
     const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : "";

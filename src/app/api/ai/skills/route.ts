@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { AI_SKILLS, aiSkill, type AiSkillId } from "@/lib/ai-skills";
 import {
   SKILL_CATALOG,
@@ -244,9 +249,9 @@ export async function POST(request: Request) {
 
   let raw: unknown;
   try {
-    raw = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    raw = await readJsonBody<unknown>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
   const parsed = aiSkillRequestSchema.safeParse(raw);
   if (!parsed.success) {

@@ -6,6 +6,11 @@ import {
   type JobPayload,
 } from "@/lib/job-queue";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 
 export const runtime = "nodejs";
 
@@ -124,9 +129,9 @@ export async function POST(request: Request) {
 
   let body: unknown;
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    body = await readJsonBody<unknown>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     return NextResponse.json({ error: "Body must be a JSON object." }, { status: 400 });

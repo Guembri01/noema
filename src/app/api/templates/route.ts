@@ -3,6 +3,11 @@ import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
 import { assertScopedParent } from "@/lib/page-parent";
 import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
+import {
   createBlockTemplateAction,
   createGalleryTemplateAction,
   createQuickStartAction,
@@ -31,9 +36,9 @@ export async function POST(request: Request) {
     parentId?: string | null;
   };
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    body = await readJsonBody<typeof body>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
 
   const workspaceId = String(body.workspaceId ?? "");

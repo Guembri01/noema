@@ -3,6 +3,11 @@ import { getCurrentUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { canMembersAction } from "@/lib/workspace-role-map";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { listEmailDeliveries, sendWorkspaceInviteAction } from "@/server/actions/email";
 import { inviteTeamspaceMemberAction } from "@/server/actions/teamspace-invites";
 
@@ -48,9 +53,9 @@ export async function POST(request: Request) {
     role?: string;
   };
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    body = await readJsonBody<typeof body>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
 
   if (body.target === "teamspace") {
