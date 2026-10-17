@@ -14,6 +14,11 @@ import {
   type AuthStrategy,
   type IdentityProfile,
 } from "@/lib/auth-strategies";
+import {
+  cookieName,
+  SSO_NONCE_COOKIE,
+  SSO_STATE_COOKIE,
+} from "@/lib/cookie-security";
 
 export const runtime = "nodejs";
 
@@ -78,8 +83,10 @@ export async function GET(request: Request) {
   }
 
   const store = await cookies();
-  const expectedState = store.get("sso_state")?.value ?? "";
-  const nonce = store.get("sso_nonce")?.value ?? "";
+  // B31: the names come from the module that owns them, so the reader and the
+  // writer always agree — in production they carry the `__Host-` prefix.
+  const expectedState = store.get(cookieName(SSO_STATE_COOKIE))?.value ?? "";
+  const nonce = store.get(cookieName(SSO_NONCE_COOKIE))?.value ?? "";
 
   const discovery = (await fetch(
     `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
@@ -222,7 +229,7 @@ export async function GET(request: Request) {
   }
 
   await createSession(userId);
-  store.delete("sso_state");
-  store.delete("sso_nonce");
+  store.delete(cookieName(SSO_STATE_COOKIE));
+  store.delete(cookieName(SSO_NONCE_COOKIE));
   return NextResponse.redirect(`${origin}${returnTo}`);
 }

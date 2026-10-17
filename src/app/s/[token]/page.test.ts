@@ -92,6 +92,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   if (ORIGINAL_SECRET === undefined) delete process.env.AUTH_SECRET;
   else process.env.AUTH_SECRET = ORIGINAL_SECRET;
 });
@@ -143,6 +144,19 @@ describe("the public share page (B01)", () => {
   });
 
   it("opens the page for a valid, unexpired unlock cookie", async () => {
+    jar.set(shareUnlockCookieName(TOKEN), createShareUnlockToken(TOKEN));
+
+    const html = await render();
+
+    expect(html).toContain(MARKER);
+    expect(html).not.toContain("Password required");
+  });
+
+  // B31: in production the unlock cookie carries the `__Host-` prefix. The
+  // reader has to ask for the very same name, or the page would ask for the
+  // password again although the visitor unlocked the link.
+  it("opens the page for the host-bound unlock cookie in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
     jar.set(shareUnlockCookieName(TOKEN), createShareUnlockToken(TOKEN));
 
     const html = await render();

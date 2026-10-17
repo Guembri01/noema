@@ -1,3 +1,5 @@
+import { secureCookies } from "./cookie-security";
+
 /**
  * Handing the desktop shell's stored theme to the served app.
  *
@@ -35,11 +37,20 @@ export type ThemeName = (typeof THEME_NAMES)[number];
 /** A year: the value is refreshed on every launch anyway. */
 export const THEME_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
-/** The cookie attributes used by the middleware (kept here so they have one home). */
+/**
+ * The cookie attributes used by the middleware (kept here so they have one home).
+ *
+ * B31: the cookie carries `Secure` in production, like every other cookie of
+ * the app. It is *not* `__Host-`-prefixed: the value is one of three theme
+ * names, checked against a closed set, so a cookie a sibling domain planted
+ * could only pick a theme — never unlock anything. The prefix is for the
+ * cookies that carry a credential.
+ */
 export const THEME_COOKIE_OPTIONS = {
   path: "/",
   sameSite: "lax",
   httpOnly: true,
+  secure: secureCookies(),
   maxAge: THEME_COOKIE_MAX_AGE,
 } as const;
 
