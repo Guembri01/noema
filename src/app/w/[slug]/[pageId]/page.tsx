@@ -8,7 +8,7 @@ import { requireUser } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { groupReactions } from "@/lib/comments";
 import { getWorkspaceAccess, canPerformWorkspaceAction } from "@/lib/permissions";
-import { viewerScopeFor } from "@/lib/guest-access";
+import { viewerScopeFor, guestReadablePageIds } from "@/lib/guest-access";
 import { buildVersionRecord } from "@/lib/version-history";
 import {
   getAncestorTrail,
@@ -45,21 +45,51 @@ export default async function PageRoute({
   if (!workspace) notFound();
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) notFound();
-  // Guests may only open pages that were shared with them (or their own).
+  /**
+   * The page is loaded before the scope decision because the *type* decides
+   * which guest scope applies (see below). The body itself is only rendered
+   * after the decision — an out-of-scope page ends in `notFound()` either way.
+   */
+  const page = await getPageDetail(pageId);
+  if (!page || page.workspaceId !== workspace.id || page.deletedAt) {
+    notFound();
+  }
+
+  /**
+   * Guests may only open pages that were shared with them (or their own).
+   *
+   * Two scopes exist (`lib/guest-access.ts`):
+   * - the **display** scope (`pageScopeFor`) also contains the *ancestors* of
+   *   the shared pages, because the sidebar has to draw the breadcrumb chain
+   *   down to a shared child. It stays the scope of every other page type —
+   *   this change does not widen what a guest may open.
+   * - the **read** scope (`guestReadablePageIds`) contains the shared pages
+   *   and their whole subtree, never an ancestor. That is the canonical
+   *   inheritance rule (`access-inheritance.ts`): a grant covers the page
+   *   itself and its children.
+   *
+   * A **database** page follows the read scope: a guest who was given a single
+   * row of a database must not open the database above it (that was the
+   * finding), and a guest who was given a parent page may open the database
+   * below it.
+   */
+  const isDatabase = page.type === "DATABASE";
+  const guestReadScope =
+    access.role === "GUEST"
+      ? await guestReadablePageIds(user.id, workspace.id)
+      : null;
   // The scope also names the teamspaces whose names the viewer may see: a
   // guest must not receive the workspace's teamspace names.
   const scope = await viewerScopeFor(user.id, workspace.id, access.role);
   const visiblePageIds = scope?.pageIds ?? null;
   const visibleTeamspaceIds = scope?.teamspaceIds ?? null;
-  if (visiblePageIds && !visiblePageIds.has(pageId)) notFound();
+  if (visiblePageIds) {
+    const allowed = isDatabase ? guestReadScope : visiblePageIds;
+    if (!allowed || !allowed.has(pageId)) notFound();
+  }
   // The roster carries every member's name: it needs its own permission, so a
   // guest never receives it — not even in the RSC payload.
   const directory = canPerformWorkspaceAction(access.role, "viewMemberDirectory");
-
-  const page = await getPageDetail(pageId);
-  if (!page || page.workspaceId !== workspace.id || page.deletedAt) {
-    notFound();
-  }
 
   // The reference scan walks the workspace's link graph (up to 1000 pages), so
   // it is started alongside the other reads but deliberately NOT awaited here:
@@ -86,7 +116,9 @@ export default async function PageRoute({
         workspaceId: workspace.id,
         type: "DATABASE",
         deletedAt: null,
-        ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+        // A guest only sees the databases inside their read scope — the
+        // workspace membership alone says nothing about what was shared.
+        ...(guestReadScope ? { id: { in: [...guestReadScope] } } : {}),
       },
       orderBy: { position: "asc" },
       select: { id: true, title: true, icon: true },
