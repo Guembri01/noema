@@ -831,12 +831,25 @@ request, the pushed tip in a push — and not every ref of the repository. A
 checkout fetches every branch, so walking every ref would have pulled the
 commits of the branches that merely happen to be open into the gate.
 
-GitHub's own automation is exempt from both checks: App accounts (they carry
-the reserved `[bot]` marker) and the `noreply@github.com` identity GitHub
-commits merges under. A bot commit is not a human authoring decision, so
-neither its clock nor its identity is a project decision. A *human* who keeps
-their e-mail private commits as `<id>+<login>@users.noreply.github.com` — that
-address is not a bot, and the policy applies to it like to any other human.
+A commit that GitHub itself created is exempt from both checks — as a whole,
+and the anchor is the **committer**: if the committer is GitHub's automation
+(App accounts, which carry the reserved `[bot]` marker, and the
+`noreply@github.com` identity GitHub commits merges under), then neither the
+author field nor the committer field is checked, against either the date or
+the identity policy. A bot commit is not a human authoring decision, so
+neither its clock nor its identity is a project decision.
+
+The scope has to be the whole commit: the merge commit GitHub synthesises for
+a pull request is dated when GitHub rebuilt the ref, and it carries the
+*human's* address in its author field — an exemption that only covered the
+field holding the bot address left that commit failing the gate, and the gate
+is a required check, so every pull request was red.
+
+The converse does not hold: a commit whose *author* is a bot but whose
+committer is a human was not created by GitHub, so it is checked like any
+other commit, its author field included. And a *human* who keeps their e-mail
+private commits as `<id>+<login>@users.noreply.github.com` — that address is
+not a bot, and the policy applies to it like to any other human.
 
 ### 11.3 Making a commit
 

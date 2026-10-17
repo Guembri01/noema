@@ -11,9 +11,11 @@
  *
  * Also verifies that author and committer e-mail addresses belong to a project
  * human, unless `--allow-nonhuman` is passed (some local automation still runs
- * under a service identity and should be able to self-check). GitHub's own
- * automation — App accounts, and the identity GitHub commits merges under — is
- * exempt from both checks: a bot commit is not a human authoring decision.
+ * under a service identity and should be able to self-check). A commit that
+ * GitHub itself created is exempt as a whole: if its *committer* is GitHub's
+ * automation — the identity GitHub commits merges under, or an App account —
+ * then neither its author field nor its committer field is checked, against
+ * either policy. A bot commit is not a human authoring decision.
  *
  * Why the ref under review and not every ref: CI checks out with
  * `fetch-depth: 0`, which fetches every branch, so walking every ref swept in
@@ -44,23 +46,45 @@ const HUMANS = new Map([
  * reserved `[bot]` marker, and the `noreply@github.com` identity GitHub
  * commits merges under.
  *
- * The exemption is deliberately narrow: a *human* who keeps their e-mail
- * private commits as `<id>+<login>@users.noreply.github.com`, and that address
- * is NOT a bot. Matching the whole no-reply domain would exempt real people
- * from the date *and* the identity policy, and would make their entry in
- * {@link HUMANS} unreachable.
+ * The *set* of identities is deliberately narrow: a *human* who keeps their
+ * e-mail private commits as `<id>+<login>@users.noreply.github.com`, and that
+ * address is NOT a bot. Matching the whole no-reply domain would exempt real
+ * people from the date *and* the identity policy, and would make their entry
+ * in {@link HUMANS} unreachable.
  *
- * A bot commit is exempt from the date check as well, and that is load-bearing:
- * Dependabot commits whenever it runs, and GitHub's synthetic merge commit
- * (`refs/pull/N/merge`, which a pull-request checkout makes `HEAD`) is dated at
- * ref-build time. Neither is a human authoring decision, so "when people
- * author" does not apply to them.
+ * The *scope* of the exemption, on the other hand, is the whole commit, and it
+ * is anchored on the **committer**: a commit whose committer is GitHub's
+ * automation was created by GitHub, so no field of it is a human authoring
+ * decision and neither the date policy nor the identity policy applies to it.
+ * That is load-bearing for the date policy: Dependabot commits whenever it
+ * runs, and GitHub's synthetic merge commit (`refs/pull/N/merge`, which a
+ * pull-request checkout makes `HEAD`) is dated at ref-build time.
+ *
+ * The converse does not hold, and the asymmetry is the point: a commit whose
+ * *author* is a bot but whose committer is a human was not created by GitHub,
+ * so it is checked like any other commit — its author field included.
  */
 const BOT_EMAIL = /\[bot\]@users\.noreply\.github\.com$|^noreply@github\.com$/;
 
 /** Whether an identity belongs to GitHub's automation rather than a person. */
 function isBot(email) {
   return BOT_EMAIL.test(String(email ?? ""));
+}
+
+/**
+ * Whether a commit is GitHub's own automation — then the exemption covers the
+ * whole commit: neither the author field nor the committer field is checked,
+ * against either the date policy or the identity policy.
+ *
+ * The anchor is the **committer**, because that is what says who created the
+ * commit. GitHub's synthetic merge commit for a pull request is the reason
+ * the author field needs the same exemption: the merge commit carries the
+ * *human's* address in its author field, while its clock and its committer
+ * are GitHub's. The reverse anchor would exempt a commit a human made on top
+ * of a bot's work — that one was committed by a human and must pass.
+ */
+function isGitHubAutomation(committerEmail) {
+  return isBot(committerEmail);
 }
 
 const argv = process.argv.slice(2);
@@ -90,10 +114,10 @@ if (pending) {
   const authorDate = parseGitDate(process.env.GIT_AUTHOR_DATE);
   const committerDate = parseGitDate(process.env.GIT_COMMITTER_DATE);
   const problems = [];
-  // A bot commits at its own clock and is not a human authoring decision, so
-  // the pending path exempts it from both policies — the same rule the
-  // history path applies, so the two cannot disagree.
-  if (!isBot(committerEmail)) {
+  // The same rule the history path applies: a commit that GitHub's automation
+  // committers is exempt as a whole, so the pending path exempts it from both
+  // policies — the two paths cannot disagree.
+  if (!isGitHubAutomation(committerEmail)) {
     if (!authorDate || !isAllowedInstant(authorDate)) {
       problems.push(`author date  ${describeVerdict(authorDate ?? "invalid")}`);
     }
@@ -101,7 +125,7 @@ if (pending) {
       problems.push(`committer    ${describeVerdict(committerDate ?? "invalid")}`);
     }
   }
-  if (!allowNonHuman && !isBot(committerEmail) && !HUMANS.has(committerEmail)) {
+  if (!allowNonHuman && !isGitHubAutomation(committerEmail) && !HUMANS.has(committerEmail)) {
     problems.push(`committer e-mail <${committerEmail}> is not a project human`);
   }
   if (problems.length === 0) {
@@ -150,18 +174,24 @@ const dateFailures = [];
 const identityFailures = [];
 
 for (const commit of commits) {
-  for (const [field, iso, email] of [
-    ["author", commit.authorDate, commit.authorEmail],
-    ["committer", commit.committerDate, commit.committerEmail],
+  // GitHub's own automation is recognised by the committer: such a commit was
+  // created by GitHub, so the exemption covers the *whole* commit — the author
+  // field included. GitHub's synthetic merge commit for a pull request is the
+  // case that needs it: the author field carries the human's address, while
+  // the clock and the committer are GitHub's. A commit whose author is a bot
+  // but whose committer is a human was not created by GitHub, so it is
+  // checked like any other commit.
+  if (isGitHubAutomation(commit.committerEmail)) continue;
+  for (const [field, iso] of [
+    ["author", commit.authorDate],
+    ["committer", commit.committerDate],
   ]) {
-    if (isBot(email)) continue;
     if (!isAllowedInstant(iso)) {
       dateFailures.push({ ...commit, field, iso });
     }
   }
   if (!allowNonHuman) {
     for (const [field, email] of [["author", commit.authorEmail], ["committer", commit.committerEmail]]) {
-      if (isBot(email)) continue;
       if (!HUMANS.has(email)) {
         identityFailures.push({ ...commit, field, email });
       }
@@ -170,7 +200,7 @@ for (const commit of commits) {
 }
 
 if (dateFailures.length === 0 && identityFailures.length === 0) {
-  console.log(`check-commit-dates: OK — ${commits.length} commits inside ${describeWindows().length} windows${allowNonHuman ? " (identity relaxed)" : ""}, humans only (GitHub automation exempt)`);
+  console.log(`check-commit-dates: OK — ${commits.length} commits inside ${describeWindows().length} windows${allowNonHuman ? " (identity relaxed)" : ""}, humans only (GitHub's automation exempt)`);
   process.exit(0);
 }
 

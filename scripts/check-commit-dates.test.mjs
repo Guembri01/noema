@@ -2,8 +2,9 @@
 //
 // The gate has two policies: the *date* policy (author and committer date
 // inside a Wed–Sat 19:00–06:00 Europe/Paris window) and the *identity* policy
-// (both e-mail addresses belong to a project human). GitHub's own automation is
-// exempt from both — a bot commit is not a human authoring decision.
+// (both e-mail addresses belong to a project human). A commit that GitHub
+// itself created is exempt from both — as a whole, and only when its
+// *committer* is GitHub's automation.
 //
 // The exemption is the risky part, so it is pinned here: a *human* who keeps
 // their e-mail private commits as `<id>+<login>@users.noreply.github.com`, and
@@ -11,6 +12,13 @@
 // exemption matched the whole no-reply domain and silently switched both
 // policies off for every such person — including the address registered in the
 // `HUMANS` map, which made that entry unreachable.
+//
+// The anchor is the committer and the scope is the whole commit. GitHub's
+// synthetic merge commit (`refs/pull/N/merge`, which a pull-request checkout
+// makes `HEAD`) carries the *human's* address in its author field while its
+// clock and its committer are GitHub's — an exemption that only covered the
+// field holding the bot address left that commit failing the gate, and the
+// gate is a required check, so every pull request was red.
 //
 // The gate is exercised end to end in a throwaway repository: each case writes
 // one commit with a crafted identity and date, then runs the script against it.
@@ -134,24 +142,44 @@ describe("the authoring-window gate (B85)", () => {
     expect(result.output).toContain("outside every window");
   });
 
-  it("exempts a GitHub App account from both policies", () => {
-    const bot = human("dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com");
+  it("exempts the commit GitHub created: a human author, GitHub's committer", () => {
+    // The shape of GitHub's synthetic merge commit (`refs/pull/N/merge`): the
+    // author field carries the *human's* address, while the clock and the
+    // committer are GitHub's. The exemption is anchored on the committer and
+    // covers the whole commit — with a per-field exemption this commit fails
+    // the gate, and the gate is a required check, so every pull request that
+    // carries such a merge commit is red.
     const result = gateFor({
-      author: bot,
+      author: human("Florian Reisinger", "reisi007@gmail.com"),
       committer: human("GitHub", "noreply@github.com"),
       date: OUT_OF_WINDOW,
     });
     expect(result.code).toBe(0);
   });
 
-  it("exempts the identity GitHub commits merges under", () => {
-    const merge = human("GitHub", "noreply@github.com");
+  it("exempts a bot that commits itself, like a Dependabot branch commit", () => {
+    const bot = human("dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com");
     const result = gateFor({
-      author: merge,
-      committer: merge,
+      author: bot,
+      committer: bot,
       date: OUT_OF_WINDOW,
     });
     expect(result.code).toBe(0);
+  });
+
+  it("rejects a bot author whose committer is a human", () => {
+    // The reverse anchor: GitHub did not create this commit — a human
+    // committed on top of a bot's work — so it is checked like any other one,
+    // its author field included.
+    const bot = human("dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com");
+    const result = gateFor({
+      author: bot,
+      committer: human(),
+      date: OUT_OF_WINDOW,
+    });
+    expect(result.code).toBe(1);
+    expect(result.output).toContain("unknown identity");
+    expect(result.output).toContain("outside every window");
   });
 
   it("rejects an unknown human's no-reply address on the identity check too", () => {
@@ -212,7 +240,10 @@ describe("the pending path of the gate (B85)", () => {
     expect(result.output).toContain("outside every window");
   });
 
-  it("exempts a bot identity from both checks, like the history path", () => {
+  it("exempts a commit GitHub's automation committers, like the history path", () => {
+    // The pending path applies the same rule as the history path: the
+    // committer decides. A commit GitHub's automation committers is exempt as
+    // a whole; a commit a human committers is checked.
     const result = pending({
       committer: human("GitHub", "noreply@github.com"),
       date: OUT_OF_WINDOW,
