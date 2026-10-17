@@ -38,6 +38,7 @@
  */
 
 import type { Mark, RichNode } from "@/lib/blocks";
+import { HTML_MAX_NESTING } from "@/lib/html-nesting";
 import { stripTags } from "@/lib/html-sanitize";
 import { safeHref } from "@/lib/markdown";
 
@@ -156,7 +157,12 @@ function tokenize(html: string): HtmlNode[] {
     const selfClosing = match[0].endsWith("/>") || VOID.has(tag);
     const el: ElementNode = { kind: "element", tag, attrs: parseAttrs(match[2] ?? ""), children: [] };
     stack[stack.length - 1].children.push(el);
-    if (!selfClosing) stack.push(el);
+    // B131: the tree is walked recursively further down (the container
+    // collector, the block builder, the serializer), so the nesting needs a
+    // limit: 10 000 nested tags overflow the stack and the import answers
+    // 500. Beyond the limit the element is unwrapped — the tag goes, the
+    // content stays.
+    if (!selfClosing && stack.length < HTML_MAX_NESTING) stack.push(el);
   }
   pushText(clean.slice(cursor));
   return root.children;

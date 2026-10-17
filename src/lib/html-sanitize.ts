@@ -32,6 +32,8 @@
  * want, not a delta). `allowedAttrs` does not bypass the `on*` strip.
  */
 
+import { HTML_MAX_NESTING } from "@/lib/html-nesting";
+
 export type SanitizeHtmlOptions = {
   /** Tags kept in the output. Replaces the default allowlist when given. */
   allowedTags?: readonly string[];
@@ -188,7 +190,12 @@ function tokenize(html: string, dropRe: RegExp): HtmlNode[] {
     const selfClosing = match[0].endsWith("/>") || VOID_TAGS.has(tag);
     const el: ElementNode = { kind: "element", tag, attrs: parseAttrs(match[2] ?? ""), children: [] };
     stack[stack.length - 1].children.push(el);
-    if (!selfClosing) stack.push(el);
+    // B131: the tree is walked recursively further down (the container
+    // collector, the block builder, the serializer), so the nesting needs a
+    // limit: 10 000 nested tags overflow the stack and the import answers
+    // 500. Beyond the limit the element is unwrapped — the tag goes, the
+    // content stays.
+    if (!selfClosing && stack.length < HTML_MAX_NESTING) stack.push(el);
   }
   pushText(clean.slice(cursor));
   return root.children;
