@@ -23,6 +23,19 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   not). The stored URL now passes the shared href allowlist (`http`, `https`,
   `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
   editor as well as in the read-only renderer.
+- The sign-up and the sign-in no longer disclose whether an address is
+  registered. The sign-up named the situation outright ("An account with that
+  email already exists."), the sign-in skipped the password comparison
+  altogether when no account existed and so answered in a fraction of the time,
+  and a wrong two-factor code carried a message of its own — three channels
+  that turned the login form into an account-existence oracle. A sign-up now
+  answers with one neutral text for every way it can fail: an address that is
+  already taken answers exactly like a sign-up that loses the race against a
+  concurrent sign-up for the same address. The sign-in always runs a bcrypt
+  comparison — against a dummy cost-12 hash when the address is unknown or
+  the stored value is not a bcrypt hash — so it costs the same whether or not
+  the account exists, and every failed sign-in answers with the same text, a
+  wrong two-factor code included.
 
 ## [1.4.1] — 2026-10-17
 
