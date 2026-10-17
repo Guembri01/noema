@@ -235,15 +235,21 @@ export type PageRowState = {
 };
 
 /**
- * Chevron rotation: 90° when open, at `--dur-2` / `--ease-smooth` (the design
- * system's "toggles" duration). Never an ad-hoc millisecond value.
+ * Chevron rotation: 90° when open. The motion (a `transition-transform` at
+ * `--dur-2` / `--ease-smooth`, the design system's "toggles" duration) is applied
+ * as inline {@link PAGE_CHEVRON_MOTION} rather than an arbitrary duration
+ * utility, so the duration still comes from the token layer. Never an ad-hoc
+ * millisecond value.
  */
 export function pageChevronClass(open: boolean): string {
-  return cn(
-    "h-3.5 w-3.5 transition-transform duration-[var(--dur-2)] ease-[var(--ease-smooth)]",
-    open && "rotate-90",
-  );
+  return cn("h-3.5 w-3.5 transition-transform", open && "rotate-90");
 }
+
+/** Token motion for {@link pageChevronClass}: `--dur-2` + `--ease-smooth`. */
+export const PAGE_CHEVRON_MOTION: CSSProperties = {
+  transitionDuration: "var(--dur-2)",
+  transitionTimingFunction: "var(--ease-smooth)",
+};
 
 /**
  * The chevron button: a 20×20 hit area (`h-5 w-5` inner target) inside a 24 px
@@ -311,15 +317,23 @@ export function pageRowSettleStyle(settling: boolean): CSSProperties {
 /**
  * An expanding/collapsing child list animates its height (`grid-template-rows`
  * 0fr→1fr) and opacity over `--dur-2` — a soft unfold, never a jarring pop. The
- * inner wrapper carries `min-h-0 overflow-hidden` so the grid row can actually
- * shrink to nothing (`PAGE_TREE_CHILDREN_INNER`).
+ * duration/easing come from {@link PAGE_TREE_CHILDREN_MOTION} (inline, so the
+ * tokens are used, not an arbitrary duration utility). The inner wrapper
+ * carries `min-h-0 overflow-hidden` so the grid row can actually shrink to
+ * nothing (`PAGE_TREE_CHILDREN_INNER`).
  */
 export function pageTreeChildrenClass(open: boolean): string {
   return cn(
-    "grid overflow-hidden transition-[grid-template-rows,opacity] duration-[var(--dur-2)] ease-[var(--ease-smooth)]",
+    "grid overflow-hidden transition-[grid-template-rows,opacity]",
     open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
   );
 }
+
+/** Token motion for {@link pageTreeChildrenClass}: `--dur-2` + `--ease-smooth`. */
+export const PAGE_TREE_CHILDREN_MOTION: CSSProperties = {
+  transitionDuration: "var(--dur-2)",
+  transitionTimingFunction: "var(--ease-smooth)",
+};
 
 /** Inner box of {@link pageTreeChildrenClass}; `min-h-0` lets the row collapse. */
 export const PAGE_TREE_CHILDREN_INNER = "min-h-0 overflow-hidden";
@@ -607,7 +621,7 @@ export const PageTreeRow = forwardRef<HTMLDivElement, PageTreeRowProps>(
           className={pageChevronButtonClass(hasChildren)}
         >
           <span aria-hidden className="flex h-5 w-5 items-center justify-center">
-            <ChevronRight className={pageChevronClass(expanded)} />
+            <ChevronRight className={pageChevronClass(expanded)} style={PAGE_CHEVRON_MOTION} />
           </span>
         </button>
         <Link href={href} className={pageRowLinkClass(renaming)}>
@@ -641,6 +655,7 @@ function TreeBranch({ open, children }: { open: boolean; children: ReactNode }) 
   return (
     <div
       className={pageTreeChildrenClass(open)}
+      style={PAGE_TREE_CHILDREN_MOTION}
       aria-hidden={!open}
       inert={!open}
       onTransitionEnd={(event) => {

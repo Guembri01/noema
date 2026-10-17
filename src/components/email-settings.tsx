@@ -252,7 +252,7 @@ export function EmailSettings({
             type="button"
             disabled={pending}
             onClick={clearSmtp}
-            className="flex h-9 items-center gap-1 rounded border border-border px-3 text-sm text-muted hover:text-red-500 disabled:opacity-50"
+            className="flex h-9 items-center gap-1 rounded border border-border px-3 text-sm text-muted hover:text-danger disabled:opacity-50"
           >
             <Trash2 className="h-4 w-4" /> {t(locale, "remove")}
           </button>
@@ -315,7 +315,7 @@ export function EmailSettings({
                       return "error" in result ? { ok: false, message: result.error } : { ok: true };
                     })
                   }
-                  className="shrink-0 hover:text-red-500"
+                  className="shrink-0 hover:text-danger"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -336,9 +336,9 @@ export function EmailSettings({
                 <span
                   className={
                     row.status === "sent"
-                      ? "text-emerald-600"
+                      ? "text-success"
                       : row.status === "failed"
-                        ? "text-red-500"
+                        ? "text-danger"
                         : ""
                   }
                 >
