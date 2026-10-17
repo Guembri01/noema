@@ -14,7 +14,8 @@
  *  - {@link inspectClipboardItem} decides whether one clipboard item may be
  *    pasted: it normalises the MIME type, resolves the byte size, enforces the
  *    allow-list and the `maxBytes` limit, and screens SVG for script / event
- *    handlers / external references via {@link isSvgSafe}.
+ *    handlers / external references via `isSvgSafe` (`@/lib/svg-safety` — the
+ *    one SVG rule the upload route runs as well).
  *  - {@link slugifyFilename} / {@link dedupeName} mint the deterministic,
  *    collision-free attachment name (`pasted-image-2026-01-02-1530.png`,
  *    `… (2).png`).
@@ -28,6 +29,7 @@
  */
 
 import { extForMime } from "@/lib/file-type";
+import { isSvgSafe } from "@/lib/svg-safety";
 
 /** One clipboard item, normalised from a `ClipboardItem`/`File`/DataTransfer. */
 export type ClipboardItem = {
@@ -214,59 +216,12 @@ export function extractDataUrl(html: string): ExtractedDataUrl | null {
 
 /* ----------------------------------------------------------- SVG safety */
 
-const SVG_FORBIDDEN: readonly RegExp[] = Object.freeze([
-  /<script\b/i,
-  /<foreignobject\b/i,
-  /<iframe\b/i,
-  /<\?xml-stylesheet\b/i,
-  /<!entity\b/i,
-  /\son[a-z]+\s*=/i,
-  /(?:javascript|vbscript)\s*:/i,
-  /data:text\/html/i,
-  /url\(\s*["']?\s*(?:https?:|\/\/|data:|file:)/i,
-]);
-
-const SVG_REF_RE = /\b(?:xlink:href|href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
-
-/**
- * Control characters (NUL, tab, LF, CR, …) — the same class `safeHref`
- * strips before it reads a scheme (`src/lib/markdown.ts`, B59/H2). A browser
- * removes them from a URL *before* it parses the scheme, so `java\nscript:`
- * is `javascript:` for it; the document gate has to read the source the same
- * way, otherwise a scheme that hides behind a line break walks past it.
+/*
+ * The SVG rule itself lives in `@/lib/svg-safety`: the upload route runs the
+ * same function, so a file cannot be safe on the clipboard path and unsafe on
+ * the upload path. It is imported here — not re-implemented — so both paths
+ * share one policy.
  */
-const SVG_CONTROL_CHARS_RE = /[\u0000-\u001f\u007f]/g;
-
-/**
- * Whether an SVG document is safe to upload and render. Rejects scripting
- * (`<script>`, `on*` handlers, `javascript:`/`vbscript:` URLs, `data:text/html`),
- * foreign content (`<foreignObject>`, `<iframe>`), XML entities/stylesheet PIs,
- * and every external reference — an `href`/`src`/`xlink:href`/`url()` that is
- * not a same-document `#fragment`. The root `xmlns` (an `http(s)://` URL) is
- * not a reference and stays allowed. Empty or non-string input is unsafe.
- */
-export function isSvgSafe(svg: string): boolean {
-  if (typeof svg !== "string") return false;
-  const source = svg.trim();
-  if (source === "") return false;
-  // B112: the blocklist is tested against the raw source *and* against the
-  // source without its control characters. A browser strips those out of a URL
-  // before it parses the scheme, so the scheme pattern has to see the source
-  // the browser sees — otherwise `java\nscript:` is not `javascript:` for the
-  // gate and slips through. The raw source stays in the test because the
-  // markup patterns anchor on the whitespace in front of an `on*` handler,
-  // which the stripped source would swallow (`<svg\nonload="…">`).
-  const normalized = source.replace(SVG_CONTROL_CHARS_RE, "");
-  if (SVG_FORBIDDEN.some((re) => re.test(source) || re.test(normalized))) return false;
-  SVG_REF_RE.lastIndex = 0;
-  let ref = SVG_REF_RE.exec(source);
-  while (ref !== null) {
-    const value = (ref[1] ?? ref[2] ?? ref[3] ?? "").trim();
-    if (!value.startsWith("#")) return false;
-    ref = SVG_REF_RE.exec(source);
-  }
-  return true;
-}
 
 /* --------------------------------------------------------- inspect item */
 
