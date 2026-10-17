@@ -22,7 +22,6 @@ import {
   Trash2,
   X } from "lucide-react";
 import {
-  CONTROL_CLASS,
   type DBProperty,
   type DBRow,
 } from "@/components/database/database-types";
@@ -140,6 +139,110 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Select, type SelectOption } from "@/components/ui/select";
+import { Stepper } from "@/components/ui/stepper";
+import { Switch } from "@/components/ui/switch";
+import { Tag } from "@/components/ui/tag";
+import { Tooltip } from "@/components/ui/tooltip";
+import type { ReactNode } from "react";
+
+/* ---------------------------------------------------------------------------
+   Shared chrome + option builders for every settings popover
+   `SettingsPopoverContent` layers the design system on the Popover primitive:
+   the primitive already supplies `.surface-raised`, `animate-rise` and
+   `Z.popover`; this adds a sticky header, a `.scrollbar-thin` scrolling body and
+   a sticky footer. The `*Options` helpers turn the app's domain lists into the
+   `Select` primitive's row shape, and `ColorChips` is the `Tag`-based hue
+   picker used by the conditional-format rule editor.
+   --------------------------------------------------------------------------- */
+
+/** `DBProperty[]` → `Select` rows (id/value). */
+export function propertyOptions(properties: readonly DBProperty[]): SelectOption[] {
+  return properties.map((property) => ({ value: property.id, label: property.name }));
+}
+
+/** Operator choices for a property type, as `Select` rows. */
+export function operatorOptions(type: string | undefined): SelectOption[] {
+  return operatorsFor(type ?? "TEXT").map((op) => ({ value: op.value, label: op.label }));
+}
+
+/**
+ * The shared popover chrome: `.surface-raised` + `animate-rise` + `Z.popover`
+ * come from `PopoverContent`; the sticky header, `.scrollbar-thin` body and
+ * sticky footer are added here so every settings popover scrolls the same way.
+ */
+export function SettingsPopoverContent({
+  title,
+  description,
+  footer,
+  className,
+  children,
+  "data-testid": testId,
+}: {
+  title: string;
+  description?: ReactNode;
+  footer?: ReactNode;
+  className?: string;
+  children?: ReactNode;
+  "data-testid"?: string;
+}) {
+  return (
+    <PopoverContent
+      data-testid={testId}
+      className={cn("flex max-h-[70vh] w-72 flex-col overflow-hidden p-0", className)}
+    >
+      <div className="sticky top-0 z-10 shrink-0 border-b border-border bg-surface-2/95 px-3 py-2 backdrop-blur">
+        <p className="text-xs font-medium text-fg">{title}</p>
+        {description ? (
+          <p className="mt-0.5 text-[11px] text-muted">{description}</p>
+        ) : null}
+      </div>
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-3 text-sm">
+        {children}
+      </div>
+      {footer ? (
+        <div className="sticky bottom-0 z-10 shrink-0 border-t border-border bg-surface-2/95 px-3 py-2 backdrop-blur">
+          {footer}
+        </div>
+      ) : null}
+    </PopoverContent>
+  );
+}
+
+/**
+ * A hue picker rendered as a row of `Tag` chips. Selecting a chip persists the
+ * same colour id a `<select>` used to, so the stored rule shape is unchanged.
+ */
+function ColorChips({
+  value,
+  label,
+  onSelect,
+}: {
+  value: string;
+  label: string;
+  onSelect: (color: string) => void;
+}) {
+  return (
+    <div role="group" aria-label={label} className="flex flex-wrap items-center gap-1">
+      {COLOR_TOKENS.map((color) => (
+        <Tag
+          key={color}
+          hue={color}
+          size="sm"
+          dot
+          selected={value === color}
+          aria-label={`${label}: ${color}`}
+          onSelectedChange={() => onSelect(color)}
+        >
+          {color}
+        </Tag>
+      ))}
+    </div>
+  );
+}
 
 /* ---------------------------------------------------------------------------
    Nested filter groups (AND/OR to any depth)
@@ -264,48 +367,42 @@ function FilterLeafRow({
   return (
     <div className="space-y-1 rounded border border-border p-2">
       <div className="flex items-center gap-1">
-        <select
-          value={leaf.propertyId}
-          aria-label="Filter group property"
-          onChange={(e) => onSetField(leaf, { propertyId: e.target.value })}
-          className={cn(CONTROL_CLASS, "flex-1")}
-        >
-          {properties.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          aria-label="Remove condition"
-          onClick={() => onRemove(leaf)}
-          className="text-muted hover:text-red-500"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
+        <span className="min-w-0 flex-1">
+          <Select
+            size="sm"
+            allowClear={false}
+            options={propertyOptions(properties)}
+            value={leaf.propertyId}
+            aria-label="Filter group property"
+            onChange={(value) => onSetField(leaf, { propertyId: value })}
+          />
+        </span>
+        <Tooltip label="Remove condition">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Remove condition"
+            onClick={() => onRemove(leaf)}
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </Button>
+        </Tooltip>
       </div>
-      <select
+      <Select
+        size="sm"
+        allowClear={false}
+        options={operatorOptions(property?.type)}
         value={leaf.operator}
         aria-label="Filter group operator"
-        onChange={(e) =>
-          onSetField(leaf, { operator: e.target.value as Filter["operator"] })
-        }
-        className={cn(CONTROL_CLASS, "w-full")}
-      >
-        {operatorsFor(property?.type ?? "TEXT").map((op) => (
-          <option key={op.value} value={op.value}>
-            {op.label}
-          </option>
-        ))}
-      </select>
+        onChange={(value) => onSetField(leaf, { operator: value as Filter["operator"] })}
+      />
       {!noValue && (
-        <input
+        <Input
           value={leaf.value ?? ""}
           aria-label="Filter group value"
           onChange={(e) => onSetField(leaf, { value: e.target.value })}
           placeholder="Value"
-          className={cn(CONTROL_CLASS, "w-full")}
         />
       )}
     </div>
@@ -344,42 +441,53 @@ function FilterGroupRows({
       )}
     >
       <div className="flex items-center gap-1">
-        <select
-          value={node.conjunction === "OR" ? "or" : "and"}
-          aria-label="Filter group match"
-          onChange={(e) =>
-            onSetConjunction(path, e.target.value === "or" ? "OR" : "AND")
-          }
-          className={cn(CONTROL_CLASS, "h-7")}
-        >
-          <option value="and">all</option>
-          <option value="or">any</option>
-        </select>
+        <span className="w-24">
+          <Select
+            size="sm"
+            allowClear={false}
+            options={[
+              { value: "and", label: "all" },
+              { value: "or", label: "any" },
+            ]}
+            value={node.conjunction === "OR" ? "or" : "and"}
+            aria-label="Filter group match"
+            onChange={(value) =>
+              onSetConjunction(path, value === "or" ? "OR" : "AND")
+            }
+          />
+        </span>
         <span className="text-xs text-muted">of these</span>
-        <div className="ml-auto flex items-center gap-2">
-          <button
+        <div className="ms-auto flex items-center gap-1">
+          <Button
             type="button"
+            variant="ghost"
+            size="xs"
+            leftIcon={<Plus className="h-3 w-3" aria-hidden />}
             onClick={() => onAddCondition(path)}
-            className="flex items-center gap-1 text-xs text-accent"
           >
-            <Plus className="h-3 w-3" /> Condition
-          </button>
-          <button
+            Condition
+          </Button>
+          <Button
             type="button"
+            variant="ghost"
+            size="xs"
+            leftIcon={<Plus className="h-3 w-3" aria-hidden />}
             onClick={() => onAddGroup(path)}
-            className="flex items-center gap-1 text-xs text-accent"
           >
-            <Plus className="h-3 w-3" /> Group
-          </button>
+            Group
+          </Button>
           {depth > 0 && (
-            <button
-              type="button"
-              aria-label="Remove group"
-              onClick={() => onRemoveGroup(path)}
-              className="text-muted hover:text-red-500"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
+            <Tooltip label="Remove group">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Remove group"
+                onClick={() => onRemoveGroup(path)}
+              >
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </Button>
+            </Tooltip>
           )}
         </div>
       </div>
@@ -486,71 +594,72 @@ function BuilderLeafRow({
   return (
     <div className="space-y-1 rounded border border-border p-2">
       <div className="flex items-center gap-1">
-        <select
-          value={leaf.propertyId}
-          aria-label="Builder condition property"
-          data-testid="builder-property"
-          onChange={(event) => {
-            const next = properties.find((p) => p.id === event.target.value);
-            const ops = operatorsFor(next?.type ?? "TEXT");
-            // Keep the operator valid for the new property type.
-            const op = ops.some((spec) => spec.value === leaf.op)
-              ? leaf.op
-              : ops[0].value;
-            onSetField(path, { propertyId: event.target.value, op });
-          }}
-          className={cn(CONTROL_CLASS, "flex-1")}
-        >
-          {properties.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        {groupOptions.length > 1 && (
-          <select
-            value=""
-            aria-label="Move condition into group"
-            data-testid="builder-move"
-            onChange={(event) => {
-              if (event.target.value) onMove(path, event.target.value);
+        <span className="min-w-0 flex-1" data-testid="builder-property">
+          <Select
+            size="sm"
+            allowClear={false}
+            options={propertyOptions(properties)}
+            value={leaf.propertyId}
+            aria-label="Builder condition property"
+            onChange={(value) => {
+              const next = properties.find((p) => p.id === value);
+              const ops = operatorsFor(next?.type ?? "TEXT");
+              const op = ops.some((spec) => spec.value === leaf.op)
+                ? leaf.op
+                : ops[0].value;
+              onSetField(path, { propertyId: value, op });
             }}
-            className={cn(CONTROL_CLASS, "w-24")}
-          >
-            <option value="">Move…</option>
-            {groupOptions.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
-            ))}
-          </select>
+          />
+        </span>
+        {groupOptions.length > 1 && (
+          <span className="w-24" data-testid="builder-move">
+            <Select
+              size="sm"
+              allowClear={false}
+              placeholder="Move…"
+              options={groupOptions.map((option) => ({
+                value: option.id,
+                label: option.label,
+              }))}
+              value=""
+              aria-label="Move condition into group"
+              onChange={(value) => {
+                if (value) onMove(path, value);
+              }}
+            />
+          </span>
         )}
-        <button
-          type="button"
-          aria-label="Remove condition"
-          onClick={() => onRemove(path)}
-          className="text-muted hover:text-red-500"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
+        <Tooltip label="Remove condition">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Remove condition"
+            onClick={() => onRemove(path)}
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </Button>
+        </Tooltip>
       </div>
-      <select
-        value={leaf.op}
-        aria-label="Builder condition operator"
-        data-testid="builder-operator"
-        onChange={(event) =>
-          onSetField(path, { op: event.target.value as Filter["operator"] })
-        }
-        className={cn(CONTROL_CLASS, "w-full")}
-      >
-        {operatorsFor(property?.type ?? "TEXT").map((op) => (
-          <option key={op.value} value={op.value}>{op.label}</option>
-        ))}
-      </select>
+      <div data-testid="builder-operator">
+        <Select
+          size="sm"
+          allowClear={false}
+          options={operatorOptions(property?.type)}
+          value={leaf.op}
+          aria-label="Builder condition operator"
+          onChange={(value) =>
+            onSetField(path, { op: value as Filter["operator"] })
+          }
+        />
+      </div>
       {!noValue && (
-        <input
+        <Input
           value={leaf.value ?? ""}
           aria-label="Builder condition value"
           data-testid="builder-value"
           onChange={(event) => onSetField(path, { value: event.target.value })}
           placeholder="Value"
-          className={cn(CONTROL_CLASS, "w-full")}
         />
       )}
     </div>
@@ -591,61 +700,68 @@ function BuilderGroupRows({
       )}
     >
       <div className="flex flex-wrap items-center gap-1">
-        <select
-          value={node.op}
-          aria-label="Builder group match"
-          data-testid={depth === 0 ? "builder-root-op" : undefined}
-          onChange={(event) =>
-            onSetOp(path, event.target.value === "or" ? "or" : "and")
-          }
-          className={cn(CONTROL_CLASS, "h-7")}
-        >
-          <option value="and">all</option>
-          <option value="or">any</option>
-        </select>
+        <span className="w-24" data-testid={depth === 0 ? "builder-root-op" : undefined}>
+          <Select
+            size="sm"
+            allowClear={false}
+            options={[
+              { value: "and", label: "all" },
+              { value: "or", label: "any" },
+            ]}
+            value={node.op}
+            aria-label="Builder group match"
+            onChange={(value) => onSetOp(path, value === "or" ? "or" : "and")}
+          />
+        </span>
         <span className="text-xs text-muted">of these</span>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ms-auto flex items-center gap-1">
           {depth > 0 && groupOptions.length > 1 && (
-            <select
-              value=""
-              aria-label="Move group into group"
-              data-testid="builder-group-move"
-              onChange={(event) => {
-                if (event.target.value) onMove(path, event.target.value);
-              }}
-              className={cn(CONTROL_CLASS, "h-7 w-24")}
-            >
-              <option value="">Move…</option>
-              {groupOptions
-                .filter((option) => option.id !== node.id)
-                .map((option) => (
-                  <option key={option.id} value={option.id}>{option.label}</option>
-                ))}
-            </select>
+            <span className="w-24" data-testid="builder-group-move">
+              <Select
+                size="sm"
+                allowClear={false}
+                placeholder="Move…"
+                options={groupOptions
+                  .filter((option) => option.id !== node.id)
+                  .map((option) => ({ value: option.id, label: option.label }))}
+                value=""
+                aria-label="Move group into group"
+                onChange={(value) => {
+                  if (value) onMove(path, value);
+                }}
+              />
+            </span>
           )}
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="xs"
+            leftIcon={<Plus className="h-3 w-3" aria-hidden />}
             onClick={() => onAddCondition(path)}
-            className="flex items-center gap-1 text-xs text-accent"
           >
-            <Plus className="h-3 w-3" /> Condition
-          </button>
-          <button
+            Condition
+          </Button>
+          <Button
             type="button"
+            variant="ghost"
+            size="xs"
+            leftIcon={<Plus className="h-3 w-3" aria-hidden />}
             onClick={() => onAddGroup(path)}
-            className="flex items-center gap-1 text-xs text-accent"
           >
-            <Plus className="h-3 w-3" /> Group
-          </button>
+            Group
+          </Button>
           {depth > 0 && (
-            <button
-              type="button"
-              aria-label="Remove group"
-              onClick={() => onRemove(path)}
-              className="text-muted hover:text-red-500"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
+            <Tooltip label="Remove group">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Remove group"
+                onClick={() => onRemove(path)}
+              >
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </Button>
+            </Tooltip>
           )}
         </div>
       </div>
@@ -1946,19 +2062,35 @@ export function ViewSettings({
       {/* Filter */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="filter-trigger"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              filterActive && "bg-surface-2 text-fg",
-            )}
+            className={cn(filterActive && "bg-surface-2 text-fg")}
+            leftIcon={<FilterIcon className="h-3.5 w-3.5" aria-hidden />}
           >
-            <FilterIcon className="h-3.5 w-3.5" />
             {t(locale, "dbFilter")}{filterCount > 0 ? ` (${filterCount})` : ""}
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-80" data-testid="db-filter-popover">
+        <SettingsPopoverContent
+          title={t(locale, "dbFilter")}
+          className="w-80"
+          data-testid="db-filter-popover"
+          footer={
+            <div data-testid="header-quick-filter">
+              <Switch
+                size="sm"
+                checked={config.quickFilter !== false}
+                label="Quick filter from column headers"
+                aria-label="Quick filter from column headers"
+                onCheckedChange={() =>
+                  onChange({ quickFilter: config.quickFilter === false })
+                }
+              />
+            </div>
+          }
+        >
           <div className="space-y-2">
             {tree ? (
               <>
@@ -1974,14 +2106,15 @@ export function ViewSettings({
                   onSetLeafField={setLeafField}
                   onRemoveLeaf={removeLeaf}
                 />
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="xs"
                   data-testid="filters-flatten"
                   onClick={() => onChange({ filterTree: [] })}
-                  className="text-xs text-muted hover:text-fg"
                 >
                   Use simple filters
-                </button>
+                </Button>
               </>
             ) : (
               <>
@@ -1996,45 +2129,48 @@ export function ViewSettings({
                   return (
                     <div key={index} className="space-y-1 rounded border border-border p-2">
                       <div className="flex items-center gap-1">
-                        <select
-                          value={filter.propertyId}
-                          data-testid="filter-property"
-                          onChange={(e) => onChange({
+                        <span className="min-w-0 flex-1" data-testid="filter-property">
+                          <Select
+                            size="sm"
+                            allowClear={false}
+                            options={propertyOptions(properties)}
+                            value={filter.propertyId}
+                            aria-label={t(locale, "dbFilter")}
+                            onChange={(value) => onChange({
+                              filters: filters.map((f, i) =>
+                                i === index ? { ...f, propertyId: value } : f,
+                              ),
+                            })}
+                          />
+                        </span>
+                        <Tooltip label="Remove filter">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Remove filter"
+                            onClick={() => onChange({ filters: filters.filter((_, i) => i !== index) })}
+                          >
+                            <X className="h-3.5 w-3.5" aria-hidden />
+                          </Button>
+                        </Tooltip>
+                      </div>
+                      <div data-testid="filter-operator">
+                        <Select
+                          size="sm"
+                          allowClear={false}
+                          options={operatorOptions(property?.type)}
+                          value={filter.operator}
+                          aria-label="Filter operator"
+                          onChange={(value) => onChange({
                             filters: filters.map((f, i) =>
-                              i === index ? { ...f, propertyId: e.target.value } : f,
+                              i === index ? { ...f, operator: value as Filter["operator"] } : f,
                             ),
                           })}
-                          className={cn(CONTROL_CLASS, "flex-1")}
-                        >
-                          {properties.map((p) => (
-                            <option key={p.id} value={p.id}>{p.name}</option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          aria-label="Remove filter"
-                          onClick={() => onChange({ filters: filters.filter((_, i) => i !== index) })}
-                          className="text-muted hover:text-red-500"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
+                        />
                       </div>
-                      <select
-                        value={filter.operator}
-                        data-testid="filter-operator"
-                        onChange={(e) => onChange({
-                          filters: filters.map((f, i) =>
-                            i === index ? { ...f, operator: e.target.value as Filter["operator"] } : f,
-                          ),
-                        })}
-                        className={cn(CONTROL_CLASS, "w-full")}
-                      >
-                        {operatorsFor(property?.type ?? "TEXT").map((op) => (
-                          <option key={op.value} value={op.value}>{op.label}</option>
-                        ))}
-                      </select>
                       {!noValue && (
-                        <input
+                        <Input
                           value={filter.value ?? ""}
                           data-testid="filter-value"
                           onChange={(e) => onChange({
@@ -2043,56 +2179,46 @@ export function ViewSettings({
                             ),
                           })}
                           placeholder="Value"
-                          className={cn(CONTROL_CLASS, "w-full")}
                         />
                       )}
                     </div>
                   );
                 })}
-                <button
-                  type="button"
-                  data-testid="add-filter"
-                  disabled={!addableFilterProperty}
-                  onClick={() =>
-                    onChange({
-                      filters: addFilter(filters, {
-                        propertyId: addableFilterProperty?.id ?? "",
-                        operator: "contains",
-                        value: "",
-                      }),
-                    })
-                  }
-                  className="flex items-center gap-1 text-xs text-accent disabled:opacity-50"
-                >
-                  <Plus className="h-3 w-3" /> Add filter
-                </button>
-                <button
-                  type="button"
-                  data-testid="add-filter-group"
-                  onClick={startTree}
-                  className="flex items-center gap-1 text-xs text-accent"
-                >
-                  <Plus className="h-3 w-3" /> Add filter group
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    data-testid="add-filter"
+                    disabled={!addableFilterProperty}
+                    leftIcon={<Plus className="h-3 w-3" aria-hidden />}
+                    onClick={() =>
+                      onChange({
+                        filters: addFilter(filters, {
+                          propertyId: addableFilterProperty?.id ?? "",
+                          operator: "contains",
+                          value: "",
+                        }),
+                      })
+                    }
+                  >
+                    Add filter
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    data-testid="add-filter-group"
+                    leftIcon={<Plus className="h-3 w-3" aria-hidden />}
+                    onClick={startTree}
+                  >
+                    Add filter group
+                  </Button>
+                </div>
               </>
             )}
-            {/* Quick filter from a column header (R89.6): a per-view default so
-                a view can withhold the header entry point. Unset means on. */}
-            <label className="mt-2 flex items-center gap-2 border-t border-border pt-2 text-xs text-muted">
-              <input
-                type="checkbox"
-                data-testid="header-quick-filter"
-                checked={config.quickFilter !== false}
-                aria-label="Quick filter from column headers"
-                onChange={() =>
-                  onChange({ quickFilter: config.quickFilter === false })
-                }
-                className="accent-[var(--accent)]"
-              />
-              Quick filter from column headers
-            </label>
           </div>
-        </PopoverContent>
+        </SettingsPopoverContent>
       </Popover>
 
       {/* AND/OR builder tree — the richer sibling of the filter-tree editor.
@@ -2100,101 +2226,116 @@ export function ViewSettings({
           `applyView` through `toQueryExpr`, so a saved tree really filters. */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="builder-trigger"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              builderTree && "bg-surface-2 text-fg",
-            )}
+            className={cn(builderTree && "bg-surface-2 text-fg")}
+            leftIcon={<FilterIcon className="h-3.5 w-3.5" aria-hidden />}
           >
-            <FilterIcon className="h-3.5 w-3.5" />
             Builder
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-96" data-testid="db-builder-popover">
-          <div className="space-y-2">
-            {builderTree ? (
-              <>
-                <BuilderGroupRows
-                  node={builderTree}
-                  path={[]}
-                  depth={0}
-                  properties={properties}
-                  groupOptions={builderGroupOptions}
-                  onAddCondition={addBuilderConditionAt}
-                  onAddGroup={addBuilderGroupAt}
-                  onRemove={removeBuilderAt}
-                  onSetOp={setBuilderOpAt}
-                  onSetLeafField={setBuilderLeafAt}
-                  onMove={moveBuilderAt}
-                />
-                <p className="text-xs text-muted" data-testid="builder-description">
-                  {builderDescription || "Empty builder — matches every row."}
-                </p>
-                {builderIssues.length > 0 && (
-                  <ul className="space-y-0.5 text-xs text-amber-500" data-testid="builder-issues">
-                    {builderIssues.map((issue) => (
-                      <li key={`${issue.path.join("-")}-${issue.code}`}>
-                        {issue.message}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <div className="flex items-center gap-3 border-t border-border pt-2">
-                  <button
-                    type="button"
-                    data-testid="builder-normalize"
-                    onClick={normalizeBuilder}
-                    className="flex items-center gap-1 text-xs text-accent"
-                  >
-                    <RotateCcw className="h-3 w-3" /> Normalize
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="builder-clear"
-                    onClick={clearBuilder}
-                    className="text-xs text-muted hover:text-fg"
-                  >
-                    Clear
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="text-xs text-muted">
-                  Build an AND/OR tree of conditions to any depth. It takes
-                  precedence over the simple filters while saved.
-                </p>
-                <button
+        <SettingsPopoverContent
+          title="Builder"
+          className="w-96"
+          data-testid="db-builder-popover"
+          footer={
+            builderTree ? (
+              <div className="flex items-center gap-2">
+                <Button
                   type="button"
-                  data-testid="builder-create"
-                  disabled={!builderDefaultProperty}
-                  onClick={createBuilderTree}
-                  className="flex items-center gap-1 text-xs text-accent disabled:opacity-50"
+                  variant="ghost"
+                  size="xs"
+                  data-testid="builder-normalize"
+                  leftIcon={<RotateCcw className="h-3 w-3" aria-hidden />}
+                  onClick={normalizeBuilder}
                 >
-                  <Plus className="h-3 w-3" /> Create filter group
-                </button>
-              </>
-            )}
-          </div>
-        </PopoverContent>
+                  Normalize
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  data-testid="builder-clear"
+                  onClick={clearBuilder}
+                >
+                  Clear
+                </Button>
+              </div>
+            ) : undefined
+          }
+        >
+          {builderTree ? (
+            <div className="space-y-2">
+              <BuilderGroupRows
+                node={builderTree}
+                path={[]}
+                depth={0}
+                properties={properties}
+                groupOptions={builderGroupOptions}
+                onAddCondition={addBuilderConditionAt}
+                onAddGroup={addBuilderGroupAt}
+                onRemove={removeBuilderAt}
+                onSetOp={setBuilderOpAt}
+                onSetLeafField={setBuilderLeafAt}
+                onMove={moveBuilderAt}
+              />
+              <p className="text-xs text-muted" data-testid="builder-description">
+                {builderDescription || "Empty builder — matches every row."}
+              </p>
+              {builderIssues.length > 0 && (
+                <ul className="space-y-0.5 text-xs text-warning" data-testid="builder-issues">
+                  {builderIssues.map((issue) => (
+                    <li key={`${issue.path.join("-")}-${issue.code}`}>
+                      {issue.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-muted">
+                Build an AND/OR tree of conditions to any depth. It takes
+                precedence over the simple filters while saved.
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                data-testid="builder-create"
+                disabled={!builderDefaultProperty}
+                leftIcon={<Plus className="h-3 w-3" aria-hidden />}
+                onClick={createBuilderTree}
+              >
+                Create filter group
+              </Button>
+            </div>
+          )}
+        </SettingsPopoverContent>
       </Popover>
 
       {filters.length > 1 && (
-        <label className="flex items-center gap-1 text-xs text-muted">
+        <span className="flex items-center gap-1 text-xs text-muted">
           Match
-          <select
-            value={config.filterMode ?? "and"}
-            onChange={(e) =>
-              onChange({ filterMode: e.target.value as "and" | "or" })
-            }
-            className={cn(CONTROL_CLASS, "h-7")}
-          >
-            <option value="and">all</option>
-            <option value="or">any</option>
-          </select>
-        </label>
+          <span className="w-24">
+            <Select
+              size="sm"
+              allowClear={false}
+              options={[
+                { value: "and", label: "all" },
+                { value: "or", label: "any" },
+              ]}
+              value={config.filterMode ?? "and"}
+              aria-label="Filter match mode"
+              onChange={(value) =>
+                onChange({ filterMode: value as "and" | "or" })
+              }
+            />
+          </span>
+        </span>
       )}
 
       {/* Color — conditional formatting rules. Array order is the precedence the
@@ -2203,168 +2344,28 @@ export function ViewSettings({
           `formatRules` for the conditional-format engine. */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="color-trigger"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              (config.colorRules?.length ?? 0) > 0 && "bg-surface-2 text-fg",
-            )}
+            className={cn((config.colorRules?.length ?? 0) > 0 && "bg-surface-2 text-fg")}
+            leftIcon={<Palette className="h-3.5 w-3.5" aria-hidden />}
           >
-            <Palette className="h-3.5 w-3.5" />
             Color
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-80">
-          <div className="space-y-2">
-            {/* Conditional-formatting authoring entry (R89.5): rules are on by
-                default; a view can switch the entry off without discarding the
-                rules it saved. Unset means enabled. */}
-            <label className="flex items-center gap-2 text-xs text-muted">
-              <input
-                type="checkbox"
-                data-testid="conditional-format-toggle"
-                checked={config.conditionalFormat !== false}
-                aria-label="Conditional formatting"
-                onChange={() =>
-                  onChange({ conditionalFormat: config.conditionalFormat === false })
-                }
-                className="accent-[var(--accent)]"
-              />
-              Conditional formatting
-            </label>
-            {(config.colorRules?.length ?? 0) === 0 && (
-              <p className="text-xs text-muted">No color rules — cards stay plain.</p>
-            )}
-            {(config.colorRules ?? []).map((rule, index) => (
-              <div key={index} className="space-y-1 rounded border border-border p-2">
-                <div className="flex items-center gap-1">
-                  <select
-                    value={rule.propertyId}
-                    onChange={(e) =>
-                      commitColorRules(
-                        (config.colorRules ?? []).map((r, i) =>
-                          i === index ? { ...r, propertyId: e.target.value } : r,
-                        ),
-                      )
-                    }
-                    className={cn(CONTROL_CLASS, "flex-1")}
-                  >
-                    {properties.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={rule.color}
-                    data-testid={`color-rule-color-${index}`}
-                    aria-label="Rule colour"
-                    onChange={(e) =>
-                      commitColorRules(
-                        (config.colorRules ?? []).map((r, i) =>
-                          i === index ? { ...r, color: e.target.value } : r,
-                        ),
-                      )
-                    }
-                    className={cn(CONTROL_CLASS, "w-24")}
-                  >
-                    {COLOR_TOKENS.map((color) => (
-                      <option key={color} value={color}>{color}</option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    aria-label={`Move rule ${index + 1} up`}
-                    data-testid={`color-rule-up-${index}`}
-                    disabled={index === 0}
-                    onClick={() =>
-                      commitColorRules(moveColorRule(config.colorRules ?? [], index, -1))
-                    }
-                    className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
-                  >
-                    <span aria-hidden>↑</span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Move rule ${index + 1} down`}
-                    data-testid={`color-rule-down-${index}`}
-                    disabled={index === (config.colorRules?.length ?? 0) - 1}
-                    onClick={() =>
-                      commitColorRules(moveColorRule(config.colorRules ?? [], index, 1))
-                    }
-                    className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
-                  >
-                    <span aria-hidden>↓</span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Remove rule"
-                    onClick={() =>
-                      commitColorRules(
-                        (config.colorRules ?? []).filter((_, i) => i !== index),
-                      )
-                    }
-                    className="text-muted hover:text-red-500"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <div className="flex items-center gap-1">
-                  <select
-                    value={rule.target ?? "row"}
-                    aria-label="Color rule target"
-                    data-testid="color-rule-target"
-                    onChange={(e) =>
-                      commitColorRules(
-                        (config.colorRules ?? []).map((r, i) =>
-                          i === index
-                            ? { ...r, target: e.target.value as ColorRule["target"] }
-                            : r,
-                        ),
-                      )
-                    }
-                    className={cn(CONTROL_CLASS, "w-20")}
-                  >
-                    <option value="row">{t(locale, "rowLabel")}</option>
-                    <option value="cell">Cell</option>
-                  </select>
-                  <select
-                    value={rule.operator}
-                    onChange={(e) =>
-                      commitColorRules(
-                        (config.colorRules ?? []).map((r, i) =>
-                          i === index
-                            ? { ...r, operator: e.target.value as Filter["operator"] }
-                            : r,
-                        ),
-                      )
-                    }
-                    className={cn(CONTROL_CLASS, "flex-1")}
-                  >
-                    {operatorsFor(
-                      properties.find((p) => p.id === rule.propertyId)?.type ?? "TEXT",
-                    ).map((op) => (
-                      <option key={op.value} value={op.value}>{op.label}</option>
-                    ))}
-                  </select>
-                  <input
-                    value={rule.value ?? ""}
-                    onChange={(e) =>
-                      commitColorRules(
-                        (config.colorRules ?? []).map((r, i) =>
-                          i === index ? { ...r, value: e.target.value } : r,
-                        ),
-                      )
-                    }
-                    placeholder="Value"
-                    className={cn(CONTROL_CLASS, "flex-1")}
-                  />
-                </div>
-              </div>
-            ))}
-            <button
+        <SettingsPopoverContent
+          title="Color"
+          className="w-80"
+          footer={
+            <Button
               type="button"
+              variant="ghost"
+              size="xs"
               data-testid="add-color-rule"
               disabled={!defaultProperty || config.conditionalFormat === false}
+              leftIcon={<Plus className="h-3 w-3" aria-hidden />}
               onClick={() =>
                 commitColorRules([
                   ...(config.colorRules ?? []),
@@ -2377,30 +2378,204 @@ export function ViewSettings({
                   } as ColorRule,
                 ])
               }
-              className="flex items-center gap-1 text-xs text-accent disabled:opacity-50"
             >
-              <Plus className="h-3 w-3" /> Add rule
-            </button>
+              Add rule
+            </Button>
+          }
+        >
+          <div className="space-y-2">
+            {/* Conditional-formatting authoring entry (R89.5): rules are on by
+                default; a view can switch the entry off without discarding the
+                rules it saved. Unset means enabled. */}
+            <div data-testid="conditional-format-toggle">
+              <Switch
+                size="sm"
+                checked={config.conditionalFormat !== false}
+                label="Conditional formatting"
+                aria-label="Conditional formatting"
+                onCheckedChange={() =>
+                  onChange({ conditionalFormat: config.conditionalFormat === false })
+                }
+              />
+            </div>
+            {(config.colorRules?.length ?? 0) === 0 && (
+              <p className="text-xs text-muted">No color rules — cards stay plain.</p>
+            )}
+            {(config.colorRules ?? []).map((rule, index) => (
+              <div key={index} className="space-y-2 rounded border border-border p-2">
+                <div className="flex items-center gap-1">
+                  <span className="min-w-0 flex-1">
+                    <Select
+                      size="sm"
+                      allowClear={false}
+                      options={propertyOptions(properties)}
+                      value={rule.propertyId}
+                      aria-label="Rule property"
+                      onChange={(value) =>
+                        commitColorRules(
+                          (config.colorRules ?? []).map((r, i) =>
+                            i === index ? { ...r, propertyId: value } : r,
+                          ),
+                        )
+                      }
+                    />
+                  </span>
+                  <Tooltip label={`Move rule ${index + 1} up`}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Move rule ${index + 1} up`}
+                      data-testid={`color-rule-up-${index}`}
+                      disabled={index === 0}
+                      onClick={() =>
+                        commitColorRules(moveColorRule(config.colorRules ?? [], index, -1))
+                      }
+                    >
+                      <span aria-hidden>↑</span>
+                    </Button>
+                  </Tooltip>
+                  <Tooltip label={`Move rule ${index + 1} down`}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Move rule ${index + 1} down`}
+                      data-testid={`color-rule-down-${index}`}
+                      disabled={index === (config.colorRules?.length ?? 0) - 1}
+                      onClick={() =>
+                        commitColorRules(moveColorRule(config.colorRules ?? [], index, 1))
+                      }
+                    >
+                      <span aria-hidden>↓</span>
+                    </Button>
+                  </Tooltip>
+                  <Tooltip label="Remove rule">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Remove rule"
+                      onClick={() =>
+                        commitColorRules(
+                          (config.colorRules ?? []).filter((_, i) => i !== index),
+                        )
+                      }
+                    >
+                      <X className="h-3.5 w-3.5" aria-hidden />
+                    </Button>
+                  </Tooltip>
+                </div>
+                <div data-testid={`color-rule-color-${index}`}>
+                  <ColorChips
+                    value={rule.color}
+                    label="Rule colour"
+                    onSelect={(color) =>
+                      commitColorRules(
+                        (config.colorRules ?? []).map((r, i) =>
+                          i === index ? { ...r, color } : r,
+                        ),
+                      )
+                    }
+                  />
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-24" data-testid="color-rule-target">
+                    <Select
+                      size="sm"
+                      allowClear={false}
+                      options={[
+                        { value: "row", label: t(locale, "rowLabel") },
+                        { value: "cell", label: "Cell" },
+                      ]}
+                      value={rule.target ?? "row"}
+                      aria-label="Color rule target"
+                      onChange={(value) =>
+                        commitColorRules(
+                          (config.colorRules ?? []).map((r, i) =>
+                            i === index
+                              ? { ...r, target: value as ColorRule["target"] }
+                              : r,
+                          ),
+                        )
+                      }
+                    />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <Select
+                      size="sm"
+                      allowClear={false}
+                      options={operatorOptions(
+                        properties.find((p) => p.id === rule.propertyId)?.type,
+                      )}
+                      value={rule.operator}
+                      aria-label="Color rule operator"
+                      onChange={(value) =>
+                        commitColorRules(
+                          (config.colorRules ?? []).map((r, i) =>
+                            i === index
+                              ? { ...r, operator: value as Filter["operator"] }
+                              : r,
+                          ),
+                        )
+                      }
+                    />
+                  </span>
+                </div>
+                <Input
+                  value={rule.value ?? ""}
+                  aria-label="Color rule value"
+                  onChange={(e) =>
+                    commitColorRules(
+                      (config.colorRules ?? []).map((r, i) =>
+                        i === index ? { ...r, value: e.target.value } : r,
+                      ),
+                    )
+                  }
+                  placeholder="Value"
+                />
+              </div>
+            ))}
           </div>
-        </PopoverContent>
+        </SettingsPopoverContent>
       </Popover>
 
       {/* Sort */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="sort-trigger"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              sorts.length > 0 && "bg-surface-2 text-fg",
-            )}
+            className={cn(sorts.length > 0 && "bg-surface-2 text-fg")}
+            leftIcon={<ArrowUpDown className="h-3.5 w-3.5" aria-hidden />}
           >
-            <ArrowUpDown className="h-3.5 w-3.5" />
             Sort{sorts.length > 0 ? ` (${sorts.length})` : ""}
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-72" data-testid="db-sort-popover">
+        <SettingsPopoverContent
+          title={t(locale, "dbSort")}
+          className="w-72"
+          data-testid="db-sort-popover"
+          footer={
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              data-testid="add-sort"
+              disabled={!addableSortProperty}
+              leftIcon={<Plus className="h-3 w-3" aria-hidden />}
+              onClick={() =>
+                onChange({
+                  sorts: addSort(sorts, addableSortProperty?.id ?? "", "asc"),
+                })
+              }
+            >
+              Add sort
+            </Button>
+          }
+        >
           <div className="space-y-2">
             {sorts.length === 0 && <p className="text-xs text-muted">No sorts applied.</p>}
             {sorts.map((sort, index) => {
@@ -2412,231 +2587,243 @@ export function ViewSettings({
                   <span className="w-6 shrink-0 text-[10px] text-muted" title={t(locale, "dbSort")}>
                     {index + 1}.
                   </span>
-                  <select
-                    value={sort.propertyId}
-                    data-testid="sort-property"
-                    aria-label={`${t(locale, "dbSort")} ${index + 1}: ${sortName}`}
-                    onChange={(e) => onChange({
-                      sorts: sorts.map((s, i) =>
-                        i === index ? { ...s, propertyId: e.target.value } : s,
-                      ),
-                    })}
-                    className={cn(CONTROL_CLASS, "flex-1")}
-                  >
-                    {properties.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    aria-label={`${t(locale, "dbMoveUp")}: ${sortName}`}
-                    disabled={index === 0}
-                    onClick={() => onChange({ sorts: moveSort(sorts, index, index - 1) })}
-                    className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
-                  >
-                    <span aria-hidden>↑</span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`${t(locale, "dbMoveDown")}: ${sortName}`}
-                    disabled={index === sorts.length - 1}
-                    onClick={() => onChange({ sorts: moveSort(sorts, index, index + 1) })}
-                    className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
-                  >
-                    <span aria-hidden>↓</span>
-                  </button>
+                  <span className="min-w-0 flex-1" data-testid="sort-property">
+                    <Select
+                      size="sm"
+                      allowClear={false}
+                      options={propertyOptions(properties)}
+                      value={sort.propertyId}
+                      aria-label={`${t(locale, "dbSort")} ${index + 1}: ${sortName}`}
+                      onChange={(value) =>
+                        onChange({
+                          sorts: sorts.map((s, i) =>
+                            i === index ? { ...s, propertyId: value } : s,
+                          ),
+                        })
+                      }
+                    />
+                  </span>
+                  <Tooltip label={`${t(locale, "dbMoveUp")}: ${sortName}`}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`${t(locale, "dbMoveUp")}: ${sortName}`}
+                      disabled={index === 0}
+                      onClick={() => onChange({ sorts: moveSort(sorts, index, index - 1) })}
+                    >
+                      <span aria-hidden>↑</span>
+                    </Button>
+                  </Tooltip>
+                  <Tooltip label={`${t(locale, "dbMoveDown")}: ${sortName}`}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`${t(locale, "dbMoveDown")}: ${sortName}`}
+                      disabled={index === sorts.length - 1}
+                      onClick={() => onChange({ sorts: moveSort(sorts, index, index + 1) })}
+                    >
+                      <span aria-hidden>↓</span>
+                    </Button>
+                  </Tooltip>
                 </div>
                 <div className="flex items-center gap-1">
-                  <select
-                    value={sort.direction}
-                    data-testid="sort-direction"
-                    aria-label={`${t(locale, "dbSort")} ${index + 1} ${t(locale, "dbSortDir")}`}
-                    onChange={(e) => onChange({
-                      sorts: sorts.map((s, i) =>
-                        i === index ? { ...s, direction: e.target.value as Sort["direction"] } : s,
-                      ),
-                    })}
-                    className={cn(CONTROL_CLASS, "flex-1")}
-                  >
-                    <option value="asc">Ascending</option>
-                    <option value="desc">Descending</option>
-                  </select>
-                  <button
-                    type="button"
-                    aria-label={`${t(locale, "remove")} ${t(locale, "dbSort")} ${index + 1}: ${sortName}`}
-                    onClick={() => onChange({ sorts: removeSort(sorts, sort.propertyId) })}
-                    className="text-muted hover:text-red-500"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+                  <span className="min-w-0 flex-1" data-testid="sort-direction">
+                    <Select
+                      size="sm"
+                      allowClear={false}
+                      options={[
+                        { value: "asc", label: "Ascending" },
+                        { value: "desc", label: "Descending" },
+                      ]}
+                      value={sort.direction}
+                      aria-label={`${t(locale, "dbSort")} ${index + 1} ${t(locale, "dbSortDir")}`}
+                      onChange={(value) =>
+                        onChange({
+                          sorts: sorts.map((s, i) =>
+                            i === index ? { ...s, direction: value as Sort["direction"] } : s,
+                          ),
+                        })
+                      }
+                    />
+                  </span>
+                  <Tooltip label={`${t(locale, "remove")} ${t(locale, "dbSort")} ${index + 1}: ${sortName}`}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`${t(locale, "remove")} ${t(locale, "dbSort")} ${index + 1}: ${sortName}`}
+                      onClick={() => onChange({ sorts: removeSort(sorts, sort.propertyId) })}
+                    >
+                      <X className="h-3.5 w-3.5" aria-hidden />
+                    </Button>
+                  </Tooltip>
                 </div>
               </div>
               );
             })}
-            <button
-              type="button"
-              data-testid="add-sort"
-              disabled={!addableSortProperty}
-              onClick={() =>
-                onChange({
-                  sorts: addSort(sorts, addableSortProperty?.id ?? "", "asc"),
-                })
-              }
-              className="flex items-center gap-1 text-xs text-accent disabled:opacity-50"
-            >
-              <Plus className="h-3 w-3" /> Add sort
-            </button>
             {sorts.length > 1 && (
               <p className="text-[11px] text-muted">
                 Sorted by the first key, then the next ones break ties.
               </p>
             )}
           </div>
-        </PopoverContent>
+        </SettingsPopoverContent>
       </Popover>
 
       {/* Group */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              (groupBy || laneBy) && "bg-surface-2 text-fg",
-            )}
+            variant="ghost"
+            size="sm"
+            className={cn((groupBy || laneBy) && "bg-surface-2 text-fg")}
+            leftIcon={<Layers className="h-3.5 w-3.5" aria-hidden />}
           >
-            <Layers className="h-3.5 w-3.5" />
             Group
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-64">
-          <label className="mb-1 block text-xs text-muted" htmlFor="group-by">
-            Group by
-          </label>
-          <select
-            id="group-by"
-            value={groupBy}
-            onChange={(e) => onChange({ groupByPropertyId: e.target.value || null })}
-            className={cn(CONTROL_CLASS, "w-full")}
-          >
-            <option value="">None</option>
-            {groupable.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-          <p className="mt-2 text-xs text-muted">
-            Grouping stacks rows by a select/status property (used by Board).
-          </p>
-          <div className="mt-3 border-t border-border pt-2">
-            <label className="mb-1 block text-xs text-muted" htmlFor="lane-by">
-              Group by (lanes)
-            </label>
-            <select
-              id="lane-by"
-              data-testid="lane-by"
-              value={laneBy}
-              onChange={(e) => onChange({ laneBy: e.target.value || undefined })}
-              className={cn(CONTROL_CLASS, "w-full")}
-            >
-              <option value="">None</option>
-              {groupable.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-            <p className="mt-2 text-xs text-muted">
-              A second grouping slices the board into horizontal lanes
-              (swimlanes).
-            </p>
-          </div>
-          {/* Group aggregation (R89.4): the summary each group shows, in the
-              same aggregation vocabulary as the chart/footer. Owned here and
-              persisted as `groupAggregation`. */}
-          {groupBy && (
-            <div className="mt-3 border-t border-border pt-2">
-              <label className="mb-1 block text-xs text-muted" htmlFor="group-aggregation">
-                Summarize groups
-              </label>
-              <select
-                id="group-aggregation"
-                data-testid="group-aggregation"
-                value={groupAggregation}
-                onChange={(e) =>
-                  onChange({ groupAggregation: e.target.value || undefined })
-                }
-                className={cn(CONTROL_CLASS, "w-full")}
-              >
-                <option value="">None</option>
-                {AGGREGATION_FUNCTIONS.map((fn) => (
-                  <option key={fn.id} value={fn.id}>{fn.label}</option>
-                ))}
-              </select>
+        <SettingsPopoverContent title="Group" className="w-64">
+          <div className="space-y-3">
+            <div>
+              <p className="mb-1 text-xs text-muted">Group by</p>
+              <Select
+                size="sm"
+                allowClear={false}
+                placeholder="None"
+                value={groupBy}
+                options={[{ value: "", label: "None" }, ...propertyOptions(groupable)]}
+                aria-label="Group by"
+                onChange={(value) => onChange({ groupByPropertyId: value || null })}
+              />
               <p className="mt-2 text-xs text-muted">
-                The summary each group shows. “None” leaves the group a plain
-                count.
+                Grouping stacks rows by a select/status property (used by Board).
               </p>
             </div>
-          )}
-          {/* Group ordering (R89.3): reorder the buckets, persisted as the
-              view's `groupOrder` (option ids); "No value" always stays last. */}
-          {groupBy && orderableGroups.length > 0 && (
-            <div className="mt-3 border-t border-border pt-2">
-              <span className="mb-1 block text-xs text-muted">Order groups</span>
-              <ul className="space-y-1">
-                {orderableGroups.map((group, index) => (
-                  <li key={group.key} className="flex items-center gap-1">
-                    <span className="min-w-0 flex-1 truncate text-sm">
-                      {group.label}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label={`Move ${group.label} up`}
-                      data-testid={`group-order-up-${group.key}`}
-                      disabled={index === 0}
-                      onClick={() => moveGroupOrder(index, -1)}
-                      className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
-                    >
-                      <span aria-hidden>↑</span>
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Move ${group.label} down`}
-                      data-testid={`group-order-down-${group.key}`}
-                      disabled={index === orderableGroups.length - 1}
-                      onClick={() => moveGroupOrder(index, 1)}
-                      className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
-                    >
-                      <span aria-hidden>↓</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+            <div className="border-t border-border pt-2">
+              <p className="mb-1 text-xs text-muted">Group by (lanes)</p>
+              <div data-testid="lane-by">
+                <Select
+                  size="sm"
+                  allowClear={false}
+                  placeholder="None"
+                  value={laneBy}
+                  options={[{ value: "", label: "None" }, ...propertyOptions(groupable)]}
+                  aria-label="Group by (lanes)"
+                  onChange={(value) => onChange({ laneBy: value || undefined })}
+                />
+              </div>
+              <p className="mt-2 text-xs text-muted">
+                A second grouping slices the board into horizontal lanes
+                (swimlanes).
+              </p>
             </div>
-          )}
-        </PopoverContent>
+            {/* Group aggregation (R89.4): the summary each group shows, in the
+                same aggregation vocabulary as the chart/footer. Owned here and
+                persisted as `groupAggregation`. */}
+            {groupBy && (
+              <div className="border-t border-border pt-2">
+                <p className="mb-1 text-xs text-muted">Summarize groups</p>
+                <div data-testid="group-aggregation">
+                  <Select
+                    size="sm"
+                    allowClear={false}
+                    placeholder="None"
+                    value={groupAggregation}
+                    options={[
+                      { value: "", label: "None" },
+                      ...AGGREGATION_FUNCTIONS.map((fn) => ({
+                        value: fn.id,
+                        label: fn.label,
+                      })),
+                    ]}
+                    aria-label="Summarize groups"
+                    onChange={(value) =>
+                      onChange({ groupAggregation: value || undefined })
+                    }
+                  />
+                </div>
+                <p className="mt-2 text-xs text-muted">
+                  The summary each group shows. “None” leaves the group a plain
+                  count.
+                </p>
+              </div>
+            )}
+            {/* Group ordering (R89.3): reorder the buckets, persisted as the
+                view's `groupOrder` (option ids); "No value" always stays last. */}
+            {groupBy && orderableGroups.length > 0 && (
+              <div className="border-t border-border pt-2">
+                <p className="mb-1 text-xs text-muted">Order groups</p>
+                <ul className="space-y-1">
+                  {orderableGroups.map((group, index) => (
+                    <li key={group.key} className="flex items-center gap-1">
+                      <span className="min-w-0 flex-1 truncate text-sm">
+                        {group.label}
+                      </span>
+                      <Tooltip label={`Move ${group.label} up`}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Move ${group.label} up`}
+                          data-testid={`group-order-up-${group.key}`}
+                          disabled={index === 0}
+                          onClick={() => moveGroupOrder(index, -1)}
+                        >
+                          <span aria-hidden>↑</span>
+                        </Button>
+                      </Tooltip>
+                      <Tooltip label={`Move ${group.label} down`}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Move ${group.label} down`}
+                          data-testid={`group-order-down-${group.key}`}
+                          disabled={index === orderableGroups.length - 1}
+                          onClick={() => moveGroupOrder(index, 1)}
+                        >
+                          <span aria-hidden>↓</span>
+                        </Button>
+                      </Tooltip>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </SettingsPopoverContent>
       </Popover>
 
       {/* WIP limits — one per board column, persisted in the view config */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="wip-trigger"
             className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
               limitedCount > 0 && "bg-surface-2 text-fg",
-              wipRollup.overCount > 0 && "text-red-500",
+              wipRollup.overCount > 0 && "text-danger",
             )}
+            leftIcon={<Gauge className="h-3.5 w-3.5" aria-hidden />}
           >
-            <Gauge className="h-3.5 w-3.5" />
             WIP limits{limitedCount > 0 ? ` (${limitedCount})` : ""}
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-72" data-testid="wip-popover">
+        <SettingsPopoverContent
+          title="WIP limits"
+          className="w-72"
+          data-testid="wip-popover"
+        >
           {wipProperty ? (
             <div className="space-y-2">
               <p className="text-xs text-muted">
-                Work-in-progress limits for “{wipProperty.name}”. Leave a field
-                blank for no limit.
+                Work-in-progress limits for “{wipProperty.name}”. Set 0 for no
+                limit.
               </p>
               {wipGroups.map((group) => {
                 const status = wipStatusByKey.get(group.key);
@@ -2648,21 +2835,21 @@ export function ViewSettings({
                       {group.rows.length}
                       {limit !== undefined ? ` / ${limit}` : ""}
                     </span>
-                    <input
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={limit ?? ""}
-                      data-testid={`wip-limit-${group.key}`}
-                      aria-label={`${group.label} WIP limit`}
-                      placeholder="∞"
-                      onChange={(event) => setWipLimit(group.key, event.target.value)}
-                      className={cn(CONTROL_CLASS, "w-16")}
-                    />
+                    <span className="block w-24" data-testid={`wip-limit-${group.key}`}>
+                      <Stepper
+                        value={limit ?? 0}
+                        min={0}
+                        step={1}
+                        aria-label={`${group.label} WIP limit`}
+                        onValueChange={(next) =>
+                          setWipLimit(group.key, next === 0 ? "" : String(next))
+                        }
+                      />
+                    </span>
                     {status?.status === "over" && (
                       <span
                         data-testid={`wip-status-${group.key}`}
-                        className="shrink-0 text-xs text-red-500"
+                        className="shrink-0 text-xs text-danger"
                       >
                         over
                       </span>
@@ -2670,7 +2857,7 @@ export function ViewSettings({
                     {status?.status === "at" && (
                       <span
                         data-testid={`wip-status-${group.key}`}
-                        className="shrink-0 text-xs text-amber-500"
+                        className="shrink-0 text-xs text-warning"
                       >
                         at limit
                       </span>
@@ -2690,25 +2877,42 @@ export function ViewSettings({
               Group by a select or status property to set per-column limits.
             </p>
           )}
-        </PopoverContent>
+        </SettingsPopoverContent>
       </Popover>
 
       {/* Groups — show/hide board columns, persisted per view as `visibleGroups` */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="groups-trigger"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              hiddenGroupCount > 0 && "bg-surface-2 text-fg",
-            )}
+            className={cn(hiddenGroupCount > 0 && "bg-surface-2 text-fg")}
+            leftIcon={<Eye className="h-3.5 w-3.5" aria-hidden />}
           >
-            <Eye className="h-3.5 w-3.5" />
             Groups{hiddenGroupCount > 0 ? ` (${hiddenGroupCount})` : ""}
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-64" data-testid="db-groups-popover">
+        <SettingsPopoverContent
+          title="Groups"
+          className="w-64"
+          data-testid="db-groups-popover"
+          footer={
+            hiddenGroupCount > 0 ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                data-testid="groups-show-all"
+                leftIcon={<RotateCcw className="h-3 w-3" aria-hidden />}
+                onClick={() => onChange({ visibleGroups: {} })}
+              >
+                Show all groups
+              </Button>
+            ) : undefined
+          }
+        >
           {wipProperty ? (
             <div className="space-y-1">
               <p className="mb-2 text-xs text-muted">
@@ -2717,42 +2921,33 @@ export function ViewSettings({
               <ul className="space-y-1">
                 {groupColumns.map((group) => (
                   <li key={group.key}>
-                    <label className="flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-surface-2">
-                      <input
-                        type="checkbox"
+                    <div
+                      className="flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-surface-2"
+                      data-testid={`group-visibility-${group.key}`}
+                    >
+                      <Checkbox
+                        size="sm"
                         checked={groupVisibility[group.key] !== false}
-                        data-testid={`group-visibility-${group.key}`}
                         aria-label={`${group.label} visible`}
-                        onChange={(event) =>
-                          setGroupVisible(group.key, event.target.checked)
+                        onCheckedChange={(checked) =>
+                          setGroupVisible(group.key, checked)
                         }
-                        className="accent-[var(--accent)]"
                       />
                       <span className="flex-1 truncate">{group.label}</span>
                       <span className="shrink-0 text-xs tabular-nums text-muted">
                         {group.rows.length}
                       </span>
-                    </label>
+                    </div>
                   </li>
                 ))}
               </ul>
-              {hiddenGroupCount > 0 && (
-                <button
-                  type="button"
-                  data-testid="groups-show-all"
-                  onClick={() => onChange({ visibleGroups: {} })}
-                  className="flex items-center gap-1 border-t border-border pt-2 text-xs text-accent"
-                >
-                  <RotateCcw className="h-3 w-3" /> Show all groups
-                </button>
-              )}
             </div>
           ) : (
             <p className="text-xs text-muted">
               Group by a select or status property to hide or show groups.
             </p>
           )}
-        </PopoverContent>
+        </SettingsPopoverContent>
       </Popover>
 
       {/* Summarize by — the metric each board column aggregates (Sum / Average
@@ -2760,36 +2955,39 @@ export function ViewSettings({
           per-column summary in `BoardView` (feat/q03). */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="aggregation-trigger"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              aggregationPropertyId && "bg-surface-2 text-fg",
-            )}
+            className={cn(aggregationPropertyId && "bg-surface-2 text-fg")}
+            leftIcon={<Sigma className="h-3.5 w-3.5" aria-hidden />}
           >
-            <Sigma className="h-3.5 w-3.5" />
             Summarize
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-64" data-testid="db-aggregation-popover">
-          <label className="mb-1 block text-xs text-muted" htmlFor="aggregation-property">
-            Summarize by property
-          </label>
-          <select
-            id="aggregation-property"
-            data-testid="aggregation-property"
-            value={aggregationPropertyId}
-            onChange={(e) =>
-              onChange({ aggregationPropertyId: e.target.value || undefined })
-            }
-            className={cn(CONTROL_CLASS, "w-full")}
-          >
-            <option value="">Automatic (first number)</option>
-            {numericProperties.map((property) => (
-              <option key={property.id} value={property.id}>{property.name}</option>
-            ))}
-          </select>
+        <SettingsPopoverContent
+          title="Summarize"
+          className="w-64"
+          data-testid="db-aggregation-popover"
+        >
+          <p className="mb-1 text-xs text-muted">Summarize by property</p>
+          <div data-testid="aggregation-property">
+            <Select
+              size="sm"
+              allowClear={false}
+              placeholder="Automatic (first number)"
+              value={aggregationPropertyId}
+              options={[
+                { value: "", label: "Automatic (first number)" },
+                ...propertyOptions(numericProperties),
+              ]}
+              aria-label="Summarize by property"
+              onChange={(value) =>
+                onChange({ aggregationPropertyId: value || undefined })
+              }
+            />
+          </div>
           <p className="mt-2 text-xs text-muted">
             The value each board column sums, averages or counts.
           </p>
@@ -2798,7 +2996,7 @@ export function ViewSettings({
               Add a number property to summarize by one.
             </p>
           )}
-        </PopoverContent>
+        </SettingsPopoverContent>
       </Popover>
 
       {/* Calculations — one footer function per visible column, persisted as
@@ -2806,19 +3004,22 @@ export function ViewSettings({
           `@/lib/footer-calculations` parses (TableView renders each value). */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="footer-trigger"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              footerSpec.length > 0 && "bg-surface-2 text-fg",
-            )}
+            className={cn(footerSpec.length > 0 && "bg-surface-2 text-fg")}
+            leftIcon={<Calculator className="h-3.5 w-3.5" aria-hidden />}
           >
-            <Calculator className="h-3.5 w-3.5" />
             Calculations{footerSpec.length > 0 ? ` (${footerSpec.length})` : ""}
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-72" data-testid="db-footer-popover">
+        <SettingsPopoverContent
+          title="Calculations"
+          className="w-72"
+          data-testid="db-footer-popover"
+        >
           <p className="mb-2 text-xs text-muted">
             Show a calculation under a column. “None” removes it.
           </p>
@@ -2831,25 +3032,28 @@ export function ViewSettings({
                   <span className="min-w-0 flex-1 truncate text-sm">
                     {property.name}
                   </span>
-                  <select
-                    value={footerFnById.get(property.id) ?? ""}
-                    data-testid={`footer-fn-${property.id}`}
-                    aria-label={`${property.name} footer calculation`}
-                    onChange={(event) =>
-                      setColumnFooter(property, event.target.value)
-                    }
-                    className={cn(CONTROL_CLASS, "w-32")}
-                  >
-                    <option value="">None</option>
-                    {footerFunctionsForType(property.type).map((fn) => (
-                      <option key={fn} value={fn}>{fn}</option>
-                    ))}
-                  </select>
+                  <span className="w-32" data-testid={`footer-fn-${property.id}`}>
+                    <Select
+                      size="sm"
+                      allowClear={false}
+                      placeholder="None"
+                      value={footerFnById.get(property.id) ?? ""}
+                      options={[
+                        { value: "", label: "None" },
+                        ...footerFunctionsForType(property.type).map((fn) => ({
+                          value: fn,
+                          label: fn,
+                        })),
+                      ]}
+                      aria-label={`${property.name} footer calculation`}
+                      onChange={(value) => setColumnFooter(property, value)}
+                    />
+                  </span>
                 </li>
               ))}
             </ul>
           )}
-        </PopoverContent>
+        </SettingsPopoverContent>
       </Popover>
 
       {/* Templates — the database default (a single slot) and the authored
@@ -2858,162 +3062,192 @@ export function ViewSettings({
       {databasePageId && orderedTemplates.length > 0 && (
         <Popover>
           <PopoverTrigger asChild>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               data-testid="templates-trigger"
-              className={cn(
-                "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-                defaultTemplateId && "bg-surface-2 text-fg",
-              )}
+              className={cn(defaultTemplateId && "bg-surface-2 text-fg")}
+              leftIcon={<LayoutTemplate className="h-3.5 w-3.5" aria-hidden />}
             >
-              <LayoutTemplate className="h-3.5 w-3.5" />
               Templates{defaultTemplateId ? " (1)" : ""}
-            </button>
+            </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-72" data-testid="db-templates-popover">
+          <SettingsPopoverContent
+            title="Templates"
+            className="w-72"
+            data-testid="db-templates-popover"
+          >
             <p className="mb-2 text-xs text-muted">
               Set the default template and reorder the list.
             </p>
             <ul className="space-y-1">
               {orderedTemplates.map((template, index) => (
                 <li key={template.id} className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    aria-label={
+                  <Tooltip
+                    label={
                       defaultTemplateId === template.id
                         ? `Clear default template ${template.name}`
                         : `Set default template ${template.name}`
                     }
-                    data-testid={`template-default-${template.id}`}
-                    onClick={() => toggleDefaultTemplate(template)}
-                    className="flex h-6 w-6 items-center justify-center rounded hover:bg-surface-2"
                   >
-                    <Star
-                      className={cn(
-                        "h-3.5 w-3.5",
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={
                         defaultTemplateId === template.id
-                          ? "fill-amber-400 text-amber-400"
-                          : "text-muted",
-                      )}
-                    />
-                  </button>
+                          ? `Clear default template ${template.name}`
+                          : `Set default template ${template.name}`
+                      }
+                      data-testid={`template-default-${template.id}`}
+                      onClick={() => toggleDefaultTemplate(template)}
+                    >
+                      <Star
+                        aria-hidden
+                        className={cn(
+                          "h-3.5 w-3.5",
+                          defaultTemplateId === template.id
+                            ? "fill-warning text-warning"
+                            : "text-muted",
+                        )}
+                      />
+                    </Button>
+                  </Tooltip>
                   <span className="min-w-0 flex-1 truncate text-sm">
                     <span aria-hidden>{template.icon ?? "📄"}</span> {template.name}
                   </span>
-                  <button
-                    type="button"
-                    aria-label={`Move template ${template.name} up`}
-                    data-testid={`template-up-${template.id}`}
-                    disabled={index === 0}
-                    onClick={() => moveDefaultTemplate(index, -1)}
-                    className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
-                  >
-                    <span aria-hidden>↑</span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Move template ${template.name} down`}
-                    data-testid={`template-down-${template.id}`}
-                    disabled={index === orderedTemplates.length - 1}
-                    onClick={() => moveDefaultTemplate(index, 1)}
-                    className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
-                  >
-                    <span aria-hidden>↓</span>
-                  </button>
+                  <Tooltip label={`Move template ${template.name} up`}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Move template ${template.name} up`}
+                      data-testid={`template-up-${template.id}`}
+                      disabled={index === 0}
+                      onClick={() => moveDefaultTemplate(index, -1)}
+                    >
+                      <span aria-hidden>↑</span>
+                    </Button>
+                  </Tooltip>
+                  <Tooltip label={`Move template ${template.name} down`}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Move template ${template.name} down`}
+                      data-testid={`template-down-${template.id}`}
+                      disabled={index === orderedTemplates.length - 1}
+                      onClick={() => moveDefaultTemplate(index, 1)}
+                    >
+                      <span aria-hidden>↓</span>
+                    </Button>
+                  </Tooltip>
                 </li>
               ))}
             </ul>
-          </PopoverContent>
+          </SettingsPopoverContent>
         </Popover>
       )}
 
       {/* Show / hide properties (per view) */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="properties-trigger"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              hiddenCount > 0 && "bg-surface-2 text-fg",
-            )}
+            className={cn(hiddenCount > 0 && "bg-surface-2 text-fg")}
+            leftIcon={<Columns3 className="h-3.5 w-3.5" aria-hidden />}
           >
-            <Columns3 className="h-3.5 w-3.5" />
             {t(locale, "dbProperties")}
             {hiddenCount > 0 ? ` (${hiddenCount})` : ""}
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-64" data-testid="db-properties-popover">
-          <p className="mb-2 text-xs text-muted">{t(locale, "dbPropertiesHint")}</p>
+        <SettingsPopoverContent
+          title={t(locale, "dbProperties")}
+          description={t(locale, "dbPropertiesHint")}
+          className="w-64"
+          data-testid="db-properties-popover"
+          footer={
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                data-testid="columns-auto-fit"
+                leftIcon={<Maximize2 className="h-3 w-3" aria-hidden />}
+                onClick={autoFitWidthsForView}
+              >
+                Auto-fit widths
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                data-testid="columns-reset-widths"
+                leftIcon={<RotateCcw className="h-3 w-3" aria-hidden />}
+                onClick={resetWidths}
+              >
+                Reset widths
+              </Button>
+            </div>
+          }
+        >
           <ul className="space-y-1">
             {properties.map((property) => {
               const isPrimary = Boolean(property.config?.primary);
               const shown = isPrimary || visibleSet.has(property.id);
               return (
                 <li key={property.id} className="flex items-center gap-1">
-                  <label
+                  <div
                     className={cn(
                       "flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-surface-2",
                       isPrimary && "opacity-60",
                     )}
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
+                      size="sm"
                       checked={shown}
                       disabled={isPrimary}
                       aria-label={`${t(locale, "dbProperties")}: ${property.name}`}
-                      onChange={() => toggleProperty(property.id)}
-                      className="accent-[var(--accent)]"
+                      onCheckedChange={() => toggleProperty(property.id)}
                     />
                     <span className="truncate">{property.name}</span>
-                  </label>
-                  <input
-                    type="number"
-                    min={DEFAULT_MIN_WIDTH}
-                    max={DEFAULT_MAX_WIDTH}
-                    step={10}
-                    value={mergedLayout.widths[property.id] ?? DEFAULT_COLUMN_WIDTH}
+                  </div>
+                  <span
+                    className="block w-20 shrink-0"
                     data-testid={`column-width-${property.id}`}
-                    aria-label={`${property.name} width`}
-                    disabled={!shown}
-                    onChange={(event) => setWidth(property.id, event.target.value)}
-                    className={cn(CONTROL_CLASS, "w-16 shrink-0 disabled:opacity-40")}
-                  />
+                  >
+                    <Stepper
+                      value={
+                        mergedLayout.widths[property.id] ?? DEFAULT_COLUMN_WIDTH
+                      }
+                      min={DEFAULT_MIN_WIDTH}
+                      max={DEFAULT_MAX_WIDTH}
+                      step={10}
+                      disabled={!shown}
+                      aria-label={`${property.name} width`}
+                      onValueChange={(next) => setWidth(property.id, String(next))}
+                    />
+                  </span>
                 </li>
               );
             })}
           </ul>
-          <div className="mt-2 flex items-center gap-3 border-t border-border pt-2">
-            <button
-              type="button"
-              data-testid="columns-auto-fit"
-              onClick={autoFitWidthsForView}
-              className="flex items-center gap-1 text-xs text-accent"
-            >
-              <Maximize2 className="h-3 w-3" /> Auto-fit widths
-            </button>
-            <button
-              type="button"
-              data-testid="columns-reset-widths"
-              onClick={resetWidths}
-              className="flex items-center gap-1 text-xs text-muted hover:text-fg"
-            >
-              <RotateCcw className="h-3 w-3" /> Reset widths
-            </button>
-          </div>
-          <label className="mt-3 flex items-center gap-2 border-t border-border pt-2 text-sm">
-            <input
-              type="checkbox"
+          <div className="mt-3 border-t border-border pt-2" data-testid="freeze-first-column">
+            <Switch
+              size="sm"
               checked={config.freezeFirstColumn !== false}
+              label={t(locale, "dbFreezeFirst")}
               aria-label={t(locale, "dbFreezeFirst")}
-              onChange={() =>
+              onCheckedChange={() =>
                 onChange({ freezeFirstColumn: config.freezeFirstColumn === false })
               }
-              className="accent-[var(--accent)]"
             />
-            {t(locale, "dbFreezeFirst")}
-          </label>
-        </PopoverContent>
+          </div>
+        </SettingsPopoverContent>
       </Popover>
 
       {/* Two-column page property layout — persisted as `config.propertyLayout`
@@ -3022,42 +3256,41 @@ export function ViewSettings({
           page property panel renders them outside this file. */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="layout-trigger"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              propertyLayout.columns === 2 && "bg-surface-2 text-fg",
-            )}
+            className={cn(propertyLayout.columns === 2 && "bg-surface-2 text-fg")}
+            leftIcon={<LayoutTemplate className="h-3.5 w-3.5" aria-hidden />}
           >
-            <LayoutTemplate className="h-3.5 w-3.5" />
             Layout
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-72" data-testid="db-layout-popover">
+        <SettingsPopoverContent
+          title="Layout"
+          className="w-72"
+          data-testid="db-layout-popover"
+        >
           <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                data-testid="layout-two-columns"
+            <div data-testid="layout-two-columns">
+              <Switch
+                size="sm"
                 checked={propertyLayout.columns === 2}
+                label="Two columns"
                 aria-label="Two-column property layout"
-                onChange={togglePropertyLayoutColumns}
-                className="accent-[var(--accent)]"
+                onCheckedChange={togglePropertyLayoutColumns}
               />
-              Two columns
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                data-testid="layout-dividers"
+            </div>
+            <div data-testid="layout-dividers">
+              <Switch
+                size="sm"
                 checked={propertyLayout.dividers === true}
+                label="Column divider"
                 aria-label="Column divider"
-                onChange={togglePropertyLayoutDividers}
-                className="accent-[var(--accent)]"
+                onCheckedChange={togglePropertyLayoutDividers}
               />
-              Column divider
-            </label>
+            </div>
             <ul className="space-y-1 border-t border-border pt-2">
               {propertyLayout.order.map((id, index) => {
                 const fullWidth = propertyLayout.spans?.[id] === 2;
@@ -3065,38 +3298,45 @@ export function ViewSettings({
                 return (
                   <li key={id} className="flex items-center gap-1 text-sm">
                     <span className="min-w-0 flex-1 truncate">{name}</span>
-                    <label className="flex items-center gap-1 text-xs text-muted">
-                      <input
-                        type="checkbox"
-                        data-testid={`layout-span-${id}`}
+                    <div
+                      className="flex items-center gap-1 text-xs text-muted"
+                      data-testid={`layout-span-${id}`}
+                    >
+                      <Checkbox
+                        size="sm"
                         checked={fullWidth}
                         disabled={propertyLayout.columns === 1}
                         aria-label={`${name} full width`}
-                        onChange={() => togglePropertyLayoutSpan(id)}
-                        className="accent-[var(--accent)] disabled:opacity-40"
+                        onCheckedChange={() => togglePropertyLayoutSpan(id)}
                       />
                       full
-                    </label>
-                    <button
-                      type="button"
-                      aria-label={`Move ${name} up`}
-                      data-testid={`layout-up-${id}`}
-                      disabled={index === 0}
-                      onClick={() => movePropertyLayout(id, -1)}
-                      className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
-                    >
-                      <span aria-hidden>↑</span>
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Move ${name} down`}
-                      data-testid={`layout-down-${id}`}
-                      disabled={index === propertyLayout.order.length - 1}
-                      onClick={() => movePropertyLayout(id, 1)}
-                      className="flex h-6 w-5 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-30"
-                    >
-                      <span aria-hidden>↓</span>
-                    </button>
+                    </div>
+                    <Tooltip label={`Move ${name} up`}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Move ${name} up`}
+                        data-testid={`layout-up-${id}`}
+                        disabled={index === 0}
+                        onClick={() => movePropertyLayout(id, -1)}
+                      >
+                        <span aria-hidden>↑</span>
+                      </Button>
+                    </Tooltip>
+                    <Tooltip label={`Move ${name} down`}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Move ${name} down`}
+                        data-testid={`layout-down-${id}`}
+                        disabled={index === propertyLayout.order.length - 1}
+                        onClick={() => movePropertyLayout(id, 1)}
+                      >
+                        <span aria-hidden>↓</span>
+                      </Button>
+                    </Tooltip>
                   </li>
                 );
               })}
@@ -3109,78 +3349,60 @@ export function ViewSettings({
               {narrowLayoutPlan.collapsed ? " · collapses on narrow screens" : ""}
             </p>
             {layoutIssues.issues.length > 0 && (
-              <p className="text-xs text-amber-500" data-testid="layout-issues">
+              <p className="text-xs text-warning" data-testid="layout-issues">
                 {layoutIssues.issues.length} layout warning
                 {layoutIssues.issues.length === 1 ? "" : "s"}
               </p>
             )}
           </div>
-        </PopoverContent>
+        </SettingsPopoverContent>
       </Popover>
 
       {/* Bounded list loading: rows per page, consumed by `paginateRows`
           (`@/lib/pagination-window`) so a large view loads a window at a time. */}
-      <label className="flex items-center gap-1 text-xs text-muted">
+      <span className="flex items-center gap-1 text-xs text-muted">
         Rows
-        <select
-          data-testid="page-size"
-          aria-label="Rows per page"
-          value={pageSize === 0 ? "0" : String(pageSize)}
-          onChange={(event) => setPageSize(event.target.value)}
-          className={cn(CONTROL_CLASS, "h-7")}
-        >
-          <option value="0">All</option>
-          <option value="25">25</option>
-          <option value="50">50</option>
-          <option value="100">100</option>
-        </select>
-      </label>
+        <span className="w-20" data-testid="page-size">
+          <Select
+            size="sm"
+            allowClear={false}
+            aria-label="Rows per page"
+            value={pageSize === 0 ? "0" : String(pageSize)}
+            options={[
+              { value: "0", label: "All" },
+              { value: "25", label: "25" },
+              { value: "50", label: "50" },
+              { value: "100", label: "100" },
+            ]}
+            onChange={(value) => setPageSize(value)}
+          />
+        </span>
+      </span>
 
       {/* Saved views — named filter/sort/group presets for this database.
           In-session only: each preset overlays the current config through
           `applySavedView`, and the config can be captured under a name. */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="saved-views-trigger"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              savedViews.length > 0 && "bg-surface-2 text-fg",
-            )}
+            className={cn(savedViews.length > 0 && "bg-surface-2 text-fg")}
+            leftIcon={<Bookmark className="h-3.5 w-3.5" aria-hidden />}
           >
-            <Bookmark className="h-3.5 w-3.5" />
             {t(locale, "savedViews")}
             {savedViews.length > 0 ? ` (${savedViews.length})` : ""}
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-72" data-testid="saved-views-popover">
-          <div className="space-y-2">
-            {savedViews.length === 0 && (
-              <p className="text-xs text-muted">No saved views yet.</p>
-            )}
-            {savedViews.map((view) => (
-              <div key={view.id} className="flex items-center gap-1">
-                <button
-                  type="button"
-                  data-testid={`apply-saved-view-${view.id}`}
-                  onClick={() => applyPreset(view)}
-                  className="flex-1 truncate rounded px-1 py-0.5 text-left text-sm hover:bg-surface-2"
-                >
-                  {view.name}
-                </button>
-                <button
-                  type="button"
-                  aria-label={`${t(locale, "delete")} ${view.name}`}
-                  onClick={() => removeSavedView(view)}
-                  className="text-muted hover:text-red-500"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-            <div className="flex items-center gap-1 border-t border-border pt-2">
-              <input
+        <SettingsPopoverContent
+          title={t(locale, "savedViews")}
+          className="w-72"
+          data-testid="saved-views-popover"
+          footer={
+            <div className="flex items-center gap-1">
+              <Input
                 value={savedViewName}
                 data-testid="saved-view-name"
                 aria-label={t(locale, "savedViews")}
@@ -3189,118 +3411,156 @@ export function ViewSettings({
                 onKeyDown={(event) => {
                   if (event.key === "Enter") savePreset();
                 }}
-                className={cn(CONTROL_CLASS, "flex-1")}
               />
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="xs"
                 data-testid="save-saved-view"
                 disabled={savedViewName.trim().length === 0}
+                leftIcon={<Plus className="h-3 w-3" aria-hidden />}
                 onClick={savePreset}
-                className="flex items-center gap-1 text-xs text-accent disabled:opacity-50"
               >
-                <Plus className="h-3 w-3" /> {t(locale, "save")}
-              </button>
+                {t(locale, "save")}
+              </Button>
             </div>
+          }
+        >
+          <div className="space-y-2">
+            {savedViews.length === 0 && (
+              <p className="text-xs text-muted">No saved views yet.</p>
+            )}
+            {savedViews.map((view) => (
+              <div key={view.id} className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  data-testid={`apply-saved-view-${view.id}`}
+                  onClick={() => applyPreset(view)}
+                  className="min-w-0 flex-1 justify-start"
+                >
+                  <span className="truncate">{view.name}</span>
+                </Button>
+                <Tooltip label={`${t(locale, "delete")} ${view.name}`}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`${t(locale, "delete")} ${view.name}`}
+                    onClick={() => removeSavedView(view)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                </Tooltip>
+              </div>
+            ))}
           </div>
-        </PopoverContent>
+        </SettingsPopoverContent>
       </Popover>
 
       {/* Chart — shape + aggregation, persisted as `chartType`/`chartAggregate`
           for `ChartView`. */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="chart-trigger"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              (config.chartType || config.chartAggregate) && "bg-surface-2 text-fg",
-            )}
+            className={cn((config.chartType || config.chartAggregate) && "bg-surface-2 text-fg")}
+            leftIcon={<BarChart3 className="h-3.5 w-3.5" aria-hidden />}
           >
-            <BarChart3 className="h-3.5 w-3.5" />
             Chart
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-64" data-testid="db-chart-popover">
-          <label className="mb-1 block text-xs text-muted" htmlFor="chart-type">
-            Chart type
-          </label>
-          <select
-            id="chart-type"
-            data-testid="chart-type"
-            value={chartType}
-            onChange={(e) => onChange({ chartType: e.target.value as ChartType })}
-            className={cn(CONTROL_CLASS, "w-full")}
-          >
-            {CHART_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-          <label className="mt-3 mb-1 block text-xs text-muted" htmlFor="chart-aggregate">
-            Aggregate
-          </label>
-          <select
-            id="chart-aggregate"
-            data-testid="chart-aggregate"
-            value={chartAggregate}
-            onChange={(e) =>
-              onChange({ chartAggregate: e.target.value as AggregationFn })
-            }
-            className={cn(CONTROL_CLASS, "w-full")}
-          >
-            {AGGREGATION_FUNCTIONS.map((fn) => (
-              <option key={fn.id} value={fn.id}>{fn.label}</option>
-            ))}
-          </select>
+        <SettingsPopoverContent
+          title="Chart"
+          className="w-64"
+          data-testid="db-chart-popover"
+        >
+          <p className="mb-1 text-xs text-muted">Chart type</p>
+          <div data-testid="chart-type">
+            <Select
+              size="sm"
+              allowClear={false}
+              value={chartType}
+              options={CHART_TYPE_OPTIONS.map((option) => ({
+                value: option.value,
+                label: option.label,
+              }))}
+              aria-label="Chart type"
+              onChange={(value) => onChange({ chartType: value as ChartType })}
+            />
+          </div>
+          <p className="mt-3 mb-1 text-xs text-muted">Aggregate</p>
+          <div data-testid="chart-aggregate">
+            <Select
+              size="sm"
+              allowClear={false}
+              value={chartAggregate}
+              options={AGGREGATION_FUNCTIONS.map((fn) => ({
+                value: fn.id,
+                label: fn.label,
+              }))}
+              aria-label="Aggregate"
+              onChange={(value) =>
+                onChange({ chartAggregate: value as AggregationFn })
+              }
+            />
+          </div>
           <p className="mt-2 text-xs text-muted">
             The shape and totals the Chart view draws per group.
           </p>
-        </PopoverContent>
+        </SettingsPopoverContent>
       </Popover>
 
       {/* Gallery — the preview property cards show, persisted as
           `previewPropertyId` for `resolveCardPreview`. */}
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="gallery-trigger"
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-muted hover:bg-surface-2",
-              previewPropertyId && "bg-surface-2 text-fg",
-            )}
+            className={cn(previewPropertyId && "bg-surface-2 text-fg")}
+            leftIcon={<ImageIcon className="h-3.5 w-3.5" aria-hidden />}
           >
-            <ImageIcon className="h-3.5 w-3.5" />
             Gallery
-          </button>
+          </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-64" data-testid="db-gallery-popover">
-          <label className="mb-1 block text-xs text-muted" htmlFor="gallery-preview">
-            Preview property
-          </label>
-          <select
-            id="gallery-preview"
-            data-testid="gallery-preview-property"
-            value={previewPropertyId}
-            onChange={(e) => onChange({ previewPropertyId: e.target.value || null })}
-            className={cn(CONTROL_CLASS, "w-full")}
-          >
-            <option value="">Automatic (first image)</option>
-            {previewable.map((property) => (
-              <option key={property.id} value={property.id}>{property.name}</option>
-            ))}
-          </select>
+        <SettingsPopoverContent
+          title="Gallery"
+          className="w-64"
+          data-testid="db-gallery-popover"
+        >
+          <p className="mb-1 text-xs text-muted">Preview property</p>
+          <div data-testid="gallery-preview-property">
+            <Select
+              size="sm"
+              allowClear={false}
+              placeholder="Automatic (first image)"
+              value={previewPropertyId}
+              options={[
+                { value: "", label: "Automatic (first image)" },
+                ...propertyOptions(previewable),
+              ]}
+              aria-label="Preview property"
+              onChange={(value) => onChange({ previewPropertyId: value || null })}
+            />
+          </div>
           <p className="mt-2 text-xs text-muted">
             The image a card shows; falls back to the page icon.
           </p>
-        </PopoverContent>
+        </SettingsPopoverContent>
       </Popover>
 
       {configIssues.length > 0 && (
         <span
           data-testid="view-config-issues"
           title={configIssues.map((issue) => issue.message).join("\n")}
-          className="rounded px-1.5 py-0.5 text-xs text-amber-500"
+          className="rounded px-1.5 py-0.5 text-xs text-warning"
         >
           {configIssues.length} config warning{configIssues.length === 1 ? "" : "s"}
         </span>
