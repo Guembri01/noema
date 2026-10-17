@@ -27,6 +27,9 @@ const WORKSPACE_A = "ws-a";
 const WORKSPACE_B = "ws-b";
 const DATABASE_A = "db-a";
 
+/** The columns of the fake database — `prop-1` belongs to `db-a`. */
+const PROPERTIES = [{ id: "prop-1", databasePageId: DATABASE_A }];
+
 type FakePage = {
   id: string;
   workspaceId: string;
@@ -73,6 +76,7 @@ const PAGES: FakePage[] = [
 const h = vi.hoisted(() => ({
   pageFindUnique: vi.fn(),
   pageUpdate: vi.fn(),
+  propertyFindFirst: vi.fn(),
   propertyValueUpsert: vi.fn(),
   activityCreate: vi.fn(),
   requireUser: vi.fn(),
@@ -86,6 +90,7 @@ vi.mock("@/lib/db", () => ({
       findUnique: h.pageFindUnique,
       update: h.pageUpdate,
     },
+    property: { findFirst: h.propertyFindFirst },
     propertyValue: { upsert: h.propertyValueUpsert },
     activity: { create: h.activityCreate },
   },
@@ -165,6 +170,22 @@ beforeEach(() => {
   h.pageUpdate.mockResolvedValue({ id: "row-a" });
   h.propertyValueUpsert.mockResolvedValue({ id: "cell-1" });
   h.activityCreate.mockResolvedValue({ id: "activity-1" });
+
+  // The columns of the fake database: `prop-1` is a column of the database
+  // `db-a`. A column of another database is not found — the fake applies the
+  // filter the real database applies (the property binding of B99).
+  h.propertyFindFirst.mockImplementation(
+    async (args: { where: { id?: string; databasePageId?: string } }) => {
+      const where = args.where ?? {};
+      const property = PROPERTIES.find(
+        (candidate) =>
+          (where.id === undefined || candidate.id === where.id) &&
+          (where.databasePageId === undefined ||
+            candidate.databasePageId === where.databasePageId),
+      );
+      return property ? { id: property.id } : null;
+    },
+  );
 });
 
 describe("setPropertyValueAction — row scope (B96)", () => {
