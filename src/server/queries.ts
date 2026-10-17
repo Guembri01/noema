@@ -412,21 +412,36 @@ export async function getDatabase(databasePageId: string) {
     relationProperties.map(async (property) => {
       const targetDatabaseId = (property.config as { targetDatabaseId: string })
         .targetDatabaseId;
-      // The related database's own workspace scopes its rows, for the same
-      // reason as the database's own rows (B08).
-      const targetDatabase = await prisma.page.findUnique({
-        where: { id: targetDatabaseId },
-        select: { workspaceId: true },
+      // B98 — the target of a relation must be a database of the *same*
+      // workspace as the database being read. Filtering the target's rows by
+      // the target's own workspace would be tautological (a foreign target's
+      // rows all carry the foreign workspace id and would pass), so the two
+      // workspaces are compared explicitly. A relation that points outside the
+      // workspace — from an old revision, an import or a direct database edit —
+      // yields no options, no cell values and no schema.
+      const target = await prisma.page.findFirst({
+        where: { id: targetDatabaseId, type: "DATABASE", deletedAt: null },
+        select: { id: true, workspaceId: true },
       });
-      const targetWorkspaceId = targetDatabase?.workspaceId ?? "";
+      if (!target || target.workspaceId !== workspaceId) {
+        relationData[property.id] = { options: [], valuesByRow: {}, properties: [] };
+        return;
+      }
       const [targetProperties, targetRows] = await Promise.all([
         prisma.property.findMany({
-          where: { databasePageId: targetDatabaseId },
+          where: {
+            databasePageId: targetDatabaseId,
+            databasePage: { workspaceId: target.workspaceId },
+          },
           orderBy: { position: "asc" },
           select: { id: true, name: true, type: true },
         }),
         prisma.page.findMany({
-          where: { parentId: targetDatabaseId, workspaceId: targetWorkspaceId, deletedAt: null },
+          where: {
+            parentId: targetDatabaseId,
+            workspaceId: target.workspaceId,
+            deletedAt: null,
+          },
           orderBy: { position: "asc" },
           include: { propertyValues: true },
         }),
