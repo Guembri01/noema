@@ -16,6 +16,7 @@ import {
   proposalBody,
   proposalLabel,
   resolveTicketRef,
+  sameProposal,
   statusLabel,
   type ChatActionPlan,
   type ChatActionProposal,
@@ -537,11 +538,42 @@ async function resolveLabelIds(workspaceId: string, names: string[]): Promise<st
 }
 
 /**
+ * The proposal a confirmation names: the assistant turn that stored it.
+ *
+ * A confirmation is bound to a proposal of *this* thread that is still pending.
+ * One that was never stored, belongs to another thread or was already applied
+ * cannot be confirmed — without that binding any caller could have the chat
+ * apply an action nobody ever proposed (B17).
+ */
+async function loadPendingProposal(
+  threadId: string,
+  proposalMessageId: string,
+): Promise<ChatActionProposal | null> {
+  const message = await prisma.chatMessage.findUnique({
+    where: { id: proposalMessageId },
+    select: { threadId: true, meta: true },
+  });
+  if (!message || message.threadId !== threadId) return null;
+  const meta =
+    message.meta && typeof message.meta === "object" && !Array.isArray(message.meta)
+      ? (message.meta as Record<string, unknown>)
+      : null;
+  if (!meta || meta.applied === true) return null;
+  const proposal = meta.proposal;
+  if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) return null;
+  return proposal as ChatActionProposal;
+}
+
+/**
  * Apply a confirmed chat action. This is the ONLY path that changes data from
  * the chat: it re-checks workspace permission, resolves names to ids, and
  * delegates to the existing ticket/page server actions (so the same guards and
  * the same activity trail apply). The assistant's confirmation is appended to
  * the thread and the proposal turn is marked applied.
+ *
+ * The confirmation is bound to the stored proposal: the caller names the
+ * proposal turn it confirms, and only the proposal that turn stored is applied
+ * (B17).
  */
 export async function executeChatActionAction(input: {
   threadId: string;
@@ -559,8 +591,20 @@ export async function executeChatActionAction(input: {
     return { error: "You do not have permission to change this workspace." };
   }
   const workspaceId = thread.workspaceId;
-  const { action } = input;
-  if (!action || !action.kind) return { error: "That action is no longer valid." };
+  const { action: requested } = input;
+  if (!requested || !requested.kind) return { error: "That action is no longer valid." };
+
+  // The stored proposal is the one that may be applied — never the copy the
+  // caller sent.
+  const proposalMessageId = (input.proposalMessageId ?? "").trim();
+  const stored = proposalMessageId
+    ? await loadPendingProposal(thread.id, proposalMessageId)
+    : null;
+  if (!stored) return { error: "That proposal is no longer available." };
+  if (!sameProposal(stored, requested)) {
+    return { error: "That proposal does not match the request." };
+  }
+  const action = stored;
 
   let message: string;
   let activity: string;
@@ -713,21 +757,19 @@ export async function executeChatActionAction(input: {
   });
 
   // Hide the confirm button: the proposal turn is now applied.
-  if (input.proposalMessageId) {
-    const proposalMessage = await prisma.chatMessage.findUnique({
-      where: { id: input.proposalMessageId },
-      select: { threadId: true, meta: true },
+  const proposalMessage = await prisma.chatMessage.findUnique({
+    where: { id: proposalMessageId },
+    select: { threadId: true, meta: true },
+  });
+  if (proposalMessage && proposalMessage.threadId === thread.id) {
+    const meta =
+      proposalMessage.meta && typeof proposalMessage.meta === "object" && !Array.isArray(proposalMessage.meta)
+        ? (proposalMessage.meta as Record<string, unknown>)
+        : {};
+    await prisma.chatMessage.update({
+      where: { id: proposalMessageId },
+      data: { meta: { ...meta, applied: true } },
     });
-    if (proposalMessage && proposalMessage.threadId === thread.id) {
-      const meta =
-        proposalMessage.meta && typeof proposalMessage.meta === "object" && !Array.isArray(proposalMessage.meta)
-          ? (proposalMessage.meta as Record<string, unknown>)
-          : {};
-      await prisma.chatMessage.update({
-        where: { id: input.proposalMessageId },
-        data: { meta: { ...meta, applied: true } },
-      });
-    }
   }
 
   revalidatePath("/w", "layout");

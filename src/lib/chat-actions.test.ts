@@ -23,6 +23,8 @@ import {
   parseChatAction,
   planChatAction,
   resolveTicketRef,
+  sameProposal,
+  type ChatActionProposal,
 } from "./chat-actions";
 
 const NOW = new Date("2026-10-15T12:00:00.000Z");
@@ -275,5 +277,60 @@ describe("planChatAction", () => {
 
   it("returns null for a plain question", async () => {
     await expect(planChatAction("ws-1", "how many tickets are open?")).resolves.toBeNull();
+  });
+});
+
+describe("sameProposal — a confirmation names the stored proposal (B17)", () => {
+  const stored: ChatActionProposal = {
+    kind: "createTicket",
+    args: { title: "Ship the beta", labels: ["urgent"] },
+    summary: 'Create ticket "Ship the beta"',
+    requiresConfirm: true,
+  };
+
+  it("accepts the very proposal that was stored", () => {
+    expect(sameProposal(stored, { ...stored })).toBe(true);
+  });
+
+  it("accepts it whatever order the arguments were written in", () => {
+    expect(
+      sameProposal(stored, {
+        ...stored,
+        args: { labels: ["urgent"], title: "Ship the beta" },
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores the decoration — the summary and the confirm flag", () => {
+    expect(
+      sameProposal(stored, {
+        kind: "createTicket",
+        args: { title: "Ship the beta", labels: ["urgent"] },
+      } as ChatActionProposal),
+    ).toBe(true);
+  });
+
+  it("refuses a changed argument", () => {
+    expect(
+      sameProposal(stored, { ...stored, args: { ...stored.args, title: "Ship the beta — and more" } }),
+    ).toBe(false);
+  });
+
+  it("refuses an added argument", () => {
+    expect(
+      sameProposal(stored, {
+        ...stored,
+        args: { ...stored.args, assigneeName: "Jane" },
+      }),
+    ).toBe(false);
+  });
+
+  it("refuses another kind", () => {
+    expect(sameProposal(stored, { ...stored, kind: "createNote" })).toBe(false);
+  });
+
+  it("refuses a missing proposal", () => {
+    expect(sameProposal(null, stored)).toBe(false);
+    expect(sameProposal(stored, null)).toBe(false);
   });
 });
