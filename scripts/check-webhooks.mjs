@@ -31,6 +31,11 @@ await prisma.apiToken.create({
     tokenHash: createHash("sha256").update(raw).digest("hex"),
   },
 });
+// The receiver is on loopback: the delivery-time SSRF guard refuses a
+// loopback target in production unless the operator opted in, so the payload
+// gate starts the shipped payload with NOEMA_ALLOW_LOOPBACK_TARGETS=1
+// (scripts/check-payload-features.mjs). Against `next dev` the development
+// exemption applies.
 const hook = await prisma.webhook.create({
   data: {
     workspaceId: workspace.id,

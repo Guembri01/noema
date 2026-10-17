@@ -12,6 +12,10 @@ import {
   signPayload,
   verifySignature,
 } from "@/lib/webhook-signature";
+// B11 — SSRF guard: a hook may not point at an internal service. The same
+// gate the calendar feed path uses (`src/lib/feed-guard.ts`), re-run before
+// every delivery attempt.
+import { isBlockedOutboundTarget } from "@/lib/feed-guard";
 import {
   LEGACY_KEY_VERSION,
   createKeyring,
@@ -36,6 +40,14 @@ export const WEBHOOK_MAX_ATTEMPTS = WEBHOOK_BACKOFF_MS.length;
 
 /** Per-attempt timeout stays at 5 s (R24.11). */
 const ATTEMPT_TIMEOUT_MS = 5_000;
+
+/**
+ * B11 — one uniform error for a refused target. The delivery log must not
+ * become a status oracle for internal services, so a blocked target records
+ * no status code, no latency and nothing that distinguishes it from any
+ * other refusal.
+ */
+const BLOCKED_TARGET_ERROR = "Blocked target.";
 
 /** R24.13 — verifiers reject `|now − t|` beyond this window (300 s). */
 export const SIGNATURE_TOLERANCE_MS = 300_000;
@@ -261,6 +273,25 @@ export async function deliverWithRetry(
   for (let attempt = 1; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt += 1) {
     const delay = WEBHOOK_BACKOFF_MS[attempt - 1] ?? 0;
     if (delay > 0) await sleep(delay);
+
+    // B11 — re-validate the target before EVERY attempt. The creation-time
+    // check (`src/server/actions/webhooks.ts`) does not cover DNS rebinding
+    // nor a target that changed after the hook was stored, so the guard runs
+    // again here: a blocked target is never contacted at all. A refusal is a
+    // policy decision, not a transient fault, so the retry loop stops instead
+    // of resolving the same host five times.
+    // `allowLoopbackWithOptIn` asks for the operator opt-in
+    // (`NOEMA_ALLOW_LOOPBACK_TARGETS=1`): only the loopback range can be
+    // opened that way, and only when the operator set the variable.
+    if (
+      await isBlockedOutboundTarget(hook.url, {
+        allowLoopbackInDevelopment: true,
+        allowLoopbackWithOptIn: true,
+      })
+    ) {
+      await recordAttempt(row, hook.id, event, attempt, false, null, BLOCKED_TARGET_ERROR);
+      return;
+    }
 
     let ok = false;
     let responseStatus: number | null = null;
