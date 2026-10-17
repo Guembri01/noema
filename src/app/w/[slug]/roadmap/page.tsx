@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CalendarRange } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { getProjects, getTickets, getWorkspaceBySlug } from "@/server/queries";
@@ -12,6 +13,8 @@ import {
   type RoadmapItem,
   type RoadmapZoom,
 } from "@/lib/roadmap";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export const metadata = { title: "Roadmap" };
 
@@ -108,11 +111,13 @@ export default async function RoadmapPage({
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
-      <p className="text-sm text-muted">Workspace</p>
-      <h1 className="mt-1 text-3xl font-bold tracking-tight">Roadmap</h1>
-      <p className="mt-2 text-sm text-muted">
-        Every project&apos;s milestones and tickets on one shared timeline.
-      </p>
+      <header className="mb-6">
+        <p className="text-sm text-muted">Workspace</p>
+        <h1 className="mt-1 text-[28px] font-semibold tracking-[-0.02em]">Roadmap</h1>
+        <p className="mt-2 text-sm text-muted">
+          Every project&apos;s milestones and tickets on one shared timeline.
+        </p>
+      </header>
 
       <div className="mt-6 flex flex-wrap items-center gap-2">
         <span className="text-xs uppercase tracking-wide text-muted">Zoom</span>
@@ -136,9 +141,17 @@ export default async function RoadmapPage({
       </div>
 
       {roadmap.lanes.length === 0 ? (
-        <p className="mt-10 rounded-xl border border-border p-6 text-sm text-muted">
-          No dated work yet. Give milestones or tickets a date and they appear here.
-        </p>
+        <EmptyState
+          className="mt-10"
+          icon={<CalendarRange className="h-5 w-5" />}
+          title="No dated work yet"
+          description="Give milestones or tickets a date and they appear here."
+          primaryAction={
+            <Button asChild variant="secondary">
+              <Link href={`/w/${workspace.slug}/projects`}>Go to projects</Link>
+            </Button>
+          }
+        />
       ) : (
         <div className="mt-6 space-y-6">
           {roadmap.lanes.map((lane) => {
@@ -209,7 +222,7 @@ export default async function RoadmapPage({
         <section>
           <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Rollup</h2>
           {rollups.length === 0 ? (
-            <p className="text-sm text-muted">Nothing tracked yet.</p>
+            <EmptyState variant="compact" title="Nothing tracked yet" />
           ) : (
             <ul className="space-y-2">
               {rollups.map((rollup) => (
@@ -235,7 +248,7 @@ export default async function RoadmapPage({
             Milestones · {milestoneItems.length}
           </h2>
           {milestoneItems.length === 0 ? (
-            <p className="text-sm text-muted">No milestones yet.</p>
+            <EmptyState variant="compact" title="No milestones yet" />
           ) : (
             <ul className="space-y-1">
               {milestoneItems.slice(0, 12).map((item) => (

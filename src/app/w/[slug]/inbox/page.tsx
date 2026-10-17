@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Bell } from "lucide-react";
+import { Bell, Inbox } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getWorkspaceAccess } from "@/lib/permissions";
@@ -8,6 +8,7 @@ import { getNotifications, getWorkspaceBySlug } from "@/server/queries";
 import { markAllNotificationsRead, markNotificationRead } from "@/server/actions/notifications";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   buildInbox,
   groupByPage,
@@ -184,29 +185,36 @@ export default async function InboxPage({
           {`Quiet hours: notifications are paused (now ${now.toLocaleString()}) and resume at ${resumeAt.toLocaleString()}.`}
         </div>
       )}
-      <div className="mb-5 flex items-center justify-between">
-        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-          <Bell className="h-5 w-5" />
-          {t(locale, "inbox")}
-          {unread > 0 && (
-            <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-medium text-white">
-              {unread}
-            </span>
+      <header className="mb-5">
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="flex items-center gap-2 text-[28px] font-semibold tracking-[-0.02em]">
+            <Bell className="h-5 w-5" />
+            {t(locale, "inbox")}
+            {unread > 0 && (
+              <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-medium text-white">
+                {unread}
+              </span>
+            )}
+          </h1>
+          {canMarkAllRead && (
+            <form action={markAllNotificationsRead}>
+              <button type="submit" className="text-sm text-muted hover:text-fg">
+                {t(locale, "markAllRead")}
+              </button>
+            </form>
           )}
-        </h1>
-        {canMarkAllRead && (
-          <form action={markAllNotificationsRead}>
-            <button type="submit" className="text-sm text-muted hover:text-fg">
-              {t(locale, "markAllRead")}
-            </button>
-          </form>
-        )}
-      </div>
+        </div>
+        <p className="mt-2 text-sm text-muted">
+          Mentions, replies and page activity, grouped by day.
+        </p>
+      </header>
 
       {buckets.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted">
-          {t(locale, "youAreAllCaughtUp")}
-        </p>
+        <EmptyState
+          icon={<Inbox className="h-5 w-5" />}
+          title={t(locale, "youAreAllCaughtUp")}
+          description="New mentions and replies land here as they happen."
+        />
       ) : (
         <div className="space-y-6">
           {buckets.map((bucket) => (
