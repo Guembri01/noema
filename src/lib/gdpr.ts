@@ -9,11 +9,12 @@ import { createHash } from "node:crypto";
  * and then execute in the request layer. Three ideas hold the module together:
  *
  *  - `PERSONAL_DATA_FIELDS` — a registry that classifies every column of the
- *    six personal-data entities (user, page, comment, reaction, version,
- *    shareLink). A field records whether it is `personal`, whether it may leave
- *    the system in an export, whether erasure touches it, and *how* erasure
- *    treats it (`delete`, `anonymize`, or `retain-legal`). Non-personal fields
- *    are always retained.
+ *    nine personal-data entities (user, page, comment, reaction, version,
+ *    shareLink, pageFollow, favorite, notification). A field records whether
+ *    it is `personal`, whether it may leave the system in an export, whether
+ *    erasure touches it, and *how* erasure treats it (`delete`, `anonymize`,
+ *    or `retain-legal`). Non-personal fields are always retained — except in
+ *    the link rows, which are removed as a whole (see below).
  *  - `buildExportPlan` / `buildErasurePlan` — derive, from a subject's records
  *    and the registry, an ordered (Art. 15) export bundle and an ordered
  *    (Art. 17) per-field operation list. Records under a legal hold are never
@@ -36,6 +37,9 @@ export const ENTITY_KINDS = [
   "reaction",
   "version",
   "shareLink",
+  "pageFollow",
+  "favorite",
+  "notification",
 ] as const;
 
 /** One of the personal-data-bearing entities. */
@@ -163,6 +167,32 @@ export const PERSONAL_DATA_FIELDS: PersonalDataRegistry = {
     pageId: retained(),
     permission: retained(),
     expiresAt: retained(),
+  },
+  // The three link rows below hold nothing but the relation between the
+  // subject and someone else's content: the pages they follow, the pages they
+  // favourite and the notifications in their inbox. That relation *is* their
+  // personal data, so every column that carries it is personal and the
+  // erasure removes the whole row — the retained columns go with it, because
+  // a row id on its own is nobody's data. The request layer owns that mapping
+  // (`src/server/actions/gdpr.ts`), because the registry is field-level while
+  // the database is not.
+  pageFollow: {
+    id: retained(),
+    userId: deleted(),
+    pageId: deleted(),
+  },
+  favorite: {
+    id: retained(),
+    userId: deleted(),
+    pageId: deleted(),
+  },
+  notification: {
+    id: retained(),
+    userId: deleted(),
+    type: deleted(),
+    // The payload carries the page title, the page id and the actor id — the
+    // content of the subject's inbox, and part of their export (Art. 15).
+    payload: deleted(),
   },
 };
 
