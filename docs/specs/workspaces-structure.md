@@ -184,6 +184,37 @@ the drift (§13).
   test with a foreign-workspace `parentId` (mocked prisma, pattern of
   `src/server/actions/workspaces.test.ts`), plus the existing cycle-walk tests
   cited by id.
+  **Shipped (B08), and widened to every write path.** The check is one
+  helper — `assertScopedParent({ workspaceId, parentId, pageId? })` in
+  `src/lib/page-parent.ts` — that loads the parent **tenant-scoped**
+  (`{ id, workspaceId }`), so a foreign parent is never read and the refusal
+  (`That parent page does not exist in this workspace.`) never names it. It
+  guards `createPageAction`, `movePageAction`, `POST /api/v1/pages`, the MCP
+  tool `create_page`, the template routes and actions, every importer
+  (Notion, Docx, Trello, Zip, Markdown, CSV, HTML, PDF), the chat-answer save
+  and the page/database duplicate paths. The **invariant** it enforces:
+  *a `parentId` always points inside the same workspace*. The read side
+  follows: `getDatabase`, the relation database, both export routes, the
+  "Deleted rows" panel, the database duplicate and the two chat-context
+  blocks (the database block and the current-page block) filter a database's
+  rows by the database's workspace — eight read sites in all — so a row that
+  was linked across workspaces before the fix no longer surfaces in the
+  foreign workspace's views, and the duplicate no longer copies such a row
+  **with its content**. The invariant
+  is **checked mechanically where the gate can see it**:
+  `scripts/check-parent-scope.mjs` finds the `Page.parentId` writes in `src/`
+  statically — 31 of them, the same 31 an independent TypeScript-parser
+  inventory finds — and fails when one of them stores a value the helper has
+  not proved. It is a safety net over the tests, not a proof: a write it
+  cannot recognise is not covered by it. The holes that are known today are
+  listed in the gate's own docstring — a raw SQL write, a write outside
+  `src/`, a member assignment such as `data.parentId = …`, a payload the gate
+  does not follow, the callers of an allow-listed helper, a computed receiver
+  (`prisma["page"]`) and a payload that arrives through a spread the gate
+  cannot read. That list is a safety net, not an enumeration: a new shape of
+  write can open a new hole, and the list only grows when somebody measures
+  one. The shapes that *are* closed are pinned by the gate's own regression
+  test (`scripts/check-parent-scope.test.mjs`).
 - **R80.8** — **Bulk move ships as a pure-logic-first feature.** (a) Selection
   model added to `src/lib/page-tree.ts` (multi-select set, shift-range over
   `flattenVisible` order, "all selected editable" predicate) with unit tests

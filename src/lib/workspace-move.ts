@@ -388,6 +388,10 @@ export function planWorkspaceMove(input: WorkspaceMoveInput): WorkspaceMovePlan 
     clone.id = newId;
 
     const oldParent = isNonEmptyString(page.parentId) ? page.parentId : null;
+    // The parent is remapped into the moved set: the clone hangs either under a
+    // page that moves along — same target workspace — or at the top level. A
+    // parent outside the set is dropped with a warning, so a move never carries
+    // a parent into another workspace (B08).
     if (oldParent === null) {
       clone.parentId = null;
     } else if (idMap.has(oldParent)) {

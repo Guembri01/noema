@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { markdownToDoc } from "@/lib/serialize";
+import { assertScopedParent } from "@/lib/page-parent";
 import { cardDescriptionBlocks, parseTrelloBoard, pathToTitles, type ImportCounts } from "@/lib/importers";
 import type { CreatePropertyDescriptor } from "@/lib/csv-mapping";
 import { fileNameExt, isAllowedType, mimeForExt } from "@/lib/file-type";
@@ -131,6 +132,11 @@ export async function importDocxAction(formData: FormData): Promise<ImportResult
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported page into another
+  // tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({ workspaceId, parentId });
+  if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
     select: { slug: true },
@@ -162,7 +168,7 @@ export async function importDocxAction(formData: FormData): Promise<ImportResult
       const page = await tx.page.create({
         data: {
           workspaceId,
-          parentId,
+          parentId: parent.parentId,
           title,
           icon: "📄",
           createdById: user.id,
@@ -197,6 +203,14 @@ export async function importTrelloAction(input: {
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported page into another
+  // tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+  });
+  if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({
     where: { id: input.workspaceId },
     select: { slug: true },
@@ -213,7 +227,7 @@ export async function importTrelloAction(input: {
   if ("error" in board) return board;
 
   const last = await prisma.page.findFirst({
-    where: { workspaceId: input.workspaceId, parentId: input.parentId ?? null },
+    where: { workspaceId: input.workspaceId, parentId: parent.parentId },
     orderBy: { position: "desc" },
     select: { position: true },
   });
@@ -227,7 +241,7 @@ export async function importTrelloAction(input: {
       const database = await tx.page.create({
         data: {
           workspaceId: input.workspaceId,
-          parentId: input.parentId ?? null,
+          parentId: parent.parentId,
           type: "DATABASE",
           title: board.name,
           icon: "📋",
@@ -282,6 +296,9 @@ export async function importTrelloAction(input: {
           const row = await tx.page.create({
             data: {
               workspaceId: input.workspaceId,
+              // The parent is the database page this action just created in
+              // `input.workspaceId` — inside the workspace by construction
+              // (B08: `assertScopedParent` would be redundant here).
               parentId: database.id,
               title: card.title,
               createdById: user.id,
@@ -334,6 +351,11 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported tree into another
+  // tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({ workspaceId, parentId });
+  if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
     select: { slug: true },
@@ -386,7 +408,7 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
     await prisma.$transaction(async (tx) => {
       for (const item of plan) {
         const { titles, content } = item;
-        let parent = parentId;
+        let parentPageId = parent.parentId;
         let prefix = "";
         for (let i = 0; i < titles.length; i += 1) {
           prefix = prefix ? `${prefix}/${titles[i]}` : titles[i];
@@ -396,11 +418,11 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
             const page = await tx.page.create({
               data: {
                 workspaceId,
-                parentId: parent,
+                parentId: parentPageId,
                 title: titles[i],
                 icon: isLeaf ? "📄" : "📁",
                 createdById: user.id,
-                position: nextPosition(parent),
+                position: nextPosition(parentPageId),
                 ...(isLeaf ? { content: content as unknown as Prisma.InputJsonValue } : {}),
               },
               select: { id: true },
@@ -413,7 +435,7 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
               lastId = pageId;
             }
           }
-          parent = pageId;
+          parentPageId = pageId;
         }
       }
       if (created === 0) throw new Error("Nothing to import.");
@@ -444,6 +466,14 @@ export async function importMarkdownAction(input: {
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import pages." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported page into another
+  // tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+  });
+  if ("error" in parent) return parent;
 
   const workspace = await prisma.workspace.findUnique({
     where: { id: input.workspaceId },
@@ -455,7 +485,7 @@ export async function importMarkdownAction(input: {
     input.filename.replace(/\.[^.]+$/, "").trim().slice(0, 200) || "Imported page";
 
   const last = await prisma.page.findFirst({
-    where: { workspaceId: input.workspaceId, parentId: input.parentId ?? null },
+    where: { workspaceId: input.workspaceId, parentId: parent.parentId },
     orderBy: { position: "desc" },
     select: { position: true },
   });
@@ -463,7 +493,7 @@ export async function importMarkdownAction(input: {
   const page = await prisma.page.create({
     data: {
       workspaceId: input.workspaceId,
-      parentId: input.parentId ?? null,
+      parentId: parent.parentId,
       title,
       icon: "📥",
       createdById: user.id,
@@ -501,6 +531,14 @@ export async function importCsvDatabaseAction(input: {
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported database into
+  // another tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+  });
+  if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({
     where: { id: input.workspaceId },
     select: { slug: true },
@@ -511,7 +549,7 @@ export async function importCsvDatabaseAction(input: {
   if (plan.length === 0) return { error: "Nothing to import." };
 
   const last = await prisma.page.findFirst({
-    where: { workspaceId: input.workspaceId, parentId: input.parentId ?? null },
+    where: { workspaceId: input.workspaceId, parentId: parent.parentId },
     orderBy: { position: "desc" },
     select: { position: true },
   });
@@ -522,7 +560,7 @@ export async function importCsvDatabaseAction(input: {
       const database = await tx.page.create({
         data: {
           workspaceId: input.workspaceId,
-          parentId: input.parentId ?? null,
+          parentId: parent.parentId,
           type: "DATABASE",
           title: input.title.trim().slice(0, 200) || "Imported CSV",
           icon: "📥",
