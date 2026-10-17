@@ -14,6 +14,19 @@ export async function startTwoFactorAction(): Promise<
   { secret: string; otpauth: string } | { error: string }
 > {
   const user = await requireUser();
+  // B128: the setup may only start when two-factor authentication is **not**
+  // on. This action writes `twoFactorEnabled: false`, so without this check
+  // an authenticated session could switch 2FA off — without a code of the
+  // factor and without the revocation of the other sessions that the
+  // sibling transition (`disableTwoFactorAction`) performs. The way to turn
+  // 2FA off is that action, not this one.
+  const current = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { twoFactorEnabled: true },
+  });
+  if (current?.twoFactorEnabled) {
+    return { error: "Two-factor authentication is already enabled." };
+  }
   const secret = generateTotpSecret();
   // B05: the seed is sealed BEFORE it reaches the database, so the column
   // never holds the raw seed. A sealing failure aborts the setup instead of
