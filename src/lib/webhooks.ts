@@ -160,13 +160,44 @@ export function encryptWebhookSecret(secret: string): string {
 }
 
 /**
+ * B63 — seal the secret of a hook that was created before the sealing (R28.17).
+ *
+ * Such a row still holds its secret in cleartext, and the secret is the shared
+ * key of the webhook: a database dump of that row yields it, and with it the
+ * power to sign a delivery (or to forge an inbound request). The app therefore
+ * seals such a row the moment it reads it, so the cleartext leaves the database
+ * without an operator step.
+ *
+ * The write is best-effort: a row that cannot be sealed keeps working (the
+ * plaintext is still the secret it always was) — only its at-rest state stays
+ * open until the next attempt. A row that already holds an envelope is never
+ * touched.
+ */
+export async function sealLegacyWebhookSecret(hook: {
+  id: string;
+  secret: string | null | undefined;
+}): Promise<void> {
+  const stored = hook.secret;
+  if (!stored || isSecretEnvelope(stored)) return;
+  try {
+    await prisma.webhook.update({
+      where: { id: hook.id },
+      data: { secret: encryptWebhookSecret(stored) },
+    });
+  } catch {
+    /* sealing is a hardening step — it must never break the delivery */
+  }
+}
+
+/**
  * Resolve a stored webhook secret to the plaintext used for signing.
  *
  * - Envelopes (`v1:` legacy or `v2:` keyring) are opened with the keyring.
  * - A pre-migration PLAINTEXT secret (M28.3 transition window) is returned
  *   as-is, with a warning, so already-configured hooks keep delivering signed
- *   requests; re-creating the hook seals it. (Follow-up: hard-fail once the
- *   migration window closes, per R28.17.)
+ *   requests; {@link sealLegacyWebhookSecret} seals the row at rest when the
+ *   app reads it. (Follow-up: hard-fail once the migration window closes,
+ *   per R28.17.)
  * - A corrupt/unreadable envelope resolves to `null` — the delivery is sent
  *   unsigned rather than signed with ciphertext — and is logged. New hooks are
  *   always sealed on write, so this cannot happen to a freshly created hook.
@@ -177,7 +208,7 @@ export function decryptWebhookSecret(
   if (!stored) return null;
   if (!isSecretEnvelope(stored)) {
     console.warn(
-      "[webhooks] signing secret is stored in plaintext; re-create the webhook to seal it at rest.",
+      "[webhooks] signing secret is stored in plaintext; it is sealed at rest when the app reads it.",
     );
     return stored;
   }
@@ -272,6 +303,9 @@ export async function deliverWithRetry(
   const row: DeliveryRowRef = { id: options.deliveryId ?? null };
   // R28.17 — the secret is sealed at rest; open it once per logical delivery.
   const secret = decryptWebhookSecret(hook.secret);
+  // B63 — a hook that predates the sealing still holds its secret in
+  // cleartext: seal it now, so the plaintext leaves the database.
+  await sealLegacyWebhookSecret(hook);
 
   for (let attempt = 1; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt += 1) {
     const delay = WEBHOOK_BACKOFF_MS[attempt - 1] ?? 0;
