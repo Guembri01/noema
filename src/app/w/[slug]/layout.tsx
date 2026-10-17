@@ -1,22 +1,17 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { resolveAiConfig } from "@/lib/ai-provider";
-import { prisma } from "@/lib/db";
-import { pageScopeFor } from "@/lib/guest-access";
+import { viewerScopeFor } from "@/lib/guest-access";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { chatModelInfo } from "@/lib/chat-model";
 import {
-  getCalendarFeeds,
-  getChatThreadsWithMessages,
   getFavorites,
   getPageTree,
-  getTeamspaces,
-  getProjects,
   getUnreadNotificationCount,
-  getUpcomingEvents,
   getUserWorkspaces,
   getWorkspaceBySlug,
 } from "@/server/queries";
+import { getWorkspaceShellDatasets } from "@/server/workspace-shell";
 import { WorkspaceShell } from "@/components/workspace-shell";
 
 export default async function WorkspaceLayout({
@@ -34,33 +29,28 @@ export default async function WorkspaceLayout({
   const access = await getWorkspaceAccess(user.id, workspace.id);
   // Guests only see the pages that were shared with them.
   if (!access) notFound();
-  const visiblePageIds = await pageScopeFor(user.id, workspace.id, access.role);
+  // One scope for the whole shell: the pages the viewer may see and the
+  // teamspaces whose names they may see (a guest's pages live in the
+  // teamspaces the sidebar has to draw them under).
+  const scope = await viewerScopeFor(user.id, workspace.id, access.role);
+  const visiblePageIds = scope?.pageIds ?? null;
+  const visibleTeamspaceIds = scope?.teamspaceIds ?? null;
 
-
-  const [
-    workspaces,
-    tree,
-    favorites,
-    unreadCount,
-    teamspaces,
-    chatThreads,
-    meetingEvents,
-    calendarFeeds,
-    projects,
-    aiConfig,
-    openTickets,
-  ] = await Promise.all([
+  const [workspaces, tree, favorites, unreadCount, shell, aiConfig] = await Promise.all([
     getUserWorkspaces(user.id),
     getPageTree(workspace.id, visiblePageIds),
-    getFavorites(user.id, workspace.id),
+    getFavorites(user.id, workspace.id, visiblePageIds),
     getUnreadNotificationCount(user.id),
-    getTeamspaces(workspace.id),
-    getChatThreadsWithMessages(workspace.id),
-    getUpcomingEvents(workspace.id),
-    getCalendarFeeds(workspace.id),
-    getProjects(workspace.id),
+    // The chat log, the calendars, the projects and the ticket count are
+    // workspace-scoped, not page-scoped: `getWorkspaceShellDatasets` hands a
+    // guest none of them. The teamspaces follow the viewer's teamspace scope,
+    // so a guest sees the teamspaces their own pages live in — and only those.
+    getWorkspaceShellDatasets({
+      workspaceId: workspace.id,
+      role: access.role,
+      visibleTeamspaceIds,
+    }),
     resolveAiConfig(workspace.id),
-    prisma.ticket.count({ where: { workspaceId: workspace.id, archived: false, status: { notIn: ["done", "cancelled"] } } }),
   ]);
 
   return (
@@ -74,11 +64,11 @@ export default async function WorkspaceLayout({
       }}
       workspaces={workspaces}
       tree={tree}
-      teamspaces={teamspaces.map((teamspace) => ({ id: teamspace.id, name: teamspace.name, icon: teamspace.icon }))}
-      chatThreads={chatThreads}
-      meetingEvents={meetingEvents}
-      calendarFeeds={calendarFeeds}
-      projects={projects.map((project) => ({ id: project.id, name: project.name, icon: project.icon }))}
+      teamspaces={shell.teamspaces}
+      chatThreads={shell.chatThreads}
+      meetingEvents={shell.meetingEvents}
+      calendarFeeds={shell.calendarFeeds}
+      projects={shell.projects}
       aiModel={aiConfig ? aiConfig.model : "no model"}
       chatModel={chatModelInfo({
         provider: aiConfig?.provider,
@@ -90,7 +80,7 @@ export default async function WorkspaceLayout({
         // nothing is configured at all - the picker tells those apart.
         source: aiConfig?.source ?? "none",
       })}
-      openTickets={openTickets}
+      openTickets={shell.openTickets}
       favorites={favorites}
       user={{ name: user.name, email: user.email }}
       unreadCount={unreadCount}
