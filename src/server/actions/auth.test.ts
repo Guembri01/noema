@@ -161,6 +161,11 @@ function registeredUser(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   resetAuthLimits();
+  // The two-factor seed is sealed at rest (B05): a row that still holds a
+  // cleartext seed is re-sealed on the first successful sign-in, and a
+  // re-seal that cannot be done denies the sign-in (fail closed). Without a
+  // usable `AUTH_SECRET` nothing can be sealed, so the test needs one.
+  process.env.AUTH_SECRET = "auth-test-secret-for-the-two-factor-gate";
   user = {
     id: "user-1",
     email: "victim@corp.test",

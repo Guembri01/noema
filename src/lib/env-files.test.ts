@@ -51,8 +51,14 @@ function nextEnvValue(dir: string, mode: string): string | null {
     }, { error() {} });`,
     `process.stdout.write(JSON.stringify(combinedEnv[${JSON.stringify(PROBE)}] ?? null));`,
   ].join("\n");
-  const env = { ...process.env, NODE_ENV: mode };
-  delete env[PROBE];
+  // The child process gets its own environment: `ProcessEnv` types
+  // `NODE_ENV` as a readonly union, and a free-form key is not part of the
+  // type at all.
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    NODE_ENV: mode as NodeJS.ProcessEnv["NODE_ENV"],
+  };
+  delete (env as Record<string, string | undefined>)[PROBE];
   const out = execFileSync(process.execPath, ["-e", script], {
     env,
     encoding: "utf8",
@@ -118,17 +124,20 @@ describe("the order of the env files", () => {
 
   it("uses the production mode unless NODE_ENV says development", () => {
     const snapshot = { ...process.env };
+    // `NODE_ENV` is typed as a readonly union on `ProcessEnv`, so the test
+    // writes through its own view of the environment.
+    const env = process.env as Record<string, string | undefined>;
     try {
-      delete process.env.NODE_ENV;
+      delete env.NODE_ENV;
       expect(envMode()).toBe("production");
-      process.env.NODE_ENV = "production";
+      env.NODE_ENV = "production";
       expect(envMode()).toBe("production");
-      process.env.NODE_ENV = "test";
+      env.NODE_ENV = "test";
       expect(envMode()).toBe("production");
-      process.env.NODE_ENV = "development";
+      env.NODE_ENV = "development";
       expect(envMode()).toBe("development");
     } finally {
-      for (const key of Object.keys(process.env)) delete process.env[key];
+      for (const key of Object.keys(process.env)) delete env[key];
       Object.assign(process.env, snapshot);
     }
   });

@@ -359,7 +359,6 @@ export async function loginAction(
         return { error: LOGIN_FAILED, requiresTwoFactor: true };
       }
     }
-    }
   }
 
   await clearFailedLogins(user.id);

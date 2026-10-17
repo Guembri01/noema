@@ -375,6 +375,17 @@ back — so it has to be re-created with the scopes it needs. Until then it is
 refused with `403 insufficient_scope` by every `/api/v1/*` route; the token
 list marks it as **No access**.
 
+- The two-factor seed is now sealed at rest (AES-256-GCM, `v1:iv:tag:payload`,
+  key derived from `AUTH_SECRET`) instead of being stored in cleartext in
+  `User.twoFactorSecret`; a database dump no longer yields a usable 2FA seed.
+  Existing plaintext seeds are re-sealed on the next sign-in or re-enrolment,
+  and a one-off backfill (`npm run backfill:2fa`) seals the rows that are still
+  plaintext — it never deletes or overwrites a row it cannot seal, and it
+  writes nothing at all unless it can prove that the `AUTH_SECRET` of this
+  environment is the key the app uses: it probes the sealed AI-provider keys
+  and the sealed SMTP password for that (the same `AUTH_SECRET` seals them),
+  and an operator who has verified the key by hand can pass `--confirm-key`.
+
 ### Changed
 
 - The app's own write path accepts only the app's own `/api/files/...` asset

@@ -45,6 +45,7 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
+import { hashSync } from "bcryptjs";
 import { totp } from "@/lib/totp";
 import { encryptTwoFactorSecret, openTwoFactorSecret } from "@/lib/secrets";
 import { loginAction } from "./auth";
@@ -56,6 +57,9 @@ import {
 
 /** A base32 seed of the shape `generateTotpSecret()` produces. */
 const SEED = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+/** A usable bcrypt hash for the fixture (cost 4 keeps the test fast). */
+const STORED_HASH = hashSync("hunter2!", 4);
+
 const USER = { id: "user-1", name: "Ada", email: "ada@example.test" };
 
 function loginForm(email: string, password: string, code?: string): FormData {
@@ -79,8 +83,15 @@ function silenceLegacyWarning(): () => void {
   return () => warn.mockRestore();
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
+  // The two-factor code space gets its own budget (B03), and that budget is
+  // module state. The reset is written so that it works with and without that
+  // change: the helper only exists once the budget does.
+  const rateLimit = (await import("@/lib/rate-limit")) as {
+    resetAuthLimits?: () => void;
+  };
+  rateLimit.resetAuthLimits?.();
   process.env.AUTH_SECRET = "b05-two-factor-test-secret";
   auth.requireUser.mockResolvedValue(USER);
   auth.verifyPassword.mockResolvedValue(true);
@@ -202,7 +213,10 @@ describe("loginAction — the 2FA gate opens the sealed seed", () => {
   const user = (twoFactorSecret: string | null) => ({
     id: USER.id,
     email: USER.email,
-    passwordHash: "hash",
+    // A real bcrypt hash: the sign-in always runs a bcrypt comparison, and a
+    // stored value that is not a bcrypt hash is refused before the code is
+    // even looked at.
+    passwordHash: STORED_HASH,
     twoFactorEnabled: true,
     twoFactorSecret,
   });
@@ -275,7 +289,10 @@ describe("without AUTH_SECRET — the 2FA flow fails closed", () => {
   const user = (twoFactorSecret: string | null) => ({
     id: USER.id,
     email: USER.email,
-    passwordHash: "hash",
+    // A real bcrypt hash: the sign-in always runs a bcrypt comparison, and a
+    // stored value that is not a bcrypt hash is refused before the code is
+    // even looked at.
+    passwordHash: STORED_HASH,
     twoFactorEnabled: true,
     twoFactorSecret,
   });
