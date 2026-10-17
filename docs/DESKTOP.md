@@ -139,7 +139,9 @@ Other deliberate choices:
   install, where an update or an uninstall takes them. For the same
   reason `prepare.mjs` strips `uploads/`, `.data/` and `backups/` from the payload
   (Next copies them in on a machine where the app has been used) and fails the
-  build if they would still ship, the way it does for `.env`.
+  build if they would still ship, the way it does for `.env`. The uploads and the
+  session store are written owner-only (`0600` files in `0700` directories), so
+  another user on the machine cannot read them.
 - **The session secret is generated per install.** With no shipped `AUTH_SECRET`
   the wrapper writes a 32-byte secret to `<data dir>/auth-secret` (`0600`) on first
   launch and reuses it afterwards, so sessions survive a restart while one
@@ -458,6 +460,7 @@ Why the other decisions are what they are:
 | Container `noema-postgres`, volume `noema-pgdata` | **never** the project's own `noema-db`: a desktop install must not adopt, restart or delete the developer's database |
 | Docker chooses the host port (`-p 127.0.0.1::5432`) | any fixed port can collide — the compose stack publishes 5433, the first candidate — and the install would fail with "port is already allocated" |
 | A **generated** password, stored in the data directory | a local database with `postgres/postgres` is a habit worth not having |
+| A **generated** password for the embedded engine, per launch and only in the environment | the engine takes any password, so the socket server checks it — otherwise every user on the machine could read the database over the loopback port |
 | The volume is never removed; a stopped container is started, a broken one recreated | the user's data outlives the app's lifecycle decisions |
 | `--restart unless-stopped` | the database comes back with the machine, without the app running |
 
@@ -676,13 +679,21 @@ is present, and otherwise falls back to a local URL (§5).
 **Two connection details that make it work** (both required):
 
 ```
-postgresql://postgres:postgres@127.0.0.1:<port>/postgres?pgbouncer=true&connection_limit=1
+postgresql://postgres:<password>@127.0.0.1:<port>/postgres?pgbouncer=true&connection_limit=1
 ```
 
 - `connection_limit=1` — PGlite is a single in-process engine;
 - `pgbouncer=true` — without it Prisma's *named prepared statements* collide on
   the long-lived engine and every query fails with
   `42P05: prepared statement "s0" already exists`.
+
+**The password is generated for every launch.** The engine itself runs in trust
+mode and would take any password, so the socket server asks for one before a
+client may reach the database: a client that cannot present it is refused
+(`Authentication failed against database server`). The password travels in the
+environment (`DATABASE_URL`) — never on a command line, which every user on the
+machine can read — and the data directory is created owner-only (`0700`, the
+cluster's files `0600`), like the session store next to it.
 
 **Remaining work for the embedded database:**
 

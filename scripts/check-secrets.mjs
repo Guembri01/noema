@@ -188,6 +188,10 @@ const ALLOWED = new Set([
   "postgresql://u:p@host:5432/db?schema=public", // src-tauri/src/state.rs fixture
   "postgresql://user:pw@host:5432/db", // src/lib/secrets.ts, the masking example
   "postgresql://noema:sup3r-secret@db.example.com:5432/noema?schema=public", // src-tauri/src/commands.rs, the redaction fixture
+  // The database URL of the embedded engine. The password is a template — the
+  // launch's own random one — and the host is the loopback.
+  "postgresql://${DB_USER}:${password}@${host}:${port}/${DB_NAME}?schema=public&connection_limit=1&pgbouncer=true", // scripts/desktop/embedded-db.cjs
+  "postgresql://postgres:<password>@127.0.0.1:<port>/postgres?pgbouncer=true&connection_limit=1", // docs/DESKTOP.md
 ]);
 
 const rel = (file) => relative(ROOT, file).replace(/\\/g, "/");

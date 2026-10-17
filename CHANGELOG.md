@@ -67,6 +67,21 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   and the boot wrapper and checks the seven rules that make the job work, so a
   pull request that breaks the container path fails in the CI that runs on
   every pull request.
+- The data directory of the desktop app belongs to the user alone, and the
+  embedded engine asks for a password. The cluster directory was created with
+  the umask's default (0755) and PGlite writes its files with 0666 — the
+  cluster files (`PG_VERSION`, `postgresql.conf`, `pg_hba.conf`) were readable
+  for every user on the machine — and the session store next to it was written
+  with 0644 into a 0755 directory. The directory is now created owner-only
+  (0700), every file in the cluster is set to 0600 and every cluster directory
+  to 0700, and the store is written as a 0600 file into a 0700 directory. The
+  embedded engine runs in trust mode — it accepts whatever password the client
+  sends — and the socket server in front of it used the conventional
+  credentials `postgres/postgres`, so every local user could open the database
+  of the running app. The socket server now asks for the password itself (the
+  Postgres cleartext-password handshake, compared in constant time); the
+  password is 32 random bytes per launch and reaches the app in the
+  environment, never on a command line.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
