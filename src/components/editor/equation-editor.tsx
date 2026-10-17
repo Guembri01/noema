@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import katex from "katex";
 import type { Editor } from "@tiptap/react";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { Z } from "@/lib/design-tokens";
+import {
+  Segmented,
+  type SegmentedOption,
+} from "@/components/ui/segmented";
 import {
   MATH_CATEGORIES,
   insertSnippet,
@@ -33,9 +38,9 @@ import {
  * The mathematics extension only exposes bare insert/update commands, so
  * inserting used to place a hard-coded `x` (or nothing at all) and look broken.
  * Instead anything that wants an equation dispatches `noema:equation` and this
- * editor opens: live KaTeX preview, Enter to apply, Escape to cancel. Clicking
- * an existing equation (configured via the extension's `onClick`) reopens it
- * for editing.
+ * editor opens: a LaTeX/Preview switch, a live KaTeX preview, Enter to apply,
+ * Escape to cancel. Clicking an existing equation (configured via the
+ * extension's `onClick`) reopens it for editing.
  *
  * A browsable symbol palette (backed by `@/lib/math-symbols`) sits under the
  * source box: categorized glyph buttons plus a search filter. Picking a symbol
@@ -61,6 +66,47 @@ const CATEGORY_LABELS: Record<MathCategory, string> = {
   "big-ops": "Big operators",
   accents: "Accents",
 };
+
+/* ---------------------------------------------------------------------------
+   Pure model: LaTeX / Preview switch + error reporting
+   ------------------------------------------------------------------------- */
+
+/** The two panes of the equation dialog. */
+export type EquationView = "source" | "preview";
+
+/** Segments for the LaTeX / Preview switch, in order. */
+export const EQUATION_VIEW_OPTIONS: SegmentedOption<EquationView>[] = [
+  { value: "source", label: "LaTeX" },
+  { value: "preview", label: "Preview" },
+];
+
+/** Flip between the source box and the rendered preview. */
+export function toggleEquationView(view: EquationView): EquationView {
+  return view === "source" ? "preview" : "source";
+}
+
+/**
+ * Validate the LaTeX with KaTeX. Returns `null` when it parses cleanly, or a
+ * short human-readable message (KaTeX's "KaTeX parse error:" prefix stripped)
+ * when it does not. Empty source is treated as valid (there is nothing to
+ * render yet).
+ */
+export function equationError(latex: string): string | null {
+  const source = latex.trim();
+  if (!source) return null;
+  try {
+    katex.renderToString(source, {
+      throwOnError: true,
+      displayMode: false,
+      strict: "ignore",
+    });
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const cleaned = message.replace(/^KaTeX parse error:\s*/i, "").trim();
+    return cleaned || "Invalid LaTeX";
+  }
+}
 
 /**
  * Per-block direction for the LaTeX source *and* its live preview, from the
@@ -125,8 +171,10 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
   const [request, setRequest] = useState<EquationRequest | null>(null);
   const [latex, setLatex] = useState("");
   const [symbolQuery, setSymbolQuery] = useState("");
+  const [view, setView] = useState<EquationView>("source");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const invokerRef = useRef<HTMLElement | null>(null);
+  const errorId = useId();
   const open = request !== null;
 
   useEffect(() => {
@@ -140,6 +188,7 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
       setRequest(next);
       setLatex(next.latex ?? "");
       setSymbolQuery("");
+      setView("source");
       window.setTimeout(() => inputRef.current?.focus(), 30);
     };
     window.addEventListener(EQUATION_EVENT, handler);
@@ -197,8 +246,13 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
     }, 0);
   };
 
-  // Tab / Shift+Tab cycles inside the dialog; Escape keeps its handling below.
+  // Tab / Shift+Tab cycles inside the dialog; Escape cancels from anywhere.
   const onDialogKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
     if (event.key !== "Tab") return;
     const { stops, nodes } = equationStops(event.currentTarget);
     const active = document.activeElement;
@@ -214,22 +268,26 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
     target.focus();
   };
 
+  const close = () => setRequest(null);
+
   if (!request) return null;
 
+  const error = equationError(latex);
+
   let preview = "";
-  try {
-    preview = katex.renderToString(latex.trim() || "\\text{preview}", {
-      throwOnError: false,
-      displayMode: request.kind === "block",
-    });
-  } catch {
-    preview = "";
+  if (!error) {
+    try {
+      preview = katex.renderToString(latex.trim() || "\\text{preview}", {
+        throwOnError: true,
+        displayMode: request.kind === "block",
+      });
+    } catch {
+      preview = "";
+    }
   }
 
   // Per-block direction for the source and its preview, from the bidi engine.
   const direction = equationDirection(latex);
-
-  const close = () => setRequest(null);
 
   const commit = () => {
     const value = latex.trim();
@@ -254,7 +312,8 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 flex items-center justify-center bg-overlay p-4"
+      style={{ zIndex: Z.modal }}
       role="dialog"
       aria-modal="true"
       aria-label={t(locale, "equationTitle")}
@@ -263,86 +322,109 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
         if (event.target === event.currentTarget) close();
       }}
     >
-      <div className="w-full max-w-md rounded-xl border border-border bg-bg p-4 shadow-2xl">
-        <p className="text-sm font-medium">
-          {request.kind === "block" ? t(locale, "blockEquationTitle") : t(locale, "inlineEquation")}
-        </p>
+      <div className="surface-raised-strong animate-scale-in w-full max-w-md p-4">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium">
+            {request.kind === "block" ? t(locale, "blockEquationTitle") : t(locale, "inlineEquation")}
+          </p>
+          <Segmented
+            options={EQUATION_VIEW_OPTIONS}
+            value={view}
+            onValueChange={setView}
+            ariaLabel={t(locale, "equationTitle")}
+            size="sm"
+          />
+        </div>
         <p className="mt-0.5 text-xs text-muted">
           {t(locale, "latexSyntaxHint")} <code>c = \sqrt&#123;a^2 + b^2&#125;</code>
         </p>
-        <textarea
-          ref={inputRef}
-          rows={3}
-          value={latex}
-          dir={direction.dir}
-          aria-label={t(locale, "latexSourceAria")}
-          placeholder="\frac{a}{b}"
-          onChange={(event) => setLatex(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              commit();
-            }
-            if (event.key === "Escape") close();
-          }}
-          className={cn(
-            "mt-3 w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm outline-none focus:border-accent",
-            direction.className,
-          )}
-        />
-        <div
-          dir={direction.dir}
-          className={cn(
-            "mt-3 min-h-12 overflow-x-auto rounded-md border border-border bg-surface px-3 py-2 text-center",
-            direction.className,
-          )}
-          aria-live="polite"
-          dangerouslySetInnerHTML={{ __html: preview }}
-        />
-        <div className="mt-3 rounded-md border border-border">
-          <div className="border-b border-border px-3 py-2">
-            <input
-              type="search"
-              value={symbolQuery}
-              onChange={(event) => setSymbolQuery(event.target.value)}
-              aria-label={t(locale, "search")}
-              placeholder="Search symbols…"
-              className="h-8 w-full rounded border border-border bg-bg px-2 text-xs outline-none focus:border-accent"
+
+        {view === "source" ? (
+          <>
+            <textarea
+              ref={inputRef}
+              rows={3}
+              value={latex}
+              dir={direction.dir}
+              aria-label={t(locale, "latexSourceAria")}
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? errorId : undefined}
+              placeholder="\frac{a}{b}"
+              onChange={(event) => setLatex(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  commit();
+                }
+              }}
+              className={cn(
+                "focus-ring mt-3 w-full rounded-md border bg-bg px-3 py-2 font-mono text-sm text-fg",
+                error ? "border-danger" : "border-border",
+                direction.className,
+              )}
             />
-          </div>
-          <div className="max-h-52 overflow-y-auto px-3 py-2">
-            {symbolGroups.length === 0 ? (
-              <p className="py-2 text-center text-xs text-muted">No matching symbols</p>
-            ) : (
-              symbolGroups.map((group) => (
-                <div key={group.category} className="mb-2 last:mb-0">
-                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
-                    {CATEGORY_LABELS[group.category]}
-                  </p>
-                  <div className="flex flex-wrap gap-1">
-                    {group.symbols.map((symbol) => (
-                      <button
-                        key={symbol.latex}
-                        type="button"
-                        title={symbol.label}
-                        aria-label={`${symbol.label} (${symbol.latex})`}
-                        onClick={() => insertSymbol(symbol.latex)}
-                        className="rounded border border-border px-1.5 py-1 font-mono text-xs hover:bg-surface-2"
-                      >
-                        {symbol.latex}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))
+            {error ? (
+              <p id={errorId} role="alert" className="mt-1 text-xs text-danger">
+                {error}
+              </p>
+            ) : null}
+            <div className="mt-3 rounded-md border border-border">
+              <div className="border-b border-border px-3 py-2">
+                <input
+                  type="search"
+                  value={symbolQuery}
+                  onChange={(event) => setSymbolQuery(event.target.value)}
+                  aria-label={t(locale, "search")}
+                  placeholder="Search symbols…"
+                  className="focus-ring h-8 w-full rounded-sm border border-border bg-bg px-2 text-xs text-fg"
+                />
+              </div>
+              <div className="scrollbar-thin max-h-52 overflow-y-auto px-3 py-2">
+                {symbolGroups.length === 0 ? (
+                  <p className="py-2 text-center text-xs text-muted">No matching symbols</p>
+                ) : (
+                  symbolGroups.map((group) => (
+                    <div key={group.category} className="mb-2 last:mb-0">
+                      <p className="mb-1 text-xs font-medium text-muted">
+                        {CATEGORY_LABELS[group.category]}
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {group.symbols.map((symbol) => (
+                          <button
+                            key={symbol.latex}
+                            type="button"
+                            title={symbol.label}
+                            aria-label={`${symbol.label} (${symbol.latex})`}
+                            onClick={() => insertSymbol(symbol.latex)}
+                            className="focus-ring u-colors rounded-sm border border-border px-1.5 py-1 font-mono text-xs text-fg hover:bg-surface-2"
+                          >
+                            {symbol.latex}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div
+            dir={direction.dir}
+            className={cn(
+              "mt-3 min-h-32 overflow-x-auto rounded-md border border-border bg-surface px-3 py-6 text-center",
+              direction.className,
             )}
-          </div>
-        </div>
+            aria-live="polite"
+            dangerouslySetInnerHTML={{ __html: error ? "" : preview }}
+          />
+        )}
+
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
             onClick={close}
-            className="h-9 rounded border border-border px-3 text-sm text-muted hover:bg-surface-2"
+            className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm text-muted hover:bg-surface-2"
           >
             {t(locale, "cancel")}
           </button>
@@ -350,7 +432,7 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
             type="button"
             onClick={commit}
             disabled={!latex.trim()}
-            className="h-9 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
+            className="focus-ring u-colors h-9 rounded-sm bg-accent px-3 text-sm font-medium text-accent-fg hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t(locale, "apply")}
           </button>
