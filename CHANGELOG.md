@@ -39,6 +39,24 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- The asset route is now a full-member surface. `GET /api/files/**` asked only
+  for workspace membership, so a guest could fetch any asset of the workspace
+  by name; an asset cannot be scoped to a page (`Asset.pageId` is never
+  populated), so the route is now reserved for full members and answers `403`
+  to a `GUEST` — before the storage driver is asked, so the refusal carries no
+  bytes, no asset `content-type`, no `etag` and no `cache-control`. A missing
+  asset gets the same answer, so the route is no longer an existence oracle for
+  a guest. A member still receives the file. **The consequence
+  is deliberate and fail-closed: a guest reads the text of the pages shared
+  with them, but none of their media** — every image block, the page cover,
+  the page icon and every database attachment of a shared page now answers
+  `403` for a guest, in the app and on the public share page `/s/[token]`.
+  Still open (not covered by this branch): the asset-to-page link —
+  `Asset.pageId` is never written, so "the assets of the pages shared with
+  this guest" cannot be answered; until that link exists the surface stays
+  closed to guests. A guest can still obtain the attachment bytes through the
+  workspace export zip — that is a separate finding (B02, #16), not closed
+  here.
 
 ## [1.4.1] — 2026-10-17
 
