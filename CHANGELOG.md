@@ -39,6 +39,22 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- **The REST API enforces the scope grant of the bearer token.** The
+  `/api/v1/*` routes check the scopes the token was granted: a token without
+  `read:pages` (respectively `write:pages`) gets `403 insufficient_scope`
+  instead of full access. The scope check runs *before* the workspace check, so
+  a token without the scope gets `403` without any information about the
+  workspace.
+- **OAuth tokens carry an explicit scope list.** The token endpoint mints the
+  token with the read and write scopes of the catalogue (without
+  `admin:workspace`) and returns that list in the `scope` field of the
+  response, instead of the hard-coded `"read write"`. Such a token can now
+  also be used on the MCP transport (`/api/mcp`), which checks the same grant:
+  before, the empty grant it carried was refused by every MCP tool.
+- **The settings UI stores the scopes it asks for.** A token created on
+  `/w/[slug]/settings` used to be persisted without any scope at all, so it
+  would have been unable to call the API once the grant was enforced. The
+  picked scopes are now stored with the token.
 
 ## [1.4.1] — 2026-10-17
 

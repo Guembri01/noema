@@ -1,12 +1,18 @@
 import { NextResponse } from "next/server";
 import { authenticateApiRequest } from "@/lib/api-auth";
+import { hasScope } from "@/lib/api-token-scope";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { rateLimit } from "@/lib/api-guard";
 
 export const runtime = "nodejs";
 
-/** GET /api/v1/pages/:pageId — read one page including its document. */
+/**
+ * GET /api/v1/pages/:pageId — read one page including its document.
+ *
+ * The bearer token must hold the `read:pages` scope; a token without it is
+ * refused with 403 `insufficient_scope`.
+ */
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ pageId: string }> },
@@ -15,6 +21,12 @@ export async function GET(
   if (limited) return limited;
   const auth = await authenticateApiRequest(request);
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!hasScope(auth.scopes, "read:pages")) {
+    return NextResponse.json(
+      { error: "insufficient_scope", required: "read:pages" },
+      { status: 403 },
+    );
+  }
 
   const { pageId } = await params;
   const page = await prisma.page.findUnique({
