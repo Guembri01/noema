@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { rateLimit } from "@/lib/api-guard";
+import { guardOpsSecret } from "@/lib/ops-guard";
 import {
   defaultRetentionPolicy,
   describePolicy,
@@ -82,21 +83,14 @@ function manifestNameFor(dump: string): string {
 }
 
 export async function GET(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    return NextResponse.json(
-      {
-        error:
-          "CRON_SECRET is not configured. Set CRON_SECRET in the environment and send it as the x-cron-secret header.",
-      },
-      { status: 503 },
-    );
-  }
-  if (request.headers.get("x-cron-secret") !== secret) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const limited = rateLimit(request, "cron", 12, 60_000);
-  if (limited) return limited;
+  // The shared gate: fail closed without a secret, throttle before the
+  // comparison (a wrong secret is bounded, not an unbounded guessing oracle),
+  // and compare the secret in constant time.
+  const gate = guardOpsSecret(request, {
+    secret: process.env.CRON_SECRET,
+    limit: () => rateLimit(request, "cron", 12, 60_000),
+  });
+  if (!gate.ok) return gate.response;
 
   const now = new Date();
   const policy = retentionPolicy();

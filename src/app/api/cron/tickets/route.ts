@@ -9,6 +9,7 @@ import {
   type TicketTemplate,
 } from "@/lib/recurring-tickets";
 import { keyPrefix, ticketKey as formatTicketKey } from "@/lib/tickets";
+import { guardOpsSecret } from "@/lib/ops-guard";
 import {
   commitRecurringRunAction,
   listDueAutomationsForCronAction,
@@ -34,21 +35,15 @@ const MAX_DRAFTS_PER_RULE = 50;
  * crash between create and commit) never double-creates a ticket.
  */
 export async function POST(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    return NextResponse.json(
-      {
-        error:
-          "CRON_SECRET is not configured. Set CRON_SECRET in the environment and send it as the x-cron-secret header.",
-      },
-      { status: 503 },
-    );
-  }
-  if (request.headers.get("x-cron-secret") !== secret) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const limited = rateLimit(request, "cron", 12, 60_000);
-  if (limited) return limited;
+  // The shared gate: fail closed without a secret, throttle before the
+  // comparison (a wrong secret is bounded, not an unbounded guessing oracle),
+  // and compare the secret in constant time.
+  const secret = process.env.CRON_SECRET ?? "";
+  const gate = guardOpsSecret(request, {
+    secret,
+    limit: () => rateLimit(request, "cron", 12, 60_000),
+  });
+  if (!gate.ok) return gate.response;
 
   const now = new Date();
   const due = await listDueAutomationsForCronAction(secret);
