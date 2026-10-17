@@ -66,7 +66,10 @@ Out of scope:
 
 - **Set a strong `AUTH_SECRET`** and never reuse the example value. It signs
   session cookies and derives the key that encrypts stored provider credentials.
-- Serve over **HTTPS**, and keep `secure` cookies on.
+- Serve over **HTTPS**, and keep `secure` cookies on. The app sends
+  `Strict-Transport-Security: max-age=31536000` by default, so the browser
+  pins HTTPS after the first request; `HSTS_MAX_AGE=0` switches that header
+  off for an installation that is deliberately served over plain HTTP.
 - Keep `DATABASE_URL` on a private network. The database is not designed to be
   internet-facing.
 - Set `APP_ORIGINS` when the app is reached through a hostname it does not

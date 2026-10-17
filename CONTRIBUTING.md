@@ -48,6 +48,7 @@ workflow-permission gate runs there as part of `npm test`.
 | `npm test` | The full Vitest unit suite |
 | `npm run check:coherence` | No drift: orphan actions, native dialogs, unexpected injection sinks, shrinking i18n coverage |
 | `npm run check:secrets` | No credential-shaped value is committed, and no `.env` is tracked |
+| `npm run check:hsts` | The `Strict-Transport-Security` header follows the environment: one year by default, the declared `max-age` when it is set, no header when it is `0` or refused |
 | `npm run check:workflow-permissions` | No workflow grants a publishing scope (`packages: write`, `id-token: write`) outside a job that no pull-request event can reach, every such job spells out its `permissions:`, and no pull-request checkout keeps its token on disk |
 | `npm run check:audit` | No advisory in the dependency tree that is not on the list of accepted advisories (`scripts/npm-audit-baseline.mjs`) — a new one fails, a known one does not |
 | `npm run check:design` | No raw colours or ad-hoc spacing — design tokens only |
