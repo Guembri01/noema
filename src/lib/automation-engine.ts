@@ -371,7 +371,13 @@ function interpolate(text: string, scope: Record<string, unknown>): string {
 }
 
 function scopeFor(row: AutomationRow | null | undefined, variables?: Record<string, string>): Record<string, unknown> {
-  const scope: Record<string, unknown> = {};
+  // The scope is built from **user data** (the row's `values`, the
+  // automation's variables). `Object.assign` **sets** the `__proto__` key of
+  // its source object — so a `__proto__` in that data would change the
+  // **prototype** of this object, and every lookup would then find the
+  // injected members. With a prototype-less object, `__proto__` is an ordinary
+  // key like any other.
+  const scope: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   if (isRecord(row)) {
     if (isRecord(row.values)) Object.assign(scope, row.values);
     for (const [key, value] of Object.entries(row)) {
