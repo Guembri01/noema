@@ -113,6 +113,12 @@ RUN addgroup -S -g 10001 nextjs \
 WORKDIR /app
 # The payload is self-contained: server.js, .next/static, public/, prisma/,
 # the traced node_modules, the Prisma CLI closure, and start.cjs.
+#
+# The Prisma CLI in the payload is **used at run time**: the boot wrapper runs
+# `prisma migrate deploy` on every launch (it is idempotent and cheap, and it
+# keeps the schema of an old installation in step). It must therefore stay a
+# runtime dependency and must not be moved to `devDependencies` — the image
+# would start with an outdated schema.
 COPY --from=builder --chown=nextjs:nextjs /app/src-tauri/server ./
 # /data is the only writable state: uploads, sessions, backups and the
 # per-install auth secret fallback. .next/cache is writable because Next's
