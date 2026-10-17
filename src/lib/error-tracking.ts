@@ -24,7 +24,8 @@
  *   clamped rate — deterministic, no RNG, and monotonic in the rate.
  * - `groupErrors` folds an event stream by fingerprint, tracking `count`,
  *   `firstSeen`, `lastSeen` and a bounded list of sample ids.
- * - `redactMessage` strips emails, credentials and file-system paths.
+ * - `redactMessage` strips emails, credentials and file-system paths; the
+ *   credential shapes come from the shared list in `value-scrubbing.ts`.
  * - `buildReport` derives a severity from a group's event count.
  * - `toBreadcrumb` produces a redacted, serialisable breadcrumb.
  *
@@ -32,11 +33,13 @@
  * additive, unit-pinned core.
  */
 
+import { REDACTED, scrubSecretValues } from "./value-scrubbing";
+
 /** Fallback message for a value that carries no usable text. */
 export const UNKNOWN_MESSAGE = "Unknown error";
 
 /** Marker that replaces a credential-shaped value. */
-export const REDACTED = "[redacted]";
+export { REDACTED };
 
 /** Marker that replaces a redacted email address. */
 export const EMAIL_MARKER = "<email>";
@@ -431,28 +434,6 @@ export function groupErrors(events: readonly ErrorEvent[]): readonly ErrorGroup[
   }));
 }
 
-/**
- * Credential-shaped substrings removed from string values. Ordered so scheme
- * redactions run before opaque-key rules; each replacement is idempotent.
- */
-const STRING_SCRUBBERS: readonly { readonly pattern: RegExp; readonly replace: string }[] = [
-  { pattern: /(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, replace: `$1${REDACTED}` },
-  { pattern: /(\bBasic\s+)[A-Za-z0-9+/=]{8,}/gi, replace: `$1${REDACTED}` },
-  {
-    pattern: /\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
-    replace: REDACTED,
-  },
-  { pattern: /\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{8,}/gi, replace: REDACTED },
-  { pattern: /\bgh[pousr]_[A-Za-z0-9]{16,}/g, replace: REDACTED },
-  { pattern: /\bgithub_pat_[A-Za-z0-9_]{16,}/g, replace: REDACTED },
-  { pattern: /\bxox[abpor]-[A-Za-z0-9-]{8,}/gi, replace: REDACTED },
-  { pattern: /\bAKIA[0-9A-Z]{16}\b/g, replace: REDACTED },
-  {
-    pattern: /([?&](?:token|access_token|api_key|apikey|password|secret)=)[^&\s]+/gi,
-    replace: `$1${REDACTED}`,
-  },
-];
-
 /** Email addresses anywhere in a message. */
 const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 
@@ -463,16 +444,13 @@ const UNIX_PATH_PATTERN = /(?<![:\w/])(?:\/[\w.@-]+){2,}\/?/g;
 /**
  * Strip emails, credentials and file-system paths from a message so free-text
  * error output is safe to persist. Idempotent and total: a value that is not a
- * string is coerced once, and the function never throws.
+ * string is coerced once, and the function never throws. The credential shapes
+ * come from the shared list in `value-scrubbing.ts`.
  */
 export function redactMessage(message: string): string {
   const text = typeof message === "string" ? message : safeToString(message);
   try {
-    let out = text;
-    for (const { pattern, replace } of STRING_SCRUBBERS) {
-      out = out.replace(pattern, replace);
-    }
-    return out
+    return scrubSecretValues(text)
       .replace(EMAIL_PATTERN, EMAIL_MARKER)
       .replace(WINDOWS_PATH_PATTERN, PATH_MARKER)
       .replace(UNIX_PATH_PATTERN, PATH_MARKER);
