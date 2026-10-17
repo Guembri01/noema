@@ -2,16 +2,6 @@
 
 ### Security
 
-- The "Authoring windows" check no longer fails for every pull request. It
-  collected its commits with `git log --all`, and CI checks out with
-  `fetch-depth: 0`, which fetches every branch — so the open Dependabot
-  branches, authored by a bot, made the required check fail with identity
-  violations that had nothing to do with the pull request under review. It
-  now walks the commits of the ref under review. GitHub's own automation is
-  exempt, because an App account commits at its own clock and the merge
-  commit GitHub synthesises for a pull request is dated when it rebuilt the
-  ref; a human's no-reply address is not a bot and still has to pass.
-
 - The unlock state of a password-protected share link is no longer a client
   cookie whose value is the constant `"1"`. Any client could send
   `Cookie: share_<token>=1` and read the protected page — the password was
@@ -485,6 +475,19 @@ list marks it as **No access**.
   the answer, not in the persisted chat row, not in the log. The log keeps the
   status and the code of a provider failure and the class of a transport
   failure, and nothing else.
+- The same rule applies when an invitation is redeemed: the role it carries is
+  granted against the role its sender holds at that moment. An `ADMIN`
+  invitation an admin minted before this change is therefore refused when it
+  is accepted (`This invitation can no longer be redeemed. Please ask the
+  workspace owner for a new invitation.`), and so is one whose sender has
+  since been demoted or removed from the workspace — an `ADMIN` invitation the
+  owner minted still redeems, and no invitation row is rewritten. The
+  settings screen's invitation picker offers only the roles the signed-in user
+  may grant, and `POST /api/invites` refuses an unknown role (`Unknown role.`)
+  instead of silently downgrading it to `MEMBER`.
+
+
+
 
 
 

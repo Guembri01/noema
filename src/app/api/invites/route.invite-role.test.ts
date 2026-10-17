@@ -124,4 +124,21 @@ describe("POST /api/invites — the role an invitation carries", () => {
       expect.objectContaining({ data: expect.objectContaining({ role: "MEMBER" }) }),
     );
   });
+
+  it.each(["OWNER", "ROOT", "admin", "superuser"])(
+    "refuses the unknown role %s instead of downgrading it to member",
+    async (role) => {
+      const response = await post({
+        target: "workspace",
+        workspaceId: "ws-1",
+        email: "mate@example.test",
+        role,
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "Unknown role." });
+      expect(h.inviteCreate).not.toHaveBeenCalled();
+      expect(h.inviteDeleteMany).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -178,11 +178,6 @@ export async function signupAction(
     return { error: PASSWORD_DISABLED_ERROR };
   }
 
-
-  // B27 puts the password-strategy gate here — as the first statement of the
-  // action, before a budget slot is spent. The place is kept for it; the gate
-  // itself is not part of this merge.
-
   const parsed = signupSchema.safeParse({
     name: formData.get("name"),
     email: formData.get("email"),
@@ -252,11 +247,6 @@ export async function loginAction(
   if (!passwordStrategyEnabled(process.env)) {
     return { error: PASSWORD_DISABLED_ERROR };
   }
-
-
-  // B27 puts the password-strategy gate here — as the first statement of the
-  // action, before a budget slot is spent. The place is kept for it; the gate
-  // itself is not part of this merge.
 
   const parsed = loginSchema.safeParse({
     email: formData.get("email"),
