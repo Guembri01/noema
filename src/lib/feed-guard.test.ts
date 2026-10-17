@@ -4,6 +4,7 @@ import {
   isBlockedFeedTarget,
   isBlockedIpLiteral,
   safeFetchFeed,
+  safeFetchGuarded,
 } from "./feed-guard";
 
 /**
@@ -217,6 +218,57 @@ describe("safeFetchFeed - guarded fetch with redirect re-validation", () => {
     const fetchFn = vi.fn();
     fetchFn.mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:9200"));
     await expect(safeFetchFeed("http://93.184.216.34/c", undefined, { fetchFn })).resolves.toBeNull();
+  });
+});
+
+/**
+ * `safeFetchGuarded` is the shared entry point (B10): the calendar path uses
+ * `safeFetchFeed`, the link-preview route uses the guarded result directly so
+ * it can tell a refused target from a broken one.
+ */
+describe("safeFetchGuarded - result shape and re-validation", () => {
+  it("reports a refused target as blocked, before any fetch", async () => {
+    dns.lookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+    const fetchFn = vi.fn();
+    const result = await safeFetchGuarded("http://evil.test/feed", undefined, { fetchFn });
+    expect(result).toEqual({ ok: false, reason: "blocked" });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("reports a network failure as failed, not as blocked", async () => {
+    resolvePublic();
+    const fetchFn = vi.fn();
+    fetchFn.mockRejectedValue(new Error("connect ETIMEDOUT"));
+    const result = await safeFetchGuarded("https://example.com/feed", undefined, { fetchFn });
+    expect(result).toEqual({ ok: false, reason: "failed" });
+  });
+
+  it("returns the final URL of a followed redirect", async () => {
+    resolvePublic();
+    const fetchFn = vi.fn();
+    fetchFn
+      .mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: { location: "https://www.example.org/x" } }),
+      )
+      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+    const result = await safeFetchGuarded("https://example.com/feed", undefined, { fetchFn });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.finalUrl).toBe("https://www.example.org/x");
+    expect(result.response.status).toBe(200);
+  });
+
+  it("re-checks a response.url that points somewhere else", async () => {
+    resolvePublic();
+    const fetchFn = vi.fn();
+    fetchFn.mockImplementation(async () => {
+      const response = new Response("ok", { status: 200 });
+      // A `fetch` that followed the redirect on its own reports the final URL.
+      Object.defineProperty(response, "url", { value: "http://169.254.169.254/secret" });
+      return response;
+    });
+    const result = await safeFetchGuarded("https://example.com/feed", undefined, { fetchFn });
+    expect(result).toEqual({ ok: false, reason: "blocked" });
   });
 });
 
