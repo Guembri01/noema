@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ScrollText } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
 import { getWorkspaceBySlug, getWorkspaceMembers } from "@/server/queries";
@@ -21,6 +22,8 @@ import {
   parseAuditQuery,
 } from "@/lib/audit-engine-query";
 import { t } from "@/lib/i18n";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export const metadata = { title: "Audit log" };
 
@@ -159,10 +162,12 @@ export default async function AuditEnginePage({
       <Link href={`/w/${workspace.slug}/settings`} className="text-xs text-muted hover:underline">
         ← {t(locale, "settings")}
       </Link>
-      <h1 className="mb-2 mt-3 text-2xl font-semibold tracking-tight">
-        {t(locale, "activityHeading")}
-      </h1>
-      <p className="mb-6 text-sm text-muted">{t(locale, "activityIntro")}</p>
+      <header className="mb-6 mt-3">
+        <h1 className="text-[28px] font-semibold tracking-[-0.02em]">
+          {t(locale, "activityHeading")}
+        </h1>
+        <p className="mt-2 text-sm text-muted">{t(locale, "activityIntro")}</p>
+      </header>
 
       <div className="mb-6 flex flex-wrap gap-3 text-xs">
         <span className="rounded border border-border px-2 py-1 text-fg">
@@ -316,9 +321,16 @@ export default async function AuditEnginePage({
       </div>
 
       {items.length === 0 ? (
-        <p className="rounded border border-border px-4 py-8 text-center text-sm text-muted">
-          {t(locale, "noResults")}
-        </p>
+        <EmptyState
+          icon={<ScrollText className="h-5 w-5" />}
+          title={t(locale, "noResults")}
+          description="No audit events match the current filters."
+          primaryAction={
+            <Button asChild variant="secondary">
+              <Link href={base}>Clear filters</Link>
+            </Button>
+          }
+        />
       ) : query.grouped ? (
         <div className="space-y-6">
           {groups.map((group) => (

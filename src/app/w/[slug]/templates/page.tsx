@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, LayoutGrid } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { getWorkspaceBySlug } from "@/server/queries";
@@ -16,6 +16,8 @@ import {
   type TemplateSortKey,
 } from "@/lib/template-gallery";
 import { t } from "@/lib/i18n";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export const metadata = { title: "Templates" };
 
@@ -195,10 +197,12 @@ export default async function TemplatesPage({
       >
         <ChevronLeft className="h-3.5 w-3.5" /> {t(locale, "home")}
       </Link>
-      <h1 className="mt-2 text-3xl font-bold tracking-tight">{t(locale, "templates")}</h1>
-      <p className="mt-2 text-sm text-muted">
-        {workspace.name} · {templates.length}
-      </p>
+      <header className="mb-6 mt-2">
+        <h1 className="text-[28px] font-semibold tracking-[-0.02em]">{t(locale, "templates")}</h1>
+        <p className="mt-2 text-sm text-muted">
+          {workspace.name} · {templates.length}
+        </p>
+      </header>
 
       <form className="mt-6 flex flex-wrap items-center gap-2">
         <input
@@ -232,7 +236,17 @@ export default async function TemplatesPage({
       </form>
 
       {templates.length === 0 ? (
-        <p className="mt-8 text-sm text-muted">{t(locale, "noResults")}</p>
+        <EmptyState
+          className="mt-8"
+          icon={<LayoutGrid className="h-5 w-5" />}
+          title={t(locale, "noResults")}
+          description="Save a database row as a template to reuse it here."
+          primaryAction={
+            <Button asChild>
+              <Link href={`/w/${workspace.slug}`}>Browse templates</Link>
+            </Button>
+          }
+        />
       ) : (
         <div className="mt-8 space-y-8">
           <section>

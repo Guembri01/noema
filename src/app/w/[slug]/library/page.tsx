@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { FileText } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { getPageTree, getWorkspaceBySlug } from "@/server/queries";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export const metadata = { title: "Library" };
 
@@ -34,7 +37,7 @@ export default async function LibraryPage({
         {label} · {nodes.length}
       </h2>
       {nodes.length === 0 ? (
-        <p className="text-sm text-muted">{empty}</p>
+        <EmptyState variant="compact" title={empty} />
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {nodes.map((node) => (
@@ -66,14 +69,32 @@ export default async function LibraryPage({
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
-      <p className="text-sm text-muted">Workspace</p>
-      <h1 className="mt-1 text-3xl font-bold tracking-tight">Library</h1>
-      <p className="mt-2 text-sm text-muted">
-        Everything in {workspace.name}, {tree.length} item
-        {tree.length === 1 ? "" : "s"}.
-      </p>
-      {section("Databases", databases, "No databases yet.")}
-      {section("Pages", pages, "No pages yet.")}
+      <header className="mb-6">
+        <p className="text-sm text-muted">Workspace</p>
+        <h1 className="mt-1 text-[28px] font-semibold tracking-[-0.02em]">Library</h1>
+        <p className="mt-2 text-sm text-muted">
+          Everything in {workspace.name}, {tree.length} item
+          {tree.length === 1 ? "" : "s"}.
+        </p>
+      </header>
+
+      {tree.length === 0 ? (
+        <EmptyState
+          icon={<FileText className="h-5 w-5" />}
+          title="Nothing in this workspace yet"
+          description="Create a page or a database to start building your library."
+          primaryAction={
+            <Button asChild>
+              <Link href={`/w/${workspace.slug}`}>New page</Link>
+            </Button>
+          }
+        />
+      ) : (
+        <>
+          {section("Databases", databases, "No databases yet.")}
+          {section("Pages", pages, "No pages yet.")}
+        </>
+      )}
     </div>
   );
 }

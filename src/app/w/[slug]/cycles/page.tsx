@@ -49,13 +49,23 @@ export default async function CyclesPage({ params }: { params: Promise<{ slug: s
       >
         <ChevronLeft className="h-3.5 w-3.5" /> Back to {workspace.name}
       </Link>
-      <h1 className="mt-2 text-[32px] font-bold tracking-[-0.02em]">Cycles</h1>
-      <p className="mt-1 mb-6 text-sm text-muted">
-        Time-box the work, commit to an estimate, and see what actually shipped. Schedule tickets from
-        the ticket drawer — pick a cycle under “Scheduled in”.
-      </p>
+      <header className="mb-6 mt-2">
+        <h1 className="text-[28px] font-semibold tracking-[-0.02em]">Cycles</h1>
+        <p className="mt-2 text-sm text-muted">
+          Time-box the work, commit to an estimate, and see what actually shipped. Schedule tickets from
+          the ticket drawer — pick a cycle under “Scheduled in”.
+        </p>
+      </header>
 
-      <CyclesBoard workspaceId={workspace.id} cycles={rows} locale={user.locale ?? "en"} />
+      {/* Cycles are server-fetched before this renders, so the board is not in
+          its own loading state here; the route-level `loading.tsx` carries the
+          skeleton. The prop stays wired for the client refetch path. */}
+      <CyclesBoard
+        workspaceId={workspace.id}
+        cycles={rows}
+        locale={user.locale ?? "en"}
+        loading={false}
+      />
     </div>
   );
 }

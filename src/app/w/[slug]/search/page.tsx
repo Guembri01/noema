@@ -7,6 +7,7 @@ import { pageScopeFor } from "@/lib/guest-access";
 import { getWorkspaceBySlug, searchPagesPaged } from "@/server/queries";
 import { t } from "@/lib/i18n";
 import { SearchResults } from "@/components/search-results";
+import { EmptyState } from "@/components/ui/empty-state";
 import { truncate } from "@/lib/utils";
 import { refineByRelevance } from "@/lib/search-ranking";
 import { filterByType, parseTypeScope, type SearchType } from "@/lib/fuzzy";
@@ -88,7 +89,12 @@ export default async function SearchPage({
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
-      <h1 className="mb-5 text-2xl font-semibold tracking-tight">{t(locale, "search")}</h1>
+      <header className="mb-6">
+        <h1 className="text-[28px] font-semibold tracking-[-0.02em]">{t(locale, "search")}</h1>
+        <p className="mt-2 text-sm text-muted">
+          Find pages and databases by title and content across the workspace.
+        </p>
+      </header>
 
       <form method="GET" className="relative">
         {searchType && <input type="hidden" name="type" value={searchType} />}
@@ -118,7 +124,13 @@ export default async function SearchPage({
           }))}
           nextOffset={paged.nextOffset}
         />
-      ) : null}
+      ) : (
+        <EmptyState
+          icon={<Search className="h-5 w-5" />}
+          title="Search the workspace"
+          description="Type a title or a phrase from a page to find it here."
+        />
+      )}
    </div>
   );
 }
