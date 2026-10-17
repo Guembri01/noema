@@ -41,7 +41,6 @@ import {
 } from "@/server/actions/page-menu";
 import { setPageTeamspaceAction } from "@/server/actions/teamspaces";
 import { WhoHasAccess } from "@/components/who-has-access";
-import { FloatingLayer } from "@/components/ui/floating-layer";
 import { ShareDialog } from "@/components/share-dialog";
 import { NotionImportDialog } from "@/components/notion-import-dialog";
 import {
@@ -1214,7 +1213,6 @@ export function PageTitle({
         onShare={() => setShareOpen(true)}
         iconMenu={
           showEmoji || showCover ? (
-            <FloatingLayer>
             <div
               role="dialog"
               aria-label={showEmoji ? "Pick an icon" : "Pick a cover"}
@@ -1264,7 +1262,6 @@ export function PageTitle({
                 </div>
               )}
             </div>
-            </FloatingLayer>
           ) : null
         }
         undoRedo={
