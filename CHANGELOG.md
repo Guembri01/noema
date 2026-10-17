@@ -315,6 +315,14 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   framework instead of on this repository. The hand-off now refuses such a
   path (a backslash counts as a separator here, too) and keeps serving the
   request as it is.
+- The data-subject erasure now removes the follow, favorite and notification
+  rows of the subject. The erasure loaded the kinds `user`, `page`, `comment`,
+  `reaction`, `version` and `shareLink` — the three link rows were missing —
+  and the user is pseudonymised rather than deleted, so the account kept
+  following the pages and kept receiving the `page.updated` notifications
+  with the **page title** in the payload. The three kinds are now entities of
+  the existing engine: the export (Art. 15) lists them, a legal hold keeps
+  them, and the plan deletes the whole row.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.

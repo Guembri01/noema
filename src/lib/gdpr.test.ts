@@ -65,9 +65,19 @@ const RECORDS: DataSubjectRecord[] = [
 ];
 
 describe("PERSONAL_DATA_FIELDS registry", () => {
-  it("registers exactly the six entity kinds", () => {
+  it("registers exactly the nine entity kinds", () => {
     expect(Object.keys(PERSONAL_DATA_FIELDS).sort()).toEqual([...ENTITY_KINDS].sort());
-    expect(ENTITY_KINDS).toEqual(["user", "page", "comment", "reaction", "version", "shareLink"]);
+    expect(ENTITY_KINDS).toEqual([
+      "user",
+      "page",
+      "comment",
+      "reaction",
+      "version",
+      "shareLink",
+      "pageFollow",
+      "favorite",
+      "notification",
+    ]);
   });
 
   it("gives every entity kind at least one personal field", () => {
@@ -208,6 +218,9 @@ describe("buildExportPlan", () => {
       reaction: 1,
       version: 1,
       shareLink: 1,
+      pageFollow: 0,
+      favorite: 0,
+      notification: 0,
     });
     expect(bundle.total).toBe(7);
   });
@@ -238,6 +251,9 @@ describe("buildExportPlan", () => {
       reaction: 0,
       version: 0,
       shareLink: 0,
+      pageFollow: 0,
+      favorite: 0,
+      notification: 0,
     });
   });
 
@@ -511,5 +527,86 @@ describe("summarizePlan", () => {
       fields: [],
     });
     expect(summary.text).toBe("Erase 0 fields across 0 records: 0 anonymized, 0 deleted, 0 retained.");
+  });
+});
+
+/**
+ * B117 — the link rows: the pages the subject follows, the pages they
+ * favourite and the notifications in their inbox. They are rows without
+ * content of their own — what they hold is the relation between the subject
+ * and someone else's content — so the erasure removes them as a whole, and
+ * their personal columns (the owner, the followed page, the event type and the
+ * payload with the page title) belong in the subject's export.
+ */
+const LINK_RECORDS: DataSubjectRecord[] = [
+  record({
+    entity: "pageFollow",
+    id: "pf_1",
+    fields: { userId: SUBJECT, pageId: "pg_1", createdAt: "2026-01-03T00:00:00.000Z" },
+  }),
+  record({
+    entity: "favorite",
+    id: "fv_1",
+    fields: { userId: SUBJECT, pageId: "pg_2" },
+  }),
+  record({
+    entity: "notification",
+    id: "nt_1",
+    fields: {
+      userId: SUBJECT,
+      type: "page.updated",
+      payload: { pageId: "pg_1", title: "Roadmap", actorId: "u2" },
+      read: false,
+    },
+  }),
+];
+
+describe("the link rows (B117)", () => {
+  it("counts them as their own entity kinds", () => {
+    const bundle = buildExportPlan(LINK_RECORDS, SUBJECT);
+    expect(bundle.counts.pageFollow).toBe(1);
+    expect(bundle.counts.favorite).toBe(1);
+    expect(bundle.counts.notification).toBe(1);
+    expect(bundle.total).toBe(3);
+  });
+
+  it("exports the notification payload — the page title is the subject's data", () => {
+    const bundle = buildExportPlan(LINK_RECORDS, SUBJECT);
+    const notification = bundle.entries.find((entry) => entry.entity === "notification");
+    expect(notification?.fields).toEqual({
+      userId: SUBJECT,
+      type: "page.updated",
+      payload: { pageId: "pg_1", title: "Roadmap", actorId: "u2" },
+    });
+  });
+
+  it("exports the pages the subject follows and favourites", () => {
+    const bundle = buildExportPlan(LINK_RECORDS, SUBJECT);
+    const follow = bundle.entries.find((entry) => entry.entity === "pageFollow");
+    const favorite = bundle.entries.find((entry) => entry.entity === "favorite");
+    expect(follow?.fields.pageId).toBe("pg_1");
+    expect(favorite?.fields.pageId).toBe("pg_2");
+  });
+
+  it("plans a delete for every personal column of a link row", () => {
+    const plan = buildErasurePlan(LINK_RECORDS, SUBJECT);
+    expect(plan.operations).toHaveLength(7);
+    expect(plan.operations.every((op) => op.action === "delete")).toBe(true);
+    expect(plan.counts).toEqual({ delete: 7, anonymize: 0, retain: 0 });
+    expect(validateErasurePlan(plan).ok).toBe(true);
+  });
+
+  it("retains a link row under legal hold", () => {
+    const held = record({
+      entity: "notification",
+      id: "nt_hold",
+      legalHold: true,
+      fields: { userId: SUBJECT, type: "page.updated", payload: { title: "Roadmap" } },
+    });
+    const plan = buildErasurePlan([held], SUBJECT);
+    expect(plan.operations.every((op) => op.action === "retain-legal")).toBe(true);
+    expect(plan.retained).toEqual([
+      { entity: "notification", id: "nt_hold", reason: "legal hold" },
+    ]);
   });
 });

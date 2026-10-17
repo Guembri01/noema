@@ -27,7 +27,7 @@ import {
  * layer over the pure `@/lib/gdpr` engine.
  *
  * The signed-in user is the data subject. `loadDataControlsAction` loads the
- * subject's rows from the six personal-data entities, hands them to
+ * subject's rows from the nine personal-data entities, hands them to
  * `buildExportPlan`/`buildErasurePlan`, and returns the export bundle (with a
  * `redactExport` preview) plus the erasure plan and its `validateErasurePlan`
  * audit. `eraseSubjectDataAction` re-loads, refuses unless the plan validates,
@@ -39,6 +39,12 @@ import {
  *  - a `delete` on a NULLABLE column writes SQL NULL; on a required column
  *    (only `User.passwordHash`) it writes an unusable tombstone, so the row
  *    stays valid but the value can never match again;
+ *  - a `delete` on a link row (`PageFollow`, `Favorite`, `Notification`)
+ *    removes the whole row: such a row holds nothing but the relation between
+ *    the subject and someone else's content, so what would be left of it (the
+ *    page id, the event type) is no longer the subject's data — and the
+ *    anonymised account must not keep following pages or keep receiving
+ *    notifications;
  *  - an `anonymize` writes the deterministic `anonymizeValue` pseudonym, except
  *    for JSON columns, which are erased to NULL (a pseudonymous JSON document
  *    is meaningless);
@@ -131,6 +137,12 @@ function recordLabel(record: DataSubjectRecord): string {
       return text("emoji") || record.id;
     case "shareLink":
       return text("token").slice(0, 10) || record.id;
+    case "pageFollow":
+      return text("pageId") || record.id;
+    case "favorite":
+      return text("pageId") || record.id;
+    case "notification":
+      return text("type") || record.id;
     default:
       return record.id;
   }
@@ -145,7 +157,17 @@ async function loadSubjectRecords(
   subjectId: string,
   heldKeys: ReadonlySet<string>,
 ): Promise<DataSubjectRecord[]> {
-  const [user, pages, comments, reactions, versions, shareLinks] = await Promise.all([
+  const [
+    user,
+    pages,
+    comments,
+    reactions,
+    versions,
+    shareLinks,
+    pageFollows,
+    favorites,
+    notifications,
+  ] = await Promise.all([
     prisma.user.findUnique({
       where: { id: subjectId },
       select: {
@@ -185,6 +207,21 @@ async function loadSubjectRecords(
     prisma.shareLink.findMany({
       where: { page: { createdById: subjectId } },
       select: { id: true, token: true, passwordHash: true, pageId: true, permission: true, expiresAt: true },
+    }),
+    // The link rows: the pages the subject follows, the pages they favourite
+    // and the notifications in their inbox. Without them the anonymised
+    // account would keep following pages and keep receiving their titles.
+    prisma.pageFollow.findMany({
+      where: { userId: subjectId },
+      select: { id: true, userId: true, pageId: true },
+    }),
+    prisma.favorite.findMany({
+      where: { userId: subjectId },
+      select: { id: true, userId: true, pageId: true },
+    }),
+    prisma.notification.findMany({
+      where: { userId: subjectId },
+      select: { id: true, userId: true, type: true, payload: true },
     }),
   ]);
 
@@ -258,6 +295,33 @@ async function loadSubjectRecords(
       subjectId,
       legalHold: held("shareLink", shareLink.id),
       fields: { ...shareLink, expiresAt: shareLink.expiresAt?.toISOString() ?? null },
+    });
+  }
+  for (const pageFollow of pageFollows) {
+    records.push({
+      entity: "pageFollow",
+      id: pageFollow.id,
+      subjectId,
+      legalHold: held("pageFollow", pageFollow.id),
+      fields: { ...pageFollow },
+    });
+  }
+  for (const favorite of favorites) {
+    records.push({
+      entity: "favorite",
+      id: favorite.id,
+      subjectId,
+      legalHold: held("favorite", favorite.id),
+      fields: { ...favorite },
+    });
+  }
+  for (const notification of notifications) {
+    records.push({
+      entity: "notification",
+      id: notification.id,
+      subjectId,
+      legalHold: held("notification", notification.id),
+      fields: { ...notification },
     });
   }
   return records;
@@ -383,6 +447,21 @@ async function applyShareLink(
 }
 
 /**
+ * Remove one link row (`PageFollow`, `Favorite`, `Notification`). The row is
+ * the personal datum: it holds the relation between the subject and someone
+ * else's content and nothing else, so the erasure takes the whole row — the
+ * anonymised account must not keep following pages or keep receiving
+ * notifications. A row without a `delete` (a held one) stays untouched.
+ */
+async function applyLinkRow(
+  operations: readonly ErasureOperation[],
+  remove: () => Promise<unknown>,
+): Promise<void> {
+  if (!operations.some((op) => op.action === "delete")) return;
+  await remove();
+}
+
+/**
  * Apply a validated erasure plan in one transaction. Held records are skipped
  * entirely (the hold wins). Returns the count of records written and retained.
  */
@@ -421,6 +500,15 @@ async function applyErasurePlan(
         break;
       case "shareLink":
         await applyShareLink(tx, record.id, operations);
+        break;
+      case "pageFollow":
+        await applyLinkRow(operations, () => tx.pageFollow.delete({ where: { id: record.id } }));
+        break;
+      case "favorite":
+        await applyLinkRow(operations, () => tx.favorite.delete({ where: { id: record.id } }));
+        break;
+      case "notification":
+        await applyLinkRow(operations, () => tx.notification.delete({ where: { id: record.id } }));
         break;
       default:
         break;
