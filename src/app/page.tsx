@@ -71,7 +71,7 @@ export default async function Home() {
           <a
             href={PROJECT_REPOSITORY}
             target="_blank"
-            rel="noreferrer"
+            rel="noreferrer noopener"
             className="inline-flex h-10 items-center rounded-md border border-border px-4 text-sm font-medium hover:bg-surface-2"
           >
             View source

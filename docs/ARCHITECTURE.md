@@ -162,6 +162,18 @@ stored before the write-time gate existed, or written by a client that does not
 run the document sanitiser (the MCP tool), can never turn into a live
 `javascript:` link.
 
+Every link that opens a new tab carries `rel="noreferrer noopener"`: the two
+tokens cut the `window.opener` the opened document would otherwise get (the
+reverse-tabnabbing trick) and the `Referer` header. The rule is **checked
+mechanically** by
+[`scripts/check-target-blank-links.mjs`](../scripts/check-target-blank-links.mjs):
+the gate scans the tree for the links that open a new browsing context — the
+19 of them, including the conditional `target`s a grep for `target="_blank"`
+never sees — and fails when one of them does not carry both tokens. Its
+regression test
+([`scripts/check-target-blank-links.test.mjs`](../scripts/check-target-blank-links.test.mjs))
+holds every shape the gate has to report.
+
 ## Databases & views
 
 `DatabaseView` (client) receives serialized properties, views and rows. It renders

@@ -53,6 +53,7 @@ workflow-permission gate runs there as part of `npm test`.
 | `npm run check:i18n` | Every `t(locale, "key")` exists in the catalogue |
 | `npm run check:client` | No server-only module leaked into a client bundle |
 | `npm run check:use-server` | Every server action file is marked correctly |
+| `npm run check:target-blank` | Every link that opens a new tab carries `rel="noreferrer noopener"` |
 
 `npm run check:fast` is the inner loop: typecheck + lint + the unit tests that
 touch your changed files. It is the one to run while you work.

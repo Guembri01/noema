@@ -191,7 +191,7 @@ export function SidebarMeetings({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm">
                         {href ? (
-                          <a href={href} target="_blank" rel="noreferrer" className="hover:underline">
+                          <a href={href} target="_blank" rel="noreferrer noopener" className="hover:underline">
                             {event.title}
                           </a>
                         ) : (

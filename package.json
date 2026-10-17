@@ -70,6 +70,7 @@
     "check:workflow-permissions": "node scripts/check-workflow-permissions.mjs",
     "check:use-server": "node scripts/check-use-server.mjs",
     "check:parent-scope": "node scripts/check-parent-scope.mjs",
+    "check:target-blank": "node scripts/check-target-blank-links.mjs",
     "check:design": "node scripts/check-design-system.mjs --check",
     "design:report": "node scripts/check-design-system.mjs",
     "check:motion": "node scripts/check-motion.mjs --check",

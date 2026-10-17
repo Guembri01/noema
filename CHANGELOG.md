@@ -565,6 +565,17 @@ list marks it as **No access**.
   app's origin for every member who opened the table or the page. Every
   stored URL now passes the shared href allowlist before it reaches an `href`
   (`http`, `https`, `mailto`, `tel` and safe relative paths).
+- Every link that opens a new tab now carries `rel="noreferrer noopener"`.
+  Six of them wrote `noreferrer` alone — five with a literal
+  `target="_blank"`, one behind a conditional `target` that a grep for
+  `target="_blank"` never sees — so the attribute was inconsistent and a
+  reader could not tell whether the difference was deliberate. Modern browsers
+  imply `noopener` for `target="_blank"`, so the reverse-tabnabbing was
+  largely mitigated already; what was left was the inconsistency, and a
+  convention only some files follow is not a control. The rule is a gate now:
+  `npm run check:target-blank` (`scripts/check-target-blank-links.mjs`, with
+  the regression test CI runs) scans the tree for the links that open a new
+  browsing context and fails when one of them does not carry both tokens.
 
 
 
