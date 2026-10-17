@@ -6,13 +6,13 @@ import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { DocRenderer } from "@/components/doc-renderer";
+import { CopyLinkButton } from "@/components/share-dialog";
 import {
-  CopyLinkButton,
   coverBannerStyle,
   isSharedPageUnavailable,
   readingMeasure,
   usesWideMeasure,
-} from "@/components/share-dialog";
+} from "@/lib/share-page";
 import { Z } from "@/lib/design-tokens";
 import { isEmoji, pageIconToCss, parsePageIcon } from "@/lib/page-icon";
 import { cn } from "@/lib/utils";

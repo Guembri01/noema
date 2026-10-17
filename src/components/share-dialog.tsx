@@ -12,13 +12,6 @@ import {
   type ShareOptions,
 } from "@/server/actions/share";
 import { useAction } from "@/lib/actions-client";
-import {
-  DEFAULT_COVER_POSITION,
-  formatObjectPosition,
-  parseCoverPosition,
-  type CoverPosition,
-} from "@/lib/cover-position";
-import { GRADIENTS, coverCss, type GradientId } from "@/lib/page-cover";
 import { t } from "@/lib/i18n";
 import { generateShortCode, isValidShortCode, shortUrl } from "@/lib/short-link";
 import { cn } from "@/lib/utils";
@@ -106,140 +99,12 @@ export const COPY_FEEDBACK_MS = 1500;
 /* ------------------------------------------------------------------------- *
  * Public share-page model
  *
- * The public page (`src/app/s/[token]/page.tsx`) is a server component and may
- * only export route symbols, so the pure decisions it makes live here and are
- * imported. They are all DOM-free and DB-free: whether a link is still
- * available, whether the document embeds a database (and so wants the wide
- * reading measure) and how a stored cover becomes a banner.
+ * The pure decisions the public page makes — whether a link is available,
+ * whether the document embeds a database, how a stored cover becomes a banner —
+ * live in `@/lib/share-page` and are re-used here. They are *not* defined in this
+ * file: it is a client module, so a non-component export would become a client
+ * reference and the server component could not call it. See that module's header.
  * ------------------------------------------------------------------------- */
-
-/** Reading measure for a prose page (§3: comfortable measure). */
-export const PROSE_MEASURE = "max-w-[720px]";
-/** Reading measure for a page containing databases — wide enough for tables. */
-export const WIDE_MEASURE = "max-w-[1100px]";
-
-/** The wrapper width for a page, widened when it embeds a database. */
-export function readingMeasure(hasDatabase: boolean): string {
-  return hasDatabase ? WIDE_MEASURE : PROSE_MEASURE;
-}
-
-/** Doc node types that make a page "contain a database". */
-const DATABASE_NODE_TYPES: ReadonlySet<string> = new Set([
-  "linkedDatabase",
-  "database",
-  "inlineDatabase",
-  "inline_database",
-  "databaseView",
-]);
-
-/**
- * Whether a stored document embeds a database block. Walks the ProseMirror tree
- * generically (unknown shapes are ignored) and is cycle-safe, so malformed or
- * hostile content reads as "no database" rather than hanging.
- */
-export function documentHasDatabase(content: unknown): boolean {
-  const root =
-    content && typeof content === "object" ? (content as { content?: unknown }) : null;
-  const stack: unknown[] = Array.isArray(root?.content) ? [...root.content] : [];
-  const seen = new Set<unknown>();
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (!node || typeof node !== "object" || seen.has(node)) continue;
-    seen.add(node);
-    const record = node as { type?: unknown; content?: unknown };
-    if (typeof record.type === "string" && DATABASE_NODE_TYPES.has(record.type)) return true;
-    if (Array.isArray(record.content)) {
-      for (const child of record.content) stack.push(child);
-    }
-  }
-  return false;
-}
-
-/** A page wants the wide measure when it is a database or embeds one. */
-export function usesWideMeasure(page: {
-  type?: string | null;
-  content?: unknown;
-}): boolean {
-  return page.type === "DATABASE" || documentHasDatabase(page.content);
-}
-
-/** Coerce a Date or ISO string to epoch millis, or `null` when unusable. */
-function toEpoch(value: Date | string | null | undefined): number | null {
-  if (value instanceof Date) {
-    const ms = value.getTime();
-    return Number.isFinite(ms) ? ms : null;
-  }
-  if (typeof value === "string") {
-    const ms = Date.parse(value);
-    return Number.isFinite(ms) ? ms : null;
-  }
-  return null;
-}
-
-/**
- * Whether a shared page should show the "no longer available" state: a missing
- * link, a soft-deleted page, or a link whose expiry has passed. The expiry
- * instant itself counts as expired (matching the guest-grant engine), and a
- * corrupt/absent expiry never hides a live page.
- */
-export function isSharedPageUnavailable(
-  link: { expiresAt?: Date | string | null } | null | undefined,
-  page: { deletedAt?: Date | string | null } | null | undefined,
-  now: Date = new Date(),
-): boolean {
-  if (!link || !page) return true;
-  if (page.deletedAt) return true;
-  const expiresAt = toEpoch(link.expiresAt);
-  return expiresAt !== null && expiresAt <= now.getTime();
-}
-
-/** Renderable banner: the `background-image` plus its focal point. */
-export type CoverBanner = { backgroundImage: string; backgroundPosition: string };
-
-/** Reverse lookup `coverCss` output → gradient preset id (mirrors the editor). */
-const GRADIENT_ID_BY_CSS: ReadonlyMap<string, GradientId> = new Map(
-  (Object.keys(GRADIENTS) as GradientId[]).map((id) => [GRADIENTS[id], id] as const),
-);
-
-/**
- * Split a stored cover string into its CSS value and the focal point encoded
- * after it (`"<css> <x>% <y>%"`). A cover without a position decodes centred.
- */
-function splitStoredCover(raw: string): { css: string; position: CoverPosition } {
-  const match = raw.match(/^(.*\S)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/);
-  if (!match) return { css: raw, position: { ...DEFAULT_COVER_POSITION } };
-  return {
-    css: match[1],
-    position: parseCoverPosition(`${match[2]}% ${match[3]}%`),
-  };
-}
-
-/**
- * Decode a persisted cover into a safe banner, or `null` for an absent or
- * unrecognised value. Gradients match the catalog by CSS value; an image URL is
- * re-validated through `coverCss`, so a hostile string never becomes a banner.
- * The stored position is threaded into `background-position`.
- */
-export function coverBannerStyle(raw: string | null | undefined): CoverBanner | null {
-  if (typeof raw !== "string" || raw.trim() === "") return null;
-  const { css, position } = splitStoredCover(raw.trim());
-  const gradientId = GRADIENT_ID_BY_CSS.get(css);
-  if (gradientId) {
-    return {
-      backgroundImage: coverCss({ type: "gradient", gradientId }),
-      backgroundPosition: formatObjectPosition(position),
-    };
-  }
-  // Accept both a bare URL and the `url("…")` form the cover encoder writes,
-  // then re-validate the URL through `coverCss` so nothing unsafe paints.
-  const wrapped = css.match(/^url\(\s*"([^"]*)"\s*\)$/);
-  const backgroundImage = coverCss({ type: "image", url: wrapped ? wrapped[1] : css });
-  if (backgroundImage === "") return null;
-  return {
-    backgroundImage,
-    backgroundPosition: formatObjectPosition(position),
-  };
-}
 
 /* ------------------------------------------------------------------------- *
  * Presentational pieces (exported so the share sections can be rendered and
