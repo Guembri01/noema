@@ -75,7 +75,15 @@ export async function setPagePermissionAction(
   if (!target) return { error: "That person is not a member of this workspace." };
 
   if (level === "NONE") {
-    await prisma.pagePermission.deleteMany({ where: { pageId, userId } });
+    // B135: the follow row goes with the permission. A guest whose access to
+    // the page was taken away must not keep the notifications of that page:
+    // the title would still reach them, long after the access was revoked.
+    // The membership removal deletes the follow rows for the same reason
+    // (B37) — this is the same revocation on a smaller scale.
+    await prisma.$transaction([
+      prisma.pagePermission.deleteMany({ where: { pageId, userId } }),
+      prisma.pageFollow.deleteMany({ where: { pageId, userId } }),
+    ]);
   } else {
     await prisma.pagePermission.upsert({
       where: { userId_pageId: { userId, pageId } },
