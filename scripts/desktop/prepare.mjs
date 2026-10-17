@@ -198,17 +198,38 @@ function migrate() {
     console.warn("[noema] prisma CLI/schema not bundled — skipping migrations");
     return;
   }
+
+  const run = (args) =>
+    spawnSync(process.execPath, [cli, ...args, "--schema", schema], {
+      cwd: root,
+      stdio: "pipe",
+      encoding: "utf8",
+      env: process.env,
+    });
+
   console.log("[noema] prisma migrate deploy…");
-  const result = spawnSync(process.execPath, [cli, "migrate", "deploy", "--schema", schema], {
-    cwd: root,
-    stdio: "inherit",
-    env: process.env,
-  });
-  if (result.status !== 0) {
-    // Not fatal: the server still boots, /api/ready reports the problem, and the
-    // app's own diagnostics panel can show it.
-    console.error("[noema] migrations exited with status", result.status);
+  const deployed = run(["migrate", "deploy"]);
+  if (deployed.status === 0) {
+    if (deployed.stdout) process.stdout.write(deployed.stdout);
+    return;
   }
+
+  // P3005: the database has tables but no migration history. That happens
+  // whenever the schema was created with `db push` (which is exactly how this
+  // project's own setup script creates it), and it is not a failure the user can
+  // act on — syncing the schema is the right fallback.
+  const output = `${deployed.stdout || ""}${deployed.stderr || ""}`;
+  if (output.includes("P3005")) {
+    console.log("[noema] existing schema without migration history — syncing with db push…");
+    const pushed = run(["db", "push", "--skip-generate", "--accept-data-loss"]);
+    if (pushed.stdout) process.stdout.write(pushed.stdout);
+    if (pushed.status === 0) return;
+    console.error("[noema] db push exited with status", pushed.status, pushed.stderr || "");
+    return;
+  }
+
+  console.error("[noema] migrations exited with status", deployed.status);
+  if (deployed.stderr) console.error(deployed.stderr);
 }
 
 function main() {

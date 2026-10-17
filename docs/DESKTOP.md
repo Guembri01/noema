@@ -36,7 +36,7 @@ Only four things differ, and they are resolved in **one module**
 │  │ sidecar supervisor  (src-tauri/src/sidecar.rs)         │   │
 │  │  · picks a free loopback port                          │   │
 │  │  · spawns `noema-node` (bundled runtime) on start.cjs  │   │
-│  │  · polls /api/ready until 200 (90 s budget)            │   │
+│  │  · polls /api/health until 200 (90 s budget)            │   │
 │  │  · streams stdout/stderr → logs/noema.log + UI         │   │
 │  │  · restarts with backoff if it dies (500ms…10s)        │   │
 │  │  · stops it cleanly on quit                            │   │
@@ -75,15 +75,26 @@ surgery, no admin rights — and the installer stays a single double-click.
 `prisma migrate deploy` and then requires the Next server. Migrations therefore
 happen on **every launch**: idempotent, cheap, and it means an app update can
 never leave the schema behind the code. If the database is unreachable the server
-still boots, `/api/ready` reports not-ready, and the app's own bootstrap page
+still boots, `/api/health` reports not-ready, and the app's own bootstrap page
 explains it instead of showing a white window.
 
 Other deliberate choices:
 
 - **Loopback only** — the server binds `127.0.0.1` on an ephemeral port chosen by
   the kernel. Nothing is exposed to the network, and two installs run side by side.
+- **Readiness is `/api/health`, not `/api/ready`.** `/api/ready` is a
+  secret-gated ops endpoint that fails closed (401/503) for an unauthenticated
+  caller, so a supervisor polling it would never see the app come up. `/api/health`
+  is the documented unauthenticated liveness+readiness probe (`{ ok, db }`, 503 when
+  the database is unreachable) — and the supervisor distinguishes the two failures:
+  "answered but unhealthy" sends the user to the database field on the bootstrap
+  page, "never answered" is a real bug worth a report.
+- **Migrations are self-healing.** The boot wrapper runs `prisma migrate deploy`
+  and, on `P3005` (tables without migration history — what `prisma db push`
+  leaves behind), falls back to `db push` so an existing database is adopted
+  instead of refused.
 - **The shell survives a dead server** — the window opens immediately on a
-  bundled page and swaps to the app once `/api/ready` answers. If it never does,
+  bundled page and swaps to the app once `/api/health` answers. If it never does,
   that page offers **Retry**, **Open data folder**, **Copy diagnostics**, and a
   **database connection** field.
 - **Rust owns the OS, JavaScript owns the product.** No business logic is

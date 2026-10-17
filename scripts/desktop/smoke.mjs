@@ -4,7 +4,7 @@
  *
  * This is the check that proves the *installer's contents* work: it runs the
  * bundled Node runtime on the staged `server/start.cjs` (which migrates the
- * database and then boots the Next server), waits for `/api/ready`, and fetches
+ * database and then boots the Next server), waits for `/api/health`, and fetches
  * a real page. If this passes, the only thing left that can fail is the webview
  * window itself.
  *
@@ -114,7 +114,7 @@ async function main() {
   while (Date.now() < deadline) {
     if (child.exitCode !== null) break;
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/ready`);
+      const response = await fetch(`http://127.0.0.1:${port}/api/health`);
       status = response.status;
       if (response.ok) {
         ready = true;
@@ -131,7 +131,7 @@ async function main() {
     for (const line of output.split(/\r?\n/).slice(-25)) console.log(`  ${line}`);
     console.log("  ----------------------------\n");
   }
-  check(ready, "GET /api/ready returns 200", ready ? "" : `last status ${status || "no response"}`);
+  check(ready, "GET /api/health returns 200", ready ? "" : `last status ${status || "no response"}`);
 
   if (ready) {
     const page = await fetch(`http://127.0.0.1:${port}/login`);

@@ -97,8 +97,8 @@ pub enum SidecarError {
     NoDataDir,
     #[error("the bundled server is missing: {0} (reinstall the app)")]
     MissingEntry(PathBuf),
-    #[error("server did not become ready within {0:?}")]
-    NotReady(Duration),
+    #[error("server did not become ready within {0:?}: {1}")]
+    NotReady(Duration, String),
     #[error("failed to spawn the server: {0}")]
     Spawn(String),
     #[error("io error: {0}")]
@@ -149,8 +149,41 @@ pub fn ensure_layout(data_dir: &Path) -> std::io::Result<()> {
 
 /// The readiness probe URL for a port. `127.0.0.1` (not `localhost`) so the
 /// check cannot accidentally hit a different resolver family.
+///
+/// This is `/api/health`, not `/api/ready`: the latter is a secret-gated ops
+/// endpoint that fails closed (401/503) for an unauthenticated caller, so a
+/// supervisor polling it would never see the app come up. `/api/health` is the
+/// documented unauthenticated liveness+readiness probe (`{ ok, db }`, 503 when
+/// the database is unreachable).
 pub fn ready_url(port: u16) -> String {
-    format!("http://127.0.0.1:{port}/api/ready")
+    format!("http://127.0.0.1:{port}/api/health")
+}
+
+/// What the readiness probe learned.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Readiness {
+    /// 200 from `/api/health`: the server and its dependencies are up.
+    Ready,
+    /// The server answered, but not with 200 — almost always the database.
+    Unhealthy(u16),
+    /// Nothing answered within the budget.
+    Silent,
+}
+
+impl Readiness {
+    /// A user-facing explanation, so the bootstrap page can say what to fix.
+    pub fn message(&self) -> String {
+        match self {
+            Readiness::Ready => "ready".to_string(),
+            Readiness::Unhealthy(status) => format!(
+                "The local server is running but reports unhealthy (HTTP {status}) — \
+                 usually the database connection. Check the connection string below."
+            ),
+            Readiness::Silent => {
+                "The local server did not answer at all. See the log for details.".to_string()
+            }
+        }
+    }
 }
 
 /// The API base the webview should use.
@@ -208,23 +241,36 @@ pub fn backoff_for(attempt: u32) -> Duration {
     RESTART_BACKOFF[index]
 }
 
-/// Poll `/api/ready` until it answers 200 or the timeout elapses.
-pub async fn wait_until_ready(port: u16, timeout: Duration) -> Result<(), SidecarError> {
-    let client = reqwest::Client::builder()
+/// Poll the health endpoint until it answers 200, or the timeout elapses.
+///
+/// Returns *why* it gave up, so the shell can tell "the database is unreachable"
+/// (the user can fix that on the bootstrap page) apart from "nothing is
+/// listening" (a real bug worth a bug report).
+pub async fn wait_until_ready(port: u16, timeout: Duration) -> Readiness {
+    let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
-        .map_err(|error| SidecarError::Spawn(error.to_string()))?;
+    {
+        Ok(client) => client,
+        Err(_) => return Readiness::Silent,
+    };
     let url = ready_url(port);
     let deadline = tokio::time::Instant::now() + timeout;
+    let mut last_status: Option<u16> = None;
     while tokio::time::Instant::now() < deadline {
         if let Ok(response) = client.get(&url).send().await {
+            let status = response.status().as_u16();
             if response.status().is_success() {
-                return Ok(());
+                return Readiness::Ready;
             }
+            last_status = Some(status);
         }
         tokio::time::sleep(READY_POLL).await;
     }
-    Err(SidecarError::NotReady(timeout))
+    match last_status {
+        Some(status) => Readiness::Unhealthy(status),
+        None => Readiness::Silent,
+    }
 }
 
 /// The bundled server entry point, inside the app's resources.
@@ -321,7 +367,7 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
     spawn_log_pump(app.clone(), receiver);
 
     match wait_until_ready(port, READY_TIMEOUT).await {
-        Ok(()) => {
+        Readiness::Ready => {
             let info = SidecarInfo {
                 api_base: origin,
                 port,
@@ -338,14 +384,19 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
             );
             Ok(info)
         }
-        Err(error) => {
+        readiness => {
+            // Stay on the bootstrap page: it is the surface that can actually fix
+            // this (the database connection string), so navigating would hide the
+            // remedy behind a broken app.
+            let message = readiness.message();
+            logging::line(app, "lifecycle", &message);
             let _ = app.emit(
                 "sidecar://event",
                 SidecarEvent::Failed {
-                    message: error.to_string(),
+                    message: message.clone(),
                 },
             );
-            Err(error)
+            Err(SidecarError::NotReady(READY_TIMEOUT, message))
         }
     }
 }
