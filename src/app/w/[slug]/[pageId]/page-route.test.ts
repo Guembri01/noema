@@ -128,6 +128,21 @@ beforeEach(() => {
     (args: { where?: { createdById?: string; type?: string }; select?: Record<string, unknown> }) => {
       if (args?.where?.type === "DATABASE") return [];
       if (args?.where?.createdById) return [];
+      // The read scope (B90) reads the pages *with* their permissions
+      // relation — the guest's grant sits on `page-shared`.
+      if (args?.select?.permissions) {
+        return [
+          { id: "page-root", parentId: null, teamspaceId: null, createdById: "owner-1", permissions: [] },
+          {
+            id: "page-shared",
+            parentId: "page-root",
+            teamspaceId: null,
+            createdById: "owner-1",
+            permissions: [{ userId: "u1", level: "READ" }],
+          },
+          { id: "page-secret", parentId: "page-root", teamspaceId: null, createdById: "owner-1", permissions: [] },
+        ];
+      }
       if (args?.select?.parentId) {
         return [
           { id: "page-root", parentId: null, teamspaceId: null },
@@ -163,7 +178,10 @@ describe("the page route", () => {
       workspaceId: "ws1",
       type: "DATABASE",
       deletedAt: null,
-      id: { in: ["page-shared", "page-root"] },
+      // The read scope carries the shared page and its subtree — never an
+      // ancestor: `page-root` is the parent of the shared page, so a guest
+      // who was granted the child does not see the parent.
+      id: { in: ["page-shared"] },
     });
   });
 
