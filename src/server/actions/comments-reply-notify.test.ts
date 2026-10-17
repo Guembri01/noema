@@ -102,13 +102,32 @@ describe("addCommentAction → reply dispatch", () => {
       addCommentAction({ pageId: PAGE_ID, body: "a reply", parentId: PARENT_ID }),
     ).resolves.toEqual({ ok: true, id: REPLY_ID });
 
+    // B136: the payload names the workspace, like the other two notification
+    // types do — without it the row cannot be attributed to a workspace.
     expect(writtenReplies()).toEqual([
       {
         userId: MEMBER,
         type: "comment.reply",
-        payload: { pageId: PAGE_ID, commentId: REPLY_ID },
+        payload: { workspaceId: "ws-1", pageId: PAGE_ID, commentId: REPLY_ID },
       },
     ]);
+  });
+
+  it("names the workspace in the payload of a mention (B136)", async () => {
+    db.memberFindMany.mockResolvedValue([
+      { userId: MEMBER, user: { name: "Ada", email: "ada@example.test" } },
+    ]);
+
+    await addCommentAction({ pageId: PAGE_ID, body: "@Ada hello" });
+
+    const rows = db.notificationCreateMany.mock.calls.map(
+      (call) => call[0].data as { userId: string; type: string; payload: unknown }[],
+    );
+    expect(rows[0][0]).toEqual({
+      userId: MEMBER,
+      type: "page.mention",
+      payload: { workspaceId: "ws-1", pageId: PAGE_ID, commentId: REPLY_ID },
+    });
   });
 
   it("asks whether the author of the parent comment still has access", async () => {
@@ -162,12 +181,14 @@ describe("addCommentAction → mention dispatch (unchanged)", () => {
 
     await addCommentAction({ pageId: PAGE_ID, body: "ping @ada" });
 
+    // B136: the payload names the workspace, like the other two notification
+    // types do — without it the row cannot be attributed to a workspace.
     expect(db.notificationCreateMany).toHaveBeenCalledWith({
       data: [
         {
           userId: MEMBER,
           type: "page.mention",
-          payload: { pageId: PAGE_ID, commentId: REPLY_ID },
+          payload: { workspaceId: "ws-1", pageId: PAGE_ID, commentId: REPLY_ID },
         },
       ],
     });
