@@ -213,7 +213,14 @@ export function Sidebar({
   return (
     <aside
       data-testid="sidebar"
-      style={{ width }}
+      style={{
+        width,
+        // Animate structural width changes (keyboard nudges, collapse/expand) on a
+        // token, but never while dragging: a transitioned width would lag the
+        // cursor instead of tracking it 1:1. This mirrors the reference app, which
+        // animates the sidebar and disables the transition for the drag.
+        transition: resizing ? "none" : "width var(--dur-2) var(--ease-smooth)",
+      }}
       className="relative flex h-screen shrink-0 flex-col border-r border-border bg-sidebar"
     >
       <WorkspaceSwitcher
