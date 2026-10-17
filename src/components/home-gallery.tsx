@@ -62,6 +62,11 @@ export type TemplatePreview = {
    * selected/highlighted surface (the accent border is reserved for selection).
    */
   gradient: string;
+  /**
+   * The tag hue the mini-layout tints its status pills with, so the eight
+   * accents are distinguishable at a glance and not only by a faint frame.
+   */
+  hue: string;
   /** Which mini-layout to draw — a board when the template groups by a property. */
   shape: "board" | "table";
 };
@@ -86,6 +91,7 @@ export function templatePreview(
   return {
     accent: safe,
     gradient: `linear-gradient(135deg, var(--tag-${hue}-bg) 0%, var(--surface-2) 100%)`,
+    hue,
     shape: templatePreviewShape(boardBy),
   };
 }
@@ -108,7 +114,17 @@ export function quickStartKinds(): readonly ("page" | "database")[] {
 /** Shared disabled affordance for the gallery's button-cards (pending state). */
 const GALLERY_CARD_STATE = "text-left aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
 
-function MiniTable() {
+/**
+ * A miniature table: a header row, four rows of a title bar, and a status pill
+ * in the trailing column.
+ *
+ * The pills carry the template's accent. Without them the strip was four grey
+ * bars on a faint tint, and the eight gallery cards were hard to tell apart —
+ * the accent only ever showed as the gradient behind. A coloured pill is what a
+ * real database row looks like, and it costs no extra DOM weight.
+ */
+function MiniTable({ hue }: { hue: string }) {
+  const pill = `var(--tag-${hue}-bg)`;
   return (
     <div className="overflow-hidden rounded-sm border border-border-strong bg-bg" aria-hidden>
       <div className="flex items-center gap-1 border-b border-border-strong px-1.5 py-1">
@@ -125,19 +141,34 @@ function MiniTable() {
             className="h-1 rounded-full bg-surface-3"
             style={{ width: `${70 - index * 8}%` }}
           />
-          <span className="ms-auto h-1 w-3 rounded-full bg-surface-3" />
+          <span
+            className="ms-auto h-1.5 w-3 shrink-0 rounded-full"
+            style={{ backgroundColor: pill }}
+          />
         </div>
       ))}
     </div>
   );
 }
 
-function MiniBoard() {
+/**
+ * A miniature board: three columns, with the column's dot in the accent and
+ * fewer cards in each column than the one before it — a board mid-flow, not
+ * three identical stacks.
+ */
+function MiniBoard({ hue }: { hue: string }) {
+  const dot = `var(--tag-${hue}-fg)`;
   return (
     <div className="grid grid-cols-3 gap-1" aria-hidden>
       {[0, 1, 2].map((column) => (
         <div key={column} className="space-y-1 rounded-sm border border-border-strong p-1">
-          <span className="block h-1 w-6 rounded-full bg-surface-3" />
+          <span className="flex items-center gap-1">
+            <span
+              className="h-1 w-1 shrink-0 rounded-full"
+              style={{ backgroundColor: dot }}
+            />
+            <span className="block h-1 w-5 rounded-full bg-surface-3" />
+          </span>
           {[0, 1, 2].slice(0, 3 - column).map((index) => (
             <span
               key={index}
@@ -160,7 +191,11 @@ function TemplatePreview({ accent, boardBy }: { accent: GalleryAccent; boardBy?:
       className="p-2"
       style={{ backgroundImage: preview.gradient }}
     >
-      {preview.shape === "board" ? <MiniBoard /> : <MiniTable />}
+      {preview.shape === "board" ? (
+        <MiniBoard hue={preview.hue} />
+      ) : (
+        <MiniTable hue={preview.hue} />
+      )}
     </div>
   );
 }

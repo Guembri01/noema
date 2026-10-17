@@ -64,6 +64,28 @@ describe("templatePreview", () => {
     expect(preview.accent).toBe("gray");
     expect(preview.gradient).toContain("var(--tag-gray-bg)");
   });
+
+  /**
+   * The accent used to live only in the faint gradient, so the eight cards read
+   * as eight grey wireframes. The mini-layout now tints its status pills with the
+   * same hue, and that hue is what the two views are handed.
+   */
+  it("exposes the tag hue the mini-layout tints with", () => {
+    for (const accent of GALLERY_ACCENTS) {
+      expect(templatePreview(accent, null).hue).toBe(accent);
+    }
+    expect(templatePreview("chartreuse", null).hue).toBe("gray");
+    expect(templatePreview(null, null).hue).toBe("gray");
+  });
+
+  it("tints the pills from a token, never a raw colour", () => {
+    const source = readFileSync(new URL("./home-gallery.tsx", import.meta.url), "utf8");
+    expect(source).toContain("var(--tag-${hue}-bg)");
+    expect(source).toContain("var(--tag-${hue}-fg)");
+    // The pill and the board dot are the only accent-coloured fills; neither may
+    // be a literal colour, or the palette would drift from `tokens.css`.
+    expect(source).not.toMatch(/#[0-9a-f]{3,8}/i);
+  });
 });
 
 describe("templatePreviewShape", () => {
