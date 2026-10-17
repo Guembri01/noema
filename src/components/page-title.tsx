@@ -86,6 +86,7 @@ import {
 import {
   GRADIENTS,
   coverCss,
+  coverKey,
   type CoverValue,
   type GradientId,
 } from "@/lib/page-cover";
@@ -1362,7 +1363,7 @@ export function PageTitle({
                 // Keyed on the image so *changing* the cover crossfades the new one in
                 // (spec: "cover changes — crossfade the image"). Repositioning by drag
                 // does not change the key, so this never fights the pointer.
-                key={storedCover.value}
+                key={coverKey(storedCover.value)}
                 className={cn(
                   "animate-fade aspect-[16/6] max-h-64 w-full bg-cover bg-center bg-no-repeat",
                   canEdit && "cursor-grab touch-none active:cursor-grabbing",

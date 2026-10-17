@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 /**
  * Layout shifts — animating things that *move* rather than things that change state.
@@ -24,6 +24,17 @@ import { useLayoutEffect, useRef } from "react";
  *    `document.body` (the same flag the `u-no-transition` convention uses).
  *  · **never against the OS.** `prefers-reduced-motion: reduce` disables the animation
  *    entirely — items simply appear in place, which is the correct reduced experience.
+ *
+ * Positions are measured as *layout* offsets (`offsetTop`/`offsetLeft`), not as
+ * `getBoundingClientRect()`, because a rect includes the transform this hook itself
+ * applies — measuring a mid-flight element would feed its animation back in as the
+ * baseline. Layout offsets are transform-independent, which also makes it safe to
+ * re-baseline while an animation is still running.
+ *
+ * A `ResizeObserver` re-baselines silently whenever the container's children change
+ * size. Without it the baseline would only refresh on a structural change, so typing a
+ * paragraph taller and *then* reordering a block would animate from a stale snapshot —
+ * a glitch, not a jump, but a glitch. The observer never animates: it only records.
  */
 
 /** Settle time for a displaced element: the panel tier (`--dur-2`). */
@@ -80,22 +91,24 @@ export function useFlipList(
 ): void {
   const positions = useRef(new Map<string, FlipPoint>());
 
+  /** Layout position of every marked child. Transform-independent, by design. */
+  const measure = useCallback((): Map<string, FlipPoint> => {
+    const container = containerRef.current;
+    const next = new Map<string, FlipPoint>();
+    if (!container) return next;
+    for (const child of Array.from(container.querySelectorAll<HTMLElement>(`[${FLIP_ID_ATTRIBUTE}]`))) {
+      const id = child.getAttribute(FLIP_ID_ATTRIBUTE);
+      if (!id) continue;
+      next.set(id, { x: child.offsetLeft, y: child.offsetTop });
+    }
+    return next;
+  }, [containerRef]);
+
   // Measure *after* React has committed but *before* the browser paints, so the
   // compensating transform is never visible as a flash.
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-
-    const measure = (): Map<string, FlipPoint> => {
-      const next = new Map<string, FlipPoint>();
-      for (const child of Array.from(container.querySelectorAll<HTMLElement>(`[${FLIP_ID_ATTRIBUTE}]`))) {
-        const id = child.getAttribute(FLIP_ID_ATTRIBUTE);
-        if (!id) continue;
-        const rect = child.getBoundingClientRect();
-        next.set(id, { x: rect.x, y: rect.y });
-      }
-      return next;
-    };
 
     const after = measure();
     const animate = shouldAnimateLayout({ reducedMotion: prefersReducedMotion(), dragging: isDragging() });
@@ -119,4 +132,20 @@ export function useFlipList(
     positions.current = after;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
+
+  // Content growing (a paragraph getting taller) moves the children without changing
+  // the structure, so refresh the baseline silently. `ResizeObserver` fires on the
+  // container's own box too, which is harmless: re-measuring costs one layout read.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      positions.current = measure();
+    });
+    observer.observe(container);
+    for (const child of Array.from(container.querySelectorAll(`[${FLIP_ID_ATTRIBUTE}]`))) {
+      observer.observe(child);
+    }
+    return () => observer.disconnect();
+  }, [containerRef, measure]);
 }

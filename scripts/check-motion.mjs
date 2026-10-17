@@ -207,9 +207,21 @@ const record = (rule, file, line, snippet) => {
   rule.offenders.push({ file, line, snippet: snippet.trim() });
 };
 
+/**
+ * Blank out comments, keeping every newline so line numbers stay aligned.
+ *
+ * The per-line check below only skipped lines that *start* with a comment marker, so
+ * the interior lines of a multi-line block comment were scanned as code — which is how
+ * a prose sentence ("the page-transition tier from the design spec, 150–250ms") was
+ * reported as an ad-hoc duration. That is a false positive, and worse, it teaches the
+ * wrong lesson: comments must be free to discuss timings.
+ */
+const blankComments = (source) =>
+  source.replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "));
+
 for (const file of files) {
   const raw = readFileSync(file, "utf8");
-  const lines = raw.split(/\r?\n/);
+  const lines = blankComments(raw).split(/\r?\n/);
   const isDragSurface = dragWithoutFreeze(raw, file);
 
   lines.forEach((line, i) => {

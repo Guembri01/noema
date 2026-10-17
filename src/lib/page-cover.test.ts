@@ -4,6 +4,7 @@ import {
   COVER_TYPES,
   GRADIENTS,
   coverCss,
+  coverKey,
   isCoverEmpty,
   resolveCoverUrl,
   validateCover,
@@ -155,5 +156,31 @@ describe("isCoverEmpty", () => {
     expect(isCoverEmpty(IMAGE)).toBe(false);
     expect(isCoverEmpty(GRADIENT)).toBe(false);
     expect(isCoverEmpty(UNSPLASH)).toBe(false);
+  });
+});
+
+/**
+ * The crossfade key: "same cover" must be decided by what the cover *is*, not by the
+ * identity of the object a fresh parse produced — otherwise repositioning a cover
+ * would replay its entrance animation.
+ */
+describe("coverKey", () => {
+  it("distinguishes covers by type and its identifying field", () => {
+    expect(coverKey({ type: "image", url: "https://cdn.example.com/a.png" })).toBe("image:https://cdn.example.com/a.png");
+    expect(coverKey({ type: "gradient", gradientId: "ocean" })).toBe("gradient:ocean");
+    expect(coverKey({ type: "image", url: "https://cdn.example.com/a.png" })).not.toBe(
+      coverKey({ type: "gradient", gradientId: "ocean" }),
+    );
+  });
+
+  it("is stable across equal values that are different objects", () => {
+    const a = { type: "image" as const, url: "https://cdn.example.com/a.png" };
+    expect(coverKey({ ...a })).toBe(coverKey(a));
+  });
+
+  it("is empty for a missing or empty cover", () => {
+    expect(coverKey(null)).toBe("");
+    expect(coverKey(undefined)).toBe("");
+    expect(coverKey({ type: "image", url: "" })).toBe("");
   });
 });

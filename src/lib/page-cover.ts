@@ -146,6 +146,20 @@ export function validateCover(value: unknown): CoverValidation {
  * can never inject CSS or paint a broken banner. Position/size are separate
  * (`cover-position.ts` supplies the focal point).
  */
+/**
+ * A stable string identifying a cover.
+ *
+ * Used as a React key so *changing* the cover replays its crossfade while
+ * repositioning the same cover does not (the key only moves when the cover itself
+ * does). Two covers are the same cover when their type and its identifying field
+ * match — the object identity of a freshly parsed value is irrelevant.
+ */
+export function coverKey(value: CoverValue | null | undefined): string {
+  if (!value || isCoverEmpty(value)) return "";
+  if (value.type === "gradient") return `gradient:${value.gradientId ?? ""}`;
+  return `${value.type}:${value.url ?? ""}`;
+}
+
 export function coverCss(value: CoverValue | null | undefined): string {
   const result = validateCover(value);
   if (!result.valid) return "";
