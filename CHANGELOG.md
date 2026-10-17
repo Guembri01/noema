@@ -39,6 +39,20 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- The workspace export and the trash purge now refuse storage keys that belong
+  to another workspace. A page can reference an upload of a different
+  workspace — a URL that leaked through a share link, a copied image — and the
+  export bundled every `/api/files/…` reference it found, so another tenant's
+  bytes ended up in the zip; purging that page then deleted the other
+  tenant's file from storage. A storage key is now accepted only when it
+  belongs to the workspace being exported or purged, so a foreign reference is
+  skipped and a foreign upload is never removed. The check fails closed: a
+  caller that cannot name its workspace gets nothing.
+- Uploads are written owner-only — a `0600` file inside a `0700` directory —
+  instead of the umask default, so no other user on the host can read another
+  tenant's uploads. The mode is applied when the file is created: uploads
+  written before this change keep the permissions they were created with and
+  have to be rewritten to get the new ones.
 
 ## [1.4.1] — 2026-10-17
 
