@@ -212,6 +212,36 @@ with `OVERLAY_COLLISION_PADDING` (8 px) and `OVERLAY_SIDE_OFFSET` (6 px);
 behaviour, pinned by `dropdown-menu.test.ts`. New *custom* popups must use
 `src/lib/floating.ts` — do not add a third implementation.
 
+### 7.2 The floating corner — one owner, stacked slots
+
+The bottom-right corner is a fixed region that three separate controls wanted:
+the Ask-AI button, the editor's undo/redo bar and the sync notice. Each choosing
+its own inset is how they ended up drawn on top of each other. The corner is a
+single contract, `src/lib/floating-corner.ts`:
+
+```ts
+FLOATING_CORNER = {
+  fab:    "bottom-5 end-5",   // slot 0 · 1.25rem — the Ask-AI button
+  bar:    "bottom-20 end-5",  // slot 1 · 5rem    — transient bars (undo/redo)
+  notice: "bottom-35 end-5",  // slot 2 · 8.75rem — the sync notice
+}
+```
+
+- **One owner**: the Ask-AI button is the *only* control at `bottom-5`. Anything
+  new that floats in this corner takes the next free slot — never the button's.
+- **Stack, don't sit beside**: bars and notices share the button's `end-5` edge
+  and move *up*. Side by side fails on a narrow window — the notice is up to
+  20rem wide, so a horizontal offset would push it off-screen.
+- **Slot maths is derived, not hand-written**: `floatingSlotOffsetRem(slot)`
+  returns `1.25 + slot × (2.5 + 1.25)` rem, from `h-10 w-10` and `--space-5`;
+  the classes above are the whole strings that arithmetic produces.
+- **All three sit at `Z.sticky`**, so their paint order is stable rather than
+  dependent on DOM order.
+- `findFloatingOverlaps()` is the DOM-free predicate the layout must satisfy;
+  `npm run check:floating` measures it in a real browser and fails on an
+  overlap, a control off-screen, a missing control, or a button still visible
+  while the panel it opens is open.
+
 ## 8. States — every interactive element needs all of them
 
 `default` · `hover` · `focus-visible` (`.focus-ring`) · `active` · `disabled`

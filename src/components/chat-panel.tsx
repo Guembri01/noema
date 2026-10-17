@@ -15,7 +15,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowDown,
-  Bot,
   Check,
   CheckCircle2,
   Copy,
@@ -58,6 +57,15 @@ import { describeActionError, safeAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/markdown";
+import { NoemaMark } from "@/components/brand/noema-mark";
+import { ChatModelPicker } from "@/components/chat-model-picker";
+import {
+  effectiveChatModel,
+  readChatModelPreference,
+  writeChatModelPreference,
+  chatModelOverride,
+  type ChatModelInfo,
+} from "@/lib/chat-model";
 import { OPEN_CHAT_EVENT } from "@/components/sidebar-chat";
 import { Z, TAG_HUES, type TagHue } from "@/lib/design-tokens";
 import {
@@ -784,6 +792,7 @@ export function ChatPanel({
   thread,
   threads,
   modelLabel,
+  chatModel,
   locale,
   onClose,
   activePageId = null,
@@ -794,6 +803,8 @@ export function ChatPanel({
   thread: PanelThread | null;
   threads: PanelThread[];
   modelLabel: string;
+  /** How the assistant is configured: drives the picker in the composer. */
+  chatModel?: ChatModelInfo;
   locale: string;
   onClose: () => void;
   /**
@@ -809,6 +820,8 @@ export function ChatPanel({
   const [pending, startTransition] = useTransition();
   const [stream, dispatch] = useReducer(streamReducer, STREAM_INITIAL);
   const [draft, setDraft] = useState("");
+  /** The model chosen for this conversation; `null` until the remembered one is read after mount. */
+  const [modelChoice, setModelChoice] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [optimistic, setOptimistic] = useState<{ id: string; body: string }[]>([]);
   const [error, setError] = useState<{ message: string; retryBody?: string } | null>(null);
@@ -824,6 +837,8 @@ export function ChatPanel({
   const atBottomRef = useRef(true);
 
   const active = threads.find((item) => item.id === activeThreadId) ?? thread ?? null;
+  /** What the next question will actually use: the choice, else the default. */
+  const activeModel = chatModel ? effectiveChatModel(chatModel.model, modelChoice) : "";
   const messages = active?.messages ?? NO_MESSAGES;
 
   // Client-side preview only: this estimates the context budget rendered in the
@@ -838,6 +853,19 @@ export function ChatPanel({
   useEffect(() => {
     if (thread?.id) setActiveThreadId(thread.id);
   }, [thread?.id]);
+
+  // The choice is a per-person preference kept in `localStorage`, so it is read
+  // after mount: reading it during render would desync server and client output.
+  useEffect(() => {
+    if (!chatModel) return;
+    setModelChoice(readChatModelPreference(window.localStorage, workspaceId));
+  }, [chatModel, workspaceId]);
+
+  /** Remember the choice and apply it to the next question. */
+  const chooseModel = (id: string) => {
+    writeChatModelPreference(window.localStorage, workspaceId, id);
+    setModelChoice(id);
+  };
 
   useEffect(() => {
     composerRef.current?.focus();
@@ -983,6 +1011,9 @@ export function ChatPanel({
             body,
             // The page on screen, so "what page am I in?" is answerable.
             pageId: activePageId,
+          // The conversation's model. Only the id travels; the route keeps the
+          // provider, endpoint and key it resolved for this workspace.
+          model: chatModelOverride(modelChoice) ?? undefined,
           }),
         });
         // A 200 means the route already wrote the question row (route.ts:56).
@@ -990,7 +1021,7 @@ export function ChatPanel({
 
         if (!response.ok || !response.body) {
           const posted = await safeAction(() =>
-            postChatMessageAction(threadId, body, activePageId),
+            postChatMessageAction(threadId, body, activePageId, chatModelOverride(modelChoice) ?? undefined),
           );
           const failure = !posted.ok
             ? posted.error
@@ -1107,7 +1138,7 @@ export function ChatPanel({
           aria-hidden
           className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-accent-soft text-accent"
         >
-          <Bot className="h-4 w-4" />
+          <NoemaMark className="h-4 w-4" />
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">
@@ -1280,7 +1311,7 @@ export function ChatPanel({
                             if (!id) return;
                             startTransition(async () => {
                               const outcome = await safeAction(() =>
-                                regenerateChatAnswerAction(id),
+                                regenerateChatAnswerAction(id, chatModelOverride(modelChoice) ?? undefined),
                               );
                               if (!outcome.ok) toast.error(outcome.error);
                               else toast.success("Answer regenerated");
@@ -1460,9 +1491,19 @@ export function ChatPanel({
 
         <div className="mt-1.5 flex items-center justify-between gap-2">
           <span className="flex min-w-0 items-center gap-2">
-            <Tag size="sm" hue="gray" dot className="max-w-[10rem]">
-              {modelLabel}
-            </Tag>
+            {chatModel ? (
+              <ChatModelPicker
+                slug={slug}
+                info={chatModel}
+                model={activeModel}
+                onSelect={chooseModel}
+                locale={locale}
+                />
+            ) : (
+              <Tag size="sm" hue="gray" dot className="max-w-40">
+                {modelLabel}
+              </Tag>
+            )}
             <span className="hidden items-center gap-1 text-2xs text-muted sm:flex">
               <Kbd size="xs">↵</Kbd> send
               <span className="mx-0.5">·</span>

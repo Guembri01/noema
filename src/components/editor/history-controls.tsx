@@ -6,6 +6,9 @@ import {
   Undo2
 } from "lucide-react";
 import { t } from "@/lib/i18n";
+import { Z } from "@/lib/design-tokens";
+import { FLOATING_CORNER } from "@/lib/floating-corner";
+import { cn } from "@/lib/utils";
 
 /* ---------------------------------------------------------------------------
    Undo / redo
@@ -134,7 +137,14 @@ export function HistoryControls({ editor, locale = "en" }: { editor: Editor; loc
 
   return (
     <div
-      className="fixed bottom-4 right-4 z-20 flex items-center gap-1 rounded-lg border border-border bg-bg p-1 shadow-lg"
+      // Bottom-right, one slot above the Ask-AI button: both used to be pinned to
+      // the same inset (`bottom-4 right-4`) and drew on top of each other. The
+      // corner is a contract now — see `src/lib/floating-corner.ts`.
+      className={cn(
+        "fixed flex items-center gap-1 rounded-lg border border-border bg-bg p-1 shadow-lg",
+        FLOATING_CORNER.bar,
+      )}
+      style={{ zIndex: Z.sticky }}
       data-shadow-levels={hasShadow ? shadowLevels : undefined}
       title={hasShadow ? shadowSummary : undefined}
     >

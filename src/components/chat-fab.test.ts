@@ -62,6 +62,15 @@ describe("ChatFab", () => {
     expect(html).not.toContain("<img");
   });
 
+  it("sizes the mark to the button: 24px inside 40px, so it reads as a logo", () => {
+    // The first mark was 20px of which the glyph used 46% — 9px of ink in a 40px
+    // circle, which is why it looked like a speck. `noema-mark.test.ts` pins the
+    // glyph's coverage; this pins the box it is given.
+    const html = render({ open: false, onOpen: () => {}, locale: "en" });
+    expect(html).toContain('class="h-6 w-6"');
+    expect(html).toContain("h-10 w-10");
+  });
+
   it("localises its accessible name", () => {
     const html = render({ open: false, onOpen: () => {}, locale: "fr" });
     expect(html).toContain(`aria-label="${t("fr", "askAI")}"`);

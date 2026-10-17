@@ -5,6 +5,7 @@ import { rateLimit } from "@/lib/api-guard";
 import { prisma } from "@/lib/db";
 import { resolveAiConfig, chatCompleteStream } from "@/lib/ai-provider";
 import { buildChatRequest } from "@/lib/chat-runtime";
+import { effectiveChatModel } from "@/lib/chat-model";
 import { linkifyReferences } from "@/lib/chat-context";
 import {
   planChatAction,
@@ -66,6 +67,10 @@ export async function POST(request: Request) {
      *  resolved scoped to the thread's workspace, so a foreign id resolves to
      *  nothing rather than leaking a title. */
     pageId?: string | null;
+    /** The model chosen for this conversation. Untrusted: only the model *id* is
+     *  honoured — provider, endpoint and key stay the resolved workspace ones —
+     *  so a crafted body cannot aim the call at another host. */
+    model?: string | null;
   };
   try {
     payload = (await request.json()) as typeof payload;
@@ -138,6 +143,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "AI is not configured for this workspace." }, { status: 503 });
   }
 
+  // The conversation's model, when one was chosen. Only the model *id* can
+  // come from the request: provider, endpoint and key stay the ones resolved
+  // for this workspace, so a crafted body cannot aim the call at another host.
+  const requestConfig = { ...config, model: effectiveChatModel(config.model, payload.model) };
+
   const chatRequest = await buildChatRequest({
     workspaceId: thread.workspaceId,
     pageId: thread.pageId,
@@ -157,7 +167,7 @@ export async function POST(request: Request) {
             user: chatRequest.user,
             temperature: 0.3,
           },
-          config,
+          requestConfig,
         )) {
           answer += delta;
           controller.enqueue(encoder.encode(delta));
@@ -183,7 +193,7 @@ export async function POST(request: Request) {
                 activity: chatRequest.intel.activity,
                 intents: chatRequest.intel.intents,
                 references: chatRequest.intel.references,
-                model: config.model,
+                model: requestConfig.model,
                 provider: config.source,
               },
             },

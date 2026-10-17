@@ -1,8 +1,10 @@
 "use client";
 
 import { t } from "@/lib/i18n";
+import { NoemaMark } from "@/components/brand/noema-mark";
 import { cn } from "@/lib/utils";
 import { DUR, EASE, Z } from "@/lib/design-tokens";
+import { FLOATING_CORNER } from "@/lib/floating-corner";
 
 /**
  * The floating "Ask AI" button, bottom-right.
@@ -11,10 +13,16 @@ import { DUR, EASE, Z } from "@/lib/design-tokens";
  * Enter/Space, and announces itself — the pattern it replaces had to re-implement
  * all three by hand.
  *
- * The mark is an inline SVG rather than an image file so it follows the theme:
- * `currentColor` is the accent foreground, so it stays legible in light, dark and
- * high-contrast without a second asset. Swap `NoemaMark` for an `<img>` if a
- * bitmap is ever wanted — nothing else in this file depends on it.
+ * Its corner is a shared contract, not a local choice: `FLOATING_CORNER.fab`
+ * (see `src/lib/floating-corner.ts`) is the same source the transient bars that
+ * stack above it read, because this button and the editor's undo/redo bar used to
+ * be pinned to the same inset and drew on top of each other. The geometry is
+ * exercised by `floating-corner.test.ts` and measured in a browser by
+ * `npm run check:floating`.
+ *
+ * The mark is `NoemaMark`, the product's own letterform, painted with
+ * `currentColor` so it stays legible in light, dark and high-contrast themes
+ * without a second asset.
  *
  * Placement notes (learned the hard way elsewhere in this codebase): the button
  * is `position: fixed`, so it must NOT live inside an ancestor that has a
@@ -44,7 +52,8 @@ export function ChatFab({
       // `hidden` (not unmounting) keeps the button's node stable while the panel
       // is open, so `aria-expanded` stays truthful.
       className={cn(
-        "focus-ring u-interactive u-transform fixed bottom-5 end-5 z-0 grid h-10 w-10 place-items-center",
+        "focus-ring u-interactive u-transform fixed z-0 grid h-10 w-10 place-items-center",
+        FLOATING_CORNER.fab,
         "rounded-full bg-accent text-accent-fg shadow-2 hover:scale-105 active:scale-95",
         open && "hidden",
       )}
@@ -55,24 +64,8 @@ export function ChatFab({
         transition: `transform var(--dur-3) var(--ease-spring), box-shadow var(--dur-1) var(--ease-smooth)`,
       }}
     >
-      <NoemaMark />
+      <NoemaMark className="h-6 w-6" />
     </button>
-  );
-}
-
-/** Noema's mark: the "N" monogram, drawn with the current text colour. */
-function NoemaMark() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" focusable="false">
-      <path
-        d="M6.5 17.5V6.5l11 11v-11"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }
 

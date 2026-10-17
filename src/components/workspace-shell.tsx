@@ -13,6 +13,7 @@ import { Sidebar } from "@/components/sidebar";
 import { OPEN_CHAT_EVENT } from "@/components/sidebar-chat";
 import { ChatFab } from "@/components/chat-fab";
 import { ChatPanel, type PanelThread } from "@/components/chat-panel";
+import type { ChatModelInfo } from "@/lib/chat-model";
 import type { CalendarFeedView, MeetingEventView } from "@/components/sidebar-meetings";
 import { CommandPalette } from "@/components/command-palette";
 import { QuickFind } from "@/components/quick-find";
@@ -81,6 +82,7 @@ export function WorkspaceShell({
   projects,
   openTickets,
   aiModel,
+  chatModel,
   favorites,
   user,
   unreadCount,
@@ -99,6 +101,8 @@ export function WorkspaceShell({
   teamspaces: { id: string; name: string; icon: string | null }[];
   chatThreads: PanelThread[];
   aiModel: string;
+  /** Effective AI configuration + who may change it: drives the composer picker. */
+  chatModel: ChatModelInfo;
   meetingEvents: MeetingEventView[];
   calendarFeeds: CalendarFeedView[];
   projects: { id: string; name: string; icon: string | null }[];
@@ -460,6 +464,7 @@ export function WorkspaceShell({
             }
             threads={chatThreads}
             modelLabel={aiModel}
+          chatModel={chatModel}
             locale={locale}
             onClose={() => setChatOpen(false)}
             activePageId={activePageId}

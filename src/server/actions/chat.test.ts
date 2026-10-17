@@ -150,3 +150,52 @@ describe("regenerateChatAnswerAction — lossless replace (R25.4)", () => {
     expect(ai.chatComplete).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The conversation's model.
+ *
+ * The picker in the composer is only half the feature — the choice has to reach
+ * the provider, and it must change exactly one thing. These pin that seam: the id
+ * is applied to the resolved config, everything that decides *where* the call goes
+ * is left as the workspace had it, and the stored answer records what really
+ * produced it.
+ */
+describe("regenerateChatAnswerAction — the conversation's model", () => {
+  /** The config handed to the provider, i.e. the second argument of the call. */
+  const sentConfig = () => ai.chatComplete.mock.calls[0][1];
+
+  it("sends the chosen model instead of the configured one", async () => {
+    await regenerateChatAnswerAction("thread-1", "m2");
+    expect(sentConfig()).toEqual({ ...CONFIG, model: "m2" });
+  });
+
+  it("changes only the model: provider, endpoint and key stay the workspace's", async () => {
+    await regenerateChatAnswerAction("thread-1", "m2");
+    expect(sentConfig()).toMatchObject({
+      provider: CONFIG.provider,
+      baseUrl: CONFIG.baseUrl,
+      apiKey: CONFIG.apiKey,
+      model: "m2",
+    });
+  });
+
+  it("keeps the configured model when no choice travels (the ordinary path)", async () => {
+    await regenerateChatAnswerAction("thread-1");
+    expect(sentConfig().model).toBe(CONFIG.model);
+  });
+
+  it("ignores a choice that is not a bare model id", async () => {
+    // A URL must not be able to aim the call somewhere else…
+    await regenerateChatAnswerAction("thread-1", "https://evil.example/v1");
+    expect(sentConfig().model).toBe(CONFIG.model);
+  });
+
+  it("records which model actually produced the stored answer", async () => {
+    await regenerateChatAnswerAction("thread-1", "m2");
+    expect(db.messageCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        meta: expect.objectContaining({ model: "m2" }),
+      }),
+    });
+  });
+});

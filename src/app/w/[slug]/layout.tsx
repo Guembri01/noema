@@ -4,6 +4,7 @@ import { resolveAiConfig } from "@/lib/ai-provider";
 import { prisma } from "@/lib/db";
 import { pageScopeFor } from "@/lib/guest-access";
 import { getWorkspaceAccess } from "@/lib/permissions";
+import { chatModelInfo } from "@/lib/chat-model";
 import {
   getCalendarFeeds,
   getChatThreadsWithMessages,
@@ -79,6 +80,16 @@ export default async function WorkspaceLayout({
       calendarFeeds={calendarFeeds}
       projects={projects.map((project) => ({ id: project.id, name: project.name, icon: project.icon }))}
       aiModel={aiConfig ? aiConfig.model : "no model"}
+      chatModel={chatModelInfo({
+        provider: aiConfig?.provider,
+        model: aiConfig?.model,
+        // A deployment that names only a base URL resolves to `custom`; the host is
+        // what lets the picker offer that provider's models.
+        baseUrl: aiConfig?.baseUrl,
+        // `resolveAiConfig` falls back to the environment, and returns null when
+        // nothing is configured at all - the picker tells those apart.
+        source: aiConfig?.source ?? "none",
+      })}
       openTickets={openTickets}
       favorites={favorites}
       user={{ name: user.name, email: user.email }}

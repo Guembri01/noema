@@ -9,6 +9,7 @@ import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { linkifyReferences } from "@/lib/chat-context";
 import { buildChatRequest } from "@/lib/chat-runtime";
 import { chatComplete, resolveAiConfig } from "@/lib/ai-provider";
+import { effectiveChatModel } from "@/lib/chat-model";
 import {
   planChatAction,
   proposalBody,
@@ -127,6 +128,8 @@ export async function discussPageAction(
   body: string,
   /** The page open in the UI, so "this page" can be answered about. */
   activePageId?: string | null,
+  /** The model chosen for this conversation; the configured one when omitted. */
+  model?: string | null,
 ): Promise<ChatResult<{ id: string; title: string; answered: boolean }>> {
   const user = await requireUser();
   const message = (body ?? "").trim();
@@ -183,6 +186,7 @@ export async function discussPageAction(
     pageId: thread.pageId,
     activePageId: activePageId ?? null,
     question,
+    model,
   });
 
   revalidatePath("/w", "layout");
@@ -202,10 +206,16 @@ async function replyAsAssistant(
     /** The page the user is looking at, if any. */
     activePageId?: string | null;
     question: string;
+    /** The model chosen for this conversation; the configured one when omitted. */
+    model?: string | null;
   },
 ): Promise<boolean> {
   const config = await resolveAiConfig(input.workspaceId);
   if (!config) return false;
+
+  // The conversation's model, when one was chosen. Only the model *id* can
+  // come from a caller, so the provider, endpoint and key stay the workspace's.
+  const chosenModel = effectiveChatModel(config.model, input.model);
 
   // Route the question to the workspace data it needs (notes, members,
   // projects/milestones, tickets, tasks) — the "chat tools". The prompt lives in
@@ -224,7 +234,7 @@ async function replyAsAssistant(
       user: request.user,
       temperature: 0.3,
     },
-    config,
+    { ...config, model: chosenModel },
   );
   if (!result.ok) return false;
   const answer = linkifyReferences(result.text.trim(), request.intel.references);
@@ -240,7 +250,7 @@ async function replyAsAssistant(
         activity: request.intel.activity,
         intents: request.intel.intents,
         references: request.intel.references,
-        model: config.model,
+        model: chosenModel,
         provider: config.source,
       },
     },
@@ -321,6 +331,8 @@ export async function saveChatAnswerAction(
 /** Replace the last answer with a fresh one (same question, new generation). */
 export async function regenerateChatAnswerAction(
   threadId: string,
+  /** The model chosen for this conversation; the configured one when omitted. */
+  model?: string | null,
 ): Promise<ChatResult<{ answered: boolean }>> {
   const user = await requireUser();
   const thread = await prisma.chatThread.findUnique({
@@ -353,6 +365,7 @@ export async function regenerateChatAnswerAction(
     workspaceId: thread.workspaceId,
     pageId: thread.pageId,
     question: lastQuestion?.body ?? "",
+    model,
   });
   if (answered && lastAnswer) {
     await prisma.chatMessage.deleteMany({ where: { id: lastAnswer.id } });

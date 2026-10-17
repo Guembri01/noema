@@ -18,6 +18,9 @@ import { useOffline } from "@/components/providers/offline-provider";
 import { Button } from "@/components/ui/button";
 import { describeConflict, type MergeConflict } from "@/lib/sync-conflict";
 import { t } from "@/lib/i18n";
+import { Z } from "@/lib/design-tokens";
+import { FLOATING_CORNER } from "@/lib/floating-corner";
+import { cn } from "@/lib/utils";
 
 /**
  * The pending-queue copy, or `null` when nothing is waiting. Kept pure so the
@@ -60,7 +63,13 @@ export function OfflineIndicator({ locale = "en" }: { locale?: string } = {}) {
     <aside
       aria-label={t(locale, "syncStatus")}
       data-testid="offline-indicator"
-      className="fixed bottom-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-bg p-3 text-sm shadow-lg"
+      // The notice shares the Ask-AI button's corner as its own slot: both used
+      // to be pinned a rem apart at the bottom-right and drew on top of each other.
+      className={cn(
+        "fixed w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-bg p-3 text-sm shadow-lg",
+        FLOATING_CORNER.notice,
+      )}
+      style={{ zIndex: Z.sticky }}
     >
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium">{online ? "Online" : "Offline"}</span>

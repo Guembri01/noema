@@ -80,6 +80,42 @@ export function providerDefinition(id: string | null | undefined): ProviderDefin
   return AI_PROVIDERS.find((provider) => provider.id === id);
 }
 
+/** The lower-case host of a URL, or `""` when it is not one. */
+function urlHost(value: string | null | undefined): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "";
+  try {
+    return new URL(raw).host.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The catalogue entry a base URL belongs to, or `null` for an unknown endpoint.
+ *
+ * A deployment can name a provider by its base URL alone — this repo's `.env` sets
+ * `AI_BASE_URL` and `AI_MODEL` and nothing else, which resolves to `custom`. That
+ * is right for transport (any OpenAI-compatible endpoint works), but it leaves the
+ * model picker with an empty catalogue: it can show the model in use and nothing
+ * to switch to. The host is enough to recognise the documented endpoints, so the
+ * list comes back.
+ */
+export function providerForBaseUrl(baseUrl: string | null | undefined): ProviderId | null {
+  const host = urlHost(baseUrl);
+  if (!host) return null;
+  for (const definition of AI_PROVIDERS) {
+    const known = urlHost(definition.defaultBaseUrl);
+    if (!known) continue;
+    // The documented host, or a regional subdomain of it (`eu.api.openai.com`).
+    if (host === known || host.endsWith(`.${known}`)) return definition.id;
+    // An apex the deployment may have configured instead. The dot keeps a bare
+    // public suffix ("com") from matching every provider at once.
+    if (host.includes(".") && known.endsWith(`.${host}`)) return definition.id;
+  }
+  return null;
+}
+
 export function providerDefaultBaseUrl(id: string): string {
   return providerDefinition(id)?.defaultBaseUrl ?? "";
 }
