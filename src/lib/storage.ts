@@ -164,9 +164,20 @@ function signingKey(secret: string, dateStamp: string, region: string): Buffer {
 
 /** Filesystem driver — the default for self-hosted installs. */
 export function localDriver(root = process.env.STORAGE_DIR ?? path.join(process.cwd(), "uploads")): StorageDriver {
+  // The check is a **path boundary**, not a prefix: a root `/data/uploads`
+  // also "contains" `/data/uploads-evil`, and a prefix comparison lets that
+  // sibling through. `path.relative` answers the question the root really
+  // asks — is the target **inside** it?
+  const base = path.resolve(root);
   const resolve = (key: string) => {
-    const target = path.join(root, key);
-    if (!target.startsWith(root)) throw new Error("Refusing to escape the storage root");
+    const target = path.resolve(base, key);
+    const relative = path.relative(base, target);
+    // `..` at the front means "above the root", an absolute path means
+    // "somewhere else entirely", and an empty relative means "the root
+    // itself" — none of them is a file **under** the root.
+    if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error("Refusing to escape the storage root");
+    }
     return target;
   };
   return {
