@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 import {
   normalizeTheme,
   THEME_COOKIE,
@@ -7,6 +8,7 @@ import {
   THEME_NAMES,
   themeHandoff,
 } from "./theme-preference";
+import { middleware } from "../middleware";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -61,6 +63,52 @@ describe("themeHandoff", () => {
     for (const name of THEME_NAMES) {
       expect(themeHandoff("/", `?theme=${name}`)?.theme).toBe(name);
     }
+  });
+
+  it("refuses a path that would carry the redirect to another origin (B118)", () => {
+    // A path that starts with two separators is protocol-relative: the
+    // middleware resolves it with `new URL(location, origin)`, and the WHATWG
+    // parser reads `//evil.com` as the *host* `evil.com` — the redirect would
+    // leave the site. A backslash counts as a separator in a special scheme,
+    // so `/\\evil.com` is the same attack in a different spelling.
+    for (const path of ["//evil.com", "/\\evil.com", "\\\\evil.com", "///evil.com"]) {
+      expect(themeHandoff(path, "?theme=dark"), path).toBeNull();
+    }
+  });
+
+  it("keeps a query that carries a bare percent sign", () => {
+    // `isSafeReturnTo` would drop this one: its `decodeURIComponent` throws on
+    // a bare `%`, and the whole hand-off would be refused. The parameter
+    // survives here — percent-encoded by `URLSearchParams`, which decodes back
+    // to `%` on the server.
+    expect(themeHandoff("/w/demo", "?theme=dark&q=100%")).toEqual({
+      theme: "dark",
+      location: "/w/demo?q=100%25",
+    });
+  });
+});
+
+describe("the hand-off redirect (src/middleware.ts)", () => {
+  it("redirects to the same origin, without the theme parameter", () => {
+    const response = middleware(
+      new NextRequest("https://noema.example/w/demo?theme=dark&page=abc"),
+    );
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://noema.example/w/demo?page=abc",
+    );
+    expect(response.headers.get("set-cookie")).toContain("noema-theme=dark");
+  });
+
+  it("never redirects to another origin (B118)", () => {
+    const response = middleware(
+      new NextRequest("https://noema.example//evil.com?theme=dark"),
+    );
+    // Refused hand-off: the request is served as it is — no redirect, no
+    // cookie, and the theme parameter simply stays in the URL.
+    expect(response.headers.get("location")).toBeNull();
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.status).not.toBe(307);
   });
 });
 

@@ -303,6 +303,18 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   than 90 days stops working at once. **This is a breaking change** for a
   deployment whose API tokens are older than that: the client gets `401` and
   has to mint a new token in the workspace settings.
+- The theme hand-off no longer builds a redirect target that could leave the
+  origin. The desktop shell hands its stored theme over as a query parameter
+  (`?theme=dark`), and the middleware turned the request path into a redirect
+  (`new URL(path, origin)`) without a same-origin check — the only redirect
+  sink in the tree without one. A path that starts with two separators
+  (`//evil.com`) is protocol-relative: the URL parser reads it as another
+  host, so the redirect would have left the site. Next normalises repeated
+  slashes in the request path before the middleware runs, so the path could
+  not be reached over HTTP — the guarantee rested on a property of the
+  framework instead of on this repository. The hand-off now refuses such a
+  path (a backslash counts as a separator here, too) and keeps serving the
+  request as it is.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
