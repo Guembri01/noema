@@ -63,6 +63,11 @@ export async function POST(request: Request) {
     return NextResponse.json(result);
   }
 
+  // The role policy is not decided here: the role an invitation carries is a
+  // grant, so `sendWorkspaceInviteAction` applies the same rule as a role
+  // change (`canGrantRole` in `@/lib/workspace-roles`) — only the workspace
+  // owner may grant the admin role. This route only translates the request and
+  // surfaces the action's refusal.
   const role = body.role === "GUEST" ? "GUEST" : body.role === "ADMIN" ? "ADMIN" : "MEMBER";
   const result = await sendWorkspaceInviteAction({
     workspaceId: String(body.workspaceId ?? ""),
