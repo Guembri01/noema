@@ -316,6 +316,7 @@ describe("regression — both token surfaces survive via the shared body", () =>
             scopes: ["read:pages"],
             createdAt: iso(-DAY),
             lastUsedAt: null,
+            expiresAt: null,
           },
         ],
         locale: "en",
