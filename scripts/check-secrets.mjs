@@ -186,6 +186,7 @@ const ALLOWED = new Set([
   "postgresql://${USER}:${USER}@localhost:5433/${DATABASE}?schema=public", // scripts/check-payload-features.mjs
   "postgresql://${DB_USER}:${DB_USER}@${host}:${port}/${DB_NAME}?schema=public&connection_limit=1&pgbouncer=true", // scripts/desktop/embedded-db.cjs
   "postgresql://${DB_USER}:${encodeURIComponent(password)}@127.0.0.1:${port}/${DB_NAME}?schema=public", // scripts/desktop/docker-db.cjs
+  "postgresql://noema:${encodeURIComponent(password)}@127.0.0.1:5434/noema?schema=public", // scripts/desktop/docker-db.test.mjs
   "postgresql://user:password@127.0.0.1:5432/noema", // src-tauri/dist/index.html placeholder
   "postgresql://u:p@host:5432/db?schema=public", // src-tauri/src/state.rs fixture
   "postgresql://user:pw@host:5432/db", // src/lib/secrets.ts, the masking example
