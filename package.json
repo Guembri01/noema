@@ -76,6 +76,7 @@
     "visual:check": "node scripts/visual-check.mjs",
     "visual:update": "node scripts/visual-check.mjs --update",
     "screenshots": "node --env-file=.env scripts/screenshots.mjs",
+    "features:pdf": "node scripts/features-pdf.mjs",
     "desktop:preflight": "node scripts/desktop/preflight.mjs",
     "check:embedded-db": "node scripts/check-embedded-db.mjs",
     "desktop:prepare": "node scripts/desktop/prepare.mjs",

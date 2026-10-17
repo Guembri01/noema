@@ -141,6 +141,11 @@ Every screen is captured from the seeded demo workspace by
 hand-taken, so a surface that changes takes its screenshot with it. The full set
 of 44, with captions, is in [`docs/GALLERY.md`](./docs/GALLERY.md).
 
+The same shots are laid out beside the feature list in
+**[`docs/Noema-features.pdf`](./docs/Noema-features.pdf)** — a printable feature
+sheet, built by `npm run features:pdf` from the README's own feature tables and
+the screenshot report, so the document cannot drift from the product either.
+
 | Workspace home | The block editor |
 | --- | --- |
 | ![Workspace home — quick starts and the template gallery](./docs/screenshots/03-home.png) | ![The block editor — headings, callouts, toggles, code, tables, backlinks](./docs/screenshots/06-editor.png) |
@@ -460,6 +465,7 @@ password: password123
 | `npm run check:tickets` | Tickets end-to-end: labels, keys, estimates, dates, board movement, relations, comments, bulk edits, activity log |
 | `npm run check:embedded-db` | Embedded-database robustness: a real PGlite engine, 24 handshakes aborted mid-flight, then two more Prisma clients — no Postgres, no Docker, no Tauri |
 | `npm run screenshots` | Regenerates the gallery in `docs/screenshots/` and `docs/GALLERY.md` from the seeded demo workspace (drives the installed Edge) |
+| `npm run features:pdf` | Builds `docs/Noema-features.pdf` — the feature sheet: every area as bullet points, illustrated with all 44 screenshots, derived from the README's feature tables and the screenshot report (drives the installed Edge) |
 | `npm run check:search` | Proves ranking, prefix matching, snippets, trashed-page exclusion, re-indexing and the public API path |
 | `npm run check:storage` | Storage round trip through the API: upload, byte-for-byte read, guards (auth, traversal, missing, bad type) |
 | `npm run check:chat-stream` | Proves answers stream in chunks, arrive before completion, and persist exactly once |
