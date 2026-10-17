@@ -36,10 +36,18 @@ export function checkRateLimit(
 
 /** Derive a stable client key from forwarding headers (falls back to loopback). */
 export function clientKey(request: Request, scope: string): string {
-  const forwarded = request.headers.get("x-forwarded-for");
+  return clientKeyFromHeaders(request.headers, scope);
+}
+
+/**
+ * The same derivation for a `Headers` object — server actions never see a
+ * `Request`, they read the request headers through `next/headers`.
+ */
+export function clientKeyFromHeaders(headers: Headers, scope: string): string {
+  const forwarded = headers.get("x-forwarded-for");
   const ip =
     forwarded?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
+    headers.get("x-real-ip") ||
     "local";
   return `${scope}:${ip}`;
 }
@@ -300,4 +308,153 @@ export class TokenBucketLimiter {
   reset(): void {
     this.buckets.clear();
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Authentication limits (login / signup / 2FA).
+ *
+ * Server actions never reach `api-guard.ts` — that helper is only
+ * called from route handlers — so the auth surface gets its own budgets
+ * here. Two of them are charged per attempt:
+ *
+ *   - one per client address: the coarse backstop against a flood;
+ *   - one per account, keyed on the submitted e-mail address. A client
+ *     cannot forge that one, so it is the budget that holds even when
+ *     the forwarding headers are spoofed.
+ *
+ * A third budget bounds 2FA code guesses: the code space (10^6 codes,
+ * three of them valid per 30 s window) is far too small to search
+ * without one.
+ *
+ * The lockout that belongs to the account itself is *persisted* by the
+ * caller (the auth actions keep the failure counter on the user row);
+ * {@link authLockoutMs} holds the pure rule both sides agree on.
+ * ------------------------------------------------------------------ */
+
+/** Sliding-window budget for one client address (any auth attempt). */
+export const AUTH_IP_LIMIT = { limit: 30, windowMs: 60_000 } as const;
+
+/** Sliding-window budget for 2FA code guesses, charged per account. */
+export const AUTH_TWO_FACTOR_LIMIT = { limit: 5, windowMs: 15 * 60_000 } as const;
+
+/** Consecutive failed sign-ins that are tolerated before the account locks. */
+export const AUTH_LOCKOUT_THRESHOLD = 5;
+
+/** Length of the first lock; doubles with every further consecutive failure. */
+export const AUTH_LOCKOUT_BASE_MS = 15_000;
+
+/** Upper bound of a lock. */
+export const AUTH_LOCKOUT_MAX_MS = 15 * 60_000;
+
+/**
+ * How long an account stays locked after its `failures`-th consecutive
+ * failure. Below {@link AUTH_LOCKOUT_THRESHOLD} nothing is locked; from
+ * the threshold on the lock doubles (15 s, 30 s, 60 s, …) up to
+ * {@link AUTH_LOCKOUT_MAX_MS}. The counter is reset by a successful
+ * sign-in, so the backoff only ever grows while the account is under
+ * attack.
+ */
+export function authLockoutMs(failures: number): number {
+  if (!Number.isFinite(failures) || failures < AUTH_LOCKOUT_THRESHOLD) return 0;
+  const step = Math.min(Math.floor(failures) - AUTH_LOCKOUT_THRESHOLD, 30);
+  return Math.min(AUTH_LOCKOUT_BASE_MS * 2 ** step, AUTH_LOCKOUT_MAX_MS);
+}
+
+/** Which budget rejected an authentication attempt. */
+export type AuthLimitScope = "ip" | "account" | "twoFactor";
+
+/** Outcome of an authentication budget check. */
+export type AuthLimitResult = {
+  /** Whether the attempt may proceed. */
+  allowed: boolean;
+  /** The budget that rejected the attempt (`null` when it was allowed). */
+  scope: AuthLimitScope | null;
+  /** How long the caller has to wait before the budget frees up. */
+  retryAfterMs: number;
+};
+
+/**
+ * Limiter for the auth surface. The account budget uses the AUTH tier
+ * (10 attempts per minute by default); the address and the 2FA budgets
+ * carry their own, explicit policies. The key prefixes keep the three
+ * budgets apart inside the one key space.
+ */
+const authLimiter = new RateLimiter();
+
+/**
+ * Charge one authentication attempt against the address and the account
+ * budget. The account budget is the AUTH tier's; the address budget is
+ * looser, because one address can serve several legitimate users.
+ */
+export function checkAuthLimit(args: {
+  /** The submitted e-mail address (already normalised by the schema). */
+  email: string;
+  /** The client address key (see {@link clientKeyFromHeaders}). */
+  ip: string;
+  /** Evaluation instant; defaults to the wall clock. */
+  now?: number;
+}): AuthLimitResult {
+  const now = args.now ?? Date.now();
+  const address = authLimiter.slidingHit(`ip:${args.ip}`, now, AUTH_IP_LIMIT);
+  if (!address.allowed) {
+    return { allowed: false, scope: "ip", retryAfterMs: address.retryAfterMs };
+  }
+  const account = authLimiter.hit({
+    key: `account:${args.email}`,
+    tier: "AUTH",
+    now,
+  });
+  if (!account.allowed) {
+    return { allowed: false, scope: "account", retryAfterMs: account.retryAfterMs };
+  }
+  return { allowed: true, scope: null, retryAfterMs: 0 };
+}
+
+/**
+ * Charge one 2FA code guess against the account's guess budget. The key
+ * is opaque to the limiter: the sign-in path passes the account e-mail,
+ * the settings path the user id.
+ */
+export function checkTwoFactorLimit(args: {
+  /** The account the guess belongs to. */
+  key: string;
+  /** Evaluation instant; defaults to the wall clock. */
+  now?: number;
+}): AuthLimitResult {
+  const now = args.now ?? Date.now();
+  const guess = authLimiter.slidingHit(`2fa:${args.key}`, now, AUTH_TWO_FACTOR_LIMIT);
+  if (guess.allowed) return { allowed: true, scope: null, retryAfterMs: 0 };
+  return { allowed: false, scope: "twoFactor", retryAfterMs: guess.retryAfterMs };
+}
+
+/** "1 second" / "42 seconds" — the wait a caller has to observe. */
+function secondsPhrase(seconds: number): string {
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
+}
+
+/**
+ * The message a caller sees when a budget is exhausted. Shared by the
+ * sign-in, sign-up and 2FA actions so the wording — and the wait it
+ * quotes — is identical everywhere.
+ */
+export function authLimitMessage(result: AuthLimitResult): string {
+  const seconds = Math.max(1, Math.ceil(result.retryAfterMs / 1000));
+  return `Too many attempts. Try again in ${secondsPhrase(seconds)}.`;
+}
+
+/** The message shown while an account is locked out. */
+export function authLockoutMessage(
+  lockedUntil: Date,
+  now: Date = new Date(),
+): string {
+  const seconds = Math.max(
+    1,
+    Math.ceil((lockedUntil.getTime() - now.getTime()) / 1000),
+  );
+  return `This account is temporarily locked. Try again in ${secondsPhrase(seconds)}.`;
+}
+
+/** Test/ops helper: forget every authentication budget. */
+export function resetAuthLimits(): void {
+  authLimiter.reset();
 }
