@@ -166,7 +166,10 @@ const MAX_FINGERPRINT_CONTENT_BYTES = 64 * 1024;
  * The peak is a little above that: the reader holds the chunks *and* the
  * merged buffer, and the tee holds a copy for the branch the route reads
  * from — about three times the budget, never the body. Measured: a 200 MiB
- * upload against a 4 MiB budget left the resident set flat at ~12 MiB.
+ * upload against a 4 MiB budget left the resident set between ~6 and ~12 MiB.
+ * That peak is transient and differs from run to run (the same upload and the
+ * same code measured both); what holds is the boundary — at most three times
+ * the budget, and never a share of the upload's size.
  */
 async function readFingerprintBody(request: Request, budget: number): Promise<string> {
   try {
