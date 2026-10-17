@@ -311,7 +311,7 @@ budget is enforced **before** the body is parsed:
 | `POST /oauth/authorize/complete`, `POST /oauth/token`, `POST /s/[token]/unlock` | 16 KiB | a password, a code, a client id |
 
 That is the complete list: **20 routes read a request body, and every one of
-them answers an over-sized body with 413** `{"error":"Request body too large."}`.
+them answers an over-sized body with **413** `{"error":"Request body too large."}`.
 A route that is not in the table does not read a body.
 
 The budgets are **hard-coded** in the route modules next to the limit they
