@@ -58,6 +58,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   if (hadAuthSecret && originalAuthSecret !== undefined) {
     process.env.AUTH_SECRET = originalAuthSecret;
   } else {
@@ -1231,6 +1232,14 @@ describe("the share unlock cookie (B01)", () => {
 
   it("names the cookie after the share token", () => {
     expect(shareUnlockCookieName(TOKEN)).toBe(`share_${TOKEN}`);
+  });
+
+  // B31: in production the cookie carries `Secure`, and a `__Host-` cookie is
+  // only accepted together with it — the prefix binds the cookie to the exact
+  // host that set it.
+  it("binds the cookie name to the host in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    expect(shareUnlockCookieName(TOKEN)).toBe(`__Host-share_${TOKEN}`);
   });
 
   // The constant-time comparison is not observable at runtime: a plain `===`

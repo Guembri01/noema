@@ -31,7 +31,9 @@ right.append("password", "s3cret");
 const rightRes = await fetch(`${base}/s/${token}/unlock`, { method: "POST", body: right, redirect: "manual" });
 const setCookie = rightRes.headers.get("set-cookie") ?? "";
 const cookie = setCookie.split(";")[0];
-console.log(`correct password → ${rightRes.status} · cookie set:${cookie.startsWith(`share_${token}=`)}`);
+// B31: in production the unlock cookie carries the `__Host-` prefix, so the
+// check accepts the prefixed name as well.
+console.log(`correct password → ${rightRes.status} · cookie set:${cookie.startsWith(`share_${token}=`) || cookie.startsWith(`__Host-share_${token}=`)}`);
 
 const unlocked = await fetch(`${base}/s/${token}`, { headers: { cookie } });
 console.log(`unlocked share → ${unlocked.status} · shows content:${/Shared page/.test(await unlocked.text())}`);

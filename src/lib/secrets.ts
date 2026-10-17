@@ -7,6 +7,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { MIN_AUTH_SECRET_LENGTH, resolveAuthSecret } from "./auth-secret";
+import { cookieName } from "./cookie-security";
 
 /**
  * Envelope encryption for stored provider keys (AES-256-GCM).
@@ -817,9 +818,15 @@ const SHARE_UNLOCK_VERSION = "v1";
 /** Default lifetime of a share unlock cookie: 7 days. */
 export const SHARE_UNLOCK_TTL_SECONDS = 60 * 60 * 24 * 7;
 
-/** The cookie that carries the unlock state of one share link. */
+/**
+ * The cookie that carries the unlock state of one share link.
+ *
+ * B31: the name carries the `__Host-` prefix in production, where the cookie
+ * also carries `Secure` — a browser then binds it to the exact host that set
+ * it, and a sibling subdomain cannot plant a cookie of that name.
+ */
 export function shareUnlockCookieName(token: string): string {
-  return `share_${token}`;
+  return cookieName(`share_${token}`);
 }
 
 /**

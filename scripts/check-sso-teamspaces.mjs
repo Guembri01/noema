@@ -94,10 +94,20 @@ const check = (label, ok) => {
 const isRedirect = (status) => status === 302 || status === 307 || status === 308;
 
 // --- SSO flow ------------------------------------------------------------
+// B31: in production the hand-off cookies carry the `__Host-` prefix, so the
+// script reads the name off the response instead of assuming one — and sends
+// the cookies back under exactly that name.
+const cookieNameOf = (cookie) => cookie.split("=")[0];
+const cookieValueOf = (cookie) => cookie.split("=")[1].split(";")[0];
+const findCookie = (headers, name) =>
+  (headers.getSetCookie?.() ?? []).find(
+    (c) => cookieNameOf(c) === name || cookieNameOf(c) === `__Host-${name}`,
+  );
+
 const start = await fetch(`${base}/api/auth/sso/start`, { redirect: "manual" });
 const startLocation = start.headers.get("location") ?? "";
-const stateCookie = (start.headers.getSetCookie?.() ?? []).find((c) => c.startsWith("sso_state="));
-const nonceCookie = (start.headers.getSetCookie?.() ?? []).find((c) => c.startsWith("sso_nonce="));
+const stateCookie = findCookie(start.headers, "sso_state");
+const nonceCookie = findCookie(start.headers, "sso_nonce");
 check("sso start redirects to the configured issuer", isRedirect(start.status) && startLocation.startsWith(`${ISSUER}/authorize`));
 check("sso start sets state + nonce cookies", Boolean(stateCookie) && Boolean(nonceCookie));
 
@@ -105,7 +115,7 @@ const authorize = await fetch(startLocation, { redirect: "manual" });
 const callbackUrl = authorize.headers.get("location") ?? "";
 check("authorize redirects back to the app callback", callbackUrl.includes("/api/auth/sso/callback") && callbackUrl.includes("code="));
 
-const cookieHeader = `sso_state=${stateCookie.split("=")[1].split(";")[0]}; sso_nonce=${nonceCookie.split("=")[1].split(";")[0]}`;
+const cookieHeader = `${cookieNameOf(stateCookie)}=${cookieValueOf(stateCookie)}; ${cookieNameOf(nonceCookie)}=${cookieValueOf(nonceCookie)}`;
 const callback = await fetch(callbackUrl, { headers: { cookie: cookieHeader }, redirect: "manual" });
 const sessionCookie = (callback.headers.getSetCookie?.() ?? []).find((c) => c.startsWith("noema_session="));
 check("callback issues a session and redirects home", isRedirect(callback.status) && callback.headers.get("location")?.endsWith("/app") === true && Boolean(sessionCookie));
@@ -113,10 +123,10 @@ check("callback issues a session and redirects home", isRedirect(callback.status
 const provisioned = await prisma.user.findUnique({ where: { email: "sso-user@noema.local" } });
 check("just-in-time user provisioning", Boolean(provisioned));
 
-const appResponse = await fetch(`${base}/app`, { headers: { cookie: `noema_session=${sessionCookie.split("=")[1].split(";")[0]}` }, redirect: "manual" });
+const appResponse = await fetch(`${base}/app`, { headers: { cookie: `noema_session=${cookieValueOf(sessionCookie)}` }, redirect: "manual" });
 check("session from SSO is accepted by /app", appResponse.status === 200);
 
-const badState = await fetch(callbackUrl, { headers: { cookie: "sso_state=nope" }, redirect: "manual" });
+const badState = await fetch(callbackUrl, { headers: { cookie: `${cookieNameOf(stateCookie)}=nope` }, redirect: "manual" });
 check("callback rejects a mismatched state", isRedirect(badState.status) && (badState.headers.get("location") ?? "").includes("error=sso"));
 
 // --- Teamspaces ----------------------------------------------------------
