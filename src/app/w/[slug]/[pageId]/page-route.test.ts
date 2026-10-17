@@ -128,26 +128,17 @@ beforeEach(() => {
     (args: { where?: { createdById?: string; type?: string }; select?: Record<string, unknown> }) => {
       if (args?.where?.type === "DATABASE") return [];
       if (args?.where?.createdById) return [];
-      // The read scope (B90) reads the pages *with* their permissions
-      // relation — the guest's grant sits on `page-shared`.
-      if (args?.select?.permissions) {
+      if (args?.select?.parentId) {
         return [
-          { id: "page-root", parentId: null, teamspaceId: null, createdById: "owner-1", permissions: [] },
+          { id: "page-root", parentId: null, teamspaceId: null, permissions: [] },
           {
             id: "page-shared",
             parentId: "page-root",
             teamspaceId: null,
-            createdById: "owner-1",
-            permissions: [{ userId: "u1", level: "READ" }],
+            // The read scope is resolved from the per-page grant select.
+            permissions: [{ level: "READ" }],
           },
-          { id: "page-secret", parentId: "page-root", teamspaceId: null, createdById: "owner-1", permissions: [] },
-        ];
-      }
-      if (args?.select?.parentId) {
-        return [
-          { id: "page-root", parentId: null, teamspaceId: null },
-          { id: "page-shared", parentId: "page-root", teamspaceId: null },
-          { id: "page-secret", parentId: "page-root", teamspaceId: null },
+          { id: "page-secret", parentId: "page-root", teamspaceId: null, permissions: [] },
         ];
       }
       return [];
@@ -171,16 +162,15 @@ describe("the page route", () => {
     expect(h.getWorkspaceMembers).not.toHaveBeenCalled();
   });
 
-  it("scopes the database list to the guest's pages", async () => {
+  it("scopes the database list to the guest's readable pages, not its ancestors", async () => {
     await PageRoute({ params: Promise.resolve({ slug: "acme", pageId: "page-shared" }) });
 
     expect(databaseWhere()).toEqual({
       workspaceId: "ws1",
       type: "DATABASE",
       deletedAt: null,
-      // The read scope carries the shared page and its subtree — never an
-      // ancestor: `page-root` is the parent of the shared page, so a guest
-      // who was granted the child does not see the parent.
+      // `page-root` is only a display ancestor; a database inherited from the
+      // shared page is in scope, one reachable only through the ancestor is not.
       id: { in: ["page-shared"] },
     });
   });

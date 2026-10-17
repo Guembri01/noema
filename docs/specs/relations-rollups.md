@@ -337,10 +337,7 @@ map — the exact pattern already used for `lastEditedBy`
   go through `t()` with keys added to every locale.
   *Acceptance:* coherence gate green (i18n file count may grow, never shrink);
   red action test for the generic cross-workspace error; a guest attempting a
-  relation write inside their read scope gets "No permission.", while a write
-  outside the scope gets "Database not found." — character for character the
-  answer for a database that does not exist, so the refusal never confirms
-  that the database exists.
+  relation write gets "No permission.".
 
 ### Non-goals (this spec)
 
