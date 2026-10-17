@@ -68,7 +68,7 @@ rustc ? ok(rustc) : bad("rustc not found", "install Rust: https://rustup.rs (or 
 cargo ? ok(cargo) : bad("cargo not found", "install Rust: https://rustup.rs");
 cargoTauri
   ? ok(`tauri cli ${cargoTauri.replace(/^tauri-cli\s*/, "")}`)
-  : bad("tauri CLI not found", "cargo install tauri-cli --version ^2 --locked");
+  : bad("tauri CLI not found", "cargo install tauri-cli --version 2.12.3 --locked");
 const triple = targetTriple();
 if (os === "win32") {
   // The MSVC linker is the classic silent failure: rustc is installed, `cargo

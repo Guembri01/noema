@@ -284,9 +284,10 @@ npm run desktop:dev            # beforeDevCommand starts `next dev --port 3200`
 npm run desktop:bundle         # NSIS .exe + .msi
 ```
 
-`cargo tauri` is the CLI (`cargo install tauri-cli --version ^2 --locked`), so no
-npm dependency has to change to build the app. A JS-driven team can use
-`@tauri-apps/cli` instead; the config is identical.
+`cargo tauri` is the CLI (`cargo install tauri-cli --version 2.12.3 --locked`,
+the exact version CI installs), so no npm dependency has to change to build
+the app. A JS-driven team can use `@tauri-apps/cli` instead; the config is
+identical.
 
 ### The one flag that splits the outputs
 
