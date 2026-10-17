@@ -1222,7 +1222,7 @@ export function PageTree({
                     <FileText className="h-4 w-4 text-muted" /> Open
                   </ContextMenuItem>
                   <ContextMenuItem
-                    onSelect={() => window.open(href, "_blank", "noopener")}
+                    onSelect={() => window.open(href, "_blank", "noopener,noreferrer")}
                   >
                     <FileText className="h-4 w-4 text-muted" /> Open in new tab
                   </ContextMenuItem>

@@ -189,6 +189,12 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   says what the block is: data to quote, never instructions. The frame goes
   around the finished text, and the autofill has no context budget (`maxTokens`
   there is the output budget), so nothing can cut the closing tag off.
+- The page tree's "Open in new tab" now passes `noreferrer` as well. The call
+  `window.open(href, "_blank", "noopener")` set `noopener` — so the opened tab
+  cannot reach back through `window.opener` — but left the `Referer` header
+  standing, so the new tab learned the app URL. The gate for new tabs reads
+  the `rel` of the elements and does not look at the feature string of a
+  `window.open`, which is why the place passed it.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
