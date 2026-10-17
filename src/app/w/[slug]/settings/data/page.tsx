@@ -5,6 +5,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { t } from "@/lib/i18n";
 import { safeAction } from "@/lib/actions-client";
+import { Section } from "@/components/ui/section";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SettingsNav } from "../settings-nav";
 import {
   eraseSubjectDataAction,
   loadDataControlsAction,
@@ -122,6 +125,8 @@ export default function DataControlsPage() {
         are always retained.
       </p>
 
+      <SettingsNav slug={slug} locale={snapshot?.locale ?? "en"} className="mb-8" />
+
       {error && (
         <p role="alert" className="mb-4 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm">
           {error}
@@ -133,14 +138,17 @@ export default function DataControlsPage() {
         </p>
       )}
 
-      {loading && !snapshot && <p className="text-sm text-muted">Loading…</p>}
+      {loading && !snapshot && (
+        <div className="mt-8 flex flex-col gap-6" aria-busy="true" aria-live="polite">
+          <span className="sr-only">Loading…</span>
+          <Skeleton variant="text" lines={2} />
+          <Skeleton variant="table" rows={4} cols={2} />
+        </div>
+      )}
 
       {snapshot && (
         <>
-          <section className="mt-8">
-            <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
-              Export (Art. 15)
-            </h2>
+          <Section className="mt-8" title="Export (Art. 15)">
             <div className="rounded-lg border border-border p-4">
               <p className="text-sm">
                 {snapshot.records.length} record{snapshot.records.length === 1 ? "" : "s"} across{" "}
@@ -176,12 +184,9 @@ export default function DataControlsPage() {
                 </details>
               )}
             </div>
-          </section>
+          </Section>
 
-          <section className="mt-10">
-            <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
-              Erasure plan (Art. 17)
-            </h2>
+          <Section className="mt-10" title="Erasure plan (Art. 17)">
             <div className="rounded-lg border border-border p-4">
               <p className="text-sm">{snapshot.summary.text}</p>
               <p className="mt-1 text-xs text-muted">
@@ -241,7 +246,7 @@ export default function DataControlsPage() {
                 </div>
               </div>
             </div>
-          </section>
+          </Section>
         </>
       )}
     </div>

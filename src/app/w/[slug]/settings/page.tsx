@@ -26,7 +26,7 @@ import {
   type ApiTokenRow,
 } from "@/components/api-token-manager";
 import { EditWorkspaceButton } from "@/components/workspace-dialog";
-import { MembersManager } from "@/components/members-manager";
+import { MembersManager, type PendingInviteRow } from "@/components/members-manager";
 import { TwoFactorManager } from "@/components/two-factor-manager";
 import { SessionsManager, type SessionRow } from "@/components/sessions-manager";
 import { OAuthAppManager, type OAuthAppRow } from "@/components/oauth-app-manager";
@@ -36,6 +36,8 @@ import {
   type WebhookRow,
 } from "@/components/webhook-manager";
 import { LocalTime } from "@/components/local-time";
+import { Section } from "@/components/ui/section";
+import { SettingsNav } from "./settings-nav";
 import { t } from "@/lib/i18n";
 import {
   aggregateByPage,
@@ -158,7 +160,7 @@ export default async function SettingsPage({
     prisma.apiToken.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
-      select: { id: true, name: true, createdAt: true, lastUsedAt: true },
+      select: { id: true, name: true, scopes: true, createdAt: true, lastUsedAt: true },
     }),
     manage
       ? prisma.webhook.findMany({
@@ -180,6 +182,8 @@ export default async function SettingsPage({
     listActiveSessions(user.id),
     getSessionId(),
   ]);
+  // The registry's sliding deadline is surfaced so the row can render its
+  // expiry line (and derive an `expired` status once the clock passes it).
   const sessionRows: SessionRow[] = activeSessions
     .map((record) => ({
       sid: record.sid,
@@ -187,6 +191,7 @@ export default async function SettingsPage({
       createdAt: record.createdAt,
       lastActiveAt: record.lastActiveAt,
       current: record.sid === currentSid,
+      expiresAt: record.expiresAt ?? null,
     }))
     .sort((a, b) => Number(b.current) - Number(a.current));
 
@@ -275,8 +280,19 @@ export default async function SettingsPage({
   const tokenRows: ApiTokenRow[] = tokens.map((token) => ({
     id: token.id,
     name: token.name,
+    scopes: token.scopes,
     createdAt: token.createdAt.toISOString(),
     lastUsedAt: token.lastUsedAt?.toISOString() ?? null,
+  }));
+
+  // Invitations that are sent but not yet accepted: the pending-invite rows the
+  // members manager renders between the roster and the guests. `listWorkspaceInvites`
+  // is already admin-gated server-side (returns [] for everyone else).
+  const pendingInvites: PendingInviteRow[] = workspaceInvites.map((invite) => ({
+    id: invite.id,
+    email: invite.email,
+    role: invite.role,
+    expiresAt: invite.expiresAt.toISOString(),
   }));
 
   return (
@@ -285,10 +301,7 @@ export default async function SettingsPage({
         {t(locale, "workspaceSettings")}
       </h1>
 
-      <section>
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
-          {t(locale, "general")}
-        </h2>
+      <Section title={t(locale, "general")}>
         {canManageMembers(access.role) ? (
           <EditWorkspaceButton
             workspaceId={workspace.id}
@@ -299,56 +312,16 @@ export default async function SettingsPage({
         ) : (
           <p className="text-sm">{workspace.name}</p>
         )}
-        <p className="mt-2 text-xs text-muted">
+        <p className="text-xs text-muted">
           {t(locale, "yourRole")} {access.role.toLowerCase()}
         </p>
-      </section>
+      </Section>
 
-      <nav aria-label={t(locale, "settings")} className="mt-8 grid gap-2 sm:grid-cols-2">
-        <Link
-          href={`/w/${workspace.slug}/settings/notifications`}
-          className="rounded-lg border border-border px-4 py-3 text-sm hover:bg-surface-2"
-        >
-          {t(locale, "notifications")}
-          <span className="mt-0.5 block text-xs text-muted">
-            Choose which events reach you and how they are batched.
-          </span>
-        </Link>
-        <Link
-          href={`/w/${workspace.slug}/settings/tokens`}
-          className="rounded-lg border border-border px-4 py-3 text-sm hover:bg-surface-2"
-        >
-          {t(locale, "apiTokens")}
-          <span className="mt-0.5 block text-xs text-muted">
-            Create and revoke scoped REST API tokens.
-          </span>
-        </Link>
-        <Link
-          href={`/w/${workspace.slug}/settings/data`}
-          className="rounded-lg border border-border px-4 py-3 text-sm hover:bg-surface-2"
-        >
-          Data &amp; privacy
-          <span className="mt-0.5 block text-xs text-muted">
-            Export or erase your personal data (GDPR).
-          </span>
-        </Link>
-        <Link
-          href={`/w/${workspace.slug}/settings/move`}
-          className="rounded-lg border border-border px-4 py-3 text-sm hover:bg-surface-2"
-        >
-          Move pages
-          <span className="mt-0.5 block text-xs text-muted">
-            Move a page subtree into another workspace.
-          </span>
-        </Link>
-      </nav>
+      <SettingsNav slug={workspace.slug} locale={locale} className="mt-8" />
 
-      <section className="mt-10">
-        {directory && (
-          <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
-            {t(locale, "members")} ({members.length})
-          </h2>
-        )}
+      {/* MembersManager owns the Members / Pending invites / Guests Section
+          headers, so the page only supplies the roster and the pending invites. */}
+      <div className="mt-10">
         <MembersManager
           workspaceId={workspace.id}
           workspaceName={workspace.name}
@@ -356,6 +329,7 @@ export default async function SettingsPage({
           currentUserId={user.id}
           currentUserRole={access.role}
           locale={locale}
+          pendingInvites={pendingInvites}
           members={
             directory
               ? members.map((member) => ({
@@ -367,22 +341,22 @@ export default async function SettingsPage({
               : []
           }
         />
-      </section>
+      </div>
 
       {manage && activity.length > 0 && (
-        <section className="mt-10">
-          <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
-            {t(locale, "activityHeading")}
-          </h2>
-          <p className="mb-3 text-xs text-muted">
-            {t(locale, "activityIntro")}
-          </p>
-          <Link
-            href={`/w/${workspace.slug}/settings/audit`}
-            className="mb-3 inline-block text-xs text-accent hover:underline"
-          >
-            View full audit log →
-          </Link>
+        <Section
+          className="mt-10"
+          title={t(locale, "activityHeading")}
+          description={t(locale, "activityIntro")}
+          action={
+            <Link
+              href={`/w/${workspace.slug}/settings/audit`}
+              className="text-xs text-accent hover:underline"
+            >
+              View full audit log →
+            </Link>
+          }
+        >
           <ul className="divide-y divide-border rounded-lg border border-border">
             {activity.map((entry) => (
               <li key={entry.id} className="flex items-center gap-3 px-4 py-2 text-sm">
@@ -398,20 +372,16 @@ export default async function SettingsPage({
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       )}
 
       {manage && analyticsEvents.length > 0 && (
-        <section className="mt-10" aria-labelledby="analytics-heading">
-          <h2
-            id="analytics-heading"
-            className="mb-3 text-sm font-medium uppercase tracking-wide text-muted"
-          >
-            Analytics
-          </h2>
-          <p className="mb-3 text-xs text-muted">
-            Page activity from the workspace trail, most active pages first.
-          </p>
+        <Section
+          className="mt-10"
+          aria-label="Analytics"
+          title="Analytics"
+          description="Page activity from the workspace trail, most active pages first."
+        >
           <div className="rounded-lg border border-border p-4">
             <div className="mb-4 flex flex-wrap gap-x-6 gap-y-1 text-sm">
               <span>
@@ -493,20 +463,18 @@ export default async function SettingsPage({
               </tbody>
             </table>
           </div>
-        </section>
+        </Section>
       )}
 
-      <section className="mt-10">
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
-          {t(locale, "exportHeading")}
-        </h2>        <a
+      <Section className="mt-10" title={t(locale, "exportHeading")}>
+        <a
           href={`/api/export/workspace/${workspace.slug}`}
           download
-          className="inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
+          className="inline-flex h-9 w-fit items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
         >
           {t(locale, "downloadWorkspace")}
         </a>
-      </section>
+      </Section>
 
       <DangerZone
         workspaceId={workspace.id}

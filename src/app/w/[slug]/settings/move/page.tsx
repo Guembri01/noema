@@ -8,6 +8,9 @@ import {
   executeWorkspaceMoveAction,
   previewWorkspaceMoveAction,
 } from "@/server/actions/move-workspace";
+import { Section } from "@/components/ui/section";
+import { SettingsNav } from "../settings-nav";
+import { t } from "@/lib/i18n";
 
 export const metadata = { title: "Move pages" };
 
@@ -35,6 +38,7 @@ export default async function MovePagesPage({
   const { slug } = await params;
   const { source, to, error } = await searchParams;
   const user = await requireUser();
+  const locale = user.locale ?? "en";
   const workspace = await getWorkspaceBySlug(slug);
   if (!workspace) notFound();
   const access = await getWorkspaceAccess(user.id, workspace.id);
@@ -87,7 +91,7 @@ export default async function MovePagesPage({
   return (
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
       <Link href={`/w/${workspace.slug}/settings`} className="text-xs text-muted hover:underline">
-        ← Settings
+        ← {t(locale, "settings")}
       </Link>
       <h1 className="mb-2 mt-3 text-2xl font-semibold tracking-tight">
         Move pages to another workspace
@@ -97,6 +101,8 @@ export default async function MovePagesPage({
         rewritten, references that do not exist in the destination are dropped with a
         warning, and every warning is shown before you confirm.
       </p>
+
+      <SettingsNav slug={workspace.slug} locale={locale} className="mb-8" />
 
       {error && (
         <p role="alert" className="mb-4 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm">
@@ -161,11 +167,16 @@ export default async function MovePagesPage({
       )}
 
       {preview && preview.ok && (
-        <section className="mt-8 rounded-lg border border-border p-4" aria-label="Move preview">
-          <h2 className="text-sm font-medium">
-            {preview.sourcePageTitle || "Untitled"} → {preview.targetName}
-          </h2>
-          <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
+        <Section
+          className="mt-8 rounded-lg border border-border p-4"
+          aria-label="Move preview"
+          title={
+            <>
+              {preview.sourcePageTitle || "Untitled"} → {preview.targetName}
+            </>
+          }
+        >
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
             <div>
               <dt className="text-xs text-muted">Pages</dt>
               <dd className="tabular-nums">{preview.summary.pageCount}</dd>
@@ -256,7 +267,7 @@ export default async function MovePagesPage({
               This move cannot be confirmed until the refusals above are resolved.
             </p>
           )}
-        </section>
+        </Section>
       )}
     </div>
   );

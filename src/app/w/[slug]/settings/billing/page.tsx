@@ -11,6 +11,8 @@ import {
   type BillingUsage,
   type PlanProrationPreview,
 } from "@/lib/workspace-plan";
+import { Section } from "@/components/ui/section";
+import { SettingsNav } from "../settings-nav";
 import { t } from "@/lib/i18n";
 
 export const metadata = { title: "Plan & billing" };
@@ -105,13 +107,9 @@ export default async function BillingSettingsPage({
         This deployment processes no payments — every amount below is a preview only.
       </p>
 
-      <section className="mb-10" aria-labelledby="current-plan-heading">
-        <h2
-          id="current-plan-heading"
-          className="mb-3 text-sm font-medium uppercase tracking-wide text-muted"
-        >
-          Current plan
-        </h2>
+      <SettingsNav slug={workspace.slug} locale={locale} className="mb-10" />
+
+      <Section className="mb-10" title="Current plan">
         <div className="rounded-lg border border-border p-4">
           <div className="flex items-baseline justify-between gap-3">
             <span className="text-lg font-semibold">{model.label}</span>
@@ -143,15 +141,9 @@ export default async function BillingSettingsPage({
             </div>
           </dl>
         </div>
-      </section>
+      </Section>
 
-      <section className="mb-10" aria-labelledby="limits-heading">
-        <h2
-          id="limits-heading"
-          className="mb-3 text-sm font-medium uppercase tracking-wide text-muted"
-        >
-          Limits
-        </h2>
+      <Section className="mb-10" title="Limits">
         <table className="w-full text-sm">
           <tbody className="divide-y divide-border border-y border-border">
             {model.limits.map((row) => (
@@ -164,15 +156,9 @@ export default async function BillingSettingsPage({
             ))}
           </tbody>
         </table>
-      </section>
+      </Section>
 
-      <section className="mb-10" aria-labelledby="features-heading">
-        <h2
-          id="features-heading"
-          className="mb-3 text-sm font-medium uppercase tracking-wide text-muted"
-        >
-          Gated features
-        </h2>
+      <Section className="mb-10" title="Gated features">
         {model.features.length > 0 ? (
           <ul className="flex flex-wrap gap-2">
             {model.features.map((feature) => (
@@ -190,15 +176,9 @@ export default async function BillingSettingsPage({
             unlock on higher tiers.
           </p>
         )}
-      </section>
+      </Section>
 
-      <section aria-labelledby="proration-heading">
-        <h2
-          id="proration-heading"
-          className="mb-3 text-sm font-medium uppercase tracking-wide text-muted"
-        >
-          Plan change preview
-        </h2>
+      <Section className="mb-10" title="Plan change preview">
         <p className="mb-3 text-xs text-muted">
           Prorated at the current date for the period {shortDate(start)} – {shortDate(end)}. A
           positive amount would be billed; a negative amount is credit owed to the workspace.
@@ -220,7 +200,7 @@ export default async function BillingSettingsPage({
             ))}
           </tbody>
         </table>
-      </section>
+      </Section>
     </div>
   );
 }

@@ -28,6 +28,7 @@ import { Select, type SelectOption } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tag } from "@/components/ui/tag";
 import { PromptCard } from "@/components/ai-settings-providers";
+import { SettingsNav } from "../settings-nav";
 
 /** Empty draft used when nothing is selected. */
 type Draft = {
@@ -214,6 +215,8 @@ export default function PromptLibraryPage() {
         Save reusable prompts with <code>{"{{variable}}"}</code> placeholders and insert them from
         the editor or the chat composer. Workspace prompts are shared; personal prompts are private.
       </p>
+
+      <SettingsNav slug={slug} locale="en" className="mb-8" />
 
       <div className="grid gap-8 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <Section
