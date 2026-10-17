@@ -8,6 +8,7 @@ import {
   type NodeViewProps,
 } from "@tiptap/react";
 import { ExternalLink, MapPin, Pencil, Trash2 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { embedMeta, hostOf, isHttpUrl, normalizeUrl, resolveEmbed } from "@/lib/embeds";
 import {
   DEFAULT_ZOOM,
@@ -303,6 +304,120 @@ function resolveBookmarkTarget(raw: string, origin: string): BookmarkTarget {
   return { ok: true, url, requestUrl };
 }
 
+/* ---------------------------------------------------- bookmark card surface */
+
+/** The three render states the bookmark card can be in (docs/DESIGN_SYSTEM.md §8). */
+export type BookmarkCardState = "loading" | "ready" | "error";
+
+export type BookmarkCardSurfaceProps = {
+  /** Which state to render. Defaults to the loaded card. */
+  state?: BookmarkCardState;
+  /** The canonicalised link target. */
+  url?: string | null;
+  title?: string | null;
+  description?: string | null;
+  image?: string | null;
+  icon?: string | null;
+  host?: string | null;
+  /** A sanitised provider `<iframe>` src, when the link resolved to one. */
+  embedUrl?: string | null;
+  /** Message for the `error` state, rendered as inline danger ink. */
+  error?: string | null;
+  onEdit?: () => void;
+  onRemove?: () => void;
+};
+
+/**
+ * The bookmark link card, split out of the Tiptap node view so every state
+ * (loading skeleton, error, loaded card) can be rendered with
+ * `renderToStaticMarkup`. Chrome is token-only — `border-border` /
+ * `bg-surface` / `rounded-md`; the hover settles through `.u-surface` +
+ * `.u-interactive` (colour and shadow only, so there is no layout shift), and
+ * the error copy is inline `text-danger` ink.
+ */
+export function BookmarkCardSurface({
+  state = "ready",
+  url = null,
+  title = null,
+  description = null,
+  image = null,
+  icon = null,
+  host = null,
+  embedUrl = null,
+  error = null,
+  onEdit,
+  onRemove,
+}: BookmarkCardSurfaceProps) {
+  if (state === "loading") {
+    return (
+      <div className="noema-bookmark-loading" data-bookmark-state="loading" aria-busy="true">
+        <Skeleton variant="card" />
+      </div>
+    );
+  }
+
+  if (state === "error") {
+    return (
+      <p
+        role="alert"
+        contentEditable={false}
+        data-bookmark-state="error"
+        className="noema-bookmark-error mt-1 text-sm text-danger"
+      >
+        {error ?? "Couldn't load this link."}
+      </p>
+    );
+  }
+
+  return (
+    <div
+      className="noema-bookmark-card u-surface u-interactive border border-border rounded-md bg-surface hover:bg-surface-2"
+      data-bookmark-state="ready"
+      contentEditable={false}
+    >
+      <a href={url ?? "#"} target="_blank" rel="noreferrer noopener" className="noema-bookmark-link">
+        <span className="noema-bookmark-text">
+          {icon ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={icon} alt="" className="noema-bookmark-favicon" />
+          ) : null}
+          <span className="noema-bookmark-title">
+            {title ?? host ?? url}
+          </span>
+          {description ? (
+            <span className="noema-bookmark-desc">
+              {renderLinkified(description, "bm-desc")}
+            </span>
+          ) : null}
+          <span className="noema-bookmark-host">
+            <ExternalLink className="h-3 w-3" /> {host}
+          </span>
+        </span>
+        {image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={image} alt="" className="noema-bookmark-image" />
+        ) : null}
+      </a>
+      {embedUrl ? (
+        <SandboxedFrame
+          className="noema-bookmark-embed bg-overlay"
+          src={embedUrl}
+          title={`${host || "Link"} preview`}
+          sandbox={SANDBOX_PREVIEW}
+        />
+      ) : null}
+      <div className="noema-bookmark-actions">
+        <button type="button" aria-label="Edit link" onClick={onEdit}>
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+        <button type="button" aria-label="Remove" onClick={onRemove}>
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function BookmarkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
   const url = node.attrs.url as string | null;
   const [editing, setEditing] = useState(!url);
@@ -333,6 +448,8 @@ function BookmarkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
         embed: card.embed,
       });
       setEditing(false);
+    } catch {
+      setError("Couldn't load this link. Check the address and try again.");
     } finally {
       setLoading(false);
     }
@@ -370,58 +487,22 @@ function BookmarkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
               </button>
             )}
           </div>
-          {error && (
-            <p
-              role="alert"
-              contentEditable={false}
-              className="noema-bookmark-error mt-1 text-sm text-red-600 dark:text-red-400"
-            >
-              {error}
-            </p>
-          )}
+          {error ? <BookmarkCardSurface state="error" error={error} /> : null}
+          {loading ? <BookmarkCardSurface state="loading" /> : null}
         </>
       ) : (
-        <div className="noema-bookmark-card" contentEditable={false}>
-          <a href={url} target="_blank" rel="noreferrer noopener" className="noema-bookmark-link">
-            <span className="noema-bookmark-text">
-              {node.attrs.icon ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={String(node.attrs.icon)} alt="" className="noema-bookmark-favicon" />
-              ) : null}
-              <span className="noema-bookmark-title">
-                {String(node.attrs.title ?? host ?? url)}
-              </span>
-              {node.attrs.description ? (
-                <span className="noema-bookmark-desc">
-                  {renderLinkified(String(node.attrs.description), "bm-desc")}
-                </span>
-              ) : null}
-              <span className="noema-bookmark-host">
-                <ExternalLink className="h-3 w-3" /> {host}
-              </span>
-            </span>
-            {node.attrs.image ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={String(node.attrs.image)} alt="" className="noema-bookmark-image" />
-            ) : null}
-          </a>
-          {embedUrl ? (
-            <SandboxedFrame
-              className="noema-bookmark-embed"
-              src={embedUrl}
-              title={`${host || "Link"} preview`}
-              sandbox={SANDBOX_PREVIEW}
-            />
-          ) : null}
-          <div className="noema-bookmark-actions">
-            <button type="button" aria-label="Edit link" onClick={() => setEditing(true)}>
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
-            <button type="button" aria-label="Remove" onClick={() => deleteNode()}>
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
+        <BookmarkCardSurface
+          state="ready"
+          url={url}
+          title={node.attrs.title as string | null}
+          description={node.attrs.description as string | null}
+          image={node.attrs.image as string | null}
+          icon={node.attrs.icon as string | null}
+          host={host}
+          embedUrl={embedUrl}
+          onEdit={() => setEditing(true)}
+          onRemove={() => deleteNode()}
+        />
       )}
     </NodeViewWrapper>
   );
@@ -562,7 +643,7 @@ function EmbedView({ node, updateAttributes, deleteNode }: NodeViewProps) {
         </div>
       ) : (
         <SandboxedFrame
-          className="noema-embed-frame"
+          className="noema-embed-frame bg-overlay"
           src={resolved.embedUrl}
           title={meta?.title ?? "Embedded content"}
           sandbox={resolved.sandbox}
@@ -570,7 +651,9 @@ function EmbedView({ node, updateAttributes, deleteNode }: NodeViewProps) {
           provider={resolved.provider}
           aspectRatio={meta?.aspectRatio}
         >
-          {meta && <span className="noema-embed-provider">{meta.label}</span>}
+          {meta && (
+            <span className="noema-embed-provider bg-surface-2 text-muted">{meta.label}</span>
+          )}
           <div className="noema-embed-actions">
             <button type="button" aria-label="Change embed" onClick={() => setEditing(true)}>
               <Pencil className="h-3.5 w-3.5" />
@@ -677,7 +760,7 @@ function PdfPreviewView({ node, updateAttributes, deleteNode }: NodeViewProps) {
             </button>
           )}
           {error && (
-            <p role="alert" className="noema-embed-hint text-red-600 dark:text-red-400">
+            <p role="alert" className="noema-embed-hint text-danger">
               {error}
             </p>
           )}
@@ -858,7 +941,7 @@ function MapBlockView({ node, updateAttributes, deleteNode }: NodeViewProps) {
             </button>
           )}
           {error && (
-            <p role="alert" className="noema-embed-hint text-red-600 dark:text-red-400">
+            <p role="alert" className="noema-embed-hint text-danger">
               {error}
             </p>
           )}
