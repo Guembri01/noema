@@ -10,6 +10,8 @@
  * without needing a DOM.
  */
 import { describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 // The renderer imports server actions (`reorderRowsAction`, `createPropertyAction`)
 // and `next/navigation`; stub them so the pure exports import cleanly in node.
@@ -32,7 +34,8 @@ import {
   tableFooterSpec,
   type TableFooterCalculation,
 } from "./view-renderers";
-import type { DBProperty, DBRow } from "./database-types";
+import { BoardView, ListView, TableView } from "./view-renderers";
+import type { DBProperty, DBRow, HeaderConfig } from "./database-types";
 
 const properties: DBProperty[] = [
   { id: "title", name: "Title", type: "TEXT", config: { primary: true } },
@@ -304,5 +307,136 @@ describe("form view: stored config → form-view engine", () => {
       "body",
     ]);
     expect(plan.meta.submitLabel).toBe("Submit");
+  });
+});
+
+/**
+ * Motion wiring — the rows carry `data-flip-id` (the FLIP hook's contract) and
+ * the table's group headings carry a reveal toggle. Rendered with
+ * `react-dom/server`: presence starts idle, so the markup is the static
+ * structure the hook then animates on the client.
+ */
+describe("row motion wiring (data-flip-id + group reveal)", () => {
+  const headerConfig: HeaderConfig = {
+    databases: [],
+    relations: [],
+    relationData: {},
+    onLinkDatabase: () => {},
+    onConfigureRollup: () => {},
+  };
+  const noop = () => {};
+
+  it("marks every table row with its stable flip id", () => {
+    const html = renderToStaticMarkup(
+      createElement(TableView, {
+        locale: "en",
+        workspaceSlug: "w",
+        workspaceId: "ws",
+        properties,
+        rows,
+        primary: properties[0],
+        editable: false,
+        config: {},
+        valueFor,
+        setValue: noop,
+        setPrimary: noop,
+        removeRow: noop,
+        onSaveTemplate: noop,
+        computedFor: () => undefined,
+        relationOptionsFor: () => [],
+        peopleOptions: [],
+        headerConfig,
+        onRunButton: noop,
+        onConfigureButton: noop,
+        onOpenPeek: noop,
+        onRunAi: noop,
+        colorOf: () => null,
+        onEditFormula: noop,
+        onSetFormat: noop,
+        onEditOptions: noop,
+        editingProperty: null,
+        setEditingProperty: noop,
+        onDeleteProperty: noop,
+        onRenameProperty: noop,
+        onDuplicateProperty: noop,
+        onReorderProperty: noop,
+      }),
+    );
+    expect(html).toContain('data-flip-id="r1"');
+    expect(html).toContain('data-flip-id="r2"');
+    expect(html).toContain('data-motion="idle"');
+  });
+
+  it("gives a grouped table a heading toggle that reveals its rows", () => {
+    const html = renderToStaticMarkup(
+      createElement(TableView, {
+        locale: "en",
+        workspaceSlug: "w",
+        workspaceId: "ws",
+        properties,
+        rows,
+        primary: properties[0],
+        editable: false,
+        config: { groupByPropertyId: "status" },
+        valueFor,
+        setValue: noop,
+        setPrimary: noop,
+        removeRow: noop,
+        onSaveTemplate: noop,
+        computedFor: () => undefined,
+        relationOptionsFor: () => [],
+        peopleOptions: [],
+        headerConfig,
+        onRunButton: noop,
+        onConfigureButton: noop,
+        onOpenPeek: noop,
+        onRunAi: noop,
+        colorOf: () => null,
+        onEditFormula: noop,
+        onSetFormat: noop,
+        onEditOptions: noop,
+        editingProperty: null,
+        setEditingProperty: noop,
+        onDeleteProperty: noop,
+        onRenameProperty: noop,
+        onDuplicateProperty: noop,
+        onReorderProperty: noop,
+      }),
+    );
+    expect(html).toContain('data-testid="table-group-toggle-todo"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("u-transform");
+  });
+
+  it("marks list rows and board cards with their flip ids", () => {
+    const list = renderToStaticMarkup(
+      createElement(ListView, {
+        locale: "en",
+        workspaceSlug: "w",
+        properties,
+        rows,
+        valueFor,
+        editable: false,
+      }),
+    );
+    expect(list).toContain('data-flip-id="r1"');
+
+    const board = renderToStaticMarkup(
+      createElement(BoardView, {
+        locale: "en",
+        workspaceSlug: "w",
+        workspaceId: "ws",
+        properties,
+        rows,
+        colorOf: () => null,
+        groupBy: "status",
+        primary: properties[0],
+        valueFor,
+        setValue: noop,
+        editable: false,
+      }),
+    );
+    expect(board).toContain('data-flip-id="r1"');
+    expect(board).toContain('data-testid="board-column-todo"');
   });
 });

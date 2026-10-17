@@ -108,6 +108,136 @@ import {
   type FormSchema,
 } from "@/lib/form-view";
 import { optionEdge, optionInk, optionSurface, type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
+import { shouldAnimateLayout, useFlipList } from "@/lib/layout-shift";
+import {
+  ROW_MOTION_MS,
+  enteredIds,
+  groupChevronClass,
+  retainLeaving,
+  rowIdsKey,
+  rowMotionClass,
+  rowMotionState,
+  rowMotionStyle,
+  sameIds,
+  type RowMotionState,
+} from "./group-motion";
+
+/* ---------------------------------------------------------------------------
+   Row presence — fade in on add, fade out on delete (shared by the views)
+
+   The FLIP hook (`@/lib/layout-shift`) animates the rows that *move*; this is
+   the other half: a row that appears fades in and one that disappears keeps its
+   box for `--dur-2` while it fades out, so the rows around it never jump. The
+   presence of a row is derived from the **ordered ids** only — a keystroke
+   changes cell content, never an id, so typing can never replay a fade.
+   --------------------------------------------------------------------------- */
+
+/**
+ * Whether this client should run entry/exit motion at all. The decision is the
+ * shared `shouldAnimateLayout` predicate, so the fade and the FLIP slide stand
+ * down under `prefers-reduced-motion` together (and the global CSS override
+ * makes anything that slips through instant). Starts `false` so the server and
+ * the first client render agree; the effect flips it once the media query is
+ * readable.
+ */
+function useMotionEnabled(): boolean {
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      setEnabled(true);
+      return;
+    }
+    setEnabled(
+      shouldAnimateLayout({
+        reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+        dragging: false,
+      }),
+    );
+  }, []);
+  return enabled;
+}
+
+type RowPresenceState<T> = {
+  /** The ordered ids of the rows that were present last commit. */
+  ids: string[];
+  /** The list rendered last commit (present rows plus any still exiting). */
+  rendered: T[];
+  /** Ids that just appeared and should fade in. */
+  entering: Set<string>;
+  /** Rows that are no longer present but still fading out. */
+  exiting: T[];
+};
+
+/**
+ * Track which rows just entered or left and return the list to render (with the
+ * exiting rows re-inserted at their old slots) plus a per-row motion state.
+ *
+ * The entry/exit detection runs during render — a render-phase state update —
+ * so the very first commit that shows a new row already carries its fade, with
+ * no visible flash. Both the enter flag and the exiting snapshots are cleared
+ * after `--dur-2`.
+ */
+function useRowPresence<T>(
+  items: readonly T[],
+  keyOf: (item: T) => string,
+): { rows: T[]; stateOf: (id: string) => RowMotionState } {
+  const motion = useMotionEnabled();
+  const ids = items.map(keyOf);
+  const [presence, setPresence] = useState<RowPresenceState<T>>(() => ({
+    ids,
+    rendered: [...items],
+    entering: new Set<string>(),
+    exiting: [],
+  }));
+
+  if (!sameIds(presence.ids, ids)) {
+    const nextIds = new Set(ids);
+    setPresence({
+      ids,
+      rendered: retainLeaving(items, presence.rendered, keyOf),
+      entering: new Set(enteredIds(presence.ids, ids)),
+      exiting: presence.rendered.filter((item) => !nextIds.has(keyOf(item))),
+    });
+  }
+
+  // Drop the enter flags once the fade has played, so a later re-entry replays.
+  useEffect(() => {
+    if (presence.entering.size === 0) return;
+    const timer = setTimeout(
+      () => setPresence((current) => ({ ...current, entering: new Set<string>() })),
+      ROW_MOTION_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [presence.entering]);
+
+  // Drop the exiting snapshots once the fade-out has played.
+  useEffect(() => {
+    if (presence.exiting.length === 0) return;
+    const timer = setTimeout(() => {
+      setPresence((current) => {
+        const present = new Set(current.ids);
+        return {
+          ...current,
+          rendered: current.rendered.filter((item) => present.has(keyOf(item))),
+          exiting: [],
+        };
+      });
+    }, ROW_MOTION_MS);
+    return () => clearTimeout(timer);
+  }, [presence.exiting]);
+
+  if (!motion) {
+    return { rows: [...items], stateOf: () => "idle" };
+  }
+
+  const present = new Set(ids);
+  return {
+    // Present rows always come from the fresh `items` (a cell edit re-renders
+    // them); only the exiting rows are pulled from the last rendered list.
+    rows: retainLeaving(items, presence.rendered, keyOf),
+    stateOf: (id) => rowMotionState(id, { present, entering: presence.entering }),
+  };
+}
 
 /* ---------------------------------------------------------------------------
    View class & motion maps (design system §5/§6)
@@ -804,6 +934,28 @@ export function TableView({
   const globalIndexById = new Map(
     orderedRows.map((row, index) => [row.id, index] as const),
   );
+  // Group reveal (spec §4 "Expand group reveals rows"): a heading folds its
+  // rows shut. The collapse is a display-only, in-session toggle — it never
+  // touches the view config, and expanding simply lets the rows fade back in.
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const groupKeyByRowId = new Map<string, string>();
+  for (const group of groups ?? []) {
+    for (const row of group.rows) {
+      if (!groupKeyByRowId.has(row.id)) groupKeyByRowId.set(row.id, group.key);
+    }
+  }
+  const visibleRows = orderedRows.filter(
+    (row) => collapsedGroups[groupKeyByRowId.get(row.id) ?? ""] !== true,
+  );
+  // Rows fade in/out by presence; the FLIP hook then slides the rows a change
+  // displaces. Both key off the ordered ids, never the cell content.
+  const rowMotion = useRowPresence(visibleRows, (row) => row.id);
+  useFlipList(scrollRef, [rowIdsKey(rowMotion.rows.map((row) => row.id))]);
+  const motionGroups = groupTableRows(
+    rowMotion.rows,
+    properties,
+    config.groupByPropertyId,
+  );
   // HTML5 drag state for property reorder: the dragged column id and the
   // column currently under the pointer (highlighted as the drop target).
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -867,11 +1019,17 @@ export function TableView({
     if (resolved.textColor) {
       rowColors.color = optionInk(resolved.textColor);
     }
+    const motion = rowMotion.stateOf(row.id);
     return (
       <tr
         key={row.id}
-        style={rowColors}
-        className="group u-colors border-b border-border last:border-0 hover:bg-surface-2/60"
+        data-flip-id={row.id}
+        data-motion={motion}
+        style={{ ...rowColors, ...rowMotionStyle(motion) }}
+        className={cn(
+          "group u-colors border-b border-border last:border-0 hover:bg-surface-2/60",
+          rowMotionClass(motion),
+        )}
       >
         {columns.map((property, index) => {
           const isPrimary = property.id === primary?.id;
@@ -1143,13 +1301,15 @@ export function TableView({
             />
           </tr>
         </thead>
-        {groups && groups.length > 0 ? (
-          groups.map((group, groupIndex) => {
+        {motionGroups && motionGroups.length > 0 ? (
+          motionGroups.map((group, groupIndex) => {
             const groupFooterByProperty = new Map(
               (groupFooters?.[groupIndex]?.footers ?? []).map(
                 (result) => [result.propertyId, result] as const,
               ),
             );
+            const collapsedGroup = collapsedGroups[group.key] === true;
+            const groupCount = groups?.[groupIndex]?.rows.length ?? group.rows.length;
             return (
               <tbody key={group.key}>
                 <tr className="bg-surface-2/60 text-xs">
@@ -1158,8 +1318,27 @@ export function TableView({
                     data-testid={`table-group-${group.key}`}
                     className="px-3 py-1.5 font-medium"
                   >
-                    {group.label}{" "}
-                    <span className="text-muted">{group.rows.length}</span>
+                    <button
+                      type="button"
+                      aria-expanded={!collapsedGroup}
+                      aria-label={
+                        collapsedGroup
+                          ? t(locale, "toggleExpand")
+                          : t(locale, "toggleCollapse")
+                      }
+                      data-testid={`table-group-toggle-${group.key}`}
+                      onClick={() =>
+                        setCollapsedGroups((current) => ({
+                          ...current,
+                          [group.key]: !(current[group.key] === true),
+                        }))
+                      }
+                      className="focus-ring u-interactive flex items-center gap-1 rounded-sm"
+                    >
+                      <ChevronRight className={groupChevronClass(!collapsedGroup)} />
+                      {group.label}
+                    </button>{" "}
+                    <span className="text-muted">{groupCount}</span>
                   </td>
                 </tr>
                 {group.rows.map((row) =>
@@ -1203,7 +1382,9 @@ export function TableView({
                 </td>
               </tr>
             )}
-            {orderedRows.map((row, rowIndex) => renderRow(row, rowIndex))}
+            {rowMotion.rows.map((row) =>
+              renderRow(row, globalIndexById.get(row.id) ?? 0),
+            )}
           </tbody>
         )}
         {(!groups || groups.length === 0) && footerByProperty.size > 0 && (
@@ -1299,6 +1480,15 @@ export function ListView({
     preserveScroll,
     orderedRows.map((row) => ({ id: row.id, height: listRowHeight(density) })),
   );
+  // Collapsing a parent hides its descendants: those rows fade out while the
+  // rows below slide up, and fade back in when the parent reopens. Presence
+  // keys off the ordered ids, so typing never triggers it.
+  const visibleRows = orderedRows.filter((row) => !hidden.has(row.id));
+  const rowMotion = useRowPresence(visibleRows, (row) => row.id);
+  useFlipList(listRef, [rowIdsKey(rowMotion.rows.map((row) => row.id))]);
+  const indexById = new Map(
+    orderedRows.map((row, index) => [row.id, index] as const),
+  );
   const setDensity = (next: ListDensity) => {
     if (onDensityChange) onDensityChange(next);
     else setLocalDensity(next);
@@ -1342,19 +1532,25 @@ export function ListView({
         ))}
       </div>
       <ul ref={listRef} className="divide-y divide-border rounded-lg border border-border">
-        {orderedRows.map((row, rowIndex) => {
-          if (hidden.has(row.id)) return null;
+        {rowMotion.rows.map((row) => {
+          const rowIndex = indexById.get(row.id) ?? 0;
           const model = listRowModel(row, properties, { density });
           const value = status ? (valueFor(row, status.id) as { optionId?: string }) : undefined;
           const option = status?.config?.options?.find((o) => o.id === value?.optionId);
           const level = levelById.get(row.id) ?? 0;
           const isCollapsed = collapsed[row.id] === true;
           const hasChildren = parents.has(row.id);
+          const motion = rowMotion.stateOf(row.id);
           return (
             <li
               key={row.id}
-              className="relative flex items-center"
-              style={level > 0 ? { paddingLeft: level * 16 } : undefined}
+              data-flip-id={row.id}
+              data-motion={motion}
+              className={cn("relative flex items-center", rowMotionClass(motion))}
+              style={{
+                ...(level > 0 ? { paddingLeft: level * 16 } : {}),
+                ...rowMotionStyle(motion),
+              }}
             >
               {listIndentGuides(level).map((offset) => (
                 <span
@@ -1712,6 +1908,65 @@ export function BoardView({
   );
   const property = groupProperty ?? statusProperty;
 
+  // The column plan and the card-presence hooks are computed before the
+  // loading/empty early returns, so the hooks run on every render (Rules of
+  // Hooks). A board without a resolvable grouping property has no columns.
+  const statusBucketBoard = property ? hasStatusGroups(property) : false;
+  const visibility = visibleGroupsProp ?? {};
+  const localizedGroups: Record<string, string> = {
+    todo: t(locale, "statusGroupTodo"),
+    doing: t(locale, "statusGroupDoing"),
+    done: t(locale, "statusGroupDone"),
+  };
+  type BoardColumn = {
+    key: string;
+    label: string;
+    color: string;
+    rows: DBRow[];
+    /**
+     * The option id a drop writes, `null` for the Empty column, or `undefined`
+     * for a status-bucket column (not an option, so a drop is visual only).
+     */
+    optionId?: string | null;
+  };
+  const buildColumns = (inputRows: DBRow[]): BoardColumn[] => {
+    if (!property) return [];
+    // A STATUS property whose options declare buckets (To-do / In progress /
+    // Done) drives one column per bucket; every other grouping goes through the
+    // board-groups engine, which orders one column per declared option and
+    // appends the Empty bucket (multi-select rows land in every matching one).
+    return statusBucketBoard
+      ? statusGroupColumns(inputRows, properties, property.id, t(locale, "noValue"))
+          .map((column) => ({
+            key: column.id,
+            label: localizedGroups[column.id] ?? column.name,
+            color: column.color,
+            rows: column.rows,
+          }))
+          .filter((column) => visibility[column.key] !== false)
+      : filterVisibleGroups(
+          groupRowsByProperty(inputRows, properties, property.id),
+          visibility,
+        ).map((group) => ({
+          key: group.key,
+          label: group.label,
+          color: group.color ?? "gray",
+          rows: group.rows,
+          optionId: group.optionId,
+        }));
+  };
+  const columns = buildColumns(rows);
+  // Cards fade in/out by presence; the FLIP hook then slides the cards a change
+  // displaces (including a cross-column drag). Both key off the ordered ids.
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const cardMotion = useRowPresence(
+    columns.flatMap((column) => column.rows),
+    (row) => row.id,
+  );
+  useFlipList(boardRef, [rowIdsKey(cardMotion.rows.map((row) => row.id))]);
+  // Exiting cards are re-grouped into their column so they fade in place.
+  const renderColumns = buildColumns(cardMotion.rows);
+
   if (loading) {
     return (
       <div
@@ -1772,47 +2027,6 @@ export function BoardView({
     );
   }
 
-  // A STATUS property whose options declare buckets (To-do / In progress /
-  // Done) drives one column per bucket; every other grouping goes through the
-  // board-groups engine, which orders one column per declared option and
-  // appends the Empty bucket (multi-select rows land in every matching one).
-  const statusBucketBoard = hasStatusGroups(property);
-  const visibility = visibleGroupsProp ?? {};
-  const localizedGroups: Record<string, string> = {
-    todo: t(locale, "statusGroupTodo"),
-    doing: t(locale, "statusGroupDoing"),
-    done: t(locale, "statusGroupDone"),
-  };
-  type BoardColumn = {
-    key: string;
-    label: string;
-    color: string;
-    rows: DBRow[];
-    /**
-     * The option id a drop writes, `null` for the Empty column, or `undefined`
-     * for a status-bucket column (not an option, so a drop is visual only).
-     */
-    optionId?: string | null;
-  };
-  const columns: BoardColumn[] = statusBucketBoard
-    ? statusGroupColumns(rows, properties, property.id, t(locale, "noValue"))
-        .map((column) => ({
-          key: column.id,
-          label: localizedGroups[column.id] ?? column.name,
-          color: column.color,
-          rows: column.rows,
-        }))
-        .filter((column) => visibility[column.key] !== false)
-    : filterVisibleGroups(
-        groupRowsByProperty(rows, properties, property.id),
-        visibility,
-      ).map((group) => ({
-        key: group.key,
-        label: group.label,
-        color: group.color ?? "gray",
-        rows: group.rows,
-        optionId: group.optionId,
-      }));
   // A second grouping property turns the single-axis board into a swimlane
   // board: `buildSwimlanes` owns the horizontal lanes (membership, order and
   // counts), while the board-groups columns above stay the vertical axis — so
@@ -1826,6 +2040,11 @@ export function BoardView({
     ? buildSwimlanes(rows, laneProperty.id, property.id)
     : null;
   const swimlaneCounts = swimlaneMatrix ? laneCounts(swimlaneMatrix) : [];
+  // The lanes to render include exiting cards, so a moved/deleted card fades in
+  // place rather than disappearing from its lane.
+  const renderSwimlanes = laneProperty
+    ? buildSwimlanes(cardMotion.rows, laneProperty.id, property.id)
+    : null;
 
   // Per-column WIP standings (kanban limits). Graded once from the full column
   // rows — not a lane's slice — so every lane of a swimlane board reports the
@@ -1860,9 +2079,12 @@ export function BoardView({
 
   const renderCard = (row: DBRow, columnKey: string, index: number) => {
     const dragging = dragRowId === row.id;
+    const motion = cardMotion.stateOf(row.id);
     return (
       <Link
         key={row.id}
+        data-flip-id={row.id}
+        data-motion={motion}
         href={`/w/${workspaceSlug}/${row.id}`}
         draggable={editable}
         onDragStart={(event) => {
@@ -1882,7 +2104,10 @@ export function BoardView({
           setDropTarget(null);
         }}
         data-dragging={dragging ? "true" : "false"}
-        className={boardCardClass({ dragging, settling: settlingId === row.id })}
+        className={cn(
+          boardCardClass({ dragging, settling: settlingId === row.id }),
+          rowMotionClass(motion),
+        )}
         style={{
           borderLeft: (() => {
             const color = colorOf(row);
@@ -1890,6 +2115,7 @@ export function BoardView({
               ? `3px solid ${optionEdge(color)}`
               : undefined;
           })(),
+          ...rowMotionStyle(motion),
         }}
       >
         <p className="text-sm font-medium">
@@ -2033,9 +2259,9 @@ export function BoardView({
     );
   };
 
-  if (swimlaneMatrix && swimlaneMatrix.lanes.length > 0) {
+  if (renderSwimlanes && renderSwimlanes.lanes.length > 0) {
     const laneRowIds = new Map<string, Set<string>>();
-    for (const lane of swimlaneMatrix.lanes) {
+    for (const lane of renderSwimlanes.lanes) {
       const ids = new Set<string>();
       for (const bucket of lane.buckets) {
         for (const row of bucket.rows) ids.add(row.id);
@@ -2044,8 +2270,8 @@ export function BoardView({
     }
 
     return (
-      <div className="space-y-4 pb-2">
-        {swimlaneMatrix.lanes.map((lane, index) => {
+      <div ref={boardRef} className="space-y-4 pb-2">
+        {renderSwimlanes.lanes.map((lane, index) => {
           const ids = laneRowIds.get(lane.key) ?? new Set<string>();
           return (
             <div key={lane.key} data-testid={`swimlane-${lane.key}`}>
@@ -2056,7 +2282,7 @@ export function BoardView({
                 </span>
               </div>
               <div className="flex gap-4 overflow-x-auto">
-                {columns.map((column) =>
+                {renderColumns.map((column) =>
                   renderColumn(
                     column,
                     column.rows.filter((row) => ids.has(row.id)),
@@ -2071,8 +2297,8 @@ export function BoardView({
   }
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-2">
-      {columns.map((column) => renderColumn(column, column.rows))}
+    <div ref={boardRef} className="flex gap-4 overflow-x-auto pb-2">
+      {renderColumns.map((column) => renderColumn(column, column.rows))}
     </div>
   );
 }

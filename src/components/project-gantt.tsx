@@ -241,6 +241,18 @@ function dayLabel(value: string | null | undefined): string {
  * (`animate-rise`, transform/opacity only). Layout is pure and cheap; when
  * callers supply dependency `bars`/`edges` an optional SVG overlay draws the
  * arrows via @/lib/dependency-arrows.
+ *
+ * Drag/resize intentionally NOT wired here. Unlike the database timeline
+ * (`timeline-chart-views.tsx`, where a bar is one row's DATE cell), this chart
+ * is presentational: it receives no `projectId` and no mutation callback, and
+ * its milestone bars share the project's `startDate` as their left edge. Moving
+ * a milestone bar would therefore only change its `dueDate` while resizing its
+ * start would silently move the *project*, and the project bar's own edges live
+ * on `Project.startDate`/`dueDate` (`updateProjectAction`) — a path this
+ * component cannot reach. Wiring it safely needs `projectId` + an explicit
+ * `onChange` contract from the project page; doing that from inside the
+ * component would invent a mutation path and misrepresent the data model, so it
+ * is left alone rather than half-done.
  */
 export function ProjectGantt({
   name,

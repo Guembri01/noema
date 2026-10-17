@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { TAG_HUES, Z } from "@/lib/design-tokens";
 import { AVATAR_SIZES } from "@/lib/avatars";
+import { t } from "@/lib/i18n";
 import { Badge, BADGE_TONES } from "@/components/ui/badge";
 import { Button, type ButtonSize, type ButtonVariant } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/input";
@@ -55,13 +56,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Tag } from "@/components/ui/tag";
 import { Avatar, AvatarGroup } from "@/components/ui/avatar";
@@ -97,6 +91,7 @@ import {
   type GallerySection,
   type GallerySectionId,
 } from "./gallery-manifest";
+import { MotionGallery } from "./motion-gallery";
 
 /**
  * The internal design gallery.
@@ -342,26 +337,6 @@ function DropdownDemo() {
   );
 }
 
-function ContextMenuDemo() {
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div className="grid h-24 w-56 place-items-center rounded-md border border-dashed border-border-strong text-sm text-muted">
-          Right-click me
-        </div>
-      </ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem onSelect={() => {}}>Cut</ContextMenuItem>
-        <ContextMenuItem onSelect={() => {}}>Copy</ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem destructive onSelect={() => {}}>
-          Delete
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
-  );
-}
-
 function SheetDemo() {
   const [open, setOpen] = useState(false);
   const [side, setSide] = useState<SheetSide>("right");
@@ -533,6 +508,16 @@ function ResizablePanelDemo() {
  * Section chrome
  * ------------------------------------------------------------------------- */
 
+/**
+ * Section label. `gallery-manifest.ts` is deliberately pure data (no imports, so
+ * it cannot call `t`), so a section carrying a `titleKey` is translated here;
+ * every other section keeps its manifest title, as an internal-dev-only page
+ * always has.
+ */
+function sectionLabel(section: GallerySection): string {
+  return "titleKey" in section ? t("en", section.titleKey) : section.title;
+}
+
 function GallerySection({
   section,
   children,
@@ -544,7 +529,7 @@ function GallerySection({
     <section id={section.id} className="flex scroll-mt-28 flex-col gap-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border pb-2">
         <h2 className="text-xl font-semibold tracking-heading">
-          {section.title}
+          {sectionLabel(section)}
         </h2>
         <code className="text-xs text-muted">
           {section.files.map((file) => `ui/${file}.tsx`).join("  ·  ")}
@@ -940,14 +925,15 @@ export function DesignGallery() {
 
     overlays: (
       <>
-        <Group label="Dialog · Popover · Dropdown · Context menu">
+        <Group label="Dialog · Popover · Dropdown">
           <DialogDemo />
           <PopoverDemo />
           <DropdownDemo />
-          <ContextMenuDemo />
         </Group>
       </>
     ),
+
+    "animation-behavior": <MotionGallery />,
 
     tooltip: (
       <Group label="Tooltip">
@@ -1388,7 +1374,7 @@ export function DesignGallery() {
                 href={`#${section.id}`}
                 className="focus-ring shrink-0 rounded-sm px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-fg"
               >
-                {section.title}
+                {sectionLabel(section)}
               </a>
             ))}
           </nav>

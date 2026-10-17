@@ -1,13 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useRouter } from "next/navigation";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { BarChart3, CalendarDays, Columns3, GanttChartSquare } from "lucide-react";
 import {
   timelineData,
   type QueryProperty,
   type QueryRow,
+  type TimelineBar,
 } from "@/lib/database-query";
+import { setPropertyValueAction } from "@/server/actions/database";
+import {
+  moveByUnits,
+  moveRange,
+  moveToBounds,
+  rangeToDateValue,
+  rangeToPercent,
+  resizeByUnits,
+  resizeRange,
+  resizeToBounds,
+  unitMs,
+  type DragBounds,
+  type DragEdge,
+  type DragRange,
+  type TimelineDragUnit,
+} from "@/lib/timeline-drag";
 import {
   buildChartSeries,
   type ChartConfig,
@@ -82,6 +107,35 @@ export const TIMELINE_ZOOM_LEVELS = [1, 2, 4] as const;
 const TIMELINE_ZOOM_LABEL = "Timeline zoom";
 /** Group name for the calendar scale radiogroup (no catalogue key exists yet). */
 const CALENDAR_SCALE_LABEL = "Calendar scale";
+
+/* --------------------------------------------------------------------------- */
+/* Timeline: drag/resize interaction model                                     */
+/* --------------------------------------------------------------------------- */
+
+/** Pointer travel (px) that turns a press into a drag rather than a click. */
+const TIMELINE_DRAG_THRESHOLD_PX = 3;
+/** Width (px) of each edge-resize handle. */
+const TIMELINE_HANDLE_WIDTH = 8;
+
+/** Which part of a bar a pointer grabbed. */
+type TimelineDragEdge = "move" | DragEdge;
+
+/** An in-flight bar drag, alive between pointerdown and pointerup/cancel. */
+type TimelineDragSession = {
+  rowId: string;
+  /** Which handle grabbed the bar: its body moves, either edge resizes. */
+  dragEdge: TimelineDragEdge;
+  /** Client x where the drag started; every delta is measured from here. */
+  startX: number;
+  /** The bar's range when the drag began (snapped against on release). */
+  origin: DragRange;
+  /** The latest previewed range, committed verbatim on release. */
+  latest: DragRange;
+  /** Pixels per snap unit, resolved from the measured board width once. */
+  pxPerUnit: number;
+  /** Whether the pointer actually travelled far enough to count as a drag. */
+  moved: boolean;
+};
 
 /**
  * Deterministic UTC month label for the timeline axis. Fixed locale + timezone
@@ -547,6 +601,60 @@ export function TimelineView({
   loading?: boolean;
 }) {
   const [zoom, setZoom] = useState<number>(TIMELINE_ZOOM_LEVELS[0]);
+  const [overrides, setOverrides] = useState<Record<string, DragRange>>({});
+  const [draggingRow, setDraggingRow] = useState<string | null>(null);
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const dragSession = useRef<TimelineDragSession | null>(null);
+  const suppressClick = useRef(false);
+  const router = useRouter();
+
+  // A drag ends with a click the browser synthesises on release; swallow it so
+  // the row's delegated side-peek never opens on the tail of a drag.
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      if (!suppressClick.current) return;
+      suppressClick.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener("click", onClick, true);
+    return () => window.removeEventListener("click", onClick, true);
+  }, []);
+
+  // Never leave the global "a drag is in progress" flag set if the view unmounts
+  // mid-gesture (navigation, a filter change): a stale flag would suppress every
+  // FLIP animation on the next page.
+  useEffect(() => () => {
+    delete document.body.dataset.dragging;
+  }, []);
+
+  // Reconcile the optimistic range with server truth: once the refreshed row
+  // carries the range that was committed, drop the local override so the server
+  // is the single source again. A failed write is reverted by `commitRange`.
+  useEffect(() => {
+    const dateId = properties.find((property) => property.type === "DATE")?.id;
+    if (!dateId) return;
+    setOverrides((current) => {
+      if (Object.keys(current).length === 0) return current;
+      let changed = false;
+      const next = { ...current };
+      for (const row of rows) {
+        const override = next[row.id];
+        if (!override) continue;
+        const value = row.propertyValues.find(
+          (entry) => entry.propertyId === dateId,
+        )?.value as { start?: string; end?: string } | null | undefined;
+        if (!value?.start) continue;
+        const start = Date.parse(value.start);
+        const end = value.end ? Date.parse(value.end) : start + MS_PER_DAY;
+        if (start === override.start && end === override.end) {
+          delete next[row.id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [rows, properties]);
 
   if (loading) return <TimelineSkeleton />;
 
@@ -649,6 +757,192 @@ export function TimelineView({
     );
   }
 
+  /* ------------------------------------------------------------------------- */
+  /* Drag / resize wiring                                                      */
+  /* ------------------------------------------------------------------------- */
+
+  // Bars are laid out as percentages of the board, so a session measures the
+  // board once for its pixels-per-unit scale; every subsequent move is pure
+  // maths in `@/lib/timeline-drag` (day snapping + bounds clamping).
+  const dragUnit: TimelineDragUnit = "day";
+  const dragBounds: DragBounds = { min: from.getTime(), max: to.getTime() };
+
+  const serverRange = (bar: TimelineBar): DragRange => ({
+    start: Date.parse(bar.startISO),
+    end: Date.parse(bar.endISO),
+  });
+  const currentRange = (bar: TimelineBar): DragRange =>
+    overrides[bar.rowId] ?? serverRange(bar);
+
+  /** Preserve the row's other DATE fields (`allDay`, `timeZone`) on a write. */
+  const rowDateValue = (rowId: string): Record<string, unknown> => {
+    const row = rows.find((candidate) => candidate.id === rowId);
+    const value = row?.propertyValues.find(
+      (entry) => entry.propertyId === dateProperty.id,
+    )?.value;
+    return value && typeof value === "object"
+      ? { ...(value as Record<string, unknown>) }
+      : {};
+  };
+
+  /**
+   * Persist a range through the *existing* mutation path — the same
+   * `setPropertyValueAction` + `router.refresh()` the table/board cells use.
+   * The optimistic override is dropped if the write fails, so a server rejection
+   * can never leave the bar at a date the database does not have.
+   */
+  const commitRange = (rowId: string, range: DragRange) => {
+    setOverrides((current) => ({ ...current, [rowId]: range }));
+    const value = { ...rowDateValue(rowId), ...rangeToDateValue(range) };
+    void (async () => {
+      try {
+        const result = await setPropertyValueAction(rowId, dateProperty.id, value);
+        if (result && "error" in result) throw new Error(result.error);
+        router.refresh();
+      } catch {
+        setOverrides((current) => {
+          const next = { ...current };
+          delete next[rowId];
+          return next;
+        });
+      }
+    })();
+  };
+
+  /**
+   * Begin a bar drag with Pointer Events (mouse/pen/touch). The listeners live
+   * on `window` so the bar keeps tracking when the pointer leaves it; the drag
+   * flag and `.u-no-transition` are cleared on pointerup *and* on
+   * pointercancel/Escape, where the preview reverts instead of committing.
+   */
+  const beginDrag = (
+    event: ReactPointerEvent<HTMLElement>,
+    bar: TimelineBar,
+    edge: TimelineDragEdge,
+  ) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const width = boardRef.current?.getBoundingClientRect().width ?? 0;
+    if (width <= 0) return;
+    const origin = currentRange(bar);
+    dragSession.current = {
+      rowId: bar.rowId,
+      dragEdge: edge,
+      startX: event.clientX,
+      origin,
+      latest: origin,
+      pxPerUnit: (width / spanMs) * unitMs(dragUnit),
+      moved: false,
+    };
+    setDraggingRow(bar.rowId);
+    document.body.dataset.dragging = "1";
+
+    const onMove = (move: PointerEvent) => {
+      const session = dragSession.current;
+      if (!session) return;
+      const deltaPx = move.clientX - session.startX;
+      if (Math.abs(deltaPx) > TIMELINE_DRAG_THRESHOLD_PX) session.moved = true;
+      const next =
+        session.dragEdge === "move"
+          ? moveRange(session.origin, deltaPx, session.pxPerUnit, dragBounds, dragUnit)
+          : resizeRange(
+              session.origin,
+              session.dragEdge,
+              deltaPx,
+              session.pxPerUnit,
+              dragBounds,
+              dragUnit,
+            );
+      session.latest = next;
+      setOverrides((current) => ({ ...current, [session.rowId]: next }));
+    };
+    const finish = (commit: boolean) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("keydown", onEscape);
+      delete document.body.dataset.dragging;
+      setDraggingRow(null);
+      const session = dragSession.current;
+      dragSession.current = null;
+      if (!session) return;
+      const wasMoved = session.moved;
+      if (commit && wasMoved) {
+        commitRange(session.rowId, session.latest);
+      } else {
+        setOverrides((current) => {
+          if (!(session.rowId in current)) return current;
+          const next = { ...current };
+          delete next[session.rowId];
+          return next;
+        });
+      }
+      // Whatever the outcome, a moved pointer still fired a click on release;
+      // swallow it so a drag (or a cancelled drag) never opens the row's
+      // side-peek. The flag is cleared on that click, and by the timer if the
+      // browser does not deliver one.
+      if (wasMoved) {
+        suppressClick.current = true;
+        window.setTimeout(() => {
+          suppressClick.current = false;
+        }, 0);
+      }
+    };
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    const onEscape = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key !== "Escape") return;
+      keyEvent.preventDefault();
+      finish(false);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("keydown", onEscape);
+  };
+
+  /** Arrow keys move the whole bar one unit; Home/End pin it to a bound. */
+  const moveBarKeys = (event: ReactKeyboardEvent<HTMLElement>, bar: TimelineBar) => {
+    const range = currentRange(bar);
+    let next: DragRange | null = null;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      next = moveByUnits(range, 1, dragUnit, dragBounds);
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      next = moveByUnits(range, -1, dragUnit, dragBounds);
+    } else if (event.key === "Home") {
+      next = moveToBounds(range, "start", dragBounds);
+    } else if (event.key === "End") {
+      next = moveToBounds(range, "end", dragBounds);
+    } else {
+      return;
+    }
+    event.preventDefault();
+    commitRange(bar.rowId, next);
+  };
+
+  /** Arrow keys resize one edge; Home/End pin that edge to a bound. */
+  const resizeBarKeys = (
+    event: ReactKeyboardEvent<HTMLElement>,
+    bar: TimelineBar,
+    edge: DragEdge,
+  ) => {
+    const range = currentRange(bar);
+    let next: DragRange | null = null;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      next = resizeByUnits(range, edge, 1, dragUnit, dragBounds);
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      next = resizeByUnits(range, edge, -1, dragUnit, dragBounds);
+    } else if (event.key === "Home") {
+      next = resizeToBounds(range, edge, "min", dragBounds);
+    } else if (event.key === "End") {
+      next = resizeToBounds(range, edge, "max", dragBounds);
+    } else {
+      return;
+    }
+    event.preventDefault();
+    commitRange(bar.rowId, next);
+  };
+
   const board = (
     <div className="relative" style={{ width: `${timelineZoomWidthPct(zoom)}%` }}>
       <div
@@ -666,7 +960,7 @@ export function TimelineView({
           </span>
         ))}
       </div>
-      <div className="relative" style={{ height }}>
+      <div ref={boardRef} className="relative" style={{ height }}>
         <div className="pointer-events-none absolute inset-0" aria-hidden="true">
           {ticks.map((tick) => (
             <div
@@ -724,29 +1018,107 @@ export function TimelineView({
             })}
           </svg>
         )}
-        {bars.map((bar) => (
-          <div
-            key={bar.rowId}
-            className="absolute left-0 right-0"
-            style={{ top: yFor(bar.rowId), height: BAR_HEIGHT }}
-          >
-            <Tooltip
-              label={timelineTooltipLabel(bar.startISO, bar.endISO)}
-              side="top"
+        {bars.map((bar) => {
+          const range = currentRange(bar);
+          const layout = rangeToPercent(range, dragBounds.min, dragBounds.max);
+          const rangeLabel = timelineTooltipLabel(
+            new Date(range.start).toISOString(),
+            new Date(range.end).toISOString(),
+          );
+          const boundMinDay = Math.floor(dragBounds.min / MS_PER_DAY);
+          const boundMaxDay = Math.floor(dragBounds.max / MS_PER_DAY);
+          const startDay = Math.floor(range.start / MS_PER_DAY);
+          const endDay = Math.floor(range.end / MS_PER_DAY);
+          const dragging = draggingRow === bar.rowId;
+          const handleOffset = TIMELINE_HANDLE_WIDTH / 2;
+          return (
+            <div
+              key={bar.rowId}
+              className="absolute left-0 right-0"
+              style={{ top: yFor(bar.rowId), height: BAR_HEIGHT }}
             >
-              <Link
-                href={`/w/${workspaceSlug}/${bar.rowId}`}
-                className="focus-ring u-interactive flex h-full items-center truncate rounded-sm bg-accent/70 px-2 text-xs text-accent-fg hover:-translate-y-0.5 hover:bg-accent"
-                style={{
-                  marginLeft: `${bar.offsetPct}%`,
-                  width: `${bar.widthPct}%`,
-                }}
+              <Tooltip label={rangeLabel} side="top">
+                <Link
+                  href={`/w/${workspaceSlug}/${bar.rowId}`}
+                  draggable={false}
+                  role="slider"
+                  tabIndex={0}
+                  aria-orientation="horizontal"
+                  aria-label={`${t(locale, "timelineMoveItem")}: ${bar.title}`}
+                  aria-valuemin={boundMinDay}
+                  aria-valuemax={boundMaxDay}
+                  aria-valuenow={startDay}
+                  aria-valuetext={rangeLabel}
+                  data-testid={`timeline-bar-${bar.rowId}`}
+                  onPointerDown={(event) => beginDrag(event, bar, "move")}
+                  onKeyDown={(event) => moveBarKeys(event, bar)}
+                  className={cn(
+                    "focus-ring u-interactive flex h-full cursor-grab touch-none select-none items-center truncate rounded-sm bg-accent/70 px-2 text-xs text-accent-fg hover:-translate-y-0.5 hover:bg-accent active:cursor-grabbing",
+                    dragging && "u-no-transition",
+                  )}
+                  style={{
+                    marginLeft: `${layout.offsetPct}%`,
+                    width: `${layout.widthPct}%`,
+                  }}
+                >
+                  {bar.title}
+                </Link>
+              </Tooltip>
+              <Tooltip
+                label={`${t(locale, "timelineResizeStart")}: ${bar.title}`}
+                side="top"
               >
-                {bar.title}
-              </Link>
-            </Tooltip>
-          </div>
-        ))}
+                <button
+                  type="button"
+                  role="slider"
+                  aria-orientation="horizontal"
+                  aria-label={`${t(locale, "timelineResizeStart")}: ${bar.title}`}
+                  aria-valuemin={boundMinDay}
+                  aria-valuemax={endDay}
+                  aria-valuenow={startDay}
+                  aria-valuetext={rangeLabel}
+                  data-testid={`timeline-resize-start-${bar.rowId}`}
+                  onPointerDown={(event) => beginDrag(event, bar, "start")}
+                  onKeyDown={(event) => resizeBarKeys(event, bar, "start")}
+                  className={cn(
+                    "focus-ring absolute inset-y-0 cursor-ew-resize touch-none rounded-s-sm bg-transparent hover:bg-accent-fg/40",
+                    dragging && "u-no-transition",
+                  )}
+                  style={{
+                    left: `calc(${layout.offsetPct}% - ${handleOffset}px)`,
+                    width: TIMELINE_HANDLE_WIDTH,
+                  }}
+                />
+              </Tooltip>
+              <Tooltip
+                label={`${t(locale, "timelineResizeEnd")}: ${bar.title}`}
+                side="top"
+              >
+                <button
+                  type="button"
+                  role="slider"
+                  aria-orientation="horizontal"
+                  aria-label={`${t(locale, "timelineResizeEnd")}: ${bar.title}`}
+                  aria-valuemin={startDay}
+                  aria-valuemax={boundMaxDay}
+                  aria-valuenow={endDay}
+                  aria-valuetext={rangeLabel}
+                  data-testid={`timeline-resize-end-${bar.rowId}`}
+                  onPointerDown={(event) => beginDrag(event, bar, "end")}
+                  onKeyDown={(event) => resizeBarKeys(event, bar, "end")}
+                  className={cn(
+                    "focus-ring absolute inset-y-0 cursor-ew-resize touch-none rounded-e-sm bg-transparent hover:bg-accent-fg/40",
+                    dragging && "u-no-transition",
+                  )}
+                  style={{
+                    left: `calc(${layout.offsetPct + layout.widthPct}% - ${handleOffset}px)`,
+                    width: TIMELINE_HANDLE_WIDTH,
+                  }}
+                />
+              </Tooltip>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

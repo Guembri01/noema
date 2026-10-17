@@ -144,8 +144,8 @@ export const GALLERY_SECTIONS = [
   },
   {
     id: "overlays",
-    title: "Dialog · Popover · Dropdown menu · Context menu",
-    files: ["dialog", "popover", "dropdown-menu", "context-menu"],
+    title: "Dialog · Popover · Dropdown menu",
+    files: ["dialog", "popover", "dropdown-menu"],
     tokens: [
       "--overlay",
       "--shadow-2",
@@ -300,6 +300,41 @@ export const GALLERY_SECTIONS = [
     title: "Emoji picker",
     files: ["emoji-picker"],
     tokens: ["--surface-2", "--bg", "--shadow-xl", "--radius-lg"],
+  },
+  {
+    /**
+     * The animation-behaviour explorer (spec §10): one place to *watch* the
+     * token vocabulary in motion, rather than read the states off static
+     * primitives. See `motion-gallery.tsx`.
+     *
+     * `files` has to name a real primitive (the completeness test walks
+     * `src/components/ui/` and fails on a claim with no file behind it), and no
+     * file may be claimed twice — so demo C, the context menu, is owned here and
+     * the motion gallery renders it. The rest of the section is the timing
+     * vocabulary from `tokens.css`, not a component.
+     */
+    id: "animation-behavior",
+    title: "Animation behaviour",
+    titleKey: "motionGalleryTitle",
+    files: ["context-menu"],
+    tokens: [
+      "--dur-1",
+      "--dur-2",
+      "--dur-3",
+      "--dur-4",
+      "--ease-smooth",
+      "--ease-in-out-soft",
+      "--ease-spring",
+      "--accent",
+      "--accent-fg",
+      "--surface",
+      "--surface-2",
+      "--border",
+      "--border-strong",
+      "--shadow-1",
+      "--shadow-focus",
+      "--z-popover",
+    ],
   },
 ] as const;
 

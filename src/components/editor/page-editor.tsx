@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
@@ -39,6 +40,8 @@ import { dropCursor } from "@tiptap/pm/dropcursor";
 import type { EditorView } from "@tiptap/pm/view";
 import { normalizePasteHtml, pastePlan } from "@/lib/paste";
 import { analyzeBlockDrop, dropZone } from "@/lib/drag-indent";
+import { useFlipList } from "@/lib/layout-shift";
+import { dropVerdict } from "@/components/editor/drop-rejection";
 import {
   DEFAULT_ALLOWED_TAGS,
   detectSource,
@@ -530,6 +533,26 @@ function blockIdAt(doc: PMNode, pos: number): string | null {
   return found;
 }
 
+/**
+ * Every block id nested inside the top-level block `id`, depth-first. Used to
+ * seed the invalid-drop decision: a block may never be dropped into its own
+ * subtree, so the editor needs that set before the first `dragover`.
+ */
+function descendantBlockIds(doc: PMNode, id: string): string[] {
+  const ids: string[] = [];
+  const walk = (node: PMNode) => {
+    node.forEach((child) => {
+      const childId = child.attrs?.id;
+      if (typeof childId === "string" && childId !== "") ids.push(childId);
+      walk(child);
+    });
+  };
+  doc.forEach((node) => {
+    if (node.attrs?.id === id) walk(node);
+  });
+  return ids;
+}
+
 /* ------------------------------------------------- block references (refs) */
 
 /**
@@ -966,6 +989,16 @@ export function PageEditor({
   const chromePosRef = useRef<number | null>(null);
   /** DOM element lifted during a drag, restored (with a spring settle) on drop. */
   const dragTargetRef = useRef<HTMLElement | null>(null);
+  /** The dragged top-level block's id, plus its subtree (invalid-drop guard). */
+  const draggingIdRef = useRef<string | null>(null);
+  const draggingDescendantsRef = useRef<string[]>([]);
+  /** Block-list root the FLIP hook measures, and the ordered ids it watches. */
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [flipOrder, setFlipOrder] = useState("");
+  /** Viewport point for the danger-tinted invalid-drop indicator, or `null`. */
+  const [dropRejection, setDropRejection] = useState<{ x: number; y: number } | null>(null);
+  /** Signature of the rejected target, so re-renders happen per target not per px. */
+  const dropRejectionKeyRef = useRef("");
   /**
    * The multi-block range selection (block-selection engine), authoritative in
    * a ref so the `editorProps` closures created once by `useEditor` never read
@@ -1248,15 +1281,37 @@ export function PageEditor({
   }, []);
 
   /**
+   * Raise or clear the body-level drag flag the FLIP hook reads. A live drag
+   * owns the pointer 1:1, so layout shifts stand down for its whole duration.
+   */
+  const setDraggingFlag = useCallback((active: boolean) => {
+    if (typeof document === "undefined") return;
+    if (active) document.body.dataset.dragging = "1";
+    else delete document.body.dataset.dragging;
+  }, []);
+
+  /**
    * Lift the block under the cursor while it is being dragged: shadow-2 + a
    * slight scale, and drop transitions so the drag tracks the pointer 1:1
    * (DESIGN_SYSTEM §6).
    */
   const beginBlockDrag = useCallback(() => {
     setDragging(true);
+    setDraggingFlag(true);
+    dropRejectionKeyRef.current = "";
+    setDropRejection(null);
     const editor = editorRef.current;
     const pos = chromePosRef.current;
-    if (!editor || pos === null) return;
+    if (!editor || pos === null) {
+      draggingIdRef.current = null;
+      draggingDescendantsRef.current = [];
+      return;
+    }
+    const blockId = blockIdAt(editor.state.doc, pos);
+    draggingIdRef.current = blockId;
+    draggingDescendantsRef.current = blockId
+      ? descendantBlockIds(editor.state.doc, blockId)
+      : [];
     const el = editor.view.nodeDOM(pos);
     if (!(el instanceof HTMLElement)) return;
     dragTargetRef.current = el;
@@ -1264,11 +1319,16 @@ export function PageEditor({
     const lift = dropLiftStyle();
     el.style.boxShadow = lift.boxShadow;
     el.style.transform = lift.transform;
-  }, []);
+  }, [setDraggingFlag]);
 
   /** Drop the lift and let the block spring back into place (spring ease). */
   const endBlockDrag = useCallback(() => {
     setDragging(false);
+    setDraggingFlag(false);
+    dropRejectionKeyRef.current = "";
+    setDropRejection(null);
+    draggingIdRef.current = null;
+    draggingDescendantsRef.current = [];
     const el = dragTargetRef.current;
     dragTargetRef.current = null;
     if (!el) return;
@@ -1279,7 +1339,7 @@ export function PageEditor({
     if (prefersReducedMotion() || typeof el.animate !== "function") return;
     const settle = el.animate(dropSettleFrames(), dropSettleOptions());
     settle.addEventListener("finish", () => settle.cancel());
-  }, []);
+  }, [setDraggingFlag]);
 
   const [peers, setPeers] = useState(1);
   /** Transport status, surfaced so a dropped link is visible in the chrome. */
@@ -1465,6 +1525,40 @@ export function PageEditor({
           const target = event.target;
           if (target instanceof HTMLInputElement && target.type === "checkbox") {
             animateTaskTick(target);
+          }
+          return false;
+        },
+        // Invalid-drop rejection: while a handle drag is live, decide on every
+        // dragover whether the block under the pointer may receive it. A refusal
+        // paints the danger-tinted indicator; moving onto a valid target clears
+        // it. Presentation only — the drop itself is untouched, so returning
+        // false keeps ProseMirror's own drop handling intact.
+        dragover(view, event) {
+          const draggingId = draggingIdRef.current;
+          const drag = view.dragging as { node?: { from: number } } | null;
+          if (!draggingId || !drag) return false;
+          const dragEvent = event as DragEvent;
+          const found = view.posAtCoords({
+            left: dragEvent.clientX,
+            top: dragEvent.clientY,
+          });
+          const targetId = found ? blockIdAt(view.state.doc, found.pos) : null;
+          const verdict = dropVerdict({
+            draggingId,
+            targetId,
+            descendants: draggingDescendantsRef.current,
+          });
+          if (verdict.valid) {
+            if (dropRejectionKeyRef.current !== "") {
+              dropRejectionKeyRef.current = "";
+              setDropRejection(null);
+            }
+            return false;
+          }
+          const key = `${verdict.reason}:${targetId ?? ""}`;
+          if (dropRejectionKeyRef.current !== key) {
+            dropRejectionKeyRef.current = key;
+            setDropRejection({ x: dragEvent.clientX, y: dragEvent.clientY });
           }
           return false;
         },
@@ -1662,6 +1756,66 @@ export function PageEditor({
     editorRef.current = editor;
   }, [editor]);
 
+  // Mirror each top-level block's stable id onto `data-flip-id`, and feed the
+  // ordered ids to the shared FLIP hook. The mirror runs synchronously in the
+  // transaction handler — before React commits — so when the hook measures, the
+  // elements already carry the marker. The hook's deps are the *structure* (the
+  // ordered ids), never the content, so a keystroke cannot trigger motion under
+  // a caret; only insert / delete / reorder / re-indent does (DESIGN_SYSTEM §6).
+  useLayoutEffect(() => {
+    if (!editor) return;
+    const sync = () => {
+      const root = editor.view.dom;
+      for (const child of Array.from(root.children)) {
+        if (!(child instanceof HTMLElement)) continue;
+        const blockId = child.getAttribute("data-block-id");
+        if (blockId) child.setAttribute("data-flip-id", blockId);
+        else child.removeAttribute("data-flip-id");
+      }
+      const order = topLevelBlockIds(editor.state.doc)
+        .filter((id) => id !== "")
+        .join("\u0000");
+      setFlipOrder((prev) => (prev === order ? prev : order));
+    };
+    sync();
+    editor.on("transaction", sync);
+    return () => {
+      editor.off("transaction", sync);
+    };
+  }, [editor]);
+
+  // FLIP the block list whenever its ordered ids change: inserting, deleting,
+  // reordering or re-indenting a block slides its neighbours into place instead
+  // of letting them jump. The hook itself stands down under reduced motion and
+  // while `document.body.dataset.dragging` is set.
+  useFlipList(listRef, [flipOrder, editor ? 1 : 0]);
+
+  // The drag flag is what makes the FLIP hook stand down while the pointer owns
+  // the block. Clear it on drop *and* on every abort path (Escape, pointercancel,
+  // a native dragend outside the handle) so an aborted drag can never leave
+  // layout animations — or the rejection indicator — stuck on.
+  useEffect(() => {
+    const clear = () => {
+      setDraggingFlag(false);
+      dropRejectionKeyRef.current = "";
+      setDropRejection(null);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clear();
+    };
+    document.addEventListener("dragend", clear);
+    document.addEventListener("drop", clear);
+    document.addEventListener("pointercancel", clear);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("dragend", clear);
+      document.removeEventListener("drop", clear);
+      document.removeEventListener("pointercancel", clear);
+      document.removeEventListener("keydown", onKeyDown);
+      clear();
+    };
+  }, [setDraggingFlag]);
+
   // Keyboard parity for the row chrome: keep the ⋮⋮ / + affordances visible
   // while the editor holds focus, not only on pointer hover (DESIGN_SYSTEM §9).
   useEffect(() => {
@@ -1741,6 +1895,7 @@ export function PageEditor({
   // scrollbar appears in practice. Intentional layout constant, not a token.
   return (
     <div
+      ref={listRef}
       className={`noema-editor relative ${dragActiveClass(dragging)}`.trim()}
       style={{ paddingBottom: "30vh" }}
       data-undo-depth={snapshotDepth.undoable}
@@ -1794,6 +1949,20 @@ export function PageEditor({
       <BlockContextMenu editor={editor} editable={editable} workspaceId={workspaceId} locale={locale}>
         <EditorContent editor={editor} />
       </BlockContextMenu>
+
+      {dropRejection && (
+        <div
+          data-invalid="true"
+          role="status"
+          aria-invalid
+          aria-label={t(locale, "invalidDropTarget")}
+          className="pointer-events-none fixed flex items-center gap-1 rounded-sm border border-danger bg-danger-soft px-1.5 py-0.5 text-xs font-medium text-danger"
+          style={{ left: dropRejection.x, top: dropRejection.y, zIndex: Z.drag }}
+        >
+          <span aria-hidden="true">⊘</span>
+          {t(locale, "invalidDropTarget")}
+        </div>
+      )}
 
       {editable && (
         <>

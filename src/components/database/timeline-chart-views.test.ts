@@ -1,7 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
+
+// The timeline now writes through the shared `setPropertyValueAction` path and
+// reads `useRouter` for the refresh; both are stubbed so the node render test
+// never reaches prisma or a Next router context.
+vi.mock("@/server/actions/database", () => ({
+  setPropertyValueAction: vi.fn(),
+}));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
+}));
+
 import { MS_PER_DAY } from "@/lib/calendar-multiday";
 import { TAG_HUES } from "@/lib/design-tokens";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -328,6 +339,29 @@ describe("TimelineView render", () => {
     // The bar carries a real tooltip label, not a `title`.
     expect(html).toContain("aria-label=");
     expect(html).not.toContain("title=\"2026");
+  });
+
+  it("makes every bar a keyboard-operable slider with edge handles", () => {
+    const html = render(
+      createElement(TimelineView, {
+        locale: "en",
+        workspaceSlug: "w",
+        properties: [dateProperty, statusProperty],
+        rows,
+      }),
+    );
+    // A focused bar moves; each edge resizes. All three expose the range.
+    expect(html).toContain('data-testid="timeline-bar-r1"');
+    expect(html).toContain('data-testid="timeline-resize-start-r1"');
+    expect(html).toContain('data-testid="timeline-resize-end-r1"');
+    expect(html.match(/role="slider"/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(html).toContain("aria-valuenow=");
+    expect(html).toContain("aria-valuetext=");
+    expect(html).toContain('aria-label="Move timeline item: Alpha"');
+    expect(html).toContain('aria-label="Resize item start: Alpha"');
+    expect(html).toContain('aria-label="Resize item end: Alpha"');
+    // The drag surface freezes transitions while it tracks the pointer.
+    expect(html).toContain("focus-ring");
   });
 
   it("renders a skeleton while loading", () => {
