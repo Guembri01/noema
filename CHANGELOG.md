@@ -39,6 +39,15 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- The desktop shell's broad capability gave the file-system plugin a scope
+  covering the whole user directory (`$HOME/**` plus Desktop, Documents,
+  Downloads, Pictures, Video and Audio) together with `remove`, `rename` and
+  `copy` — a script in the web view could read, overwrite or delete the
+  user's files. Nothing used the plugin's JavaScript face (the shell reads
+  and writes its files server-side, in Rust), so the broad capability now
+  grants no file-system permission at all; the app's own data directories
+  stay covered by the narrow `fs:default` in the local-only `default`
+  capability.
 
 ## [1.4.1] — 2026-10-17
 
