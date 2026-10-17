@@ -221,23 +221,32 @@ async function waitForPostgres() {
  * volume that already holds a cluster keeps the *old* password (the image only
  * honours `POSTGRES_PASSWORD` on first init), so the app would hand the server a
  * password that cannot work and the user would see an endless "unhealthy".
+ *
+ * The password does not go into the argument list of the docker process: the
+ * argument list of a process is world-readable. It travels in the environment
+ * of that process, and the `-e` flag names only the variable — the docker
+ * client takes the value from its own environment, exactly like it does for
+ * `docker run -e NAME`.
  */
 function verifyCredentials(password) {
-  const result = docker([
-    "exec",
-    "-e",
-    `PGPASSWORD=${password}`,
-    CONTAINER,
-    "psql",
-    "-h",
-    "127.0.0.1",
-    "-U",
-    DB_USER,
-    "-d",
-    DB_NAME,
-    "-tAc",
-    "select 1",
-  ]);
+  const result = docker(
+    [
+      "exec",
+      "-e",
+      "PGPASSWORD",
+      CONTAINER,
+      "psql",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      DB_USER,
+      "-d",
+      DB_NAME,
+      "-tAc",
+      "select 1",
+    ],
+    { env: { ...process.env, PGPASSWORD: password } },
+  );
   return result.status === 0 && String(result.stdout || "").trim() === "1";
 }
 
