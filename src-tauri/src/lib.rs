@@ -19,8 +19,55 @@ pub mod shell;
 pub mod sidecar;
 pub mod state;
 
+use std::path::PathBuf;
+
 use sidecar::{SidecarEvent, SidecarState};
 use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+
+/// Record panics somewhere a user (or a support engineer) can find them.
+///
+/// The release profile aborts on panic, so without this a shipped app that dies
+/// during boot leaves no trace whatsoever: the user sees a window that never
+/// opens, and there is nothing in `logs/` because logging had not started yet.
+/// That is precisely what happened the first time this app was installed.
+///
+/// The report goes to the OS temp directory — always writable, and it exists
+/// before any of the app's own directories do — and additionally next to the
+/// app's logs when the data directory is known.
+pub fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0);
+        let report = format!(
+            "Noema {} — panic\nepoch: {seconds}\nversion: {}\nplatform: {}-{}\nthread: {:?}\n{info}\n\n",
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            std::thread::current().name().unwrap_or("unnamed"),
+        );
+
+        let mut targets = vec![std::env::temp_dir().join("noema-panic.log")];
+        if let Ok(dir) = std::env::var("NOEMA_DATA_DIR") {
+            if !dir.trim().is_empty() {
+                let logs = PathBuf::from(dir).join("logs");
+                let _ = std::fs::create_dir_all(&logs);
+                targets.push(logs.join("panic.log"));
+            }
+        }
+        for target in targets {
+            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&target) {
+                use std::io::Write as _;
+                let _ = file.write_all(report.as_bytes());
+            }
+        }
+
+        previous(info);
+    }));
+}
 
 /// Inject the bridge object and point the window at the local server.
 async fn attach_server(app: &tauri::AppHandle, info: &sidecar::SidecarInfo) {
@@ -43,6 +90,9 @@ async fn attach_server(app: &tauri::AppHandle, info: &sidecar::SidecarInfo) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // First thing: a shipped app that dies during boot must leave a trace.
+    install_panic_hook();
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // A second launch focuses the first window instead of starting a

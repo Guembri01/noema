@@ -90,6 +90,13 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&MenuItemBuilder::with_id("check-update", "Check for updates…").build(app)?)
         .build()?;
 
+    // macOS gets the conventional app submenu (Settings, Services, Hide, Quit).
+    // Those predefined items — `services`, `hide`, `hide_others`, `show_all` —
+    // are macOS-only in Tauri, and calling them on Windows/Linux fails, which
+    // used to travel up through `setup()` into `.expect(...)`: an immediate,
+    // message-less crash (0xC0000409) on a platform where the items make no
+    // sense anyway.
+    #[cfg(target_os = "macos")]
     let app_menu = SubmenuBuilder::new(app, "Noema")
         .item(&settings)
         .separator()
@@ -102,9 +109,18 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .quit()
         .build()?;
 
-    MenuBuilder::new(app)
-        .items(&[&app_menu, &file, &edit, &data, &view, &help])
-        .build()
+    let mut top: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::new();
+    #[cfg(target_os = "macos")]
+    top.push(&app_menu);
+    top.extend([
+        &file as &dyn tauri::menu::IsMenuItem<tauri::Wry>,
+        &edit,
+        &data,
+        &view,
+        &help,
+    ]);
+
+    MenuBuilder::new(app).items(&top).build()
 }
 
 /// Handle a menu / tray click. Kept as one function so the two entry points
