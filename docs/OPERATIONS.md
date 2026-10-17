@@ -745,19 +745,21 @@ nothing about the workspace it was aimed at.
 
 ### 8.6 Ops gates: the shared secret, the rate limit, the order
 
-The cron routes and the readiness probe run the **same gate** —
-`@/lib/ops-guard` (`src/lib/ops-guard.ts`) — so they cannot drift apart. The
-metrics route and the cron server actions use the same constant-time comparison
-and the same fail-closed rule; metrics has one documented ordering exception
-(below). The gate owns three properties:
+Every endpoint that authenticates with the shared ops secret uses the **same
+helper** — `@/lib/ops-guard` (`src/lib/ops-guard.ts`) — so the routes cannot
+drift apart: seven of the nine gate files (ten of the eleven HTTP handlers)
+go through `guardOpsSecret` (which owns the order); the two exceptions are
+`/api/metrics` — it compares with the same `safeSecretEqual` but keeps the
+order in the route body — and the server-action surface (`cronActionGate` in
+`src/server/actions/automations.ts`). The gate owns three properties:
 
 | Property | What it means | Where |
 | --- | --- | --- |
-| **Fail closed** | No configured secret ⇒ the gate is **closed** (`503`), never open. An empty/absent presented value is never a match. | `guardOpsSecret` |
+| **Fail closed** | No configured secret ⇒ the gate is **closed**, never open. The routes answer `503` there; the two exceptions answer something else *without* opening the gate: `/api/metrics` answers `401` (its second, session-based admin path — a `503` would lock the admins out) and the server actions answer `{"error":"Unauthorized"}` (an action result, not an HTTP status — see the exceptions below). An empty/absent presented value is never a match. | `guardOpsSecret` · `cronActionGate` |
 | **Constant-time comparison** | The presented secret is compared byte by byte without an early exit, so the response time does not reveal *where* a guess differs. The comparison is case sensitive; both sides are trimmed before it. | `safeSecretEqual` → `constantTimeEqual` (`src/lib/secrets.ts`) |
-| **Throttle first** | The rate limit runs **before** the comparison, so a wrong secret is answered `429` once the budget is spent — the guessing is bounded instead of unlimited. (`/api/metrics` resolves the caller first so its budget can be keyed by user; its comparison is constant time and a wrong secret still reaches the limiter.) | `guardOpsSecret` |
+| **Throttle first** | The rate limit runs **before** the comparison, so a wrong secret is answered `429` once the budget is spent — the guessing is bounded instead of unlimited. The order holds on every ops surface: `/api/metrics` keeps it in its route body, and the server actions answer `{"error":"Rate limit exceeded."}` (an action result, not an HTTP status) once their budget is spent — see the exceptions below. | `guardOpsSecret` · `cronActionGate` |
 
-**Order of the answers** (this is the contract):
+**Order of the answers** (this is the contract of the HTTP routes):
 
 1. no secret configured → `503 {"error":"…is not configured…"}` (fail closed);
 2. over the rate limit → `429` (with a `retry-after` header) — **also for a
@@ -765,11 +767,22 @@ and the same fail-closed rule; metrics has one documented ordering exception
 3. wrong/missing secret → `401 {"error":"Unauthorized"}`;
 4. otherwise the request runs.
 
-**Exception — `/api/metrics`:** the route resolves the admin identity first so
-the 120/60 s budget can be keyed on the user (an IP-rotating caller must not
-dodge it), then applies the limit. The secret comparison is constant time and a
-wrong secret still consumes the limiter; the only difference is that a wrong
-guess is answered `401` until that per-user/IP budget is spent, then `429`.
+**Exception — `GET /api/metrics`:** with no secret configured it answers
+**`401`**, not `503`. The route has a second, session-based admin path (a
+workspace OWNER/ADMIN), and a `503` would lock those admins out; `401` is
+therefore the unchanged and correct contract there. Its **order** is the same
+as everywhere else: the rate limit runs before the secret comparison, so a
+wrong secret is throttled (`429`) once the budget is spent.
+
+**Exception — the server actions** (`listDueAutomationsForCronAction`,
+`commitRecurringRunAction`): with no secret configured they answer
+**`{"error":"Unauthorized"}`**, not `503`. An action returns an **action
+result**, not an HTTP response — it has no status code to answer with, so it
+has no `503` contract at all. The gate is still **closed** there (fail closed,
+also for a whitespace-only `CRON_SECRET`): the actions differ only in *how*
+they say "no". Their **order** is the same as everywhere else: the budget is
+spent before the secret is compared, so a wrong secret is answered
+`{"error":"Rate limit exceeded."}` once the budget is spent.
 
 **Which environment variable guards which route:**
 
@@ -782,8 +795,8 @@ guess is answered `401` until that per-user/IP budget is spent, then `429`.
 | `GET`/`POST /api/cron/digest` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
 | `GET /api/cron/backups` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
 | `GET`/`POST /api/ready` | `CRON_SECRET` **or** `READY_SECRET` | `x-cron-secret` **or** `x-ready-secret` | token bucket: burst 30, 1/s |
-| `GET /api/metrics` | `CRON_SECRET` (besides the session-based workspace-admin path) | `x-cron-secret` | 120 / 60 s |
-| `listDueAutomationsForCronAction`, `commitRecurringRunAction` (server actions — HTTP endpoints too) | `CRON_SECRET` | the action's `secret` argument | 120 / 60 s, deployment-wide |
+| `GET /api/metrics` | `CRON_SECRET` (besides the session-based workspace-admin path) | `x-cron-secret` | 120 / 60 s — no secret configured ⇒ `401`, not `503` (the admin path stays open) |
+| `listDueAutomationsForCronAction`, `commitRecurringRunAction` (server actions — HTTP endpoints too) | `CRON_SECRET` | the action's `secret` argument | 120 / 60 s, deployment-wide — no secret configured ⇒ `{"error":"Unauthorized"}`, not `503` (an action result, not an HTTP status) |
 
 `READY_SECRET` is an **alternative name for the readiness probe only** — it is
 accepted *in addition to* `CRON_SECRET` there, and nowhere else.
@@ -799,7 +812,9 @@ accepted *in addition to* `CRON_SECRET` there, and nowhere else.
   presented one — a key built from the guess would be a fresh bucket per
   attempt and the limit would be bypassable. The budget is deployment-wide
   (the action has no request of its own) and therefore more generous than the
-  routes' 12/min.
+  routes' 12/min. A missing secret and a wrong secret are **indistinguishable
+  there** — both answer `{"error":"Unauthorized"}` — so the operator reads the
+  difference in the cron tick's log, not in the answer.
 - Rotation of `CRON_SECRET` changes the rate-limit key of the action surface
   (it is hashed into the key) — the new secret starts with a fresh budget.
 
