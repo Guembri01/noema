@@ -8,6 +8,13 @@
 .githooks/* text eol=lf
 *.sh text eol=lf
 
+# Container and CI inputs are parsed by Linux tools: keep them LF even on a
+# Windows checkout. A CRLF Dockerfile can leave a stray \r in RUN commands.
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf
+docker-compose*.yml text eol=lf
+.github/workflows/*.yml text eol=lf
+
 # Binary assets: never converted, never diffed as text.
 *.png binary
 *.jpg binary

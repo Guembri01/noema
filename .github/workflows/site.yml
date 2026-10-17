@@ -1,9 +1,17 @@
-# Site version: the hosted web app. Container image, migrations smoke test, and
-# a tag-triggered publish to GHCR.
+# Site version: the hosted web app. Tests, a multi-arch container image, a
+# vulnerability gate, keyless signing, and a real container smoke test.
 #
-# The site build deliberately does NOT use `output: "standalone"` — that flag is
-# what switches the codebase to the desktop sidecar output, and `next start` does
-# not serve a standalone build. See docs/DESKTOP.md §"Two versions".
+# The image is a *standalone* Next.js build, staged by the project's own
+# desktop packager (scripts/desktop/prepare.mjs) — see the Dockerfile for why.
+# `next start` is deliberately not used: Next does not serve a standalone
+# build that way.
+#
+# Publishing:
+#   - pull requests  -> build linux/amd64, load it, scan it, smoke it. No push.
+#   - main           -> push edge + latest + sha tags to GHCR.
+#   - tags v*        -> push semver (+ latest) tags to GHCR.
+# The image is signed with cosign keyless (GitHub OIDC) and carries SBOM and
+# provenance attestations (docker/build-push-action).
 name: site
 
 on:
@@ -15,7 +23,10 @@ on:
       - "src/**"
       - "app/**"
       - "prisma/**"
+      - "public/**"
+      - "scripts/desktop/**"
       - "Dockerfile"
+      - ".dockerignore"
       - "docker-compose.yml"
       - ".github/workflows/site.yml"
   workflow_dispatch:
@@ -24,9 +35,10 @@ concurrency:
   group: site-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege by default; the image job requests the two extra scopes it
+# needs (packages: write to push, id-token: write for cosign keyless signing).
 permissions:
   contents: read
-  packages: write
 
 env:
   NEXT_TELEMETRY_DISABLED: "1"
@@ -34,10 +46,11 @@ env:
 jobs:
   build:
     name: build + test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine3.24@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_USER: noema
           POSTGRES_PASSWORD: noema
@@ -50,9 +63,9 @@ jobs:
       DATABASE_URL: postgresql://noema:noema@127.0.0.1:5432/noema?schema=public
       AUTH_SECRET: ci-only-secret-not-used-in-production-000000
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 24, cache: npm }
       - run: npm ci
       - run: npx prisma db push --skip-generate
       - run: npm run typecheck
@@ -92,54 +105,184 @@ jobs:
   image:
     name: container image
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    services:
+      postgres:
+        image: postgres:16-alpine3.24@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_USER: noema
+          POSTGRES_PASSWORD: noema
+          POSTGRES_DB: noema
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U noema" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      IMAGE_NAME: ghcr.io/${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        if: startsWith(github.ref, 'refs/tags/')
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build metadata
+        run: echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ env.IMAGE_NAME }}
+          # latest=auto keeps `latest` on semver tags; the raw rule below adds
+          # it on the default branch, where `edge` also points.
+          flavor: |
+            latest=auto
           tags: |
             type=ref,event=branch
+            type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
             type=sha,format=short
-      - uses: docker/build-push-action@v6
+            type=raw,value=edge,enable={{is_default_branch}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # PRs build amd64 and load it so the scan and smoke test run against the
+      # exact bytes under review. Pushes build both architectures.
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          push: ${{ startsWith(github.ref, 'refs/tags/') }}
+          target: runner
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          cache-from: type=gha,scope=noema
+          cache-to: type=gha,mode=max,scope=noema
+          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+          sbom: ${{ github.event_name != 'pull_request' }}
+
+      - name: Resolve image reference
+        id: image
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "ref=${IMAGE_NAME,,}:pr-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${IMAGE_NAME,,}@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Fails the pipeline on fixable HIGH/CRITICAL findings. ignore-unfixed
+      # keeps upstream base-image noise from blocking a release.
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.image.outputs.ref }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Keyless: the signature is bound to this workflow's identity through
+      # GitHub OIDC, so there is no long-lived signing key to store.
+      - name: Sign image (keyless)
+        if: github.event_name != 'pull_request'
+        run: cosign sign --yes "${IMAGE_NAME,,}@${{ steps.build.outputs.digest }}"
+
+      - name: Start the image
+        run: |
+          docker run --detach --name noema-smoke \
+            --add-host=host.docker.internal:host-gateway \
+            --publish 3000:3000 \
+            --read-only \
+            --tmpfs /tmp \
+            --tmpfs /app/.next/cache \
+            --volume noema-smoke-data:/data \
+            --env DATABASE_URL='postgresql://noema:noema@host.docker.internal:5432/noema?schema=public' \
+            --env AUTH_SECRET='ci-only-secret-not-used-in-production-000000' \
+            --env APP_ORIGINS='http://localhost:3000' \
+            "${{ steps.image.outputs.ref }}"
+
+      - name: Wait for readiness
+        run: |
+          for attempt in $(seq 1 90); do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' http://127.0.0.1:3000/api/health || true)
+            if [ "$code" = "200" ]; then
+              echo "healthy after ${attempt} attempt(s)"
+              cat /tmp/health.json
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::/api/health did not return 200 (last: ${code:-no response})"
+          docker logs --tail=200 noema-smoke
+          exit 1
+
+      - name: Smoke pages
+        run: |
+          curl -fsS http://127.0.0.1:3000/ > /dev/null
+          curl -fsS http://127.0.0.1:3000/login > /dev/null
+
+      - name: Container logs
+        if: always()
+        run: docker logs --tail=200 noema-smoke || true
+
+      - name: Stop the container
+        if: always()
+        run: |
+          docker rm --force noema-smoke || true
+          docker volume rm noema-smoke-data || true
 
   compose-smoke:
     name: docker compose smoke
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     if: github.event_name != 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare environment
+        run: cp .env.example .env
+
       - name: Start the stack
-        run: |
-          cp .env.example .env 2>/dev/null || true
-          docker compose up -d --build
+        run: docker compose --profile app up -d --build
+
       - name: Wait for readiness
         run: |
-          for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:3200/api/health >/dev/null 2>&1; then
-              echo "ready after ${i}s"; exit 0
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:3202/api/health >/dev/null 2>&1; then
+              echo "ready after ${i} attempt(s)"
+              exit 0
             fi
-            sleep 1
+            sleep 2
           done
-          echo "::error::the site never became ready"; docker compose logs --tail=80; exit 1
+          echo "::error::the app never became ready"
+          docker compose --profile app logs --tail=120
+          exit 1
+
       - name: Tear down
         if: always()
-        run: docker compose down -v
+        run: docker compose --profile app down -v

@@ -1,6 +1,9 @@
 services:
+  # Postgres for local development and self-hosting. Pinned by digest so an
+  # unattended `docker compose pull` cannot move the database under a running
+  # install; bump the digest deliberately.
   db:
-    image: postgres:16-alpine
+    image: postgres:16-alpine3.24@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
     container_name: noema-db
     restart: unless-stopped
     environment:
@@ -17,34 +20,70 @@ services:
       timeout: 5s
       retries: 10
 
-  # B62 (spec R28.23): application service — PROFILE-GATED, so a plain
-  # `docker compose up` keeps starting ONLY the `db` service above, which is
-  # byte-identical to before (noema-db, the dev loop and `npm run backup`
-  # are untouched). Start the full stack explicitly with:
-  #   docker compose --profile app up --build
+  # Application service — PROFILE-GATED, so a plain `docker compose up` keeps
+  # starting ONLY the `db` service (the dev loop and `npm run backup` are
+  # untouched). Start the app explicitly:
+  #
+  #   docker compose pull app                       # published image from GHCR
+  #   docker compose --profile app up -d            # start db + app
+  #   docker compose --profile app up -d --build    # build the image locally
+  #
   # Secrets come from .env at run time (env_file) — never baked into the image.
   app:
     profiles: ["app"]
+    # Published multi-arch image (amd64 + arm64). Override NOEMA_IMAGE to pin a
+    # digest, e.g. NOEMA_IMAGE=ghcr.io/guembri01/noema@sha256:…
+    image: ${NOEMA_IMAGE:-ghcr.io/guembri01/noema:latest}
     build:
       context: .
-    image: noema-app:local
+      target: runner
+      args:
+        VERSION: ${NOEMA_VERSION:-dev}
+        REVISION: ${NOEMA_REVISION:-unknown}
+        BUILD_DATE: ${NOEMA_BUILD_DATE:-1970-01-01T00:00:00Z}
     container_name: noema-app
     restart: unless-stopped
+    # The image already handles SIGTERM; init reaps any child the Prisma CLI
+    # leaves behind during migrations.
+    init: true
+    stop_grace_period: 30s
     env_file: .env
     environment:
-      # In-network DB host: the .env DATABASE_URL points at localhost:5433
-      # on the host, which is unreachable from inside the container.
+      # In-network DB host: the .env DATABASE_URL points at localhost:5433 on
+      # the host, which is unreachable from inside the container.
       DATABASE_URL: postgresql://noema:noema@db:5432/noema?schema=public
       PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      # Public origin(s) the browser uses. The boot wrapper recomputes the
+      # Server Action allowlist from this at run time (reverse proxy, tunnel,
+      # LAN address) — build-time interfaces are never baked into the image.
+      APP_ORIGINS: ${APP_ORIGINS:-http://localhost:3202}
+      # Writable state. Mounted as a named volume below.
+      NOEMA_DATA_DIR: /data
+      STORAGE_DIR: /data/uploads
+      SESSION_STORE_PATH: /data/sessions.json
+      BACKUP_DIR: /data/backups
     ports:
-      # B74: host 3202 (3200 prod / 3201 dev are sacred, and the container's
-      # own 3000 stays internal). Matches the B74 smoke-run port.
+      # Host 3202 (3200 prod / 3201 dev are sacred; the container's own 3000
+      # stays internal).
       - "3202:3000"
+    volumes:
+      - noema-app-data:/data
+    # Hardening: the process runs as UID 10001, needs no capabilities, and
+    # writes only to /data and the two cache/temp mounts.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       db:
         condition: service_healthy
     healthcheck:
-      # GET /api/health (R28.24): 200 = healthy, 503 (or no answer) = unhealthy.
+      # GET /api/health: 200 = healthy, 503 (or no answer) = unhealthy.
       test:
         [
           "CMD",
@@ -55,7 +94,8 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
 volumes:
   noema-db-data:
+  noema-app-data:

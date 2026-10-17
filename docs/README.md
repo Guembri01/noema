@@ -23,6 +23,7 @@ Everything written about the project, in roughly the order people want it. The
 | [`DESIGN_SYSTEM.md`](./DESIGN_SYSTEM.md) | How it looks and moves: tokens, spacing, motion — and the rules the checks enforce. |
 | [`api-reference.md`](./api-reference.md) | Every REST route: method, path, authentication, request and response, and errors. |
 | [`DESKTOP.md`](./DESKTOP.md) | The installable build: packaging, the embedded database, the port model, and how an install is verified. |
+| [`DOCKER.md`](./DOCKER.md) | The published container image: pull, configure, migrate, verify signatures, and harden a deployment. |
 | [`OPERATIONS.md`](./OPERATIONS.md) | Running it: migrations, backups, search setup, environment variables, troubleshooting. |
 | [`PERFORMANCE.md`](./PERFORMANCE.md) | The service-level targets, and how each one is validated. |
 

@@ -421,6 +421,23 @@ npm run dev                 # http://localhost:3000 (Next.js default port)
 **Production:** `npm run build` then `npm start`. Note that dev and prod share
 the same `.next` directory — never run them at the same time.
 
+### Docker image
+
+A multi-arch (amd64 + arm64) image is published to the GitHub Container
+Registry on every `main` push and `v*` tag:
+
+```bash
+cp .env.example .env          # set a real AUTH_SECRET
+docker compose --profile app pull app
+docker compose --profile app up -d
+# http://localhost:3202
+```
+
+It is a standalone, non-root image that runs migrations on start-up, ships a
+healthcheck, and is signed with cosign (keyless) with SBOM and provenance
+attestations. Full configuration, reverse-proxy notes, signature verification
+and the image tags are in **[`docs/DOCKER.md`](./docs/DOCKER.md)**.
+
 ### Servers & ports
 
 | Server | Command | Port |
