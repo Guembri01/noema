@@ -71,6 +71,52 @@ async function authorizeDatabase(
 }
 
 /**
+ * The relation target named by an untrusted property config.
+ *
+ * `undefined` — the config names no target at all (`targetDatabaseId` absent,
+ * `null` or blank: the relation is empty and nothing has to be resolved).
+ * `null` — the config names a target that is not a database id (a number, an
+ * object, …); it can never be resolved, so it is refused like a missing one.
+ * Otherwise the trimmed id of the target.
+ */
+function relationTargetOf(config: unknown): string | null | undefined {
+  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+    return undefined;
+  }
+  const raw = (config as { targetDatabaseId?: unknown }).targetDatabaseId;
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string") return null;
+  const id = raw.trim();
+  return id === "" ? undefined : id;
+}
+
+/**
+ * B98 — a relation property may only point at a database of the *same*
+ * workspace. `Property.config` is untrusted stored JSON and
+ * `updatePropertyAction` persists it verbatim, so a `config.targetDatabaseId`
+ * is resolved before it is written: the target must be a live
+ * (`deletedAt: null`) database of the property's own workspace. A target that
+ * is missing, deleted, not a database or belongs to another workspace is
+ * answered with the module's own "Database not found." — the same answer for
+ * a foreign and for a missing target, so the response is no existence oracle.
+ */
+async function relationTargetAllowed(
+  targetDatabaseId: string,
+  workspaceId: string,
+): Promise<boolean> {
+  const target = await prisma.page.findFirst({
+    where: {
+      id: targetDatabaseId,
+      workspaceId,
+      type: "DATABASE",
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  return target !== null;
+}
+
+/**
  * Reduce workspace access to the lock policy's role shape
  * (`src/lib/database-lock.ts`). Mirrors `lockRoleFor` in `pages.ts`: only the
  * owner keeps the locked-schema override, so the lock stays releasable.
@@ -275,6 +321,14 @@ export async function updatePropertyAction(
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
+
+  // B98 — the relation target must be a database of this workspace.
+  const target = relationTargetOf(patch.config);
+  if (target !== undefined) {
+    const allowed =
+      target !== null && (await relationTargetAllowed(target, auth.page.workspaceId));
+    if (!allowed) return { error: "Database not found." };
+  }
 
   await prisma.property.update({
     where: { id: propertyId },
