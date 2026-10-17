@@ -92,12 +92,14 @@ export function RouteProgressBar({
       <div
         data-testid="route-progress-bar"
         data-value={state.value}
-        className="h-full bg-accent"
+        className="h-full w-full origin-left bg-accent"
         style={{
-          width: `${state.value}%`,
+          // Composited (transform) rather than layout (width): the bar advances
+          // on every navigation tick, and `width` forced a reflow each time.
+          transform: `scaleX(${state.value / 100})`,
           transition: reducedMotion
             ? "none"
-            : "width var(--dur-3) var(--ease-smooth)",
+            : "transform var(--dur-3) var(--ease-smooth)",
         }}
       />
     </div>

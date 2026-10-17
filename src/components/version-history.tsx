@@ -77,8 +77,8 @@ const MAX_INLINE_DIFF_LENGTH = 2000;
 
 const INLINE_DIFF_CLASS: Record<DiffSegment["op"], string> = {
   equal: "",
-  insert: "rounded bg-emerald-500/15 text-emerald-700",
-  delete: "rounded bg-red-500/15 text-red-600",
+  insert: "rounded bg-success-soft text-success",
+  delete: "rounded bg-danger-soft text-danger",
 };
 
 /* ------------------------------------------------------------------------- *
@@ -195,10 +195,10 @@ function InlineDiff({ before, after }: { before: string; after: string }) {
         )}
       </p>
       <p className="flex items-center gap-2 text-[11px] text-muted">
-        <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-600">
+        <span className="rounded bg-success-soft px-1.5 py-0.5 text-success">
           +{stats.added}
         </span>
-        <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-red-500">
+        <span className="rounded bg-danger-soft px-1.5 py-0.5 text-danger">
           -{stats.removed}
         </span>
       </p>
@@ -413,7 +413,7 @@ export function VersionHistory({
                             {label !== null && (
                               <span
                                 data-testid="version-label"
-                                className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-700"
+                                className="inline-flex items-center gap-0.5 rounded bg-warning-soft px-1.5 py-0.5 text-warning"
                               >
                                 <Tag className="h-2.5 w-2.5" aria-hidden />
                                 {label}
@@ -429,8 +429,8 @@ export function VersionHistory({
                             className={cn(
                               "shrink-0 rounded px-1.5 py-0.5 text-[10px]",
                               version.charDelta > 0
-                                ? "bg-emerald-500/10 text-emerald-600"
-                                : "bg-red-500/10 text-red-500",
+                                ? "bg-success-soft text-success"
+                                : "bg-danger-soft text-danger",
                             )}
                           >
                             {version.charDelta > 0 ? "+" : ""}
@@ -534,7 +534,7 @@ export function VersionHistory({
                                   data-testid="version-restore-confirm"
                                   disabled={pending}
                                   onClick={() => restoreVersion(restoreTarget.id)}
-                                  className="rounded bg-red-500/90 px-2 py-0.5 text-[11px] text-white hover:bg-red-500 disabled:opacity-50"
+                                  className="rounded bg-danger/90 px-2 py-0.5 text-[11px] text-white hover:bg-danger disabled:opacity-50"
                                 >
                                   {t(locale, "restore")}
                                 </button>

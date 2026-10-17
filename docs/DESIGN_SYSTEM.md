@@ -233,15 +233,25 @@ fails if any total exceeds its baseline):
 
 | Rule | Found | Baseline |
 |---|---|---|
-| raw hex | 42 | 69 |
-| arbitrary z-index | 0 | 2 |
-| arbitrary duration | 5 | 7 |
+| raw hex | 0 | 0 |
+| arbitrary z-index | 0 | 0 |
+| arbitrary duration | 0 | 0 |
 | arbitrary radius | 0 | 0 |
 | ad-hoc shadow | 0 | 0 |
-| legacy palette | 93 | 155 |
+| legacy palette | 0 | 0 |
 
-170 files scanned; 29 files still carry at least one hit. The furthest from the
-system are `auth-form.tsx`, `database/view-renderers.tsx`, `editor/page-editor.tsx`
-and `audit-feed.tsx` (all "legacy palette", some "raw hex" / "arbitrary
-duration"). These are the remaining adoption targets — see the build order in
-`FRONTEND_PLAN.md` §22.
+**The whole app is on the system.** 171 files scanned, 0 with a hit, and every
+baseline is now 0 — so the ratchet only turns one way: any new raw hex, magic
+z-index, ad-hoc duration/radius/shadow or legacy palette class fails
+`npm run check:design` in CI (`site.yml`).
+
+`npm run check:motion` is at 0 for its five hard rules *and* its three soft
+smells (`transition: all`, ad-hoc durations, inline animation durations, literal
+easings, non-skipping `motion-reduce`, layout-animating properties, drag surfaces
+without `.u-no-transition`, `@keyframes` outside `tokens.css`). Motion vocabulary
+now includes a constant-rate token (`--ease-linear`) for loops and for
+time-locked indicators such as the undo countdown.
+
+Companion gates: `npm run check:coherence`, `npm run check:use-server`, and the
+visual harness `npm run visual:check` (local or PR review — it needs a seeded
+database and a browser, so it is intentionally not a CI step).

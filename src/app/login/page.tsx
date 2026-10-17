@@ -20,7 +20,7 @@ export default async function LoginPage({
           Sign in to your Noema workspace.
         </p>
         {error === "sso" && (
-          <p className="mb-4 text-sm text-red-500">Single sign-on failed.</p>
+          <p className="mb-4 text-sm text-danger">Single sign-on failed.</p>
         )}
         <AuthForm mode="login" next={next} />
         {process.env.SSO_ISSUER && (

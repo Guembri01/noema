@@ -24,10 +24,10 @@ import { join } from "node:path";
  * lands; never raise them. Soft rules are not gated.
  */
 const BASELINE = {
-  "transition: all": 1,
-  "ad-hoc duration": 6,
-  "inline animation duration": 1,
-  "literal easing keyword": 8,
+  "transition: all": 0,
+  "ad-hoc duration": 0,
+  "inline animation duration": 0,
+  "literal easing keyword": 0,
   "motion-reduce shortens instead of skips": 0,
 };
 
@@ -66,10 +66,14 @@ const inlineAnimationDuration = (line) =>
  * Token-safe: `--ease-smooth`, `var(--ease-in-out-soft)` and `ease-[var(--ease-x)]`
  * are not matches, and `linear` never matches inside `linear-gradient`.
  */
-const literalEasing = (line) =>
-  /(?<![\w-])(?:ease-in-out|ease-in|ease-out|step-start|step-end|ease|linear)(?![\w-])/.test(
+const literalEasing = (line) => {
+  // Declaring the token is where a keyword belongs: `--ease-linear: linear;` is
+  // the definition of the vocabulary, not a use of a literal.
+  if (/^\s*--ease-[a-z-]+\s*:/.test(line)) return false;
+  return /(?<![\w-])(?:ease-in-out|ease-in|ease-out|step-start|step-end|ease|linear)(?![\w-])/.test(
     line,
   );
+};
 
 /**
  * A `motion-reduce:` guard that only shortens/slows the motion instead of

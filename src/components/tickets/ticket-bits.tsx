@@ -11,9 +11,9 @@ import { LABEL_TONES } from "./ticket-types";
 
 /** SLA grades reuse the status palette so the chip reads at a glance. */
 const SLA_TONES: Record<SlaStatus, string> = {
-  ok: "bg-emerald-500/10 text-emerald-600",
-  warning: "bg-amber-500/10 text-amber-600",
-  overdue: "bg-red-500/10 text-red-500",
+  ok: "bg-success-soft text-success",
+  warning: "bg-warning-soft text-warning",
+  overdue: "bg-danger-soft text-danger",
 };
 
 export function LabelChip({ name, color }: { name: string; color: string }) {

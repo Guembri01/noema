@@ -314,8 +314,8 @@ export function WebhookManager({
                     }
                     className={`rounded px-1 text-[10px] font-medium ${
                       health.attemptable
-                        ? "bg-emerald-500/15 text-emerald-600"
-                        : "bg-red-500/15 text-red-600"
+                        ? "bg-success-soft text-success"
+                        : "bg-danger-soft text-danger"
                     }`}
                   >
                     {health.circuit} · {health.attempts} {t(locale, "attemptUnit")}
@@ -338,7 +338,7 @@ export function WebhookManager({
                       }
                     })
                   }
-                  className="text-muted hover:text-red-500"
+                  className="text-muted hover:text-danger"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
@@ -358,7 +358,7 @@ export function WebhookManager({
               <li key={delivery.id} className="flex items-center gap-3 px-4 py-2">
                 <span
                   className={`h-2 w-2 shrink-0 rounded-full ${
-                    delivery.ok ? "bg-emerald-500" : "bg-red-500"
+                    delivery.ok ? "bg-success" : "bg-danger"
                   }`}
                   aria-hidden
                 />

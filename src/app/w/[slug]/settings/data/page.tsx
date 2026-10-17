@@ -128,7 +128,7 @@ export default function DataControlsPage() {
       <SettingsNav slug={slug} locale={snapshot?.locale ?? "en"} className="mb-8" />
 
       {error && (
-        <p role="alert" className="mb-4 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm">
+        <p role="alert" className="mb-4 rounded border border-danger/40 bg-danger-soft px-3 py-2 text-sm">
           {error}
         </p>
       )}
@@ -209,7 +209,7 @@ export default function DataControlsPage() {
                       {record.label}
                     </span>
                     {holds.has(record.key) && (
-                      <span className="shrink-0 text-xs text-amber-500">legal hold</span>
+                      <span className="shrink-0 text-xs text-warning">legal hold</span>
                     )}
                   </li>
                 ))}
@@ -221,7 +221,7 @@ export default function DataControlsPage() {
                 Checked records are treated as under legal hold: they are retained and never erased.
               </p>
 
-              <div className="mt-5 rounded border border-red-500/40 p-3">
+              <div className="mt-5 rounded border border-danger/40 p-3">
                 <p className="text-sm font-medium">Erase my personal data</p>
                 <p className="mt-1 text-xs text-muted">
                   This applies the plan above in one transaction. It cannot be undone. Type{" "}
@@ -239,7 +239,7 @@ export default function DataControlsPage() {
                     type="button"
                     disabled={busy || confirmText !== "ERASE"}
                     onClick={executeErasure}
-                    className="inline-flex h-9 items-center rounded border border-red-500/60 px-3 text-sm text-red-500 hover:bg-red-500/10 disabled:opacity-40"
+                    className="inline-flex h-9 items-center rounded border border-danger/60 px-3 text-sm text-danger hover:bg-danger-soft disabled:opacity-40"
                   >
                     {busy ? "Erasing…" : "Erase data"}
                   </button>

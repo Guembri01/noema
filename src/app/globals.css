@@ -58,15 +58,18 @@
   --ease-smooth: cubic-bezier(0.2, 0, 0, 1);
   --ease-in-out-soft: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-spring: cubic-bezier(0.34, 1.32, 0.64, 1);
-  --animate-shimmer: shimmer 1.4s ease-in-out infinite;
+  /* Constant rate — for loops (spin) and for anything that must advance in
+     lockstep with real time (the undo countdown). */
+  --ease-linear: linear;
+  --animate-shimmer: shimmer 1.4s var(--ease-in-out-soft) infinite;
   --animate-rise: rise 0.12s var(--ease-smooth) both;
   --animate-fade: fade 0.16s var(--ease-smooth) both;
   --animate-scale-in: scale-in 0.16s var(--ease-smooth) both;
   --animate-slide-in-right: slide-in-right 0.24s var(--ease-smooth) both;
   --animate-slide-in-left: slide-in-left 0.24s var(--ease-smooth) both;
   --animate-slide-in-bottom: slide-in-bottom 0.24s var(--ease-smooth) both;
-  --animate-spin: spin 0.9s linear infinite;
-  --animate-pulse-soft: pulse-soft 1.6s ease-in-out infinite;
+  --animate-spin: spin 0.9s var(--ease-linear) infinite;
+  --animate-pulse-soft: pulse-soft 1.6s var(--ease-in-out-soft) infinite;
   --animate-sweep: sweep 1.4s var(--ease-in-out-soft) infinite;
 }
 

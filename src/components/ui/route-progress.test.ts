@@ -75,7 +75,7 @@ describe("RouteProgressBar", () => {
     expect(html).toContain('data-testid="route-progress"');
     expect(html).toContain('data-phase="loading"');
     expect(html).toContain('data-testid="route-progress-bar"');
-    expect(html).toContain("width:45%");
+    expect(html).toContain("transform:scaleX(0.45)");
     expect(html).toContain("bg-accent");
     expect(html).toContain("h-0.5");
     expect(html).toContain("pointer-events-none");

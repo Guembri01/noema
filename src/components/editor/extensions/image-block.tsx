@@ -356,7 +356,7 @@ function ImageView({
         )}
         {kind === "image" && editable && (
           <div
-            className="noema-image-resize"
+            className="noema-image-resize u-no-transition"
             data-testid="image-resize-handle"
             aria-label={t(locale, "imageResizeAria")}
             contentEditable={false}

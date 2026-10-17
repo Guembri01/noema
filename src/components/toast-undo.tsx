@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { t } from "@/lib/i18n";
 import { UNDO_WINDOW_MS } from "@/lib/actions-client";
 
@@ -15,11 +16,11 @@ import { UNDO_WINDOW_MS } from "@/lib/actions-client";
  *   toast.custom((id) => (
  *     <UndoButton action="Delete" onUndo={() => undo(id)} />
  *   ));
+ *
+ * The `undo-countdown` keyframes live in `src/app/tokens.css` with the rest of
+ * the motion vocabulary; the window is handed over as a local CSS custom
+ * property, so a data-driven duration never becomes a hard-coded animation value.
  */
-
-/** Keyframes are injected once per rendered button (globals.css is not ours). */
-const COUNTDOWN_KEYFRAMES =
-  "@keyframes undo-countdown{from{transform:scaleX(1)}to{transform:scaleX(0)}}";
 
 export type UndoButtonProps = {
   /** The action being undone, e.g. "Delete" — becomes "Undo Delete". */
@@ -38,33 +39,35 @@ export function UndoButton({
 }: UndoButtonProps) {
   const undoLabel = t(locale, "undo");
   return (
-    <>
-      <style>{COUNTDOWN_KEYFRAMES}</style>
-      <button
-        type="button"
-        onClick={onUndo}
-        aria-label={`${undoLabel} ${action}`}
-        aria-keyshortcuts="Control+Z"
-        data-testid="undo-action"
-        className="focus-ring u-interactive relative inline-flex items-center overflow-hidden rounded-sm px-2 py-1 text-sm font-medium text-accent"
+    <button
+      type="button"
+      onClick={onUndo}
+      aria-label={`${undoLabel} ${action}`}
+      aria-keyshortcuts="Control+Z"
+      data-testid="undo-action"
+      className="focus-ring u-interactive relative inline-flex items-center overflow-hidden rounded-sm px-2 py-1 text-sm font-medium text-accent"
+    >
+      {undoLabel}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 overflow-hidden"
       >
-        {undoLabel}
         <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 overflow-hidden"
-        >
-          <span
-            data-testid="undo-countdown"
-            className="block h-full w-full origin-center bg-accent opacity-40"
-            style={{
+          data-testid="undo-countdown"
+          className="block h-full w-full origin-center bg-accent opacity-40"
+          style={
+            {
+              // The window is data, not design: it rides a local custom property
+              // and the animation consumes it.
+              "--undo-window": `${windowMs}ms`,
               animationName: "undo-countdown",
-              animationDuration: `${windowMs}ms`,
-              animationTimingFunction: "linear",
+              animationDuration: "var(--undo-window)",
+              animationTimingFunction: "var(--ease-linear)",
               animationFillMode: "forwards",
-            }}
-          />
-        </span>
-      </button>
-    </>
+            } as CSSProperties
+          }
+        />
+      </span>
+    </button>
   );
 }

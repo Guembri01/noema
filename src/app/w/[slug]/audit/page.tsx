@@ -37,8 +37,8 @@ const TARGET_TYPES = ["workspace", "page", "ticket", "label", "comment", "member
 const SEVERITY_TONE: Record<AuditSeverity, string> = {
   info: "bg-surface-2 text-muted",
   notice: "bg-surface-2 text-fg",
-  warning: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  critical: "bg-red-500/15 text-red-700 dark:text-red-300",
+  warning: "bg-warning-soft text-warning",
+  critical: "bg-danger-soft text-danger",
 };
 
 /** ISO instant → compact `YYYY-MM-DD HH:MMZ`, tolerating an odd timestamp. */

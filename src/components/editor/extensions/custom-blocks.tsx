@@ -1252,7 +1252,7 @@ function ColumnView({ node, editor, getPos, locale }: NodeViewProps & { locale: 
       <NodeViewContent style={{ display: "contents" }} />
       {editable && !isLast && (
         <span
-          className="noema-column-resize"
+          className="noema-column-resize u-no-transition"
           role="separator"
           aria-orientation="vertical"
           aria-label={t(locale, "blockColumns")}

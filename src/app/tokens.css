@@ -149,6 +149,13 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }
 }
+/* The undo-countdown bar. Lives here with the rest of the vocabulary so a
+   component never ships its own <style> block (and so the duration can be fed
+   from a local `--undo-window` var, which is data, not design). */
+@keyframes undo-countdown {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
 
 /* --- Utilities ----------------------------------------------------------- */
 

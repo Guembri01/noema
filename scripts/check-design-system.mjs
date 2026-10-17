@@ -15,13 +15,16 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 /** Worst tolerated totals. Lower these as the design system lands; never raise. */
+// All at zero: the whole app (171 files) now paints exclusively through the
+// token layer. Any new hit fails `npm run check:design`, which is the point —
+// the ratchet only turns one way.
 const BASELINE = {
-  "raw hex": 69,
-  "arbitrary z-index": 2,
-  "arbitrary duration": 7,
+  "raw hex": 0,
+  "arbitrary z-index": 0,
+  "arbitrary duration": 0,
   "arbitrary radius": 0,
   "ad-hoc shadow": 0,
-  "legacy palette": 155,
+  "legacy palette": 0,
 };
 
 const RULES = [

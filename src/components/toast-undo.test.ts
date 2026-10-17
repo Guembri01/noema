@@ -32,8 +32,13 @@ describe("UndoButton", () => {
   it("renders the countdown as a CSS animation, not a timer", () => {
     const html = render({ action: "Move", onUndo: () => {} });
     expect(html).toContain("animation-name:undo-countdown");
-    expect(html).toContain(`animation-duration:${UNDO_WINDOW_MS}ms`);
-    expect(html).toContain("@keyframes undo-countdown");
+    // The window is data: it rides a local custom property, so the animation
+    // value itself stays token-driven (`var(--undo-window)`).
+    expect(html).toContain(`--undo-window:${UNDO_WINDOW_MS}ms`);
+    expect(html).toContain("animation-duration:var(--undo-window)");
+    expect(html).toContain("animation-timing-function:var(--ease-linear)");
+    // The keyframes belong to the shared vocabulary, not to a component.
+    expect(html).not.toContain("@keyframes");
     expect(html).toContain('data-testid="undo-countdown"');
     // Decorative: screen readers get the button, not the bar.
     expect(html).toMatch(/aria-hidden="true"[^>]*>\s*<span data-testid="undo-countdown"/);
@@ -42,7 +47,7 @@ describe("UndoButton", () => {
 
   it("inherits a custom window on the animation", () => {
     const html = render({ action: "Rename", onUndo: () => {}, windowMs: 1500 });
-    expect(html).toContain("animation-duration:1500ms");
+    expect(html).toContain("--undo-window:1500ms");
   });
 
   it("localizes the undo word", () => {

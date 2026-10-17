@@ -105,7 +105,7 @@ export default async function MovePagesPage({
       <SettingsNav slug={workspace.slug} locale={locale} className="mb-8" />
 
       {error && (
-        <p role="alert" className="mb-4 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm">
+        <p role="alert" className="mb-4 rounded border border-danger/40 bg-danger-soft px-3 py-2 text-sm">
           {error}
         </p>
       )}
@@ -161,7 +161,7 @@ export default async function MovePagesPage({
       )}
 
       {preview && !preview.ok && (
-        <p role="alert" className="mt-6 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm">
+        <p role="alert" className="mt-6 rounded border border-danger/40 bg-danger-soft px-3 py-2 text-sm">
           {preview.error}
         </p>
       )}
@@ -196,8 +196,8 @@ export default async function MovePagesPage({
           </dl>
 
           {!preview.access.allowed && (
-            <div className="mt-4 rounded border border-red-500/40 bg-red-500/10 px-3 py-2">
-              <p className="text-sm font-medium text-red-500">
+            <div className="mt-4 rounded border border-danger/40 bg-danger-soft px-3 py-2">
+              <p className="text-sm font-medium text-danger">
                 The destination workspace refuses this move
               </p>
               <ul className="mt-1 list-inside list-disc text-xs text-muted">
@@ -209,8 +209,8 @@ export default async function MovePagesPage({
           )}
 
           {!preview.validation.ok && (
-            <div className="mt-4 rounded border border-red-500/40 bg-red-500/10 px-3 py-2">
-              <p className="text-sm font-medium text-red-500">The plan is not valid</p>
+            <div className="mt-4 rounded border border-danger/40 bg-danger-soft px-3 py-2">
+              <p className="text-sm font-medium text-danger">The plan is not valid</p>
               <ul className="mt-1 list-inside list-disc text-xs text-muted">
                 {preview.validation.errors.map((planError) => (
                   <li key={planError}>{planError}</li>

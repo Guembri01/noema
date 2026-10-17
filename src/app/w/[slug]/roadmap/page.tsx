@@ -179,7 +179,7 @@ export default async function RoadmapPage({
                         </div>
                       ))}
                       <div
-                        className="absolute top-0 h-full border-l border-red-400/70"
+                        className="absolute top-0 h-full border-l border-danger/70"
                         style={{ left: `${nowLeft}%` }}
                         aria-hidden
                       />
@@ -193,7 +193,7 @@ export default async function RoadmapPage({
                             <div
                               className={
                                 row.overdue
-                                  ? "absolute top-1 h-4 rounded bg-red-500/70 px-1.5 text-[10px] leading-4 text-white"
+                                  ? "absolute top-1 h-4 rounded bg-danger/70 px-1.5 text-[10px] leading-4 text-white"
                                   : row.width === 0
                                     ? "absolute top-1.5 h-3 w-3 -translate-x-1/2 rotate-45 rounded-sm bg-accent"
                                     : "absolute top-1 h-4 overflow-hidden rounded bg-accent px-1.5 text-[10px] leading-4 text-accent-fg"

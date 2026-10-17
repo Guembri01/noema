@@ -29,11 +29,11 @@ export type LabelRow = { id: string; name: string; color: string; count: number 
 
 export const LABEL_TONES: Record<string, string> = {
   gray: "bg-surface-2 text-muted",
-  blue: "bg-blue-500/10 text-blue-600",
-  green: "bg-emerald-500/10 text-emerald-600",
-  yellow: "bg-amber-500/10 text-amber-600",
-  orange: "bg-orange-500/10 text-orange-600",
-  red: "bg-red-500/10 text-red-500",
-  purple: "bg-purple-500/10 text-purple-600",
-  pink: "bg-pink-500/10 text-pink-600",
+  blue: "bg-[var(--tag-blue-bg)] text-[var(--tag-blue-fg)]",
+  green: "bg-[var(--tag-green-bg)] text-[var(--tag-green-fg)]",
+  yellow: "bg-[var(--tag-yellow-bg)] text-[var(--tag-yellow-fg)]",
+  orange: "bg-[var(--tag-orange-bg)] text-[var(--tag-orange-fg)]",
+  red: "bg-[var(--tag-red-bg)] text-[var(--tag-red-fg)]",
+  purple: "bg-[var(--tag-purple-bg)] text-[var(--tag-purple-fg)]",
+  pink: "bg-[var(--tag-pink-bg)] text-[var(--tag-pink-fg)]",
 };
