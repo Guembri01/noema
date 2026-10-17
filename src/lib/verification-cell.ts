@@ -59,7 +59,7 @@ export type CellTone = "verified" | "stale" | "none";
 
 /** What {@link cellDisplay} renders for one cell. */
 export type CellDisplay = {
-  /** Human label, e.g. `"Verified ✓ · Ada · 2026-03-01"`. */
+  /** Human label, e.g. `"Verified ✓ · Ada · 2026-03-04"`. */
   label: string;
   /** Tone for the UI to colour the chip by. */
   tone: CellTone;

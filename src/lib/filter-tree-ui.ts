@@ -503,7 +503,7 @@ function describeNode(node: FilterNode, propertyName: (id: string) => string): s
 
 /**
  * Render a tree as a sentence, e.g.
- * `Status is Done AND (Priority is High OR Due is before 2026-02-01)`.
+ * `Status is Done AND (Priority is High OR Due is before 2026-02-04)`.
  * Top-level conditions are joined by their group op; nested groups are
  * parenthesised.
  */
