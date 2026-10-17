@@ -224,6 +224,18 @@ const ALLOWED_IN_TESTS = new Set([
   "postgresql://noema:supersecretpw@localhost:5433/noema", // src/lib/redaction.test.ts
   "whsec-inbound-rules-fixture", // src/app/api/webhooks/inbound/route.rules.test.ts
   "postgresql://noema:${encodeURIComponent(password)}@127.0.0.1:5434/noema?schema=public", // scripts/desktop/docker-db.test.mjs
+  // The fixtures of the shared value scrubbers (the finding B121) — one
+  // example per shape the scrubbers know.
+  "gho_abcdefghijklmnopqrstuvwxyz01", // src/lib/value-scrubbing.test.ts
+  "ghu_abcdefghijklmnopqrstuvwxyz01", // src/lib/value-scrubbing.test.ts
+  "ghs_abcdefghijklmnopqrstuvwxyz01", // src/lib/value-scrubbing.test.ts
+  "ghr_abcdefghijklmnopqrstuvwxyz01", // src/lib/value-scrubbing.test.ts
+  "github_pat_abcdefghijklmnopqrstuvwxyz01", // src/lib/value-scrubbing.test.ts
+  "glpat-abcdefghij0123456789", // src/lib/value-scrubbing.test.ts
+  "xoxp-123456789012-abcdefghijkl", // src/lib/value-scrubbing.test.ts
+  "xoxa-123456789012-abcdefghijkl", // src/lib/value-scrubbing.test.ts
+  "xoxr-123456789012-abcdefghijkl", // src/lib/value-scrubbing.test.ts
+  "deadbeefcafe", // src/lib/value-scrubbing.test.ts — the value in the query strings
   "b39-unit-secret-0123456789abcdef", // src/lib/auth-session-idle-timeout.test.ts
   "b39-two-factor-test-secret-0123456789", // src/server/actions/two-factor-revoke-sessions.test.ts
   "RECIPIENT_PASSWORD", // src/server/actions/ownership-transfer-actions.test.ts — a constant, not a secret

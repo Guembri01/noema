@@ -270,7 +270,7 @@ export async function removeMemberAction(
   await prisma.teamspaceMember.deleteMany({ where: { userId, teamspace: { workspaceId } } });
   // The project roles are authorisation rows as well: a stale one keeps the
   // removed person in the project roster with the role of the project.
-  await prisma.projectMember.deleteMany({ where: { userId, project: { workspaceId } } });34e4e6b3310e27bc6547a20e42133a91a
+  await prisma.projectMember.deleteMany({ where: { userId, project: { workspaceId } } });
   revalidatePath("/w", "layout");
   return { ok: true };
 }

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 import {
   normalizeTheme,
   THEME_COOKIE,
