@@ -177,6 +177,16 @@ share `.next/`: a plain `next build` rewrites the directory and removes
 copy whatever is left. That produced an installer that built cleanly, weighed
 50 MB, and would have booted to nothing.
 
+**Neither may a dev server share `.next/` with a production build.** The same
+directory holds two incompatible outputs, so a running `next dev` keeps serving while
+*its own* chunks start 404ing (`_next/static/chunks/main-app.js` → `text/plain`,
+refused) and pages fail with `Cannot read properties of undefined (reading 'call')`.
+The visible symptom is the one that costs the most time: **every page renders but
+nothing hydrates** — the markup is fine, so it looks like a component bug, and it is
+not. Measured end-to-end while building the motion harness. If a dev server starts
+behaving like that, stop it, delete `.next`, and start it again; and stop it before
+running `desktop:prepare` or `cargo tauri build`.
+
 Two guards make that class of mistake impossible now:
 
 - `prepare` validates the payload against a required list (`server.js`,

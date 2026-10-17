@@ -100,6 +100,24 @@ micro tier, the sidebar's width the panel tier, the route-content fade the page 
 measurement in a context launched with `prefers-reduced-motion: reduce` and requires
 the durations to collapse. A class name is not evidence; a computed duration is.
 
+**Watch it instead of reading about it.** `/dev/ui#animation-behavior` is the motion
+explorer: the four duration tiers animating the same transform side by side, the easing
+curves, every button and form-control state, the sidebar collapse, expanding tab
+labels, a context menu, the chevron, a skeleton, a toast, a tooltip and a drop
+indicator — plus a switch that flips the whole page into the reduced-motion treatment so
+you can see what the OS preference does. It is a development surface (a production
+build calls `notFound()`), so start one first:
+
+```bash
+npx next dev -p 3200     # then open http://localhost:3200/dev/ui#animation-behavior
+```
+
+`npm run audit:motion-spec` scores this document's inventory section by section. It
+currently reads **116 ok · 3 partial · 0 missing**; the three that remain are recorded
+decisions rather than gaps: expandable surfaces transition metrics we actually know
+instead of `max-height`, a database view switch is deliberately instant (a cross-fade
+flashes the table), and remote cursors move only as fast as the transport delivers them.
+
 **Things that move are not things that change state.** A hover or an open menu is one
 element changing its own styles, so CSS handles it. A reorder, an insert, a delete or a
 group expanding moves elements that did *not* change — there is nothing to put a
