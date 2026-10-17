@@ -18,6 +18,7 @@ const db = vi.hoisted(() => ({
   pageUpdate: vi.fn(),
   pageVersionCreate: vi.fn(),
   pageFollowFindMany: vi.fn(),
+  workspaceMemberFindMany: vi.fn(),
   userFindMany: vi.fn(),
   notificationFindMany: vi.fn(),
   notificationCreateMany: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("@/lib/db", () => ({
     page: { findUnique: db.pageFindUnique, update: db.pageUpdate },
     pageVersion: { create: db.pageVersionCreate },
     pageFollow: { findMany: db.pageFollowFindMany },
+    workspaceMember: { findMany: db.workspaceMemberFindMany },
     user: { findMany: db.userFindMany },
     notification: {
       findMany: db.notificationFindMany,
@@ -92,6 +94,7 @@ beforeEach(() => {
   db.pageUpdate.mockResolvedValue({ id: PAGE_ID });
   db.pageVersionCreate.mockResolvedValue({ id: "ver-1" });
   db.pageFollowFindMany.mockResolvedValue([{ userId: "f1" }]);
+  db.workspaceMemberFindMany.mockResolvedValue([{ userId: "f1" }]);
   db.userFindMany.mockResolvedValue([{ id: "f1", notificationPrefs: null }]);
   db.notificationFindMany.mockResolvedValue([]);
   db.notificationCreateMany.mockResolvedValue({ count: 1 });
@@ -145,6 +148,10 @@ describe("updatePageAction → follow dispatch (R82.12)", () => {
 
   it("a muted follower receives nothing even on a real edit", async () => {
     db.pageFollowFindMany.mockResolvedValue([{ userId: "f1" }, { userId: "f2" }]);
+    db.workspaceMemberFindMany.mockResolvedValue([
+      { userId: "f1" },
+      { userId: "f2" },
+    ]);
     db.userFindMany.mockResolvedValue([
       { id: "f1", notificationPrefs: null },
       { id: "f2", notificationPrefs: muted("f2") },
