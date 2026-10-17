@@ -193,7 +193,7 @@
     "@types/pdfkit": "^0.17.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
+    "eslint": "^10",
     "eslint-config-next": "15.5.27",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
