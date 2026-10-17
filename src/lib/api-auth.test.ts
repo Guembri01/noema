@@ -21,7 +21,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-import { authenticateApiRequest, hashApiToken } from "./api-auth";
+import { apiTokenMatches, authenticateApiRequest, hashApiToken } from "./api-auth";
 
 const TOKEN = "noema_api_auth_test_token";
 const TOKEN_HASH = hashApiToken(TOKEN);
@@ -34,6 +34,20 @@ const bearer = (token: string | null = TOKEN) =>
 beforeEach(() => {
   vi.clearAllMocks();
   db.apiTokenUpdate.mockResolvedValue({ id: "token-1" });
+});
+
+describe("apiTokenMatches", () => {
+  it("refuses a digest that is not a string or is empty", () => {
+    // A missing or malformed digest can never match — and the comparison must
+    // not throw either: `Buffer.from` throws on a value that is not a string,
+    // and a route that throws answers 500 instead of 401.
+    expect(apiTokenMatches("noema_token", "")).toBe(false);
+    expect(apiTokenMatches("noema_token", undefined as unknown as string)).toBe(false);
+    expect(apiTokenMatches("noema_token", null as unknown as string)).toBe(false);
+    expect(apiTokenMatches("noema_token", 42 as unknown as string)).toBe(false);
+    // The well-formed digest still matches.
+    expect(apiTokenMatches("noema_token", hashApiToken("noema_token"))).toBe(true);
+  });
 });
 
 describe("authenticateApiRequest", () => {

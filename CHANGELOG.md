@@ -149,6 +149,13 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   the workspace of the database being read, so a legacy, imported or
   hand-edited foreign target yields no options, no cell values and no schema.
   `duplicateDatabaseAction` empties a copied target that does not pass.
+- The target of a relation is also checked against the guest's **read** scope.
+  A guest could open a database they are allowed to read and still receive
+  the rows, cell values and schema of a second database of the workspace
+  that was never shared with them, because the relation target was only
+  compared by workspace. The page route and the linked-database action now
+  pass the read scope into `getDatabase()`, which resolves no target outside
+  it; a member (`null` scope) still sees the whole workspace.
 - A row that carries a different `workspaceId` than the database it hangs
   under can no longer be written or deleted. `setPropertyValueAction` and
   `deleteRowAction` check the row's own workspace before the role check and
