@@ -11,6 +11,18 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Security
+
+- The "Authoring windows" check no longer fails for every pull request. It
+  collected its commits with `git log --all`, and CI checks out with
+  `fetch-depth: 0`, which fetches every branch — so the open Dependabot
+  branches, authored by a bot, made the required check fail with identity
+  violations that had nothing to do with the pull request under review. It
+  now walks the commits of the ref under review. GitHub's own automation is
+  exempt, because an App account commits at its own clock and the merge
+  commit GitHub synthesises for a pull request is dated when it rebuilt the
+  ref; a human's no-reply address is not a bot and still has to pass.
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour

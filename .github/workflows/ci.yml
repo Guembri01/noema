@@ -25,8 +25,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The authoring-window gate walks the whole history, so a shallow
-          # checkout would make it vacuous.
+          # The authoring-window gate walks the whole history of the ref
+          # under review, so a shallow checkout would make it vacuous.
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -63,6 +63,9 @@ jobs:
       # Every commit — author *and* committer date — must land inside a Noema
       # authoring window (Wed–Sat evenings, Europe/Paris). See
       # src/lib/dates-policy.ts for the rule and the tests that pin its edges.
+      # GitHub's own automation is exempt: an App account commits at its own
+      # clock, and the merge commit GitHub synthesises for a pull request is
+      # dated when it rebuilt the ref.
       - name: Authoring windows
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-commit-dates.mjs
 
