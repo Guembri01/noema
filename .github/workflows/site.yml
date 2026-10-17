@@ -77,6 +77,12 @@ jobs:
       # ad-hoc duration, legacy palette class or literal easing fails the build.
       - run: npm run check:design
       - run: npm run check:motion
+      # No credential shapes in the tree. It is value-shaped, not entropy-shaped:
+      # it knows what a leaked key looks like (`sk-…`, an AWS id, a private-key
+      # header, a connection string with a password) rather than guessing from
+      # randomness, so it does not drown in false positives. A real key did once
+      # reach `.env`; this is what stops the next one.
+      - run: npm run check:secrets
       - name: Design report (informative)
         if: always()
         run: npm run design:report
