@@ -11,6 +11,21 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Security
+
+- The AI proxy routes `/api/ai` and `/api/ai/skills` resolved a workspace's
+  stored provider — its endpoint and its decrypted API key — for whatever
+  `workspaceId` the client sent, so any signed-in account could name a
+  workspace it did not belong to and have the server call that workspace's
+  provider with that workspace's key and token budget. A workspace's provider
+  is now used only when the caller actually has access to that workspace; the
+  environment configuration applies otherwise, and the foreign provider row is
+  not even read. Both routes validate their request body with Zod as well, so
+  a `workspaceId` that is not an id, or a `mode` outside `ask` / `summarize` /
+  `autofill`, is refused with 400 before the request reaches the provider.
+
+
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour
