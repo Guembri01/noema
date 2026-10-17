@@ -758,7 +758,7 @@ order in the route body — and the server-action surface (`cronActionGate` in
 | --- | --- | --- |
 | **Fail closed** | No configured secret ⇒ the gate is **closed**, never open. The routes answer `503` there; the two exceptions answer something else *without* opening the gate: `/api/metrics` answers `401` (its second, session-based admin path — a `503` would lock the admins out) and the server actions answer `{"error":"Unauthorized"}` (an action result, not an HTTP status — see the exceptions below). An empty/absent presented value is never a match. | `guardOpsSecret` · `cronActionGate` |
 | **Constant-time comparison** | The presented secret is compared byte by byte without an early exit, so the response time does not reveal *where* a guess differs. The comparison is case sensitive; both sides are trimmed before it. | `safeSecretEqual` → `constantTimeEqual` (`src/lib/secrets.ts`) |
-| **Throttle first** | The rate limit runs **before** the comparison, so a wrong secret is answered `429` once the budget is spent — the guessing is bounded instead of unlimited. | `guardOpsSecret` |
+| **Throttle first** | The rate limit runs **before** the comparison, so a wrong secret is answered `429` once the budget is spent — the guessing is bounded instead of unlimited. The order holds on every ops surface: `/api/metrics` keeps it in its route body, and the server actions answer `{"error":"Rate limit exceeded."}` (an action result, not an HTTP status) once their budget is spent — see the exceptions below. | `guardOpsSecret` · `cronActionGate` |
 
 **Order of the answers** (this is the contract of the HTTP routes):
 
