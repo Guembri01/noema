@@ -4,6 +4,7 @@ import { getWorkspaceAccess } from "@/lib/permissions";
 import {
   getLabels,
   getTicketsPage,
+  getTicketListRow,
   getWorkspaceBySlug,
   getWorkspaceMembers,
   getProjects,
@@ -22,10 +23,10 @@ export default async function TicketsPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ project?: string }>;
+  searchParams: Promise<{ project?: string; ticket?: string }>;
 }) {
   const { slug } = await params;
-  const { project: projectParam } = await searchParams;
+  const { project: projectParam, ticket: ticketParam } = await searchParams;
   const user = await requireUser();
   const workspace = await getWorkspaceBySlug(slug);
   if (!workspace) notFound();
@@ -41,7 +42,20 @@ export default async function TicketsPage({
     getCycles(workspace.id),
   ]);
 
+  // `?ticket=` is how a notification opens the ticket it names. The tracker
+  // pages by board position, so a newly created ticket - the common case for an
+  // assignment notice - lives on the *last* page; fetch the named row when it is
+  // not in the first page and lead the list with it, so the drawer really opens.
+  // An unknown id, or one from another workspace, is ignored rather than trusted.
+  const requested = typeof ticketParam === "string" ? ticketParam : "";
   const rows: TicketRow[] = ticketPage.tickets.map(toTrackerTicket);
+  if (requested && !rows.some((row) => row.id === requested)) {
+    const named = await getTicketListRow(workspace.id, requested);
+    if (named) rows.unshift(toTrackerTicket(named));
+  }
+  const initialTicketId =
+    requested && rows.some((row) => row.id === requested) ? requested : undefined;
+
   const locale = user.locale ?? "en";
 
   return (
@@ -54,6 +68,7 @@ export default async function TicketsPage({
         workspaceId={workspace.id}
         slug={workspace.slug}
         locale={user.locale ?? "en"}
+        initialTicketId={initialTicketId}
         initialProjectFilter={projects.some((project) => project.id === projectParam) ? projectParam : ""}
         cycles={cycles.map((cycle) => ({ id: cycle.id, name: cycle.name }))}
         nextCursor={ticketPage.nextCursor}

@@ -39,6 +39,7 @@ export function TicketsWorkspace({
   members,
   projects,
   initialProjectFilter,
+  initialTicketId,
   views,
   locale,
   cycles,
@@ -51,6 +52,8 @@ export function TicketsWorkspace({
   members: { id: string; name: string }[];
   projects: { id: string; name: string; icon: string | null }[];
   initialProjectFilter?: string;
+  /** `?ticket=` - the ticket a notification named, opened as a drawer on load. */
+  initialTicketId?: string;
   views: { id: string; name: string; config: Record<string, unknown> }[];
   locale: string;
   /** Sprints the workspace has planned. */
@@ -68,7 +71,7 @@ export function TicketsWorkspace({
   const [assigneeFilter, setAssigneeFilter] = useState<string>("");
   const [projectFilter, setProjectFilter] = useState<string>(initialProjectFilter ?? "");
   const [hideDone, setHideDone] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialTicketId ?? null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [checked, setChecked] = useState<string[]>([]);
   const [viewDialog, setViewDialog] = useState(false);
@@ -85,7 +88,19 @@ export function TicketsWorkspace({
     Record<string, TicketActivityRow[]>
   >({});
 
-  const rows = useMemo(() => [...tickets, ...moreRows], [tickets, moreRows]);
+  // Keyset pages can echo a row the page already rendered (a `?ticket=` deep link
+  // leads the list with a row that a later "Load more" may also return), and two
+  // rows with one id would duplicate React keys, so merge by id, first wins.
+  const rows = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: TicketRow[] = [];
+    for (const ticket of [...tickets, ...moreRows]) {
+      if (seen.has(ticket.id)) continue;
+      seen.add(ticket.id);
+      merged.push(ticket);
+    }
+    return merged;
+  }, [tickets, moreRows]);
 
   const filtered = useMemo(
     () =>
@@ -108,7 +123,9 @@ export function TicketsWorkspace({
   const totals = sumEstimates(filtered);
   const remaining = sumEstimates(filtered.filter((ticket) => !isClosed(ticket.status)));
   const closed = filtered.filter((ticket) => isClosed(ticket.status)).length;
-  const active = tickets.find((ticket) => ticket.id === selected) ?? null;
+  // Read from the merged set, not the first page: a row from "Load more" - or the
+  // row a deep link led the list with - must open like any other.
+  const active = rows.find((ticket) => ticket.id === selected) ?? null;
 
   const run = (label: string | null, task: () => Promise<{ ok: boolean; message?: string }>) =>
     startTransition(async () => {

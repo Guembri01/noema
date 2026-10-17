@@ -1370,8 +1370,22 @@ export async function getTicketsCursorPage(
   });
 }
 
-/** Tickets belonging to one project (project page rollup + Gantt). */
-export async function getProjectTickets(workspaceId: string, projectId: string) {
+/**
+ * One ticket in the tracker's list shape, scoped to its workspace.
+ *
+ * The tracker pages by board position (`getTicketsPage`), so the *last* page
+ * holds the newest tickets - exactly the ones an assignment notice names. A deep
+ * link therefore cannot assume the row it points at is on the first page, and
+ * this is the single-row lookup that lets the drawer open anyway.
+ */
+export async function getTicketListRow(workspaceId: string, ticketId: string) {
+  return prisma.ticket.findFirst({
+    where: { id: ticketId, workspaceId, archived: false },
+    select: ticketListSelect,
+  });
+}
+
+/** Tickets belonging to one project (project page rollup + Gantt). */export async function getProjectTickets(workspaceId: string, projectId: string) {
   return prisma.ticket.findMany({
     where: { workspaceId, projectId, archived: false },
     orderBy: [{ position: "asc" }, { createdAt: "desc" }],

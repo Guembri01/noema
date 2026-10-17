@@ -43,6 +43,7 @@ export const EVENT_LABELS: Readonly<Record<NotificationEventType, string>> = {
   "page.mention": "Mentions",
   "comment.reply": "Replies to my comments",
   "page.shared": "Pages shared with me",
+  "ticket.assigned": "Ticket assignments",
   "page.updated": "Page edits",
   "member.invited": "Workspace invitations",
 };
@@ -52,6 +53,7 @@ export const EVENT_DESCRIPTIONS: Readonly<Record<NotificationEventType, string>>
   "page.mention": "When someone @mentions you in a comment or on a page.",
   "comment.reply": "When someone replies to a comment you wrote.",
   "page.shared": "When a page is shared with you.",
+  "ticket.assigned": "When someone makes you the assignee of a ticket or task.",
   "page.updated": "When a page you care about is edited.",
   "member.invited": "When you are invited to a workspace.",
 };

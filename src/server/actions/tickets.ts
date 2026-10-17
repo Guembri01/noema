@@ -8,6 +8,7 @@ import { canEditContent, canManageMembers, getWorkspaceAccess } from "@/lib/perm
 import { parsePageContent } from "@/lib/validation";
 import { DESCRIPTION_MAX, descriptionDoc, sanitizeDescription } from "@/lib/description";
 import { getTicketDetail, getTicketsPage } from "@/server/queries";
+import { notifyTicketAssigned } from "@/server/actions/notifications";
 import type { TicketActivityRow } from "@/components/tickets/ticket-drawer";
 import { addBusinessHours, type WorkingHours } from "@/lib/business-hours";
 import { computeSlaDue, type SlaKind, type SlaPolicy } from "@/lib/sla-timer";
@@ -43,6 +44,10 @@ async function authorizeTicket(ticketId: string) {
       key: true,
       archived: true,
       createdAt: true,
+      // Read so an assignment can tell a *change* of assignee from a re-save,
+      // and so the resulting notice can carry the ticket's project.
+      assigneeId: true,
+      projectId: true,
     },
   });
   if (!ticket) return { ok: false as const, error: "Ticket not found." };
@@ -276,6 +281,15 @@ export async function createTicketAction(input: {
 
   await logActivity(ticket.id, user.id, "created", { status, priority });
   revalidatePath("/w", "layout");
+  // A ticket created already assigned is still news to the assignee.
+  if (input.assigneeId) {
+    await notifyTicketAssigned({
+      workspaceId: input.workspaceId,
+      assigneeId: input.assigneeId,
+      ticketIds: [ticket.id],
+      projectId: input.projectId ?? null,
+    });
+  }
   return { ok: true, id: ticket.id, key: ticket.key };
 }
 
@@ -375,6 +389,20 @@ export async function updateTicketAction(input: {
   await prisma.ticket.update({ where: { id: input.ticketId }, data });
   await logActivity(input.ticketId, auth.user.id, "updated", changes);
   revalidatePath("/w", "layout");
+  // Only a real hand-over is news: re-saving the same assignee (or clearing it)
+  // must not re-notify. `notifyTicketAssigned` re-checks the database state too.
+  if (
+    input.assigneeId !== undefined &&
+    input.assigneeId !== null &&
+    input.assigneeId !== auth.ticket.assigneeId
+  ) {
+    await notifyTicketAssigned({
+      workspaceId: auth.ticket.workspaceId,
+      assigneeId: input.assigneeId,
+      ticketIds: [input.ticketId],
+      projectId: input.projectId !== undefined ? input.projectId : auth.ticket.projectId,
+    });
+  }
   return { ok: true };
 }
 
@@ -644,6 +672,22 @@ export async function bulkUpdateTicketsAction(input: {
   const hasLabels = addLabelIds.length > 0 || removeLabelIds.length > 0;
   if (!hasScalar && !hasLabels) return { ok: true, updated: 0 };
 
+  // Which of the selected tickets actually change hands? Read *before* the
+  // update so the assignee's notice counts what moved ("3 tickets"), not what was
+  // selected, and so re-assigning the same person says nothing at all.
+  let assignedTicketIds: string[] = [];
+  if (input.assigneeId !== undefined && input.assigneeId !== null) {
+    const changing = await prisma.ticket.findMany({
+      where: {
+        id: { in: input.ticketIds },
+        workspaceId: first.workspaceId,
+        OR: [{ assigneeId: null }, { assigneeId: { not: input.assigneeId } }],
+      },
+      select: { id: true },
+    });
+    assignedTicketIds = changing.map((row) => row.id);
+  }
+
   let updated = 0;
   if (hasScalar) {
     const result = await prisma.ticket.updateMany({
@@ -677,6 +721,15 @@ export async function bulkUpdateTicketsAction(input: {
     await logActivity(ticketId, user.id, "bulk_updated", detail);
   }
   revalidatePath("/w", "layout");
+  // One notice for the whole operation, not one per ticket.
+  if (assignedTicketIds.length > 0 && input.assigneeId) {
+    await notifyTicketAssigned({
+      workspaceId: first.workspaceId,
+      assigneeId: input.assigneeId,
+      ticketIds: assignedTicketIds,
+      projectId: input.projectId !== undefined ? input.projectId : null,
+    });
+  }
   return { ok: true, updated };
 }
 

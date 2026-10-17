@@ -81,8 +81,8 @@ export type NotificationPrefs = {
 /**
  * Defaults: the inbox is on, email/push are opt-in, the digest is off, and the
  * `page.updated` broadcast is off until the user follows a page. Directed events
- * (mention, reply, share, invite) are in-app on. Comment-reply following is on
- * by default; page following is not.
+ * (mention, reply, share, assignment, invite) are in-app on. Comment-reply
+ * following is on by default; page following is not.
  */
 export const DEFAULT_PREFS: NotificationPrefs = {
   userId: "",
@@ -92,6 +92,7 @@ export const DEFAULT_PREFS: NotificationPrefs = {
     "page.mention": { inApp: true, email: false },
     "comment.reply": { inApp: true, email: false },
     "page.shared": { inApp: true, email: false },
+    "ticket.assigned": { inApp: true, email: false },
     "page.updated": { inApp: true, email: false },
     "member.invited": { inApp: true, email: false },
   },

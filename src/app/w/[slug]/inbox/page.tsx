@@ -29,8 +29,37 @@ const LABELS: Record<string, string> = {
   "comment.reply": "Someone replied to your comment",
   "page.mention": "You were mentioned on a page",
   "page.shared": "A page was shared with you",
+  "ticket.assigned": "You were assigned a ticket",
   "page.updated": "A page you follow was updated",
 };
+
+/**
+ * One inbox row carries more than its type: an assignment knows *which* ticket.
+ * These are the extra payload fields this page reads, kept beside the pure
+ * `InboxNotification` so the row can be specific without the pure engine having
+ * to learn about tickets (`buildInbox` and friends are generic over this).
+ */
+type InboxItem = InboxNotification & {
+  readonly ticketId?: string;
+  readonly ticketTitle?: string;
+  readonly ticketCount?: number;
+};
+
+/**
+ * The sentence for one row. Assignment rows are the one type whose payload makes
+ * the row more useful than its category ("You were assigned a ticket" tells a
+ * person nothing they did not already assume from the unread dot), so they name
+ * the ticket - or count the batch - and fall back to the plain label.
+ */
+function labelFor(notification: InboxItem): string {
+  if (notification.type === "ticket.assigned") {
+    const count = notification.ticketCount ?? 1;
+    if (count > 1) return `You were assigned ${count} tickets`;
+    const title = notification.ticketTitle?.trim();
+    return title ? `You were assigned “${title}”` : LABELS["ticket.assigned"];
+  }
+  return LABELS[notification.type] ?? notification.type;
+}
 
 /**
  * Day-section headings. The i18n catalogue has no keys for these yet (only
@@ -50,7 +79,7 @@ type RawNotification = Awaited<ReturnType<typeof getNotifications>>[number];
  * shape. `payload` is untyped JSON, so it is read defensively here; the shared
  * server query is left untouched.
  */
-function toInboxNotification(row: RawNotification): InboxNotification {
+function toInboxNotification(row: RawNotification): InboxItem {
   const payload =
     typeof row.payload === "object" &&
     row.payload !== null &&
@@ -60,6 +89,14 @@ function toInboxNotification(row: RawNotification): InboxNotification {
   const pageId = typeof payload.pageId === "string" ? payload.pageId : undefined;
   const actorId =
     typeof payload.actorId === "string" ? payload.actorId : undefined;
+  const ticketId =
+    typeof payload.ticketId === "string" ? payload.ticketId : undefined;
+  const ticketTitle =
+    typeof payload.title === "string" ? payload.title : undefined;
+  const ticketCount =
+    typeof payload.count === "number" && Number.isFinite(payload.count)
+      ? payload.count
+      : undefined;
   return {
     id: row.id,
     type: row.type,
@@ -67,6 +104,9 @@ function toInboxNotification(row: RawNotification): InboxNotification {
     read: row.read,
     pageId,
     actorId,
+    ticketId,
+    ticketTitle,
+    ticketCount,
   };
 }
 
@@ -132,10 +172,15 @@ export default async function InboxPage({
   const isQuiet = quiet !== null && isWithinQuietHours(now, quiet);
   const resumeAt = isQuiet ? nextDeliveryTime(now, quiet) : null;
 
-  const renderNotification = (notification: InboxNotification) => {
+  const renderNotification = (notification: InboxItem) => {
+    // Pages link to the page; an assignment links to the ticket it names, which
+    // the tickets page opens as a drawer from `?ticket=` (there is no ticket
+    // route of its own - the tracker is one page with an open row).
     const href = notification.pageId
       ? `/w/${workspace.slug}/${notification.pageId}`
-      : null;
+      : notification.ticketId
+        ? `/w/${workspace.slug}/tickets?ticket=${notification.ticketId}`
+        : null;
     // Same contract as the bulk control: the engine decides what is markable.
     const markable =
       markRead([notification], [notification.id])[0] !== notification;
@@ -149,7 +194,7 @@ export default async function InboxPage({
           aria-hidden
         />
         <span className={cn("flex-1", notification.read && "text-muted")}>
-          {LABELS[notification.type] ?? notification.type}
+          {labelFor(notification)}
         </span>
         {isInDigest(notification, prefs) && (
           <span className="rounded bg-surface-2 px-1.5 py-0.5 text-3xs uppercase tracking-wide text-muted">

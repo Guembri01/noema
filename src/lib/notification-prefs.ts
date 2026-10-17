@@ -7,10 +7,11 @@
  * inbox route and a future digest scheduler all share the same decision
  * function. Event ids are the dotted `Notification.type` strings the app
  * already writes (`src/server/actions/comments.ts` -> `comment.reply`,
- * `page.mention`) and renders (`src/app/w/[slug]/inbox/page.tsx` ->
- * `page.shared`), extended with the dotted `page.updated` / `member.invited`
- * vocabulary of `src/lib/activity.ts` and `src/lib/webhook-events.ts` - no
- * second, conflicting enum.
+ * `page.mention`), renders (`src/app/w/[slug]/inbox/page.tsx` ->
+ * `page.shared`) and dispatches to an assignee (`src/server/actions/tickets.ts`
+ * -> `ticket.assigned`), extended with the dotted `page.updated` /
+ * `member.invited` vocabulary of `src/lib/activity.ts` and
+ * `src/lib/webhook-events.ts` - no second, conflicting enum.
  *
  * Everything fails closed, mirroring `src/lib/feed-guard.ts`: unknown or
  * corrupt preferences normalize to the defaults, unknown event types are
@@ -26,11 +27,12 @@
  * cannot drift apart.
  */
 export const NOTIFICATION_EVENT_TYPES = [
-  "page.mention", //   MENTION  - @you in a comment or on a page
-  "comment.reply", //  COMMENT  - someone replied to your comment
-  "page.shared", //    SHARE    - a page was shared with you
-  "page.updated", //   PAGE_EDIT - a page's content was edited
-  "member.invited", // INVITE   - you were invited to the workspace
+  "page.mention", //    MENTION  - @you in a comment or on a page
+  "comment.reply", //   COMMENT  - someone replied to your comment
+  "page.shared", //     SHARE    - a page was shared with you
+  "ticket.assigned", // ASSIGN   - you were made the assignee of a ticket
+  "page.updated", //    PAGE_EDIT - a page's content was edited
+  "member.invited", //  INVITE   - you were invited to the workspace
 ] as const;
 
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
@@ -52,15 +54,16 @@ export type NotificationPrefs = {
 
 /**
  * Sane defaults: types directed at one person (a mention, a reply, a share, an
- * invitation) alert on every event, while `page.updated` is a broadcast - any
- * edit by anyone - and only alerts when it mentions you, so a busy workspace
- * cannot flood a fresh install. `INSTANT` delivers as it happens.
+ * assignment, an invitation) alert on every event, while `page.updated` is a
+ * broadcast - any edit by anyone - and only alerts when it mentions you, so a
+ * busy workspace cannot flood a fresh install. `INSTANT` delivers as it happens.
  */
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   events: {
     "page.mention": "ALL",
     "comment.reply": "ALL",
     "page.shared": "ALL",
+    "ticket.assigned": "ALL",
     "page.updated": "MENTIONS",
     "member.invited": "ALL",
   },

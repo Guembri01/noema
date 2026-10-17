@@ -286,3 +286,98 @@ export async function notifyPageUpdated(pageId: string): Promise<void> {
     console.warn("notifyPageUpdated: dispatch failed", error);
   }
 }
+
+/** Upper bound on the tickets one assignment notice may describe (defence in depth). */
+const TICKET_ASSIGNED_MAX = 200;
+
+/**
+ * Tell someone they were handed a ticket.
+ *
+ * The assignment paths (`createTicketAction`, `updateTicketAction`,
+ * `bulkUpdateTicketsAction`) used to write `assigneeId` and the activity log and
+ * nothing else, so a person could be assigned a ticket and never hear about it -
+ * the inbox only ever had rows for mentions, replies, shares and page edits.
+ * This is the missing dispatch.
+ *
+ * It is deliberately **state-checked rather than argument-trusted**, because
+ * this file is a `"use server"` module and therefore a callable endpoint:
+ *
+ *  - the actor is re-derived from the session and must be able to edit content
+ *    in the workspace, so a forged call cannot notify anyone;
+ *  - the tickets are re-read from the database (scoped to the workspace) instead
+ *    of trusting titles passed by the caller;
+ *  - only tickets that are *currently* assigned to the target are described, so
+ *    a call can only ever tell someone about work they actually hold;
+ *  - the target's own preferences decide delivery through `resolveRecipients`
+ *    (`ticket.assigned` is a directed event: the assignee is the only watcher, the
+ *    actor is excluded, the per-type in-app toggle and quiet hours apply).
+ *
+ * Best-effort: a dispatch failure is logged and the assignment itself still
+ * succeeds (R82.8), exactly like `notifyPageUpdated`.
+ */
+export async function notifyTicketAssigned(input: {
+  workspaceId: string;
+  assigneeId: string;
+  /** The tickets that changed hands; already-assigned ones are filtered out here. */
+  ticketIds: readonly string[];
+  projectId?: string | null;
+}): Promise<void> {
+  try {
+    if (input.ticketIds.length === 0) return;
+
+    const actor = await requireUser();
+    if (input.assigneeId === actor.id) return; // assigning yourself is not news
+
+    const actorAccess = await getWorkspaceAccess(actor.id, input.workspaceId);
+    if (!actorAccess || !canEditContent(actorAccess.role)) return;
+    const assigneeAccess = await getWorkspaceAccess(input.assigneeId, input.workspaceId);
+    if (!assigneeAccess) return; // an inbox is a delivery channel: members only
+
+    const ids = [...new Set(input.ticketIds)].slice(0, TICKET_ASSIGNED_MAX);
+    const tickets = await prisma.ticket.findMany({
+      where: {
+        id: { in: ids },
+        workspaceId: input.workspaceId,
+        assigneeId: input.assigneeId,
+      },
+      select: { id: true, title: true },
+      orderBy: { id: "asc" },
+    });
+    if (tickets.length === 0) return;
+
+    const assignee = await prisma.user.findUnique({
+      where: { id: input.assigneeId },
+      select: { notificationPrefs: true },
+    });
+    if (!assignee) return;
+
+    const recipients = resolveRecipients(
+      { type: "ticket.assigned", actorId: actor.id, at: new Date() },
+      {
+        watchers: [input.assigneeId],
+        prefs: { [input.assigneeId]: parseEnginePrefs(assignee.notificationPrefs) },
+      },
+    );
+    if (recipients.length === 0) return;
+
+    const [first] = tickets;
+    await prisma.notification.createMany({
+      data: recipients.map((userId) => ({
+        userId,
+        type: "ticket.assigned",
+        payload: {
+          workspaceId: input.workspaceId,
+          ticketId: first.id,
+          title: first.title,
+          count: tickets.length,
+          projectId: input.projectId ?? null,
+          actorId: actor.id,
+        },
+      })),
+    });
+    revalidatePath("/w", "layout");
+  } catch (error) {
+    // R82.8 — never fail the edit that triggered the dispatch.
+    console.warn("notifyTicketAssigned: dispatch failed", error);
+  }
+}
