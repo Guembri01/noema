@@ -332,6 +332,19 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   rewrite, never instructions. The framing happens after the token budget is
   applied, so the budget can never cut the closing tag off, and the text
   inside the frame is the same text the budget left.
+- The notification rows of a removed member no longer outlive the membership.
+  The `notification` rows were never deleted anywhere in the tree, and
+  `getNotifications(userId)` filters by `userId` alone while the inbox loads
+  every workspace — so a person who was removed from a workspace (or who left
+  it) kept their notification rows, and the inbox of the workspaces they stayed
+  in went on naming the pages and tickets of the workspace they were removed
+  from: the payload carries the workspace id and, for a ticket assignment, the
+  **title** (`You were assigned “Payroll restructure”`). The unread badge
+  counted the same rows and the digest mail read them without a workspace
+  filter. Removing a member, leaving a workspace and deleting a workspace now
+  delete the notification rows of that workspace with them, so the inbox, the
+  badge and the digest can no longer name a workspace the person has no access
+  to any more.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
