@@ -25,6 +25,8 @@
  * from the subtree root (an orphan or a detached cycle).
  */
 
+import { randomBase36 } from "@/lib/random";
+
 /** A block (or nested block) carrying a stable id; extra fields are kept. */
 export type PageBlock = {
   id: string;
@@ -65,13 +67,15 @@ export type PageDuplicateValidation = { ok: boolean; errors: string[] };
 let defaultCounter = 0;
 
 /**
- * Default id factory: fresh, collision-resistant ids. Randomised so two copies
- * in the same process never share an id, and prefixed so generated output is
- * recognisable. Callers that need determinism pass their own `IdFactory`.
+ * Default id factory: fresh, collision-resistant ids. The random part comes
+ * from the CSPRNG (`@/lib/random`), so the page ids that end up in a URL
+ * cannot be guessed from a weak PRNG; the counter keeps them unique inside the
+ * process and the prefix keeps generated output recognisable. Callers that
+ * need determinism pass their own `IdFactory`.
  */
 export function defaultIdFactory(): string {
   defaultCounter += 1;
-  const random = Math.random().toString(36).slice(2, 10);
+  const random = randomBase36(8);
   return `page_${defaultCounter.toString(36)}_${random}`;
 }
 

@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { randomBytes, randomInt, randomToken, toBase64Url, toHex } from "@/lib/random";
+import { describe, expect, it, vi } from "vitest";
+import {
+  randomBase36,
+  randomBytes,
+  randomInt,
+  randomToken,
+  toBase64Url,
+  toHex,
+} from "@/lib/random";
 
 /**
  * Isomorphic randomness.
@@ -184,5 +191,43 @@ describe("random", () => {
 
   it("toHex pads every byte to two characters", () => {
     expect(toHex(new Uint8Array([0, 1, 15, 16, 255]))).toBe("00010f10ff");
+  });
+
+  it("randomBase36 returns exactly the requested number of characters", () => {
+    expect(randomBase36(0)).toBe("");
+    expect(randomBase36(1)).toHaveLength(1);
+    expect(randomBase36(8)).toHaveLength(8);
+    expect(randomBase36(32)).toHaveLength(32);
+  });
+
+  it("randomBase36 stays inside the base36 alphabet", () => {
+    expect(randomBase36(64)).toMatch(/^[0-9a-z]{64}$/);
+  });
+
+  it("randomBase36 covers the whole alphabet and never repeats itself", () => {
+    const seen = new Set<string>();
+    const alphabet = new Set<string>();
+    for (let i = 0; i < 500; i += 1) {
+      const value = randomBase36(8);
+      seen.add(value);
+      for (const character of value) alphabet.add(character);
+    }
+    expect(seen.size).toBe(500);
+    expect(alphabet.size).toBe(36);
+  });
+
+  it("randomBase36 rejects nonsense lengths instead of quietly returning something", () => {
+    expect(() => randomBase36(-1)).toThrow(RangeError);
+    expect(() => randomBase36(2.5)).toThrow(RangeError);
+  });
+
+  it("randomBase36 does not touch Math.random", () => {
+    const spy = vi.spyOn(Math, "random");
+    try {
+      randomBase36(8);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
