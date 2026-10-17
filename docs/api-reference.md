@@ -516,7 +516,8 @@ Source: [`src/app/oauth/token/route.ts`](../src/app/oauth/token/route.ts) ·
 rate scope `oauth-token` (30/min)
 
 Form body: `grant_type=authorization_code`, `code`, `client_id`,
-`client_secret`, `redirect_uri`.
+`client_secret`, `redirect_uri`, `code_verifier` (only when the app sent a
+`code_challenge`).
 
 **200**
 ```json
@@ -528,6 +529,13 @@ Form body: `grant_type=authorization_code`, `code`, `client_id`,
 | 401 | `{"error":"invalid_client"}` — unknown client or wrong secret |
 | 400 | `{"error":"invalid_grant"}` — code unknown / already used / wrong client / wrong redirect URI / expired |
 | 429 | rate limited |
+
+The code is single-use. It is consumed with a conditional update
+(`UPDATE … WHERE used = false`) and the token is minted only when that update
+matched exactly one row, so two exchanges of the same code cannot both
+succeed: the loser is refused with `invalid_grant`. A refused exchange — a
+wrong client, a wrong redirect URI, a wrong PKCE verifier — never consumes
+the code, so it stays usable.
 
 The minted token is a regular API token named `OAuth: <app name>` and works on
 `/api/v1/*` (§6).
