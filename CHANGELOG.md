@@ -39,6 +39,10 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- The "Ask AI" grounding search honours the guest page scope. A guest's prompt
+  is now answered only from the pages that were shared with them — page titles
+  and text no longer leak from the rest of the workspace through the model
+  context — while a member still grounds in the whole workspace.
 
 ## [1.4.1] — 2026-10-17
 
