@@ -84,7 +84,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # The version lives in one place: the `.nvmrc` of the
+          # repository (`engines.node` asks for the same major).
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: package-lock.json
 
@@ -215,7 +217,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # The version lives in one place: the `.nvmrc` of the repository
+          # (`engines.node` asks for the same major).
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: package-lock.json
 
@@ -336,7 +340,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with: { node-version-file: ".nvmrc", cache: npm }
       - run: npm ci
       - name: Build the payload (standalone server + static + Prisma CLI + runtime)
         run: npm run desktop:prepare
