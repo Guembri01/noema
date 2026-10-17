@@ -65,6 +65,7 @@ import { POST as aiPost } from "./ai/route";
 import { POST as skillsPost } from "./ai/skills/route";
 import { POST as streamPost } from "./chat/stream/route";
 import { listAiModelsAction } from "@/server/actions/ai-settings";
+import { encryptSecret } from "@/lib/secrets";
 
 /** The key the workspace sent to the provider — the thing that must not leak. */
 const API_KEY = "sk-live-abcdef1234567890";
@@ -261,5 +262,73 @@ describe("the workspace key never reaches a client", () => {
     const logged = errorSpy.mock.calls.map((call) => JSON.stringify(call)).join("\n");
     expect(logged).not.toContain(API_KEY);
     expect(logged).not.toContain("Incorrect API key provided");
+  });
+});
+
+/**
+ * The log carries the attribution of a failure — and on two of the AI routes
+ * the workspace id comes from the request body, which is not validated.
+ */
+describe("the log carries no client-chosen value", () => {
+  /** A provider config stored for a workspace, with an encrypted key. */
+  function storedConfig() {
+    return {
+      provider: "openai",
+      baseUrl: "http://localhost:1/v1",
+      model: "gpt-4o-mini",
+      apiKeyEncrypted: encryptSecret(API_KEY),
+      enabled: true,
+    };
+  }
+
+  beforeEach(() => {
+    // The stored key is sealed with AUTH_SECRET — the same secret the route
+    // opens it with.
+    vi.stubEnv("AUTH_SECRET", "b19-workspace-id-test-secret-0123456789");
+  });
+
+  it("leaves a workspace id the client made up out of the log", async () => {
+    // `/api/ai` and `/api/ai/skills` take the workspace id from the request
+    // body. The id in the log must therefore be one the app could have handed
+    // out: a client cannot write an arbitrary string into the operator's log.
+    db.prisma.aiProviderConfig.findUnique.mockResolvedValue(storedConfig());
+
+    const ai = await aiPost(
+      jsonRequest("/api/ai", { prompt: "hello", workspaceId: "spoofed-workspace" }),
+    );
+    const skills = await skillsPost(
+      jsonRequest("/api/ai/skills", {
+        skillId: "proofread",
+        text: "teh fox",
+        workspaceId: "spoofed-workspace",
+      }),
+    );
+    expect(ai.status).toBe(502);
+    expect(skills.status).toBe(502);
+
+    const logged = errorSpy.mock.calls.map((call) => JSON.stringify(call)).join("\n");
+    expect(logged).not.toContain("spoofed-workspace");
+    expect(logged).not.toContain("workspaceId");
+    // The rest of the attribution is still there — the line stays useful.
+    expect(logged).toContain("openai");
+    expect(logged).toContain("gpt-4o-mini");
+  });
+
+  it("carries the workspace id the app handed out", async () => {
+    // The attribution is the point of the line: a workspace id of the app's
+    // own shape is written, so a failure is attributable in an installation
+    // with several workspaces.
+    db.prisma.aiProviderConfig.findUnique.mockResolvedValue(storedConfig());
+
+    const response = await aiPost(
+      jsonRequest("/api/ai", {
+        prompt: "hello",
+        workspaceId: "cm5wq2k3l4k5b6c7d8e9f0g1h",
+      }),
+    );
+    expect(response.status).toBe(502);
+
+    const logged = errorSpy.mock.calls.map((call) => JSON.stringify(call)).join("\n");
+    expect(logged).toContain("cm5wq2k3l4k5b6c7d8e9f0g1h");
   });
 });

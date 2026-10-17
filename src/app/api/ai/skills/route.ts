@@ -249,7 +249,7 @@ export async function POST(request: Request) {
 
   let raw: unknown;
   try {
-    raw = await readJsonBody(request, MAX_JSON_BODY_BYTES);
+    raw = await readJsonBody<unknown>(request, MAX_JSON_BODY_BYTES);
   } catch (error) {
     return bodyReadError(error, "Invalid JSON body.");
   }
