@@ -28,6 +28,7 @@ const WORKSPACE_A = "ws-a";
 const WORKSPACE_B = "ws-b";
 const DATABASE_A = "db-a";
 const DATABASE_B = "db-b";
+const DATABASE_C = "db-c";
 
 type FakePage = {
   id: string;
@@ -51,7 +52,9 @@ type FakeProperty = {
  *   - `db-a` — the database of workspace A, the caller's database,
  *   - `row-a` — a normal row of `db-a`,
  *   - `db-b` — the database of workspace B (the foreign one),
- *   - `row-b` — a row of `db-b`.
+ *   - `row-b` — a row of `db-b`,
+ *   - `db-c` — a second database **of workspace A** (the row's database is
+ *     `db-a`, so a column of `db-c` is foreign here as well).
  *
  * `row-missing` does not exist — it is the reference for "Row not found.".
  */
@@ -88,6 +91,14 @@ const PAGES: FakePage[] = [
     schemaLocked: false,
     propertyValues: [],
   },
+  {
+    id: DATABASE_C,
+    workspaceId: WORKSPACE_A,
+    parentId: null,
+    type: "DATABASE",
+    schemaLocked: false,
+    propertyValues: [],
+  },
 ];
 
 /**
@@ -100,7 +111,13 @@ const PAGES: FakePage[] = [
  *   - `prop-ai-own` — an AI-autofill column of `db-a` without a target, so
  *     the run writes into the column itself,
  *   - `prop-ai-unknown` — an AI-autofill column of `db-a` whose config names
- *     a target that does not exist.
+ *     a target that does not exist,
+ *   - `prop-c` — a column of `db-c` (another database of the same workspace),
+ *   - `prop-ai-c` — an AI-autofill column of `db-c` whose config names
+ *     `prop-c` as its target: the column and its target live in `db-c`, the
+ *     row in `db-a`. A target that is bound to the **column's** database
+ *     would be accepted here — only the binding to the **row's** database
+ *     refuses it.
  */
 const PROPERTIES: FakeProperty[] = [
   { id: "prop-a", databasePageId: DATABASE_A, type: "TEXT", config: {} },
@@ -122,6 +139,13 @@ const PROPERTIES: FakeProperty[] = [
     databasePageId: DATABASE_A,
     type: "AI_AUTOFILL",
     config: { prompt: "Summarize the row.", targetPropertyId: "prop-unknown" },
+  },
+  { id: "prop-c", databasePageId: DATABASE_C, type: "TEXT", config: {} },
+  {
+    id: "prop-ai-c",
+    databasePageId: DATABASE_C,
+    type: "AI_AUTOFILL",
+    config: { prompt: "Summarize the row.", targetPropertyId: "prop-c" },
   },
 ];
 
@@ -188,6 +212,15 @@ function activityWorkspaces(): string[] {
   return h.activityCreate.mock.calls.map(
     (call) => (call[0] as { data: { workspaceId: string } }).data.workspaceId,
   );
+}
+
+/**
+ * The order of the **last** call of a mock — the global invocation order, so
+ * the order of two different mocks can be compared with each other.
+ */
+function lastCallOrder(mock: { mock: { invocationCallOrder: number[] } }): number {
+  const order = mock.mock.invocationCallOrder;
+  return order[order.length - 1];
 }
 
 beforeEach(() => {
@@ -260,20 +293,36 @@ beforeEach(() => {
     },
   );
 
+  // The AI column is read with a `select` — the fake database returns
+  // **only the selected fields**, every other field is `undefined`, exactly
+  // as in the real database. A binding that reads an unselected field (for
+  // example `databasePageId`) therefore finds `undefined` here and cannot
+  // pass silently.
   h.propertyFindUnique.mockImplementation(
-    async (args: { where: { id?: string } }) => {
+    async (args: {
+      where: { id?: string };
+      select?: Record<string, boolean>;
+    }) => {
       const property = PROPERTIES.find(
         (candidate) => candidate.id === args.where?.id,
       );
       if (!property) return null;
-      return {
-        ...property,
+      const row = {
+        id: property.id,
+        type: property.type,
+        config: property.config,
         databasePage: {
           workspaceId:
             PAGES.find((page) => page.id === property.databasePageId)
               ?.workspaceId ?? "",
         },
       };
+      if (!args.select) return { ...row };
+      const selected: Record<string, unknown> = {};
+      for (const [field, wanted] of Object.entries(args.select)) {
+        if (wanted) selected[field] = row[field as keyof typeof row];
+      }
+      return selected;
     },
   );
 
@@ -340,8 +389,47 @@ describe("runAiAutofillAction — target property scope (B99)", () => {
       ok: false,
       error: "That target property does not belong to this database.",
     });
+    // The target check runs **before** the provider: a run that cannot write
+    // is not worth a model call.
+    expect(h.resolveAiConfig).not.toHaveBeenCalled();
+    expect(h.chatComplete).not.toHaveBeenCalled();
     expect(h.propertyValueUpsert).not.toHaveBeenCalled();
     expect(writtenPropertyIds()).not.toContain("prop-b");
+  });
+
+  it("does not write the generated value under a column of another database of the same workspace", async () => {
+    // The AI column `prop-ai-c` and its target `prop-c` both live in `db-c`,
+    // the row in `db-a`: the target has to be bound to the **row's**
+    // database, not to the database of the column that names it.
+    const result = await runAiAutofillAction({
+      workspaceId: WORKSPACE_A,
+      rowId: "row-a",
+      propertyId: "prop-ai-c",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: "That target property does not belong to this database.",
+    });
+    expect(h.resolveAiConfig).not.toHaveBeenCalled();
+    expect(h.chatComplete).not.toHaveBeenCalled();
+    expect(h.propertyValueUpsert).not.toHaveBeenCalled();
+    expect(writtenPropertyIds()).not.toContain("prop-c");
+  });
+
+  it("checks the target before the provider is called", async () => {
+    const result = await runAiAutofillAction({
+      workspaceId: WORKSPACE_A,
+      rowId: "row-a",
+      propertyId: "prop-ai-own",
+    });
+
+    expect(result.ok).toBe(true);
+    // The target check (`property.findFirst`) has to run before the provider
+    // (`chatComplete`) — the order is part of the rule, not an accident.
+    expect(lastCallOrder(h.propertyFindFirst)).toBeLessThan(
+      lastCallOrder(h.chatComplete),
+    );
   });
 
   it("answers a foreign target exactly like a target that does not exist", async () => {
