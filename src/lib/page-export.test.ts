@@ -147,6 +147,24 @@ describe("buildMarkdownExport", () => {
     const result = buildMarkdownExport("Plain", doc(para("hello")));
     expect(result.fidelity).toEqual({ lost: [], approximated: [] });
   });
+
+  /**
+   * B109 — the export writes a stored link target only when the allowlist
+   * (`markdown.ts#safeHref`) accepts it; a refused target becomes plain text
+   * and shows up in the fidelity report as a loss.
+   */
+  it("writes a refused link target as plain text and reports the loss", () => {
+    const hostile = doc({
+      type: "paragraph",
+      content: [
+        { type: "text", text: "click", marks: [{ type: "link", attrs: { href: "javascript:alert(1)" } }] },
+      ],
+    });
+    const result = buildMarkdownExport("Hostile", hostile, { frontMatter: {} });
+    expect(result.body).toBe("click");
+    expect(result.body).not.toContain("javascript:");
+    expect(result.fidelity.lost.map((loss) => loss.kind)).toContain("link");
+  });
 });
 
 // ---------------------------------------------------------------------------

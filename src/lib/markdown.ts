@@ -971,8 +971,12 @@ function applyBlockMarks(value: string, marks: readonly BlockMark[] | undefined)
   if (has("italic") || has("em")) out = `*${out}*`;
   if (has("strike") || has("del")) out = `~~${out}~~`;
   if (has("highlight") || has("mark")) out = `==${out}==`;
+  // B109: the output side applies the same allowlist the input side applies
+  // (`safeHref`) — a target the allowlist refuses is written as plain text,
+  // never as a link.
   const link = marks.find((mark) => mark.type === "link");
-  if (typeof link?.attrs?.href === "string") out = `[${out}](${link.attrs.href})`;
+  const href = typeof link?.attrs?.href === "string" ? safeHref(link.attrs.href) : null;
+  if (href) out = `[${out}](${href})`;
   return out;
 }
 
