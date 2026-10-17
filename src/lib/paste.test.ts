@@ -608,6 +608,54 @@ describe("sanitizePastedHtml", () => {
   });
 });
 
+/**
+ * The url gates of the paste module (B111): a link target goes through the
+ * shared `safeHref`, a resource url through the shared `safeUrl` — the same
+ * allowlists the rest of the repository uses. A protocol-relative target
+ * inherits the scheme of the application, so it never survives.
+ */
+describe("paste url targets (B111)", () => {
+  /** The href the normaliser keeps for `<a href>`, or `null` when it drops it. */
+  const hrefOf = (href: string): string | null => {
+    const [para] = parse(`<p><a href="${href}">x</a></p>`).blocks;
+    const mark = para?.content?.[0]?.marks?.find((m) => m.type === "link");
+    const value = mark?.attrs?.href;
+    return typeof value === "string" ? value : null;
+  };
+
+  it("drops a protocol-relative target and its backslash twin", () => {
+    expect(hrefOf("//evil.example/x")).toBeNull();
+    expect(hrefOf("\\\\evil.example/x")).toBeNull();
+    expect(sanitizePastedHtml('<a href="//evil.example/x">x</a>')).toBe("<a>x</a>");
+    expect(sanitizePastedHtml('<a href="\\\\evil.example/x">x</a>')).toBe("<a>x</a>");
+    expect(sanitizePastedHtml('<img src="//evil.example/x" alt="a">')).toBe('<img alt="a">');
+    expect(parse('<img src="//evil.example/x" alt="a">').blocks).toEqual([
+      { type: "image", attrs: { src: "", alt: "a" } },
+    ]);
+  });
+
+  it("keeps the ordinary link targets", () => {
+    expect(hrefOf("https://example.test/a")).toBe("https://example.test/a");
+    expect(hrefOf("http://example.test/a")).toBe("http://example.test/a");
+    expect(hrefOf("mailto:a@b.test")).toBe("mailto:a@b.test");
+    expect(hrefOf("tel:+1234")).toBe("tel:+1234");
+    expect(hrefOf("/w/demo/page")).toBe("/w/demo/page");
+    expect(hrefOf("#section")).toBe("#section");
+    expect(sanitizePastedHtml('<a href="/w/demo/page">x</a>')).toBe(
+      '<a href="/w/demo/page">x</a>',
+    );
+  });
+
+  it("leaves a pasted image alive — a src is not a link target", () => {
+    expect(parse('<img src="data:image/png;base64,QUJD" alt="a">').blocks).toEqual([
+      { type: "image", attrs: { src: "data:image/png;base64,QUJD", alt: "a" } },
+    ]);
+    expect(sanitizePastedHtml('<img src="data:image/png;base64,QUJD">')).toBe(
+      '<img src="data:image/png;base64,QUJD">',
+    );
+  });
+});
+
 describe("stripToPlainText", () => {
   it("decodes entities", () => {
     expect(stripToPlainText("<p>A &amp; B &lt;C&gt; &copy;&nbsp;D</p>")).toBe(
