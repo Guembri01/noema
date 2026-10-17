@@ -188,7 +188,7 @@
     "@eslint/eslintrc": "^3",
     "@playwright/test": "^1.64.0",
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^24.19.2",
+    "@types/node": "^26.6.5",
     "@types/nodemailer": "^8.0.2",
     "@types/pdfkit": "^0.17.6",
     "@types/react": "^19",
