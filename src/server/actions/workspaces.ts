@@ -260,6 +260,11 @@ export async function removeMemberAction(
   await prisma.workspaceMember.delete({ where: { id: target.id } });
   await logActivity({ workspaceId, actorId: user.id, action: "member.removed", targetType: "member", targetId: userId });
   await prisma.pagePermission.deleteMany({ where: { userId, page: { workspaceId } } });
+  // A removed member keeps nothing: the follow/favorite rows go with the
+  // permission rows, so the bell cannot go on reporting the pages of a
+  // workspace the person no longer belongs to (the notice carries the title).
+  await prisma.pageFollow.deleteMany({ where: { userId, page: { workspaceId } } });
+  await prisma.favorite.deleteMany({ where: { userId, page: { workspaceId } } });
   revalidatePath("/w", "layout");
   return { ok: true };
 }
@@ -286,6 +291,11 @@ export async function leaveWorkspaceAction(workspaceId: string): Promise<Workspa
   await prisma.workspaceMember.delete({ where: { id: membership.id } });
   await logActivity({ workspaceId, actorId: user.id, action: "member.left", targetType: "member", targetId: user.id });
   await prisma.pagePermission.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
+  // Leaving takes the subscriptions with it: a follow row that outlived the
+  // membership would keep reporting the pages of a workspace the person has
+  // left (the notice carries the title).
+  await prisma.pageFollow.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
+  await prisma.favorite.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
   revalidatePath("/", "layout");
   return { ok: true };
 }

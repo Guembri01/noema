@@ -576,6 +576,41 @@ export async function getPageContentAction(
   return { id: page.id, title: page.title, icon: page.icon, content: page.content };
 }
 
+/**
+ * The page a follow or a favorite may point at.
+ *
+ * `PageFollow.pageId` and `Favorite.pageId` are plain foreign keys, so nothing
+ * but this check keeps the subscription inside its tenant: a member of
+ * workspace A could otherwise follow a page of workspace B and be told about
+ * every edit of it — the notice carries the page's title. The page must live
+ * in the caller's own workspace, and a guest is held to the pages they may
+ * open (the scope the page route applies).
+ *
+ * The query is tenant-scoped, so a foreign page is never even read and the
+ * message never names it.
+ */
+async function assertSubscribablePage(input: {
+  userId: string;
+  workspaceId: string;
+  role: NonNullable<WorkspaceAccess>["role"];
+  pageId: string;
+}): Promise<{ error: string } | { ok: true }> {
+  const page = await prisma.page.findFirst({
+    where: { id: input.pageId, workspaceId: input.workspaceId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!page) return { error: "Page not found." };
+  const visiblePageIds = await pageScopeFor(
+    input.userId,
+    input.workspaceId,
+    input.role,
+  );
+  if (visiblePageIds && !visiblePageIds.has(page.id)) {
+    return { error: "Page not found." };
+  }
+  return { ok: true };
+}
+
 export async function toggleFavoriteAction(
   workspaceId: string,
   pageId: string,
@@ -583,6 +618,13 @@ export async function toggleFavoriteAction(
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) return { error: "No access." };
+  const target = await assertSubscribablePage({
+    userId: user.id,
+    workspaceId,
+    role: access.role,
+    pageId,
+  });
+  if ("error" in target) return target;
   const existing = await prisma.favorite.findUnique({
     where: { userId_pageId: { userId: user.id, pageId } },
   });
@@ -603,6 +645,13 @@ export async function toggleFollowAction(
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) return { error: "No access." };
+  const target = await assertSubscribablePage({
+    userId: user.id,
+    workspaceId,
+    role: access.role,
+    pageId,
+  });
+  if ("error" in target) return target;
   const existing = await prisma.pageFollow.findUnique({
     where: { userId_pageId: { userId: user.id, pageId } },
   });
