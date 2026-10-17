@@ -58,8 +58,17 @@ export type SessionRecord = {
 
 /** Mirrors SESSION_DAYS in src/lib/auth.ts — expired records are pruned. */
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-/** Revoked rows linger a week so "recently revoked" stays observable in logs. */
-const REVOKED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * A revoked row lives as long as its token can be replayed.
+ *
+ * B129: the row used to be dropped a week after the revocation. The token of
+ * the session lives 30 days, and the request path treats an **unknown** sid
+ * as a legacy session (fail-open) — so a revoked session that was forgotten
+ * by the registry was accepted again, for the rest of the token's life. The
+ * retention is therefore the absolute lifetime of a session: the row outlives
+ * the token, so "revoked" stays "revoked" as long as the token can be used.
+ */
+const REVOKED_RETENTION_MS = SESSION_TTL_MS;
 /** lastActiveAt rewrites are throttled to one per minute per session. */
 const TOUCH_INTERVAL_MS = 60_000;
 
@@ -179,7 +188,13 @@ function deadlineMs(record: SessionRecord, options: TouchOptions): number {
 /** Drop records that outlived their session deadline (or revocation retention). */
 function prune(records: SessionRecord[], nowMs: number): SessionRecord[] {
   return records.filter((record) => {
-    if (effectiveExpiryMs(record) <= nowMs) return false;
+    // Keep an idle-expired record until its absolute lifetime is over. Dropping
+    // it at the idle deadline would make `findSession` return null, and the
+    // request path treats an unknown sid as a legacy (fail-open) session - so
+    // the next write would resurrect an idle-expired JWT.
+    const created = Date.parse(record.createdAt);
+    const absolute = Number.isFinite(created) ? created + SESSION_TTL_MS : Number.NEGATIVE_INFINITY;
+    if (absolute <= nowMs) return false;
     if (record.revokedAt && nowMs - Date.parse(record.revokedAt) > REVOKED_RETENTION_MS) {
       return false;
     }
