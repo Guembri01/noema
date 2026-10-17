@@ -219,6 +219,17 @@ cookie session · rate scope `preview` (60/min)
 but `url`/`host` null). **400** `{"error":"Invalid url"}` or
 `{"error":"Blocked host"}`.
 
+A page document stores a bookmark block as
+`{ "type": "bookmark", "attrs": { "url": "…", … } }`, and `url` is rendered as
+an anchor. The app's own write path (`updatePageAction`) drops a URL that is
+not on the shared `http|https|mailto|tel` href allowlist; a client that writes
+the document itself (the MCP `append_blocks` tool, which does not run the
+document sanitiser) may store any value, and the editor and the read-only
+renderer both check the stored URL against the same allowlist before it becomes
+a link. A stored `javascript:`, `data:` or protocol-relative URL therefore
+never becomes a live link, whichever client wrote it — it is rendered as a card
+without a target.
+
 ### `POST /api/upload` — file upload (multipart)
 
 Source: [`src/app/api/upload/route.ts`](../src/app/api/upload/route.ts) ·
