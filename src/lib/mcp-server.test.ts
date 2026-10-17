@@ -4,9 +4,11 @@ import {
   RESOURCE_CATALOG,
   TOOL_CATALOG,
   authCheck,
+  authCheckResource,
   describeTool,
   getTool,
   listTools,
+  resourceScopes,
   toJsonSchema,
   validateToolCall,
   validateUri,
@@ -421,6 +423,78 @@ describe("authCheck (§13)", () => {
     expect(authCheck(tool("query_database_rows"), { scopes: ["read:databases"] }).allowed).toBe(
       true,
     );
+  });
+});
+
+/**
+ * B89 — a resource is a read path like a tool, so it needs a scope too.
+ *
+ * The `notion://` templates read exactly what the read tools read; they used
+ * to read it without asking the token. Each template therefore carries the
+ * scope of the read tool it mirrors, and the check fails closed.
+ */
+describe("authCheckResource — the resource path asks the token (B89)", () => {
+  const PAGE = "notion://pages/{pageId}";
+  const COMMENTS = "notion://pages/{pageId}/comments";
+  const DATABASE = "notion://databases/{databaseId}";
+  const ROWS = "notion://databases/{databaseId}/rows";
+
+  it("gives every catalog template the scope of the read tool it mirrors", () => {
+    expect(resourceScopes(PAGE)).toEqual(["read:pages"]);
+    expect(resourceScopes(COMMENTS)).toEqual(["read:comments"]);
+    expect(resourceScopes(DATABASE)).toEqual(["read:databases"]);
+    expect(resourceScopes(ROWS)).toEqual(["read:databases"]);
+  });
+
+  it("gives every template of the catalogue a scope", () => {
+    for (const resource of RESOURCE_CATALOG) {
+      const required = resourceScopes(resource.uriTemplate);
+      expect(required, resource.uriTemplate).toBeDefined();
+      expect(required?.length, resource.uriTemplate).toBeGreaterThan(0);
+    }
+  });
+
+  it("allows a read when the caller holds the required scope", () => {
+    expect(authCheckResource(PAGE, { scopes: ["read:pages"] }).allowed).toBe(true);
+    expect(authCheckResource(COMMENTS, { scopes: ["read:comments"] }).allowed).toBe(true);
+    expect(authCheckResource(DATABASE, { scopes: ["read:databases"] }).allowed).toBe(true);
+    expect(authCheckResource(ROWS, { scopes: ["read:databases"] }).allowed).toBe(true);
+  });
+
+  it("refuses a read and names the missing scope", () => {
+    const result = authCheckResource(ROWS, { scopes: ["read:pages"] });
+    expect(result.allowed).toBe(false);
+    expect(result.missing).toEqual(["read:databases"]);
+    expect(result.reason).toBe("missing_scope");
+  });
+
+  it("refuses every template for a caller without scopes", () => {
+    for (const template of [PAGE, COMMENTS, DATABASE, ROWS]) {
+      const result = authCheckResource(template, { scopes: [] });
+      expect(result.allowed, template).toBe(false);
+      expect(result.missing.length, template).toBeGreaterThan(0);
+    }
+  });
+
+  it("treats a write scope as implying the matching read scope", () => {
+    expect(authCheckResource(PAGE, { scopes: ["write:pages"] }).allowed).toBe(true);
+    expect(authCheckResource(ROWS, { scopes: ["write:databases"] }).allowed).toBe(true);
+  });
+
+  it("lets admin:workspace satisfy every template", () => {
+    for (const resource of RESOURCE_CATALOG) {
+      expect(
+        authCheckResource(resource.uriTemplate, { scopes: ["admin:workspace"] }).allowed,
+        resource.uriTemplate,
+      ).toBe(true);
+    }
+  });
+
+  it("fails an unknown template closed", () => {
+    const result = authCheckResource("notion://secrets/{id}", { scopes: ["admin:workspace"] });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe("unknown_resource");
+    expect(resourceScopes("notion://secrets/{id}")).toBeUndefined();
   });
 });
 

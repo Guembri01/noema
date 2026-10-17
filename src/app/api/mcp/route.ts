@@ -13,6 +13,7 @@ import { pageScopeFor } from "@/lib/guest-access";
 import {
   RESOURCE_CATALOG,
   authCheck,
+  authCheckResource,
   getTool,
   listTools,
   toJsonSchema,
@@ -429,11 +430,11 @@ export async function GET(request: Request) {
  * `canEditContent` confirms their workspace role. Arguments are validated with
  * `validateToolCall` and resource URIs with `validateUri` before any query.
  *
- * The token's scopes choose the *tools* a `tools/call` may invoke, never the
- * *pages*: every read — tool or resource — is narrowed by the page scope the
- * caller's role carries, so a guest sees the pages shared with them and
- * nothing else — and a page outside that scope answers "not found", not
- * "forbidden".
+ * The token's scopes choose the *tools* a `tools/call` may invoke and the
+ * *resources* a `resources/read` may read, never the *pages*: every read —
+ * tool or resource — is narrowed by the page scope the caller's role carries,
+ * so a guest sees the pages shared with them and nothing else — and a page
+ * outside that scope answers "not found", not "forbidden".
  */
 export async function POST(request: Request) {
   const auth = await authenticateApiRequest(request);
@@ -541,6 +542,13 @@ export async function POST(request: Request) {
     const match = validateUri(params.uri);
     if (!match.ok) {
       return rpcFail(id, -32602, match.message);
+    }
+    // A resource is a read path like a tool: the token has to carry the scope
+    // of the read tool the template mirrors, or nothing is read. The check
+    // comes before the read, so a missing scope costs no database round trip.
+    const decision = authCheckResource(match.template, { scopes: effectiveScopes });
+    if (!decision.allowed) {
+      return rpcFail(id, -32003, "Insufficient scope.", { missing: decision.missing });
     }
     try {
       return rpcOk(id, {

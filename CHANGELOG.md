@@ -565,6 +565,17 @@ list marks it as **No access**.
   app's origin for every member who opened the table or the page. Every
   stored URL now passes the shared href allowlist before it reaches an `href`
   (`http`, `https`, `mailto`, `tel` and safe relative paths).
+- The MCP resource path now asks the token what it may read. A `tools/call` has
+  always been gated by the token's scopes (`authCheck`), but `resources/read`
+  validated the URI and read the resource without ever looking at them: a
+  bearer token with **no** scope at all — or with only `read:webhooks` — could
+  read pages, page comments, databases and database rows through the
+  `notion://pages/{pageId}`, `notion://pages/{pageId}/comments`,
+  `notion://databases/{databaseId}` and `notion://databases/{databaseId}/rows`
+  templates. Every template now carries the scope of the read tool it mirrors
+  (`read:pages`, `read:comments`, `read:databases`), and a read without that
+  scope is refused with the answer a tool call gets — **-32003**
+  `Insufficient scope.` — before the database is touched at all.
 
 
 
