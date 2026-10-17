@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { hashToken as storedDigest } from "@/lib/secrets";
 import {
   DEFAULT_MAX_USES,
   DEFAULT_TOKEN_BYTES,
@@ -18,10 +20,10 @@ import type { RedeemableInvite } from "./invite-token";
  * gating self-serve invite links.
  *
  * Red-first: `src/lib/invite-token.ts` did not exist when this file was
- * written. A raw token is generated once and emailed; only its SHA-256 hex
- * digest is persisted. Redeemability is decided from an invite's expiry, a
- * used marker and a redemption budget. No DB, routes, React or clock — every
- * time input is passed in explicitly.
+ * written. A raw token is generated once and emailed; only its digest is
+ * persisted. Redeemability is decided from an invite's expiry, a used marker
+ * and a redemption budget. No DB, routes, React or clock — every time input is
+ * passed in explicitly.
  */
 
 // 43 base64url chars: a fixed, well-formed token (32 bytes of entropy).
@@ -70,12 +72,16 @@ describe("generateInviteToken", () => {
 });
 
 describe("hashToken", () => {
-  it("is the lowercase SHA-256 hex digest of the token", () => {
-    expect(hashToken("hello")).toBe(
-      "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
-    );
-    expect(hashToken("")).toBe(
-      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  it("is the digest the server stores, not a bare SHA-256 of the token", () => {
+    // The trap this pins down: invitations are minted and verified with
+    // `hashToken` from `@/lib/secrets`, which domain-separates. A local
+    // `sha256(token)` here — which this module used to carry — hashed to a
+    // value no stored invite could ever be matched against, so a link that
+    // looked spendable could never be redeemed.
+    expect(hashToken(FIXED_TOKEN)).toBe(storedDigest(FIXED_TOKEN));
+    expect(hashToken("hello")).toBe(storedDigest("hello"));
+    expect(hashToken("hello")).not.toBe(
+      createHash("sha256").update("hello").digest("hex"),
     );
   });
 

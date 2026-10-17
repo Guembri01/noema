@@ -1,14 +1,25 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+
+/**
+ * The digest an invite token is stored under — the *same* one the server uses
+ * to mint and verify, re-exported rather than reimplemented. See the module
+ * note below.
+ */
+export { hashToken } from "@/lib/secrets";
 
 /**
  * Invite tokens — the pure half of self-serve invite links.
  *
  * A raw token is minted once (`generateInviteToken`), embedded in a link and
- * emailed. Only its SHA-256 hex digest is persisted (`hashToken`), so a
- * database dump cannot be replayed as a live invite. Redemption is gated by
- * three independent facts — expiry, an already-used marker and a redemption
- * budget (`canRedeem`) — and the raw token is never echoed back to a UI
- * (`maskToken`, which mirrors `maskSecret`).
+ * emailed. Only its digest is persisted ({@link hashToken}), so a database dump
+ * cannot be replayed as a live invite. That digest is **re-exported from
+ * `@/lib/secrets`**, not reimplemented: the server mints and verifies invites
+ * with the domain-separated `sha256("noema:token:" + token)`, and this module
+ * used to carry its own bare `sha256(token)` — digests that no stored invite
+ * could ever be matched against. Redemption is gated by three independent facts
+ * — expiry, an already-used marker and a redemption budget (`canRedeem`) — and
+ * the raw token is never echoed back to a UI (`maskToken`, which mirrors
+ * `maskSecret`).
  *
  * Everything here is pure and deterministic over Node's `crypto` builtin: no
  * DB, requests, React or ambient clock — callers pass `now` explicitly so the
@@ -68,17 +79,7 @@ export function generateInviteToken(
   return randomBytes(bytes).toString("base64url");
 }
 
-/**
- * The SHA-256 hex digest used to store an invite token. Deterministic and
- * one-way: persist this, compare a presented token by hashing it, and never
- * keep the raw value. Lowercase, fixed 64-char width.
- */
-export function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-/**
- * Whether `token` has the shape of a token minted by
+/** Whether `token` has the shape of a token minted by
  * {@link generateInviteToken}: a string of unpadded base64url characters
  * within the accepted length range. Defensive about untrusted input — any
  * non-string, blank, padded, standard-base64 or out-of-range value is `false`.

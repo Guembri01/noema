@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { DesktopThemeSync } from "@/components/desktop-theme-sync";
 import { OfflineProvider } from "@/components/providers/offline-provider";
 import { OfflineIndicator } from "@/components/offline-indicator";
 import { UndoRedoProvider } from "@/components/providers/undo-redo-provider";
@@ -63,6 +64,7 @@ export default async function RootLayout({
               <UndoRedoProvider>{children}</UndoRedoProvider>
               <OfflineIndicator />
               <ActionErrorGuard locale={locale} />
+              <DesktopThemeSync />
               <Toaster />
             </OfflineProvider>
           </TooltipProvider>

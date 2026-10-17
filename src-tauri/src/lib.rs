@@ -137,6 +137,7 @@ pub fn run() {
             commands::set_zoom,
             commands::check_update,
             commands::set_decorations,
+            commands::set_theme,
             commands::quit,
         ])
         .setup(|app| {
@@ -187,6 +188,20 @@ pub fn run() {
                     }
                 }
             });
+
+            // Paint the window chrome in the theme the workspace was last left
+            // in — before the page loads, so the title bar never flashes the
+            // desktop's theme over an app that disagrees with it. The webview
+            // keeps the shell updated afterwards (`set_theme`).
+            let stored_theme =
+                state::pref::<String>(&handle, state::prefs::THEME, "system".to_string());
+            if let Err(error) = commands::apply_theme(&handle, &stored_theme) {
+                logging::line(
+                    &handle,
+                    "lifecycle",
+                    &format!("could not apply the stored theme: {error}"),
+                );
+            }
 
             // 4. start the server, then attach the window to it.
             let app_for_boot = handle.clone();

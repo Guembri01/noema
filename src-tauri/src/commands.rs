@@ -201,6 +201,44 @@ pub fn set_decorations(app: AppHandle, decorated: bool) -> Result<(), String> {
     window.set_decorations(decorated).map_err(|e| e.to_string())
 }
 
+/// The window theme a stored preference asks for.
+///
+/// `"system"` — and anything unrecognised, which is treated the same way rather
+/// than pinning a wrong look — is `None`: hand the window back to the OS, which
+/// keeps following the desktop setting live.
+pub fn theme_from_name(name: &str) -> Option<tauri::Theme> {
+    match name {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    }
+}
+
+/// Paint the window chrome in the workspace's theme.
+///
+/// The title bar, menus and scrollbars are drawn by the OS; the page's
+/// `class="dark"` cannot reach them. Without this, a light workspace inside a
+/// dark-skinned desktop showed a dark title bar above a light page.
+pub fn apply_theme(app: &AppHandle, name: &str) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "no main window".to_string())?;
+    window
+        .set_theme(theme_from_name(name))
+        .map_err(|error| error.to_string())
+}
+
+/// Set the workspace theme: apply it now *and* remember it for the next launch.
+#[tauri::command]
+pub fn set_theme(app: AppHandle, theme: String) -> Result<(), String> {
+    state::set_pref(
+        &app,
+        state::prefs::THEME,
+        serde_json::Value::String(theme.clone()),
+    );
+    apply_theme(&app, &theme)
+}
+
 /// Quit the app cleanly (stops the server first).
 #[tauri::command]
 pub async fn quit(app: AppHandle) {
@@ -237,5 +275,22 @@ mod tests {
     #[test]
     fn redact_never_echoes_garbage_back() {
         assert_eq!(redact("not a url"), "<unparseable connection string>");
+    }
+
+    #[test]
+    fn theme_names_map_to_window_themes() {
+        assert_eq!(theme_from_name("light"), Some(tauri::Theme::Light));
+        assert_eq!(theme_from_name("dark"), Some(tauri::Theme::Dark));
+    }
+
+    #[test]
+    fn an_unset_or_unknown_theme_leaves_the_window_to_the_os() {
+        // "system" is a real preference the app offers, and a stale/garbled
+        // store value falls the same way: follow the desktop rather than pin a
+        // look the user did not ask for.
+        assert_eq!(theme_from_name("system"), None);
+        assert_eq!(theme_from_name(""), None);
+        assert_eq!(theme_from_name("DARK"), None);
+        assert_eq!(theme_from_name("solarized"), None);
     }
 }

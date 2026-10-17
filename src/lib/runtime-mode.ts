@@ -36,6 +36,20 @@ declare global {
   interface Window {
     /** Injected by the Tauri shell before the webview loads the app. */
     __NOEMA_DESKTOP__?: DesktopBridge;
+    /**
+     * Tauri's own global, injected on **every** page the webview hosts when
+     * `withGlobalTauri` is on (see `src-tauri/tauri.conf.json`) — including the
+     * served app, which is a different origin from the shell's own bootstrap
+     * page. Only the narrow shape the app uses is declared.
+     */
+    __TAURI__?: {
+      core?: {
+        invoke?: (
+          command: string,
+          args?: Record<string, unknown>,
+        ) => Promise<unknown>;
+      };
+    };
   }
 }
 
@@ -43,6 +57,28 @@ declare global {
 export function isDesktop(): boolean {
   if (typeof window === "undefined") return false;
   return Boolean(window.__NOEMA_DESKTOP__?.mode === "desktop");
+}
+
+/**
+ * Call a command in the desktop shell (see `src-tauri/src/commands.rs`), or
+ * `null` when there is no shell to call — the site, a plain browser, or SSR.
+ *
+ * Deliberately independent of {@link desktopBridge}: the bridge object is
+ * evaluated into the shell's *own* page and does not survive the navigation to
+ * the served app, while Tauri's global is reinstalled on each document. A
+ * rejected command resolves to `undefined` rather than throwing: shell commands
+ * are enhancements, and nothing in the app may break because the shell said no.
+ */
+export function invokeShell(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<unknown> | null {
+  if (typeof window === "undefined") return null;
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (typeof invoke !== "function") return null;
+  return Promise.resolve()
+    .then(() => invoke(command, args))
+    .catch(() => undefined);
 }
 
 /** The desktop bridge, or null in a browser. */

@@ -5,6 +5,7 @@ import {
   desktopBridge,
   desktopChrome,
   hideSiteOnlyChrome,
+  invokeShell,
   isDesktop,
   nativeCapabilities,
   platform,
@@ -83,5 +84,36 @@ describe("runtime mode", () => {
     withWindow(bridge);
     expect(apiUrl("api/x")).toBe("http://127.0.0.1:47821/api/x");
     expect(apiUrl("/api/x")).toBe("http://127.0.0.1:47821/api/x");
+  });
+});
+
+describe("invoking the shell", () => {
+  function withShell(invoke: unknown) {
+    (globalThis as unknown as { window: { __TAURI__?: unknown } }).window = {
+      __TAURI__: { core: { invoke } },
+    };
+  }
+
+  it("is a no-op without a shell (SSR, the site, a plain browser)", () => {
+    expect(invokeShell("set_theme", { theme: "dark" })).toBeNull();
+    withWindow(undefined);
+    expect(invokeShell("set_theme", { theme: "dark" })).toBeNull();
+    withShell(undefined);
+    expect(invokeShell("set_theme", { theme: "dark" })).toBeNull();
+  });
+
+  it("passes the command and its arguments through", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    withShell((command: string, args?: Record<string, unknown>) => {
+      calls.push({ command, args });
+      return Promise.resolve(null);
+    });
+    await invokeShell("set_theme", { theme: "dark" });
+    expect(calls).toEqual([{ command: "set_theme", args: { theme: "dark" } }]);
+  });
+
+  it("swallows a refusal instead of failing the caller", async () => {
+    withShell(() => Promise.reject(new Error("no main window")));
+    await expect(invokeShell("set_theme", { theme: "dark" })).resolves.toBeUndefined();
   });
 });
