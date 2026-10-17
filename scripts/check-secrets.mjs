@@ -55,6 +55,10 @@ const ALLOWED = new Set([
   "sk-example-0000000000000000", // src/lib/self-hosting.ts placeholder
   "ci-only-secret-not-used-in-production-000000", // .github/workflows/site.yml
   "b74-build-time-dummy-secret-not-a-real-key", // Dockerfile build-time dummy
+  // The database URL of the embedded engine. The password is a template — the
+  // launch's own random one — and the host is the loopback.
+  "postgresql://${DB_USER}:${password}@${host}:${port}/${DB_NAME}?schema=public&connection_limit=1&pgbouncer=true", // scripts/desktop/embedded-db.cjs
+  "postgresql://postgres:<password>@127.0.0.1:<port>/postgres?pgbouncer=true&connection_limit=1", // docs/DESKTOP.md
 ]);
 
 const rel = (file) => relative(ROOT, file).replace(/\\/g, "/");

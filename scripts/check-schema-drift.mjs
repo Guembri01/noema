@@ -89,6 +89,15 @@ async function main() {
   try {
     // 1. Drift: replay every migration in the shadow database, then compare the
     //    result with the schema. Any SQL here means the migrations are behind.
+    //
+    //    The shadow URL is an *argument* here — Prisma has no environment
+    //    alternative for `--shadow-database-url` ("You must pass the
+    //    --shadow-database-url if you want to diff a migrations directory", it
+    //    says). So this one command line carries the shadow database's
+    //    password. It is a throwaway database that holds nothing but this
+    //    project's schema and lives for the seconds this gate takes; the
+    //    desktop app never does this (there the URL travels in the
+    //    environment).
     const diff = await prisma(
       [
         "migrate",

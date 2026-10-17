@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -115,6 +115,23 @@ describe("localDriver", () => {
     await driver.put("ws1/secret.png", new Uint8Array([1]), "image/png");
 
     const file = await stat(path.join(root, "ws1", "secret.png"));
+    expect(file.mode & 0o777).toBe(0o600);
+    const dir = await stat(path.join(root, "ws1"));
+    expect(dir.mode & 0o777).toBe(0o700);
+  });
+
+  it("hardens uploads that an older version left readable (B67)", async () => {
+    // An install from before the modes were set: the workspace directory is
+    // 0755 and the file in it 0644 — the umask's defaults.
+    await mkdir(path.join(root, "ws1"), { recursive: true });
+    await chmod(path.join(root, "ws1"), 0o755);
+    await writeFile(path.join(root, "ws1", "old.png"), "old");
+    await chmod(path.join(root, "ws1", "old.png"), 0o644);
+
+    // Writing the same key again must not leave the old modes in place.
+    await driver.put("ws1/old.png", new Uint8Array([2]), "image/png");
+
+    const file = await stat(path.join(root, "ws1", "old.png"));
     expect(file.mode & 0o777).toBe(0o600);
     const dir = await stat(path.join(root, "ws1"));
     expect(dir.mode & 0o777).toBe(0o700);
