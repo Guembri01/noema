@@ -60,7 +60,9 @@ const FORBIDDEN_REMOTE_PREFIXES = [
  * `get_pref`/`set_pref` are thin wrappers around the store plugin
  * (`src-tauri/src/commands.rs` — `app.store(state::PREFS_FILE)`), so a remote
  * origin that holds the plugin reaches the very same file, unredacted
- * connection string included.
+ * connection string included. Since B48 the plugin is withheld from *every*
+ * origin (see the B48 block below) — but the served app must never get it
+ * either.
  */
 const SHELL_PAGE_ONLY = [
   "allow-database-url",
@@ -400,5 +402,56 @@ describe("desktop capabilities (B46)", () => {
     const ids = permissionIds(remote);
     expect(ids).toContain("core:event:allow-listen");
     expect(ids).toContain("core:event:allow-unlisten");
+  });
+});
+
+/**
+ * B48 — the store plugin is granted without a scope.
+ *
+ * `tauri-plugin-store` does no scope and no ACL check of its own: `store|load`
+ * takes an arbitrary `path`, and `resolve_store_path` resolves it against the
+ * app's data directory only when the path is **relative** — an absolute path is
+ * used as it is, and `Store::save` then writes it. So `store:default` is a
+ * read (and a write) primitive over any JSON file on the machine.
+ *
+ * The store this app keeps is worse than that: `preferences.json` holds the
+ * **unredacted** database connection string (`set_database_url` writes it there
+ * through `state::set_pref`), so the grant handed out the password.
+ *
+ * The permission bought nothing: nothing in the app uses the plugin's
+ * JavaScript face. The shell reads and writes the store through Rust
+ * (`state::set_pref`, `app.store(...)`), which the ACL does not gate — the ACL
+ * governs the IPC commands a webview may invoke. So the store is withheld from
+ * **every** origin: remote *and* local.
+ */
+describe("desktop capabilities (B48)", () => {
+  it("grants no origin the store plugin", () => {
+    const capabilities = allCapabilities();
+    expect(capabilities.length).toBeGreaterThan(0);
+
+    for (const capability of capabilities) {
+      for (const id of permissionIds(capability)) {
+        expect(
+          id.startsWith("store:"),
+          `capability "${capability.identifier}" grants "${id}" — the store plugin does no scope check of its own, and its file holds the unredacted connection string`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("keeps the shell's own page its audited way into the store", () => {
+    // The store stays reachable for the shell's own page — through the app
+    // commands (`get_pref`/`set_pref`), which the ACL *can* gate. What must
+    // not happen is the plugin's own permission set, which the ACL can only
+    // hand out unscoped.
+    const ids = permissionIds(readCapability("default.json"));
+    expect(ids).toContain("default");
+
+    const permissionSet = readFileSync(
+      join(root, "src-tauri", "permissions", "default.toml"),
+      "utf8",
+    );
+    expect(permissionSet).toContain("allow-get-pref");
+    expect(permissionSet).toContain("allow-set-pref");
   });
 });

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop-everything",
-  "description": "Broad, explicit permissions for the installed app's own page: open any URL/path in the OS, pick files, and run its own bundled server. Deliberately permissive per product decision — the app is local-first with a single user. A hardened build drops this capability and keeps only `default`. It grants no remote URL: the served web app (`http://127.0.0.1:<port>`) is a different origin, so it gets its own narrow capability (`desktop-remote.json`) instead. The shell's own page keeps the server lifecycle (`restart_server`, `stop_server`, `set_database_url`, `quit`) and the preference store (`get_pref`, `set_pref`, which holds the unredacted connection string). No file-system permissions: the app reads and writes its files server-side (Rust `std::fs`), never through the `fs` plugin, so the JavaScript face of that plugin stays unused here. The app's own data directories are covered by `fs:default` in the `default` capability, which is the narrow, local-only one.",
+  "description": "Broad, explicit permissions for the installed app's own page: open any URL/path in the OS, pick files, and run its own bundled server. Deliberately permissive per product decision — the app is local-first with a single user. A hardened build drops this capability and keeps only `default`. It grants no remote URL: the served web app (`http://127.0.0.1:<port>`) is a different origin, so it gets its own narrow capability (`desktop-remote.json`) instead. The shell's own page keeps the server lifecycle (`restart_server`, `stop_server`, `set_database_url`, `quit`) and the preference store (`get_pref`, `set_pref` — the app commands; the store *plugin* itself is granted to nobody, see `default.json`). No file-system permissions: the app reads and writes its files server-side (Rust `std::fs`), never through the `fs` plugin, so the JavaScript face of that plugin stays unused here. The app's own data directories are covered by `fs:default` in the `default` capability, which is the narrow, local-only one.",
   "local": true,
   "windows": ["main"],
   "permissions": [
@@ -34,7 +34,6 @@
     "core:app:allow-version",
     "core:app:allow-name",
     "core:app:allow-set-app-theme",
-    "store:default",
     "log:default",
     "window-state:default",
 
