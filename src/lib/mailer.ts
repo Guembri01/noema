@@ -168,7 +168,17 @@ export async function verifyMail(
   }
 }
 
-/** Shared, simple HTML shell for transactional email. */
+/**
+ * Shared, simple HTML shell for transactional email.
+ *
+ * `heading` and `body` are HTML fragments: the caller escapes the
+ * user-controlled names inside them and keeps the markup it wants (the
+ * invitation body carries a `<strong>` around the workspace name), so they
+ * are interpolated as given. Every other field is escaped here — `ctaUrl` in
+ * attribute context, `ctaLabel` and `footer` in text context — so a value
+ * that reaches the template unescaped can never break out of the attribute
+ * or of the text it lands in.
+ */
 export function emailTemplate(input: {
   heading: string;
   body: string;
@@ -195,14 +205,16 @@ export function emailTemplate(input: {
         <p style="margin:0 0 20px;line-height:1.6;color:#4a4a47">${input.body}</p>
         ${
           input.ctaUrl
-            ? `<a href="${input.ctaUrl}" style="display:inline-block;background:#1a75d2;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px;font-weight:500">${
-                input.ctaLabel ?? "Open"
-              }</a>`
+            ? `<a href="${escapeHtml(input.ctaUrl)}" style="display:inline-block;background:#1a75d2;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px;font-weight:500">${escapeHtml(
+                input.ctaLabel ?? "Open",
+              )}</a>`
             : ""
         }
         ${
           input.footer
-            ? `<p style="margin:24px 0 0;font-size:12px;color:#6b6a65">${input.footer}</p>`
+            ? `<p style="margin:24px 0 0;font-size:12px;color:#6b6a65">${escapeHtml(
+                input.footer,
+              )}</p>`
             : ""
         }
       </td></tr>

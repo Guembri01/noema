@@ -154,7 +154,8 @@ describe("emailTemplate — renders heading, body, CTA and footer", () => {
     expect(html).toContain(input.body);
     expect(html).toContain('href="https://app.example.test/invite/abc"');
     expect(html).toContain(">Accept invitation</a>");
-    expect(html).toContain(input.footer);
+    // the footer is escaped by the template (the apostrophe becomes an entity)
+    expect(html).toContain(escapeHtml(input.footer));
     // the CTA url is the only outbound link in the shell
     expect(html.match(/<a href=/g)).toHaveLength(1);
   });
@@ -182,6 +183,56 @@ describe("emailTemplate — renders heading, body, CTA and footer", () => {
   it("keeps empty-ish optional parts out of the text join", () => {
     const { text } = emailTemplate({ heading: "Head", body: "Body", footer: "" });
     expect(text).toBe("Head\nBody");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// emailTemplate — the values it interpolates are escaped
+// ---------------------------------------------------------------------------
+
+describe("emailTemplate — escapes the CTA url, the CTA label and the footer", () => {
+  it("escapes the CTA url in attribute context (a quote cannot break out)", () => {
+    const { html } = emailTemplate({
+      heading: "Head",
+      body: "Body",
+      ctaLabel: "Accept invitation",
+      ctaUrl: 'https://app.example.test/invite/tok"><img src=x onerror=alert(1)>',
+    });
+
+    // the whole payload stays inside the href attribute …
+    expect(html).toContain(
+      'href="https://app.example.test/invite/tok&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"',
+    );
+    // … and no injected tag reaches the document
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("onerror=alert(1)>");
+  });
+
+  it("escapes the CTA label and the footer in text context", () => {
+    const { html } = emailTemplate({
+      heading: "Head",
+      body: "Body",
+      ctaLabel: "Open <b>now</b>",
+      ctaUrl: "https://app.example.test/",
+      footer: "ignore it <script>alert(1)</script>",
+    });
+
+    expect(html).toContain("Open &lt;b&gt;now&lt;/b&gt;");
+    expect(html).toContain("ignore it &lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<b>now</b>");
+    expect(html).not.toContain("<script>");
+  });
+
+  it("leaves an ordinary CTA url untouched (the legitimate link still works)", () => {
+    const { html } = emailTemplate({
+      heading: "Head",
+      body: "Body",
+      ctaLabel: "Accept invitation",
+      ctaUrl: "https://app.example.test/invite/abc",
+    });
+
+    expect(html).toContain('href="https://app.example.test/invite/abc"');
+    expect(html).toContain(">Accept invitation</a>");
   });
 });
 
