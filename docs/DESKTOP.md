@@ -36,7 +36,7 @@ Only four things differ, and they are resolved in **one module**
 │  │ sidecar supervisor  (src-tauri/src/sidecar.rs)         │   │
 │  │  · keeps this install's port (free if taken)           │   │
 │  │  · spawns `noema-node` (bundled runtime) on start.cjs  │   │
-│  │  · polls /api/health until 200 (90 s budget)            │   │
+│  │  · polls /api/health until it carries our token        │   │
 │  │  · streams stdout/stderr → logs/noema.log + UI         │   │
 │  │  · restarts with backoff if it dies (500ms…10s)        │   │
 │  │  · stops it cleanly on quit                            │   │
@@ -111,6 +111,17 @@ Other deliberate choices:
   the database is unreachable) — and the supervisor distinguishes the two failures:
   "answered but unhealthy" sends the user to the database field on the bootstrap
   page, "never answered" is a real bug worth a report.
+- **The readiness handshake is authenticated.** The port is picked by binding
+  `127.0.0.1:0`, reading the port and closing the socket again, so another program
+  on the same machine can take the port before the server does — and it only has
+  to answer `200` to be believed. The window would then load *that* page, on an
+  origin the Tauri capability covers, with the app's IPC rights. So the shell
+  generates a random token per start (`NOEMA_SHELL_TOKEN`, 32 bytes from the
+  system CSPRNG), hands it to the server through the environment, and accepts a
+  server only when the health response echoes it in the `x-noema-shell-token`
+  header. The token never reaches the log, the webview or the frozen health body.
+  A program squatting the port cannot get it: the token lives in the server
+  process' environment, which belongs to another user.
 - **The payload ships no `.env`.** Next's standalone output copies `.env` files
   into `.next/standalone` by itself, so `prepare.mjs` strips them — and fails the
   build if one would still ship. Without that step the installer carried the
@@ -534,9 +545,10 @@ key out of the tree it ships.
 
 | Layer | What runs |
 |---|---|
-| Rust (shell) | `cargo test` — data-dir layout, loopback URL shape, resource path, env contract (incl. the database URL), restart backoff bounds, free-port behaviour and the preferred-port fallback, layout creation, log ring buffer, connection-string redaction |
+| Rust (shell) | `cargo test` — data-dir layout, loopback URL shape, resource path, env contract (incl. the database URL and the handshake token), restart backoff bounds, free-port behaviour and the preferred-port fallback, the readiness handshake (a response is ours only when it carries the token), layout creation, log ring buffer, connection-string redaction |
 | Rust (quality) | `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` |
 | Shared TS | the whole existing suite — the app version adds **no** forked logic |
+| Desktop wiring | `scripts/desktop/capabilities.test.mjs`, `scripts/desktop/fs-capability.test.mjs` and `scripts/desktop/shell-handshake.test.mjs` — the capability split and the handshake between the shell and the server (both sides must agree on the token's name and its header, and neither may drop the check) |
 | Runtime mode | `src/lib/runtime-mode.test.ts` (site vs desktop, the mode the server renders into the document, the Tauri fallback, API base, data dir, version, capabilities, SSR safety) and `src/app/a11y-layout.test.ts` (the attribute the layout renders for the site, `NOEMA_RUNTIME` and `NOEMA_STANDALONE`) |
 | Packaging | `desktop:preflight` on every run; `site.yml` asserts the site build never emits a standalone server |
 | Embedded database | `npm run check:embedded-db` — starts a real PGlite engine in a throwaway data directory, aborts 24 handshakes mid-flight, and proves the engine still serves a second and a third Prisma client. No Postgres, no Docker, no Tauri. Run in CI's `payload-smoke` job. |
