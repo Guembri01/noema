@@ -1,5 +1,5 @@
 // Minimal Yjs WebSocket server (y-websocket wire protocol) for Noema.
-// Usage: node scripts/collab-server.mjs   (env: PORT=1234 HOST=0.0.0.0)
+// Usage: node scripts/collab-server.mjs   (env: PORT=1234 HOST=127.0.0.1)
 //
 // One Y.Doc per room (room = page id). Documents are kept in memory and
 // broadcast to every other connection. Awareness (cursors/presence) is
@@ -44,22 +44,38 @@
 //           with the verified identity — display name resolved from the DB
 //           once at join (cached on the connection), colour a stable hash of
 //           the user id (R9.17 palette). Client claims are never relayed.
-//  7. Origin: when `APP_ORIGINS` (comma-separated, normalized like
-//           `next.config.ts:34-37`) is configured, the upgrade `Origin` must
-//           be on that list or the socket closes 4400 BEFORE the session
-//           check; a missing Origin fails closed too. When APP_ORIGINS is
-//           unset — the repo's default posture, same as the app's Server
-//           Action list — the relay is PERMISSIVE by choice: a cross-site
-//           page cannot attach the cookie anyway (`SameSite=lax` sends it
-//           only same-site) and every connection needs a valid JWT regardless,
-//           so Origin is defence in depth, not the primary control. Fail
-//           closed when unset would break CLI/non-browser clients
-//           (`check-collab.mjs`, tests) for no security gain.
+//  7. Origin (B64 — the rule changed from permissive to fail closed): the
+//           upgrade `Origin` is checked BEFORE the session check.
+//           · `APP_ORIGINS` configured (comma-separated, normalized like
+//             `next.config.ts:34-37`): ONLY the listed origins connect; a
+//             missing or empty Origin fails closed (close 4400).
+//           · `APP_ORIGINS` unset — the repo's default posture: ONLY the
+//             loopback origin (`localhost`, `127.0.0.1`, `[::1]`) connects.
+//             A foreign origin (any page in the network) is refused with
+//             4400, and so is an EMPTY Origin header: it names no origin,
+//             and no browser sends one.
+//           · A MISSING Origin header is accepted, because no browser omits
+//             it on a WebSocket handshake — only a native client
+//             (`check-collab.mjs`, the desktop sidecar, the tests) sends
+//             none, and a native client cannot be the cross-site attacker
+//             the Origin check exists for. It still has to pass the session
+//             check (4401) and the page authorization (4403).
+//           A networked deployment therefore has to name its origins in
+//           `APP_ORIGINS` (see docs/OPERATIONS.md §5.4).
+//
+//  8. B64 — the network posture of the relay:
+//           · the default bind address is the loopback interface
+//             (`127.0.0.1`); `HOST=0.0.0.0` is an explicit opt-in for a
+//             networked deployment and is never the default;
+//           · a single WebSocket message is capped at `MAX_PAYLOAD_BYTES`
+//             (4 MiB — the app's own budget for a page's content in one
+//             request); `ws` would otherwise accept 100 MiB per message.
 //
 // Known gaps (still open):
 // no mid-session lock re-evaluation (R9.4 — join-time only), no byte-rate cap
-// (512 KiB/s half of R9.6), handshake *churn* bounded only by the concurrency
-// cap, and the residual timing side channel from B53.
+// (512 KiB/s half of R9.6 — the per-MESSAGE cap of B64 does not replace it),
+// handshake *churn* bounded only by the concurrency cap, and the residual
+// timing side channel from B53.
 // ---------------------------------------------------------------------------
 import { WebSocket, WebSocketServer } from "ws";
 import * as Y from "yjs";
@@ -95,8 +111,48 @@ const MESSAGE_LIMIT = 30;
 const MESSAGE_WINDOW_MS = 10_000;
 const MAX_NAME_LENGTH = 128;
 
+/**
+ * The interface the relay binds to when the operator names none (B64).
+ *
+ * Loopback only: the relay carries the live document content, so a default
+ * that listens on every interface would publish it to the whole network.
+ * `HOST=0.0.0.0` stays available as an EXPLICIT choice for a networked
+ * deployment (a container, a host behind a reverse proxy) — it is simply
+ * never the default.
+ */
+export const DEFAULT_HOST = "127.0.0.1";
+
+/**
+ * The largest single WebSocket message the relay accepts (B64).
+ *
+ * `ws` defaults to 100 MiB per message, so one client could hand the relay
+ * a message that fills its heap. 4 MiB is the app's own budget for a page's
+ * content in one request (`MAX_CONTENT_BODY_BYTES`, `src/lib/body-limit.ts`),
+ * i.e. the biggest document the product itself accepts; measured, a Yjs
+ * update of a page costs 1.0–1.4× its content size (10 000 small blocks:
+ * 976.6 KiB of text → 1.35 MiB of update), so the cap covers what the app
+ * can store while staying 25× below the `ws` default.
+ */
+export const MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Resolve the interface the relay binds to (B64).
+ *
+ * `HOST` wins when it names something; an unset, empty or blank `HOST` falls
+ * back to {@link DEFAULT_HOST}. The empty case matters: `server.listen(port,
+ * "")` binds to EVERY interface, so an empty `HOST` would have been the very
+ * hole this default closes.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+export function resolveHost(env = process.env) {
+  const raw = typeof env?.HOST === "string" ? env.HOST.trim() : "";
+  return raw.length > 0 ? raw : DEFAULT_HOST;
+}
+
 const PORT = Number(process.env.PORT ?? 1234);
-const HOST = process.env.HOST ?? "0.0.0.0";
+const HOST = resolveHost(process.env);
 
 // `npm run collab` starts this file directly (no `--env-file`), so load the
 // repo `.env` once at import time when the secrets are not already set.
@@ -233,7 +289,7 @@ export async function verifySessionCookie(cookieHeader) {
  * Normalize one `APP_ORIGINS` entry the way `next.config.ts:34-37` does:
  * trim, strip a leading scheme and trailing slashes, lowercase. Empty
  * entries are dropped; an unset/empty value yields an empty list (= no
- * policy = permissive, see `isOriginAllowed`).
+ * policy = the fail-closed default of `isOriginAllowed`).
  */
 export function parseAppOrigins(value) {
   return String(value ?? "")
@@ -242,29 +298,71 @@ export function parseAppOrigins(value) {
     .filter((entry) => entry.length > 0);
 }
 
+/** The host names that address THIS machine's loopback interface. */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 /**
- * Decide an upgrade's `Origin` header against a parsed allow-list.
+ * Whether an `Origin` header names the loopback interface — the app served
+ * from this very machine (`http://localhost:3200`, `http://127.0.0.1:3200`,
+ * `http://[::1]:3200`).
  *
- * - Empty policy (APP_ORIGINS unset/empty — the repo default): permissive.
- *   Justification: the relay already requires a valid `noema_session` JWT on
- *   the handshake, and `SameSite=lax` keeps that cookie off cross-site
- *   WebSocket handshakes, so a browser attacker from another origin gets 4401
- *   anyway; refusing every non-browser client (CLI smoke, tests) when no
- *   operator ever configured an origin would cost availability for no gain.
- * - Non-empty policy: fail closed. Only listed origins connect, and a missing
- *   or unparsable Origin (e.g. `"null"` from a sandboxed frame) is denied.
- *   Entries are matched scheme-insensitively against `host[:port]`, mirroring
- *   the app's Server-Action allow-list normalization.
+ * The port is irrelevant: the origin is the APP's, not the relay's, and the
+ * relay's port is not known to the browser's page.
  */
-export function isOriginAllowed(originHeader, allowedOrigins) {
-  if (!Array.isArray(allowedOrigins) || allowedOrigins.length === 0) return true;
-  if (typeof originHeader !== "string" || originHeader.length === 0) return false;
+export function isLoopbackOrigin(originHeader) {
+  if (typeof originHeader !== "string") return false;
   const normalized = originHeader
     .trim()
     .replace(/^https?:\/\//i, "")
     .replace(/\/+$/, "")
     .toLowerCase();
-  return normalized.length > 0 && allowedOrigins.includes(normalized);
+  if (normalized.length === 0) return false;
+  const host = normalized.startsWith("[")
+    ? normalized.slice(0, normalized.indexOf("]") + 1)
+    : normalized.split(":")[0];
+  return LOOPBACK_HOSTS.has(host);
+}
+
+/**
+ * Decide an upgrade's `Origin` header against a parsed allow-list (B64).
+ *
+ * The rule fails closed in every configuration:
+ *
+ * - Non-empty policy (`APP_ORIGINS` configured): only the listed origins
+ *   connect. A missing or empty Origin is denied — non-browser clients have
+ *   to be named too. Entries are matched scheme-insensitively against
+ *   `host[:port]`, mirroring the app's Server-Action allow-list
+ *   normalization.
+ * - Empty policy (`APP_ORIGINS` unset — the repo default): only the
+ *   LOOPBACK origin connects. A foreign origin (any page in the network)
+ *   is refused with 4400, and so is an EMPTY Origin header: it names no
+ *   origin, and no browser ever sends one.
+ * - A MISSING Origin header is accepted in both cases, because no browser
+ *   omits `Origin` on a WebSocket handshake: only a native client
+ *   (`check-collab.mjs`, the desktop sidecar, the tests) sends none, and a
+ *   native client cannot be the cross-site attacker the Origin check exists
+ *   for. It still has to pass the session check (4401) and the page
+ *   authorization (4403), so a missing header does not open the relay.
+ *
+ * Before B64 this rule was permissive whenever `APP_ORIGINS` was unset —
+ * which, together with the default bind on every interface, let every page
+ * in the network reach the relay.
+ */
+export function isOriginAllowed(originHeader, allowedOrigins) {
+  const hasPolicy = Array.isArray(allowedOrigins) && allowedOrigins.length > 0;
+  const raw = typeof originHeader === "string" ? originHeader.trim() : "";
+
+  if (raw.length === 0) {
+    // Present but empty: an Origin header that names no origin. Refused in
+    // every configuration.
+    if (typeof originHeader === "string") return false;
+    // Absent: a native client (see above).
+    return !hasPolicy;
+  }
+
+  const normalized = raw.replace(/^https?:\/\//i, "").replace(/\/+$/, "").toLowerCase();
+  if (hasPolicy) return allowedOrigins.includes(normalized);
+  return isLoopbackOrigin(raw);
 }
 
 /* ------------------------------------------------------------------ *
@@ -599,7 +697,9 @@ function isStateRequest(message) {
 
 async function handleConnection(conn, request, deps) {
   // 0. Origin first — answered BEFORE the session check and before the room
-  //    name is parsed (B75). No-op (permissive) when no policy is configured.
+  //    name is parsed (B75). Fail closed (B64): only the loopback origin, or
+  //    the `APP_ORIGINS` allow-list, is accepted; a missing header is a
+  //    native client and still has to pass the session check below.
   if (!isOriginAllowed(request.headers.origin, deps.origins)) {
     return deny(conn, CLOSE_BAD_ORIGIN, "origin not allowed");
   }
@@ -768,6 +868,8 @@ async function handleConnection(conn, request, deps) {
  * `resolveIdentity` are injectable so tests can drive the pipeline without a
  * database; the R9.6 clock (`rateLimitClock`) and caps are injectable too,
  * and the origin policy defaults to the `APP_ORIGINS` environment variable.
+ * `host` defaults to {@link resolveHost} and `maxPayload` to
+ * {@link MAX_PAYLOAD_BYTES} (B64).
  */
 export function createCollabServer({
   verifySession = verifySessionCookie,
@@ -781,6 +883,7 @@ export function createCollabServer({
   messageLimit = MESSAGE_LIMIT,
   messageWindowMs = MESSAGE_WINDOW_MS,
   appOrigins = process.env.APP_ORIGINS,
+  maxPayload = MAX_PAYLOAD_BYTES,
 } = {}) {
   const limiter = createRateLimiter({
     maxConnections: maxConnectionsPerUser,
@@ -789,7 +892,7 @@ export function createCollabServer({
     clock: rateLimitClock,
   });
   const origins = parseAppOrigins(appOrigins);
-  const wss = new WebSocketServer({ host, port });
+  const wss = new WebSocketServer({ host, port, maxPayload });
   wss.on("connection", (conn, request) => {
     handleConnection(conn, request, {
       verifySession,
@@ -819,9 +922,9 @@ function start() {
     const originNote =
       origins.length > 0
         ? `origin allow-list: ${origins.length} entr${origins.length === 1 ? "y" : "ies"} (fail closed)`
-        : "origin policy: APP_ORIGINS unset (permissive; SameSite=lax + JWT still apply)";
+        : "origin policy: APP_ORIGINS unset (loopback origins only — a networked deployment must set APP_ORIGINS)";
     console.log(
-      `Noema collaboration server listening on ws://${HOST}:${PORT} (auth: session cookie + page authz; identity: DB-bound; rate: ${MAX_CONNECTIONS_PER_USER} conns/user, ${MESSAGE_LIMIT} msg/${MESSAGE_WINDOW_MS / 1000}s; ${originNote})`,
+      `Noema collaboration server listening on ws://${HOST}:${PORT} (auth: session cookie + page authz; identity: DB-bound; rate: ${MAX_CONNECTIONS_PER_USER} conns/user, ${MESSAGE_LIMIT} msg/${MESSAGE_WINDOW_MS / 1000}s; payload: max ${MAX_PAYLOAD_BYTES} B/msg; ${originNote})`,
     );
   });
   wss.on("error", (error) => {
