@@ -152,7 +152,7 @@ describe("a transport failure never carries the key", () => {
     expect(persisted).not.toContain("def-tail-9x");
     expect(persisted).toContain(PROVIDER_UNREACHABLE);
 
-    // And the log carries the class and nothing else.
+    // And the log carries the class and no runtime text.
     const logged = errorSpy.mock.calls.map((call) => JSON.stringify(call)).join("\n");
     expect(logged).not.toContain("sk-live-abc");
     expect(logged).not.toContain("def-tail-9x");

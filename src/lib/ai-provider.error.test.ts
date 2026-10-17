@@ -33,7 +33,8 @@ const CONFIG = {
   model: "gpt-4o",
   apiKey: API_KEY,
   source: "workspace" as const,
-  workspaceId: "ws-1",
+  /** A workspace id of the app's own shape — the log carries such an id. */
+  workspaceId: "cm5wq2k3l4k5b6c7d8e9f0g1h",
 };
 
 /** A provider body that echoes the key back, the way a gateway does. */
@@ -112,8 +113,12 @@ describe("provider failure classification", () => {
   it("never takes over a foreign credential-shaped code", () => {
     // A code that is shaped like a secret is no code at all — whoever owns
     // the secret, it must not travel to the client in the answer.
+    //
+    // None of these shapes shares a run of eight characters with the key we
+    // sent, so the *form* alone has to refuse every one of them: each shape
+    // pins the credential-shape guard on its own.
     const shapes = [
-      "sk-proj-0123456789abcdef",
+      "sk-proj-zzzzzzzzzzzzzzzz",
       "ghp_abcdefghijklmnopqrstuvwx",
       "AKIAIOSFODNN7EXAMPLE",
       "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc123signature",
@@ -251,11 +256,118 @@ describe("chatComplete failures", () => {
     const logged = errorSpy.mock.calls.map((call) => JSON.stringify(call)).join("\n");
     expect(logged).not.toContain(API_KEY);
     expect(logged).not.toContain("Incorrect API key provided");
-    // The log carries the class and nothing else: no body, not even a
-    // redacted excerpt — a body may hold other secrets than the key.
+    // The log carries the class and nothing of the body: no excerpt, not even
+    // a redacted one — a body may hold other secrets than the key.
     expect(logged).not.toContain("example.invalid");
     // The stable code stays: it is the grep anchor for the log.
     expect(logged).toContain("invalid_api_key");
+    // The line says whose call failed — in an installation with several
+    // workspaces a line without that is unattributable.
+    expect(logged).toContain(CONFIG.workspaceId);
+    expect(logged).toContain("mock");
+    expect(logged).toContain("gpt-4o");
+    // The endpoint never does: it can carry a credential in its user info.
+    expect(logged).not.toContain("localhost:1");
+  });
+});
+
+/**
+ * The attribution the log carries: the workspace, the provider and the model.
+ *
+ * The values come from the workspace's own settings — and on two of the AI
+ * routes from the request body — so they are untrusted like every other input.
+ * A value may only be written when it is safe to write: never a credential,
+ * never the key we sent, never a string the client chose, and never longer
+ * than a log line can hold.
+ */
+describe("the log attribution", () => {
+  /**
+   * Let one provider call fail and return the line that was logged.
+   *
+   * The line is an object, so a value that is dropped leaves no trace behind:
+   * the field is simply not there.
+   */
+  async function logLine(overrides: Partial<typeof CONFIG>): Promise<{
+    fields: Record<string, string>;
+    text: string;
+  }> {
+    errorSpy.mockClear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => providerError(LEAKY_BODY)),
+    );
+
+    await chatComplete({ system: "s", user: "u" }, { ...CONFIG, ...overrides });
+
+    const call = errorSpy.mock.calls.findLast(
+      (entry) => entry[0] === "ai provider error",
+    );
+    return {
+      fields: (call?.[1] ?? {}) as Record<string, string>,
+      text: errorSpy.mock.calls.map((entry) => JSON.stringify(entry)).join("\n"),
+    };
+  }
+
+  it("leaves the model out when it is the key we sent", async () => {
+    // The model is free text — in the AI form, in the environment and in the
+    // chat request — and a deployment can point it at the very key it sends
+    // (AI_MODEL = the key). The model is then the key, and a key in a format
+    // the scrubber does not know survives the shape check: only the
+    // comparison against the key itself stops it.
+    const hexKey = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
+
+    const whole = await logLine({ apiKey: hexKey, model: hexKey });
+    expect("model" in whole.fields).toBe(false);
+    expect(whole.text).not.toContain(hexKey);
+
+    // Eight characters of the key are its fingerprint — enough of it to be
+    // used against the provider.
+    const fragment = await logLine({ apiKey: hexKey, model: hexKey.slice(0, 8) });
+    expect("model" in fragment.fields).toBe(false);
+    expect(fragment.text).not.toContain(hexKey.slice(0, 8));
+
+    // A key in a known shape is caught by the shape check.
+    const shaped = await logLine({ model: API_KEY });
+    expect("model" in shaped.fields).toBe(false);
+    expect(shaped.text).not.toContain(API_KEY);
+
+    // An ordinary model stays: the guard must not swallow the attribution.
+    const ordinary = await logLine({ model: "gpt-4o-mini" });
+    expect(ordinary.fields.model).toBe("gpt-4o-mini");
+  });
+
+  it("leaves the model out when it is credential-shaped", async () => {
+    // A value that looks like a credential is no attribution at all: it is
+    // dropped, not scrubbed — a scrubbed value would still say something about
+    // a secret that does not belong in the line.
+    for (const shaped of [
+      "sk-live-abcdef1234567890",
+      "ghp_abcdefghijklmnopqrstuvwx",
+    ]) {
+      const { fields, text } = await logLine({ model: shaped });
+      expect("model" in fields, shaped).toBe(false);
+      expect(text, shaped).not.toContain(shaped);
+    }
+  });
+
+  it("cuts a long model down to a length a log line can hold", async () => {
+    const { fields } = await logLine({ model: "m".repeat(200) });
+    expect(fields.model).toBe("m".repeat(64));
+  });
+
+  it("leaves out a workspace id that is not an id of the app's own shape", async () => {
+    // Two of the AI routes take the workspace id from the request body, so
+    // the value is chosen by the client. Only an id the app hands out may be
+    // written: a client cannot put an arbitrary string into the operator's
+    // log, and a value that is not an id is left out rather than guessed.
+    const spoofed = await logLine({ workspaceId: "spoofed-workspace" });
+    expect("workspaceId" in spoofed.fields).toBe(false);
+    expect(spoofed.text).not.toContain("spoofed-workspace");
+
+    // An id of the app's own shape stays — the attribution is the point of
+    // the line.
+    const real = await logLine({ workspaceId: "cm5wq2k3l4k5b6c7d8e9f0g1h" });
+    expect(real.fields.workspaceId).toBe("cm5wq2k3l4k5b6c7d8e9f0g1h");
   });
 });
 
@@ -304,8 +416,8 @@ describe("listProviderModels failures", () => {
     expect(result.error).not.toContain("sk-live-abc");
     expect(result.error).toBe(PROVIDER_UNREACHABLE);
 
-    // And it is not logged raw either: the log keeps the class and nothing
-    // else, so the operator sees the failure without the key.
+    // And it is not logged raw either: the log keeps the class and no runtime
+    // text, so the operator sees the failure without the key.
     const logged = errorSpy.mock.calls.map((call) => JSON.stringify(call)).join("\n");
     expect(logged).not.toContain("sk-live-abc");
     expect(logged).not.toContain("def");
@@ -345,10 +457,13 @@ describe("chatComplete transport failures", () => {
     expect(result.error).not.toContain("sk-live-abc");
     expect(result.error).not.toContain("def-tail-9x");
 
-    // The log carries the class and nothing else.
+    // The log carries the class and no runtime text.
     const logged = errorSpy.mock.calls.map((call) => JSON.stringify(call)).join("\n");
     expect(logged).not.toContain("sk-live-abc");
     expect(logged).not.toContain("def-tail-9x");
     expect(logged).toContain(TRANSPORT_ERROR);
+    // A transport failure is attributable as well.
+    expect(logged).toContain(CONFIG.workspaceId);
+    expect(logged).not.toContain("localhost:1");
   });
 });

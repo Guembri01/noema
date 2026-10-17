@@ -36,12 +36,13 @@ const LEAKY_BODY = JSON.stringify({
 });
 
 /**
- * The route reads its key at module scope, so the module is re-imported after
- * the environment has been stubbed.
+ * The route reads its key and its model at module scope, so the module is
+ * re-imported after the environment has been stubbed.
  */
-async function loadPost(key = API_KEY) {
+async function loadPost(key = API_KEY, model = "whisper-1") {
   vi.resetModules();
   vi.stubEnv("AI_TRANSCRIBE_API_KEY", key);
+  vi.stubEnv("AI_TRANSCRIBE_MODEL", model);
   const mod = await import("./route");
   return mod.POST;
 }
@@ -151,6 +152,40 @@ describe("provider failures", () => {
     const body = JSON.parse(raw) as { error?: string };
     expect(body.error).toBe("Transcription failed (401): authentication_failed");
   });
+
+  it("keeps the key out of the log when the model is the key", async () => {
+    // The transcription endpoint logs the model it called with, and the model
+    // is free text: a deployment can point it at the very key it sends
+    // (AI_TRANSCRIBE_MODEL = the key). The model is then the key, and a key
+    // in a format the scrubber does not know survives the shape check — so
+    // the comparison against the key itself has to hold here too.
+    const hexKey = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
+    const POST = await loadPost(hexKey, hexKey);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(LEAKY_BODY, {
+            status: 401,
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    );
+
+    const response = await POST(transcriptionRequest());
+    const raw = await response.text();
+
+    expect(response.status).toBe(502);
+    expect(raw).not.toContain(hexKey);
+    // The log carries neither the key nor a fragment of it: the model field
+    // is simply not there.
+    const logged = errorSpy.mock.calls.map((call) => JSON.stringify(call)).join("\n");
+    expect(logged).not.toContain(hexKey);
+    expect(logged).not.toContain(hexKey.slice(0, 8));
+    expect(logged).not.toContain("model");
+    // The line keeps its anchor.
+    expect(logged).toContain("invalid_api_key");
+  });
 });
 
 describe("transport failures", () => {
@@ -183,7 +218,7 @@ describe("transport failures", () => {
     const body = JSON.parse(raw) as { error?: string };
     expect(body.error).toBe(PROVIDER_UNREACHABLE);
 
-    // The log carries the class and nothing else.
+    // The log carries the class and no runtime text.
     const logged = errorSpy.mock.calls.map((call) => JSON.stringify(call)).join("\n");
     expect(logged).not.toContain("sk-transcribe-abc");
     expect(logged).not.toContain("def-tail-9x");

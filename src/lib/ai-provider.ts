@@ -12,6 +12,7 @@ import { prisma } from "./db";
 import { decryptSecret } from "./secrets";
 import { providerDefaultBaseUrl, normalizeBaseUrl } from "./ai-providers";
 import { checkBudget, estimateTokens, recordUsage, type BudgetRecord } from "./ai-cost";
+import { z } from "zod";
 import { getWorkspaceAccess } from "./permissions";
 import { redactSecrets } from "./error-reporting";
 
@@ -32,11 +33,20 @@ export const AI_BUDGET_EXCEEDED =
  * A failure is therefore reduced to a class: the upstream status plus a stable
  * code. The body is parsed for that code, never forwarded, and the key we sent
  * — or a recognisable part of it — is treated as poison wherever it turns up.
- * The body itself does not reach the log either — only the status and the code
- * do.
+ * The body itself does not reach the log either — only the status, the code
+ * and the attribution of the call (the workspace, the provider, the model) do.
+ * The attribution is checked against the key we sent before it is written: a
+ * value that *is* the key — or a run of its characters — is left out, because
+ * a scrubber knows credential shapes and not every key format.
  * -------------------------------------------------------------------------- */
 
-/** How much of a provider body is read (for its code). */
+/**
+ * How much of a provider body is parsed (for its code).
+ *
+ * The body is read in full — it is never cut short on the way in — but a body
+ * longer than this is not parsed at all: the provider's code is then unknown
+ * and the failure falls back to the status class.
+ */
 const MAX_PROVIDER_BODY = 4096;
 
 /** A provider code must look like an identifier before it may be shown. */
@@ -63,6 +73,35 @@ export type ProviderFailure = {
   readonly code: string;
   /** The message a client may see — never provider body text. */
   readonly message: string;
+};
+
+/**
+ * What a provider failure can be attributed to — and what it is checked
+ * against.
+ *
+ * The workspace, the provider and the model are the attribution: they say
+ * whose call failed. The key is not part of it — the key is the *comparison
+ * value*. A value that is the key itself, or a recognisable run of its
+ * characters, is poison, and only a comparison against the key we sent can
+ * tell: a scrubber knows credential *shapes*, not every key format. The key
+ * therefore travels with the attribution, is read by the guard alone and is
+ * never written to the log.
+ */
+export type ProviderAttribution = {
+  /** The workspace the call was billed to; absent for the env defaults. */
+  readonly workspaceId?: string;
+  /** The provider's id — the workspace's provider, or `env` for the default. */
+  readonly provider?: string;
+  /** The model the call asked for. */
+  readonly model?: string;
+  /**
+   * The key the call was made with — compared against, never written.
+   *
+   * Required on purpose: an attribution without it would let a value that
+   * *is* the key into the log line, and a guard that can be left out by
+   * accident is a guard that fails open.
+   */
+  readonly apiKey: string;
 };
 
 /** Scrub credential-shaped substrings out of a free-text value. */
@@ -185,8 +224,75 @@ export function providerFailure(
   return { status, code, message: `AI provider error (${status}): ${code}` };
 }
 
+/** Longest attribution value kept in the log — an id, a name, a model id. */
+const MAX_LOG_CONTEXT_LENGTH = 64;
+
 /**
- * Record a provider failure for the operator: the status and the stable code.
+ * A value that may be written to the log.
+ *
+ * The attribution comes from the workspace's own settings — and on two of the
+ * AI routes from the request body — so it is untrusted like every other input:
+ * a value that looks like a credential is dropped rather than scrubbed, a value
+ * that carries the key we sent is dropped as well, and a long one is cut. A
+ * missing value is left out — the log never guesses.
+ *
+ * The comparison against the key runs on the *whole* value, before it is cut:
+ * a comparison against the shortened value would miss a fragment of the key
+ * that sits behind the cut.
+ */
+function logContextValue(value: string | undefined, apiKey: string): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (scrubText(trimmed) !== trimmed) return undefined;
+  // The key we sent — or a recognisable run of its characters — is poison
+  // whatever shape it has: a scrubber knows credential *shapes*, not every key
+  // format, so only the comparison against the key itself catches it.
+  if (echoesKey(trimmed, apiKey)) return undefined;
+  return trimmed.length > MAX_LOG_CONTEXT_LENGTH
+    ? trimmed.slice(0, MAX_LOG_CONTEXT_LENGTH)
+    : trimmed;
+}
+
+/**
+ * The shape of an id this app hands out.
+ *
+ * `Workspace.id` is a Prisma `cuid()` (`prisma/schema.prisma`), and the ids
+ * the app accepts from a client are checked the same way
+ * (`z.string().cuid()` in `src/lib/validation.ts`).
+ */
+const WORKSPACE_ID = z.string().cuid();
+
+/**
+ * The workspace id the log may carry.
+ *
+ * Two of the AI routes take the workspace id from the request body, so the
+ * value is chosen by the client. Only an id of the app's own shape may be
+ * written: a client cannot put an arbitrary string into the operator's log,
+ * and a value that is not an id is left out rather than guessed.
+ */
+function logWorkspaceId(value: string | undefined, apiKey: string): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (!WORKSPACE_ID.safeParse(trimmed).success) return undefined;
+  return logContextValue(trimmed, apiKey);
+}
+
+/** The attribution that is known — never a secret, never a guess. */
+function logContext(context: ProviderAttribution | undefined): Record<string, string> {
+  const fields: Record<string, string> = {};
+  const apiKey = context?.apiKey ?? "";
+  const workspaceId = logWorkspaceId(context?.workspaceId, apiKey);
+  if (workspaceId) fields.workspaceId = workspaceId;
+  const provider = logContextValue(context?.provider, apiKey);
+  if (provider) fields.provider = provider;
+  const model = logContextValue(context?.model, apiKey);
+  if (model) fields.model = model;
+  return fields;
+}
+
+/**
+ * Record a provider failure for the operator: the status, the stable code and
+ * the attribution of the call.
  *
  * The body is not logged — not even a redacted excerpt. A provider body is
  * untrusted input that may carry the workspace's key, a secret of the
@@ -196,11 +302,19 @@ export function providerFailure(
  * provider's own error code (`invalid_api_key`, `model_not_found`, …) or the
  * status class, and it is the very string the client is told — so one grep
  * finds both the log line and the client-visible failure.
+ *
+ * The attribution says *whose* call failed: the workspace, the provider and
+ * the model. Without it a line is unattributable in an installation with
+ * several workspaces. Neither the key nor the endpoint is ever part of it.
  */
-export function logProviderFailure(failure: ProviderFailure): void {
+export function logProviderFailure(
+  failure: ProviderFailure,
+  context?: ProviderAttribution,
+): void {
   console.error("ai provider error", {
     status: failure.status,
     code: failure.code,
+    ...logContext(context),
   });
 }
 
@@ -264,12 +378,17 @@ function isProviderClassError(error: unknown): error is Error {
 /**
  * Reduce a transport failure to a class and record it for the operator.
  *
- * The log keeps the class and nothing else — no message, no stack, no name:
- * the message is untrusted text that may hold the workspace's key. The code is
- * the grep anchor, the same way the provider failure's code is.
+ * The log keeps the class — no message, no stack, no name: the message is
+ * untrusted text that may hold the workspace's key. The code is the grep
+ * anchor, the same way the provider failure's code is, and the attribution
+ * says whose call failed, so a line is not ambiguous in an installation with
+ * several workspaces.
  */
-export function transportFailure(): string {
-  console.error("ai provider error", { code: TRANSPORT_ERROR });
+export function transportFailure(context?: ProviderAttribution): string {
+  console.error("ai provider error", {
+    code: TRANSPORT_ERROR,
+    ...logContext(context),
+  });
   return PROVIDER_UNREACHABLE;
 }
 
@@ -280,9 +399,12 @@ export function transportFailure(): string {
  * and the code. Everything else is a transport failure and is reduced here: a
  * class carries no key material whatever the key looks like.
  */
-export function providerClass(error: unknown): string {
+export function providerClass(
+  error: unknown,
+  context?: ProviderAttribution,
+): string {
   if (isProviderClassError(error)) return error.message;
-  return transportFailure();
+  return transportFailure(context);
 }
 
 export type AiRuntimeConfig = {
@@ -294,6 +416,26 @@ export type AiRuntimeConfig = {
   /** Workspace the call is billed to; absent for the env/global defaults. */
   workspaceId?: string;
 };
+
+/**
+ * The attribution of a call: the workspace, the provider and the model — and
+ * the key the call was made with, which is the value the guard compares
+ * against.
+ *
+ * Only what the config knows — the endpoint is never part of it. A config
+ * without a workspace (the env defaults, the admin's connection test) yields
+ * an attribution without one: a missing value is left out, never guessed.
+ */
+export function providerAttribution(
+  config: AiRuntimeConfig,
+): ProviderAttribution {
+  return {
+    workspaceId: config.workspaceId,
+    provider: config.provider,
+    model: config.model,
+    apiKey: config.apiKey,
+  };
+}
 
 /**
  * Monthly token ceiling for every AI call, read from `AI_BUDGET_TOKENS`.
@@ -476,7 +618,7 @@ export async function chatComplete(
     if (!response.ok) {
       const text = await response.text();
       const failure = providerFailure(response.status, text, config.apiKey);
-      logProviderFailure(failure);
+      logProviderFailure(failure, providerAttribution(config));
       return { ok: false, status: 502, error: failure.message };
     }
     const data = (await response.json()) as {
@@ -506,7 +648,7 @@ export async function chatComplete(
     // even scrubbed, since a scrubber only knows credential *shapes* and the
     // tail of a key with an interior newline is no shape at all. The class
     // goes to the client, the class goes to the log.
-    return { ok: false, status: 502, error: transportFailure() };
+    return { ok: false, status: 502, error: transportFailure(providerAttribution(config)) };
   }
 }
 
@@ -551,7 +693,7 @@ export async function* chatCompleteStream(
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     const failure = providerFailure(response.status, detail, config.apiKey);
-    logProviderFailure(failure);
+    logProviderFailure(failure, providerAttribution(config));
     // Thrown as a class: a caller may forward the message, and the message is
     // the class — never the provider's body.
     throw new ProviderClassError(failure.code, failure.message);
