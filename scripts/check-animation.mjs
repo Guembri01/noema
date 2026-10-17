@@ -131,11 +131,28 @@ async function main() {
 
   // 1. The timing tiers themselves, on the gallery.
   let galleryReachable = false;
+  let galleryHydrated = false;
   try {
     const response = await page.goto(`${BASE}/dev/ui`, { waitUntil: "domcontentloaded", timeout: 30_000 });
     galleryReachable = Boolean(response) && response.status() === 200 && (await page.locator('[data-testid="motion-gallery"]').count()) > 0;
+    if (galleryReachable) {
+      await page.waitForTimeout(1500);
+      // An un-hydrated page still *renders* (the demos carry inline styles, so their
+      // computed timings are readable) but nothing is interactive. That happens when a
+      // dev server is sharing a `.next` with a production build and serving its own
+      // chunks as 404s — a harness problem, not a motion problem, so it must be
+      // reported as a skip rather than as a failure of the demos.
+      galleryHydrated = await page.evaluate(() => {
+        const node = document.querySelector('[data-testid="motion-reduce-toggle"]');
+        return Boolean(node) && Object.keys(node).some((key) => key.startsWith("__react"));
+      });
+    }
   } catch {
     galleryReachable = false;
+  }
+
+  if (galleryReachable && !galleryHydrated) {
+    skip("the interactive gallery checks", "the page rendered but did not hydrate — start a clean dev server: remove .next, then npx next dev -p 3200");
   }
 
   if (galleryReachable) {
@@ -151,8 +168,8 @@ async function main() {
       record(atTier(timing, tier), `${testId} animates at its tier`, timing ? `${maxOf([...timing.transition, ...timing.animation])}ms (expected ~${tier}ms)` : "element not found");
     }
     const reduceToggle = page.locator('[data-testid="motion-reduce-toggle"]');
-    if ((await reduceToggle.count()) > 0) {
-      await reduceToggle.click();
+    if ((await reduceToggle.count()) > 0 && galleryHydrated) {
+      await reduceToggle.setChecked(true).catch(() => {});
       await page.waitForTimeout(300);
       const collapsed = await page.evaluate((ceiling) => {
         const root = document.querySelector('[data-testid="motion-gallery"]');

@@ -43,6 +43,15 @@ function styleSrcOf(csp: string): string {
   return csp.split(";").map((d) => d.trim()).find((d) => d.startsWith("style-src")) ?? "";
 }
 
+/**
+ * The middleware's *document* CSP adds 'unsafe-eval' in development only. Next's dev
+ * runtime evaluates module boundaries, and without it a page renders but never
+ * hydrates — measured in a browser (a rendered node carried no React props and the
+ * browser reported the eval violation), not inferred. The static map and every
+ * production build keep it out.
+ */
+const DEV_EVAL = process.env.NODE_ENV === "production" ? "" : " 'unsafe-eval'";
+
 describe("CSP builder (src/lib/security-headers.ts)", () => {
   it("static CSP: script-src is 'self' + pinned theme hash, no unsafe-inline", () => {
     const csp = buildCsp();
@@ -148,7 +157,7 @@ describe("CSP nonce middleware (src/middleware.ts)", () => {
     expect(nonce, "response CSP carries no nonce Next can extract").toBeTruthy();
     expect(nonce).toMatch(/^[A-Za-z0-9+/]+={0,2}$/);
     expect(scriptSrcOf(served!)).toBe(
-      `script-src 'self' 'nonce-${nonce}' '${THEME_SCRIPT_SHA256}'`,
+      `script-src 'self' 'nonce-${nonce}' '${THEME_SCRIPT_SHA256}'${DEV_EVAL}`,
     );
     expect(scriptSrcOf(served!)).not.toContain("'unsafe-inline'");
     expect(styleSrcOf(served!)).toBe("style-src 'self' 'unsafe-inline'");

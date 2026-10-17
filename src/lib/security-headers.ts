@@ -74,14 +74,28 @@ const FRAME_SRC = [
  *   (`script-src 'self'` only - middleware-skipped/static fallback).
  *   Same directive order as B61 so live diffs are reviewable.
  */
-export function buildCsp(nonce?: string | null): string {
+export function buildCsp(nonce?: string | null, options: { dev?: boolean } = {}): string {
+  // Development needs `'unsafe-eval'`: Next's dev runtime evaluates module
+  // boundaries, and without it the *whole page* fails to hydrate — the markup renders
+  // (SSR) so it looks fine, but nothing is interactive. Measured, not assumed: the
+  // comment above used to claim "dev included — verified by the B98 chromium probe",
+  // and that probe was wrong. A rendered node carried no React props key and the
+  // browser reported the eval violation. Production still has no `'unsafe-eval'`,
+  // which is where it matters, and `npm run check:csp` keeps asserting that.
+  const allowEval = options.dev === true;
   return [
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'self'",
-    ["script-src", "'self'", nonce ? `'nonce-${nonce}'` : null, `'${THEME_SCRIPT_SHA256}'`]
+    [
+      "script-src",
+      "'self'",
+      nonce ? `'nonce-${nonce}'` : null,
+      `'${THEME_SCRIPT_SHA256}'`,
+      allowEval ? "'unsafe-eval'" : null,
+    ]
       .filter(Boolean)
       .join(" "),
     "style-src 'self' 'unsafe-inline'",

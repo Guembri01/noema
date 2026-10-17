@@ -108,7 +108,11 @@ export function middleware(request: NextRequest): NextResponse {
   if (blocked) return blocked;
 
   const nonce = btoa(crypto.randomUUID());
-  const csp = buildCsp(nonce);
+  // Next's dev runtime evaluates module boundaries, so a document CSP without
+  // `'unsafe-eval'` leaves every page rendered but *inert* — no hydration, no
+  // interactivity. Only development loosens it; a production build (and the static
+  // map, which passes no options) keeps `'unsafe-eval'` out.
+  const csp = buildCsp(nonce, { dev: process.env.NODE_ENV !== "production" });
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set(NONCE_HEADER, nonce);

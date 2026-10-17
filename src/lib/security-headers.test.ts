@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import nextConfig, { SECURITY_HEADERS } from "../../next.config";
-import { cspNonce, THEME_SCRIPT_SHA256 } from "./security-headers";
+import { buildCsp, cspNonce, THEME_SCRIPT_SHA256 } from "./security-headers";
 
 /**
  * B61 - security headers on EVERY response (docs/audits/security-1.md M9,
@@ -59,7 +59,16 @@ describe("security headers (next.config.ts)", () => {
     }
     // Enforced, not report-only.
     expect(csp).not.toMatch(/Content-Security-Policy-Report-Only/);
+    // `unsafe-eval` must never reach a shipped build. The static map is the shipped
+    // shape by construction (no options), and the per-document CSP the middleware
+    // builds may add it in development only — because Next's dev runtime evaluates
+    // module boundaries, and without it the whole page fails to hydrate: the markup
+    // renders, so it looks fine, but nothing is interactive. That was measured in a
+    // browser (a rendered node carried no React props, and the browser reported the
+    // eval violation), not inferred.
     expect(csp).not.toContain("unsafe-eval");
+    expect(buildCsp(null, { dev: true })).toContain("'unsafe-eval'");
+    expect(buildCsp(null, { dev: false })).not.toContain("unsafe-eval");
     // B98: 'unsafe-inline' dropped from script-src - Next.js App Router
     // hydration scripts are nonced per response by src/middleware.ts (this
     // static map is the fallback for middleware-skipped paths). The pinned
