@@ -11,6 +11,13 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Security
+
+- The "Ask AI" grounding search honours the guest page scope. A guest's prompt
+  is now answered only from the pages that were shared with them — page titles
+  and text no longer leak from the rest of the workspace through the model
+  context — while a member still grounds in the whole workspace.
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour
