@@ -46,6 +46,14 @@ describe("verifyTotp", () => {
     expect(verifyTotp(RFC_SECRET, previous, 59_000, 1)).toBe(true);
     expect(verifyTotp(RFC_SECRET, previous, 59_000, 0)).toBe(false);
   });
+
+  it("refuses anything that is not a TOTP code", () => {
+    // The code space is digits only, so a recovery code could never be
+    // entered: there is no recovery path in the sign-in.
+    expect(verifyTotp(RFC_SECRET, "1234-5678", 59_000)).toBe(false);
+    expect(verifyTotp(RFC_SECRET, "ABCD-EFGH", 59_000)).toBe(false);
+    expect(verifyTotp(RFC_SECRET, "12345", 59_000)).toBe(false);
+  });
 });
 
 describe("otpauth url", () => {

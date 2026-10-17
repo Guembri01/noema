@@ -77,6 +77,11 @@ The central decision is **"everything is a page."**
   the submitted e-mail address) and one for the 2FA guesses. Five consecutive
   failures lock the account for a while; the counter and the lock live on the
   user row (`User.failedLoginCount`, `User.lockedUntil`).
+- Two-factor authentication is **TOTP only** (`src/lib/totp.ts`): the sign-in
+  checks a six- to eight-digit code and nothing else. There are **no recovery
+  codes** — none are issued, none are stored and none would be accepted, so the
+  settings dialog does not offer any (a lost authenticator locks the account
+  until an operator resets it, see `docs/OPERATIONS.md` §9).
 
 ## Authorization
 
