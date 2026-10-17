@@ -544,11 +544,22 @@ async function main() {
     }
 
     // Ordered by name, so the gallery reads 01…44 whichever context captured
-    // which shot — and so `--only` still writes a file the docs can render.
+    // which shot.
     report.sort((a, b) => a.name.localeCompare(b.name));
-    writeFileSync(join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-    writeGallery(report);
-    console.log(`\n${report.length} screenshot(s) → docs/screenshots/`);
+
+    // A partial run refreshes the images it names and leaves the index alone:
+    // `--only db-` would otherwise rewrite `report.json` — and `docs/GALLERY.md`,
+    // which is built from it — to describe three images and drop the other
+    // forty. The PNGs are written either way.
+    if (selected.length === all.length) {
+      writeFileSync(join(OUT, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+      writeGallery(report);
+    } else {
+      console.log(
+        `\n${report.length} of ${all.length} shot(s) refreshed — report.json and docs/GALLERY.md left alone`,
+      );
+    }
+    console.log(`${report.length} screenshot(s) → docs/screenshots/`);
   } finally {
     await browser.close();
   }
