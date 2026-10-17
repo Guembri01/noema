@@ -111,7 +111,7 @@ jobs:
       # The gate's own regression test runs with it: the shapes it closes are
       # pinned there, so a hole cannot re-open unnoticed.
       - name: Secret gate
-        run: node scripts/check-secrets.mjs && node scripts/check-secrets.test.mjs
+        run: node scripts/check-secrets.mjs && npx vitest run scripts/check-secrets.test.mjs
 
       # The scan above sees only the *present* of the repository. The *past* is
       # a second gate: a credential that was committed and later removed is
