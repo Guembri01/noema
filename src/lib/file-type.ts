@@ -165,8 +165,16 @@ export const ICON_BY_CATEGORY: Readonly<Record<FileCategory, string>> = {
   other: "📎",
 };
 
-/** Lower-case a MIME and drop any `; charset=…` parameters. */
-function normalizeMime(mime: string): string {
+/**
+ * Lower-case a MIME and drop any `; charset=…` parameters.
+ *
+ * The **base** type is what every type decision has to compare: a browser
+ * may declare `image/svg+xml; charset=utf-8`, and a rule that compares the
+ * raw string would not recognise it. The allow-list compares the base type
+ * ({@link isAllowedType}), so a rule next to it has to compare the same
+ * value.
+ */
+export function baseMimeType(mime: string): string {
   return (mime ?? "").split(";", 1)[0].trim().toLowerCase();
 }
 
@@ -187,7 +195,7 @@ export function mimeForExt(ext: string): string {
 
 /** Canonical extension for a MIME type ("image/png" → "png"); unknown → `""`. */
 export function extForMime(mime: string): string {
-  return EXT_BY_MIME[normalizeMime(mime)] ?? "";
+  return EXT_BY_MIME[baseMimeType(mime)] ?? "";
 }
 
 /** Resolve a MIME, extension or file name down to a lower-case extension. */
@@ -217,7 +225,7 @@ function categoryOfMime(mime: string): FileCategory {
  */
 export function fileCategory(input: string): FileCategory {
   const value = (input ?? "").trim().toLowerCase();
-  if (value.includes("/")) return categoryOfMime(normalizeMime(value));
+  if (value.includes("/")) return categoryOfMime(baseMimeType(value));
   return categoryOfMime(mimeForExt(resolveExt(value)));
 }
 
@@ -244,7 +252,7 @@ export type AllowedTypeOptions = {
  * allow-all rule `*` (also `*` + slash + `*`). An empty list fails closed.
  */
 export function isAllowedType(mime: string, options: AllowedTypeOptions): boolean {
-  const target = normalizeMime(mime) || DEFAULT_MIME;
+  const target = baseMimeType(mime) || DEFAULT_MIME;
   const category = categoryOfMime(target);
   const extension = extForMime(target);
   for (const raw of options.allow) {

@@ -186,6 +186,24 @@ describe("GET /api/external-image - the response", () => {
     await expect(res.json()).resolves.toEqual({ error: "Unsafe image" });
   });
 
+  it("415s an SVG that is not valid UTF-8", async () => {
+    // A UTF-16 document interleaves a NUL after every ASCII character. A
+    // lenient decoder replaces the invalid bytes, the rule reads the
+    // replacement characters instead of the markup — and a browser would
+    // decode the file as UTF-16 and find the script the rule never saw.
+    const source = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>';
+    const utf16 = new Uint8Array(source.length * 2);
+    for (let i = 0; i < source.length; i += 1) {
+      utf16[i * 2] = source.charCodeAt(i) & 0xff;
+      utf16[i * 2 + 1] = source.charCodeAt(i) >> 8;
+    }
+    fetchMock.mockResolvedValue(imageResponse(utf16, "image/svg+xml"));
+
+    const res = await call("https://images.unsplash.com/a.svg");
+    expect(res.status).toBe(415);
+    await expect(res.json()).resolves.toEqual({ error: "Unsafe image" });
+  });
+
   it("413s a body over the cap", async () => {
     fetchMock.mockResolvedValue(imageResponse(new Uint8Array(5 * 1024 * 1024 + 1)));
     const res = await call("https://images.unsplash.com/big.png");
