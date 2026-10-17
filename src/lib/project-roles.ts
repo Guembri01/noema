@@ -20,7 +20,7 @@
  *   effective role is the more privileged of the workspace baseline and the
  *   override, so a guest can be raised to `editor` on one project while a
  *   workspace owner or admin keeps their floor everywhere (mirroring the
- *   implicit OWNER/ADMIN baseline in `access-inheritance.ts`).
+ *   OWNER/ADMIN grant list of `permissions.ts`).
  * - **Fail closed.** Unknown roles, unknown actions, blanks and wrong types are
  *   denied (`canProjectAction`), dropped (`createRoleOverride`) or reported
  *   (`validateRoleMatrix`); nothing throws.

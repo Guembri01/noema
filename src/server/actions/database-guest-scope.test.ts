@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * B95 — the database actions must honour the guest page scope.
  *
  * A guest may read a database only when it lies in their *read* scope: the
- * pages shared with them plus their whole subtree (the inheritance rule of
- * `access-inheritance.ts` — a grant covers the page itself and its
+ * pages shared with them plus their whole subtree (the guest rule of
+ * `lib/guest-access.ts` — a grant covers the page itself and its
  * descendants, never its ancestors). `authorizeDatabase()` resolves the
  * workspace *membership* only, so before the fix a guest could list the
  * trashed rows of every database of the workspace — title, icon and deletion

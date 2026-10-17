@@ -4,11 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * B90 — the linked-database actions must honour the guest page scope.
  *
  * A guest may read a database only when it lies in their *read* scope: the
- * pages shared with them plus their whole subtree (the inheritance rule of
- * `access-inheritance.ts` — a grant covers the page itself and its
- * descendants, never its ancestors). Both actions are reachable from the
- * editor (`components/editor/extensions/linked-database.tsx`), so without the
- * scope a guest could list every database of the workspace and read its rows.
+ * pages shared with them plus their whole subtree (a grant covers the page
+ * itself and its descendants, never its ancestors). Both actions are reachable
+ * from the editor (`components/editor/extensions/linked-database.tsx`), so
+ * without the scope a guest could list every database of the workspace and
+ * read its rows.
  *
  * Only the transport edges (prisma/auth/permissions/queries) are mocked — the
  * real scope computation (`lib/guest-access.ts`) and the real action logic run.
