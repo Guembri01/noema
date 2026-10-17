@@ -79,7 +79,7 @@ describe("the IPC bridge of the desktop shell (B57)", () => {
     // to the shell's internals, and a newer package can expect a newer
     // transport than the crate provides.
     const lock = readFileSync(join(root, "src-tauri", "Cargo.lock"), "utf8");
-    const crate = lock.match(/name = "tauri"\nversion = "([^"]+)"/)?.[1];
+    const crate = lock.match(/name = "tauri"\r?\nversion = "([^"]+)"/)?.[1];
     expect(crate, "the version of the tauri crate").toBeTruthy();
     const wanted = String(pkg.dependencies["@tauri-apps/api"]).replace(/^[^\d]*/, "");
     expect(wanted.startsWith(crate)).toBe(true);

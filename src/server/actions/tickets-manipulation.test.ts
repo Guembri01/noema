@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   ticket: {
     findUnique: vi.fn(),
+    findMany: vi.fn(),
     delete: vi.fn(),
     deleteMany: vi.fn(),
     updateMany: vi.fn(),
@@ -54,6 +55,9 @@ beforeEach(() => {
     key: "NOE-1",
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
   });
+  db.ticket.findMany.mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) =>
+    (args?.where?.id?.in ?? []).map((id) => ({ id })),
+  );
   db.ticketActivity.create.mockResolvedValue({ id: "a1" });
 });
 
