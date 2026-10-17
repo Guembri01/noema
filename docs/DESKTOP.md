@@ -464,12 +464,16 @@ connection**, paste a `DATABASE_URL`, and press **Save & restart**. **Copy
 diagnostics** puts a redacted report (host, port, app version, recent log lines —
 password never included) on the clipboard.
 
-Two environment variables are honoured, which is how a portable install or a
+Three environment variables are honoured, which is how a portable install or a
 support session works without touching the UI:
 
 ```
 NOEMA_DATABASE_URL   the Postgres connection string
 NOEMA_DATA_DIR       where logs/ and backups/ live
+NOEMA_ALLOW_LOOPBACK_TARGETS  1 = allow an outbound webhook to point at the
+                                loopback range (127.0.0.0/8, ::1, localhost);
+                                unset = refused (the default). The opt-in
+                                opens the loopback range only — see SECURITY.md
 ```
 
 Uninstall: **Settings → Apps → Noema → Uninstall**, or the `uninstall.exe` in the
