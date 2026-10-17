@@ -91,13 +91,17 @@ This is intentionally centralized so a future public API can reuse it.
 
 A second, separate guard covers the page *tree*: `assertScopedParent()`
 ([`src/lib/page-parent.ts`](../src/lib/page-parent.ts)) loads a parent
-**tenant-scoped** (`{ id, workspaceId }`) and refuses a parent that lives in
-another workspace — the foreign page is never read and the error never names
-it. A page therefore never hangs under a page of a different workspace, which
-keeps it out of the foreign workspace's database view and CSV/JSON export, and
-keeps Postgres' `onDelete: Cascade` from deleting it together with a foreign
-parent. Every write path that stores a `Page.parentId` goes through that
-helper; the read side filters a database's rows by the database's workspace.
+**tenant-scoped** (`{ id, workspaceId, deletedAt: null }`) and refuses a parent
+that lives in another workspace or that is in the trash — the foreign page is
+never read and the error never names it. A page therefore never hangs under a
+page of a different workspace, which keeps it out of the foreign workspace's
+database view and CSV/JSON export, and keeps Postgres' `onDelete: Cascade` from
+deleting it together with a foreign parent. Every write path that stores a
+`Page.parentId` goes through that helper; the read side filters a database's
+rows by the database's workspace. The rule is enforced mechanically by
+[`scripts/check-parent-scope.mjs`](../scripts/check-parent-scope.mjs): the gate
+fails when a `Page.parentId` is written outside `assertScopedParent()` without
+a reasoned allow-list entry.
 
 ## Editor
 

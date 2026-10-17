@@ -83,6 +83,12 @@ jobs:
       - name: Server boundaries
         run: node scripts/check-use-server.mjs
 
+      # A `Page.parentId` may only be written through `assertScopedParent()`:
+      # the tenant boundary is enforced in the application, so a write path
+      # that skips the helper re-opens the cross-tenant hole.
+      - name: Parent scope
+        run: node scripts/check-parent-scope.mjs
+
       - name: Client bundle
         run: node scripts/check-client-bundle.mjs
 

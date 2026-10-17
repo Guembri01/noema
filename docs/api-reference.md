@@ -353,6 +353,13 @@ rate scope `templates` (30/min)
   template id, …)
 - **401** unauthenticated · **429** rate limited
 - **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
+- `parentId`, when given, must name a page **of the same workspace** — a
+  foreign parent (or one that does not exist, or one that is in the trash) is
+  refused with **400** `That parent page does not exist in this workspace.`,
+  the same refusal a page of the caller's own workspace would get. The check
+  runs **after** the workspace-membership check of the backing action, so a
+  caller who is not a member of the workspace learns nothing about the page
+  ids of that workspace.
 
 ### `GET /api/link-preview?url=` — OpenGraph metadata for bookmark blocks
 
@@ -732,6 +739,25 @@ from a binary PDF itself.
 - **200** `{"ok":true,…}` · **400** `Invalid JSON body.` or any action
   `{error}` · **401** · **429**
 - **413** `Request body too large.` — the body is over the 8 MiB budget (§3)
+
+### `POST /api/import/pdf` — import a PDF text layer
+Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
+cookie session · rate scope `pdf-import` (30/min)
+
+```json
+{ "workspaceId": "…", "parentId": null, "filename": "notes.pdf", "text": "…" }
+```
+
+Delegates to `importPdfTextAction`
+([`src/server/actions/import-pdf.ts`](../src/server/actions/import-pdf.ts)),
+which runs the `pdf-import` engine over the extracted text layer and stores the
+recovered blocks as one page.
+
+- `parentId`, when given, must name a page **of the same workspace** — a
+  foreign parent is refused with **400** `That parent page does not exist in
+  this workspace.` and **nothing is written**.
+- **200** `{"ok":true,"id":"…","slug":"…","format":"pdf","title":"…","pages":1,…}`
+- **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
 
 ### `POST /api/import/pdf` — import a PDF text layer
 Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·

@@ -444,7 +444,11 @@ list marks it as **No access**.
   It therefore no longer turns up in that workspace's database view or in its
   CSV/JSON export, and it is no longer swept along by the foreign workspace's
   cascade delete. The database and export views filter their rows by the
-  workspace as well.
+  workspace as well — and so do the "Deleted rows" panel, the database
+  duplicate (which copies a database's rows **with their content**) and the
+  chat context that is sent to the AI, so a row that was linked across
+  workspaces before the check existed no longer surfaces there. The invariant
+  is enforced by a repository gate (`scripts/check-parent-scope.mjs`).
 - A failed AI call handed the workspace's provider key to the client. On a
   non-2xx answer the provider's error body was sliced to 200 characters and
   returned verbatim in the `error` field, and several OpenAI-compatible
@@ -506,6 +510,9 @@ list marks it as **No access**.
   number, so a retry is recognised even when it arrives with a different
   framing, and a key that is reused for a different body is still refused with
   `422 idempotency_key_reuse`.
+
+
+
 
 ### Changed
 

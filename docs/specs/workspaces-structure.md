@@ -194,9 +194,13 @@ the drift (§13).
   (Notion, Docx, Trello, Zip, Markdown, CSV, HTML, PDF), the chat-answer save
   and the page/database duplicate paths. The **invariant** it enforces:
   *a `parentId` always points inside the same workspace*. The read side
-  follows: `getDatabase` and both export routes filter a database's rows by
-  the database's workspace, so a row that was linked across workspaces before
-  the fix no longer surfaces in the foreign workspace's views.
+  follows: `getDatabase`, both export routes, the "Deleted rows" panel, the
+  database duplicate and the chat context filter a database's rows by the
+  database's workspace, so a row that was linked across workspaces before
+  the fix no longer surfaces in the foreign workspace's views — and the
+  duplicate no longer copies such a row **with its content**. The invariant
+  is enforced mechanically by `scripts/check-parent-scope.mjs`, which fails
+  when a `Page.parentId` is written outside the helper.
 - **R80.8** — **Bulk move ships as a pure-logic-first feature.** (a) Selection
   model added to `src/lib/page-tree.ts` (multi-select set, shift-range over
   `flattenVisible` order, "all selected editable" predicate) with unit tests
