@@ -560,8 +560,11 @@ same Bearer authentication.
 
 JSON-RPC 2.0 over HTTP: `initialize`, `tools/list`, `tools/call`,
 `resources/list`, `resources/read`. Read-first and fail-closed — the caller's
-token must carry the scope of every tool it calls, and a write call needs
-`?allowWrite=true` plus an edit-capable role.
+token must carry the scope of every tool it calls **and of every resource it
+reads**: a page needs `read:pages`, a page's comments `read:comments`, a
+database and its rows `read:databases`. A missing scope answers **-32003**
+`Insufficient scope.` on both paths — before the database is touched. A write
+call needs `?allowWrite=true` plus an edit-capable role.
 
 - **200** the JSON-RPC result (or the JSON-RPC `error` object) · **400**
   `Invalid JSON body.` / `Invalid request.` · **401** `Unauthorized` ·
