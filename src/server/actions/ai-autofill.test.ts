@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 /**
  * `runAiAutofillAction` — run an AI-autofill column's prompt for a row and
  * write the target property. The column config is untrusted stored JSON, so the
- * action must validate it before calling the provider, and it must never write
- * across a workspace boundary.
+ * action must validate it before calling the provider, it must never write
+ * across a workspace boundary, and the column the value is written into must
+ * belong to the row's own database (B99).
  *
  * Only prisma, auth, permissions, the provider and the cache are mocked; the
  * action's validation and ordering logic run for real.
@@ -12,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const db = vi.hoisted(() => ({
   propertyFindUnique: vi.fn(),
+  propertyFindFirst: vi.fn(),
   pageFindUnique: vi.fn(),
   valueUpsert: vi.fn(),
 }));
@@ -21,7 +23,7 @@ const ai = vi.hoisted(() => ({ resolveAiConfig: vi.fn(), chatComplete: vi.fn() }
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    property: { findUnique: db.propertyFindUnique },
+    property: { findUnique: db.propertyFindUnique, findFirst: db.propertyFindFirst },
     page: { findUnique: db.pageFindUnique },
     propertyValue: { upsert: db.valueUpsert },
   },
@@ -50,6 +52,17 @@ const CONFIG = {
 
 const INPUT = { workspaceId: "ws1", rowId: "row1", propertyId: "p1" };
 
+/**
+ * The columns of the fake database: the AI column `p1` and its target `p2`,
+ * both of them columns of the database `db1` the row hangs under. A column of
+ * another database is not found — the fake applies the filter the real
+ * database applies.
+ */
+const COLUMNS = [
+  { id: "p1", databasePageId: "db1" },
+  { id: "p2", databasePageId: "db1" },
+];
+
 beforeEach(() => {
   vi.clearAllMocks();
   auth.requireUser.mockResolvedValue({ id: "u1" });
@@ -61,9 +74,22 @@ beforeEach(() => {
     config: { prompt: "Summarize the row.", targetPropertyId: "p2" },
     databasePage: { workspaceId: "ws1" },
   });
+  db.propertyFindFirst.mockImplementation(
+    async (args: { where: { id?: string; databasePageId?: string } }) => {
+      const where = args.where ?? {};
+      const column = COLUMNS.find(
+        (candidate) =>
+          (where.id === undefined || candidate.id === where.id) &&
+          (where.databasePageId === undefined ||
+            candidate.databasePageId === where.databasePageId),
+      );
+      return column ? { id: column.id } : null;
+    },
+  );
   db.pageFindUnique.mockResolvedValue({
     id: "row1",
     workspaceId: "ws1",
+    parentId: "db1",
     title: "Launch plan",
     propertyValues: [{ value: { text: "Body text" }, property: { name: "Notes" } }],
   });
