@@ -183,4 +183,49 @@ describe("globals.css wiring", () => {
     expect(css).toContain("transition-duration: 0.01ms !important");
     expect(css).toContain("scroll-behavior: auto !important");
   });
+
+  /**
+   * Brace depth at a source index: `0` is the top level, i.e. outside every
+   * `@layer { … }` block. This is the property that matters for the focus-ring
+   * rules below — a *layered* rule loses to the layered utilities it exists to
+   * beat, however specific it is.
+   */
+  function depthAt(index: number): number {
+    let depth = 0;
+    for (let i = 0; i < index; i++) {
+      if (css[i] === "{") depth++;
+      else if (css[i] === "}") depth--;
+    }
+    return depth;
+  }
+
+  it("keeps the global a11y focus ring unlayered", () => {
+    const ring =
+      ":where(a, button, input, select, textarea, [tabindex]):focus-visible";
+    const at = css.indexOf(ring);
+    expect(at, "global focus ring missing from globals.css").toBeGreaterThanOrEqual(0);
+    expect(depthAt(at)).toBe(0);
+    expect(ruleBody(ring)).toContain("outline: 2px solid var(--accent)");
+  });
+
+  it("opts the writing surfaces out of the ring, unlayered too", () => {
+    // A page is *written* in the title and in the editor body, so an accent box
+    // around the caret reads as a selection; the caret is the affordance. The
+    // editor's own `outline: none` sits in `@layer components` and therefore
+    // cannot beat the unlayered ring — which is what framed the whole writing
+    // area, since ProseMirror's node carries `tabindex="0"`.
+    const title = css.indexOf(".noema-page-title:focus-visible");
+    const editor = css.indexOf(".noema-editor .ProseMirror:focus-visible");
+    expect(title, "page-title opt-out missing").toBeGreaterThanOrEqual(0);
+    expect(editor, "editor-body opt-out missing").toBeGreaterThanOrEqual(0);
+    expect(depthAt(title)).toBe(0);
+    expect(depthAt(editor)).toBe(0);
+    expect(ruleBody(".noema-editor .ProseMirror:focus-visible")).toContain(
+      "outline: none",
+    );
+    // Sanity check on `depthAt`: a rule we know lives in `@layer components`
+    // must report a depth above zero, so the assertions above cannot pass by
+    // accident.
+    expect(depthAt(css.indexOf(".noema-page-canvas .ProseMirror"))).toBeGreaterThan(0);
+  });
 });

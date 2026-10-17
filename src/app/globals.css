@@ -1405,11 +1405,15 @@ body {
   outline-offset: 2px;
 }
 
-/* The page title is where a page is *written*, not a control to operate: an
-   accent box around the caret reads as a selection. The caret — plus the title
-   row's own hover chrome — is the affordance, so the title opts out of the ring
-   above. Every real control keeps it. */
-.noema-page-title:focus-visible {
+/* A page's writing surfaces — the title and the editor body — are where text is
+   written, not controls to operate: an accent box around the caret reads as a
+   selection. The caret is the affordance, so both opt out of the ring above.
+   `.noema-editor .ProseMirror` already asks for `outline: none`, but that rule
+   sits in `@layer components` and so cannot beat this unlayered safety net —
+   and ProseMirror's own node carries `tabindex="0"`, which is what matched the
+   ring. Every real control keeps it. */
+.noema-page-title:focus-visible,
+.noema-editor .ProseMirror:focus-visible {
   outline: none;
 }
 @layer components {
