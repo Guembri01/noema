@@ -5,10 +5,11 @@ import { fileURLToPath } from "node:url";
 /**
  * B30 — the ops gate: **the rate limit runs before the secret comparison**.
  *
- * RED-first against the routes as shipped. In eight of the nine ops gates the
- * secret was compared *first* and throttled *afterwards*, so a wrong secret
- * was answered 401 forever: the guessing was unbounded, and the limit that
- * was supposed to bound it never saw the attempt. The comparison itself was
+ * RED-first against the routes as shipped. In seven of the nine gate files the
+ * secret was compared *first* and throttled *afterwards* — and the server
+ * actions had no limit at all — so a wrong secret was never bounded: the
+ * guessing was unbounded, and the limit that was supposed to bound it never
+ * saw the attempt. The comparison itself was
  * a plain `===` on two strings, which returns at the first differing byte.
  *
  * The shared gate (`@/lib/ops-guard`) now owns the order — 503 (no secret
@@ -16,17 +17,20 @@ import { fileURLToPath } from "node:url";
  * throttled instead of probing the comparison.
  *
  * **Every** gate is pinned here, not a sample of them: the `GATES` list
- * below drives all eight ops routes (eleven handlers) through the same four
+ * below drives all eight ops routes (eleven handlers) through the same five
  * cases, so "the limit runs first" is a *test* and not a code shape:
  *
- *   1. a wrong secret + a spent budget ⇒ **429** (not 401) — the regression
+ *   1. no secret configured ⇒ **503** `{"error":"…is not configured…"}` (fail
+ *      closed) — **401** at `/api/metrics`, whose session-admin path would be
+ *      locked out by a 503;
+ *   2. a wrong secret + a spent budget ⇒ **429** (not 401) — the regression
  *      guard. A route that compared first would answer 401 here and the
  *      guessing would be unbounded;
- *   2. the correct secret + a spent budget ⇒ 429 (the limit covers
+ *   3. the correct secret + a spent budget ⇒ 429 (the limit covers
  *      legitimate calls too);
- *   3. the correct secret + a free budget ⇒ the request runs (the gate does
+ *   4. the correct secret + a free budget ⇒ the request runs (the gate does
  *      not reject it);
- *   4. a wrong secret + a free budget ⇒ 401 `{"error":"Unauthorized"}`.
+ *   5. a wrong secret + a free budget ⇒ 401 `{"error":"Unauthorized"}`.
  *
  * `/api/metrics` is the one exception in the *not configured* case: it has a
  * second, session-based admin path, so without a configured secret it
@@ -384,14 +388,37 @@ describe("the ops gate — no `===` on a secret survives", () => {
     throw new Error(`unbalanced braces in ${name}`);
   }
 
+  /**
+   * The comparison scope of the helper: the body of `safeSecretEqual` plus
+   * the bodies of the same-file functions it calls — a hand-rolled byte loop
+   * could be delegated one level down.
+   *
+   * The scope is deliberately **not** the whole file: an unrelated
+   * `Buffer.from(` — e.g. in `opsSecretLimitKey`, which hashes the
+   * configured secret — is not a copy of the byte loop and must not turn the
+   * scan red.
+   */
+  function comparisonScope(source: string): string {
+    const scope = [functionBody(source, "safeSecretEqual")];
+    for (const call of scope[0].matchAll(/\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g)) {
+      const name = call[1];
+      // Only the functions of *this* file — `constantTimeEqual` is imported.
+      if (!source.includes(`function ${name}(`)) continue;
+      scope.push(functionBody(source, name));
+    }
+    return scope.join("\n");
+  }
+
   it("the helper delegates the comparison to constantTimeEqual (no own copy of the byte loop)", () => {
     const source = readFileSync(repoFile(HELPER_FILE), "utf8");
     expect(source).toContain("constantTimeEqual(");
     const body = functionBody(source, "safeSecretEqual");
     expect(body).toContain("constantTimeEqual(");
-    // A hand-rolled byte loop would need buffers or char codes of its own.
-    expect(source, "the helper must not copy the byte loop").not.toMatch(/Buffer\.from\(/);
-    expect(source, "the helper must not copy the byte loop").not.toMatch(/charCodeAt/);
+    // A hand-rolled byte loop would need buffers or char codes of its own —
+    // inside the comparison, not anywhere in the helper.
+    const scope = comparisonScope(source);
+    expect(scope, "the helper must not copy the byte loop").not.toMatch(/Buffer\.from\(/);
+    expect(scope, "the helper must not copy the byte loop").not.toMatch(/charCodeAt/);
   });
 
   it("the helper never compares the two secrets with ===/!==", () => {
