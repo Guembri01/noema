@@ -10,6 +10,8 @@ import {
   headerClientIp,
   isPrivateSurface,
   parseIpAllowlist,
+  parseTrustedProxyHops,
+  TRUSTED_PROXY_HOPS_ENV,
 } from "./lib/tenant-guard";
 
 /**
@@ -59,9 +61,13 @@ import {
  *    is unset the gate is OPEN (no behaviour change for existing deploys);
  *    once configured it fails CLOSED - a missing, malformed or non-matching
  *    client IP gets a 403, and a configured-but-entirely-invalid allowlist
- *    denies everything rather than silently opening. The client IP is the
- *    first `X-Forwarded-For` hop, falling back to `X-Real-IP` (same
- *    convention as `rate-limit.ts`).
+ *    denies everything rather than silently opening. The client IP is taken
+ *    from the forwarding headers ONLY when the deployment declares how many
+ *    reverse-proxy hops to trust (`TRUSTED_PROXY_HOPS`); without that
+ *    declaration the headers are written by the client itself and are
+ *    ignored, so a configured allowlist denies every request (fail closed)
+ *    until the proxy is declared. See `headerClientIp` in
+ *    `src/lib/tenant-guard.ts` for the exact hop arithmetic.
  *  - Access resolution (`access-inheritance.ts`) is exposed to route handlers
  *    through the same guard; middleware stays DB-free so it does not resolve
  *    grants itself.
@@ -79,6 +85,15 @@ function configuredIpAllowlist(): { configured: boolean; entries: string[] } {
     }
   }
   return { configured: false, entries: [] };
+}
+
+/**
+ * How many reverse-proxy hops in front of the app may set the forwarding
+ * headers. 0 (the default) means the headers are client-controlled and are
+ * ignored — the same rule the rate limiter applies.
+ */
+function trustedProxyHops(): number {
+  return parseTrustedProxyHops(process.env[TRUSTED_PROXY_HOPS_ENV]);
 }
 
 /** A minimal 403 body for a blocked private/admin surface. */
@@ -102,7 +117,7 @@ function ipGate(request: NextRequest): NextResponse | null {
   if (allowlist.entries.length === 0) return forbidden();
 
   const decision = decideIpAllowlist(
-    headerClientIp((name) => request.headers.get(name)),
+    headerClientIp((name) => request.headers.get(name), trustedProxyHops()),
     allowlist.entries,
   );
   return decision.allowed ? null : forbidden();

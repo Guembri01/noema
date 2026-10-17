@@ -273,13 +273,103 @@ export function decideIpAllowlist(
   };
 }
 
-/** Pull the client IP from forwarding headers (XFF first hop, then X-Real-IP). */
-export function headerClientIp(get: (name: string) => string | null): string | null {
+/* ------------------------------------------------------------------ *
+ * Client IP resolution (trusted proxy hops)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Name of the environment variable that declares how many reverse-proxy hops
+ * in front of the app may be trusted. Unset (or anything that is not a
+ * positive integer) means: trust NO forwarding header.
+ */
+export const TRUSTED_PROXY_HOPS_ENV = "TRUSTED_PROXY_HOPS";
+
+/** Upper bound for a parsed hop count — a longer chain is a configuration bug. */
+const MAX_TRUSTED_PROXY_HOPS = 16;
+
+/**
+ * Parse the trusted-proxy hop count from an environment value.
+ *
+ * Fail closed: only a plain positive integer counts as trusted hops, every
+ * other value (`""`, `"0"`, `"-1"`, `"abc"`, `"1.5"`) means "trust no
+ * forwarding header".
+ *
+ * A value **above** the upper bound (`MAX_TRUSTED_PROXY_HOPS`) is rejected
+ * the same way, not clamped: clamping would silently reinterpret a typo
+ * (999 → 16) and declare a trust boundary the operator did not write. Only
+ * a value up to and including the upper bound is a valid declaration; the
+ * upper bound itself still applies.
+ */
+export function parseTrustedProxyHops(raw: string | null | undefined): number {
+  if (typeof raw !== "string") return 0;
+  const text = raw.trim();
+  if (!/^\d+$/.test(text)) return 0;
+  const hops = Number(text);
+  if (!Number.isFinite(hops) || hops <= 0) return 0;
+  if (hops > MAX_TRUSTED_PROXY_HOPS) return 0;
+  return hops;
+}
+
+/**
+ * Resolve the client IP from the forwarding headers.
+ *
+ * `trustedProxyHops` is the number of reverse proxies in front of the app:
+ *
+ *  - **0** (no trusted proxy): the forwarding headers are written by the
+ *    client itself, so they are ignored entirely and the IP is unknown
+ *    (`null`). Callers fail closed on an unknown IP.
+ *  - **N ≥ 1**: the **Nth-from-last** `X-Forwarded-For` hop — the **N-th hop
+ *    from the end**, which is the **real client**: every trusted proxy
+ *    appends the address of its peer, so the last N entries of the chain are
+ *    the ones the trusted proxies appended, and the N-th one from the end is
+ *    the address the proxy closest to the internet saw.
+ *    A chain shorter than N hops cannot be attributed that way: the
+ *    `X-Real-IP` fallback is used instead (the proxy that declared itself
+ *    sets it), and only when that header is missing too does the caller fall
+ *    back to the shared `scope:local` bucket.
+ *
+ * `X-Real-IP` is only consulted when a trusted proxy is configured — it is
+ * then written by that proxy, never by the client.
+ */
+export function resolveClientIp(
+  get: (name: string) => string | null,
+  trustedProxyHops: number,
+): string | null {
+  const hops = Number.isFinite(trustedProxyHops) ? Math.floor(trustedProxyHops) : 0;
+  if (hops <= 0) return null;
   const forwarded = get("x-forwarded-for");
-  const first = forwarded?.split(",")[0]?.trim();
-  if (first) return first;
+  if (forwarded) {
+    const chain = forwarded
+      .split(",")
+      .map((hop) => hop.trim())
+      .filter((hop) => hop !== "");
+    // The Nth hop from the end: the real client — every proxy appends the
+    // address of its peer, so the last N entries of the chain are the ones
+    // the trusted proxies appended.
+    if (chain.length >= hops) {
+      const candidate = chain[chain.length - hops];
+      if (candidate) return candidate;
+    }
+  }
+  // The chain was shorter than the declared hop count (or absent): it cannot
+  // be attributed that way, so the proxy's own `X-Real-IP` is used. Only when
+  // that header is missing too does the caller fall back to the shared
+  // `scope:local` bucket.
   const real = get("x-real-ip");
   return real && real.trim() !== "" ? real.trim() : null;
+}
+
+/**
+ * Pull the client IP from the forwarding headers, honouring the trusted
+ * proxy hops. Without a trusted proxy (`trustedProxyHops` 0, the default) the
+ * headers are ignored and the IP is `null` — the caller cannot tell a
+ * spoofed `X-Forwarded-For` from a real one.
+ */
+export function headerClientIp(
+  get: (name: string) => string | null,
+  trustedProxyHops = 0,
+): string | null {
+  return resolveClientIp(get, trustedProxyHops);
 }
 
 /** Paths that hold private workspace data (settings/audit) or admin tooling. */

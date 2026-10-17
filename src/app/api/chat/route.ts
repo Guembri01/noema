@@ -14,9 +14,9 @@ export const runtime = "nodejs";
 
 /** List the workspace's discussions with their recent messages. */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "chat-read", 120, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "chat-read", 120, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const workspaceId = new URL(request.url).searchParams.get("workspaceId") ?? "";
@@ -31,9 +31,9 @@ export async function GET(request: Request) {
  * The same server actions back the sidebar UI.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "chat-write", 60, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "chat-write", 60, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let body: {

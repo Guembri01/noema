@@ -5,10 +5,64 @@
  */
 import { createLru, LruCache } from "./lru";
 import { createBucket, tryConsume, type ConsumeResult, type TokenBucket } from "./token-bucket";
+import { normalizeIp } from "./ip-allowlist";
+import {
+  parseTrustedProxyHops,
+  resolveClientIp,
+  TRUSTED_PROXY_HOPS_ENV,
+} from "./tenant-guard";
 
 type Bucket = { count: number; resetAt: number };
 
-const buckets = new Map<string, Bucket>();
+/**
+ * Hard cap on the number of tracked buckets **per store**. A flood of unique
+ * client keys must not grow the map without bound: beyond the cap the
+ * least-recently-used bucket is evicted. Mirrors `DEFAULT_MAX_KEYS`, the
+ * sliding limiter's cap.
+ */
+const MAX_BUCKETS = 10_000;
+
+/**
+ * How often expired buckets are swept out of the map.
+ *
+ * The sweep runs *before* the LRU is asked to make room, so an expired bucket
+ * is dropped before a live one can be evicted. One second keeps that lag
+ * small while bounding the cleanup cost at a single pass over the store per
+ * second (the pass is O(n) in the number of tracked buckets).
+ */
+const SWEEP_INTERVAL_MS = 1_000;
+
+/**
+ * The client-address buckets (`scope:<ip>`) live in **their own** store.
+ *
+ * This is the part of the key space an *unauthenticated* caller controls: a
+ * request can mint one address bucket per source address, so this is the
+ * store a flood of forged addresses fills.
+ */
+const addressBuckets = createLru<string, Bucket>({ capacity: MAX_BUCKETS });
+
+/**
+ * The per-user buckets (`scope:user:<id>`) live in a **separate** store.
+ *
+ * The user id comes from the session or the API token, so it cannot be
+ * spoofed — but that is worth nothing if the budget can be reset from the
+ * outside. In one shared store the user bucket is the *oldest* key (it is
+ * created at the user's first request) and therefore the LRU's preferred
+ * victim: a flood of 10 000 forged client addresses evicted it, the exhausted
+ * window started over and the caller was answered 200 instead of 429. The
+ * separate store makes that structurally impossible — an address flood never
+ * touches the user bucket.
+ *
+ * The residual that remains is named, not hidden: the user store has its own
+ * cap (`MAX_BUCKETS`), so more than 10 000 *distinct authenticated users*
+ * holding a live budget in the same window would sacrifice the coldest of
+ * them and that user's window would start over. That needs a real
+ * installation with that many concurrent users, not a flood.
+ */
+const userBuckets = createLru<string, Bucket>({ capacity: MAX_BUCKETS });
+
+/** Timestamp of the last TTL sweep (0 = never swept yet). */
+let lastSweepAt = 0;
 
 export type RateLimitResult = {
   ok: boolean;
@@ -16,15 +70,61 @@ export type RateLimitResult = {
   retryAfterMs: number;
 };
 
-export function checkRateLimit(
+/**
+ * Drop buckets whose window has closed from one store. The LRU cap bounds the
+ * map on its own; the sweep only releases the memory earlier.
+ *
+ * The sweep runs **before** the LRU is asked to make room, so an expired
+ * bucket goes first and the LRU only has to evict a *live* one when the store
+ * genuinely holds `MAX_BUCKETS` live buckets. It cannot be a full guarantee:
+ * a bucket can linger expired for up to `SWEEP_INTERVAL_MS`, and the LRU's
+ * victim is the coldest entry by *recency*, not the one that expires first.
+ *
+ * The residual is a memory bound, not a hole: with more than `MAX_BUCKETS`
+ * distinct keys live inside a single window, the coldest live bucket is
+ * evicted and that caller's window starts over — the same trade-off the
+ * sliding limiter makes at `DEFAULT_MAX_KEYS` (see `RateLimiter`'s doc
+ * comment). Reaching it needs more than 10 000 distinct client keys in one
+ * window; with the default configuration (`TRUSTED_PROXY_HOPS` unset) every
+ * caller of a scope shares the `scope:local` bucket, so the key space cannot
+ * grow that way at all.
+ */
+function sweepStore(store: LruCache<string, Bucket>, now: number): void {
+  // `keys()` is most-recently-used first; walking it in the opposite order
+  // keeps the LRU's recency order intact, because every `get` promotes the
+  // key it touches to the most-recent end.
+  for (const key of store.keys().reverse()) {
+    const bucket = store.get(key);
+    if (bucket && bucket.resetAt <= now) store.delete(key);
+  }
+}
+
+/**
+ * Sweep every store whose window has closed. Runs at most once per
+ * `SWEEP_INTERVAL_MS`; both stores are always swept together, so they never
+ * drift apart.
+ */
+function sweepExpiredBuckets(now: number): void {
+  if (now - lastSweepAt < SWEEP_INTERVAL_MS) return;
+  lastSweepAt = now;
+  sweepStore(addressBuckets, now);
+  sweepStore(userBuckets, now);
+}
+
+/**
+ * The fixed-window rule, applied to one store. The caller picks the store, so
+ * the address key space and the per-user key space cannot evict each other.
+ */
+function checkBucket(
+  store: LruCache<string, Bucket>,
   key: string,
   limit: number,
   windowMs: number,
-  now: number = Date.now(),
+  now: number,
 ): RateLimitResult {
-  const bucket = buckets.get(key);
+  const bucket = store.get(key);
   if (!bucket || bucket.resetAt <= now) {
-    buckets.set(key, { count: 1, resetAt: now + windowMs });
+    store.set(key, { count: 1, resetAt: now + windowMs });
     return { ok: true, remaining: limit - 1, retryAfterMs: 0 };
   }
   if (bucket.count >= limit) {
@@ -34,19 +134,98 @@ export function checkRateLimit(
   return { ok: true, remaining: limit - bucket.count, retryAfterMs: 0 };
 }
 
-/** Derive a stable client key from forwarding headers (falls back to loopback). */
-export function clientKey(request: Request, scope: string): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  const ip =
-    forwarded?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "local";
-  return `${scope}:${ip}`;
+/**
+ * Charge the **client-address** budget of `key` (see `clientKey`). The bucket
+ * lives in the address store, whose key space a flood of forged addresses can
+ * fill — see {@link checkUserRateLimit} for the budget that a flood cannot
+ * touch.
+ */
+export function checkRateLimit(
+  key: string,
+  limit: number,
+  windowMs: number,
+  now: number = Date.now(),
+): RateLimitResult {
+  sweepExpiredBuckets(now);
+  return checkBucket(addressBuckets, key, limit, windowMs, now);
+}
+
+/**
+ * Charge the **per-user** budget of `key` (see `userKey`).
+ *
+ * The bucket lives in its own store, so the address flood — the part of the
+ * key space an unauthenticated caller controls — cannot evict it and cannot
+ * reset an exhausted window. Only a store full of *authenticated* users can
+ * (see the note on `userBuckets`).
+ */
+export function checkUserRateLimit(
+  key: string,
+  limit: number,
+  windowMs: number,
+  now: number = Date.now(),
+): RateLimitResult {
+  sweepExpiredBuckets(now);
+  return checkBucket(userBuckets, key, limit, windowMs, now);
+}
+
+/**
+ * How many reverse-proxy hops in front of the app may set the forwarding
+ * headers, from `TRUSTED_PROXY_HOPS`. 0 (the default) means: trust no
+ * forwarding header at all.
+ */
+export function trustedProxyHops(): number {
+  return parseTrustedProxyHops(process.env[TRUSTED_PROXY_HOPS_ENV]);
+}
+
+/**
+ * Derive a stable client key from the request.
+ *
+ * The client IP is only read from `X-Forwarded-For`/`X-Real-IP` when a
+ * trusted proxy is configured (`TRUSTED_PROXY_HOPS`); otherwise those headers
+ * are written by the client itself and are ignored — every direct caller
+ * shares the `"local"` bucket, so a spoofed header cannot buy a fresh
+ * allowance.
+ *
+ * The address is canonicalized before it becomes a key. A value that is not an
+ * IP literal cannot be attributed and falls back to the shared bucket, so a
+ * proxy that forwards garbage cannot mint one bucket per garbage value.
+ */
+export function clientKey(
+  request: Request,
+  scope: string,
+  hops: number = trustedProxyHops(),
+): string {
+  const ip = resolveClientIp((name) => request.headers.get(name), hops);
+  const canonical = ip === null ? null : normalizeIp(ip);
+  if (canonical === null) return `${scope}:local`;
+  return `${scope}:${canonical}`;
+}
+
+/**
+ * Key for the per-user budget. The user id comes from the session, so it is
+ * not spoofable — a caller cannot dodge its limit by changing its IP. The
+ * bucket lives in its own store, so it is not evictable by an address flood
+ * either (see `userBuckets`).
+ */
+export function userKey(scope: string, userId: string): string {
+  return `${scope}:user:${userId}`;
+}
+
+/** Number of client-address buckets currently tracked (test/ops helper). */
+export function rateLimitBucketCount(): number {
+  return addressBuckets.size();
+}
+
+/** Number of per-user buckets currently tracked (test/ops helper). */
+export function userRateLimitBucketCount(): number {
+  return userBuckets.size();
 }
 
 /** Test/ops helper. */
 export function resetRateLimits(): void {
-  buckets.clear();
+  addressBuckets.clear();
+  userBuckets.clear();
+  lastSweepAt = 0;
 }
 
 /* ------------------------------------------------------------------ *

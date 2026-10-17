@@ -70,9 +70,9 @@ function parsePartIndexes(
  *   the plan and exactly which parts are still needed.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "upload", 60, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "upload", 60, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
