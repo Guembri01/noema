@@ -112,6 +112,20 @@ Other deliberate choices:
   launch and reuses it afterwards, so sessions survive a restart while one
   install's cookies are worthless on another. A configured `AUTH_SECRET`, like a
   configured database, still wins.
+- **The Server Action origin allowlist is recomputed at launch, not shipped.**
+  Next only accepts a Server Action when the request's `Origin` matches its `Host`
+  (CSRF), so this machine's own addresses must be listed — next.config.ts gets the
+  list from `scripts/desktop/allowed-origins.cjs`. Next serializes that config
+  *into* the build (`.next/required-server-files.json`, and the literal in the
+  standalone `server.js`), which would make an install inherit the network
+  interfaces of whatever machine built it: a VPN adapter that appears later, or a
+  build on someone else's PC, would leave the app refusing its own address, and
+  the failure is silent (saving spins forever, comments do nothing). The boot
+  wrapper therefore rebuilds the config from that file with the allowlist computed
+  now — including the runtime `APP_ORIGINS`, which a standalone payload otherwise
+  ignores — and falls back to the generated entry if the file is not the shape it
+  expects. `prepare.mjs` counts `next.config.ts` as a build input, so
+  `NOEMA_SKIP_BUILD=1` cannot re-stage a payload with the previous list.
 - **Migrations are self-healing.** The boot wrapper runs `prisma migrate deploy`
   and, on `P3005` (tables without migration history — what `prisma db push`
   leaves behind), falls back to `db push` so an existing database is adopted

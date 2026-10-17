@@ -102,6 +102,13 @@ function assertBuildIsFresh() {
     }
   };
   walk(join(root, "src"));
+  // …and the config, which is serialized *into* the payload
+  // (`required-server-files.json`, and the literal in the standalone entry).
+  // Without it here, a change to the Server Action allowlist would be ignored by
+  // a `NOEMA_SKIP_BUILD=1` re-stage, which is precisely the change that has to
+  // reach the payload.
+  const configFile = join(root, "next.config.ts");
+  if (existsSync(configFile)) newest = Math.max(newest, statSync(configFile).mtimeMs);
   if (newest > builtAt + 1000) {
     throw new Error(
       [
@@ -139,6 +146,7 @@ export const REQUIRED_PAYLOAD = [
   ["start.cjs", "the boot wrapper (database → migrate → serve)"],
   ["docker-db.cjs", "the managed-database helper"],
   ["embedded-db.cjs", "the embedded-database helper"],
+  ["allowed-origins.cjs", "the Server Action origin policy the wrapper recomputes at launch"],
   ["node_modules/@electric-sql/pglite", "the embedded PostgreSQL engine (WASM)"],
   ["node_modules/@electric-sql/pglite-socket", "the wire protocol Prisma connects over"],
 ];
@@ -355,8 +363,10 @@ function writeBootScript() {
   const boot = join(standalone, "start.cjs");
   copyFileSync(source, boot);
   // The boot wrapper requires these next to itself (defensively, so an older
-  // payload still boots without them).
-  for (const helper of ["docker-db.cjs", "embedded-db.cjs"]) {
+  // payload still boots without them). `allowed-origins.cjs` is the same policy
+  // next.config.ts imports: the wrapper recomputes the Server Action allowlist
+  // for the machine the app actually runs on, rather than the one that built it.
+  for (const helper of ["docker-db.cjs", "embedded-db.cjs", "allowed-origins.cjs"]) {
     copyFileSync(join(root, "scripts", "desktop", helper), join(standalone, helper));
   }
   console.log("· copied boot wrapper → start.cjs (embedded PostgreSQL → Docker → migrate → serve)");

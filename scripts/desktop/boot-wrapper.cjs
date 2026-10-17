@@ -22,6 +22,11 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 const fs = require("node:fs");
 
+// Set before anything requires Next, exactly as the generated standalone entry
+// does: Next decides which React build to load from this, and a late assignment
+// loads the development copy into a production server.
+process.env.NODE_ENV = "production";
+
 // The managed-database helper is copied next to this file by prepare.mjs.
 // Required defensively: an older payload without it should still boot (falling
 // back to a configured or conventional database) rather than crash on start.
@@ -39,6 +44,15 @@ try {
   ({ startEmbeddedDatabase } = require("./embedded-db.cjs"));
 } catch (error) {
   console.warn("[noema] embedded-database helper unavailable:", error && error.message);
+}
+
+// The Server Action origin policy, shared with next.config.ts. Defensive too: a
+// payload without it keeps Next's own configuration rather than failing to boot.
+let allowedOrigins = null;
+try {
+  ({ allowedOrigins } = require("./allowed-origins.cjs"));
+} catch (error) {
+  console.warn("[noema] origin-allowlist helper unavailable:", error && error.message);
 }
 
 const root = __dirname;
@@ -171,8 +185,68 @@ async function migrate() {
   if (deployed.stderr) console.error(deployed.stderr);
 }
 
+/**
+ * The configuration to start Next with, recomputed for *this* machine.
+ *
+ * Next's standalone entry (`server.js`) carries the whole of `next.config.ts` as a
+ * literal — including `serverActions.allowedOrigins`, which is this machine's
+ * network addresses *as they were when the payload was built*. A packaged app that
+ * inherited them refuses a Server Action sent while browsing an address it now
+ * has (a VPN adapter that appeared later, a different network, a build from
+ * someone else's machine), and that failure is silent: saving spins forever,
+ * comments and chat do nothing.
+ *
+ * So the serialized config Next wrote at build time is the starting point, and the
+ * allowlist is replaced with one computed now. Everything else is untouched.
+ *
+ * Returns `null` when the file is missing or not the shape we expect; the caller
+ * then falls back to the generated entry, because a Next.js change must never
+ * leave someone with an app that will not start.
+ */
+function recomputedConfig() {
+  if (!allowedOrigins) return null;
+  try {
+    const serialized = JSON.parse(
+      fs.readFileSync(path.join(root, ".next", "required-server-files.json"), "utf8"),
+    );
+    const original = serialized && serialized.config;
+    if (!original || typeof original !== "object") return null;
+
+    const origins = allowedOrigins();
+    const experimental = { ...(original.experimental ?? {}) };
+    experimental.serverActions = { ...(experimental.serverActions ?? {}), allowedOrigins: origins };
+    console.log(`[noema] server actions accept ${origins.length} origin(s) on this machine`);
+    return { ...original, experimental, output: "standalone" };
+  } catch (error) {
+    console.warn("[noema] could not recompute the server config:", error && error.message);
+    return null;
+  }
+}
+
 function startServer() {
-  require(path.join(root, "server.js"));
+  const config = recomputedConfig();
+  if (!config) {
+    // `server.js` is Next's own entry and knows its own config.
+    require(path.join(root, "server.js"));
+    return;
+  }
+
+  process.chdir(root);
+  process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(config);
+  require("next");
+  const { startServer: start } = require("next/dist/server/lib/start-server");
+
+  const port = Number.parseInt(process.env.PORT ?? "", 10) || 3000;
+  const hostname = process.env.HOSTNAME || "0.0.0.0";
+  let keepAliveTimeout = Number.parseInt(process.env.KEEP_ALIVE_TIMEOUT ?? "", 10);
+  if (!Number.isFinite(keepAliveTimeout) || keepAliveTimeout < 0) keepAliveTimeout = undefined;
+
+  start({ dir: root, isDev: false, config, hostname, port, allowRetry: false, keepAliveTimeout }).catch(
+    (error) => {
+      console.error(error);
+      process.exit(1);
+    },
+  );
 }
 
 /**

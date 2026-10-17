@@ -71,13 +71,22 @@ const ORIGIN_REJECTION_MESSAGE = "Invalid Server Actions request";
 const ORIGIN_REJECTION_CODE = "@E80";
 const bogusActionId = "0".repeat(40);
 const pageUrl = `${base}/w/${workspace.slug}/${page.id}`;
+// The action cases have to address the port the target actually serves. They used
+// to hardcode `:3200`, so pointing this check at anything else (the packaged
+// payload runs on whatever port is free) made *every* case cross-origin — the
+// "same origin" case was not same-origin at all, and the LAN case then depended on
+// an allowlist that a prebuilt payload froze at build time. `check:features`
+// reported a healthy payload as broken because of it.
+const target = new URL(base);
+const targetPort = target.port || (target.protocol === "https:" ? "443" : "80");
 const lanAddress = Object.values(networkInterfaces())
   .flat()
   .find((address) => address && address.family === "IPv4" && !address.internal)?.address;
 const originCases = [
-  ["same origin", "http://localhost:3200", false],
-  ["loopback ip", "http://127.0.0.1:3200", false],
-  ...(lanAddress ? [[`lan (${lanAddress})`, `http://${lanAddress}:3200`, false]] : []),
+  ["same origin", target.origin, false],
+  ["loopback ip", `http://127.0.0.1:${targetPort}`, false],
+  ["localhost name", `http://localhost:${targetPort}`, false],
+  ...(lanAddress ? [[`lan (${lanAddress})`, `http://${lanAddress}:${targetPort}`, false]] : []),
   ["foreign origin", "http://evil.example", true],
 ];
 for (const [label, origin, mustBeRejected] of originCases) {
