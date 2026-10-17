@@ -14,7 +14,7 @@ import {
  * only changed blocks") — pure, deterministic, red-first.
  *
  * `src/lib/sync-delta.ts` did not exist when this file was first written
- * (module-not-found -> suite red; scripts/LOOP_PLAYBOOK.md "red-first"). The
+ * (module-not-found -> suite red; "red-first"). The
  * whole engine is a sandbox: reconcile two document snapshots by `id`, carrying
  * `updatedAt` as the version marker, so a client can pull/merge only what moved.
  *

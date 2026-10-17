@@ -2,11 +2,11 @@
 // M1: R9.1, R9.2, R9.5, R9.7 + the read-only half of R9.3).
 //
 // Red-first: this file was written BEFORE scripts/collab-server.mjs exposed any
-// authorization surface — the first run failed on the missing exports (see the
-// batch report for the red tail).
+// authorization surface — the first run failed on the missing exports (the red
+// tail is recorded in the PR).
 //
 // The connection pipeline is exercised with an INJECTED session verifier and
-// page authorizer (per the B53 brief), so no database is touched. The real
+// page authorizer (per B53), so no database is touched. The real
 // primitives are unit-tested directly: `verifySessionCookie` (the same HS256
 // `noema_session` verification `src/lib/auth.ts` performs) and `decideAccess`
 // (the join rule). The injected fakes reuse `decideAccess`, so the tests pin

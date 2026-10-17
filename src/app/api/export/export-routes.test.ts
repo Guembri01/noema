@@ -11,7 +11,7 @@ import { resetRateLimits } from "@/lib/rate-limit";
  * - database JSON: the `json-export.ts` snapshot
  *   `{ schemaVersion, name, properties, rows, views }`
  * - fidelity pins: the md/html/pdf/csv outputs must not change byte-wise
- *   (red evidence incl. a deliberate control mismatch: `scripts/_logs/b91-red.log`)
+ *   (red evidence incl. a deliberate control mismatch)
  *
  * Only transport edges (auth, db, permissions, queries, pdf) are mocked; the
  * rate limiter, the format validation and the response shaping run for real.

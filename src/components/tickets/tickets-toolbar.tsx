@@ -307,7 +307,7 @@ function asTicketView(viewType: string | undefined, fallback: TicketView): Ticke
     : fallback;
 }
 
-/** Shared shape of the orchestrator's action runner (wraps a server action). */
+/** Shared shape of the action runner (wraps a server action). */
 export type RunAction = (
   label: string | null,
   task: () => Promise<{ ok: boolean; message?: string }>,

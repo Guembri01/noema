@@ -1,8 +1,7 @@
 # Spec — Version history v2 (diff, named versions, retention, scheduled snapshots)
 
-> **Status: spec complete, implementation pending.** Batch **B30** of the parity
-> loop (docs-only; no production code changed). This document is the
-> deliverable. Every claim about current code cites file + line. Requirement IDs
+> **Status: spec complete, implementation pending.** Document-only: no
+> production code changed. This document is the deliverable. Every claim about current code cites file + line. Requirement IDs
 > (`R30.x`) are the traceability anchors: the delivery plan in §11 lists tasks
 > 1:1 against them, and tests must cite the IDs they cover. Scope is FEATURE
 > MATRIX **section 10 (Version history), rows `docs/FEATURE_MATRIX.md:441-449`**
@@ -52,7 +51,7 @@ overlap (cadence R9.13, restore-through-ydoc R9.14, block authorship O9.4).
 | Scheduled jobs | `src/app/api/cron/templates/route.ts:14-31` | The only cron endpoint: `CRON_SECRET` fail-closed (`:17-29`) + `rateLimit(request,"cron",12,60_000)` (`:30`). This is the house pattern for §9's scheduled snapshots. |
 | Size guard | `src/lib/validation.ts:33,35-38,41-59` | Content capped at 2 MB (`MAX_PAGE_CONTENT_BYTES`), shape `{ type: "doc", content: ≤20 000 nodes }`. A full copy rides in every version row. |
 | Tests | `docs/TEST_PLAN.md:89` (E9) | E9 is **planned, not implemented**: no unit test touches `page-versions.ts`, no e2e opens the history panel (grep across `src/**/*.test.ts` and `e2e/` finds none). |
-| Cross-docs | `docs/AUDIT.md:26`, matrix `:428,434,635,683` | AUDIT claims "version history with restore ✅" while the matrix plans all 9 rows — the glyph change is **orchestrator-owned** (`docs:counts`); this batch edits Notes only. Related rows outside section 10: "Page history" `:428` (points here), "Trash retention policy" `:434`, "Page snapshots" `:635`, "Version-history retention by plan" `:683`. |
+| Cross-docs | matrix `:428,434,635,683` | An earlier audit claimed "version history with restore ✅" while the matrix plans all 9 rows — the glyph change is **maintainer-owned** (`docs:counts`); this change edits Notes only. Related rows outside section 10: "Page history" `:428` (points here), "Trash retention policy" `:434`, "Page snapshots" `:635`, "Version-history retention by plan" `:683`. |
 | Collab interplay | `docs/specs/realtime-collab.md:80-83 (D3), :163-166 (R9.13), :167-170 (R9.14), :417-419 (O9.4)` | Under collab, N clients × per-save snapshots spam versions (D3); B09 will make the **server** the single writer and throttle to "at most once per 5 minutes per page of actual activity" (R9.13) — v2's cadence helper must be the *same* function. Restore must become ydoc-aware (R9.14); block-level attribution stays CRDT-bound (O9.4). |
 
 ### 2.2 What the product class (Notion) does
@@ -74,7 +73,7 @@ overlap (cadence R9.13, restore-through-ydoc R9.14, block authorship O9.4).
 
 | # | Row (matrix) | v1 today | Gap v2 must close |
 | --- | --- | --- | --- |
-| 1 | Per-page history `:441` | ✅ panel + timeline exist (§2.1) | Pagination past 25/10 caps, consistent authorship (R30.11, R30.12); rows understate shipped state — glyph fix is orchestrator's. |
+| 1 | Per-page history `:441` | ✅ panel + timeline exist (§2.1) | Pagination past 25/10 caps, consistent authorship (R30.11, R30.12); rows understate shipped state — glyph fix is the maintainers'. |
 | 2 | Restore version `:442` | ✅ one-click restore | Correctness: `searchText` recompute, null-content write, lock/trash guards, summary/charDelta bugs (R30.1-R30.5); current-row semantics (R30.6). |
 | 3 | Version diff `:443` | ❌ charDelta number only | Block-level diff engine + view (R30.8, R30.9). |
 | 4 | Named versions `:444` | ❌ no label column | `label` + naming action + pinning + retention exemption (R30.10). |
@@ -88,7 +87,7 @@ overlap (cadence R9.13, restore-through-ydoc R9.14, block authorship O9.4).
 
 | # | Decision | Rationale / alternatives |
 | --- | --- | --- |
-| D1 | **Diff is a pure lib** `src/lib/version-diff.ts`, unit-harness first (playbook: new complex domains start as lib + unit tests before components). | Alternatives: SQL/JSONB diff (untestable in isolation), editor-internal diff (requires mounted editor server-side). Content JSON is the shared denominator — diff two `PageVersion.content` snapshots structurally: align top-level nodes by `(type, position, text similarity)`, classify `added/removed/modified/unchanged`. Tables/nested lists diff as whole nodes in v2 (recursion = O30.3). |
+| D1 | **Diff is a pure lib** `src/lib/version-diff.ts`, unit-harness first (tier rule: new complex domains start as lib + unit tests before components). | Alternatives: SQL/JSONB diff (untestable in isolation), editor-internal diff (requires mounted editor server-side). Content JSON is the shared denominator — diff two `PageVersion.content` snapshots structurally: align top-level nodes by `(type, position, text similarity)`, classify `added/removed/modified/unchanged`. Tables/nested lists diff as whole nodes in v2 (recursion = O30.3). |
 | D2 | **Cadence + dedupe live in one pure helper** `shouldSnapshot(prev, next, now, opts)` shared by the action path today and B09's server-side writer (R9.13) tomorrow. | One source of truth prevents drift between collab and non-collab modes (the exact class of bug D3 describes, `realtime-collab.md:80-83`). Defaults: max 1 auto snapshot / 5 min / page; skip when `sha256(canonical JSON)` equals the newest row's hash; named + restore-point writes bypass both gates. |
 | D3 | **Retention is tiers, not a single TTL**: full fidelity < 30 d, daily 30-90 d, weekly > 90 d, never prune `label != null` nor the newest row, hard cap 500 non-labeled rows/page. | A pure `retentionPolicy(now, rows)` function is trivially unit-testable; a TTL destroys exactly the long-tail history users regret losing. Values come from env (`VERSION_RETENTION_*`), not code (matrix `:446` "configurable"). |
 | D4 | **Scheduled snapshots reuse the templates cron pattern** — `POST /api/cron/versions`, `CRON_SECRET` fail-closed + rate limit (`cron/templates/route.ts:14-31`). | No new infra; scheduler already points at a cron endpoint in deployments. The job is a *backstop*: it only writes when the newest hash differs (R30.13), so unchanged pages cost one indexed query. |
@@ -163,7 +162,7 @@ overlap (cadence R9.13, restore-through-ydoc R9.14, block authorship O9.4).
   *Acceptance:* **red** policy tests (tier boundaries, invariants, cap) +
   integration: seed 1 000 rows across 40 days → cron returns pruned counts,
   newest + named survive, second run is a no-op. *(Schema change ⇒ this task
-  ships Tier MAX: `prisma db push` under the gate lock.)*
+  ships Tier HEAVY: `prisma db push` under the build serialization.)*
 
 ### M2 — Visibility: diff, named versions, authorship, pagination
 
@@ -204,7 +203,7 @@ overlap (cadence R9.13, restore-through-ydoc R9.14, block authorship O9.4).
   of history).
   *Acceptance:* **red** unit/action tests: version authored by a member
   removed from the workspace shows the same label in panel and menu; deleted
-  author → "Former member", `charDelta`/summary unaffected. *(FK ⇒ Tier MAX
+  author → "Former member", `charDelta`/summary unaffected. *(FK ⇒ Tier HEAVY
   with R30.7's index — ship both in one `db push`.)*
 - **R30.12** — Pagination: history reads move to a cursor action
   (`getPageVersionsAction(pageId, cursor)`, default 25, `createdAt`-cursor)
@@ -302,8 +301,8 @@ model PageVersion {
   text back into `searchText` per R30.1).
 - Existing rows need no backfill migration: `label`/`contentHash` are nullable;
   `contentHash` computes on first touch (R30.3) — old rows simply re-hash on
-  their next comparison. Schema change ⇒ Tier MAX (`prisma db push`) when this
-  spec is implemented; **this batch is docs-only and touches no schema**.
+  their next comparison. Schema change ⇒ Tier HEAVY (`prisma db push`) when this
+  spec is implemented; **this change is docs-only and touches no schema**.
 - Env knobs: `VERSION_SNAPSHOT_INTERVAL_S` (300), `VERSION_RETENTION_FULL_D`
   (30) / `VERSION_RETENTION_MED_D` (90) / `VERSION_RETENTION_MAX_ROWS` (500),
   `TRASH_RETENTION_DAYS` (30).
@@ -324,7 +323,7 @@ model PageVersion {
 - **Naming**: ⋯-inline "Name this version" on a row (prompt dialog →
   `nameVersionAction`), rename/clear from the pinned badge menu. All strings
   via `t()`; new keys land in all 5 locales in the same change (i18n test
-  parity), anchored with `scripts/i18n-insert.mjs`.
+  parity), anchored with the i18n key inserter.
 - **A11y**: panel keeps `role="dialog"` + aria-labels (`:66-75`), diff is
   keyboard-reachable, restore/naming remain buttons (existing patterns).
 
@@ -357,12 +356,12 @@ day ≈ one row per pause ≥ 600 ms — hundreds of rows, each a full copy.
    drafts don't pin history forever.
 
 **Measurement:** cron returns `{ scanned, created, pruned }`; the implementer
-adds a one-line note to `docs/VELOCITY.md`-style ops notes if a seeded 100 k-row
+adds a one-line note to the ops notes if a seeded 100 k-row
 prune exceeds 5 s (batch size knob) — honest numbers, no invented benchmarks.
 
 ## 8. Test plan
 
-**Unit (vitest, red-first — pure libs first per playbook)**
+**Unit (vitest, red-first — pure libs first)**
 
 1. *Cadence/dedupe* — `shouldSnapshot`: same hash skip; inside/outside window;
    labeled + restore-point bypass; first row always writes (R30.3).
@@ -417,7 +416,7 @@ dev :3201 — none require a new server or the collab process.
 1. **No content migration.** `label`/`contentHash` are nullable; existing
    `PageVersion` rows load unchanged and hash lazily on first comparison
    (R30.3). The composite index replaces `@@index([pageId])` in the same
-   `prisma db push` (Tier MAX, gate lock) as the `createdById` FK.
+   `prisma db push` (Tier HEAVY, build serialization) as the `createdById` FK.
 2. **FK adoption for existing rows**: `createdById` strings that no longer
    resolve to a `User` simply render "Former member" (R30.11) — the FK is
    added as *optional*; unmatched legacy ids are preserved as-is (no data
@@ -432,10 +431,10 @@ dev :3201 — none require a new server or the collab process.
 
 ## 10. Delivery plan (milestones → tasks ↔ requirements)
 
-> Test-first rule from `scripts/LOOP_PLAYBOOK.md` applies: every task's
+> Test-first rule applies: every task's
 > acceptance is a red test citing its requirement IDs before implementation.
 
-**M1 — Correctness + storage foundation (~2-3 days; schema part = Tier MAX)**
+**M1 — Correctness + storage foundation (~2-3 days; schema part = Tier HEAVY)**
 
 - T30.1 [R30.1, R30.2]: transactional restore with explicit content + FTS
   recompute. Red: tests 7.
@@ -489,8 +488,8 @@ dev :3201 — none require a new server or the collab process.
    non-collab correctness half with tests that B09 must keep green; file
    ownership: whoever implements second re-derives from both specs, not from
    the first diff.
-4. **Tier MAX schema push contention.** R30.7 + R30.11 need `db push`
-   (shared `.next`/DB rules, playbook "Gate lock"): batch it as one push with
+4. **Tier HEAVY schema push contention.** R30.7 + R30.11 need `db push`
+   (shared `.next`/DB rules, build serialization): make it one push with
    build+prod restart, restart dev :3201 after.
 
 **Open questions**

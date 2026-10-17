@@ -17,7 +17,7 @@
 /blob-report
 .playwright/
 
-# parity-loop artifacts (evidence logs stay local-only)
+# local scratch: gate evidence logs stay local-only
 scripts/_logs/
 scripts/_gate_*.ps1
 scripts/_b*-check.mjs
@@ -76,7 +76,7 @@ docs/_audit-raw.json
 docs/screenshots/*/
 scripts/_capture.cjs
 
-# Scratch/debug files an agent or a human leaves behind: never commit these.
+# Scratch/debug files left behind: never commit these.
 scripts/_*
 
 # The product film (video/) is its own Remotion project: the app's tsconfig and

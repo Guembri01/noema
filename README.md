@@ -180,8 +180,8 @@ the screenshot report, so the document cannot drift from the product either.
 
 The landing page sits at the top of this file. The rest of the interface —
 search, databases, tickets, chat, the editor, sharing — is specified in
-[`docs/specs/`](./docs/specs/), reviewed in [`docs/AUDIT.md`](./docs/AUDIT.md),
-and tracked row by row in [`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md).
+[`docs/specs/`](./docs/specs/) and tracked row by row in
+[`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md).
 
 ## AI configuration
 
@@ -431,7 +431,7 @@ the same `.next` directory — never run them at the same time.
 Playwright's default `baseURL` is **`http://localhost:3200`** (see
 `playwright.config.ts`), so start the production server on `:3200` before
 `npm run e2e` — or point the suite at any other server with `E2E_BASE_URL`
-(the parity loop targets the dev server on `:3201`:
+(the dev server on `:3201` is already running:
 `E2E_BASE_URL=http://localhost:3201 npx playwright test`).
 
 ### Demo credentials
@@ -483,11 +483,11 @@ password: password123
 | `npm run check:chat-stream` | Proves answers stream in chunks, arrive before completion, and persist exactly once |
 | `npm run check:coherence` | **Fails on drift**: orphan actions, native dialogs, unexpected injection sinks, growing action-call drift, shrinking i18n coverage |
 | `npm run audit` | Static coherence inventory (same rules as `check:coherence`) → `docs/_audit-raw.json` |
-| `npm run check:matrix` | Recount the parity scoreboard (read-only; add `-- --write` to update the doc) |
+| `npm run check:matrix` | Recount the parity status summary (read-only; add `-- --write` to update the doc) |
 | `node --env-file=.env scripts/check-notion.mjs` | Notion API importer check (uses a local mock Notion server) |
 | `npm run seed:tickets` | Optional demo backlog: 11 workspace labels, 3 cycles and 34 tickets with estimates, dates, relations, comments and activity (skips if tickets already exist) |
 | `npm run docs:gaps` | Regenerates **`docs/MISSING_FEATURES.md`** — every partial/planned row, grouped by area, with the priority shortlist |
-| `npm run docs:counts` | Recomputes the `FEATURE_MATRIX` scoreboard |
+| `npm run docs:counts` | Recomputes the `FEATURE_MATRIX` status summary |
 
 ## Project layout
 
@@ -507,10 +507,8 @@ noema/
 │  ├─ ARCHITECTURE.md
 │  ├─ FEATURE_MATRIX.md    # Notion parity tracker (563 feature rows)
 │  ├─ specs/               # design specs (saml-sso, relations-rollups, realtime-collab)
-│  ├─ VELOCITY.md          # parity-loop velocity actuals vs targets
 │  └─ ROADMAP.md
 ├─ scripts/
-│  ├─ LOOP_PLAYBOOK.md     # how the parity loop runs (gates, locks, slots)
 │  └─ check-*.mjs          # the check:* gates above
 └─ docker-compose.yml
 ```
@@ -546,14 +544,10 @@ Found a vulnerability? Please **do not open a public issue** — follow
 
 | Document | What it answers |
 | --- | --- |
-| [`docs/AUDIT.md`](docs/AUDIT.md) | What ships, what's good, what's bad (with severity, evidence and the fix for each finding), the adversarial review and the verdict |
 | [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | The exhaustive spec/UX/UI test matrix — including right-click, keyboard, offline and permission cases — and the definition of done |
-| [`docs/FIX_PLAN.md`](docs/FIX_PLAN.md) | Ordered A→Z plan to make spec ≡ backend ≡ UI ≡ tests ≡ docs, with acceptance criteria per phase |
 | [`docs/MISSING_FEATURES.md`](docs/MISSING_FEATURES.md) | Every unfinished feature row, grouped by area |
 | [`docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md) | The 563-row Notion parity tracker behind all of the above |
 | [`docs/specs/`](docs/specs/) | Design specs for the big builds — `saml-sso.md`, `relations-rollups.md`, `realtime-collab.md` |
-| [`docs/VELOCITY.md`](docs/VELOCITY.md) | Actual build times per parity-loop batch vs the playbook targets |
-| [`scripts/LOOP_PLAYBOOK.md`](scripts/LOOP_PLAYBOOK.md) | How the parity loop runs: gate tiers, server/port rules, lock and slots |
 
 Conversations are addressable: `/w/<slug>?chat=<threadId>` opens that discussion in the docked panel.
 Deleted pages live at `/w/<slug>/trash` (restore · delete forever · empty trash).

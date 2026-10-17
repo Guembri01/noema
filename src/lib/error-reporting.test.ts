@@ -21,7 +21,7 @@ import {
  * Error tracking (pure half) — red-first.
  *
  * `src/lib/error-reporting.ts` did not exist when this file was first written
- * (module-not-found -> suite red, scripts/LOOP_PLAYBOOK.md "Red-first").
+ * (module-not-found -> suite red,  "Red-first").
  *
  * This is the framework-free core behind the planned error-tracking panel: it
  * turns whatever was thrown (`Error`, string, object, `null`, a hostile getter

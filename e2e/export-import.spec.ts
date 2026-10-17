@@ -23,22 +23,22 @@ import { PrismaClient } from "@prisma/client";
  *     (md / zip / docx / trello / notion) and the page-actions "Import"
  *     entry opens the import dialog.
  *
- * Discipline (scripts/LOOP_PLAYBOOK.md): dedicated prisma fixtures with
+ * Discipline: dedicated prisma fixtures with
  * try/finally cleanup — never the shared first page; targeted runs only under
  * the TARGETED-RUN CONCURRENCY rule; component/importer sources are READ-ONLY
- * for this batch because B71 runs import code live (check `git status` before
+ * for this change because B71 runs import code live (check `git status` before
  * any "quick fix" there — report instead).
  */
 
 const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
 const SLUG = "demo-workspace";
 
-// Generous budgets: dev :3201 recompiles on demand and several sibling
-// batches run playwright against the same server.
+// Generous budgets: dev :3201 recompiles on demand and several suites may
+// run playwright against the same server.
 const NAV_TIMEOUT = { timeout: 60_000 };
 
 test.setTimeout(120_000);
-// Fleet note: sibling batches run playwright concurrently in this working dir;
+// Note: several suites may run playwright concurrently in this working dir;
 // the shared test-results/.playwright-artifacts-* dirs then collide mid-trace
 // ("trace recording fixture timeout during setup"). Opt this spec out of
 // tracing; give it its own output dir on the command line
@@ -55,9 +55,9 @@ test.afterAll(async () => {
 });
 
 /**
- * Navigation only, never assertions: with several batches running targeted e2e
+ * Navigation only, never assertions: with several suites running targeted e2e
  * against one `next dev`, a page load can come back `net::ERR_ABORTED` when a
- * sibling's compile interrupts it (LOOP_PLAYBOOK "dev-server artifact").
+ * a concurrent run's compile interrupts it (dev-server artifact).
  * Copied from e2e/version-parity.spec.ts (B67).
  */
 async function gotoStable(page: Page, url: string) {
@@ -242,7 +242,7 @@ test.describe("export / import parity (B94)", () => {
         `/api/export/database/${fixture.databaseId}?format=json`,
       );
 
-      // B91 owns the database export allowlist and is running in this wave.
+      // B91 owns the database export allowlist and is running right now.
       if (response.status() === 400) {
         const body = (await response.json()) as { valid?: string[] };
         // Whatever else happens, the contract stays: 400 + the valid list.
@@ -313,7 +313,7 @@ test.describe("export / import parity (B94)", () => {
       // DialogTitle/aria-label) so `role + name` cannot find it - identify it
       // by the heading INSIDE it instead. The missing accessible name on
       // role="dialog" is reported upstream: notion-import-dialog.tsx is
-      // B71-dirty and READ-ONLY for this batch.
+      // B71-dirty and READ-ONLY for this change.
       const importDialog = page
         .getByRole("dialog")
         .filter({ has: page.getByRole("heading", { name: "Import from Notion" }) });

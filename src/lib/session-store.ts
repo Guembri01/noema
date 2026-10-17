@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
  * prisma schema — the spec deferred the `Session` table (D28.2/O28.2). One
  * writer process per file is the design point: dev :3201 and prod :3200 share
  * the file, and a simultaneous write from two live servers can drop the slower
- * record update (accepted for the parity loop, noted in the B54 report).
+ * record update (accepted for now).
  *
  * Reads fail OPEN: a missing or corrupt file yields "no sessions", never an
  * auth outage — a broken registry must not lock every device out.

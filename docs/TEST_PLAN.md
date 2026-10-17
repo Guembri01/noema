@@ -1,7 +1,7 @@
 # Noema — test plan (spec · UX · UI), exhaustive
 
 > How the app is proven, and everything that should be proven before a feature is
-> called done. Written against `docs/AUDIT.md` findings so every open weakness has
+> called done. Written against the known weaknesses so every open item has
 > a test that would catch its regression.
 
 ## 0. Levels and gates

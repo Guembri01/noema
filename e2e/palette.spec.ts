@@ -10,7 +10,7 @@ import { PrismaClient } from "@prisma/client";
  *  (e) Ctrl+P also opens the palette (the quick-find row's key).
  *
  * Structural tests: every test builds its own dedicated page through prisma
- * and removes it in `finally` — never the shared first page (LOOP_PLAYBOOK).
+ * and removes it in `finally` — never the shared first page.
  */
 
 const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
@@ -18,7 +18,7 @@ const SLUG = "demo-workspace";
 
 const prisma = new PrismaClient();
 
-// A cold dev server compiles routes on demand and other batches share it, so
+// A cold dev server compiles routes on demand and other suites share it, so
 // the per-test budget is deliberately generous (config default is 60s).
 test.describe.configure({ timeout: 180_000 });
 
@@ -27,8 +27,8 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another batch's
-  // Tier MAX build), so sign-in is retried instead of failing the test.
+  // The dev server is shared: it can be restarting under us (another suite's
+  // Tier HEAVY build), so sign-in is retried instead of failing the test.
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -100,7 +100,7 @@ async function createPage(title: string): Promise<string> {
 
 async function removePages(ids: string[]) {
   // Cleanup must never be the reason a test fails: the shared DB engine can
-  // hiccup under a sibling suite's load, so one retry absorbs it.
+  // hiccup under another suite's load, so one retry absorbs it.
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -126,7 +126,7 @@ async function openWorkspacePage(page: Page, pageId: string) {
       return;
     } catch (error) {
       lastError = error;
-      // The shared dev server can restart under a sibling's Tier MAX build;
+      // The shared dev server can restart under a concurrent run's Tier HEAVY build;
       // swallow the teardown noise and retry on a fresh load.
       await page.waitForTimeout(3_000).catch(() => {});
     }

@@ -149,7 +149,7 @@ function hashString(input: string): number {
  *
  * NOTE: the server does not yet issue recovery codes, so these are derived
  * client-side and are not persisted anywhere. This is presentation-only; see
- * the follow-up in the wave-2 report (`RecoveryCode` model + hashed storage).
+ * the follow-up in the follow-up report (`RecoveryCode` model + hashed storage).
  */
 export function recoveryCodes(
   seed: string,
@@ -197,7 +197,7 @@ export type TwoFactorSetupLabels = {
  * Every value the catalogue already owns is overridden with `t(...)` by the
  * container; these fallbacks cover the handful of new strings (secret/otpauth
  * labels, the recovery-card copy and the disable confirmation) whose catalogue
- * keys require an edit to `src/lib/i18n.ts` — outside this wave's file
+ * keys require an edit to `src/lib/i18n.ts` — outside this phase's file
  * ownership. Swapping them for `t(locale, key)` is a one-line change per label
  * once the keys land.
  */

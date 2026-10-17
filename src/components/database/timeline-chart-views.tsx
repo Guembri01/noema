@@ -71,7 +71,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 /**
  * Timeline, chart and calendar views for a database.
  *
- * Extracted from `database-view.tsx` (docs/FIX_PLAN.md P3) so the file that owns
+ * Extracted from `database-view.tsx` (P3) so the file that owns
  * the table/board/list renderers keeps shrinking toward a testable size. The
  * chart body is built by the pure `@/lib/charts` engine and the timeline can
  * stroke dependency arrows routed by `@/lib/dependency-arrows`.

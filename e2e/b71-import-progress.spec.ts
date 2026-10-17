@@ -19,12 +19,12 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
-// B44 note: sign-in costs 30–90 s when sibling batches build against the
+// B44 note: sign-in costs 30–90 s when other suites build against the
 // shared dev server — budget accordingly.
 const NAV_TIMEOUT = { timeout: 150_000 };
 
 test.setTimeout(300_000);
-// Fleet note (B44): sibling batches run playwright concurrently in this
+// Note (B44): several suites run playwright concurrently in this
 // working dir — opt out of tracing so shared artifact dirs cannot collide.
 test.use({ trace: "off", actionTimeout: 20_000 });
 

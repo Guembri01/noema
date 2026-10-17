@@ -7,7 +7,7 @@
  *   (`api/`, `_next/`, favicon) and as a backstop for any response that
  *   never reaches middleware;
  * - `src/middleware.ts` -> per-response policy via `buildCsp(nonce)` for
- *   document responses (see docs/audits/security-1.md M9 addendum).
+ *   document responses (see the M9 addendum).
  *
  * CSP decisions (B61 compatibility pass, B98 nonce tightening):
  * - `script-src 'self'` (+ `'nonce-<b64>'` per response, + the pinned
@@ -154,7 +154,7 @@ export function cspNonce(csp: string): string | null {
 }
 
 /**
- * B61 - security headers on EVERY response (docs/audits/security-1.md M9,
+ * B61 - security headers on EVERY response (M9,
  * roadmap R10), applied via `headers()` in `next.config.ts` so static pages,
  * dynamic RSC renders, route handlers AND the public `/s/<token>` share pages
  * all get the same protection. Enforced, not report-only.

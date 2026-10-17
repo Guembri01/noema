@@ -1,17 +1,17 @@
 # Operations guide
 
-> **B81** (docs tier — no code touched). Every command below was cross-checked
-> against the actual repo file that implements it (see
-> [§10 Verification appendix](#10-verification-appendix)); nothing here is
-> invented. Where a command is a *standard tool* (curl, systemd, crontab,
-> docker CLI) rather than repo code, it is marked as such. Date: 2026-10-15.
+> Every command below was cross-checked against the actual repo file that
+> implements it (see [§10 Verification appendix](#10-verification-appendix));
+> nothing here is invented. Where a command is a *standard tool* (curl, systemd,
+> crontab, docker CLI) rather than repo code, it is marked as such.
+> Date: 2026-10-15.
 
 ## 1. Topology at a glance
 
 | Process | Command | Port | Notes |
 | --- | --- | --- | --- |
 | Database | `docker compose up -d` | `localhost:5433` → 5432 | container `noema-db`, volume `noema-db-data` |
-| App (dev) | `npm run dev` | 3000 (parity loop: 3201) | `next dev --turbopack` |
+| App (dev) | `npm run dev` | 3000 (dev loop: 3201) | `next dev --turbopack` |
 | App (prod) | `npm run build` then `npm start -- --port 3200` | 3200 (default `npm start`: 3000) | **dev and prod share `.next` — never run both at once** |
 | Collab relay | `npm run collab` | 1234 (`PORT`/`HOST` env) | optional; clients need `NEXT_PUBLIC_COLLAB_URL` |
 | Dockerized app | `docker compose --profile app up --build` | 3000 (container) | profile-gated; plain `docker compose up` starts **db only** |
@@ -88,7 +88,7 @@ Steps 2–3 come from `backup.mjs`’s own header/exit output (the restore +
 row-count verification hook); the `docker exec -i` variant is the same psql
 client the backup path already relies on (the compose `db` image is
 `postgres:16-alpine`, which ships `psql`). **Read-verified, not executed by
-this batch** — run the full drill on a scratch database before you need it for
+this change** — run the full drill on a scratch database before you need it for
 real.
 
 ## 3. Cron driver: recurring templates
@@ -269,10 +269,9 @@ $env:PORT="9000"; $env:HOST="127.0.0.1"; npm run collab   # PowerShell
 
 ### 5.2 Join authorization (B53) + M1.5 hardening (B75)
 
-Sources: the header contract in `scripts/collab-server.mjs` and
-`docs/audits/security-1-r13-collab-relay-auth.md` (B53 slice; its
+Source: the header contract in `scripts/collab-server.mjs` (B53). Its earlier
 “residual risk” list **predates B75** — rate limiting, Origin check and
-presence binding have since landed in the script itself).
+presence binding have since landed in the script itself.
 
 The relay authorizes **before** the room exists — fail closed everywhere:
 
@@ -400,7 +399,7 @@ So `prisma migrate deploy` alone does **not** reproduce the current schema —
 `npx prisma migrate status` will show drift until the baseline migration
 (reconciling today’s schema, tracked as R28.25) lands. Until then:
 
-- **Dev / this loop:** `npm run db:push` (Tier MAX in the playbook: gate lock,
+- **Dev / this loop:** `npm run db:push` (Tier HEAVY: build serialization,
   stop `:3200`, restart after, restart dev `:3201`).
 - **Production:** prefer `npx prisma migrate deploy` *once the baseline exists*;
   check first with `npx prisma migrate status`, and diff with
@@ -440,7 +439,7 @@ curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 
 ## 10. Verification appendix
 
-How each command above was cross-checked (this batch read the named source;
+How each command above was cross-checked (this change read the named source;
 nothing was executed against live servers):
 
 | Section | Command / fact | Source of truth |
@@ -454,30 +453,30 @@ nothing was executed against live servers):
 | 4.2 | “Email & invitations” / “Verify & send test” labels, `testEmailAction` → `verifyMail` | `src/components/email-settings.tsx` · `src/lib/i18n.ts` (`emailHeading`, `verifySendTest`, `smtpVerified`, `recentEmail`) |
 | 4.3 | `npm run check:mail`, mock on 2525, `MOCK_SMTP_PORT`, assertions, cleanup | `package.json` · `scripts/check-mail.mjs` |
 | 5.1 | `npm run collab`, `PORT`/`HOST`, `loadEnvFile`, `AUTH_SECRET` warn, `DATABASE_URL`, `NEXT_PUBLIC_COLLAB_URL` | `package.json` · `scripts/collab-server.mjs` (PORT/HOST, `ensureEnv`, `start()`) · `.env.example:11-12` |
-| 5.2 | 4401/4403 table, read-only drop, no oracle; B75: 4400 Origin (`APP_ORIGINS`), 4429 rate limits (5 conns / 30 msg per 10 s), presence identity binding, current known-gaps list | `scripts/collab-server.mjs` header contract · `docs/audits/security-1-r13-collab-relay-auth.md` (B53 part) |
-| 5.3 | collab test count (38 `it()` lines), `check-collab.mjs` → 4401 not a gate | `scripts/collab-server.test.mjs` · audit doc |
-| 6 | `--profile app`, service names/ports/env/healthchecks, volume behaviour | `docker-compose.yml` · `scripts/parity-state.json` (B62/B74 notes) |
+| 5.2 | 4401/4403 table, read-only drop, no oracle; B75: 4400 Origin (`APP_ORIGINS`), 4429 rate limits (5 conns / 30 msg per 10 s), presence identity binding, current known-gaps list | `scripts/collab-server.mjs` header contract (B53) |
+| 5.3 | collab test count (38 `it()` lines), `check-collab.mjs` → 4401 not a gate | `scripts/collab-server.test.mjs` |
+| 6 | `--profile app`, service names/ports/env/healthchecks, volume behaviour | `docker-compose.yml` |
 | 7 | `/api/health` 200/503 shapes, 2 s ping, `no-store`, no auth/disclosure, compose healthcheck | `src/app/api/health/route.ts` · `docker-compose.yml` |
 | 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
 | 8 | single `20260113000000_init` migration vs push-evolved schema | `prisma/migrations/` · `docs/specs/engineering-hardening.md:149,367-373` |
-| all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` · `scripts/LOOP_PLAYBOOK.md` |
+| all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
 
 **Not verified by execution (be explicit when relying on them):** the backup →
 restore drill (§2.2), the systemd/crontab drivers (§3.2/3.3 — standard tooling,
 not repo code), and `docker compose --profile app up --build` end-to-end (the
 build itself was proven by B74: real build + run on 3202 + health probe; this
-batch did not rebuild).
+guide did not rebuild).
 
-**Observed staleness (not fixed here, other owners):** `docs/AUDIT.md` and
-`docs/specs/templates.md` refer to a `check:share-cron` npm script that does
-**not** exist in `package.json` — the script must be run directly (§3.4); the
-B53 audit doc’s “residual risk” list predates B75 (§5.2); and
+**Observed staleness (not fixed here):** `docs/specs/templates.md` refers to a
+`check:share-cron` npm script that does **not** exist in `package.json` — the
+script must be run directly (§3.4); the collab relay’s “residual risk” list
+predates B75 (§5.2); and
 `scripts/backup.mjs:1` says “compressed” while the dump is plain SQL (§2.1).
 
-**Concurrent-batch note:** `scripts/backup.mjs` (B92) and
+**Note on concurrent work:** `scripts/backup.mjs` (B92) and
 `scripts/collab-server.mjs` (B75) both changed *while this guide was being
 written*; §2 and §5 were re-read and re-verified against the post-landing
-versions. Re-check those two sections if either batch ships again.
+versions. Re-check those two sections if either file changes again.
 
 ## 11. Authoring-window policy
 

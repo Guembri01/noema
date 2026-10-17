@@ -6,14 +6,14 @@ Ordered by dependency and impact. Every item maps to rows in
 **How to read this roadmap (2026-10-15):**
 
 - **Marks:** `[x]` delivered · `[~]` delivered in code but its matrix row still reads
-  🟡/🧭 — queued for orchestrator re-verification (counts/`docs:gaps` are
-  orchestrator-owned; **where this file and the matrix disagree, the matrix wins**) ·
+  🟡/🧭 — queued for maintainer re-verification (counts/`docs:gaps` are
+  maintainer-owned; **where this file and the matrix disagree, the matrix wins**) ·
   `[ ]` not built.
-- **Scoreboard:** **174 ✅ / 89 🟡 / 286 🧭 / 14 ⛔ of 563** feature rows — 375 still open.
+- **Status:** **174 ✅ / 89 🟡 / 286 🧭 / 14 ⛔ of 563** feature rows — 375 still open.
 - Known drift of this class was already confirmed by spec audit B21: the formula /
   relation / rollup engines, version history, the REST API + tokens, webhooks + OAuth
   apps, 2FA + rate limiting and much of the import/export suite exist in `src/**` while
-  their matrix rows still read 🧭. Those rows are re-verified by the orchestrator, not
+  their matrix rows still read 🧭. Those rows are re-verified by the maintainers, not
   flipped by this document.
 
 ## Milestone 0 — Foundation (done)
@@ -30,7 +30,7 @@ Ordered by dependency and impact. Every item maps to rows in
 - [x] Block hover handle + pointer drag-and-drop reordering (TipTap drag handle)
 - [x] Selection bubble menu (bold/italic/underline/strike/code/link)
 - [~] Text color + highlight marks — renders; palettes still limited (matrix 🟡)
-- [x] Keyboard-driven `/` slash menu (tiered ranking shipped in the wave-1 block batch)
+- [x] Keyboard-driven `/` slash menu (tiered ranking shipped in the first block pass)
 - [x] Callout (in-block emoji picker verified) · toggle (state proven to persist by e2e)
 - [~] Columns (2/3/4/5), simple table block, table of contents — render; add/remove-column
   UI, header styling and scroll-spy are thin (matrix 🟡)
@@ -51,7 +51,7 @@ Ordered by dependency and impact. Every item maps to rows in
 - [x] Undo/redo surfaced in UI + restore-deleted-block via snapshot + Undo toast (B03)
 - [x] Block context menu (turn-into complete vs Notion, nine-tint block backgrounds)
 - [x] Notion-style caret + selection styling
-- [x] Wave-1 editor polish: code-block language picker (35 languages) + syntax
+- [x] First-round editor polish: code-block language picker (35 languages) + syntax
   highlighting (B01), nested text-colour fix (B03)
 
 ## Milestone 2 — Databases complete
@@ -84,7 +84,7 @@ Ordered by dependency and impact. Every item maps to rows in
   `src/lib/importers.ts`; matrix section-3 rows 🧭)
 - [ ] Database lock · [~] button properties (per-row button config UI exists) + basic
   automations (template cron)
-- [x] Wave-1 database round (B15, 13 flips): sticky first column, freeze/show-hide
+- [x] First database round (B15, 13 flips): sticky first column, freeze/show-hide
   columns, delete/restore rows via the *Deleted rows* panel, keyset pagination on the
   ticket tracker, stale-write race fix in `setViewConfig`, soft-delete semantics for rows
 
@@ -117,8 +117,7 @@ Ordered by dependency and impact. Every item maps to rows in
 - [x] Chat: draft-first threads, note-pinned discussions, `/ask` grounded replies,
   **streaming answers** (`/api/chat/stream`, `check:chat-stream`) + **Regenerate**
 - [~] Version history slide-over (author, summary, delta, restore — `version-history.tsx`)
-  — matrix section 10 reads 0/9 → re-baseline; B30's *version history v2* spec is in the
-  wave
+  — matrix section 10 reads 0/9 → re-baseline; B30's *version history v2* spec is drafted
 - [x] Workspace chat (discussions with messages; sidebar Chat tab + `GET/POST /api/chat`)
 - [x] Calendar subscriptions (ICS import + refresh; sidebar Meetings tab) ·
   [ ] two-way Google/Outlook OAuth sync (matrix 🟡 — ICS read-only today)
@@ -167,16 +166,14 @@ Ordered by dependency and impact. Every item maps to rows in
 - [x] Sidebar chrome (Home/Chat/Meetings tabs, search with Ctrl K, Library, Teamspaces,
   Private pages, Add, Customize) + Library page
 
-## Milestone 5 — Wave pool execution (Oct 2026)
+## Milestone 5 — Parallel work phases (Oct 2026)
 
-Fleet status at writing: **60 batches, 28 done / 27 running / 5 queued** (2026-10-15).
-
-- [ ] **Waves 1–3 land:** B11 (Actions ⋯ closeout), B17 properties family (13 partials),
+- [ ] **Phases 1–3 land:** B11 (Actions ⋯ closeout), B17 properties family (13 partials),
   B18 editor micro-slice, B19 sharing/permissions, B20 media/embeds · unit net B33–B36 ·
   e2e net B38–B41 · feature slices B42–B44 (trash restore + permanent delete, command
-  palette, favorites section) — fast gates + targeted e2e per batch; the orchestrator runs
-  **one** full-suite gate + docs regen when each wave lands.
-- [ ] **Waves 4–5 land (audit remediation):** B29 navigation spec · B45 focus traps ·
+  palette, favorites section) — fast gates + targeted e2e per change; one full-suite gate
+  plus a docs regeneration when each phase lands.
+- [ ] **Phases 4–5 land (audit remediation):** B29 navigation spec · B45 focus traps ·
   B46 a11y audit · **B53 collab-server M1 auth** (audit C1) · B54 session list + revoke ·
   B57 template-cron D3/D4/D7 · B58 AI draft/regenerate-loss · B59 href-XSS + calendar-SSRF
   · B60 guest scoping + upload hardening (queued behind B42) · B55 export hardening ·
@@ -184,23 +181,23 @@ Fleet status at writing: **60 batches, 28 done / 27 running / 5 queued** (2026-1
 - [x] Spec cycle **done** — all 12 specs on disk: realtime-collab, saml-sso,
   relations-rollups, formula-engine, import-export, integrations-api, ai-surface,
   plans-licensing, automations, engineering-hardening, templates, version-history-v2.
-- [x] Docs/audits published — README refresh (B47), REST API reference (B48, 31
-  endpoints), security audit (B49, 25 findings), performance audit (B50, 19 findings).
+- [x] Documentation published — README refresh (B47), REST API reference (B48, 31
+  endpoints).
 - [ ] **B16** — spec-side flake cleanup + DB pollution + **one quiet-window full-suite
   baseline** (3 consecutive green runs, or one green + documented reasoning): the reference
-  every later wave is judged against. Still queued — it needs a quiet window.
-- [ ] **Scoreboard pressure:** convert the **89 🟡 partials** to ✅ first — they are
-  wiring/test gaps, not greenfield (batch-size cap: 2–3 rows or 1 refactor).
+  every later phase is judged against. Still queued — it needs a quiet window.
+- [ ] **Status pressure:** convert the **89 🟡 partials** to ✅ first — they are
+  wiring/test gaps, not greenfield (change-size cap: 2–3 rows or 1 refactor).
 
 ## Milestone 6 — Collaboration security & SSO depth (Oct–Nov 2026)
 
-- [ ] **CRDT M1 — security slice** — **chartered as B53, running** (wave 4):
+- [ ] **CRDT M1 — security slice** — **chartered as B53** (phase 4):
   server-side room-join authz in `collab-server.mjs` (session + workspace membership +
   guest page scoping, fail-closed, no existence oracle) per `realtime-collab.md` §M1 and
   the audit's C1 critical. Gates the matrix's multiplayer/presence/cursor rows.
 - [ ] **SAML T10.1** (`saml-sso.md` §M1 first slice, next to charter now that every spec
   exists): `@node-saml/node-saml`, `SsoConnection`/`SamlAssertionSeen` schema
-  (`prisma db push`, Tier MAX), ACS + JIT login against the mock-IdP plan [R10.1, R10.5].
+  (`prisma db push`, Tier HEAVY), ACS + JIT login against the mock-IdP plan [R10.1, R10.5].
 - [ ] CRDT M2 — persisted documents + text CRDT; M3 — cursors/awareness UX. Honest scope:
   M2/M3 only if M1 lands clean this year — otherwise multiplayer rows stay 🧭 into 2027.
 
@@ -227,15 +224,15 @@ Fleet status at writing: **60 batches, 28 done / 27 running / 5 queued** (2026-1
 
 ## Milestone 9 — Release candidate (Dec 2026)
 
-- [ ] The B16 full-suite baseline held green through the cycle (one suite per batch, lock
+- [ ] The B16 full-suite baseline held green through the cycle (one suite per change, lock
   discipline, quarantine list empty or root-caused).
-- [ ] Orchestrator re-baseline: `docs:counts` / `docs:gaps` regen + stale-🧭 verification
+- [ ] Re-baseline: `docs:counts` / `docs:gaps` regen + stale-🧭 verification
   (the B21/B23/B25 class — formula engines, docx/trello importers, AI block + autofill),
   and the i18n QA (B51) fixes applied.
-- [x] Docs published from the pool: README refresh (B47), REST API reference (B48),
+- [x] Documentation published: README refresh (B47), REST API reference (B48),
   security audit (B49) + performance audit (B50) — their remediation is chartered as
   B53–B60 (M5).
-- [ ] Honest scoreboard target: close most of the 89 🟡, stretch ✅ from 174 toward
+- [ ] Honest status summary target: close most of the 89 🟡, stretch ✅ from 174 toward
   ~230–250, ⛔ stays 14 — **full parity (286 planned rows) is explicitly not a 2026
   commitment.**
 - [ ] `check:coherence` green with ratchets holding (unwrapped ≤ 11 and shrinking,

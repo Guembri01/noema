@@ -37,8 +37,8 @@ import {
  * mechanism is identical - with one documented requirement from the Next
  * docs: nonce pages must be DYNAMICALLY rendered (static-prerendered HTML is
  * generated at build time with no request context and would ship script tags
- * without the nonce). Flagged in docs/audits/security-1.md M9 for the next
- * Tier MAX build to re-verify against :3200 (no build in this batch).
+ * without the nonce). Flagged in M9 for the next
+ * Tier HEAVY build to re-verify against :3200 (no build in this change).
  *
  * Skipped: `api/` (JSON responses execute no scripts; they keep B61's static
  * CSP from `next.config.ts`), `_next/` (immutable assets + HMR/devtools
@@ -50,7 +50,7 @@ import {
  * `style-src 'self' 'unsafe-inline'` is deliberately untouched (TipTap
  * inline style attributes - a nonce there would disable 'unsafe-inline').
  *
- * Security gates (this batch, additive):
+ * Security gates (this change, additive):
  *  - IP allowlist: private/admin surfaces (`/w/<slug>/settings`,
  *    `/w/<slug>/audit`, `/admin/*`) are gated by the CIDR engine in
  *    `src/lib/ip-allowlist.ts`, read through `src/lib/tenant-guard.ts`.

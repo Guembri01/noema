@@ -2,7 +2,7 @@
 
 One word per idea, everywhere: UI copy, code, schema, docs and tests. When a term
 changes here, it changes in all five (this file is part of the coherence
-contract in `docs/AUDIT.md` §5).
+contract).
 
 | Term | Means | Not |
 | --- | --- | --- |

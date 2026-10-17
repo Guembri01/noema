@@ -440,7 +440,7 @@ const VIEW_CONFIG_KEYS = [
   "chartAggregate",
   "aggregationPropertyId",
   "previewPropertyId",
-  // Toolbar-owned keys added by the wiring waves: without these, a captured
+  // Toolbar-owned keys added by the wiring work: without these, a captured
   // saved view silently drops the footer, format rules, filter tree builder,
   // property layout and page size.
   "footer",

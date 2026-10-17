@@ -56,7 +56,7 @@
 //           closed when unset would break CLI/non-browser clients
 //           (`check-collab.mjs`, tests) for no security gain.
 //
-// Known gaps (still open, see docs/audits/security-1-r13-collab-relay-auth.md):
+// Known gaps (still open):
 // no mid-session lock re-evaluation (R9.4 — join-time only), no byte-rate cap
 // (512 KiB/s half of R9.6), handshake *churn* bounded only by the concurrency
 // cap, and the residual timing side channel from B53.

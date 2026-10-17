@@ -8,7 +8,7 @@
  * params (`w`,`h`,`fit`,`format`,`q`) — no token/signature is ever appended
  * here, so a transform URL is a plain, cacheable, deterministic string. The
  * actual re-encoding and the signed/private variants are the caller's job;
- * this module only owns the URL shape (LOOP_PLAYBOOK: new logic starts as a
+ * this module only owns the URL shape (new logic starts as a pure
  * lib, so vitest owns it).
  *
  * Contract:

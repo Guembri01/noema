@@ -4,14 +4,14 @@
  *   node_modules/.bin/tsx scripts/i18n-extract.ts            # scan all of src/
  *   node_modules/.bin/tsx scripts/i18n-extract.ts --top 15   # more files listed
  *
- * `scripts/i18n-insert.mjs` owns the WRITE side (it splices hand-authored keys
+ * the i18n key inserter owns the WRITE side (it splices hand-authored keys
  * into the five locale blocks). This companion owns the READ side: it walks
  * `src/`, runs the conservative `i18n-scan` analyser, prints the real coverage
  * each file/locale reaches, proposes catalogue keys for the strings still
  * hard-coded, merges those proposals against the live catalogue
  * (`mergeIntoCatalog`) and reports the per-locale delta (`diffCatalog`) —
  * without touching `src/lib/i18n.ts`. It is the evidence behind the coverage
- * numbers; `i18n-insert.mjs` is what actually applies a change.
+ * numbers; the i18n key inserter is what actually applies a change.
  *
  * Pure helpers are exported so `scripts/i18n-extract.test.mjs` can pin them
  * without a filesystem or a full repo scan. `import.meta.url` guards the CLI.

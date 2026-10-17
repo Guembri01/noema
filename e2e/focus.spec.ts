@@ -19,7 +19,7 @@ import { PrismaClient } from "@prisma/client";
  *      button that opened it).
  *
  * Owned files: src/components/ui/** (B45). share-dialog.tsx / page-title.tsx /
- * sidebar workspace-switcher belong to other batches - READ-ONLY here, asserted
+ * sidebar workspace-switcher belong to other work - READ-ONLY here, asserted
  * exactly as they are.
  * The assertions target the primitive contract (role / aria-modal / focus
  * containment / focus return) rather than dialog-specific copy, so any dialog

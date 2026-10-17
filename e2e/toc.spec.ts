@@ -14,14 +14,14 @@ import { PrismaClient, type Prisma } from "@prisma/client";
  * exercises the JSON load path the editor uses for every reopened page.
  *
  * Every test builds its own page and removes it in `finally` — never the
- * shared first page (LOOP_PLAYBOOK e2e discipline).
+ * shared first page (e2e discipline).
  */
 
 const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
 
 const prisma = new PrismaClient();
 
-// A cold dev server compiles routes on demand and other batches share it, so
+// A cold dev server compiles routes on demand and other suites share it, so
 // the per-test budget is deliberately generous (the config is 60s).
 test.describe.configure({ timeout: 180_000 });
 

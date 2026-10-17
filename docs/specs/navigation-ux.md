@@ -1,11 +1,10 @@
 # Spec — Navigation UX: side peek, page tabs, back/forward, shortcut map
 
-> **Status: spec complete, implementation pending.** Batch **B29** of the parity
-> loop — a **docs-only** batch: no `src/**`, `e2e/**` or schema file was changed
-> to produce this document. Every claim about the current code cites `file:line`
+> **Status: spec complete, implementation pending.** A **docs-only** change: no
+> `src/**`, `e2e/**` or schema file was edited to produce this document. Every claim about the current code cites `file:line`
 > as measured on 2026-10-15. Requirement IDs (`R29.x`) are the traceability
 > anchors: §11 lists tasks 1:1 against them and tests must cite the IDs they
-> cover. §13 maps them to the exact `FEATURE_MATRIX` rows this batch appends its
+> cover. §13 maps them to the exact `FEATURE_MATRIX` rows this change appends its
 > spec path to — **side peek / tabs / back-forward rows only**; the command
 > palette and shortcut rows belong to **B43** and are deliberately untouched
 > (this spec designs *around* them, see §3.4).
@@ -62,7 +61,7 @@ rather than duplicate.
 | Global keybindings | `workspace-shell.tsx:81-90` — one listener: `(metaKey \|\| ctrlKey) && key === "k"` → `setQuickOpen`; the only `metaKey\|ctrlKey` match in `src/**` besides a synthetic dispatch | One ad-hoc global binding; no scope stack, no registry. |
 | Synthetic shortcut dispatch | `src/components/page-title.tsx:221-236` `undoEditor()` fires `new KeyboardEvent("keydown", { key: "z", ctrlKey: true })` at `.ProseMirror` | Workaround pattern — shortcuts are *simulated*, not registered. |
 | Shortcut labels (menu) | `src/lib/actions-menu.ts:50` `ctrl+alt+l`, `:65` `ctrl+d`, `:74` `ctrl+shift+p`, `:156` `ctrl+z`; renderer `:280` `formatShortcut` | Labels are display-only strings in the Actions menu model (B11's file). |
-| Command palette | `src/components/command-palette.tsx` → **NOT PRESENT** at audit time; `scripts/parity-state.json` shows `"B43": { status: "running", note: "wave 2: feature: command palette (Ctrl+K)" }` (started 2026-10-15T12:30Z) | **Sibling B43 owns it — spec around it, do not duplicate.** |
+| Command palette | `src/components/command-palette.tsx` → **NOT PRESENT** at audit time; a command palette is being written in parallel | **B43 owns it — this spec designs around it.** |
 | Quick find (predecessor of palette) | `src/components/quick-find.tsx` (mtime **2026-10-14 19:53**, 4.7 KB) — `cmdk` `Command` + Radix `Dialog`, `quickFindAction`, create-page item; mounted at `workspace-shell.tsx:157-161`; opened by `?`/footer (`sidebar.tsx:130-134`, `sidebar/sidebar-footer.tsx:87-88`); e2e `e2e/search.spec.ts:156,167` presses `Control+k` | Exists, **e2e-locked to Ctrl+K**; B43 extends it. |
 | Breadcrumb — header | `src/components/page-title.tsx:324-328` — `<nav aria-label="Breadcrumb">` with exactly two **static `<span>`s** (`workspaceName / title`), no links, no ancestors, no popover | **Partial** (matrix row 580 🟡 "renders; interactions partial"). |
 | Breadcrumb — data | `src/server/queries.ts:403-424` `getAncestorTrail(workspaceId, pageId)` walks `parentId` up to `guard < 50`, workspace-scoped; consumed by `src/app/w/[slug]/[pageId]/page.tsx:53-56` → `:181` `breadcrumbTrail` | Full trail is computed on every page load — **and then only handed to the editor**, not the header. |
@@ -113,7 +112,7 @@ rather than duplicate.
 - **G8 — no shortcut registry.** Bindings live in a shell `useEffect`
   (`workspace-shell.tsx:81-90`), a synthetic event (`page-title.tsx:221-236`)
   and TipTap; labels live in a menu model (`actions-menu.ts:50-156`). Nothing
-  prevents two batches from binding the same combo — hence the explicit
+  prevents two changes from binding the same combo — hence the explicit
   ownership table in §7.3.
 - **G9 — planned shortcut rows collide with the browser.** Matrix row 587
   proposes `Cmd/Ctrl+P` for quick find and row 588 proposes `Cmd/Ctrl+N` for
@@ -121,7 +120,7 @@ rather than duplicate.
   new window — both are browser-owned and never reach the page; `Ctrl+D`
   (row 593 duplicate block, also `actions-menu.ts:65`) is bookmark-this-page.
   Recorded here for B43's awareness; **their cells are not edited by this
-  batch** (§13).
+  change** (§13).
 
 ## 3. Decision
 
@@ -146,7 +145,7 @@ model browsers themselves use (one active tab per window).
 
 ### 3.3 Persistence: `sessionStorage`, keyed like the view-tab precedent
 
-Brief requirement is *session-persisted* → `sessionStorage["noema:tabs:<slug>"]`
+The requirement is *session-persisted* → `sessionStorage["noema:tabs:<slug>"]`
 (follows `database-view.tsx:150-173`: namespaced key, restore in an effect to
 keep server/client HTML identical, `try/catch` for private mode). `localStorage`
 is explicitly deferred (O29.1).
@@ -156,7 +155,7 @@ is explicitly deferred (O29.1).
 `src/lib/shortcuts.ts` is data + a scope resolver; it does **not** rebind
 anything B43 or B11 owns. §7.3's table is the single source of truth for who
 owns which combo, and the registry's unit test fails if B29 adds a combo
-already claimed by a sibling or reserved by the browser (G8/G9).
+already claimed elsewhere or reserved by the browser (G8/G9).
 
 **Boundary with B43** (running; `command-palette.tsx` absent at audit time):
 B43 owns *palette behaviour* (open, fuzzy match, keyboard nav, its rows) and the
@@ -232,7 +231,7 @@ list, no duplicated literals.
   `aria-modal="false"`, accessible name from the i18n catalogue
   (`rowLabel`/`openSidePeek` already exist, `i18n.ts:455`), trigger carries
   `aria-expanded`; **all** new strings go through `t()` in all 5 locales via
-  `scripts/i18n-insert.mjs` (no hand-edits). New client files using `t()` may
+  the i18n key inserter (no hand-edits). New client files using `t()` may
   only *raise* the coherence `i18nFiles` ratchet (`check-coherence.mjs:26,82-84`
   — growth allowed, shrink fails).
   **Acceptance:** locale key-parity unit test stays green; `check:coherence`
@@ -356,7 +355,7 @@ list, no duplicated literals.
   **Acceptance:** unit — every B29 entry has a `labelKey` + formatter output
   (e.g. `ctrl+alt+p` → `Ctrl+Alt+P` on non-mac, `⌘`-form flagged for i18n);
   lint-level spot check in review: no new `"ctrl+"` literals outside
-  `src/lib/shortcuts.ts` (grep evidence in the batch report).
+  `src/lib/shortcuts.ts` (grep evidence).
 - **R29.24 — Collision gate stays on.** The registry test additionally fails
   if a B29 combo equals any combo in B43's or B11's claimed set (§7.3) or a
   browser-reserved combo (`Ctrl+T/W/N/Tab/PageUp/PageDown/1-9`,
@@ -364,22 +363,22 @@ list, no duplicated literals.
   `Ctrl+R/F5`) — so G9-style rows can never be implemented silently.
   **Acceptance:** unit (same file as R29.21) asserts the reserved list is
   enforced by adding a deliberately reserved combo → RED → removed → GREEN
-  (negative-control evidence in the batch report).
+  (negative-control evidence).
 
 ### Cross-cutting
 
-- **R29.25 — Docs-only this batch.** B29 changes no `src/**`, `e2e/**` or
-  schema file; implementation lands in M1–M3 batches that inherit this
+- **R29.25 — Docs-only this change.** B29 changes no `src/**`, `e2e/**` or
+  schema file; implementation lands in M1–M3 work that inherits this
   document's requirement IDs.
   **Acceptance:** `git status` shows only `docs/specs/navigation-ux.md` and the
-  four matrix Notes cells for this batch; `check:coherence` COHERENT.
-- **R29.26 — No-regression envelope for implementation batches.** Every M1–M3
-  batch keeps `check:tsc` 0, eslint 0 errors, unit green, `check:a11y` green,
+  four matrix Notes cells for this change; `check:coherence` COHERENT.
+- **R29.26 — No-regression envelope.** Every M1–M3
+  step keeps `check:tsc` 0, eslint 0 errors, unit green, `check:a11y` green,
   coherence COHERENT, and the existing suites green — especially
   `e2e/search.spec.ts:156` (Ctrl+K quick find), the database-parity specs that
   exercise the current peek panel, and `e2e/noema.spec.ts` (editor slot, never
   edited here).
-  **Acceptance:** per-batch evidence tails; a targeted
+  **Acceptance:** evidence recorded per step; a targeted
   `npx playwright test -g "peek|tab|history"` run on dev `:3201` in M1.
 
 ## 5. State model & storage (no schema change)
@@ -441,7 +440,7 @@ export function formatCombo(combo: string, platform: "mac"|"other"): string;
 - **Peek ↔ history**: the shell subscribes to route changes; the drawer's
   open/close is derived from `?peek=` (state *follows* the URL — R29.2/R29.3
   fall out structurally instead of being special-cased).
-- **i18n**: new keys are inserted by `scripts/i18n-insert.mjs` only
+- **i18n**: new keys are inserted by the i18n key inserter only
   (5 locales, parity test), never by hand.
 
 ## 7. UI spec
@@ -475,7 +474,7 @@ export function formatCombo(combo: string, platform: "mac"|"other"): string;
 
 ### 7.3 Shortcut map (ownership table — the anti-collision artifact)
 
-**Existing / owned by others — recorded, NOT edited by this batch:**
+**Existing / owned by others — recorded, NOT edited by this change:**
 
 | Combo | Action | Evidence | Owner |
 | --- | --- | --- | --- |
@@ -511,8 +510,8 @@ R29.24's test.)
 - **Header breadcrumb (row 580, 🟡):** the trail is already fetched
   (`page.tsx:53-56`) but the header shows two static crumbs
   (`page-title.tsx:324-328`). The low-risk fix — render ancestors as links
-  using `breadcrumbTrail` — touches `page-title.tsx`, **owned by B11** in this
-  wave, so it is recorded as a follow-up (O29.4), not specified as a B29
+  using `breadcrumbTrail` — touches `page-title.tsx`, **owned by B11**,
+  so it is recorded as a follow-up (O29.4), not specified as a B29
   requirement. The interactive-crumb implementation to mirror already exists in
   `breadcrumb.tsx:58-75`.
 - **Sidebar collapse (rows 581/590):** no desktop collapse exists
@@ -539,7 +538,7 @@ R29.24's test.)
 
 ## 9. Test plan
 
-**Unit (vitest, red-first — pure libs first per the playbook sandbox rule)**
+**Unit (vitest, red-first — pure libs first, the sandbox rule)**
 
 1. `src/lib/peek-url.test.ts` — `clampPeekWidth`, `serialize/deserializePeek`
    round-trip, malformed input (R29.1, R29.2).
@@ -554,7 +553,7 @@ R29.24's test.)
 
 **e2e (Playwright — new own file `e2e/navigation-ux.spec.ts`, dedicated
 prisma-created pages + `try/finally` cleanup; targeted `-g` runs on dev `:3201`
-in wave mode; never edits `e2e/noema.spec.ts` or `e2e/search.spec.ts`)**
+in targeted mode; never edits `e2e/noema.spec.ts` or `e2e/search.spec.ts`)**
 
 6. Peek: open from row → URL has `?peek=` → reload re-opens → Escape closes →
    focus restored (R29.2, R29.4).
@@ -568,16 +567,16 @@ in wave mode; never edits `e2e/noema.spec.ts` or `e2e/search.spec.ts`)**
 11. Non-regression: `npx playwright test -g "Ctrl"` (search spec's `Ctrl+K`)
     stays green (R29.26).
 
-**Gates (docs batch):** `check:tsc`, `check:lint`, unit baseline unchanged,
+**Gates (docs-only):** `check:tsc`, `check:lint`, unit baseline unchanged,
 `npm run check:coherence` → **COHERENT**. No build, no full e2e (FAST tier,
-`scripts/LOOP_PLAYBOOK.md:34-40`). Implementation batches add `check:a11y` and
+). Implementation adds `check:a11y` and
 targeted e2e per slice.
 
 ## 10. Milestones (M1–M3)
 
 1. **M1 — Side peek** (R29.1–R29.9): shared shell + `?peek=` + keyboard/a11y +
    content preview. Delivers matrix rows 583 and 234 (Notes already appended by
-   this batch; glyph flips land with the code).
+   this change; glyph flips land with the code).
 2. **M2 — History + registry** (R29.10–R29.13, R29.21–R29.24): stack model,
    nav buttons, `Alt+Shift+←/→`, `src/lib/shortcuts.ts` with the collision
    gate. Delivers row 584.
@@ -586,12 +585,12 @@ targeted e2e per slice.
    history. Delivers row 585.
 
 Milestones are sequenced so each ships independently (one row flips per
-milestone) and so M3's editor flush handshake lands **after** the current wave
+milestone) and so M3's editor flush handshake lands **after** the current phase
 releases `page-editor.tsx` (see Risk 1).
 
 ## 11. Delivery plan (tasks ↔ requirements)
 
-> Test-first rule from `scripts/LOOP_PLAYBOOK.md`: every task's acceptance is a
+> Test-first rule: every task's acceptance is a
 > red test citing its requirement IDs **before** implementation.
 
 **M1 — Side peek (~1.5 days)**
@@ -631,15 +630,15 @@ releases `page-editor.tsx` (see Risk 1).
 tests cited), targeted `npx playwright test -g` on dev `:3201` green,
 `check:a11y` green, `check:coherence` COHERENT, matrix glyph flipped for the
 rows that milestone actually delivered (Notes already contain the spec path —
-do not re-append), evidence tail in the batch report.
+do not re-append), evidence recorded in the pull request.
 
 ## 12. Risks & open questions (honest)
 
 **Risks**
 
 1. **Editor-slot coupling (highest for M3).** R29.17 needs a flush hook in
-   `page-editor.tsx` — the editor slot is committed to sibling batches (B18
-   this wave; `e2e/noema.spec.ts` is editor-owned). Mitigation: the handshake is
+   `page-editor.tsx` — the editor slot is committed to concurrent suites (B18
+   this phase; `e2e/noema.spec.ts` is editor-owned). Mitigation: the handshake is
    a `CustomEvent` the editor already has the pieces for
    (`runSave`, `page-editor.tsx:107-118`); if the slot is busy, M3 ships with
    the `pagehide` flush only and an honest partial on row 585's persistence
@@ -656,14 +655,14 @@ do not re-append), evidence tail in the batch report.
 4. **Browser-reserved shortcuts in existing rows (G9).** `Ctrl+P`/`Ctrl+N`/
    `Ctrl+D` in the matrix and in `actions-menu.ts` labels may never fire in
    Chromium. Out of B29's edit scope; flagged for B43/B11 (§7.3) — if a future
-   batch changes those rows, §7.3 must be updated with it.
+   change touches those rows, §7.3 must be updated with it.
 5. **Tab strip vs. existing e2e geometry.** A strip that renders at one tab
    would shift `main` and break selector-based tests. Mitigation is structural:
    R29.14 hides it below two tabs (default state = byte-identical layout).
 
 **Open questions**
 
-- **O29.1:** `sessionStorage` (per brief: session-persisted) vs `localStorage`
+- **O29.1:** `sessionStorage` (session-persisted) vs `localStorage`
   "restore tabs next time I open the browser". Decision: sessionStorage now;
   a per-workspace preference toggle can flip the key later without touching the
   reducer (codec already versioned).
@@ -673,7 +672,7 @@ do not re-append), evidence tail in the batch report.
 - **O29.3:** "Reopen closed tab" (`Ctrl+Shift+T` is browser-owned) — deferred;
   would need `Ctrl+Alt+Shift+T` or a strip context menu. Not in M1–M3.
 - **O29.4:** Header breadcrumb interactivity (G6) — needs `page-title.tsx`
-  (B11's file) or a shell-level crumb component; propose a follow-up batch
+  (B11's file) or a shell-level crumb component; propose follow-up work
   after B11 lands, reusing `getAncestorTrail` + `breadcrumb.tsx:58-75` styles.
 - **O29.5:** Desktop sidebar collapse (G7) — pairs with B43's `Ctrl+\` row;
   needs a persisted `noema:sidebar` width/collapsed key in the shell. Recorded,
@@ -681,9 +680,9 @@ do not re-append), evidence tail in the batch report.
 
 ## 13. Traceability — FEATURE_MATRIX rows
 
-**Rows appended by this batch (append-only, glyph untouched, exactly four):**
+**Rows appended by this change (Notes-only, glyph untouched, exactly four):**
 
-| Row | Matrix line | Text after this batch |
+| Row | Matrix line | Text after this change |
 | --- | --- | --- |
 | Side peek | `FEATURE_MATRIX.md:583` | `… \| 🧭 \| Planned. Spec: docs/specs/navigation-ux.md. \|` |
 | Back/forward navigation | `FEATURE_MATRIX.md:584` | `… \| 🧭 \| Planned; router-driven. Spec: docs/specs/navigation-ux.md. \|` |
@@ -704,5 +703,4 @@ do not re-append), evidence tail in the batch report.
 
 **Requirement → milestone → row:** R29.1–R29.9 → M1 → `:583`, `:234`;
 R29.10–R29.13 + R29.21–R29.24 → M2 → `:584`; R29.14–R29.20 → M3 → `:585`.
-Counts/gaps regeneration stays orchestrator-only
-(`scripts/LOOP_PLAYBOOK.md:84-87`).
+Counts/gaps regeneration stays maintainer-only.

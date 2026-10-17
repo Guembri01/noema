@@ -30,12 +30,8 @@ Everything written about the project, in roughly the order people want it. The
 
 | Document | What it answers |
 | --- | --- |
-| [`AUDIT.md`](./AUDIT.md) | What ships, what is good, what is bad — every finding with severity, evidence and the fix. |
 | [`TEST_PLAN.md`](./TEST_PLAN.md) | The test matrix, and what has to be proven before a feature is called done. |
-| [`FIX_PLAN.md`](./FIX_PLAN.md) | The ordered plan that keeps spec, backend, interface and tests in agreement. |
 | [`FRONTEND_PLAN.md`](./FRONTEND_PLAN.md) | The interface work list: what is smooth, what needs polish, what is missing. |
-| [`VELOCITY.md`](./VELOCITY.md) | Measured build times per work batch, against the playbook targets. |
-| [`audits/`](./audits/) | The raw reports: security, performance, i18n QA, test coverage. |
 
 ## Design specs
 
@@ -47,8 +43,7 @@ and the open questions.
 
 ## Where the evidence lives
 
-- `npm run check:matrix` recounts the scoreboard in `FEATURE_MATRIX.md`.
+- `npm run check:matrix` recounts the status summary in `FEATURE_MATRIX.md`.
 - `npm run docs:gaps` regenerates `MISSING_FEATURES.md` from the matrix.
 - `npm run audit` writes the static coherence inventory to `_audit-raw.json`.
-- [`scripts/LOOP_PLAYBOOK.md`](../scripts/LOOP_PLAYBOOK.md) documents the batch
-  workflow those gates serve.
+- `npm run check:coherence` is the gate those two feed.

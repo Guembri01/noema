@@ -1,7 +1,7 @@
 /**
  * Number property formatting — pure, dependency-free math for turning a NUMBER
  * property value into a display string and back (docs/FEATURE_MATRIX.md :274
- * "Number format"; docs/FIX_PLAN.md B17 properties family).
+ * "Number format"; B17 properties family).
  *
  * `database-query.ts` already renders NUMBER cells with a bespoke
  * percent/currency branch; this module is the general core behind it, built on

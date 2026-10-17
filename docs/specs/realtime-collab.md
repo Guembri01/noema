@@ -1,7 +1,7 @@
 # Spec — Realtime collaborative editing (CRDT + presence)
 
-> **Status: spec complete, implementation pending.** Batch **B09** of the parity
-> loop. This document is the deliverable; no production code was changed.
+> **Status: spec complete, implementation pending.** This document is the
+> deliverable; no production code was changed.
 > Every claim about the current code cites file + line. Requirement IDs
 > (`R9.x`) are the traceability anchors: the implementation plan in §14 lists
 > tasks 1:1 against them, and tests must cite the IDs they cover.
@@ -54,7 +54,7 @@ incrementally on top of the existing Yjs foundation, not a rewrite.
 | Smoke test | `scripts/check-collab.mjs:1-33` | Two in-process clients join one room, assert map update relay + awareness relay. No auth, no persistence assertions. |
 | Docs | `docs/ROADMAP.md:52`, `docs/FEATURE_MATRIX.md:352-356,667` | Roadmap marks opt-in realtime "done"; matrix still plans multiplayer/presence/cursors/gateway. |
 
-There is **no `src/lib/realtime*` module** — the batch brief's assumption of one
+There is **no `src/lib/realtime*` module** — an assumption of one
 is incorrect; all realtime client code lives inline in `page-editor.tsx`.
 
 ### 2.2 What the product class (Notion) does
@@ -104,7 +104,7 @@ is incorrect; all realtime client code lives inline in `page-editor.tsx`.
 | Lexical | Different editor core; Noema's entire block-extension set (TableKit, Mathematics, BlockColors, custom blocks…) is TipTap/ProseMirror. | Rejected — editor rewrite. |
 | Plain OT | Needs a single authoritative transform server with total order; offline merge and arbitrary concurrent structural edits (block moves, table edits) are far harder to get right than with CRDTs; no awareness story. | Rejected — higher complexity, worse offline semantics. |
 
-**Decision: Yjs, extending the existing foundation** (per the B09 brief:
+**Decision: Yjs, extending the existing foundation** (per B09:
 "extend that foundation, not replace it"). The work is (a) security, (b)
 persistence, (c) identity/presence UI, (d) persistence-path ownership — not a
 CRDT swap.
@@ -358,7 +358,7 @@ stack renders for a second presence entry injected via the test hook.
 
 ## 11. Delivery plan (milestones → tasks ↔ requirements)
 
-> Test-first rule from `scripts/LOOP_PLAYBOOK.md` applies: every task's
+> Test-first rule applies: every task's
 > acceptance is a red test citing its requirement IDs before implementation.
 
 **M1 — Secure the relay + presence identity (~2-3 days)**

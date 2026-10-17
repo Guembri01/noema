@@ -3,8 +3,7 @@
 // keep-N retention pruning that never prunes the newest dump.
 //
 // Red-first: this file was written BEFORE scripts/backup-lib.mjs existed — the
-// first run failed on the missing module (see the batch report for the red
-// tail). The pure helpers live in backup-lib.mjs so they are unit-testable
+// first run failed on the missing module (the red tail is recorded in the PR). The pure helpers live in backup-lib.mjs so they are unit-testable
 // without touching pg_dump, docker or the backups/ directory.
 import { describe, expect, it } from "vitest";
 import {

@@ -32,7 +32,7 @@ import { parseRule, type RecurrenceRule } from "@/lib/recurring-tickets";
  * There is no `Automation`/`AutomationRun` Prisma model yet (the spec's §5 data
  * model is unimplemented), so rules live in an in-process store. That keeps the
  * engines genuinely reachable and testable end-to-end; durability across
- * restarts/multiple instances is the tracked follow-up (see the report).
+ * restarts/multiple instances is a tracked follow-up.
  */
 
 export type StoredRecurringTicket = {

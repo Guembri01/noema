@@ -79,7 +79,7 @@ async function cleanup(fixture: Fixture, contexts: BrowserContext[]) {
 }
 
 test.describe.configure({ timeout: 300_000 });
-// The dev server is shared with sibling batches; give navigations room.
+// The dev server is shared with concurrent suites; give navigations room.
 test.use({ navigationTimeout: 120_000, actionTimeout: 60_000 });
 
 test.describe("session management parity", () => {

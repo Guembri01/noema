@@ -1,8 +1,7 @@
 # Spec — Database deep: view-type depth, linked views, templates, permissions & row ops
 
-> **Status: spec complete, implementation pending.** Batch **B89** of the parity
-> loop (docs tier, light slot). This document is the deliverable; no production
-> code was changed. It covers **FEATURE_MATRIX §3 "Databases" — the 36 planned
+> **Status: spec complete, implementation pending.** This document is the
+> deliverable; no production code was changed. It covers **FEATURE_MATRIX §3 "Databases" — the 36 planned
 > (🧭) rows**, the biggest remaining cluster. Every claim about the current code
 > cites file + line. Requirement IDs (`R89.x`) are the traceability anchors:
 > §11 lists milestones 1:1 against them, §13 maps every matrix row to its
@@ -105,7 +104,7 @@ requirement already owned by a sibling spec (§2.4).
   character with the cuid and cannot be prefixed/padded; not a stable,
   human-readable id (matrix `:265`, `:300`).
 - **D89.8 — `PLACE`/`VERIFICATION` missing** from `enum PropertyType`
-  (`schema.prisma:32-55`) — requires `prisma db push` (Tier MAX).
+  (`schema.prisma:32-55`) — requires `prisma db push` (Tier HEAVY).
 - **D89.9 — engine/UI split.** `FilterNode`, `ColorRule`, `groupRows`,
   `aggregate` (rollup lib) already exist, but the settings UI still offers flat
   filters only (`view-settings.tsx:56-71`) — rows `:216-226` stay 🧭 purely for
@@ -114,7 +113,7 @@ requirement already owned by a sibling spec (§2.4).
   `importCsvAction(text)` directly (`database-view.tsx:835-848`); R23.1's
   mapping preview (owned by import-export) is not wired into this entry point.
 
-### 2.4 Ownership map (cross-spec — do not duplicate)
+### 2.4 Ownership map (cross-spec — avoid duplication)
 
 | Concern | Owner spec | Anchor requirements | What THIS spec adds |
 | --- | --- | --- | --- |
@@ -137,7 +136,7 @@ Every M1 requirement extends `database-query.ts` (pure functions) and the
 renderers, persisting through the existing `DatabaseView.config` JSON via
 `normalizeViewConfig`/`parseViewConfig`. No `prisma db push` in M1 → the
 milestone runs Tier STANDARD. Schema deltas (FORM, PLACE, VERIFICATION, lock,
-seq, dependencies) are isolated in M3 → Tier MAX, one push.
+seq, dependencies) are isolated in M3 → Tier HEAVY, one push.
 
 ### 3.2 One aggregation function set: reuse `src/lib/rollup.ts`
 
@@ -214,10 +213,10 @@ are rejected at write time.
 
 ## 4. Requirements (numbered, testable)
 
-> Test-first rule from `scripts/LOOP_PLAYBOOK.md` applies: every task's
+> Test-first rule applies: every task's
 > acceptance is a red test citing its requirement IDs before implementation.
-> Docs batch: no tests run for B89 itself; IDs below are for the implementing
-> batches.
+> Docs-only: no tests run for B89 itself; the IDs below are for the
+> implementing work.
 
 ### M1 — view-engine depth (pure lib + renderers + config; **no schema change**, Tier STANDARD)
 
@@ -414,7 +413,7 @@ are rejected at write time.
   id rewrites); e2e: duplicate with views+properties → copy has identical view
   configs, original untouched.
 
-### M3 — permissions & lock, property types, form view, structural rows (**schema changes → Tier MAX**)
+### M3 — permissions & lock, property types, form view, structural rows (**schema changes → Tier HEAVY**)
 
 - **R89.23** — **Database capability model**: `authorizeDatabase`
   (`database.ts:41`) returns `{ readRows, editRows, editSchema }` derived from
@@ -525,7 +524,7 @@ are rejected at write time.
   pattern as the current FORMULA handling). *Accept:* unit: operator catalogue
   selection per type (enabled only when the dependency exists); e2e marked
   `test.skip` **only until B21 M1 lands**, then activated citing R21.4+R89.32
-  together. (No skips ship in the final state — playbook rule.)
+  together. (No skips ship in the final state — tier rule.)
 - **R89.33** — **Tenancy & guardrails (spans M1–M3)**: every new action
   (`moveRowAction`, `duplicateRowAction`, `duplicateDatabaseAction`,
   `submitFormAction`, dependency CRUD, description/lock/config writes) calls
@@ -533,7 +532,7 @@ are rejected at write time.
   cross-workspace ids return the same generic error (no existence oracle, cf.
   R21.20/R9.7); view-config writes validate through `normalizeViewConfig`
   (never trust shape); new UI strings go through `t()` with
-  `scripts/i18n-insert.mjs` only (no i18n-ratchet raise beyond measured
+  the i18n key inserter only (no i18n-ratchet raise beyond measured
   coverage); a11y: every new control keyboard-reachable (`check:a11y` green).
   *Accept:* integration: outsider/foreign-workspace ids rejected on every new
   action; unit: config validation rejects malformed trees/widths/measure ids.
@@ -584,8 +583,7 @@ model RowDependency {
   and defaulted on read; unknown keys preserved for forward-compat.
 - `Template` changes (isDefault, kind, workspaceId, variables, locked) are
   **owned by `templates.md` §5** — not repeated here.
-- Everything in this section lands in one `prisma db push` (Tier MAX gate per
-  playbook), behind the M3 milestone.
+- Everything in this section lands in one `prisma db push` (Tier HEAVY gate), behind the M3 milestone.
 
 ## 6. UI spec (delta only — what B15's chrome gains)
 
@@ -693,7 +691,7 @@ model RowDependency {
 22. Outsider/foreign-workspace ids generic-refused on all new actions (R89.33).
 
 **e2e (Playwright — new `e2e/database-deep.spec.ts`, dedicated pages,
-try/finally cleanup per playbook)**
+try/finally cleanup)**
 
 23. Filter tree build → reload → intact (R89.2); group collapse persistence
     (R89.3); footer sum (R89.4); colour rule (R89.5); header quick filter
@@ -710,7 +708,7 @@ try/finally cleanup per playbook)**
 28. CSV toolbar import mapping dialog blocks unaccounted columns (R89.20 +
     R23.1).
 
-Docs batch B89 runs **none** of the above (FAST/docs tier: no e2e, no build);
+B89 is docs-only: it runs **none** of the above (FAST/docs tier: no e2e, no build);
 evidence for B89 = coherence gate green + this document.
 
 ## 10. Migration path (M1 → M2 → M3)
@@ -726,7 +724,7 @@ evidence for B89 = coherence gate green + this document.
    `description` to the M3 push). Row/template/import work depends on B21/B31/
    B23 landings only where §2.4 says so; otherwise independent.
 3. **M3 — schema + permissions**: R89.23–R89.33 in one `prisma db push`
-   (Tier MAX: build + prod restart + full e2e + domain checks per playbook).
+   (Tier HEAVY: build + prod restart + full e2e + domain checks).
    Order: capability gate first (no behavior change unlocked), then lock, then
    property types, then form/sub-items/dependencies. Existing rows: UNIQUE_ID
    properties backfill `seq` from `count(*)` in the migration task (ids start
@@ -752,7 +750,7 @@ evidence for B89 = coherence gate green + this document.
 - T89.11 [R89.18, R89.19]: duplicate/move row. Red: units 10–11, e2e 26.
 - T89.12 [R89.20, R89.21, R89.22]: import wiring, description, duplicate database. Red: e2e 26, 28 (description moves to M3 push — see §10).
 
-**M3 — permissions, properties, form, structural (~3–4 days, Tier MAX)**
+**M3 — permissions, properties, form, structural (~3–4 days, Tier HEAVY)**
 
 - T89.13 [R89.23, R89.33]: capability gate + guards. Red: units 12, 22; integration 18, 22.
 - T89.14 [R89.24]: lock. Red: integration 18, e2e 27.
@@ -770,14 +768,15 @@ evidence for B89 = coherence gate green + this document.
    hand-edited configs are the likeliest crash source. Mitigation: one
    normalizer, unknown-key preservation, property-style tests over random
    configs.
-2. **Scope gravity.** 36 rows in one spec can become one mega-batch — the
-   playbook's 2–3-row cap applies. Mitigation: milestones ship as micro-slices
+2. **Scope gravity.** 36 rows in one spec can become one mega-change — the
+   tier rule — 2–3 feature rows per change — applies. Mitigation: milestones
+   ship as micro-slices
    (T89.x) with independent acceptance; M1 alone closes 13 rows.
 3. **Two big dependencies.** R89.16/R89.17 wait on B31 (templates) and R89.32
    on B21 (relations); R89.20 on B23 (import). Mitigation: integration seams
-   specified above so implementation batches can land the seam first and flip
+   specified above so implementation work can land the seam first and flip
    behavior when the dependency lands (no skipped tests at the end).
-4. **Tier MAX consolidation.** All schema changes concentrate in M3 — one big
+4. **Tier HEAVY consolidation.** All schema changes concentrate in M3 — one big
    push. Mitigation: columns are additive with defaults; the UNIQUE_ID backfill
    is idempotent.
 5. **Drag interactions are e2e-flaky territory.** Mitigation: keyboard
@@ -809,7 +808,7 @@ evidence for B89 = coherence gate green + this document.
 ## 13. Traceability — FEATURE_MATRIX rows → requirements
 
 Section 3 (every 🧭 row addressed; Notes in the matrix were appended
-append-only, glyphs untouched):
+Notes-only, glyphs untouched):
 
 | Matrix row (§3) | Line | Requirements |
 | --- | --- | --- |
@@ -848,7 +847,7 @@ append-only, glyphs untouched):
 | Recurring templates | 262 | R89.17 (core: R31.18–R31.23) |
 | CSV import | 263 | R89.20 (contract: R23.1, R23.2) |
 | CSV export | 264 | R89.20 (contract: R23.5) |
-| Unique ID property | 265 | R89.25 (section-4 twin `:300`, notes not edited — §4 is outside this batch) |
+| Unique ID property | 265 | R89.25 (section-4 twin `:300`, notes not edited — §4 is outside this change) |
 
 Section 4 twins referenced **without editing** (matrix §4 rows keep their own
 ownership): Button `:301` → R89.26, Place `:302` → R89.27, Verification `:303`

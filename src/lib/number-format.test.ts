@@ -10,7 +10,7 @@ import {
 
 /**
  * Number property formatting (docs/FEATURE_MATRIX.md :274 "Number format";
- * docs/FIX_PLAN.md B17 properties family).
+ * B17 properties family).
  *
  * `database-query.ts` renders a NUMBER cell with a hard-coded percent/currency
  * branch. This module is the pure, dependency-free core that generalises it:

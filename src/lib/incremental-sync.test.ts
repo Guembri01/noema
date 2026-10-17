@@ -18,7 +18,7 @@ import {
  * red-first.
  *
  * `src/lib/incremental-sync.ts` did not exist when this file was first run
- * (module-not-found -> suite red; scripts/LOOP_PLAYBOOK.md "red-first"). The
+ * (module-not-found -> suite red; "red-first"). The
  * whole engine is a sandbox: diff two entity arrays by `id` into a minimal,
  * `seq`-ordered op-log (`buildOps`), fold that log back onto a document
  * (`applyOps`), and reason about it — collapse redundant chains

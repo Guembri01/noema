@@ -63,7 +63,7 @@ lines.push("");
 lines.push("> Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.");
 lines.push("");
 lines.push(
-  `**Scoreboard:** ${total} feature rows — ${count("done")} implemented · ${count("partial")} partial · ${count("planned")} planned · ${count("out")} deliberately out of scope.`,
+  `**Status:** ${total} feature rows — ${count("done")} implemented · ${count("partial")} partial · ${count("planned")} planned · ${count("out")} deliberately out of scope.`,
 );
 lines.push("");
 lines.push(`This file lists the **${count("partial") + count("planned")}** rows that are not finished, area by area, plus ${count("out")} intentional divergences.`);

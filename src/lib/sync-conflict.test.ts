@@ -20,7 +20,7 @@ import {
  * Sync conflict handling (S23) — pure, red-first.
  *
  * `src/lib/sync-conflict.ts` did not exist when this file was first written
- * (module-not-found -> suite red; scripts/LOOP_PLAYBOOK.md "Red-first").
+ * (module-not-found -> suite red; "Red-first").
  *
  * When two replicas edit the same record from a shared base, three-way merges
  * go wrong in exactly one place: fields both sides changed to *different*

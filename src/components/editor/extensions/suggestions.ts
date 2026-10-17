@@ -62,7 +62,7 @@ import {
  *     restore a replaced node, re-insert a deleted one); the engine's list then
  *     recomputes without it.
  *
- * Honesty boundaries (see the final report): the engine's `Block` carries only
+ * Honesty boundaries: the engine's `Block` carries only
  * `{ type, text }`, so accepting/rejecting a changed block rebuilds that block
  * from text and drops inline marks and nested structure — structural blocks
  * (lists, tables, images, custom nodes) are decorated but not surgically

@@ -1,8 +1,7 @@
 # Spec — Integrations & API parity (webhooks, pagination, rate limits, OAuth)
 
-> **Status: spec complete, implementation pending.** Batch **B24** of the
-> parity loop (spec-only, light slot). This document is the deliverable; no
-> production code was changed. Every claim about the current code cites
+> **Status: spec complete, implementation pending.** This document is the
+> deliverable; no production code was changed. Every claim about the current code cites
 > file + line. Requirement IDs (`R24.x`) are the traceability anchors: §11
 > lists milestones/tasks 1:1 against them, and tests must cite the IDs they
 > cover.
@@ -54,9 +53,9 @@ server actions (`src/server/actions/webhooks.ts`) plus the settings UI
 (`src/components/webhook-manager.tsx`), and there is no REST route to list or
 test deliveries either.
 
-### 2.2 Tokens & guards — brief correction
+### 2.2 Tokens & guards — a correction
 
-The brief points at `src/lib/api-guard.ts` for "token minting/verification".
+An early assumption pointed at `src/lib/api-guard.ts` for "token minting/verification".
 It does not do that: **`src/lib/api-guard.ts:1-25` contains only `rateLimit()`**
 (a fixed-window wrapper over `checkRateLimit(clientKey(request, scope), …)`
 returning 429 + `Retry-After`). Minting and verification live elsewhere:
@@ -182,7 +181,7 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
   the envelope (never "all rows"); no in-repo consumer changes are required.
   *Acceptance:* the check scripts cited in R24.2 stay green against the prod
   server; the settings UI (which uses server actions, not `/api/v1`) is
-  unaffected — no UI diff in the batch.
+  unaffected — no UI diff in this change.
 - **R24.6** — Once `authenticateApiRequest` succeeds, the limiter key becomes
   `api-token:<tokenId>:<scope>` with a default budget of **600 req/min per
   token**; unauthenticated traffic keeps the IP key
@@ -382,7 +381,7 @@ model OAuthCode {
   DB, so hashing is lossless for verification purposes — the plaintext is
   simply no longer *readable* afterwards).
 - `ApiToken.scopes` defaults to full access → zero behavior change for every
-  token minted before this batch.
+  token minted before this change.
 
 ## 6. Transport & contracts
 
@@ -521,7 +520,7 @@ error model and headers, not for data.
 
 ## 11. Delivery plan (milestones → tasks ↔ requirements)
 
-> Red-first per `scripts/LOOP_PLAYBOOK.md`: every task's acceptance is a test
+> Red-first: every task's acceptance is a test
 > citing its requirement IDs before implementation.
 
 **M1 — API contract parity (~2-3 days)**

@@ -8,7 +8,7 @@ import { PrismaClient } from "@prisma/client";
  *  (c) an empty ticket description renders no box.
  *
  * Dedicated prisma-created rows with try/finally cleanup; never the shared
- * first page (see scripts/LOOP_PLAYBOOK.md e2e discipline).
+ * first page (see the e2e discipline).
  */
 
 const CREDENTIALS = { email: "demo@noema.local", password: "password123" };

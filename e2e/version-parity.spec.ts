@@ -16,7 +16,7 @@ import { PrismaClient } from "@prisma/client";
  *    stayed invisible to search until the next edit.
  *
  * Dedicated prisma-created page + version with try/finally cleanup; never the
- * shared first page (scripts/LOOP_PLAYBOOK.md e2e discipline). Assertions are
+ * shared first page (e2e discipline). Assertions are
  * scoped to `#main` so the sidebar tree cannot satisfy them.
  */
 
@@ -51,10 +51,10 @@ async function signIn(page: Page) {
 }
 
 /**
- * Navigation only, never assertions: with several batches running targeted
+ * Navigation only, never assertions: with several suites running targeted
  * e2e against one `next dev`, a page load can come back `net::ERR_ABORTED`
- * when a sibling's compile interrupts it (scripts/LOOP_PLAYBOOK.md
- * "dev-server artifact"). Copied from e2e/search.spec.ts (B39).
+ * when a concurrent run's compile interrupts it
+ * (dev-server artifact). Copied from e2e/search.spec.ts (B39).
  */
 async function gotoStable(page: Page, url: string) {
   let lastError: unknown;

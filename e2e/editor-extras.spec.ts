@@ -13,14 +13,14 @@ import { PrismaClient } from "@prisma/client";
  *      shortcodes stay literal.
  *
  * Every test builds its own prisma page(s) and removes them in a `finally`
- * block — never the shared first page (LOOP_PLAYBOOK e2e discipline).
+ * block — never the shared first page (e2e discipline).
  */
 
 const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
 
 const prisma = new PrismaClient();
 
-// A cold dev server compiles routes on demand and other batches share it, so
+// A cold dev server compiles routes on demand and other suites share it, so
 // the per-test budget is deliberately generous (the config is 60s).
 test.describe.configure({ timeout: 180_000 });
 
@@ -29,8 +29,8 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another batch's
-  // Tier MAX build), so sign-in is retried instead of failing the test.
+  // The dev server is shared: it can be restarting under us (another suite's
+  // Tier HEAVY build), so sign-in is retried instead of failing the test.
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {

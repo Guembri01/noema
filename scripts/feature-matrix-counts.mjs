@@ -1,4 +1,4 @@
-// Recomputes the FEATURE_MATRIX scoreboard from the feature rows.
+// Recomputes the FEATURE_MATRIX status summary from the feature rows.
 // Usage: node scripts/feature-matrix-counts.mjs [--write]
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -69,11 +69,11 @@ if (process.argv.includes("--write")) {
   const tableStart = text.indexOf("| Area |", end);
   const tableEnd = text.indexOf("\n\n", tableStart);
   if (tableStart === -1 || tableEnd === -1) {
-    console.error("Scoreboard table not found.");
+    console.error("Status table not found.");
     process.exit(1);
   }
   const updated =
     text.slice(0, tableStart) + lines.join("\n") + text.slice(tableEnd);
   writeFileSync(path, updated);
-  console.log("\nScoreboard updated.");
+  console.log("\nStatus summary updated.");
 }

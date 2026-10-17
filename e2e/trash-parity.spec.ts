@@ -10,7 +10,7 @@ import { PrismaClient } from "@prisma/client";
  *      every trashed page.
  *
  * Every test builds its own trashed pages through prisma and removes them in a
- * `finally` block — never the shared seed data (LOOP_PLAYBOOK e2e discipline).
+ * `finally` block — never the shared seed data (e2e discipline).
  * Destructive flows only ever touch these dedicated fixtures.
  */
 
@@ -18,7 +18,7 @@ const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
 
 const prisma = new PrismaClient();
 
-// A cold dev server compiles routes on demand and other batches share it, so
+// A cold dev server compiles routes on demand and other suites share it, so
 // the per-test budget is deliberately generous (the config is 60s): it has to
 // absorb the sign-in retry loop when several suites compile at once.
 test.describe.configure({ timeout: 300_000 });
@@ -28,8 +28,8 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another batch's
-  // Tier MAX build) and sibling source edits thrash the turbopack cache, so
+  // The dev server is shared: it can be restarting under us (another suite's
+  // Tier HEAVY build) and concurrent source edits thrash the turbopack cache, so
   // sign-in is retried instead of failing the test. `domcontentloaded` not
   // `load`: under compile storms individual chunks stall for minutes while
   // the HTML (and the server-action form, which works without hydration)
@@ -212,7 +212,7 @@ test("permanently deletes a trashed page only after confirmation, children inclu
     await parentRow.getByRole("button", { name: `Delete ${parentTitle} forever` }).click();
     await parentRow.getByRole("button", { name: "Delete forever" }).click();
     // Generous: the dev server compiles the changed action module on first use
-    // and may be restarting under the shared fleet's load.
+    // and may be restarting under the shared dev server's load.
     await expect(page.getByText("Deleted forever")).toBeVisible({ timeout: 60_000 });
 
     await expect

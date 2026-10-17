@@ -25,7 +25,7 @@ import {
  * store (SESSION_STORE_PATH) — never the app's `.data/sessions.json`.
  *
  * The owner-scoped tests are the security core: a session may only be revoked
- * by the user that owns it (B54 brief: "member cannot revoke another user's
+ * by the user that owns it (B54: "member cannot revoke another user's
  * session").
  */
 

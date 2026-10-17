@@ -1,5 +1,5 @@
 /**
- * IP allowlist / CIDR matching (`docs/audits/security-1.md` M7 — the
+ * IP allowlist / CIDR matching (M7 — the
  * `X-Forwarded-For` client key is spoofable, so an allowlist gate must do its
  * own arithmetic instead of string-prefix checks).
  *

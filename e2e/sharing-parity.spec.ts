@@ -8,14 +8,14 @@ import { PrismaClient } from "@prisma/client";
  * actually persists through the server, the public route reflects the stored
  * mode, and a member is offered no owner controls in workspace settings.
  * Fixtures are dedicated prisma rows with try/finally cleanup — never the
- * shared first page (LOOP_PLAYBOOK e2e discipline).
+ * shared first page (e2e discipline).
  */
 
 const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
 
 const prisma = new PrismaClient();
 
-// The dev server is shared with the other wave batches and compiles on demand.
+// The dev server is shared with the other concurrent suites and compiles on demand.
 test.describe.configure({ timeout: 180_000 });
 
 const stamp = Date.now();
@@ -27,7 +27,7 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page, creds = CREDENTIALS) {
-  // The dev server can be mid-restart or saturated by a sibling batch's suite
+  // The dev server can be mid-restart or saturated by a concurrent suite
   // (shared machine), so sign-in is retried with patience instead of failing.
   let lastError: unknown;
   for (let attempt = 0; attempt < 6; attempt += 1) {

@@ -30,7 +30,7 @@ const eslintConfig = [
       // output, never linted as source.
       "src-tauri/server/**",
       "src-tauri/target/**",
-      // gitignored local-only parity-loop evidence logs (never shipped)
+      // gitignored local-only gate evidence logs (never shipped)
       "scripts/_logs/**",
       // The product film is a separate Remotion project with its own tsconfig,
       // its own React and its own build; it is excluded from the app's

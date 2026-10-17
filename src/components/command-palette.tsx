@@ -74,7 +74,7 @@ import type { PageTreeNode } from "@/server/queries";
  * sentences (never concatenated) with `{placeholder}` slots, exactly like the
  * existing `importedMany` entry, so they can be lifted verbatim into
  * `src/lib/i18n.ts`. This file owns no catalogue keys — see the follow-up note
- * in the batch report.
+ * in the change notes.
  */
 export const PALETTE_COPY = {
   databases: "Databases",

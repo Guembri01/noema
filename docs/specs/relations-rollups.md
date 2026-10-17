@@ -1,8 +1,7 @@
 # Spec — Relations, rollups & the formula property
 
-> **Status: spec complete, implementation pending.** Batch **B21** of the parity
-> loop (spec-only, light slot). This document is the deliverable; no production
-> code was changed. Every claim about the current state cites a file that was
+> **Status: spec complete, implementation pending.** This document is the
+> deliverable; no production code was changed. Every claim about the current state cites a file that was
 > opened for this spec. Requirement IDs (`R21.x`) are the traceability anchors:
 > §10 lists milestones/tasks 1:1 against them, and tests must cite the IDs they
 > cover.
@@ -62,8 +61,8 @@ the existing engines (`src/lib/formula.ts`, `src/lib/rollup.ts`), not a rewrite.
 | `Page` relations (parentId) | `prisma/schema.prisma:196,220,240` | Self-relation `Page.parentId` ("PageChildren", `onDelete: Cascade`, indexed). **Database rows are pages**: `getDatabase` fetches rows as `parentId: databasePageId` (`queries.ts:155-157`). Nested pages ship (matrix:152 ✅); duplicate-page relation remap is partial (matrix:431 🟡). |
 | Permission precedent | `src/lib/permissions.ts:10-26,28-30` | `getWorkspaceAccess(userId, workspaceId)` → role or null (owner fallback); `canEditContent` = not GUEST. Database actions already gate on both (`database.ts:40-52,66,190`). |
 | Guest scoping precedent | `src/lib/guest-access.ts:1-11,38-40,46,84` | `guestVisiblePageIds` is "the query the sidebar, search and the page route all use, so the rule cannot drift" (`:9-10`); `isVisibleToGuest` predicate (`:38-40`). |
-| Tests today | `src/lib/formula.test.ts` (6), `src/lib/rollup.test.ts` (7); `e2e/` grep (case-insensitive) for `relation|rollup|formula` → **0 matches** | Engine-level unit coverage exists; **zero e2e coverage** of the three property types. Own spec file needed: `e2e/relations-parity.spec.ts` (playbook: shared files → own file). |
-| Matrix rows | `docs/FEATURE_MATRIX.md:289-295` (section 4), `:314-329` (section 5, **16 planned rows**, scoreboard `:775` = 0/0/16/0) | Section-4 relation/rollup rows all 🧭 "Planned" — **drift**: the code ships a v1. Glyphs left untouched per house rules; this spec's Notes append is the only matrix edit. |
+| Tests today | `src/lib/formula.test.ts` (6), `src/lib/rollup.test.ts` (7); `e2e/` grep (case-insensitive) for `relation|rollup|formula` → **0 matches** | Engine-level unit coverage exists; **zero e2e coverage** of the three property types. Own spec file needed: `e2e/relations-parity.spec.ts` (tier rule: shared files → own file). |
+| Matrix rows | `docs/FEATURE_MATRIX.md:289-295` (section 4), `:314-329` (section 5, **16 planned rows**, status summary `:775` = 0/0/16/0) | Section-4 relation/rollup rows all 🧭 "Planned" — **drift**: the code ships a v1. Glyphs left untouched per house rules; this spec's Notes append is the only matrix edit. |
 
 **Summary:** the engines and the storage shapes exist and are tested; the gaps
 are *validation, tenancy, two-way semantics, picker UX, editor UX, and one
@@ -113,7 +112,7 @@ render-path defect* (rollup → table cell).
 
 | Option | Fit | Verdict |
 | --- | --- | --- |
-| **Pair fields inside `Property.config`** (`inversePropertyId`, `multi`) | `config` is *already* documented to hold relation/rollup/formula config (`schema.prisma:269`); pair is 1:1 with the property, no independent lifecycle; **zero Prisma schema change → no `prisma db push` (Tier MAX) for M1/M2**; matches how `targetDatabaseId` already ships. | **Chosen.** |
+| **Pair fields inside `Property.config`** (`inversePropertyId`, `multi`) | `config` is *already* documented to hold relation/rollup/formula config (`schema.prisma:269`); pair is 1:1 with the property, no independent lifecycle; **zero Prisma schema change → no `prisma db push` (Tier HEAVY) for M1/M2**; matches how `targetDatabaseId` already ships. | **Chosen.** |
 | Dedicated `RelationPair` model (cf. `TicketRelation`, `schema.prisma:717-729`) | Referential integrity for free. But a pair row would duplicate the property's own row (every relation already *is* a `Property`), needs its own migration + cascade rules, and buys nothing the JSON can't express with two symmetric writes. | Rejected — schema churn for no read path that needs it. |
 
 **Decision:** `config = { targetDatabaseId, multi, inversePropertyId }` for
@@ -126,7 +125,7 @@ enforced by the actions, not the DB — same trade the JSON config already makes
 | Option | Fit | Verdict |
 | --- | --- | --- |
 | **Client-side, existing parser** (`src/lib/formula.ts`) | Already built, pure, dependency-free, unit-tested (6 cases), no `eval` (whitelist parser = no code-exec risk); evaluates during render with zero round-trips; the SAME module can be imported by the server action for validation (it touches no DOM/fs — isomorphic by construction). | **Chosen.** |
-| Server-side per-row evaluation + payload | Authoritative, cacheable, indexable — but one HTTP round-trip (or a server-component refetch) per expression change; N rows × M formulas re-shipped; kills the instant-feedback loop the formula editor needs; a caching/dependency layer (matrix `:328`) would have to be built first. | Rejected for M3 — revisit only with the dependency-graph batch (O21.4). |
+| Server-side per-row evaluation + payload | Authoritative, cacheable, indexable — but one HTTP round-trip (or a server-component refetch) per expression change; N rows × M formulas re-shipped; kills the instant-feedback loop the formula editor needs; a caching/dependency layer (matrix `:328`) would have to be built first. | Rejected for M3 — revisit only with the dependency-graph work (O21.4). |
 | Hybrid: client for preview, server for stored values | Two evaluation contexts = the drift class this codebase avoids deliberately ("one source of truth", cf. realtime spec §6). Only worth it if values were persisted; they are not (`computedFor` derives at render, `database-view.tsx:409-429`). | Rejected — drift risk, no consumer for a persisted value yet. |
 
 **Decision: client-side evaluation, server-side *validation*, one shared
@@ -246,7 +245,7 @@ map — the exact pattern already used for `lastEditedBy`
   *Acceptance:* red tests for each of the three violations + one happy path.
 - **R21.11** — Function set: the rollup function set is the existing 14
   (`rollup.ts:21-36`) **plus `percent_empty`** = `round(count_empty / count_all
-  × 100)`% , rendered `"—"` when `count_all = 0`. The brief's required set
+  × 100)`%, rendered `"—"` when `count_all = 0`. The required set
   (sum/avg/min/max/count/percent-empty/show-original) is a subset; matrix row
   295's "join" maps to `show_original` with an optional `separator` config
   (default `", "`).
@@ -488,14 +487,14 @@ pages — `e2e/` currently has ZERO relation/rollup/formula coverage)**
 11. Non-regression: `e2e/database-parity.spec.ts` + `properties-parity.spec.ts`
     must stay green (they own the existing property behavior).
 
-**Gate tier**: the spec batch itself is FAST (docs only: tsc/eslint untouched,
-coherence + this document). Implementation batches are STANDARD (targeted e2e
-against dev `:3201`, no full suite per wave gating); no schema push means no
-Tier MAX unless a later batch adds a table (O21.4 would).
+**Gate tier**: this spec is FAST (docs only: tsc/eslint untouched,
+coherence + this document). Implementation is STANDARD (targeted e2e
+against dev `:3201`, no full suite per phase gating); no schema push means no
+Tier HEAVY unless later work adds a table (O21.4 would).
 
 ## 10. Delivery plan (milestones → tasks ↔ requirements)
 
-> Test-first rule from `scripts/LOOP_PLAYBOOK.md` applies: every task's
+> Test-first rule applies: every task's
 > acceptance is a red test citing its requirement IDs before implementation.
 
 **M1 — Single relation done right (~2-3 days)**
@@ -547,9 +546,9 @@ Tier MAX unless a later batch adds a table (O21.4 would).
 3. **Scope creep into the formula mega-build.** Section 5 has 16 planned rows
    (matrix `:314-329`); R21.17 covers the cheap half. If M3 balloons, ship
    R21.14-R21.16 + R21.18 first (editor quality) and let the function library
-   be its own micro-batch (playbook rule: max 2-3 feature rows per batch).
+   be its own micro-slice (tier rule: max 2-3 feature rows per change).
 4. **Picker e2e flakiness.** Dialog + typeahead on `workers:1` serial suites —
-   mitigate with generous polling and dedicated pages (playbook flake rules).
+   mitigate with generous polling and dedicated pages.
 
 **Open questions**
 

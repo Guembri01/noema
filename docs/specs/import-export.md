@@ -1,11 +1,11 @@
 # Spec — Import & export (round-trip, fidelity, jobs, scheduling)
 
-> **Status: spec complete, implementation pending.** Batch **B23** of the parity
-> loop (docs-only — no production code was changed). Every claim about the
+> **Status: spec complete, implementation pending.** Document-only: no
+> production code was changed. Every claim about the
 > current code cites file + line. Requirement IDs (`R23.x`) are the
 > traceability anchors: the delivery plan in §11 lists tasks 1:1 against them,
-> and tests must cite the IDs they cover. Matrix edits for this batch are
-> append-only Notes in `docs/FEATURE_MATRIX.md` §12 (glyphs untouched).
+> and tests must cite the IDs they cover. Matrix edits for this change are
+> Notes-only entries in `docs/FEATURE_MATRIX.md` §12 (glyphs untouched).
 
 ---
 
@@ -53,7 +53,7 @@ M1–M3.
 | Markdown parsers (two) | `src/lib/markdown.ts:278` (`parseMarkdown`), `:645` (`markdownToTipTap`) vs `src/lib/serialize.ts:44` (`markdownToDoc`) | Import paths use `serialize.markdownToDoc`; chat/ask-ai use `markdown.ts` (`src/server/actions/chat.ts:236-239`, `src/components/editor/extensions/ask-ai.tsx:13,134`). Two independent Markdown→blocks conversions must be kept in sync by hand. |
 | Frontmatter | `grep frontmatter src/lib/markdown.ts src/lib/serialize.ts` → **0 hits** | No YAML frontmatter handling anywhere; a `---` block imports as literal body content. Matrix's "frontmatter partial" (§12 row 1) is optimistic. |
 | Zip import | `src/server/actions/import.ts:182-263` | `importZipAction`: `JSZip` load (`:200-201`), **only `*.md/*.markdown` entries** considered (`:204-205`), path segments become nested pages (`pathToTitles`, `src/lib/importers.ts:53`), leaf content via `markdownToDoc` (`:233`). Non-Markdown assets in the archive are dropped. No transaction; error after partial create leaves pages (`:259`). |
-| Word import | `src/server/actions/import.ts:16-67` | `importDocxAction`: `mammoth.convertToMarkdown` → `markdownToDoc` → one page. Matrix §12 row 7 says "Planned; docx parser needed" — **the code exists**; glyph is stale (orchestrator regen owns it). |
+| Word import | `src/server/actions/import.ts:16-67` | `importDocxAction`: `mammoth.convertToMarkdown` → `markdownToDoc` → one page. Matrix §12 row 7 says "Planned; docx parser needed" — **the code exists**; glyph is stale (maintainer regen owns it). |
 | Trello import | `src/server/actions/import.ts:70-180` | `importTrelloAction`: JSON parse + `parseTrelloBoard` (`src/lib/importers.ts:19`), creates a `DATABASE` page, `Name` + `List` properties, Table+Board views, then a row per card (`:150-180`). Sequential creates, **no transaction**. |
 | CSV import (append) | `src/server/actions/database.ts:591-665` | `importCsvAction(databasePageId, csv)`: `csvToMatrix` (`src/lib/serialize.ts:173-213`, handles BOM `:178`, quotes, CRLF), header matched **case-insensitively by property name** (`:610`), unmatched column → `columns[i] = null` → skipped at `:642`; unparseable cell skipped at `:646-647`. Result reports only `{ created }`. The only `prisma.$transaction` in `database.ts` is `:166` (create-database path) — **the CSV row loop is not transactional**. |
 | CSV import UI | `src/components/database/database-view.tsx:819-866` | Toolbar: export `<a href=/api/export/database/...>` (`:820`), import button (label `importCsv`, `src/lib/i18n.ts:508`) → hidden `.csv` file input → `importCsvAction(databasePageId, text)` (`:848`) → "imported N rows" toast. **No mapping/preview step**, no skip-column report. |
@@ -317,8 +317,8 @@ M1–M3.
   page/database **30/min**, workspace **5/min** per user (same helper and
   style as `import/notion/route.ts:10`), returning 429 beyond that.
   *Accept:* 6 workspace export requests in one minute → 6th is 429; the
-  import and export surfaces report their limits in `docs/AUDIT.md`'s API
-  table if one exists.
+  import and export surfaces report their limits in the REST API
+  reference.
 - **R23.23** — **Verification asserts fidelity, not just reachability.**
   `scripts/check-export.mjs` is extended to assert: md contains the fixture
   marker heading; html contains `dir=` and one marker per block type
@@ -334,7 +334,7 @@ M1–M3.
 
 - Importers for Asana / Evernote / Google Docs / Confluence / HTML files /
   PDF extraction (their own §12 rows; they plug into the job + integrity
-  framework built here but are separate batches).
+  framework built here but are separate changes).
 - Two-way calendar sync, `.ics` file upload (calendar domain owns feed
   imports; row "Google Calendar sync" is §13).
 - Changing `scripts/backup.mjs` (database dumps stay an ops concern —
@@ -509,7 +509,7 @@ model WorkspaceExportSchedule {
 (`csvToMatrix`, `formatCell`, `blockHtml`) — cheap and decisive; 8-11 run
 against the dev DB like `check-export.mjs` does today; e2e 12-13 need only
 one serial spec file with dedicated fixture pages (structural-test
-cleanup discipline from the playbook).
+cleanup discipline).
 
 ## 10. Migration path (M1–M3)
 
@@ -528,11 +528,11 @@ cleanup discipline from the playbook).
      (closes D23.6, D23.7).
    - **M3b bulk/schedule:** R23.17, R23.18, R23.19, R23.20, R23.21
      (closes D23.8). Needs `ExportJob` + `WorkspaceExportSchedule` schema
-     (Tier MAX: `prisma db push` + build per playbook).
+     (Tier HEAVY: `prisma db push` + build).
 
 ## 11. Delivery plan (milestones → tasks ↔ requirements)
 
-> Test-first rule from `scripts/LOOP_PLAYBOOK.md` applies: every task's
+> Test-first rule applies: every task's
 > acceptance is a red test citing its requirement IDs before implementation.
 
 **M1**
@@ -547,7 +547,7 @@ cleanup discipline from the playbook).
 
 **M2**
 
-- T23.5 [R23.9]: `ImportJob` schema (`prisma db push`, Tier MAX) + progress
+- T23.5 [R23.9]: `ImportJob` schema (`prisma db push`, Tier HEAVY) + progress
   writes. Red: integration 9.
 - T23.6 [R23.1]: mapping UI + server contract. Red: unit 1 + e2e 12.
 - T23.7 [R23.2,R23.3]: create-from-CSV/JSON path + inference. Red: unit 2.

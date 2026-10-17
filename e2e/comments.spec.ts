@@ -12,7 +12,7 @@ import { join } from "node:path";
  *  (d) delete a thread — its reply goes with it.
  *
  * Dedicated prisma-created pages with try/finally cleanup; never the shared
- * first page (see scripts/LOOP_PLAYBOOK.md e2e discipline). All assertions are
+ * first page (see the e2e discipline). All assertions are
  * scoped to `#main`. The demo session is established once in `beforeAll` and
  * shared through `storageState`.
  *
@@ -29,7 +29,7 @@ const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
 const UI_TIMEOUT = 30_000;
 /**
  * One demo login per file: `signIn()` costs a full /login round trip, and a
- * dev server busy recompiling (parallel fleet) can take a minute on it. The
+ * dev server busy recompiling (parallel runs) can take a minute on it. The
  * saved session keeps every test inside its own budget.
  */
 const AUTH_STATE = join(tmpdir(), "noema-b40-auth.json");

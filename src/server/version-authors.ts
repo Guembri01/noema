@@ -15,7 +15,7 @@ import { pickVersionAuthor, type VersionAuthor } from "@/lib/version-history";
  *
  * Returns a synchronous resolver; an author id with no surviving User row
  * resolves to `null` (the surface renders its label - the "Former member"
- * i18n label itself ships with T30.9/R30.11's schema FK batch).
+ * i18n label itself ships with T30.9/R30.11's schema FK work).
  */
 export async function loadVersionAuthors(
   createdByIds: readonly (string | null | undefined)[],

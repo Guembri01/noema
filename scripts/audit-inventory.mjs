@@ -1,4 +1,4 @@
-// Static inventory of the app surface, used by docs/AUDIT.md and docs/FIX_PLAN.md.
+// Static inventory of the app surface, used by the coherence gate.
 //
 //   node scripts/audit-inventory.mjs [--json]
 //

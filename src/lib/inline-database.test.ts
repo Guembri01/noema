@@ -21,7 +21,7 @@ import { normalizeViewConfig, type ViewConfig } from "@/lib/database-query";
  * database block" — "view config incomplete", height/scroll shell).
  *
  * `src/lib/inline-database.ts` did not exist when this file was first written
- * (module-not-found -> suite red; scripts/LOOP_PLAYBOOK.md "Red-first").
+ * (module-not-found -> suite red; "Red-first").
  *
  * An inline-database block is a database *instance* embedded in a page. It
  * records how the shell lays the instance out (display + height mode) and the

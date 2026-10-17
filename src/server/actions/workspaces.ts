@@ -517,9 +517,8 @@ export async function removeProjectRoleAction(
  *
  * There is no `OwnershipTransfer` Prisma model yet, so live (pending) requests
  * are held in an in-process store — they survive the request/accept window on a
- * single server instance and are replayed deterministically by the engine. See
- * the follow-up in the report: a model is required for durable, cross-instance
- * transfers. The terminal swap itself is durable (it writes the real rows).
+ * single server instance and are replayed deterministically by the engine. A
+ * model is required for durable, cross-instance transfers. The terminal swap itself is durable (it writes the real rows).
  * ------------------------------------------------------------------------- */
 
 /** Default acceptance window: 7 days. */

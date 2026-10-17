@@ -7,7 +7,7 @@ import { hashPassword, verifyPassword } from "@/lib/auth";
  * requireUser depend on next/headers cookies, env secret and prisma — impure,
  * covered by e2e instead of being forced into this suite.
  *
- * bcrypt cost 12 is intentionally slow; under fleet-parallel CPU load a single
+ * bcrypt cost 12 is intentionally slow; under parallel CPU load a single
  * hash/compare can exceed vitest's 5s default, so every bcrypt test gets an
  * explicit timeout and hashes are computed once in beforeAll.
  */

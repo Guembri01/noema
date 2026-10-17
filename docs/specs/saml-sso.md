@@ -1,8 +1,7 @@
 # Spec — SAML 2.0 SSO (`@node-saml/node-saml`)
 
-> **Status: spec complete, implementation pending.** Batch **B10** of the
-> parity loop. This document is the deliverable; no production code was
-> changed. Requirement IDs (`R10.x`) are the traceability anchors; §12's
+> **Status: spec complete, implementation pending.** This document is the
+> deliverable; no production code was changed. Requirement IDs (`R10.x`) are the traceability anchors; §12's
 > task list references them 1:1 and every test cites the IDs it covers.
 
 ---
@@ -43,7 +42,7 @@ protocol.
 | Roles | `src/lib/permissions.ts:28-38`, `prisma/schema.prisma:152-164` | `WorkspaceRole` = OWNER / ADMIN / MEMBER / GUEST on `WorkspaceMember`; workspace owner auto-OWNER (`permissions.ts:20-24`). |
 | Invites | `prisma/schema.prisma:166-182`, `src/server/actions/email.ts` | Email invites with role + expiry; the model SAML JIT must complement, not bypass (an invited email wins over domain rules). |
 | Mock IdP harness | `scripts/check-sso-teamspaces.mjs:13-87` | In-process OIDC mock IdP on `:4321` (discovery, `/authorize`, `/token`, `/jwks`, RS256 `id_token` with `email`/`name`/`nonce` claims, `:67-79`); full flow asserted end-to-end including negative state test (`:119-120`) and JIT user cleanup (`:159`). `npm run check:sso` (`package.json:15`). |
-| Server env in the loop | `scripts/parity-loop.mjs:59` | The live gate server starts with `SSO_ISSUER=http://localhost:4321 SSO_CLIENT_ID=noema SSO_CLIENT_SECRET=secret`. |
+| Server env for the live gate | the dev-server config | The live gate server starts with `SSO_ISSUER=http://localhost:4321 SSO_CLIENT_ID=noema SSO_CLIENT_SECRET=secret`. |
 | SAML code today | — | **None.** No `@node-saml/*`, no XML libs in `package.json:45-101`. |
 | Docs drift worth knowing | `docs/FEATURE_MATRIX.md:655,656,654` | Row 655 "SSO / SAML ✅" is OIDC-only (glyph overstates); row 656 says "OIDC support 🧭 Planned" (stale opposite); row 654 says 2FA planned though implemented. Left as-is per house rules — this spec's matrix Notes append is the only edit. |
 
@@ -151,8 +150,8 @@ domain verification, SLO, and SCIM.
 - **R10.8** — Existing-account linking: if a user with the same email exists
   (password or OIDC), the SAML login **signs that account in** (no duplicate
   user). If the account has 2FA enabled, SSO login bypasses the TOTP prompt
-  (IdP is the factor — matches product-class behavior); this is an explicit
- , documented decision (open question O10.3).
+  (IdP is the factor — matches product-class behavior); this is an explicit,
+  documented decision (open question O10.3).
 - **R10.9** — Domain auto-join: JIT users whose email domain matches a
   **verified domain** of a workspace are added as `MEMBER` automatically
   (schema §6). Unverified domains never auto-join.
@@ -316,7 +315,7 @@ validation failure fails review even if tests were adjusted.
 **M1 — SP + ACS + JIT login (~3-4 days)**
 
 - T10.1 [R10.1,R10.5]: add `@node-saml/node-saml`; SsoConnection/SamlAssertionSeen
-  schema + `prisma db push` under the gate lock; SAML strategy wiring with
+  schema + `prisma db push` under the build serialization; SAML strategy wiring with
   fail-closed defaults. Red: unit 2 skeleton + tampered-XML integration leg.
 - T10.2 [R10.2,R10.3,R10.4,R10.16]: full validation config + replay cache.
   Red: negative legs in `check-saml.mjs`.
@@ -361,7 +360,7 @@ validation failure fails review even if tests were adjusted.
    consistent with matrix row 659, but enterprise reviewers will ask. Be
    honest in docs.
 4. **Gate/CI load**: the SAML suite needs a port (:4323) + server restart
-   under the gate lock (LOOP_PLAYBOOK serialization) — same class of
+   under the build serialization — same class of
    friction the OIDC check already has; keep the suite < 30 s.
 
 **Open questions**

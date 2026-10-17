@@ -49,4 +49,4 @@ retry, pagination, indexes, `pg_dump` backups), the measurements do not.
   manifest of per-table row counts so a restore can be checked, and prunes by
   retention without ever deleting the newest dump.
 - **Probes** — `/api/health` (`{ok, db}`) and `/api/ready` (env + Postgres) are the
-  liveness/readiness pair an orchestrator or the desktop shell polls.
+  liveness/readiness pair a supervisor or the desktop shell polls.
