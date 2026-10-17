@@ -11,6 +11,7 @@ import {
   canEditContent,
   type WorkspaceAccess,
 } from "@/lib/permissions";
+import { guestReadablePageIds } from "@/lib/guest-access";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { assertScopedParent } from "@/lib/page-parent";
 import { csvToMatrix } from "@/lib/serialize";
@@ -58,6 +59,14 @@ type DatabaseAuth =
  *   RELATION                        -> { pageIds: string[] }
  */
 
+/**
+ * The roles that may read every page of a workspace. Everybody else — a
+ * `GUEST`, and a role that is not a known workspace role at all — is scoped,
+ * so the scope check in `authorizeDatabase` can never be skipped by a forged
+ * role.
+ */
+const FULL_ACCESS_ROLES: ReadonlySet<string> = new Set(["OWNER", "ADMIN", "MEMBER"]);
+
 async function authorizeDatabase(
   databasePageId: string,
 ): Promise<DatabaseAuth> {
@@ -69,6 +78,32 @@ async function authorizeDatabase(
   if (!page || page.type !== "DATABASE") return { error: "Database not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return { error: "No access to this database." };
+  /**
+   * A guest may read a database only inside their **read** scope: the pages
+   * shared with them plus their whole subtree.
+   *
+   * The read scope is not the display scope (`pageScopeFor` /
+   * `guestVisiblePageIds`): the display scope also carries the *ancestors* of
+   * the shared pages, because the sidebar has to draw the breadcrumb chain
+   * down to a shared child. The inheritance rule is the canonical one of
+   * `src/lib/access-inheritance.ts` — a grant covers the page itself and its
+   * descendants, never its ancestors — so a guest who was given a single row
+   * of a database does not get the database above it, while a guest who was
+   * given a parent page does get the database below it.
+   *
+   * The refusal is `Database not found.`, the same answer as for an id that
+   * does not exist: a refusal must not confirm that the database exists (no
+   * existence oracle). The check stands in front of the content query of every
+   * action, so an out-of-scope database is never read.
+   */
+  if (access.role === "GUEST") {
+    const readable = await guestReadablePageIds(user.id, page.workspaceId);
+    if (!readable.has(databasePageId)) return { error: "Database not found." };
+  } else if (!FULL_ACCESS_ROLES.has(access.role)) {
+    // A role that is not a known workspace role gets no pages at all — it must
+    // never widen the view (fail closed).
+    return { error: "Database not found." };
+  }
   return { page, access, user };
 }
 
