@@ -39,6 +39,50 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   still failed the gate. The converse does not hold: a bot author with a
   human committer was not created by GitHub and is checked like any other
   commit. A human's no-reply address is not a bot and still has to pass.
+- When a page is created or moved, its parent is now checked against the
+  workspace: a page can no longer be filed under a page of another workspace.
+  It therefore no longer turns up in that workspace's database view or in its
+  CSV/JSON export, and it is no longer swept along by the foreign workspace's
+  cascade delete. The database and export views filter their rows by the
+  workspace as well — and so do the "Deleted rows" panel, the database
+  duplicate (which copies a database's rows **with their content**) and the
+  chat context that is sent to the AI, so a row that was linked across
+  workspaces before the check existed no longer surfaces there. The invariant is
+  checked mechanically where the repository gate can see it
+  (`scripts/check-parent-scope.mjs`): the gate finds the `Page.parentId` writes
+  in `src/` statically and fails when one of them stores a value the helper has
+  not proved. The allow-list of that gate is **precise**: every entry names the
+  value it releases **and** the proof that makes that value safe (the
+  authorization the entry relies on), and the gate checks that the proof is
+  still there — an entry whose context is gone releases nothing. The taint of a
+  raw request value is transitive as well: a local that is derived from a
+  tainted local is tainted too, and a read of `.parentId` from a name whose
+  origin the gate cannot see is a raw value, whatever that receiver is called.
+  It is a safety net over the tests, not a proof — a write it
+  cannot recognise is not covered by it. The holes that are known today are
+  listed in the gate's own docstring, and that list is a safety net, not an
+  enumeration: a new shape of write can open a new hole, and the list only
+  grows when somebody measures one. It is shorter than it was: the precise
+  allow-list closed the two holes of the name-based list — the callers of an
+  allow-listed helper (the gate checks that no caller hands in a raw parent)
+  and the payload whose parent a helper computes (a value the gate cannot
+  attribute is no longer mistaken for the checked one). The shapes that *are*
+  closed are pinned by the gate's own regression test
+  (`scripts/check-parent-scope.test.mjs`), which holds every allow-list entry
+  to the one path it describes.
+- The parent-scope gate no longer releases a write by the **name** of its
+  value. An allow-list entry used to match on the file, the function and the
+  written value — so the local behind that value could change its origin
+  (the parent taken straight from the request) and the gate stayed green, and
+  so could the authorization the entry relies on (it could be deleted) — while
+  not a single test turned red. Every entry now names the **proof** it relies
+  on and the gate checks it: the entry for `createRowAction()`, for instance,
+  holds only while `authorizeDatabase(databasePageId)` is still in that
+  function. The taint of a raw request value is transitive now as well: a
+  local derived from a tainted local is tainted too, the taint is found in a
+  destructuring and in a re-assignment, and a read of `.parentId` from a
+  receiver whose origin the gate cannot see (a parameter, a module-level
+  name) is a raw value — whatever that receiver is called.
 
 ## [1.4.1] — 2026-10-17
 
