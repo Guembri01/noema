@@ -252,6 +252,21 @@ without `.u-no-transition`, `@keyframes` outside `tokens.css`). Motion vocabular
 now includes a constant-rate token (`--ease-linear`) for loops and for
 time-locked indicators such as the undo countdown.
 
+
+**Floating panels (popups, menus, pickers):** the browser check `npm run check:popovers`
+opens each one and *measures* it against the control that opened it — attached? flipped?
+inside the viewport? did opening it move its trigger? It exists because a page menu once
+opened in the corner of its header: the header has `backdrop-blur`, and a backdrop filter
+(or a `transform`) makes that ancestor the **containing block for `position: fixed`**
+descendants, so a panel's viewport coordinates get re-rooted. The rule that follows from
+it:
+
+- a panel positioned with `position: fixed` must be **portalled** (`FloatingLayer`) and
+  placed with `placeFloating` — never left inside a blurred/transformed ancestor;
+- a panel positioned with `absolute` and static offsets must **stay inline** (absolute
+  already resolves against its positioned ancestor; portalling it moves it to the body);
+- never use a magic z-index for a panel — place it at `Z.popover`.
+
 Companion gates: `npm run check:coherence`, `npm run check:use-server`,
 `npm run check:client` (no client component may reach a `node:` built-in — the
 bug class that made `next build` fail while every test passed), and the visual
