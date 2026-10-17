@@ -200,4 +200,44 @@ describe("POST /api/upload — the SVG safety rule (B56)", () => {
     expect(smil.accept).toBe(false);
     expect(smil.reason).toBe("unsafe-svg");
   });
+
+  /* -------------------------------- the three gaps of the diff review */
+
+  it("refuses an SVG whose declared type carries a parameter", async () => {
+    // A browser may declare `image/svg+xml; charset=utf-8`. The allow-list
+    // compares the *base* type, so the rule has to compare the same value —
+    // otherwise the parameter skips the rule and the file is served as SVG.
+    const res = await POST(
+      uploadRequest(
+        new File([SCRIPT_SVG], "payload.svg", { type: "image/svg+xml; charset=utf-8" }),
+      ),
+    );
+
+    expect(res.status).toBe(415);
+    await expect(res.json()).resolves.toEqual({
+      error: "File rejected by the image safety policy",
+    });
+    expect(edge.put).not.toHaveBeenCalled();
+    expect(edge.assetCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses an SVG that is not valid UTF-8", async () => {
+    // A UTF-16 document interleaves a NUL after every ASCII character. A
+    // lenient decoder replaces the invalid bytes, the scan reads the
+    // replacement characters instead of the markup — and a browser would
+    // decode the file as UTF-16 and find the script the scan never saw.
+    const utf16 = new Uint8Array(SCRIPT_SVG.length * 2);
+    for (let i = 0; i < SCRIPT_SVG.length; i += 1) {
+      utf16[i * 2] = SCRIPT_SVG.charCodeAt(i) & 0xff;
+      utf16[i * 2 + 1] = SCRIPT_SVG.charCodeAt(i) >> 8;
+    }
+
+    const res = await POST(
+      uploadRequest(new File([utf16], "payload.svg", { type: "image/svg+xml" })),
+    );
+
+    expect(res.status).toBe(415);
+    expect(edge.put).not.toHaveBeenCalled();
+    expect(edge.assetCreate).not.toHaveBeenCalled();
+  });
 });
