@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { type Conditions } from "@/lib/automation-engine";
 import { rateLimit } from "@/lib/api-guard";
+import { bodyReadError, readTextBody } from "@/lib/body-limit";
 import { prisma } from "@/lib/db";
 import {
   DEFAULT_TOLERANCE_SECONDS,
@@ -22,6 +23,15 @@ export const runtime = "nodejs";
 
 /** How long a redelivery of the same event is suppressed (in ms). */
 const DEDUPE_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * B22 — the budget for one inbound event.
+ *
+ * The body is read as text because the signature is verified over the exact
+ * bytes the provider sent, so it has to be buffered — but it must not be
+ * unbounded. 1 MB is far above any provider event.
+ */
+const MAX_BODY_BYTES = 1024 * 1024;
 
 /** Request header that may carry the provider when the query string omits it. */
 const PROVIDER_HEADER = "x-webhook-provider";
@@ -126,7 +136,12 @@ export async function POST(request: Request) {
   }
 
   const provider = readProvider(request);
-  const body = await request.text();
+  let body: string;
+  try {
+    body = await readTextBody(request, MAX_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Expected a request body.");
+  }
   const now = Date.now();
 
   const verification = verifySignature({
