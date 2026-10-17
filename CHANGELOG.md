@@ -13,7 +13,6 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ### Security
 
-<<<<<<< HEAD
 - The dependency tree is audited in CI, and one advisory chain is gone. The
   lockfile carried `mammoth` → `argparse` 1.0.10 → `sprintf-js` 1.0.3, and
   `sprintf-js` 1.0.3 carries GHSA-hp3w-g68c-fv3c (a denial of service through
@@ -41,7 +40,6 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   distrusted emSign intermediate whose private key is public. Every other
   advisory fails the job.
 
-=======
 - Every action the workflows use is now pinned to a commit SHA, and a new gate
   keeps it that way. A tag is a name, not a version: `uses: actions/checkout@v4`
   resolves to whatever the tag points to when the job starts, so a moved tag
@@ -57,7 +55,18 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   workflows and fails when a reference carries no SHA, when a tool is
   installed without an exact version, or when a cache key caches that tool
   without its version.
->>>>>>> 7c28508 (fix(ci): every action is pinned to a commit SHA)
+- The compose smoke test of the site workflow is checked before it runs. It
+  can only succeed if the workflow, the compose file and the image agree: the
+  stack must be started with the profile that gates the `app` service, the
+  probe must ask for the port the compose file publishes, and the image must
+  apply the migrations before the probe. At the reviewed commit none of the
+  three held, and the job could never succeed. The three symptoms are fixed
+  upstream, but nothing kept them fixed — and the job itself runs only on a
+  push to `main`, never in a pull request. The new gate (`npm run
+  check:compose-smoke`) reads the workflow, the compose file, the `Dockerfile`
+  and the boot wrapper and checks the seven rules that make the job work, so a
+  pull request that breaks the container path fails in the CI that runs on
+  every pull request.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.

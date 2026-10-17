@@ -77,6 +77,7 @@
     "check:motion": "node scripts/check-motion.mjs --check",
     "motion:report": "node scripts/check-motion.mjs",
     "check:client": "node scripts/check-client-bundle.mjs",
+    "check:compose-smoke": "node scripts/check-compose-smoke.mjs",
     "visual:check": "node scripts/visual-check.mjs",
     "visual:update": "node scripts/visual-check.mjs --update",
     "screenshots": "node --env-file=.env scripts/screenshots.mjs",
