@@ -63,7 +63,7 @@ const inlineAnimationDuration = (line) =>
 /**
  * A literal CSS easing keyword — `linear`, `ease`, `ease-in`, `ease-out`,
  * `ease-in-out`, `step-start`/`step-end` — instead of `var(--ease-*)`.
- * Token-safe: `--ease-smooth`, `var(--ease-in-out-soft)` and `ease-[var(…)]`
+ * Token-safe: `--ease-smooth`, `var(--ease-in-out-soft)` and `ease-[var(--ease-x)]`
  * are not matches, and `linear` never matches inside `linear-gradient`.
  */
 const literalEasing = (line) =>

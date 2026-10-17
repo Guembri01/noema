@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
  *
  * `page-title.tsx`, `sidebar/page-tree.tsx` and `email-settings.tsx` were the
  * last three components still carrying a design-system violation (an arbitrary
- * `duration-[…]` utility in the first two, a legacy Tailwind palette class in
+ * arbitrary bracket-duration utility in the first two, a legacy Tailwind palette class in
  * the third). This is a *source scan* — the same rules `scripts/check-design-system.mjs`
  * enforces — pinned as a test so the regression cannot come back silently.
  */

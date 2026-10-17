@@ -15,8 +15,8 @@ stop it from drifting.
    Never a raw hex in a component (`#eee`, `rgb(...)`) — only in `globals.css` / `tokens.css`, where the tokens are declared.
 2. **Motion** always comes from a duration + easing token: `u-colors`, `animate-rise`, `DUR.base`.
    Never `transition: all .3s` and never an ad-hoc millisecond value.
-3. **Layering** always comes from `Z.*` / `--z-*`. Never `z-[999]`.
-4. **Shape** (radius, shadow, spacing) comes from the scale. Never `rounded-[7px]`, never a bespoke shadow.
+3. **Layering** always comes from `Z.*` / `--z-*`. Never an arbitrary z-index.
+4. **Shape** (radius, shadow, spacing) comes from the scale. Never a bespoke radius or shadow.
 
 ---
 
@@ -176,10 +176,10 @@ mobile; contrast AA for every token pair (tags included); RTL-safe logical CSS
 
 - [ ] **No raw hex** (`#…`, `rgb(…)`, `hsl(…)`) outside `globals.css` / `tokens.css`
       — including user-chosen colours, which go through a token or `tagStyle()`.
-- [ ] **No magic z-index** — `Z.*` / `--z-*` only, never `z-[999]` or `zIndex: 999`.
-- [ ] **No ad-hoc duration** — `DUR.*` / `--dur-*` only, never `duration-[137ms]`
+- [ ] **No magic z-index** — `Z.*` / `--z-*` only, never a hard-coded z-index.
+- [ ] **No ad-hoc duration** — `DUR.*` / `--dur-*` only, never an ad-hoc duration
       or `transition: all .3s`.
-- [ ] No arbitrary radius/shadow (`rounded-[7px]`, `shadow-[…]`); shape comes from
+- [ ] No arbitrary radius/shadow (`rounded-[7px]`, a bespoke shadow); shape comes from
       the scales in §5.
 - [ ] All seven states implemented (see §8).
 - [ ] Any popup goes through `src/lib/floating.ts` (§7.1) — never hand-rolled

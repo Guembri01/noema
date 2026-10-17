@@ -37,6 +37,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inflateSync } from "node:zlib";
 import { chromium } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 
@@ -70,6 +71,8 @@ const databaseUrl =
   flagValue("--database") ?? process.env.VISUAL_DATABASE_URL ?? dotenvValue("DATABASE_URL") ?? process.env.DATABASE_URL;
 
 const DEMO_EMAIL = "demo@noema.local";
+/** The workspace the routes are captured from. Override with NOEMA_DEMO_WORKSPACE. */
+const DEMO_WORKSPACE = process.env.NOEMA_DEMO_WORKSPACE ?? "demo-workspace";
 const THEMES = ["light", "dark", "high-contrast"];
 const VIEWPORT = { width: 1280, height: 900 };
 /** Pixel tolerance for element-metric drift (sub-pixel/antialias jitter). */
@@ -150,6 +153,9 @@ if (!user) {
   process.exit(1);
 }
 const workspace =
+  // Prefer the workspace the seed creates, so the route list is stable even when
+  // the demo user owns several workspaces (the first one is not predictable).
+  (await prisma.workspace.findFirst({ where: { slug: DEMO_WORKSPACE } })) ??
   (await prisma.workspace.findFirst({ where: { ownerId: user.id } })) ??
   (await prisma.workspace.findFirst());
 if (!workspace) {
@@ -269,29 +275,176 @@ const PNG = (buf) =>
     ? { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
     : { width: 0, height: 0 };
 
+// A dependency-free PNG decoder (8-bit, non-interlaced — everything Chromium
+// emits) so the fingerprint can be computed from *pixels* rather than bytes.
+// Byte hashes are too brittle: the same DOM painted twice can differ by a
+// couple of antialiased pixels (GPU rasterisation, font hinting), which showed
+// up as a spurious "hash changed" on one route across runs.
+function decodePng(buffer) {
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 8;
+  let colourType = 6;
+  let interlace = 0;
+  const idat = [];
+  while (offset + 8 <= buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.toString("ascii", offset + 4, offset + 8);
+    const data = buffer.subarray(offset + 8, offset + 8 + length);
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data[8];
+      colourType = data[9];
+      interlace = data[12];
+    } else if (type === "IDAT") {
+      idat.push(data);
+    } else if (type === "IEND") {
+      break;
+    }
+    offset += 12 + length;
+  }
+  const channels = { 0: 1, 2: 3, 4: 2, 6: 4 }[colourType];
+  if (bitDepth !== 8 || interlace !== 0 || !channels) return null;
+
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = width * channels;
+  const out = Buffer.alloc(width * height * 4);
+  let previous = Buffer.alloc(stride);
+  let position = 0;
+  for (let y = 0; y < height; y += 1) {
+    const filter = raw[position];
+    position += 1;
+    const line = Buffer.from(raw.subarray(position, position + stride));
+    position += stride;
+    for (let x = 0; x < stride; x += 1) {
+      const a = x >= channels ? line[x - channels] : 0;
+      const b = previous[x];
+      const c = x >= channels ? previous[x - channels] : 0;
+      switch (filter) {
+        case 0:
+          break;
+        case 1:
+          line[x] = (line[x] + a) & 255;
+          break;
+        case 2:
+          line[x] = (line[x] + b) & 255;
+          break;
+        case 3:
+          line[x] = (line[x] + ((a + b) >> 1)) & 255;
+          break;
+        case 4: {
+          const p = a + b - c;
+          const pa = Math.abs(p - a);
+          const pb = Math.abs(p - b);
+          const pc = Math.abs(p - c);
+          line[x] = (line[x] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 255;
+          break;
+        }
+        default:
+          return null;
+      }
+    }
+    for (let x = 0; x < width; x += 1) {
+      const s = x * channels;
+      const d = (y * width + x) * 4;
+      if (channels === 4) {
+        out[d] = line[s];
+        out[d + 1] = line[s + 1];
+        out[d + 2] = line[s + 2];
+        out[d + 3] = line[s + 3];
+      } else if (channels === 3) {
+        out[d] = line[s];
+        out[d + 1] = line[s + 1];
+        out[d + 2] = line[s + 2];
+        out[d + 3] = 255;
+      } else if (channels === 2) {
+        out[d] = out[d + 1] = out[d + 2] = line[s];
+        out[d + 3] = line[s + 1];
+      } else {
+        out[d] = out[d + 1] = out[d + 2] = line[s];
+        out[d + 3] = 255;
+      }
+    }
+    previous = line;
+  }
+  return { width, height, data: out };
+}
+
+// Fingerprint = sha256 of the pixels with each channel snapped to 5 bits. That
+// absorbs sub-threshold rasterisation noise while still catching a 8/255 change
+// anywhere on the page (which is far below anything a human would call a diff).
+function fingerprint(buffer) {
+  const decoded = decodePng(buffer);
+  if (!decoded) return createHash("sha256").update(buffer).digest("hex");
+  const quantised = Buffer.allocUnsafe(decoded.data.length);
+  for (let index = 0; index < decoded.data.length; index += 1) {
+    quantised[index] = decoded.data[index] & 0xf8;
+  }
+  return createHash("sha256").update(quantised).digest("hex");
+}
+
 // Belt-and-braces on top of the context's `reducedMotion: "reduce"` (the design
 // system already neutralises motion there): kill any transition/animation so a
 // frame is never captured mid-motion.
 const FREEZE_CSS =
   "*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}";
 
-// Freeze the page clock so relative labels ("Edited 3 minutes ago") are stable
-// across runs — otherwise every capture drifts as wall-clock time passes.
-function freezeClock() {
-  const FIXED = Date.UTC(2026, 9, 15, 12, 0, 0);
-  const RealDate = Date;
-  class MockDate extends RealDate {
-    constructor(...args) {
-      if (args.length === 0) super(FIXED);
-      else super(...args);
-    }
-    static now() {
-      return FIXED;
-    }
+// Stabilise volatile text **after** hydration instead of freezing the clock.
+//
+// Freezing `Date` before boot breaks SSR: the server rendered its real time and
+// the client then rendered the frozen time, so every route failed with
+// "Hydration failed because the server rendered text didn't match the client".
+// That is a false positive created by the harness, not a product bug.
+//
+// Instead: let the page hydrate normally, then rewrite the handful of labels that
+// depend on wall-clock time to a fixed placeholder, just before the screenshot.
+const VOLATILE_TEXT = [
+  // Relative labels. The app's i18n uses short units ("{n} min ago", "Edited
+  // {n} min ago"), which is why the spelled-out-only pattern used to miss it.
+  [
+    /\b\d+\s*(?:s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|wk|wks|week|weeks|mo|mon|mos|month|months|y|yr|yrs|year|years)\s+ago\b/gi,
+    "some time ago",
+  ],
+  [
+    /\bin\s+\d+\s*(?:s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|wk|wks|week|weeks|mo|mon|mos|month|months|y|yr|yrs|year|years)\b/gi,
+    "in some time",
+  ],
+  [/\bjust now\b/gi, "some time ago"],
+  [/\b(?:Today|Yesterday)\s+at\s+[\d:]+\s*(?:AM|PM)?/gi, "recently"],
+  [/\\bEdited\\s+some time ago\\b/gi, "Edited recently"],
+  // Absolute clock times ("8:39 PM", "20:39") — the page header renders one.
+  [/\b\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM))?\b/gi, "at time"],
+  // ISO-ish and localised dates, with or without a time part.
+  [/\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?Z?)?\b/g, "a date"],
+  [
+    /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}(?:,?\s*\d{1,2}:\d{2}\s*(?:AM|PM)?)?/gi,
+    "a date",
+  ],
+  [/\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}\b/gi, "a date"],
+];
+
+async function stabiliseVolatileText(page) {
+  try {
+    await page.evaluate((rules) => {
+      const patterns = rules.map(([source, flags, replacement]) => [
+        new RegExp(source, flags),
+        replacement,
+      ]);
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      for (const node of nodes) {
+        const original = node.nodeValue ?? "";
+        let next = original;
+        for (const [pattern, replacement] of patterns) next = next.replace(pattern, replacement);
+        if (next !== original) node.nodeValue = next;
+      }
+    }, VOLATILE_TEXT.map(([re, to]) => [re.source, re.flags, to]));
+  } catch {
+    // A blocked/partial page is reported by the normal checks; never fail here.
   }
-  MockDate.parse = RealDate.parse;
-  MockDate.UTC = RealDate.UTC;
-  window.Date = MockDate;
 }
 
 // Applied before every document boots: pick the theme through the app's own
@@ -365,7 +518,7 @@ const CONSOLE_IGNORE = [
 ];
 const isIgnored = (text) => CONSOLE_IGNORE.some((re) => re.test(text));
 
-async function capture(page, route, theme) {
+async function capture(page, route, theme, stabilise) {
   const errors = [];
   const onConsole = (message) => {
     if (message.type() === "error" && !isIgnored(message.text())) {
@@ -396,8 +549,34 @@ async function capture(page, route, theme) {
   await page
     .evaluate(() => (document.fonts ? document.fonts.ready : true))
     .catch(() => {});
+  // Images are the other thing that can land after hydration. Every capture gets
+  // a fresh context (cold HTTP cache), so a still-loading avatar made the same
+  // route fingerprint differently on an `--update` run vs a later compare.
+  await page
+    .evaluate(async () => {
+      const images = Array.from(document.images);
+      await Promise.all(
+        images.map((image) =>
+          image.complete
+            ? Promise.resolve()
+            : new Promise((resolve) => {
+                image.addEventListener("load", resolve, { once: true });
+                image.addEventListener("error", resolve, { once: true });
+              }),
+        ),
+      );
+      await Promise.all(
+        images.map((image) => (image.decode ? image.decode().catch(() => {}) : Promise.resolve())),
+      );
+    })
+    .catch(() => {});
   await page.addStyleTag({ content: FREEZE_CSS }).catch(() => {});
   await page.waitForTimeout(SETTLE_MS);
+
+  // After hydration, replace wall-clock-dependent labels with fixed text so
+  // consecutive runs hash the same (and without breaking hydration).
+  if (stabilise) await stabilise(page);
+  await page.waitForTimeout(120);
 
   // Hydration can scroll-into-view an active tree item; pin every scroll
   // container (and the window) to the origin so the frame is reproducible.
@@ -413,7 +592,7 @@ async function capture(page, route, theme) {
   const size = PNG(buffer);
   return {
     status,
-    hash: createHash("sha256").update(buffer).digest("hex"),
+    hash: fingerprint(buffer),
     width: size.width,
     height: size.height,
     metrics,
@@ -458,9 +637,12 @@ const loginPage = await browserContext.newPage();
 let loggedIn = true;
 try {
   await loginPage.goto(`${base}/login`, { waitUntil: "domcontentloaded", timeout: 45000 });
-  await loginPage.getByLabel("Email").fill(DEMO_EMAIL);
-  await loginPage.getByLabel("Password").fill("password123");
-  await loginPage.getByRole("button", { name: "Sign in" }).click();
+  // Locale-proof selectors and submit: the demo workspace ships in French, so
+  // label/button text ("Mot de passe", "Se connecter") is not stable. The
+  // `name` attributes and the form's submit button are.
+  await loginPage.locator('input[name="email"]').fill(DEMO_EMAIL);
+  await loginPage.locator('input[name="password"]').fill("password123");
+  await loginPage.locator('form button[type="submit"]').first().click();
   await loginPage.waitForURL(/\/w\//, { timeout: 30000 });
 } catch (error) {
   loggedIn = false;
@@ -508,9 +690,8 @@ if (loggedIn) {
         storageState,
       });
       await context.addInitScript(applyTheme, theme);
-      await context.addInitScript(freezeClock);
       const page = await context.newPage();
-      const shot = await capture(page, route, theme);
+      const shot = await capture(page, route, theme, stabiliseVolatileText);
       await context.close();
 
       const entry = { hash: shot.hash, width: shot.width, height: shot.height, metrics: shot.metrics };

@@ -1,5 +1,15 @@
-@import "tailwindcss";
+/* `source(none)` disables Tailwind's automatic content detection; the explicit
+   @source rules below scope scanning to real application code. Without this,
+   Tailwind also scans docs/, scripts/ and CI files — and any prose that looks
+   like a utility (e.g. an ad-hoc bracket duration quoted in docs/DESIGN_SYSTEM.md) is
+   compiled into a real rule. One such string produced `var(…)` with a U+2026
+   ellipsis, which is invalid CSS and made Turbopack fail to parse the whole
+   stylesheet (every route 500). */
+@import "tailwindcss" source(none);
 @import "./tokens.css";
+@source "../app";
+@source "../components";
+@source "../lib";
 
 /* Class-based dark mode (next-themes sets `.dark` on <html>). */
 @custom-variant dark (&:where(.dark, .dark *));

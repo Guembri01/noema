@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-15T22:08:52.210Z",
-  "baseUrl": "http://localhost:3218",
+  "generatedAt": "2026-10-15T22:42:16.156Z",
+  "baseUrl": "http://localhost:3200",
   "viewport": {
     "width": 1280,
     "height": 900
@@ -12,7 +12,7 @@
       "path": "/w/demo-workspace",
       "themes": {
         "light": {
-          "hash": "85f2f7d9e93e45fd3c34f158f472e3920cc24a99f1cdfa1cbc721bde0f4dc2f5",
+          "hash": "648aa6feca7d34ed9fd867f892fa38e408009388498898e6bc8474ac03d104ad",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -30,7 +30,7 @@
             ],
             "firstCard": [
               272,
-              140,
+              138,
               480,
               82
             ],
@@ -39,7 +39,7 @@
           }
         },
         "dark": {
-          "hash": "8b1663edf4752257a0ba70e9a542a4cf2238b0047e4c2b50a0c7a6a557295e68",
+          "hash": "20cf6f00fb48bb93587f86eaf64bd1b91ea3fed27ac08736dc8d6dbab5758159",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -57,7 +57,7 @@
             ],
             "firstCard": [
               272,
-              140,
+              138,
               480,
               82
             ],
@@ -66,7 +66,7 @@
           }
         },
         "high-contrast": {
-          "hash": "9df83f92bf0a7dbf7d4b1962e35c69ab33478899341ecc83dbd6ce552e884046",
+          "hash": "5ec05a2f3c7f179564114dcc4ea53edab14c42dc572a5be97845d029db616019",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -84,7 +84,7 @@
             ],
             "firstCard": [
               272,
-              140,
+              138,
               480,
               82
             ],
@@ -99,7 +99,7 @@
       "path": "/w/demo-workspace/tickets",
       "themes": {
         "light": {
-          "hash": "0d6bf57bd9d73a806dbcaaea3ad6b3d9f355bc3273dd5fd805dd30093e34a5f6",
+          "hash": "600810b2d5da067f76acd9151aae078280bcea82ea432422e534333b81b09b46",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -126,7 +126,7 @@
           }
         },
         "dark": {
-          "hash": "c2db4c6fb2f4725d3abd0f8eb16e7314feef5f7c7f74fdedb13fa543c3b7d1c6",
+          "hash": "1961d46395ecf23dbbe5184ac5d6a18f28c1b5f65cd61756df0ec533147188ac",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -153,7 +153,7 @@
           }
         },
         "high-contrast": {
-          "hash": "b374ebad25e081194df8efe2ab9d754b0406e07142ba19d7a2f3a7ec24628179",
+          "hash": "f0aeee96f06dcf6edbcee46111802ed75bf3d4f8bd2650af99029e760cb3cf28",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -183,10 +183,10 @@
     },
     "database-table": {
       "label": "database table",
-      "path": "/w/demo-workspace/cmva1sn6d000aukkoo8ly0sb0",
+      "path": "/w/demo-workspace/cmv9vpppy000aukbgi4fm9of0",
       "themes": {
         "light": {
-          "hash": "f75023fcf26ee890d26794a146455a41ac5d834d8575879bac644f752539ae94",
+          "hash": "d6b1e0aa6cb35b630aa2b55d1172e7d0de10c0a7df435fe51e9bef7b0322cba3",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -204,7 +204,7 @@
             ],
             "firstCard": [
               289,
-              532,
+              540,
               942,
               35
             ],
@@ -213,7 +213,7 @@
           }
         },
         "dark": {
-          "hash": "db7bbb644b9099b4878accd2d34c304c9a61cc0f4e9d92a51536b8ef58ca51f8",
+          "hash": "4b53bc8cb4465f322a078277220b1fdbb2dfc0474bda61f1063baefe6a31f063",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -231,7 +231,7 @@
             ],
             "firstCard": [
               289,
-              532,
+              540,
               942,
               35
             ],
@@ -240,7 +240,7 @@
           }
         },
         "high-contrast": {
-          "hash": "3a00a8375b2e10c245384ccd7a354ff81f0a0a6d25323d0898150274bf3a2eb8",
+          "hash": "e03ca4bd366d5271e280cbd758645f54b24281aebde15804a065d971e0db9a9a",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -258,7 +258,7 @@
             ],
             "firstCard": [
               289,
-              532,
+              540,
               942,
               35
             ],
@@ -270,10 +270,10 @@
     },
     "page-code-table": {
       "label": "page with code block + table",
-      "path": "/w/demo-workspace/cmva26tuf0001ukp0hozmji3q",
+      "path": "/w/demo-workspace/cmva3pfqb0001ukgoin89dvx4",
       "themes": {
         "light": {
-          "hash": "dbdb9fb9855d038ef89767f720beca17849da0acc4d6c152d0adb9232bafae0b",
+          "hash": "3ac2149f180309dd608022c9214156338de59f1cbe8e31b68f6ee2a520126a17",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -300,7 +300,7 @@
           }
         },
         "dark": {
-          "hash": "7ff179b25c144fdc71e6d63d7c4dbd27e1ca9d6a9c0f1cede9a23df1cbc9d1d3",
+          "hash": "39c03110e06e0ea1a182d5fcdcfc86c12c356fc28b83057f7afe6456d3d2c380",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -327,7 +327,7 @@
           }
         },
         "high-contrast": {
-          "hash": "cdd6a4309f3caf654c65ffd7186a160a6431433f96678dd893bb334a70a96e6d",
+          "hash": "73736167b1e8cfb87e7cd8badeda81b30d0aa21673215ada82340a40aae8f5a1",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -360,7 +360,7 @@
       "path": "/w/demo-workspace/settings",
       "themes": {
         "light": {
-          "hash": "c5419c74209b8115aca3eede2da7e509f56443a620aa964c402389cc4ea4f82f",
+          "hash": "d572e490279498c54ebe069e1577e01357430e764bc9fba09f213379d0d5fe39",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -378,7 +378,7 @@
             ],
             "firstCard": [
               422,
-              144,
+              164,
               118,
               32
             ],
@@ -387,7 +387,7 @@
           }
         },
         "dark": {
-          "hash": "29ae8739a4783f2a28d8585345b024416ce9580fd005f63dcbaa667e2704e22d",
+          "hash": "ac8171d5ce7bd0463b1dea856772bfa20d20e524df53363ac0fe8e10d5e27c34",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -405,7 +405,7 @@
             ],
             "firstCard": [
               422,
-              144,
+              164,
               118,
               32
             ],
@@ -414,7 +414,7 @@
           }
         },
         "high-contrast": {
-          "hash": "61532613e5b7d91b8a749a97e709c35f73bd82acdbd757c0363003746016fe2d",
+          "hash": "30f2c5179fef7f94c91c855225ea769124781556bf080049168979ab0dc1bfbc",
           "width": 1280,
           "height": 900,
           "metrics": {
@@ -432,9 +432,81 @@
             ],
             "firstCard": [
               422,
-              144,
+              164,
               118,
               32
+            ],
+            "scrollWidth": 1280,
+            "clientWidth": 1280
+          }
+        }
+      }
+    },
+    "dev-ui": {
+      "label": "dev UI",
+      "path": "/dev/ui",
+      "themes": {
+        "light": {
+          "hash": "c8a8bdc8973d4dc2c61efe854941502a75e3b9d4f0cb85d002df0faeaadf5b59",
+          "width": 1280,
+          "height": 900,
+          "metrics": {
+            "sidebar": null,
+            "main": [
+              0,
+              98,
+              1280,
+              10384
+            ],
+            "firstCard": [
+              124,
+              4877,
+              74,
+              24
+            ],
+            "scrollWidth": 1280,
+            "clientWidth": 1280
+          }
+        },
+        "dark": {
+          "hash": "2baa3aa176cd8a6e2453e64f6f3a3bfa917f2ea7605f7a50f4767b6e6d756346",
+          "width": 1280,
+          "height": 900,
+          "metrics": {
+            "sidebar": null,
+            "main": [
+              0,
+              98,
+              1280,
+              10384
+            ],
+            "firstCard": [
+              124,
+              4877,
+              74,
+              24
+            ],
+            "scrollWidth": 1280,
+            "clientWidth": 1280
+          }
+        },
+        "high-contrast": {
+          "hash": "56dfe79f4b804f5833457f03c24c6735fec33218c0a160ec041da60d4ff36d8a",
+          "width": 1280,
+          "height": 900,
+          "metrics": {
+            "sidebar": null,
+            "main": [
+              0,
+              98,
+              1280,
+              10384
+            ],
+            "firstCard": [
+              124,
+              4877,
+              74,
+              24
             ],
             "scrollWidth": 1280,
             "clientWidth": 1280
