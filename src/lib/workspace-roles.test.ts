@@ -7,6 +7,7 @@ import {
   WorkspaceRoleError,
   assertCan,
   assignableRoles,
+  canGrantRole,
   canWorkspace,
   capabilitiesFor,
   compareRoles,
@@ -266,6 +267,36 @@ describe("assignableRoles", () => {
         expect(compareRoles(actor, granted)).toBeLessThan(0);
       }
     }
+  });
+});
+
+describe("canGrantRole", () => {
+  it("lets the owner grant admin, member and guest", () => {
+    expect(canGrantRole("owner", "admin")).toBe(true);
+    expect(canGrantRole("owner", "member")).toBe(true);
+    expect(canGrantRole("owner", "guest")).toBe(true);
+  });
+
+  it("stops an admin from granting the admin role (peer escalation)", () => {
+    expect(canGrantRole("admin", "admin")).toBe(false);
+    expect(canGrantRole("admin", "owner")).toBe(false);
+    expect(canGrantRole("admin", "member")).toBe(true);
+    expect(canGrantRole("admin", "guest")).toBe(true);
+  });
+
+  it("grants a member or guest nothing", () => {
+    for (const role of WORKSPACE_ROLES.filter((known) => known !== "owner" && known !== "admin")) {
+      for (const granted of WORKSPACE_ROLES) {
+        expect(canGrantRole(role, granted)).toBe(false);
+      }
+    }
+  });
+
+  it("fails closed on both sides", () => {
+    expect(canGrantRole("admin", "root")).toBe(false);
+    expect(canGrantRole("root", "member")).toBe(false);
+    expect(canGrantRole("owner", null)).toBe(false);
+    expect(canGrantRole(null, "member")).toBe(false);
   });
 });
 

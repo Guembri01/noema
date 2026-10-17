@@ -431,6 +431,7 @@ curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 | `/api/health` refused / no answer | app process alive? port correct (3000 vs 3200 vs compose app)? `docker compose logs app` |
 | Cron never materializes | 503 = `CRON_SECRET` unset in the *app’s* env; 401 = header/value mismatch; `journalctl -u noema-templates.service`; rate limit is 12/min |
 | Invites never arrive | settings “Email & invitations” → status shows `environment SMTP` / `not configured`; run `npm run check:mail`; delivery log error text (10 s connect / 20 s socket timeouts) |
+| Invitation link refused with “This invitation can no longer be redeemed.” | The role the invitation carries is not one its sender may hand out *now* — an admin invitation an admin minted before the grant rule, or a sender who has since been demoted or removed. Nothing to clean up: the workspace owner sends a new invitation (an admin invitation the owner minted still redeems). |
 | Collaborative editing refuses everything (4401) | `AUTH_SECRET` missing/short in the relay’s env; wrong `NEXT_PUBLIC_COLLAB_URL`; 4403 = page scope/permission, not a secret problem |
 | Backup exits 1 | the script says why: no `pg_dump`, dump < 1 KiB, or missing core tables — it deletes the bad file rather than keeping it. `npm run backup -- --dry-run` shows what a run would do |
 | Collaborative socket closed 4400 | `APP_ORIGINS` is set and the client’s `Origin` isn’t on the list (checked pre-auth) — add the origin or unset `APP_ORIGINS` |
