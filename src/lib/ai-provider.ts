@@ -12,6 +12,7 @@ import { prisma } from "./db";
 import { decryptSecret } from "./secrets";
 import { providerDefaultBaseUrl, normalizeBaseUrl } from "./ai-providers";
 import { checkBudget, estimateTokens, recordUsage, type BudgetRecord } from "./ai-cost";
+import { z } from "zod";
 import { getWorkspaceAccess } from "./permissions";
 import { redactSecrets } from "./error-reporting";
 
@@ -34,6 +35,9 @@ export const AI_BUDGET_EXCEEDED =
  * — or a recognisable part of it — is treated as poison wherever it turns up.
  * The body itself does not reach the log either — only the status, the code
  * and the attribution of the call (the workspace, the provider, the model) do.
+ * The attribution is checked against the key we sent before it is written: a
+ * value that *is* the key — or a run of its characters — is left out, because
+ * a scrubber knows credential shapes and not every key format.
  * -------------------------------------------------------------------------- */
 
 /**
@@ -72,20 +76,32 @@ export type ProviderFailure = {
 };
 
 /**
- * What a provider failure can be attributed to in the log.
+ * What a provider failure can be attributed to — and what it is checked
+ * against.
  *
- * The workspace, the provider and the model — never the key and never the
- * endpoint: an endpoint can carry a credential in its user info, and the key is
- * the very thing that must not be written anywhere. A value that is not known
- * is left out; the log never guesses.
+ * The workspace, the provider and the model are the attribution: they say
+ * whose call failed. The key is not part of it — the key is the *comparison
+ * value*. A value that is the key itself, or a recognisable run of its
+ * characters, is poison, and only a comparison against the key we sent can
+ * tell: a scrubber knows credential *shapes*, not every key format. The key
+ * therefore travels with the attribution, is read by the guard alone and is
+ * never written to the log.
  */
-export type ProviderLogContext = {
+export type ProviderAttribution = {
   /** The workspace the call was billed to; absent for the env defaults. */
   readonly workspaceId?: string;
   /** The provider's id — the workspace's provider, or `env` for the default. */
   readonly provider?: string;
   /** The model the call asked for. */
   readonly model?: string;
+  /**
+   * The key the call was made with — compared against, never written.
+   *
+   * Required on purpose: an attribution without it would let a value that
+   * *is* the key into the log line, and a guard that can be left out by
+   * accident is a guard that fails open.
+   */
+  readonly apiKey: string;
 };
 
 /** Scrub credential-shaped substrings out of a free-text value. */
@@ -214,28 +230,62 @@ const MAX_LOG_CONTEXT_LENGTH = 64;
 /**
  * A value that may be written to the log.
  *
- * The attribution comes from the workspace's own settings, so it is untrusted
- * like every other input: a value that looks like a credential is dropped
- * rather than scrubbed, and a long one is cut. A missing value is left out —
- * the log never guesses.
+ * The attribution comes from the workspace's own settings — and on two of the
+ * AI routes from the request body — so it is untrusted like every other input:
+ * a value that looks like a credential is dropped rather than scrubbed, a value
+ * that carries the key we sent is dropped as well, and a long one is cut. A
+ * missing value is left out — the log never guesses.
+ *
+ * The comparison against the key runs on the *whole* value, before it is cut:
+ * a comparison against the shortened value would miss a fragment of the key
+ * that sits behind the cut.
  */
-function logContextValue(value: string | undefined): string | undefined {
+function logContextValue(value: string | undefined, apiKey: string): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
   if (scrubText(trimmed) !== trimmed) return undefined;
+  // The key we sent — or a recognisable run of its characters — is poison
+  // whatever shape it has: a scrubber knows credential *shapes*, not every key
+  // format, so only the comparison against the key itself catches it.
+  if (echoesKey(trimmed, apiKey)) return undefined;
   return trimmed.length > MAX_LOG_CONTEXT_LENGTH
     ? trimmed.slice(0, MAX_LOG_CONTEXT_LENGTH)
     : trimmed;
 }
 
+/**
+ * The shape of an id this app hands out.
+ *
+ * `Workspace.id` is a Prisma `cuid()` (`prisma/schema.prisma`), and the ids
+ * the app accepts from a client are checked the same way
+ * (`z.string().cuid()` in `src/lib/validation.ts`).
+ */
+const WORKSPACE_ID = z.string().cuid();
+
+/**
+ * The workspace id the log may carry.
+ *
+ * Two of the AI routes take the workspace id from the request body, so the
+ * value is chosen by the client. Only an id of the app's own shape may be
+ * written: a client cannot put an arbitrary string into the operator's log,
+ * and a value that is not an id is left out rather than guessed.
+ */
+function logWorkspaceId(value: string | undefined, apiKey: string): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (!WORKSPACE_ID.safeParse(trimmed).success) return undefined;
+  return logContextValue(trimmed, apiKey);
+}
+
 /** The attribution that is known — never a secret, never a guess. */
-function logContext(context: ProviderLogContext | undefined): Record<string, string> {
+function logContext(context: ProviderAttribution | undefined): Record<string, string> {
   const fields: Record<string, string> = {};
-  const workspaceId = logContextValue(context?.workspaceId);
+  const apiKey = context?.apiKey ?? "";
+  const workspaceId = logWorkspaceId(context?.workspaceId, apiKey);
   if (workspaceId) fields.workspaceId = workspaceId;
-  const provider = logContextValue(context?.provider);
+  const provider = logContextValue(context?.provider, apiKey);
   if (provider) fields.provider = provider;
-  const model = logContextValue(context?.model);
+  const model = logContextValue(context?.model, apiKey);
   if (model) fields.model = model;
   return fields;
 }
@@ -259,7 +309,7 @@ function logContext(context: ProviderLogContext | undefined): Record<string, str
  */
 export function logProviderFailure(
   failure: ProviderFailure,
-  context?: ProviderLogContext,
+  context?: ProviderAttribution,
 ): void {
   console.error("ai provider error", {
     status: failure.status,
@@ -334,7 +384,7 @@ function isProviderClassError(error: unknown): error is Error {
  * says whose call failed, so a line is not ambiguous in an installation with
  * several workspaces.
  */
-export function transportFailure(context?: ProviderLogContext): string {
+export function transportFailure(context?: ProviderAttribution): string {
   console.error("ai provider error", {
     code: TRANSPORT_ERROR,
     ...logContext(context),
@@ -351,7 +401,7 @@ export function transportFailure(context?: ProviderLogContext): string {
  */
 export function providerClass(
   error: unknown,
-  context?: ProviderLogContext,
+  context?: ProviderAttribution,
 ): string {
   if (isProviderClassError(error)) return error.message;
   return transportFailure(context);
@@ -368,20 +418,22 @@ export type AiRuntimeConfig = {
 };
 
 /**
- * The attribution of a call: the workspace, the provider and the model.
+ * The attribution of a call: the workspace, the provider and the model — and
+ * the key the call was made with, which is the value the guard compares
+ * against.
  *
- * Only what the config knows — the endpoint and the key are never part of it.
- * A config without a workspace (the env defaults, the admin's connection
- * test) yields an attribution without one: a missing value is left out, never
- * guessed.
+ * Only what the config knows — the endpoint is never part of it. A config
+ * without a workspace (the env defaults, the admin's connection test) yields
+ * an attribution without one: a missing value is left out, never guessed.
  */
 export function providerAttribution(
   config: AiRuntimeConfig,
-): ProviderLogContext {
+): ProviderAttribution {
   return {
     workspaceId: config.workspaceId,
     provider: config.provider,
     model: config.model,
+    apiKey: config.apiKey,
   };
 }
 
