@@ -22,7 +22,7 @@ const permissions = vi.hoisted(() => ({
 }));
 const queries = vi.hoisted(() => ({ searchPagesForPrompt: vi.fn() }));
 const runtime = vi.hoisted(() => ({ buildChatRequest: vi.fn() }));
-const actions = vi.hoisted(() => ({ planChatAction: vi.fn() }));
+const actions = vi.hoisted(() => ({ planChatAction: vi.fn(), executeChatActionAction: vi.fn() }));
 const db = vi.hoisted(() => ({
   prisma: {
     aiProviderConfig: { findUnique: vi.fn() },
@@ -50,7 +50,7 @@ vi.mock("@/lib/chat-actions", () => ({
   proposalLabel: () => "",
 }));
 vi.mock("@/server/actions/chat", () => ({
-  executeChatActionAction: vi.fn(),
+  executeChatActionAction: actions.executeChatActionAction,
 }));
 
 import { POST as streamPost } from "./route";
@@ -106,6 +106,7 @@ beforeEach(() => {
   });
   db.prisma.chatThread.update.mockResolvedValue(undefined);
   db.prisma.chatMessage.create.mockResolvedValue(undefined);
+  actions.executeChatActionAction.mockResolvedValue({ ok: true, message: "Created **X** — DW-1." });
   errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 
@@ -113,6 +114,39 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   errorSpy.mockRestore();
+});
+
+describe("a confirmation names the proposal it applies (B17)", () => {
+  const confirm = {
+    kind: "createTicket",
+    args: { title: "Ship the beta" },
+    summary: 'Create ticket "Ship the beta"',
+    requiresConfirm: true,
+  };
+
+  it("refuses a confirmation that names no proposal", async () => {
+    const response = await streamPost(jsonRequest({ threadId: "t1", confirm }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "That confirmation must name the proposal it applies.",
+    });
+    // Nothing was executed.
+    expect(actions.executeChatActionAction).not.toHaveBeenCalled();
+  });
+
+  it("hands the named proposal to the action that applies it", async () => {
+    const response = await streamPost(
+      jsonRequest({ threadId: "t1", confirm, proposalMessageId: "msg-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(actions.executeChatActionAction).toHaveBeenCalledWith({
+      threadId: "t1",
+      action: confirm,
+      proposalMessageId: "msg-1",
+    });
+  });
 });
 
 describe("a transport failure never carries the key", () => {
