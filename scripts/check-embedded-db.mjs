@@ -21,15 +21,21 @@
  *      `error` event as fatal. The *whole database process died* because one
  *      client went away. Fixed by listening for `connection` on the server and
  *      attaching an `error` listener before the server's own accept runs.
+ *   3. **The database was readable by everyone.** The data directory and the
+ *      cluster files came out with the umask's defaults (0755/0666), and the
+ *      socket server accepted *any* password — the engine runs in trust mode.
+ *      Another user on the same machine could read the files and talk to the
+ *      database. Fixed by owner-only modes and a password that is generated
+ *      per launch and checked by the socket server.
  *
- * Both are reproduced here against a real engine, in a throwaway data directory:
+ * All three are reproduced here against a real engine, in a throwaway data directory:
  *
  *   npm run check:embedded-db
  *
  * It needs no Postgres, no Docker and no Tauri — the same property the installer
  * has, which is the point.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -108,13 +114,44 @@ try {
 
   console.log(`embedded database on port ${db.port}`);
 
+  // The password never goes into the log — it is printed masked everywhere.
+  const password = new URL(db.url).password;
+  const maskedUrl = db.url.replace(/^([^:]+:\/\/[^:]+:)[^@]*(@)/, "$1<password>$2");
+
   record(db.port > 0, "the engine reports a listening port", String(db.port));
   record(
     db.url.includes("pgbouncer=true"),
     "the URL disables named prepared statements",
-    db.url,
+    maskedUrl,
   );
   record(db.url.includes("connection_limit=1"), "the URL pins Prisma to one connection");
+
+  // --- the modes on disk -----------------------------------------------------
+  // The database holds everything the app knows. It must not be readable for
+  // the other users of the machine.
+  const mode = (path) => statSync(path).mode & 0o777;
+  record(
+    mode(db.dir) === 0o700,
+    "the data directory is owner-only",
+    `0${mode(db.dir).toString(8)}`,
+  );
+  const loose = [];
+  for (const entry of readdirSync(db.dir, { withFileTypes: true })) {
+    const wanted = entry.isDirectory() ? 0o700 : 0o600;
+    const found = mode(join(db.dir, entry.name));
+    if (found !== wanted) loose.push(`${entry.name}: 0${found.toString(8)}`);
+  }
+  record(loose.length === 0, "every file in the data directory is owner-only", loose.join(", "));
+
+  // --- the password ----------------------------------------------------------
+  // The engine accepts any password (it runs in trust mode), so the socket
+  // server checks it: a client that does not know it must not reach the data.
+  record(password.length >= 32, "the URL carries a random password", `${password.length} characters`);
+  record(
+    !db.url.includes(":postgres@"),
+    "the URL does not carry the conventional password",
+    maskedUrl,
+  );
 
   process.env.DATABASE_URL = db.url;
   const { PrismaClient } = require("@prisma/client");
@@ -152,6 +189,25 @@ try {
     `count=${Array.isArray(again) ? again[0]?.n : undefined}`,
   );
   await third.$disconnect();
+
+  // --- a client with the wrong password must not get in ---------------------
+  // Before the fix the engine took any password, so every user on the machine
+  // could read the database over the loopback port.
+  process.env.DATABASE_URL = db.url.replace(password, "not-the-password");
+  const intruder = new PrismaClient();
+  let refused = "";
+  try {
+    await intruder.$queryRawUnsafe("SELECT count(*)::int AS n FROM probe");
+  } catch (error) {
+    refused = String(error && error.message);
+  } finally {
+    await intruder.$disconnect().catch(() => {});
+  }
+  record(
+    refused.includes("Authentication failed"),
+    "a client with the wrong password is refused",
+    refused.split("\n").find((line) => line.includes("Authentication failed"))?.trim() ?? "",
+  );
 } catch (error) {
   record(false, "the embedded database started and served queries", String(error && error.stack));
 } finally {

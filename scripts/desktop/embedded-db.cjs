@@ -12,14 +12,31 @@
 // It is a real file in the repo (copied into the payload by prepare.mjs), not
 // generated text, so it is reviewable and can be fixed without touching the
 // packager.
+//
+// Two hardening rules live here, because the database is the app's most
+// sensitive file: the data directory is created owner-only (0700, the files in
+// it 0600), and the socket server asks for a password that is generated per
+// launch. The password reaches the app in the environment (`DATABASE_URL`),
+// never on a command line, which every user on the machine can read.
 
 const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 
-/** PGlite is a single-user engine; these are the conventional credentials. */
+/** PGlite is a single-user engine; these are the conventional names. */
 const DB_USER = "postgres";
 const DB_NAME = "postgres";
+
+/**
+ * The two request codes a Postgres client sends before its startup packet:
+ * an SSL offer and a cancel request.
+ */
+const SSL_REQUEST_CODE = 80877103;
+const CANCEL_REQUEST_CODE = 80877102;
+
+/** How long a client has to present the password before it is dropped. */
+const AUTH_TIMEOUT_MS = 10_000;
 
 /**
  * Where the database files live.
@@ -32,6 +49,208 @@ const DB_NAME = "postgres";
 function resolveDataDir(dataDir) {
   const base = dataDir || process.env.NOEMA_DATA_DIR || path.join(os.homedir(), ".noema");
   return path.join(base, "pgdata");
+}
+
+/**
+ * A fresh password for this launch.
+ *
+ * The engine itself does not check passwords — it runs in trust mode and
+ * accepts whatever the client sends — so the socket server checks the password
+ * itself (see `authenticate`). 32 random bytes, base64url: URL-safe without
+ * escaping, and different for every launch, so a password that leaked from one
+ * run is worthless for the next one.
+ */
+function generatePassword() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+/** Compare two secrets without leaking their length through the timing. */
+function secretsMatch(given, expected) {
+  const a = Buffer.from(given, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * The error the server sends when the password does not match.
+ *
+ * The wording is Postgres' own, so the client reports the usual
+ * "credentials are not valid" message instead of something exotic.
+ */
+function authenticationFailed() {
+  const fields = Buffer.from('SERROR\0C28P01\0Mpassword authentication failed for user "postgres"\0\0', "utf8");
+  const header = Buffer.alloc(5);
+  header.write("E", 0, "latin1");
+  header.writeInt32BE(fields.length + 4, 1);
+  return Buffer.concat([header, fields]);
+}
+
+/**
+ * Read bytes from a socket without losing what arrives beyond them.
+ *
+ * The reader keeps its own buffer, so a client that pipelines is not
+ * truncated, and it removes only its own listeners — the socket server's
+ * error listener has to stay.
+ */
+function socketReader(socket) {
+  const state = { buffer: Buffer.alloc(0), waiter: null, error: null, ended: false };
+
+  const wake = () => {
+    if (!state.waiter) return;
+    const waiter = state.waiter;
+    state.waiter = null;
+    waiter();
+  };
+  const onData = (chunk) => {
+    state.buffer = Buffer.concat([state.buffer, chunk]);
+    wake();
+  };
+  const onError = (error) => {
+    state.error = error;
+    wake();
+  };
+  const onEnd = () => {
+    state.ended = true;
+    wake();
+  };
+  socket.on("data", onData);
+  socket.on("error", onError);
+  socket.on("end", onEnd);
+
+  return {
+    async read(count) {
+      while (state.buffer.length < count) {
+        if (state.error) throw state.error;
+        if (state.ended) throw new Error("the client closed the connection");
+        await new Promise((resolve) => {
+          state.waiter = resolve;
+        });
+      }
+      const bytes = state.buffer.subarray(0, count);
+      state.buffer = state.buffer.subarray(count);
+      return bytes;
+    },
+    leftover() {
+      return state.buffer;
+    },
+    detach() {
+      socket.removeListener("data", onData);
+      socket.removeListener("error", onError);
+      socket.removeListener("end", onEnd);
+    },
+  };
+}
+
+/**
+ * Make the client prove that it knows the password.
+ *
+ * The exchange is the ordinary Postgres one: the server asks for a cleartext
+ * password, the client answers with a `PasswordMessage`, and only a matching
+ * answer lets the startup packet through to the engine. A client that cannot
+ * answer never reaches the database.
+ *
+ * @returns the bytes the engine has to see (the startup packet), or `null`
+ *          when the client did not prove anything.
+ */
+async function authenticate(socket, password, log) {
+  const reader = socketReader(socket);
+  const timeout = setTimeout(() => socket.destroy(), AUTH_TIMEOUT_MS);
+  timeout.unref?.();
+  try {
+    let startup = null;
+    for (;;) {
+      const head = await reader.read(8);
+      const length = head.readInt32BE(0);
+      const code = head.readInt32BE(4);
+      if (length === 8 && code === SSL_REQUEST_CODE) {
+        // The client offers TLS first (Prisma does); this server speaks plain
+        // text, so the answer is the usual "no".
+        socket.write("N");
+        continue;
+      }
+      if (length === 8 && code === CANCEL_REQUEST_CODE) {
+        // A cancel request carries no credentials and is answered by the
+        // engine itself.
+        return head;
+      }
+      if (length < 8) throw new Error("the client sent a malformed startup packet");
+      startup = Buffer.concat([head, await reader.read(length - 8)]);
+      break;
+    }
+
+    // AuthenticationCleartextPassword: 'R', length 8, code 3.
+    const request = Buffer.alloc(9);
+    request.write("R", 0, "latin1");
+    request.writeInt32BE(8, 1);
+    request.writeInt32BE(3, 5);
+    socket.write(request);
+
+    const message = await reader.read(5);
+    if (message.subarray(0, 1).toString("latin1") !== "p") {
+      throw new Error("the client did not answer with a password");
+    }
+    const length = message.readInt32BE(1);
+    if (length < 4 || length > 4096) throw new Error("the client sent a malformed password message");
+    const body = await reader.read(length - 4);
+    const given = body.subarray(0, body.length - 1).toString("utf8");
+
+    if (!secretsMatch(given, password)) {
+      socket.write(authenticationFailed());
+      return null;
+    }
+    return Buffer.concat([startup, reader.leftover()]);
+  } catch (error) {
+    log.warn(`[noema] a client did not authenticate: ${error && error.message}`);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+    // The socket is paused before the reader lets go of it: a paused socket
+    // keeps what arrives, a flowing one without a listener throws it away.
+    socket.pause();
+    reader.detach();
+  }
+}
+
+/**
+ * Make the database directory and everything in it owner-only.
+ *
+ * PGlite creates its files with mode 0666 and its directories with 0777 — the
+ * umask does not reduce them (measured: with umask 022 the cluster files came
+ * out as 0666, with umask 077 as 0666 as well). A real Postgres creates them
+ * as 0600/0700, so the modes are set here, once the engine has laid the
+ * cluster out.
+ */
+function hardenDirectory(dir, log) {
+  const walk = (current) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      try {
+        if (entry.isDirectory()) {
+          fs.chmodSync(full, 0o700);
+          walk(full);
+        } else {
+          fs.chmodSync(full, 0o600);
+        }
+      } catch (error) {
+        log.warn(`[noema] could not protect ${full}: ${error && error.message}`);
+      }
+    }
+  };
+
+  try {
+    fs.chmodSync(dir, 0o700);
+  } catch (error) {
+    log.warn(`[noema] could not protect ${dir}: ${error && error.message}`);
+    return;
+  }
+  walk(dir);
 }
 
 /**
@@ -82,10 +301,26 @@ async function startEmbeddedDatabase({ dataDir, log = console, host = "127.0.0.1
   const { PGLiteSocketServer } = require("@electric-sql/pglite-socket");
 
   const dir = resolveDataDir(dataDir);
-  fs.mkdirSync(dir, { recursive: true });
+  // The database holds everything the app knows: owner-only, like the session
+  // secret next to it. `mkdir` only sets the mode of the directories it
+  // creates, so the mode is enforced afterwards — an install that was created
+  // by an older version keeps the umask's 0755 otherwise.
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(dir, 0o700);
+  } catch (error) {
+    log.warn(`[noema] could not protect ${dir}: ${error && error.message}`);
+  }
 
   const db = new PGlite(dir);
   await db.waitReady;
+  // The engine creates its own files; they are protected once it is done.
+  hardenDirectory(dir, log);
+
+  // The password this launch expects. It never goes onto a command line: the
+  // URL travels in the environment (`DATABASE_URL`), which only the user who
+  // owns the process can read.
+  const password = generatePassword();
 
   // `maxConnections` is generous rather than 1: the Prisma CLI (which runs before
   // the server, so normally alone) opens its own client, and a retry should never
@@ -119,7 +354,21 @@ async function startEmbeddedDatabase({ dataDir, log = console, host = "127.0.0.1
   const accept = server.handleConnection.bind(server);
   server.handleConnection = async (socket) => {
     reclaimDeadHandlers(server);
+    // The password first: a client that cannot present it never reaches the
+    // engine. The engine itself accepts any password (it runs in trust mode),
+    // so this check is the only thing standing between the loopback port and
+    // another user on the same machine.
+    const startup = await authenticate(socket, password, log);
+    if (!startup) {
+      socket.destroy();
+      return undefined;
+    }
+    // The engine has to see the startup packet, so it is pushed back into the
+    // socket — which is paused, so the bytes cannot slip past the handler
+    // before it is attached.
+    socket.unshift(startup);
     const accepted = accept(socket);
+    socket.resume();
     // `handleConnection` registers its handler synchronously (its only `await`
     // is `attach`, which sets `handler.socket` before suspending), so by now the
     // handler for this socket exists — and is already orphaned if the socket
@@ -157,7 +406,9 @@ async function startEmbeddedDatabase({ dataDir, log = console, host = "127.0.0.1
   // CLI before the server, a seed after a build, a restart), which is exactly the
   // sequence the desktop app performs. Disabling prepared statements makes each
   // connection self-contained and the race disappears.
-  const url = `postgresql://${DB_USER}:${DB_USER}@${host}:${port}/${DB_NAME}?schema=public&connection_limit=1&pgbouncer=true`;
+  // The password is this launch's own: 32 random bytes, base64url (so it needs
+  // no escaping in the URL) and different for every start.
+  const url = `postgresql://${DB_USER}:${password}@${host}:${port}/${DB_NAME}?schema=public&connection_limit=1&pgbouncer=true`;
 
   let stopped = false;
   const stop = async () => {
@@ -175,6 +426,10 @@ async function startEmbeddedDatabase({ dataDir, log = console, host = "127.0.0.1
     } catch (error) {
       log.warn("[noema] could not close the embedded database:", error && error.message);
     }
+    // The engine writes while it runs (WAL segments and the like), and those
+    // files come out with the engine's own modes. The directory is owner-only
+    // either way, but a database at rest should look like a real one.
+    hardenDirectory(dir, log);
   };
 
   log.log(`[noema] embedded database ready at ${dir}`);

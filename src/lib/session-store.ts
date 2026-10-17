@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /**
@@ -83,11 +83,39 @@ function readAll(): SessionRecord[] {
   }
 }
 
+/**
+ * Set a mode, but never let it stop a write.
+ *
+ * A filesystem without Unix permissions (a FAT stick, a network mount) answers
+ * `EPERM`, and a directory that belongs to somebody else cannot be changed at
+ * all. Neither is a reason to stop writing sessions — the mode is best effort,
+ * and where the filesystem supports permissions the file is owner-only.
+ */
+function restrict(path: string, mode: number): void {
+  try {
+    chmodSync(path, mode);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`[noema] could not set the mode of ${path}: ${reason}`);
+  }
+}
+
 function writeAll(records: SessionRecord[]): void {
   const file = storePath();
-  mkdirSync(dirname(file), { recursive: true });
+  const dir = dirname(file);
+  // The registry names the devices that are signed in: owner-only, like the
+  // rest of the app's data. The desktop app puts the store next to the
+  // database, and the umask's 0755/0644 would let every user on the machine
+  // read it. `mkdir` only sets the mode of the directories it creates, so the
+  // mode is enforced afterwards — a store from an older version keeps its old
+  // mode otherwise.
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  restrict(dir, 0o700);
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(records), "utf8");
+  writeFileSync(tmp, JSON.stringify(records), { encoding: "utf8", mode: 0o600 });
+  // A leftover file from an earlier run keeps its old mode; the rename below
+  // publishes whatever this file is.
+  restrict(tmp, 0o600);
   renameSync(tmp, file); // atomic: readers never see a half-written file
 }
 
