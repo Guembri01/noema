@@ -188,6 +188,18 @@ describe("writing skills route through ai-writing", () => {
     expect(response.status).toBe(502);
     expect(((await response.json()) as SkillResponse).error).toBe("provider down");
   });
+
+  it("scrubs a credential-shaped provider error before answering", async () => {
+    ai.chatComplete.mockResolvedValue({
+      ok: false,
+      status: 502,
+      error: "AI provider error (401): sk-live-abcdef1234567890",
+    });
+    const response = await postSkill({ skillId: "summarize", text: "hi" });
+    const raw = await response.text();
+    expect(response.status).toBe(502);
+    expect(raw).not.toContain("sk-live-abcdef1234567890");
+  });
 });
 
 describe("GET catalogue", () => {

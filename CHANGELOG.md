@@ -480,7 +480,6 @@ list marks it as **No access**.
   runtime, where `process.env` is frozen at build time, the variable has to be
   set for the **build**, not only for the start.
 
-
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour

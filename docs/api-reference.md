@@ -1027,7 +1027,14 @@ Source: [`src/app/api/chat/stream/route.ts`](../src/app/api/chat/stream/route.ts
 - **200** is a **plain-text stream** (`text/plain; charset=utf-8`,
   `cache-control: no-store`, `x-accel-buffering: no`) — UTF-8 chunks as the
   model emits them. Provider failures after headers are sent travel
-  **in-band** as `\n\n[stream-error] <detail>`.
+  **in-band** as `\n\n[stream-error] AI provider error (<upstatus>): <code>`
+  — the classified failure (upstream status plus a stable code), never the
+  provider's body. A transport failure travels **in-band** the same way, as
+  `\n\n[stream-error] Could not reach the provider.` — a class, never the
+  runtime's message (it can carry the request header, and the header carries
+  the key). The same class is persisted in the assistant row — unless the
+  stream already produced a partial answer, in which case the row holds that
+  partial answer alone.
 - Errors before streaming: **400** `Invalid JSON body` /
   `Write something first.` (empty or >4000 chars trimmed) · **401** ·
   **403** `You do not have permission to post here.` (read-only role) ·
@@ -1067,7 +1074,11 @@ Source: [`src/app/api/ai/route.ts`](../src/app/api/ai/route.ts)
   `prompt is required to autofill` ·
   **401** · **503** `AI is not configured. Add a provider in workspace
   settings (AI) or set AI_API_KEY / AI_BASE_URL / AI_MODEL.` ·
-  provider failures returned as `{error}` with the upstream status · 429.
+  provider failures returned as `{error}` — `AI provider error (<upstatus>):
+  <code>`, the classified failure (upstream status plus a stable code), never
+  the provider's body · transport failures returned as `{error}` — `Could not
+  reach the provider.`, a class, never the runtime's message (it can carry the
+  request header, and the header carries the key) · 429.
 
 ### `POST /api/ai/skills` — editor AI skills — scope `ai-skills` (30/min)
 Source: [`src/app/api/ai/skills/route.ts`](../src/app/api/ai/skills/route.ts)
@@ -1089,9 +1100,11 @@ Skill ids: `improve`, `proofread`, `reformat`, `shorten`, `explain`,
 - `workspaceId` selects the provider under the same rule as `/api/ai`: the
   workspace's own endpoint and API key are used only when the caller has
   access to that workspace, the environment configuration applies otherwise.
-- Errors: 400 (`Invalid JSON body.` / `Invalid request body.` /
-  `Unknown skill.` / `text is required.`,
-  text capped at 8000) · 401 · 503 (AI unconfigured) · 429.
+- Errors: 400 (`Invalid JSON body.` / `Unknown skill.` / `text is required.`,
+text capped at 8000) · 401 · 503 (AI unconfigured) · **502** `AI provider
+error (<upstatus>): <code>` (the classified failure, never the provider's
+body) or `Could not reach the provider.` (a transport failure — a class,
+never the runtime's message) · 429.
 
 ### `POST /api/ai/transcribe` — speech-to-text — scope `transcribe` (10/min)
 Source: [`src/app/api/ai/transcribe/route.ts`](../src/app/api/ai/transcribe/route.ts)
@@ -1103,7 +1116,10 @@ Source: [`src/app/api/ai/transcribe/route.ts`](../src/app/api/ai/transcribe/rout
 
 - **200** `{"text":"…"}` · **400** `file is required` · **401** ·
   **503** `Transcription is not configured. Set AI_TRANSCRIBE_API_KEY …` ·
-  **502** `Transcription failed (<upstatus>): …` or transport message · 429.
+  **502** `Transcription failed (<upstatus>): <code>` — the classified failure
+  (upstream status plus a stable code), never the provider's body — or
+  `Could not reach the provider.` for a transport failure, a class, never the
+  runtime's message · 429.
 
 ---
 

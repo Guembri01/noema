@@ -5,6 +5,7 @@ import { pageScopeFor } from "@/lib/guest-access";
 import { searchPagesForPrompt } from "@/server/queries";
 import { rateLimit } from "@/lib/api-guard";
 import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfigForUser } from "@/lib/ai-provider";
+import { redactSecrets } from "@/lib/error-reporting";
 import { assembleContext, estimateTokens, type ContextDoc } from "@/lib/ai-context";
 import { aiRequestSchema } from "@/lib/validation";
 
@@ -135,7 +136,13 @@ export async function POST(request: Request) {
     config,
   );
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+    // The provider already reduced its failure to a class (status + code); the
+    // message is scrubbed once more so no credential-shaped string can leave
+    // the server.
+    const detail = redactSecrets(result.error);
+    const error =
+      typeof detail === "string" && detail !== "" ? detail : "AI request failed";
+    return NextResponse.json({ error }, { status: result.status });
   }
   return NextResponse.json({ text: result.text });
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
+import { logProviderFailure, providerFailure, transportFailure } from "@/lib/ai-provider";
 
 export const runtime = "nodejs";
 
@@ -46,17 +47,24 @@ export async function POST(request: Request) {
     });
     if (!response.ok) {
       const text = await response.text();
+      // The provider's body is untrusted: it may echo the API key back. The
+      // failure is reduced to its status plus a stable code, and only that
+      // class reaches the log.
+      const failure = providerFailure(response.status, text, KEY);
+      logProviderFailure(failure);
       return NextResponse.json(
-        { error: `Transcription failed (${response.status}): ${text.slice(0, 200)}` },
+        { error: `Transcription failed (${response.status}): ${failure.code}` },
         { status: 502 },
       );
     }
     const data = (await response.json()) as { text?: string };
     return NextResponse.json({ text: data.text ?? "" });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Transcription failed" },
-      { status: 502 },
-    );
+  } catch {
+    // A transport failure: the runtime's message can carry the request header,
+    // and the header carries the workspace's key. It is never forwarded — not
+    // even scrubbed, since a scrubber only knows credential *shapes* and the
+    // tail of a key with an interior newline is no shape at all. The class
+    // goes to the client, the class goes to the log.
+    return NextResponse.json({ error: transportFailure() }, { status: 502 });
   }
 }
