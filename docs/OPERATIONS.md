@@ -746,13 +746,16 @@ What that means for an operator:
 
 ### 8.6 Ops gates: the shared secret, the rate limit, the order
 
-Every endpoint that authenticates with the shared ops secret runs the **same
-gate** — `@/lib/ops-guard` (`src/lib/ops-guard.ts`) — so the routes cannot
-drift apart. The gate owns three properties:
+Every endpoint that authenticates with the shared ops secret uses the **same
+helper** — `@/lib/ops-guard` (`src/lib/ops-guard.ts`) — so the routes cannot
+drift apart: eight of the nine go through `guardOpsSecret` (which owns the
+order), `/api/metrics` compares with the same `safeSecretEqual` but keeps the
+order in the route body (see the exception below). The gate owns three
+properties:
 
 | Property | What it means | Where |
 | --- | --- | --- |
-| **Fail closed** | No configured secret ⇒ the gate is **closed** (`503`), never open. An empty/absent presented value is never a match. | `guardOpsSecret` |
+| **Fail closed** | No configured secret ⇒ the gate is **closed** (`503`), never open (`/api/metrics` answers `401` there — see the exception below). An empty/absent presented value is never a match. | `guardOpsSecret` |
 | **Constant-time comparison** | The presented secret is compared byte by byte without an early exit, so the response time does not reveal *where* a guess differs. The comparison is case sensitive; both sides are trimmed before it. | `safeSecretEqual` → `constantTimeEqual` (`src/lib/secrets.ts`) |
 | **Throttle first** | The rate limit runs **before** the comparison, so a wrong secret is answered `429` once the budget is spent — the guessing is bounded instead of unlimited. | `guardOpsSecret` |
 
@@ -763,6 +766,13 @@ drift apart. The gate owns three properties:
    correct secret**: the limit covers legitimate calls too;
 3. wrong/missing secret → `401 {"error":"Unauthorized"}`;
 4. otherwise the request runs.
+
+**Exception — `GET /api/metrics`:** with no secret configured it answers
+**`401`**, not `503`. The route has a second, session-based admin path (a
+workspace OWNER/ADMIN), and a `503` would lock those admins out; `401` is
+therefore the unchanged and correct contract there. Its **order** is the same
+as everywhere else: the rate limit runs before the secret comparison, so a
+wrong secret is throttled (`429`) once the budget is spent.
 
 **Which environment variable guards which route:**
 
@@ -775,7 +785,7 @@ drift apart. The gate owns three properties:
 | `GET`/`POST /api/cron/digest` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
 | `GET /api/cron/backups` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
 | `GET`/`POST /api/ready` | `CRON_SECRET` **or** `READY_SECRET` | `x-cron-secret` **or** `x-ready-secret` | token bucket: burst 30, 1/s |
-| `GET /api/metrics` | `CRON_SECRET` (besides the session-based workspace-admin path) | `x-cron-secret` | 120 / 60 s |
+| `GET /api/metrics` | `CRON_SECRET` (besides the session-based workspace-admin path) | `x-cron-secret` | 120 / 60 s — no secret configured ⇒ `401`, not `503` (the admin path stays open) |
 | `listDueAutomationsForCronAction`, `commitRecurringRunAction` (server actions — HTTP endpoints too) | `CRON_SECRET` | the action's `secret` argument | 120 / 60 s, deployment-wide |
 
 `READY_SECRET` is an **alternative name for the readiness probe only** — it is
@@ -794,7 +804,7 @@ accepted *in addition to* `CRON_SECRET` there, and nowhere else.
   (the action has no request of its own) and therefore more generous than the
   routes' 12/min.
 - Rotation of `CRON_SECRET` changes the rate-limit key of the action surface
-  (it is hashed into the key) — the new secret starts with a fresh budget.## 9. Incident quick reference
+  (it is hashed into the key) — the new secret starts with a fresh budget.
 
 ## 9. Incident quick reference
 
@@ -849,6 +859,7 @@ nothing was executed against live servers):
 | 8.3 | OAuth secrets hashed at rest (`clientSecretHash`/`codeHash`), the SQL digest byte-identical to the Node one, the code consumed atomically, the migration before the app | `prisma/migrations/20261019000000_oauth_secret_hashes/` · `src/lib/api-auth.ts` · `src/app/oauth/token/route.ts` |
 | 8.4 | the SSO link guard migration (`User.emailVerified`), the backfill marks only the provider-created accounts, the new build needs the column | `prisma/migrations/20261019000000_user_email_verified/` · `src/lib/auth-strategies.ts` |
 | 8.5 | tenant boundary enforced in the application (`assertScopedParent`), no `(parentId, workspaceId)` constraint, refusal message, trashed parent refused, legacy rows not repaired (read side: database view, relation database, both exports, deleted rows, database duplicate, the two chat-context blocks), write paths checked where the gate can see them (`scripts/check-parent-scope.mjs`) | `src/lib/page-parent.ts` · `scripts/check-parent-scope.mjs` · `prisma/schema.prisma` (`Page.parentId`) · `src/server/actions/import-pdf.ts` · `src/server/queries.ts` (`getDatabase`) |
+| 8.6 | ops-gate order (503 → 429 → 401; `/api/metrics` answers 401 without a configured secret), constant-time comparison, per-route secret/limit table, action-surface budget | `src/lib/ops-guard.ts` · `src/app/api/ready/route.ts` · `src/app/api/cron/*/route.ts` · `src/app/api/metrics/route.ts` · `src/server/actions/automations.ts` |
 | all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
 
 **Not verified by execution (be explicit when relying on them):** the backup →
