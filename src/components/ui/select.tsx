@@ -444,7 +444,8 @@ export function Select(props: SelectProps) {
     loading = false,
     invalid = false,
     errorMessage,
-    placeholder = "Select…",
+    locale = "en",
+    placeholder = t(locale, "select"),
     searchPlaceholder,
     noResultsLabel,
     noResultsHint = "Try a different search.",
@@ -461,7 +462,6 @@ export function Select(props: SelectProps) {
     menuClassName,
     id,
     name,
-    locale = "en",
     "aria-label": ariaLabel,
     "aria-labelledby": ariaLabelledby,
   } = props;

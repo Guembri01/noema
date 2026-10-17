@@ -235,12 +235,12 @@ export function FindBar({ blocks, initialQuery = "", onSelect, onClose }: FindBa
         onClick={() => step(-1)}
       >
         <ChevronUp aria-hidden className="h-4 w-4" />
-        <kbd className="hidden text-[10px] leading-none text-muted sm:inline">{PREVIOUS_HINT}</kbd>
+        <kbd className="hidden text-3xs leading-none text-muted sm:inline">{PREVIOUS_HINT}</kbd>
       </ToolButton>
 
       <ToolButton label={LABELS.next} hint={NEXT_HINT} disabled={count === 0} onClick={() => step(1)}>
         <ChevronDown aria-hidden className="h-4 w-4" />
-        <kbd className="hidden text-[10px] leading-none text-muted sm:inline">{NEXT_HINT}</kbd>
+        <kbd className="hidden text-3xs leading-none text-muted sm:inline">{NEXT_HINT}</kbd>
       </ToolButton>
 
       <span aria-hidden className="mx-0.5 h-5 w-px shrink-0 bg-border" />

@@ -582,6 +582,7 @@ export function BubbleToolbar({
               </button>
               <button
                 type="button"
+                aria-label={t(locale, "apply")}
                 onClick={applyLink}
                 className="focus-ring u-colors h-8 rounded-sm bg-accent px-3 text-sm font-medium text-accent-fg hover:bg-accent/90"
               >

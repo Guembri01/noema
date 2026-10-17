@@ -438,7 +438,6 @@ function CodeBlock({
   return (
     <div
       className={cn("notion-code", markdownBlockClass("codeBlock"), "print:break-inside-avoid")}
-      style={{ background: "var(--surface-2)" }}
     >
       <div className="notion-code-head print:hidden">
         <span className={cn("notion-code-lang", markdownBlockClass("codeLang"))}>
@@ -494,7 +493,6 @@ function renderInline(nodes: Inline[], slug?: string): React.ReactNode[] {
           <code
             key={index}
             className={cn("notion-inline-code", markdownBlockClass("inlineCode"))}
-            style={{ background: "var(--surface-2)", color: "var(--danger)" }}
           >
             {node.value}
           </code>

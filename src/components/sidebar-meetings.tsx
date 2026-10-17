@@ -137,8 +137,9 @@ export function SidebarMeetings({
           <button
             type="button"
             disabled={pending || !url.trim()}
+            aria-label={t(locale, "connectCalendarButton")}
             onClick={connect}
-            className="h-7 w-full rounded bg-accent text-xs text-accent-fg disabled:opacity-50"
+            className="focus-ring u-interactive h-7 w-full rounded bg-accent text-xs text-accent-fg disabled:opacity-50"
           >
             {pending ? t(locale, "connecting") : t(locale, "connectCalendarButton")}
           </button>
@@ -154,7 +155,7 @@ export function SidebarMeetings({
       ) : (
         grouped.map(([day, items]) => (
           <div key={day}>
-            <p className="px-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+            <p className="px-1 pb-0.5 text-2xs font-medium uppercase tracking-wide text-muted">
               {day}
             </p>
             <ul className="space-y-0.5">
@@ -174,7 +175,7 @@ export function SidebarMeetings({
                         event.title
                       )}
                     </p>
-                    <p className="truncate text-[11px] text-muted">
+                    <p className="truncate text-2xs text-muted">
                       {timeLabel(event, locale)}
                       {event.feed ? ` · ${event.feed.name}` : ""}
                     </p>
@@ -182,7 +183,7 @@ export function SidebarMeetings({
                   {event.notesPageId ? (
                     <Link
                       href={`/w/${slug}/${event.notesPageId}`}
-                      className="shrink-0 rounded px-1 text-[11px] text-accent hover:underline"
+                      className="shrink-0 rounded px-1 text-2xs text-accent hover:underline"
                     >
                       {t(locale, "eventNotes")}
                     </Link>
@@ -218,7 +219,7 @@ export function SidebarMeetings({
       {feeds.length > 0 && (
         <div className="mt-1 space-y-1 border-t border-border pt-2">
           {feeds.map((feed) => (
-            <div key={feed.id} className="flex items-center gap-1 text-[11px] text-muted">
+            <div key={feed.id} className="flex items-center gap-1 text-2xs text-muted">
               <span className="truncate">
                 {feed.name} · {feed._count.events}
               </span>

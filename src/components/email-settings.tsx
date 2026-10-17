@@ -148,7 +148,7 @@ export function EmailSettings({
           <input
             value={host}
             aria-label={t(locale, "smtpHostLabel")}
-            placeholder="smtp.example.com"
+            placeholder={t(locale, "smtpHostPlaceholder")}
             onChange={(event) => setHost(event.target.value)}
             className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
           />
@@ -197,7 +197,7 @@ export function EmailSettings({
           <input
             value={fromEmail}
             aria-label={t(locale, "senderAddressAria")}
-            placeholder="noema@example.com"
+            placeholder={t(locale, "smtpFromPlaceholder")}
             onChange={(event) => setFromEmail(event.target.value)}
             className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
           />
@@ -228,7 +228,8 @@ export function EmailSettings({
           type="button"
           disabled={pending}
           onClick={saveSmtp}
-          className="h-9 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
+          aria-label={t(locale, "saveSmtp")}
+          className="focus-ring u-interactive h-9 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
         >
           {t(locale, "saveSmtp")}
         </button>
@@ -243,7 +244,8 @@ export function EmailSettings({
           type="button"
           disabled={pending}
           onClick={test}
-          className="flex h-9 items-center gap-1 rounded border border-border px-3 text-sm hover:bg-surface-2 disabled:opacity-50"
+          aria-label={t(locale, "verifySendTest")}
+          className="focus-ring u-interactive flex h-9 items-center gap-1 rounded border border-border px-3 text-sm hover:bg-surface-2 disabled:opacity-50"
         >
           <Send className="h-4 w-4" /> {t(locale, "verifySendTest")}
         </button>
@@ -252,7 +254,8 @@ export function EmailSettings({
             type="button"
             disabled={pending}
             onClick={clearSmtp}
-            className="flex h-9 items-center gap-1 rounded border border-border px-3 text-sm text-muted hover:text-danger disabled:opacity-50"
+            aria-label={t(locale, "remove")}
+            className="focus-ring u-interactive flex h-9 items-center gap-1 rounded border border-border px-3 text-sm text-muted hover:text-danger disabled:opacity-50"
           >
             <Trash2 className="h-4 w-4" /> {t(locale, "remove")}
           </button>
@@ -267,7 +270,7 @@ export function EmailSettings({
           <input
             value={inviteEmail}
             aria-label={t(locale, "inviteEmailAria")}
-            placeholder="client@example.com"
+            placeholder={t(locale, "inviteEmailPlaceholder")}
             onChange={(event) => setInviteEmail(event.target.value)}
             className="h-9 w-64 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
           />
@@ -285,7 +288,8 @@ export function EmailSettings({
             type="button"
             disabled={pending || !inviteEmail.trim()}
             onClick={invite}
-            className="flex h-9 items-center gap-1 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
+            aria-label={t(locale, "sendInvitation")}
+            className="focus-ring u-interactive flex h-9 items-center gap-1 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
           >
             <Mail className="h-4 w-4" /> {t(locale, "sendInvitation")}
           </button>
@@ -315,7 +319,7 @@ export function EmailSettings({
                       return "error" in result ? { ok: false, message: result.error } : { ok: true };
                     })
                   }
-                  className="shrink-0 hover:text-danger"
+                  className="focus-ring u-interactive shrink-0 hover:text-danger"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>

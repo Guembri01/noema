@@ -13,6 +13,7 @@ import { MS_PER_DAY } from "@/lib/calendar-multiday";
 import { formatDateRange } from "@/lib/date-range";
 import { humanizeDuration } from "@/lib/duration";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 /**
  * The date / time control the app was missing — for date properties, reminders,
@@ -246,7 +247,7 @@ export function DatePicker({
   weekStartsOn,
   showPresets = true,
   relative = false,
-  placeholder = "Select a date…",
+  placeholder = t(locale, "selectDate"),
   presetLabels,
   className,
   id,
@@ -375,7 +376,7 @@ export function DatePicker({
         className="animate-rise w-auto p-3"
       >
         {showPresets && (
-          <div role="group" aria-label="Quick ranges" className="mb-2 flex flex-wrap gap-1">
+          <div role="group" aria-label={t(locale, "quickRanges")} className="mb-2 flex flex-wrap gap-1">
             {DATE_PRESETS.map((preset) => (
               <button
                 key={preset}
@@ -407,11 +408,11 @@ export function DatePicker({
         )}
 
         {hasTime && (
-          <div role="group" aria-label="Time" className="mt-2 flex items-center justify-center gap-1">
+          <div role="group" aria-label={t(locale, "timeLabel")} className="mt-2 flex items-center justify-center gap-1">
             <button
               type="button"
-              aria-label="Decrease hour"
-              title="Hour"
+              aria-label={`${t(locale, "decrease")} ${t(locale, "hour")}`}
+              title={t(locale, "hour")}
               onClick={() => commitTime(stepTime(time, "hours", -1))}
               className={STEPPER_CLASS}
             >
@@ -419,26 +420,26 @@ export function DatePicker({
             </button>
             <button
               type="button"
-              aria-label="Increase hour"
-              title="Hour"
+              aria-label={`${t(locale, "increase")} ${t(locale, "hour")}`}
+              title={t(locale, "hour")}
               onClick={() => commitTime(stepTime(time, "hours", 1))}
               className={STEPPER_CLASS}
             >
               +
             </button>
             <input
-              aria-label="Time"
+              aria-label={t(locale, "timeLabel")}
               value={timeDraft}
               inputMode="numeric"
-              placeholder="HH:MM"
+              placeholder={formatTime({ hours: 0, minutes: 0 })}
               onChange={(event) => handleTimeDraft(event.target.value)}
               onBlur={() => setTimeDraft(formatTime(time))}
               className="focus-ring h-7 w-16 rounded-sm border border-border bg-bg text-center text-sm tabular-nums text-fg"
             />
             <button
               type="button"
-              aria-label="Decrease minute"
-              title="Minute"
+              aria-label={`${t(locale, "decrease")} ${t(locale, "minute")}`}
+              title={t(locale, "minute")}
               onClick={() => commitTime(stepTime(time, "minutes", -1))}
               className={STEPPER_CLASS}
             >
@@ -446,8 +447,8 @@ export function DatePicker({
             </button>
             <button
               type="button"
-              aria-label="Increase minute"
-              title="Minute"
+              aria-label={`${t(locale, "increase")} ${t(locale, "minute")}`}
+              title={t(locale, "minute")}
               onClick={() => commitTime(stepTime(time, "minutes", 1))}
               className={STEPPER_CLASS}
             >

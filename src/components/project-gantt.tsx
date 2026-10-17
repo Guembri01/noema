@@ -301,7 +301,7 @@ export function ProjectGantt({
     <div className="rounded-xl border border-border p-4">
       <div className="mb-3 flex items-center justify-between">
         <p className="text-sm font-medium">{t(locale, "timelineLabel")}</p>
-        <p className="text-[11px] text-muted">
+        <p className="text-2xs text-muted">
           {fromLabel} → {toLabel}
         </p>
       </div>
@@ -372,7 +372,7 @@ export function ProjectGantt({
                       />
                     </>
                   ) : (
-                    <span className="absolute right-0 top-1/2 -translate-y-1/2 text-[10px] text-muted">
+                    <span className="absolute right-0 top-1/2 -translate-y-1/2 text-3xs text-muted">
                       {t(locale, "noDate")}
                     </span>
                   )}
@@ -406,7 +406,7 @@ export function ProjectGantt({
         )}
       </div>
 
-      <p className="mt-3 text-[11px] text-muted">
+      <p className="mt-3 text-2xs text-muted">
         {t(locale, "ganttLegend")}
       </p>
     </div>

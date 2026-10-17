@@ -113,7 +113,8 @@ describe("renderToStaticMarkup", () => {
     // Scrim: Z.overlay (40) painted with --overlay.
     expect(html).toContain('data-testid="confirm-scrim"');
     expect(html).toContain("z-index:40");
-    expect(html).toContain("var(--overlay)");
+    // Scrim carries `--overlay` through the `bg-overlay` token utility.
+    expect(html).toContain("bg-overlay");
     expect(html).toContain("Duplicate");
     expect(html).toContain("Keep as is");
   });

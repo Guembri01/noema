@@ -18,6 +18,8 @@
  * Unit-pinned red-first by `src/lib/last-edited.test.ts`.
  */
 
+import { formatRelativeTime } from "@/lib/i18n-format";
+
 /** The kind of thing an edit happened to. */
 export type EditEntityType = "page" | "row" | "property" | "comment";
 
@@ -75,21 +77,6 @@ export type EditorRef = { readonly actorId: string } | null | undefined;
 
 /** Default burst window: edits by one author within 5 minutes collapse. */
 export const DEFAULT_COALESCE_WINDOW_MS = 5 * 60_000;
-
-const MONTHS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
 
 /** Millisecond instant of an ISO timestamp; unparseable input sorts as oldest. */
 function millisOf(at: string): number {
@@ -218,22 +205,20 @@ export function resolveDisplayName(
   return "Unknown";
 }
 
-/** Relative phrase for a positive age in milliseconds. */
+/**
+ * Relative phrase for a positive age in milliseconds. Delegates to
+ * {@link formatRelativeTime} (`@/lib/i18n-format`) so this footer agrees with
+ * every other relative label; an unparseable instant still reads "just now".
+ */
 function relativeLabel(age: number, at: number): string {
-  if (!Number.isFinite(age) || age < 60_000) return "just now";
-  const minutes = Math.floor(age / 60_000);
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.floor(age / 3_600_000);
-  if (hours < 24) return `${hours} hr ago`;
-  const days = Math.floor(age / 86_400_000);
-  if (days < 7) return days === 1 ? "1 day ago" : `${days} days ago`;
-  const date = new Date(at);
-  return `${MONTHS[date.getUTCMonth()]} ${date.getUTCDate()}, ${date.getUTCFullYear()}`;
+  if (!Number.isFinite(age)) return "just now";
+  return formatRelativeTime(at, { base: at + age });
 }
 
 /**
- * A footer label for the last edit: `"Edited 5 min ago by Ada"`. The author is
- * omitted when no name is known, and a `null` result renders `"Never edited"`.
+ * A footer label for the last edit: `"Edited 5 minutes ago by Ada"`. The author
+ * is omitted when no name is known, and a `null` result renders
+ * `"Never edited"`.
  */
 export function describeLastEdited(
   result: EditorSummary | null,

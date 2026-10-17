@@ -193,7 +193,7 @@ function AnimatedImageView({ node, deleteNode, locale }: NodeViewProps & { local
             {policy.showPlayControl && (
               <button
                 type="button"
-                className="noema-animated-play"
+                className="noema-animated-play focus-ring u-interactive"
                 aria-pressed={playing}
                 aria-label={t(locale, "askWord")}
                 data-testid="animated-play"
@@ -227,7 +227,7 @@ function AnimatedImageView({ node, deleteNode, locale }: NodeViewProps & { local
       <button
         type="button"
         aria-label={t(locale, "remove")}
-        className="noema-animated-remove"
+        className="noema-animated-remove focus-ring u-interactive"
         onClick={() => deleteNode()}
       >
         <Trash2 className="h-3.5 w-3.5" />

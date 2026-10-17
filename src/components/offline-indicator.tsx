@@ -17,6 +17,7 @@
 import { useOffline } from "@/components/providers/offline-provider";
 import { Button } from "@/components/ui/button";
 import { describeConflict, type MergeConflict } from "@/lib/sync-conflict";
+import { t } from "@/lib/i18n";
 
 /**
  * The pending-queue copy, or `null` when nothing is waiting. Kept pure so the
@@ -47,7 +48,7 @@ export function summarizeConflicts(conflicts: readonly MergeConflict[]): string[
   return conflicts.map((conflict) => describeConflict(conflict));
 }
 
-export function OfflineIndicator() {
+export function OfflineIndicator({ locale = "en" }: { locale?: string } = {}) {
   const { online, pending, conflicts, lastSyncedAt, flush, resolve } = useOffline();
 
   const visible = !online || pending > 0 || conflicts.length > 0;
@@ -57,7 +58,7 @@ export function OfflineIndicator() {
 
   return (
     <aside
-      aria-label="Sync status"
+      aria-label={t(locale, "syncStatus")}
       data-testid="offline-indicator"
       className="fixed bottom-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-bg p-3 text-sm shadow-lg"
     >
@@ -82,7 +83,7 @@ export function OfflineIndicator() {
       ) : null}
 
       {conflicts.length > 0 ? (
-        <ul className="mt-2 space-y-2" aria-label="Unresolved conflicts">
+        <ul className="mt-2 space-y-2" aria-label={t(locale, "unresolvedConflicts")}>
           {conflicts.map((conflict) => (
             <li
               key={conflict.field}

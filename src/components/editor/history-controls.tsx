@@ -69,7 +69,7 @@ function DepthBadge({ depth }: { depth: number }) {
     <span
       aria-hidden
       data-depth={depth}
-      className="pointer-events-none absolute -right-1 -top-1 min-w-3.5 rounded-full bg-accent px-0.5 py-0.5 text-center text-[9px] font-medium leading-none text-accent-fg"
+      className="pointer-events-none absolute -right-1 -top-1 min-w-3.5 rounded-full bg-accent px-0.5 py-0.5 text-center text-3xs font-medium leading-none text-accent-fg"
     >
       {depth}
     </span>
@@ -169,7 +169,7 @@ export function HistoryControls({ editor, locale = "en" }: { editor: Editor; loc
           data-shadow-undo={depth.undo}
           data-shadow-redo={depth.redo}
           title={shadowSummary}
-          className="flex select-none items-center gap-0.5 pl-0.5 pr-1 text-[10px] text-muted"
+          className="flex select-none items-center gap-0.5 pl-0.5 pr-1 text-3xs text-muted"
         >
           <Layers className="h-3 w-3" />
           {shadowLevels}

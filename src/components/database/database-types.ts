@@ -2,7 +2,8 @@ import type { PropertyType } from "@prisma/client";
 import type { RelationData } from "@/server/queries";
 import type { GeoValue } from "@/lib/geo";
 import type { UniqueIdConfig } from "@/lib/unique-id";
-import { isTagHue, type TagHue } from "@/lib/design-tokens";
+import type { TagHue } from "@/lib/design-tokens";
+import { hueEdge, hueInk, hueSurface, normalizeHue } from "@/lib/palette";
 
 /**
  * The database shape shared by the view renderers.
@@ -96,28 +97,29 @@ export const CONTROL_CLASS =
 
 /**
  * Resolve a persisted colour id to a hue in the shared tag palette
- * (`@/lib/design-tokens`). The stored ids are exactly `COLOR_CHOICES`; anything
+ * (`@/lib/palette`, the one colour catalogue). The stored ids are exactly
+ * `COLOR_CHOICES`; anything
  * else — a stale id, a future hue, `null` — reads as `gray`, so a swatch is
  * never left unstyled. This is the single normaliser every option accessor
  * below calls, so a chip, a board dot and a chart series all agree.
  */
 export function optionHue(color: string | null | undefined): TagHue {
-  return isTagHue(color) ? color : "gray";
+  return normalizeHue(color);
 }
 
 /** The tag ink (`--tag-<hue>-fg`) for a persisted option colour id. */
 export function optionInk(color: string | null | undefined): string {
-  return `var(--tag-${optionHue(color)}-fg)`;
+  return hueInk(color);
 }
 
 /** The tag surface (`--tag-<hue>-bg`) for a persisted option colour id. */
 export function optionSurface(color: string | null | undefined): string {
-  return `var(--tag-${optionHue(color)}-bg)`;
+  return hueSurface(color);
 }
 
 /** The tag edge (`--tag-<hue>-bd`) for a persisted option colour id. */
 export function optionEdge(color: string | null | undefined): string {
-  return `var(--tag-${optionHue(color)}-bd)`;
+  return hueEdge(color);
 }
 
 /**
@@ -133,13 +135,13 @@ export function optionEdge(color: string | null | undefined): string {
  * `optionSurface` / `optionEdge` for the softer `-bg` / `-bd` tokens.
  */
 export const OPTION_COLORS: Record<string, string> = {
-  gray: "var(--tag-gray-fg)",
-  blue: "var(--tag-blue-fg)",
-  green: "var(--tag-green-fg)",
-  red: "var(--tag-red-fg)",
-  yellow: "var(--tag-yellow-fg)",
-  orange: "var(--tag-orange-fg)",
-  purple: "var(--tag-purple-fg)",
-  pink: "var(--tag-pink-fg)",
-  brown: "var(--tag-brown-fg)",
+  gray: hueInk("gray"),
+  blue: hueInk("blue"),
+  green: hueInk("green"),
+  red: hueInk("red"),
+  yellow: hueInk("yellow"),
+  orange: hueInk("orange"),
+  purple: hueInk("purple"),
+  pink: hueInk("pink"),
+  brown: hueInk("brown"),
 };

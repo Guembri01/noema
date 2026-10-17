@@ -311,7 +311,7 @@ export function ProjectCardTile({
         label={`${done}/${total} ${t(locale, "milestonesComplete")}`}
       />
 
-      <div className="mt-auto flex flex-wrap items-center gap-2 text-[11px] text-muted">
+      <div className="mt-auto flex flex-wrap items-center gap-2 text-2xs text-muted">
         {project.status === "done" ? (
           <CheckCircle2 className="h-3.5 w-3.5" />
         ) : project.status === "paused" ? (
@@ -367,11 +367,13 @@ export function ProjectCardTile({
 function WipLimitsEditor({
   limits,
   columns,
+  locale,
   onChange,
   onClear,
 }: {
   limits: WipLimits;
   columns: readonly WipColumn[];
+  locale: string;
   onChange: (key: string, value: string) => void;
   onClear: () => void;
 }) {
@@ -381,10 +383,10 @@ function WipLimitsEditor({
     <div className="mb-6 rounded-xl border border-border p-4" data-testid="wip-editor">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-2 text-sm font-medium">
-          <Gauge className="h-4 w-4" /> WIP limits
+          <Gauge className="h-4 w-4" /> {t(locale, "wipLimits")}
         </p>
         <div className="flex items-center gap-2">
-          <p className="text-[11px] text-muted">Local only — leave blank for no limit.</p>
+          <p className="text-2xs text-muted">Local only — leave blank for no limit.</p>
           {limited && (
             <Button type="button" variant="secondary" size="xs" onClick={onClear}>
               Clear
@@ -406,14 +408,14 @@ function WipLimitsEditor({
                 step={1}
                 value={limit ?? ""}
                 placeholder="∞"
-                aria-label={`${label} WIP limit`}
+                aria-label={`${label} ${t(locale, "wipLimitAria")}`}
                 onChange={(event) => onChange(status, event.target.value)}
                 className="h-8 w-16 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
               />
               {grade === "over" ? (
-                <span className="text-[11px] text-danger">over</span>
+                <span className="text-2xs text-danger">over</span>
               ) : grade === "at" ? (
-                <span className="text-[11px] text-warning">at limit</span>
+                <span className="text-2xs text-warning">at limit</span>
               ) : null}
             </li>
           );
@@ -567,7 +569,7 @@ export function ProjectsBoard({
             onClick={create}
             leftIcon={<Plus className="h-4 w-4" />}
           >
-            Create
+            {t(locale, "create")}
           </Button>
         </div>
       </div>
@@ -575,6 +577,7 @@ export function ProjectsBoard({
       <WipLimitsEditor
         limits={limits}
         columns={check.columns}
+        locale={locale}
         onChange={setLimit}
         onClear={clearLimits}
       />
@@ -582,8 +585,8 @@ export function ProjectsBoard({
       {wipEnabled && (
         <div className="mb-6 rounded-xl border border-border p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-medium">WIP limits</p>
-            <p className="text-[11px] text-muted">
+            <p className="text-sm font-medium">{t(locale, "wipLimits")}</p>
+            <p className="text-2xs text-muted">
               {wip.limitedColumns}/{wip.columnCount} columns limited · {wip.remainingCapacity} slot
               {wip.remainingCapacity === 1 ? "" : "s"} left
               {wip.overCount > 0
@@ -593,7 +596,7 @@ export function ProjectsBoard({
                   : ""}
             </p>
           </div>
-          <ul className="flex flex-wrap gap-1.5 text-[11px]">
+          <ul className="flex flex-wrap gap-1.5 text-2xs">
             {check.columns.map((column) => {
               const label = STATUS_LABELS[column.key] ?? column.key;
               return (
@@ -651,7 +654,7 @@ export function ProjectsBoard({
         <EmptyState
           data-testid="projects-empty"
           icon={<FolderKanban className="h-6 w-6" />}
-          title="No projects yet"
+          title={t(locale, "noProjectsYet")}
           description="Create a project to track deliverables with milestones, then attach the notes that belong to it."
           primaryAction={
             <Button
@@ -659,7 +662,7 @@ export function ProjectsBoard({
               onClick={focusCreate}
               leftIcon={<Plus className="h-4 w-4" />}
             >
-              New project
+              {t(locale, "newProject")}
             </Button>
           }
           tip="Right-click a page in the sidebar and choose “Add to project”."
@@ -675,7 +678,7 @@ export function ProjectsBoard({
                 health={projectHealth(ticketsByProject?.[project.id])}
               />
               {movable && (
-                <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px]">
+                <div className="mt-2 flex flex-wrap items-center gap-1 text-2xs">
                   <span className="text-muted">Move to</span>
                   {STATUS_ORDER.filter((status) => status !== project.status).map((status) => {
                     const allowed = canMoveRow(groups, limits, project.id, status, {

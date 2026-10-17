@@ -54,7 +54,8 @@ export default async function AuthorizePage({
             type="submit"
             name="decision"
             value="allow"
-            className="h-10 rounded bg-accent px-4 text-sm text-accent-fg"
+            aria-label={t(locale, "authorizeWord")}
+            className="focus-ring u-interactive h-10 rounded bg-accent px-4 text-sm text-accent-fg"
           >
             {t(locale, "authorizeWord")}
           </button>
@@ -62,7 +63,8 @@ export default async function AuthorizePage({
             type="submit"
             name="decision"
             value="deny"
-            className="h-10 rounded border border-border px-4 text-sm"
+            aria-label={t(locale, "denyWord")}
+            className="focus-ring u-interactive h-10 rounded border border-border px-4 text-sm"
           >
             {t(locale, "denyWord")}
           </button>

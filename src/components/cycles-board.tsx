@@ -220,7 +220,7 @@ export function CycleCard({
         <span className="flex items-center gap-1">
           <button
             type="button"
-            aria-label={`Edit ${cycle.name}`}
+            aria-label={`${t(locale, "edit")} ${cycle.name}`}
             onClick={onEdit}
             disabled={!onEdit}
             className="flex h-7 w-7 items-center justify-center rounded text-muted u-interactive hover:bg-surface-2 focus-ring disabled:opacity-50"
@@ -229,7 +229,7 @@ export function CycleCard({
           </button>
           <button
             type="button"
-            aria-label={`Delete ${cycle.name}`}
+            aria-label={`${t(locale, "delete")} ${cycle.name}`}
             onClick={onDelete}
             disabled={!onDelete || deleting}
             className="flex h-7 w-7 items-center justify-center rounded text-muted u-interactive hover:bg-surface-2 hover:text-danger focus-ring disabled:opacity-50"
@@ -284,7 +284,7 @@ export function CycleCard({
           preserveAspectRatio="none"
           className="h-16 w-full"
           role="img"
-          aria-label={`${cycle.name} burndown: remaining vs ideal`}
+          aria-label={`${cycle.name} ${t(locale, "burndownAria")}`}
         >
           <polyline
             className="text-muted"
@@ -319,7 +319,7 @@ export function CycleCard({
             );
           })}
         </svg>
-        <figcaption className="mt-1 flex items-center gap-3 text-[10px] text-muted">
+        <figcaption className="mt-1 flex items-center gap-3 text-3xs text-muted">
           <span className="inline-flex items-center gap-1">
             <span aria-hidden className="inline-block h-px w-3 bg-accent" />
             remaining
@@ -332,7 +332,7 @@ export function CycleCard({
       </figure>
 
       {load.length > 0 && (
-        <ul className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+        <ul className="mt-3 flex flex-wrap items-center gap-1.5 text-2xs text-muted">
           <li className="font-medium uppercase tracking-wide">Workload</li>
           {load.map((bucket) => (
             <li
@@ -351,7 +351,7 @@ export function CycleCard({
         <div className="mt-3 space-y-2">
           {byDue.map((bucket) => (
             <div key={bucket.key}>
-              <h4 className="flex items-baseline gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+              <h4 className="flex items-baseline gap-1.5 text-3xs font-medium uppercase tracking-wide text-muted">
                 {bucket.label}
                 <span className="font-normal normal-case tracking-normal">
                   {bucket.entries.length}
@@ -374,7 +374,7 @@ export function CycleCard({
             </div>
           ))}
           {undated > 0 && (
-            <p className="text-[11px] text-muted">
+            <p className="text-2xs text-muted">
               {undated} ticket{undated === 1 ? "" : "s"} without a due date
             </p>
           )}
@@ -449,7 +449,7 @@ export function CyclesBoard({
           {cycles.length} cycle{cycles.length === 1 ? "" : "s"}
         </span>
         {current && <span>Running now: {current.name}</span>}
-        <span title="Average completed points in the last six finished cycles">
+        <span title={t(locale, "velocityHint")}>
           <TrendingUp className="mr-1 inline h-3 w-3" aria-hidden />
           {t(locale, "velocity")}: {averageVelocity} pts/cycle
         </span>
@@ -525,7 +525,7 @@ export function CyclesBoard({
       <PromptDialog
         open={creating || editing !== null}
         locale={locale}
-        title={editing ? `Edit ${editing.name}` : "New cycle"}
+        title={editing ? `${t(locale, "edit")} ${editing.name}` : t(locale, "newCycle")}
         description="A cycle is a time box. Tickets you schedule into it count towards its committed estimate."
         fields={[
           { name: "name", label: "Name", defaultValue: editing?.name ?? "", placeholder: "Sprint 12" },

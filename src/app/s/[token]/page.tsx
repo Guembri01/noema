@@ -3,6 +3,8 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { Link2, Lock } from "lucide-react";
 import { prisma } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth";
+import { t } from "@/lib/i18n";
 import { DocRenderer } from "@/components/doc-renderer";
 import {
   CopyLinkButton,
@@ -69,6 +71,9 @@ export default async function PublicSharedPage({
 }) {
   const { token } = await params;
   const { error } = await searchParams;
+  // A public reader still localises to the signed-in viewer when there is one;
+  // an anonymous visitor gets the default catalogue.
+  const locale = (await getCurrentUser())?.locale ?? "en";
   const link = await prisma.shareLink.findUnique({
     where: { token },
     include: {
@@ -111,7 +116,7 @@ export default async function PublicSharedPage({
             name="password"
             required
             autoFocus
-            placeholder="Password"
+            placeholder={t(locale, "passwordLabel")}
             className="focus-ring h-10 w-full rounded-sm border border-border bg-bg px-3 text-sm"
           />
           {error && (
@@ -175,7 +180,7 @@ export default async function PublicSharedPage({
       {cover && (
         <div
           role="img"
-          aria-label="Page cover"
+          aria-label={t(locale, "pageCover")}
           className="w-full bg-cover bg-center"
           style={{
             backgroundImage: cover.backgroundImage,

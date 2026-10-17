@@ -192,7 +192,7 @@ describe("renderToStaticMarkup — a full document", () => {
     expect(html).toContain("var(--border-strong)"); // blockquote accent
     expect(html).toContain("var(--surface-2)"); // code + table header
     expect(html).toContain("--radius-md"); // code radius
-    expect(html).toContain("var(--danger)"); // inline-code ink
+    expect(html).toContain("text-danger"); // inline-code ink
     expect(html).toContain("text-accent"); // link
   });
 

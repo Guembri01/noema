@@ -252,7 +252,7 @@ export function SidebarChat({
                           {thread.page ? `${thread.page.icon ?? "📄"} ` : ""}
                           {thread.title || t(locale, "newDiscussion")}
                         </span>
-                        <span className="block truncate text-[11px] text-muted">
+                        <span className="block truncate text-2xs text-muted">
                           {stamp || lastPreview(thread, locale)}
                         </span>
                       </button>

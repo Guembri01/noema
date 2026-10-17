@@ -540,7 +540,7 @@ export function MembersManager({
                   type="email"
                   required
                   value={inviteEmail}
-                  placeholder="client@example.com"
+                  placeholder={t(locale, "clientEmailPlaceholder")}
                   onChange={(event) => setInviteEmail(event.target.value)}
                   onBlur={() => setInviteTouched(true)}
                   disabled={pending}

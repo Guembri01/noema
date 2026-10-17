@@ -1935,6 +1935,7 @@ export function DatabaseView({
             <button
               type="button"
               onClick={addRow}
+              aria-label={t(locale, "newRow")}
               title={
                 defaultTemplate
                   ? `${t(locale, "newRow")} — ${defaultTemplate.name}`
@@ -1954,7 +1955,7 @@ export function DatabaseView({
                 deletedRows === null ? loadDeletedRows() : setDeletedRows(null)
               }
               className={cn(
-                "flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
+                "focus-ring u-interactive flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
                 deletedRows !== null && "bg-surface-2 text-fg",
               )}
             >
@@ -1986,7 +1987,7 @@ export function DatabaseView({
                         </span>
                       )}
                       {template.recurrence && (
-                        <span className="text-[10px] text-muted">{template.recurrence}</span>
+                        <span className="text-3xs text-muted">{template.recurrence}</span>
                       )}
                     </DropdownMenuSubTrigger>
                     <DropdownMenuSubContent>
@@ -2058,6 +2059,7 @@ export function DatabaseView({
             <button
               type="button"
               onClick={duplicateDatabase}
+              aria-label={t(locale, "duplicate")}
               className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
             >
               <Copy className="h-4 w-4" />

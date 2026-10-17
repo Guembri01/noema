@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 /**
  * Stepper — a clamped numeric field with − / + affordances.
@@ -164,6 +165,8 @@ export type StepperProps = {
   errorMessage?: string;
   className?: string;
   inputClassName?: string;
+  /** Locale for the − / + accessible names (defaults to English). */
+  locale?: string;
   /** Accessible name for the field when no visible `label` is supplied. */
   "aria-label"?: string;
   /** id(s) of external labelling element(s), forwarded to the input. */
@@ -189,6 +192,7 @@ export function Stepper({
   errorMessage,
   className,
   inputClassName,
+  locale = "en",
   "aria-label": ariaLabel,
   "aria-labelledby": ariaLabelledby,
   "aria-describedby": ariaDescribedby,
@@ -264,7 +268,7 @@ export function Stepper({
   };
 
   const buttonClass = cn(
-    "focus-ring u-interactive flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface-2 text-fg",
+    "u-interactive flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface-2 text-fg",
     "hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50",
   );
 
@@ -303,9 +307,9 @@ export function Stepper({
       >
         <button
           type="button"
-          aria-label="Decrease"
+          aria-label={t(locale, "decrease")}
           disabled={disabled || atMin}
-          className={buttonClass}
+          className={cn(buttonClass, "focus-ring")}
           {...pressHandlers(-1)}
         >
           <Minus className="h-4 w-4" aria-hidden="true" />
@@ -353,9 +357,9 @@ export function Stepper({
 
         <button
           type="button"
-          aria-label="Increase"
+          aria-label={t(locale, "increase")}
           disabled={disabled || atMax}
-          className={buttonClass}
+          className={cn(buttonClass, "focus-ring")}
           {...pressHandlers(1)}
         >
           <Plus className="h-4 w-4" aria-hidden="true" />

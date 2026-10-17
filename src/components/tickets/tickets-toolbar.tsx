@@ -579,7 +579,13 @@ export function TicketsToolbar({
   return (
     <>
       {/* Toolbar */}
-      <div className="mb-4 flex flex-wrap items-center gap-2" data-testid="tickets-toolbar">
+      {/* `gap-x-2` keeps horizontal density while `gap-y-3` gives wrapped rows
+          a consistent, roomier line gap; every fixed-width control carries
+          `shrink-0` so a wrapped row can never squeeze or abut its neighbour. */}
+      <div
+        className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-3"
+        data-testid="tickets-toolbar"
+      >
         <Segmented<TicketView>
           ariaLabel="Ticket layout"
           options={TICKET_VIEW_OPTIONS}
@@ -591,13 +597,17 @@ export function TicketsToolbar({
         {/* Entry point for the archive view — the flip side of the board's
             archive action, sitting beside the list/board/timeline switcher. */}
         <Button asChild variant="secondary" size="sm" leftIcon={<Archive className="h-3.5 w-3.5" />}>
-          <Link href={archiveHref} aria-label="Archived tickets" data-testid="tickets-archive-link">
+          <Link
+            href={archiveHref}
+            aria-label={t(locale, "archivedTickets")}
+            data-testid="tickets-archive-link"
+          >
             Archive
           </Link>
         </Button>
 
         {/* Search: the primitive field with a clear affordance and a `/` hint. */}
-        <span className="w-48">
+        <span className="w-48 min-w-48 shrink-0">
           <Input
             ref={searchRef}
             value={query}
@@ -618,56 +628,56 @@ export function TicketsToolbar({
         </span>
 
         {/* Filters: one searchable, clearable Select per field, with counts. */}
-        <span className="w-36">
+        <span className="w-36 min-w-36 shrink-0">
           <Select
             size="sm"
             value={statusFilter}
             onChange={(value) => setStatusFilter(value)}
             options={statusOptions}
-            placeholder="Any status"
-            aria-label="Filter by status"
+            placeholder={t(locale, "anyStatus")}
+            aria-label={t(locale, "filterByStatus")}
           />
         </span>
-        <span className="w-36">
+        <span className="w-36 min-w-36 shrink-0">
           <Select
             size="sm"
             value={priorityFilter}
             onChange={(value) => setPriorityFilter(value)}
             options={priorityOptions}
-            placeholder="Any priority"
-            aria-label="Filter by priority"
+            placeholder={t(locale, "anyPriority")}
+            aria-label={t(locale, "filterByPriority")}
           />
         </span>
-        <span className="w-40">
+        <span className="w-40 min-w-40 shrink-0">
           <Select
             size="sm"
             value={labelFilter}
             onChange={(value) => setLabelFilter(value)}
             options={labelOptions}
-            placeholder="Any label"
-            aria-label="Filter by label"
+            placeholder={t(locale, "anyLabel")}
+            aria-label={t(locale, "filterByLabel")}
             disabled={labels.length === 0}
           />
         </span>
-        <span className="w-40">
+        <span className="w-40 min-w-40 shrink-0">
           <Select
             size="sm"
             value={assigneeFilter}
             onChange={(value) => setAssigneeFilter(value)}
             options={assigneeOptions}
-            placeholder="Anyone"
-            aria-label="Filter by assignee"
+            placeholder={t(locale, "anyone")}
+            aria-label={t(locale, "filterByAssignee")}
             disabled={members.length === 0}
           />
         </span>
-        <span className="w-40">
+        <span className="w-40 min-w-40 shrink-0">
           <Select
             size="sm"
             value={projectFilter}
             onChange={(value) => setProjectFilter(value)}
             options={projectOptions}
-            placeholder="Any project"
-            aria-label="Filter by project"
+            placeholder={t(locale, "anyProject")}
+            aria-label={t(locale, "filterByProject")}
             disabled={projects.length === 0}
           />
         </span>
@@ -677,11 +687,11 @@ export function TicketsToolbar({
           checked={hideDone}
           onCheckedChange={setHideDone}
           label={t(locale, "hideClosed")}
-          aria-label="Hide closed tickets"
+          aria-label={t(locale, "hideClosedTickets")}
         />
 
         {/* Sort: field + an asc/desc toggle, written to the view via `onSortChange`. */}
-        <span className="flex items-center gap-1" data-testid="ticket-sort">
+        <span className="flex min-w-max shrink-0 items-center gap-1" data-testid="ticket-sort">
           <ArrowUpDown className="h-3.5 w-3.5 text-muted" aria-hidden />
           <span className="w-32">
             <Select
@@ -694,8 +704,8 @@ export function TicketsToolbar({
                 })
               }
               options={sortOptions}
-              placeholder="Sort"
-              aria-label="Sort tickets by"
+              placeholder={t(locale, "sort")}
+              aria-label={t(locale, "sortTicketsBy")}
               menuClassName="w-40"
             />
           </span>
@@ -705,7 +715,7 @@ export function TicketsToolbar({
               variant="secondary"
               size="icon"
               data-testid="ticket-sort-direction"
-              aria-label="Sort direction"
+              aria-label={t(locale, "sortDirection")}
               disabled={sort.field === ""}
               onClick={() => applySort(toggleSortDirection(sort))}
             >
@@ -723,7 +733,7 @@ export function TicketsToolbar({
             <Button
               variant="secondary"
               size="sm"
-              aria-label="Saved views"
+              aria-label={t(locale, "savedViews")}
               leftIcon={<Bookmark className="h-3.5 w-3.5" />}
             >
               {t(locale, "savedViews")}
@@ -764,7 +774,7 @@ export function TicketsToolbar({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label={`Delete view ${chip.name}`}
+                  aria-label={`${t(locale, "delete")} ${chip.name}`}
                   onClick={() =>
                     run("View deleted", async () => {
                       const result = await deleteTicketViewAction(chip.id);
@@ -790,7 +800,7 @@ export function TicketsToolbar({
             <Button
               variant="secondary"
               size="sm"
-              aria-label="View presets"
+              aria-label={t(locale, "viewPresets")}
               data-testid="ticket-presets-trigger"
               leftIcon={<Star className="h-3.5 w-3.5" />}
             >

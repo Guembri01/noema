@@ -252,7 +252,7 @@ export function FormulaEditor({
           style={{ zIndex: Z.popover }}
         >
           <ul
-            aria-label="Completions"
+            aria-label={t(locale, "completions")}
             data-testid={dataTestId ? `${dataTestId}-completions` : undefined}
           >
             {completions.map((item, index) => (

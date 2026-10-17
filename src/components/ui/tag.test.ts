@@ -48,7 +48,9 @@ describe("size map", () => {
   it("defaults to md and switches for sm", () => {
     expect(tagSizeClass(undefined)).toBe(tagSizeClass("md"));
     expect(tagSizeClass("sm")).not.toBe(tagSizeClass("md"));
-    expect(tagSizeClass("sm")).toContain("text-[11px]");
+    // The small size uses the metadata type token (11px) rather than an arbitrary
+    // `text-[11px]`, so the assertion names the token.
+    expect(tagSizeClass("sm")).toContain("text-2xs");
   });
 
   it("tints the dot with currentColor at both sizes", () => {

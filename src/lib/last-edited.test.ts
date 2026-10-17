@@ -321,38 +321,38 @@ describe("describeLastEdited", () => {
 
   it("formats minutes with the author", () => {
     expect(describeLastEdited(result, { now: BASE, actorName: "Ada" })).toBe(
-      "Edited 5 min ago by Ada",
+      "Edited 5 minutes ago by Ada",
     );
   });
 
-  it("formats just-now and the one-minute boundary", () => {
+  it("formats seconds and the one-minute boundary", () => {
     expect(
       describeLastEdited({ ...result, at: iso(-30_000) }, { now: BASE, actorName: "Ada" }),
-    ).toBe("Edited just now by Ada");
+    ).toBe("Edited 30 seconds ago by Ada");
     expect(
       describeLastEdited({ ...result, at: iso(-MIN) }, { now: BASE, actorName: "Ada" }),
-    ).toBe("Edited 1 min ago by Ada");
+    ).toBe("Edited 1 minute ago by Ada");
   });
 
   it("formats hours", () => {
     expect(
       describeLastEdited({ ...result, at: iso(-3 * HOUR) }, { now: BASE, actorName: "Ada" }),
-    ).toBe("Edited 3 hr ago by Ada");
+    ).toBe("Edited 3 hours ago by Ada");
   });
 
-  it("formats days with singular and plural labels", () => {
+  it("formats days with auto wording (singular → yesterday) and plural", () => {
     expect(
       describeLastEdited({ ...result, at: iso(-DAY) }, { now: BASE, actorName: "Ada" }),
-    ).toBe("Edited 1 day ago by Ada");
+    ).toBe("Edited yesterday by Ada");
     expect(
       describeLastEdited({ ...result, at: iso(-3 * DAY) }, { now: BASE, actorName: "Ada" }),
     ).toBe("Edited 3 days ago by Ada");
   });
 
-  it("formats an absolute date beyond a week", () => {
+  it("formats weeks-old edits as a month bucket", () => {
     expect(
       describeLastEdited({ ...result, at: iso(-30 * DAY) }, { now: BASE, actorName: "Ada" }),
-    ).toBe("Edited Apr 1, 2026 by Ada");
+    ).toBe("Edited last month by Ada");
   });
 
   it("renders Never edited for a null result", () => {
@@ -360,7 +360,9 @@ describe("describeLastEdited", () => {
   });
 
   it("omits the author when no name is known", () => {
-    expect(describeLastEdited(result, { now: BASE, actorName: null })).toBe("Edited 5 min ago");
+    expect(describeLastEdited(result, { now: BASE, actorName: null })).toBe(
+      "Edited 5 minutes ago",
+    );
   });
 });
 

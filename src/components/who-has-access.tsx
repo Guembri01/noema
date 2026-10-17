@@ -211,7 +211,7 @@ function MemberRow({
         <span className="block truncate text-sm" title={row.name}>
           {row.name}
         </span>
-        <span className="block truncate text-[11px] text-muted" title={row.email}>
+        <span className="block truncate text-2xs text-muted" title={row.email}>
           {row.email}
         </span>
       </span>
@@ -342,7 +342,7 @@ export function AccessList({
     <div className="max-h-80 overflow-y-auto scrollbar-thin">
       {groups.map((group) => (
         <div key={group.kind} className="py-1">
-          <p className="flex items-center gap-1.5 px-1 py-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+          <p className="flex items-center gap-1.5 px-1 py-1 text-2xs font-medium uppercase tracking-wide text-muted">
             {group.kind === "owner" && <Crown className="h-3 w-3" aria-hidden />}
             {group.kind === "invited" && <UserPlus className="h-3 w-3" aria-hidden />}
             {GROUP_LABELS[group.kind]}
@@ -433,7 +433,7 @@ export function WhoHasAccess({
         type="button"
         aria-label={t(locale, "close")}
         onClick={onClose}
-        className="absolute inset-0 bg-overlay"
+        className="focus-ring absolute inset-0 bg-overlay"
       />
       <div
         ref={dialogRef}
@@ -460,6 +460,7 @@ export function WhoHasAccess({
           <button
             type="button"
             onClick={onClose}
+            aria-label={t(locale, "done")}
             className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm hover:bg-surface-2"
           >
             {t(locale, "done")}

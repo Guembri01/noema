@@ -194,7 +194,7 @@ function InlineDiff({ before, after }: { before: string; after: string }) {
           ),
         )}
       </p>
-      <p className="flex items-center gap-2 text-[11px] text-muted">
+      <p className="flex items-center gap-2 text-2xs text-muted">
         <span className="rounded bg-success-soft px-1.5 py-0.5 text-success">
           +{stats.added}
         </span>
@@ -302,12 +302,12 @@ export function VersionHistory({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg"
+        className="focus-ring u-interactive inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg"
       >
         <History className="h-4 w-4" />
         {t(locale, "history")}
         {versions.length > 0 && (
-          <span className="rounded bg-surface-2 px-1 text-[10px]">{versions.length}</span>
+          <span className="rounded bg-surface-2 px-1 text-3xs">{versions.length}</span>
         )}
       </button>
 
@@ -317,7 +317,7 @@ export function VersionHistory({
             type="button"
             aria-label={t(locale, "closeVersionHistory")}
             onClick={() => setOpen(false)}
-            className="absolute inset-0 bg-black/30"
+            className="focus-ring absolute inset-0 bg-black/30"
           />
           <aside
             ref={dialogRef}
@@ -335,7 +335,7 @@ export function VersionHistory({
                 type="button"
                 aria-label={t(locale, "close")}
                 onClick={() => setOpen(false)}
-                className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
+                className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -355,7 +355,7 @@ export function VersionHistory({
                     <p className="truncate text-sm font-medium">
                       {current.title || t(locale, "untitled")}
                     </p>
-                    <p className="text-[11px] text-muted" suppressHydrationWarning>
+                    <p className="text-2xs text-muted" suppressHydrationWarning>
                       {relative(current.updatedAt, locale)}
                       {t(locale, "currentSuffix")}
                     </p>
@@ -394,7 +394,7 @@ export function VersionHistory({
                   <li key={version.id} className="rounded-lg border border-border p-3">
                       <div className="flex items-center gap-2">
                         <span
-                          className="grid h-6 w-6 place-items-center rounded-full text-[10px] font-medium text-white"
+                          className="grid h-6 w-6 place-items-center rounded-full text-3xs font-medium text-white"
                           style={{
                             backgroundColor: avatarColor(version.author?.email ?? "unknown"),
                           }}
@@ -407,7 +407,7 @@ export function VersionHistory({
                             {version.author?.name ?? t(locale, "unknown")}
                           </p>
                           <p
-                            className="flex flex-wrap items-center gap-1 text-[11px] text-muted"
+                            className="flex flex-wrap items-center gap-1 text-2xs text-muted"
                             suppressHydrationWarning
                           >
                             {label !== null && (
@@ -427,7 +427,7 @@ export function VersionHistory({
                         {typeof version.charDelta === "number" && version.charDelta !== 0 && (
                           <span
                             className={cn(
-                              "shrink-0 rounded px-1.5 py-0.5 text-[10px]",
+                              "shrink-0 rounded px-1.5 py-0.5 text-3xs",
                               version.charDelta > 0
                                 ? "bg-success-soft text-success"
                                 : "bg-danger-soft text-danger",
@@ -441,7 +441,7 @@ export function VersionHistory({
                       <p className="mt-2 text-sm">
                         {version.summary ?? t(locale, "editedContent")}
                       </p>
-                      <p className="mt-0.5 truncate text-[11px] text-muted">
+                      <p className="mt-0.5 truncate text-2xs text-muted">
                         {t(locale, "titledPrefix")}
                         {version.title || t(locale, "untitled")}
                         {t(locale, "titledSuffix")}
@@ -452,7 +452,7 @@ export function VersionHistory({
                         type="button"
                         disabled={pending}
                         onClick={() => restoreVersion(version.id)}
-                        className="mt-2 inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-50"
+                        className="focus-ring u-interactive mt-2 inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-50"
                       >
                         <RotateCcw className="h-3 w-3" /> {t(locale, "restore")}
                       </button>
@@ -467,7 +467,7 @@ export function VersionHistory({
                           setConfirmingRestore(null);
                           setSelected((previous) => (previous === version.id ? null : version.id));
                         }}
-                        className="mt-2 inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2"
+                        className="focus-ring u-interactive mt-2 inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2"
                       >
                         {t(locale, "suggestionReplaced")}
                       </button>
@@ -478,7 +478,7 @@ export function VersionHistory({
                         >
                           <div
                             role="group"
-                            aria-label="Compare version with"
+                            aria-label={t(locale, "compareVersionWith")}
                             className="mb-2 flex items-center gap-0.5"
                           >
                             <button
@@ -489,7 +489,7 @@ export function VersionHistory({
                                 setConfirmingRestore(null);
                               }}
                               className={cn(
-                                "rounded px-2 py-0.5 text-[11px]",
+                                "focus-ring u-interactive rounded px-2 py-0.5 text-2xs",
                                 effectiveComparison === "current"
                                   ? "bg-surface text-fg"
                                   : "text-muted hover:bg-surface",
@@ -506,7 +506,7 @@ export function VersionHistory({
                                 setConfirmingRestore(null);
                               }}
                               className={cn(
-                                "rounded px-2 py-0.5 text-[11px]",
+                                "focus-ring u-interactive rounded px-2 py-0.5 text-2xs",
                                 effectiveComparison === "previous"
                                   ? "bg-surface text-fg"
                                   : "text-muted hover:bg-surface",
@@ -524,7 +524,7 @@ export function VersionHistory({
                           <div className="mt-3 border-t border-border pt-2">
                             {confirmingRestore === version.id ? (
                               <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-[11px] text-muted">
+                                <span className="text-2xs text-muted">
                                   {effectiveComparison === "previous"
                                     ? "Restore the previous snapshot and replace the current page?"
                                     : "Restore this version and replace the current page?"}
@@ -534,14 +534,14 @@ export function VersionHistory({
                                   data-testid="version-restore-confirm"
                                   disabled={pending}
                                   onClick={() => restoreVersion(restoreTarget.id)}
-                                  className="rounded bg-danger/90 px-2 py-0.5 text-[11px] text-white hover:bg-danger disabled:opacity-50"
+                                  className="focus-ring u-interactive rounded bg-danger/90 px-2 py-0.5 text-2xs text-white hover:bg-danger disabled:opacity-50"
                                 >
                                   {t(locale, "restore")}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setConfirmingRestore(null)}
-                                  className="rounded px-2 py-0.5 text-[11px] text-muted hover:bg-surface"
+                                  className="focus-ring u-interactive rounded px-2 py-0.5 text-2xs text-muted hover:bg-surface"
                                 >
                                   {t(locale, "close")}
                                 </button>
@@ -553,7 +553,7 @@ export function VersionHistory({
                                 data-comparison={effectiveComparison}
                                 disabled={pending}
                                 onClick={() => setConfirmingRestore(version.id)}
-                                className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-50"
+                                className="focus-ring u-interactive inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-50"
                               >
                                 <RotateCcw className="h-3 w-3" /> Restore this version
                               </button>

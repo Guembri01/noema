@@ -378,8 +378,8 @@ export default async function SettingsPage({
       {manage && analyticsEvents.length > 0 && (
         <Section
           className="mt-10"
-          aria-label="Analytics"
-          title="Analytics"
+          aria-label={t(locale, "analytics")}
+          title={t(locale, "analytics")}
           description="Page activity from the workspace trail, most active pages first."
         >
           <div className="rounded-lg border border-border p-4">
@@ -401,7 +401,7 @@ export default async function SettingsPage({
             <div
               className="flex h-16 items-end gap-1"
               role="img"
-              aria-label={`Daily page activity over the last ${SPARKLINE_DAYS} days`}
+              aria-label={t(locale, "dailyPageActivityAria")}
             >
               {dailyActivity.map((bucket) => (
                 <div
@@ -416,7 +416,7 @@ export default async function SettingsPage({
                 />
               ))}
             </div>
-            <div className="mb-4 flex justify-between text-[10px] text-muted">
+            <div className="mb-4 flex justify-between text-3xs text-muted">
               <span>{firstActivityDay}</span>
               <span>{lastActivityDay}</span>
             </div>

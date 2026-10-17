@@ -1486,7 +1486,7 @@ export function Cell({
                   keeps one colour everywhere (deterministic from their name). */}
               <span
                 aria-hidden
-                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-medium"
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-3xs font-medium"
                 style={tagStyle(avatarHue(name))}
               >
                 {initials(name)}
@@ -1910,7 +1910,8 @@ export function Cell({
           <button
             type="button"
             onClick={onRunButton}
-            className="rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
+            aria-label={buttonLabel}
+            className="focus-ring u-interactive rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
           >
             {buttonLabel}
           </button>
@@ -2023,7 +2024,7 @@ export function Cell({
           title={reason}
           aria-label={`${label}: ${reason}`}
           data-testid="button-cell-disabled"
-          className="max-w-full truncate rounded border border-border px-2 py-0.5 text-xs opacity-60"
+          className="focus-ring u-interactive max-w-full truncate rounded border border-border px-2 py-0.5 text-xs opacity-60"
         >
           {label}
         </button>
@@ -2034,6 +2035,7 @@ export function Cell({
         <button
           type="button"
           onClick={onRunAi}
+          aria-label={t(locale, "autofillWord")}
           className="focus-ring max-w-full truncate rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
         >
           {t(locale, "autofillWord")}
@@ -2188,14 +2190,15 @@ export function AddPropertyForm({
             },
           })
         }
-        className="h-9 rounded bg-accent px-4 text-sm text-accent-fg disabled:opacity-50"
+        className="focus-ring u-interactive h-9 rounded bg-accent px-4 text-sm text-accent-fg disabled:opacity-50"
       >
         {t(locale, "add")}
       </button>
       <button
         type="button"
         onClick={onClose}
-        className="h-9 rounded px-3 text-sm text-muted hover:bg-surface-2"
+        aria-label={t(locale, "cancel")}
+        className="focus-ring u-interactive h-9 rounded px-3 text-sm text-muted hover:bg-surface-2"
       >
         {t(locale, "cancel")}
       </button>

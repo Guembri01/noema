@@ -20,7 +20,7 @@ export function LabelChip({ name, color }: { name: string; color: string }) {
   return (
     <span
       className={cn(
-        "rounded px-1.5 py-0.5 text-[10px] font-medium",
+        "rounded px-1.5 py-0.5 text-3xs font-medium",
         LABEL_TONES[color] ?? LABEL_TONES.gray,
       )}
     >
@@ -34,7 +34,7 @@ export function StatusPill({ status }: { status: string }) {
   return (
     <span
       className={cn(
-        "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase",
+        "rounded-full px-2 py-0.5 text-3xs font-medium uppercase",
         LABEL_TONES[meta.color] ?? LABEL_TONES.gray,
       )}
     >
@@ -63,7 +63,7 @@ export function SlaChip({
   return (
     <span
       className={cn(
-        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+        "shrink-0 rounded px-1.5 py-0.5 text-3xs font-medium",
         SLA_TONES[status],
         className,
       )}
@@ -75,7 +75,7 @@ export function SlaChip({
 }
 
 /** Shared chrome for the locale-aware value chips, matching the ticket palette. */
-const VALUE_CHIP = "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-muted";
+const VALUE_CHIP = "shrink-0 rounded px-1.5 py-0.5 text-3xs font-medium text-muted";
 
 /**
  * Relative date chip for a ticket's due/start instant — "in 2 days",

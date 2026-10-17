@@ -197,7 +197,7 @@ export function SettingsPopoverContent({
       <div className="sticky top-0 z-10 shrink-0 border-b border-border bg-surface-2/95 px-3 py-2 backdrop-blur">
         <p className="text-xs font-medium text-fg">{title}</p>
         {description ? (
-          <p className="mt-0.5 text-[11px] text-muted">{description}</p>
+          <p className="mt-0.5 text-2xs text-muted">{description}</p>
         ) : null}
       </div>
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-3 text-sm">
@@ -350,11 +350,13 @@ function removeNodeAtPath(root: FilterGroup, path: number[]): FilterGroup {
 
 /** One condition (leaf) row inside a group. */
 function FilterLeafRow({
+  locale,
   leaf,
   properties,
   onSetField,
   onRemove,
 }: {
+  locale: string;
   leaf: FilterTreeLeaf;
   properties: DBProperty[];
   onSetField: (leaf: FilterTreeLeaf, patch: Partial<Filter>) => void;
@@ -373,16 +375,16 @@ function FilterLeafRow({
             allowClear={false}
             options={propertyOptions(properties)}
             value={leaf.propertyId}
-            aria-label="Filter group property"
+            aria-label={t(locale, "filterGroupPropertyAria")}
             onChange={(value) => onSetField(leaf, { propertyId: value })}
           />
         </span>
-        <Tooltip label="Remove condition">
+        <Tooltip label={t(locale, "removeCondition")}>
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            aria-label="Remove condition"
+            aria-label={t(locale, "removeCondition")}
             onClick={() => onRemove(leaf)}
           >
             <X className="h-3.5 w-3.5" aria-hidden />
@@ -394,15 +396,15 @@ function FilterLeafRow({
         allowClear={false}
         options={operatorOptions(property?.type)}
         value={leaf.operator}
-        aria-label="Filter group operator"
+        aria-label={t(locale, "filterGroupOperatorAria")}
         onChange={(value) => onSetField(leaf, { operator: value as Filter["operator"] })}
       />
       {!noValue && (
         <Input
           value={leaf.value ?? ""}
-          aria-label="Filter group value"
+          aria-label={t(locale, "filterGroupValueAria")}
           onChange={(e) => onSetField(leaf, { value: e.target.value })}
-          placeholder="Value"
+          placeholder={t(locale, "valuePlaceholder")}
         />
       )}
     </div>
@@ -411,6 +413,7 @@ function FilterLeafRow({
 
 /** A group of conditions/subgroups combined with one AND/OR conjunction. */
 function FilterGroupRows({
+  locale,
   node,
   path,
   depth,
@@ -422,6 +425,7 @@ function FilterGroupRows({
   onSetLeafField,
   onRemoveLeaf,
 }: {
+  locale: string;
   node: FilterGroup;
   path: number[];
   depth: number;
@@ -450,7 +454,7 @@ function FilterGroupRows({
               { value: "or", label: "any" },
             ]}
             value={node.conjunction === "OR" ? "or" : "and"}
-            aria-label="Filter group match"
+            aria-label={t(locale, "filterGroupMatchAria")}
             onChange={(value) =>
               onSetConjunction(path, value === "or" ? "OR" : "AND")
             }
@@ -477,12 +481,12 @@ function FilterGroupRows({
             Group
           </Button>
           {depth > 0 && (
-            <Tooltip label="Remove group">
+            <Tooltip label={t(locale, "removeGroup")}>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label="Remove group"
+                aria-label={t(locale, "removeGroup")}
                 onClick={() => onRemoveGroup(path)}
               >
                 <X className="h-3.5 w-3.5" aria-hidden />
@@ -498,6 +502,7 @@ function FilterGroupRows({
         isFilterGroup(child) ? (
           <FilterGroupRows
             key={index}
+            locale={locale}
             node={child}
             path={[...path, index]}
             depth={depth + 1}
@@ -512,6 +517,7 @@ function FilterGroupRows({
         ) : (
           <FilterLeafRow
             key={index}
+            locale={locale}
             leaf={child}
             properties={properties}
             onSetField={onSetLeafField}
@@ -573,6 +579,7 @@ export function setBuilderGroupOp(
 
 /** One condition (leaf) row inside the builder tree. */
 function BuilderLeafRow({
+  locale,
   leaf,
   path,
   properties,
@@ -581,6 +588,7 @@ function BuilderLeafRow({
   onRemove,
   onMove,
 }: {
+  locale: string;
   leaf: BuilderLeaf;
   path: number[];
   properties: DBProperty[];
@@ -600,7 +608,7 @@ function BuilderLeafRow({
             allowClear={false}
             options={propertyOptions(properties)}
             value={leaf.propertyId}
-            aria-label="Builder condition property"
+            aria-label={t(locale, "builderPropertyAria")}
             onChange={(value) => {
               const next = properties.find((p) => p.id === value);
               const ops = operatorsFor(next?.type ?? "TEXT");
@@ -616,25 +624,25 @@ function BuilderLeafRow({
             <Select
               size="sm"
               allowClear={false}
-              placeholder="Move…"
+              placeholder={t(locale, "movePlaceholder")}
               options={groupOptions.map((option) => ({
                 value: option.id,
                 label: option.label,
               }))}
               value=""
-              aria-label="Move condition into group"
+              aria-label={t(locale, "moveConditionIntoGroup")}
               onChange={(value) => {
                 if (value) onMove(path, value);
               }}
             />
           </span>
         )}
-        <Tooltip label="Remove condition">
+        <Tooltip label={t(locale, "removeCondition")}>
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            aria-label="Remove condition"
+            aria-label={t(locale, "removeCondition")}
             onClick={() => onRemove(path)}
           >
             <X className="h-3.5 w-3.5" aria-hidden />
@@ -647,7 +655,7 @@ function BuilderLeafRow({
           allowClear={false}
           options={operatorOptions(property?.type)}
           value={leaf.op}
-          aria-label="Builder condition operator"
+          aria-label={t(locale, "builderOperatorAria")}
           onChange={(value) =>
             onSetField(path, { op: value as Filter["operator"] })
           }
@@ -656,10 +664,10 @@ function BuilderLeafRow({
       {!noValue && (
         <Input
           value={leaf.value ?? ""}
-          aria-label="Builder condition value"
+          aria-label={t(locale, "builderValueAria")}
           data-testid="builder-value"
           onChange={(event) => onSetField(path, { value: event.target.value })}
-          placeholder="Value"
+          placeholder={t(locale, "valuePlaceholder")}
         />
       )}
     </div>
@@ -668,6 +676,7 @@ function BuilderLeafRow({
 
 /** A group of conditions/subgroups combined with one AND/OR conjunction. */
 function BuilderGroupRows({
+  locale,
   node,
   path,
   depth,
@@ -680,6 +689,7 @@ function BuilderGroupRows({
   onSetLeafField,
   onMove,
 }: {
+  locale: string;
   node: BuilderGroup;
   path: number[];
   depth: number;
@@ -709,7 +719,7 @@ function BuilderGroupRows({
               { value: "or", label: "any" },
             ]}
             value={node.op}
-            aria-label="Builder group match"
+            aria-label={t(locale, "builderGroupMatchAria")}
             onChange={(value) => onSetOp(path, value === "or" ? "or" : "and")}
           />
         </span>
@@ -720,12 +730,12 @@ function BuilderGroupRows({
               <Select
                 size="sm"
                 allowClear={false}
-                placeholder="Move…"
+                placeholder={t(locale, "movePlaceholder")}
                 options={groupOptions
                   .filter((option) => option.id !== node.id)
                   .map((option) => ({ value: option.id, label: option.label }))}
                 value=""
-                aria-label="Move group into group"
+                aria-label={t(locale, "moveGroupIntoGroup")}
                 onChange={(value) => {
                   if (value) onMove(path, value);
                 }}
@@ -751,12 +761,12 @@ function BuilderGroupRows({
             Group
           </Button>
           {depth > 0 && (
-            <Tooltip label="Remove group">
+            <Tooltip label={t(locale, "removeGroup")}>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label="Remove group"
+                aria-label={t(locale, "removeGroup")}
                 onClick={() => onRemove(path)}
               >
                 <X className="h-3.5 w-3.5" aria-hidden />
@@ -772,6 +782,7 @@ function BuilderGroupRows({
         isBuilderGroup(child) ? (
           <BuilderGroupRows
             key={child.id}
+            locale={locale}
             node={child}
             path={[...path, index]}
             depth={depth + 1}
@@ -787,6 +798,7 @@ function BuilderGroupRows({
         ) : (
           <BuilderLeafRow
             key={child.id}
+            locale={locale}
             leaf={child}
             path={[...path, index]}
             properties={properties}
@@ -2082,8 +2094,8 @@ export function ViewSettings({
               <Switch
                 size="sm"
                 checked={config.quickFilter !== false}
-                label="Quick filter from column headers"
-                aria-label="Quick filter from column headers"
+                label={t(locale, "quickFilterFromHeaders")}
+                aria-label={t(locale, "quickFilterFromHeaders")}
                 onCheckedChange={() =>
                   onChange({ quickFilter: config.quickFilter === false })
                 }
@@ -2095,6 +2107,7 @@ export function ViewSettings({
             {tree ? (
               <>
                 <FilterGroupRows
+                  locale={locale}
                   node={tree}
                   path={[]}
                   depth={0}
@@ -2143,12 +2156,12 @@ export function ViewSettings({
                             })}
                           />
                         </span>
-                        <Tooltip label="Remove filter">
+                        <Tooltip label={t(locale, "removeFilter")}>
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon"
-                            aria-label="Remove filter"
+                            aria-label={t(locale, "removeFilter")}
                             onClick={() => onChange({ filters: filters.filter((_, i) => i !== index) })}
                           >
                             <X className="h-3.5 w-3.5" aria-hidden />
@@ -2161,7 +2174,7 @@ export function ViewSettings({
                           allowClear={false}
                           options={operatorOptions(property?.type)}
                           value={filter.operator}
-                          aria-label="Filter operator"
+                          aria-label={t(locale, "filterOperatorAria")}
                           onChange={(value) => onChange({
                             filters: filters.map((f, i) =>
                               i === index ? { ...f, operator: value as Filter["operator"] } : f,
@@ -2178,7 +2191,7 @@ export function ViewSettings({
                               i === index ? { ...f, value: e.target.value } : f,
                             ),
                           })}
-                          placeholder="Value"
+                          placeholder={t(locale, "valuePlaceholder")}
                         />
                       )}
                     </div>
@@ -2234,11 +2247,11 @@ export function ViewSettings({
             className={cn(builderTree && "bg-surface-2 text-fg")}
             leftIcon={<FilterIcon className="h-3.5 w-3.5" aria-hidden />}
           >
-            Builder
+            {t(locale, "builderWord")}
           </Button>
         </PopoverTrigger>
         <SettingsPopoverContent
-          title="Builder"
+          title={t(locale, "builderWord")}
           className="w-96"
           data-testid="db-builder-popover"
           footer={
@@ -2270,6 +2283,7 @@ export function ViewSettings({
           {builderTree ? (
             <div className="space-y-2">
               <BuilderGroupRows
+                locale={locale}
                 node={builderTree}
                 path={[]}
                 depth={0}
@@ -2329,7 +2343,7 @@ export function ViewSettings({
                 { value: "or", label: "any" },
               ]}
               value={config.filterMode ?? "and"}
-              aria-label="Filter match mode"
+              aria-label={t(locale, "filterMatchModeAria")}
               onChange={(value) =>
                 onChange({ filterMode: value as "and" | "or" })
               }
@@ -2352,11 +2366,11 @@ export function ViewSettings({
             className={cn((config.colorRules?.length ?? 0) > 0 && "bg-surface-2 text-fg")}
             leftIcon={<Palette className="h-3.5 w-3.5" aria-hidden />}
           >
-            Color
+            {t(locale, "colorLabel")}
           </Button>
         </PopoverTrigger>
         <SettingsPopoverContent
-          title="Color"
+          title={t(locale, "colorLabel")}
           className="w-80"
           footer={
             <Button
@@ -2391,8 +2405,8 @@ export function ViewSettings({
               <Switch
                 size="sm"
                 checked={config.conditionalFormat !== false}
-                label="Conditional formatting"
-                aria-label="Conditional formatting"
+                label={t(locale, "conditionalFormatting")}
+                aria-label={t(locale, "conditionalFormatting")}
                 onCheckedChange={() =>
                   onChange({ conditionalFormat: config.conditionalFormat === false })
                 }
@@ -2410,7 +2424,7 @@ export function ViewSettings({
                       allowClear={false}
                       options={propertyOptions(properties)}
                       value={rule.propertyId}
-                      aria-label="Rule property"
+                      aria-label={t(locale, "rulePropertyAria")}
                       onChange={(value) =>
                         commitColorRules(
                           (config.colorRules ?? []).map((r, i) =>
@@ -2450,12 +2464,12 @@ export function ViewSettings({
                       <span aria-hidden>↓</span>
                     </Button>
                   </Tooltip>
-                  <Tooltip label="Remove rule">
+                  <Tooltip label={t(locale, "removeRule")}>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                      aria-label="Remove rule"
+                      aria-label={t(locale, "removeRule")}
                       onClick={() =>
                         commitColorRules(
                           (config.colorRules ?? []).filter((_, i) => i !== index),
@@ -2469,7 +2483,7 @@ export function ViewSettings({
                 <div data-testid={`color-rule-color-${index}`}>
                   <ColorChips
                     value={rule.color}
-                    label="Rule colour"
+                    label={t(locale, "ruleColour")}
                     onSelect={(color) =>
                       commitColorRules(
                         (config.colorRules ?? []).map((r, i) =>
@@ -2489,7 +2503,7 @@ export function ViewSettings({
                         { value: "cell", label: "Cell" },
                       ]}
                       value={rule.target ?? "row"}
-                      aria-label="Color rule target"
+                      aria-label={t(locale, "colorRuleTargetAria")}
                       onChange={(value) =>
                         commitColorRules(
                           (config.colorRules ?? []).map((r, i) =>
@@ -2509,7 +2523,7 @@ export function ViewSettings({
                         properties.find((p) => p.id === rule.propertyId)?.type,
                       )}
                       value={rule.operator}
-                      aria-label="Color rule operator"
+                      aria-label={t(locale, "colorRuleOperatorAria")}
                       onChange={(value) =>
                         commitColorRules(
                           (config.colorRules ?? []).map((r, i) =>
@@ -2524,7 +2538,7 @@ export function ViewSettings({
                 </div>
                 <Input
                   value={rule.value ?? ""}
-                  aria-label="Color rule value"
+                  aria-label={t(locale, "colorRuleValueAria")}
                   onChange={(e) =>
                     commitColorRules(
                       (config.colorRules ?? []).map((r, i) =>
@@ -2532,7 +2546,7 @@ export function ViewSettings({
                       ),
                     )
                   }
-                  placeholder="Value"
+                  placeholder={t(locale, "valuePlaceholder")}
                 />
               </div>
             ))}
@@ -2584,7 +2598,7 @@ export function ViewSettings({
               return (
               <div key={`${sort.propertyId}-${index}`} className="space-y-1 rounded border border-border p-2">
                 <div className="flex items-center gap-1">
-                  <span className="w-6 shrink-0 text-[10px] text-muted" title={t(locale, "dbSort")}>
+                  <span className="w-6 shrink-0 text-3xs text-muted" title={t(locale, "dbSort")}>
                     {index + 1}.
                   </span>
                   <span className="min-w-0 flex-1" data-testid="sort-property">
@@ -2664,7 +2678,7 @@ export function ViewSettings({
               );
             })}
             {sorts.length > 1 && (
-              <p className="text-[11px] text-muted">
+              <p className="text-2xs text-muted">
                 Sorted by the first key, then the next ones break ties.
               </p>
             )}
@@ -2682,20 +2696,20 @@ export function ViewSettings({
             className={cn((groupBy || laneBy) && "bg-surface-2 text-fg")}
             leftIcon={<Layers className="h-3.5 w-3.5" aria-hidden />}
           >
-            Group
+            {t(locale, "dbGroup")}
           </Button>
         </PopoverTrigger>
-        <SettingsPopoverContent title="Group" className="w-64">
+        <SettingsPopoverContent title={t(locale, "dbGroup")} className="w-64">
           <div className="space-y-3">
             <div>
               <p className="mb-1 text-xs text-muted">Group by</p>
               <Select
                 size="sm"
                 allowClear={false}
-                placeholder="None"
+                placeholder={t(locale, "colorNone")}
                 value={groupBy}
-                options={[{ value: "", label: "None" }, ...propertyOptions(groupable)]}
-                aria-label="Group by"
+                options={[{ value: "", label: t(locale, "colorNone") }, ...propertyOptions(groupable)]}
+                aria-label={t(locale, "groupByLabel")}
                 onChange={(value) => onChange({ groupByPropertyId: value || null })}
               />
               <p className="mt-2 text-xs text-muted">
@@ -2708,10 +2722,10 @@ export function ViewSettings({
                 <Select
                   size="sm"
                   allowClear={false}
-                  placeholder="None"
+                  placeholder={t(locale, "colorNone")}
                   value={laneBy}
-                  options={[{ value: "", label: "None" }, ...propertyOptions(groupable)]}
-                  aria-label="Group by (lanes)"
+                  options={[{ value: "", label: t(locale, "colorNone") }, ...propertyOptions(groupable)]}
+                  aria-label={t(locale, "groupByLanesLabel")}
                   onChange={(value) => onChange({ laneBy: value || undefined })}
                 />
               </div>
@@ -2730,16 +2744,16 @@ export function ViewSettings({
                   <Select
                     size="sm"
                     allowClear={false}
-                    placeholder="None"
+                    placeholder={t(locale, "colorNone")}
                     value={groupAggregation}
                     options={[
-                      { value: "", label: "None" },
+                      { value: "", label: t(locale, "colorNone") },
                       ...AGGREGATION_FUNCTIONS.map((fn) => ({
                         value: fn.id,
                         label: fn.label,
                       })),
                     ]}
-                    aria-label="Summarize groups"
+                    aria-label={t(locale, "summarizeGroupsAria")}
                     onChange={(value) =>
                       onChange({ groupAggregation: value || undefined })
                     }
@@ -2811,11 +2825,11 @@ export function ViewSettings({
             )}
             leftIcon={<Gauge className="h-3.5 w-3.5" aria-hidden />}
           >
-            WIP limits{limitedCount > 0 ? ` (${limitedCount})` : ""}
+            {t(locale, "wipLimits")}{limitedCount > 0 ? ` (${limitedCount})` : ""}
           </Button>
         </PopoverTrigger>
         <SettingsPopoverContent
-          title="WIP limits"
+          title={t(locale, "wipLimits")}
           className="w-72"
           data-testid="wip-popover"
         >
@@ -2891,11 +2905,11 @@ export function ViewSettings({
             className={cn(hiddenGroupCount > 0 && "bg-surface-2 text-fg")}
             leftIcon={<Eye className="h-3.5 w-3.5" aria-hidden />}
           >
-            Groups{hiddenGroupCount > 0 ? ` (${hiddenGroupCount})` : ""}
+            {t(locale, "groupsWord")}{hiddenGroupCount > 0 ? ` (${hiddenGroupCount})` : ""}
           </Button>
         </PopoverTrigger>
         <SettingsPopoverContent
-          title="Groups"
+          title={t(locale, "groupsWord")}
           className="w-64"
           data-testid="db-groups-popover"
           footer={
@@ -2963,11 +2977,11 @@ export function ViewSettings({
             className={cn(aggregationPropertyId && "bg-surface-2 text-fg")}
             leftIcon={<Sigma className="h-3.5 w-3.5" aria-hidden />}
           >
-            Summarize
+            {t(locale, "summarizeWord")}
           </Button>
         </PopoverTrigger>
         <SettingsPopoverContent
-          title="Summarize"
+          title={t(locale, "summarizeWord")}
           className="w-64"
           data-testid="db-aggregation-popover"
         >
@@ -2976,13 +2990,13 @@ export function ViewSettings({
             <Select
               size="sm"
               allowClear={false}
-              placeholder="Automatic (first number)"
+              placeholder={t(locale, "autoFirstNumber")}
               value={aggregationPropertyId}
               options={[
-                { value: "", label: "Automatic (first number)" },
+                { value: "", label: t(locale, "autoFirstNumber") },
                 ...propertyOptions(numericProperties),
               ]}
-              aria-label="Summarize by property"
+              aria-label={t(locale, "summarizeByProperty")}
               onChange={(value) =>
                 onChange({ aggregationPropertyId: value || undefined })
               }
@@ -3012,11 +3026,11 @@ export function ViewSettings({
             className={cn(footerSpec.length > 0 && "bg-surface-2 text-fg")}
             leftIcon={<Calculator className="h-3.5 w-3.5" aria-hidden />}
           >
-            Calculations{footerSpec.length > 0 ? ` (${footerSpec.length})` : ""}
+            {t(locale, "calculationsWord")}{footerSpec.length > 0 ? ` (${footerSpec.length})` : ""}
           </Button>
         </PopoverTrigger>
         <SettingsPopoverContent
-          title="Calculations"
+          title={t(locale, "calculationsWord")}
           className="w-72"
           data-testid="db-footer-popover"
         >
@@ -3036,10 +3050,10 @@ export function ViewSettings({
                     <Select
                       size="sm"
                       allowClear={false}
-                      placeholder="None"
+                      placeholder={t(locale, "colorNone")}
                       value={footerFnById.get(property.id) ?? ""}
                       options={[
-                        { value: "", label: "None" },
+                        { value: "", label: t(locale, "colorNone") },
                         ...footerFunctionsForType(property.type).map((fn) => ({
                           value: fn,
                           label: fn,
@@ -3070,11 +3084,11 @@ export function ViewSettings({
               className={cn(defaultTemplateId && "bg-surface-2 text-fg")}
               leftIcon={<LayoutTemplate className="h-3.5 w-3.5" aria-hidden />}
             >
-              Templates{defaultTemplateId ? " (1)" : ""}
+              {t(locale, "templates")}{defaultTemplateId ? " (1)" : ""}
             </Button>
           </PopoverTrigger>
           <SettingsPopoverContent
-            title="Templates"
+            title={t(locale, "templates")}
             className="w-72"
             data-testid="db-templates-popover"
           >
@@ -3264,11 +3278,11 @@ export function ViewSettings({
             className={cn(propertyLayout.columns === 2 && "bg-surface-2 text-fg")}
             leftIcon={<LayoutTemplate className="h-3.5 w-3.5" aria-hidden />}
           >
-            Layout
+            {t(locale, "layoutWord")}
           </Button>
         </PopoverTrigger>
         <SettingsPopoverContent
-          title="Layout"
+          title={t(locale, "layoutWord")}
           className="w-72"
           data-testid="db-layout-popover"
         >
@@ -3277,8 +3291,8 @@ export function ViewSettings({
               <Switch
                 size="sm"
                 checked={propertyLayout.columns === 2}
-                label="Two columns"
-                aria-label="Two-column property layout"
+                label={t(locale, "twoColumnsLabel")}
+                aria-label={t(locale, "twoColumnLayoutAria")}
                 onCheckedChange={togglePropertyLayoutColumns}
               />
             </div>
@@ -3286,8 +3300,8 @@ export function ViewSettings({
               <Switch
                 size="sm"
                 checked={propertyLayout.dividers === true}
-                label="Column divider"
-                aria-label="Column divider"
+                label={t(locale, "columnDividerAria")}
+                aria-label={t(locale, "columnDividerAria")}
                 onCheckedChange={togglePropertyLayoutDividers}
               />
             </div>
@@ -3366,7 +3380,7 @@ export function ViewSettings({
           <Select
             size="sm"
             allowClear={false}
-            aria-label="Rows per page"
+            aria-label={t(locale, "rowsPerPage")}
             value={pageSize === 0 ? "0" : String(pageSize)}
             options={[
               { value: "0", label: "All" },
@@ -3406,7 +3420,7 @@ export function ViewSettings({
                 value={savedViewName}
                 data-testid="saved-view-name"
                 aria-label={t(locale, "savedViews")}
-                placeholder="Name this view"
+                placeholder={t(locale, "nameThisView")}
                 onChange={(event) => setSavedViewName(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") savePreset();
@@ -3471,11 +3485,11 @@ export function ViewSettings({
             className={cn((config.chartType || config.chartAggregate) && "bg-surface-2 text-fg")}
             leftIcon={<BarChart3 className="h-3.5 w-3.5" aria-hidden />}
           >
-            Chart
+            {t(locale, "chartWord")}
           </Button>
         </PopoverTrigger>
         <SettingsPopoverContent
-          title="Chart"
+          title={t(locale, "chartWord")}
           className="w-64"
           data-testid="db-chart-popover"
         >
@@ -3489,7 +3503,7 @@ export function ViewSettings({
                 value: option.value,
                 label: option.label,
               }))}
-              aria-label="Chart type"
+              aria-label={t(locale, "chartType")}
               onChange={(value) => onChange({ chartType: value as ChartType })}
             />
           </div>
@@ -3503,7 +3517,7 @@ export function ViewSettings({
                 value: fn.id,
                 label: fn.label,
               }))}
-              aria-label="Aggregate"
+              aria-label={t(locale, "chartAggregate")}
               onChange={(value) =>
                 onChange({ chartAggregate: value as AggregationFn })
               }
@@ -3527,11 +3541,11 @@ export function ViewSettings({
             className={cn(previewPropertyId && "bg-surface-2 text-fg")}
             leftIcon={<ImageIcon className="h-3.5 w-3.5" aria-hidden />}
           >
-            Gallery
+            {t(locale, "galleryWord")}
           </Button>
         </PopoverTrigger>
         <SettingsPopoverContent
-          title="Gallery"
+          title={t(locale, "galleryWord")}
           className="w-64"
           data-testid="db-gallery-popover"
         >
@@ -3540,13 +3554,13 @@ export function ViewSettings({
             <Select
               size="sm"
               allowClear={false}
-              placeholder="Automatic (first image)"
+              placeholder={t(locale, "autoFirstImage")}
               value={previewPropertyId}
               options={[
-                { value: "", label: "Automatic (first image)" },
+                { value: "", label: t(locale, "autoFirstImage") },
                 ...propertyOptions(previewable),
               ]}
-              aria-label="Preview property"
+              aria-label={t(locale, "galleryPreview")}
               onChange={(value) => onChange({ previewPropertyId: value || null })}
             />
           </div>

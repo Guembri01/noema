@@ -103,8 +103,8 @@ export default async function SearchPage({
           name="q"
           defaultValue={q}
           autoFocus
-          placeholder="Search titles and page content…"
-          className="h-11 w-full rounded-lg border border-border bg-bg pl-9 pr-3 text-sm outline-none focus:border-accent"
+          placeholder={t(locale, "searchTitlesAndContent")}
+          className="focus-ring h-11 w-full rounded-lg border border-border bg-bg pl-9 pr-3 text-sm outline-none focus:border-accent"
         />
       </form>
 

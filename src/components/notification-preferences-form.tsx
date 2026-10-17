@@ -255,7 +255,7 @@ export function NotificationPreferencesForm({
               }}
               searchable={false}
               allowClear={false}
-              aria-label="Cadence"
+              aria-label={t(locale, "cadenceLabel")}
             />
           </Field>
         </div>
@@ -267,7 +267,7 @@ export function NotificationPreferencesForm({
         description="Pause notifications during a time window each day."
         action={
           <Switch
-            aria-label="Pause notifications"
+            aria-label={t(locale, "pauseNotifications")}
             checked={quiet.enabled}
             onCheckedChange={(enabled) => {
               setSaved(false);

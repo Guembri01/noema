@@ -244,7 +244,7 @@ export function planTicketDrawerTab(
 function PropertyRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
-      <span className="text-[11px] uppercase tracking-wide text-muted">{label}</span>
+      <span className="text-2xs uppercase tracking-wide text-muted">{label}</span>
       {children}
     </div>
   );
@@ -264,7 +264,7 @@ function DrawerSection({
 }) {
   return (
     <section className={cn("min-w-0", className)}>
-      <p className="mb-2 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted">
+      <p className="mb-2 flex items-center gap-1.5 text-2xs uppercase tracking-wide text-muted">
         {icon}
         {title}
       </p>
@@ -445,7 +445,7 @@ export function TicketDrawerBody({
 
   return (
     <>
-      <DrawerSection title="Properties">
+      <DrawerSection title={t(locale, "properties")}>
         <div className="grid grid-cols-2 gap-3">
           <PropertyRow label={t(locale, "statusWord")}>
             <Select
@@ -572,7 +572,7 @@ export function TicketDrawerBody({
 
       <Separator />
 
-      <DrawerSection title="Description">
+      <DrawerSection title={t(locale, "description")}>
         <textarea
           data-testid={hasDescription ? "ticket-description-box" : undefined}
           value={description}
@@ -613,7 +613,7 @@ export function TicketDrawerBody({
 
         {children.length > 0 ? (
           <>
-            <p className="mb-1.5 flex flex-wrap items-center gap-1 text-[11px] text-muted">
+            <p className="mb-1.5 flex flex-wrap items-center gap-1 text-2xs text-muted">
               <Badge tone="neutral" size="sm" count={childRollup.count} />
               <span>{t(locale, "estimateTotal")}:</span>
               <span className="text-fg">{formatEstimate(childRollup.total, childUnit)}</span>
@@ -626,7 +626,7 @@ export function TicketDrawerBody({
                 {childByAssignee.map((bucket) => (
                   <li
                     key={bucket.assigneeId}
-                    className="flex items-center justify-between gap-2 text-[11px] text-muted"
+                    className="flex items-center justify-between gap-2 text-2xs text-muted"
                   >
                     <span className="min-w-0 flex-1 truncate">
                       {bucket.assigneeId === UNASSIGNED_BUCKET
@@ -777,7 +777,7 @@ export function TicketDrawerBody({
           <div className="space-y-3" data-testid="ticket-activity">
             {activityGroups.map((group) => (
               <div key={group.key}>
-                <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                <p className="mb-1 text-2xs font-medium uppercase tracking-wide text-muted">
                   {group.label}
                 </p>
                 <ol className="relative space-y-1.5 border-s border-border ps-3">
@@ -800,7 +800,7 @@ export function TicketDrawerBody({
                         <time
                           dateTime={iso}
                           title={iso}
-                          className="ms-auto shrink-0 text-[11px] text-muted"
+                          className="ms-auto shrink-0 text-2xs text-muted"
                         >
                           {formatRelativeTime(entry.createdAt, { locale })}
                         </time>
@@ -826,7 +826,7 @@ export function TicketDrawerBody({
             : ""}
           {ticket.assigneeName ? ` · ${t(locale, "assignedTo")} ${ticket.assigneeName}` : ""}
         </p>
-        <p className="mt-1 text-[11px] text-muted">
+        <p className="mt-1 text-2xs text-muted">
           {t(locale, "permalinkLabel")} /w/{slug}?ticket={ticket.key}
         </p>
       </DrawerSection>
@@ -1041,7 +1041,7 @@ export function TicketDrawer({
         tone="danger"
         title={t(locale, "delete")}
         description={deleteTicketConfirmLabel(ticket.key, ticket.title)}
-        confirmLabel="Delete permanently"
+        confirmLabel={t(locale, "deletePermanently")}
         pending={pending}
         onConfirm={() => void permanentlyDelete()}
       />

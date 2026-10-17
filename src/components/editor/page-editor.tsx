@@ -1390,12 +1390,12 @@ export function PageEditor({
       Column,
       TableOfContents.configure({ locale }),
       Mention,
-      Bookmark,
-      Embed,
-      PdfPreview,
-      MapBlock,
+      Bookmark.configure({ locale }),
+      Embed.configure({ locale }),
+      PdfPreview.configure({ locale }),
+      MapBlock.configure({ locale }),
       Breadcrumb.configure({ trail: breadcrumbTrail, workspaceSlug, locale }),
-      PageEmbed.configure({ workspaceId, workspaceSlug }),
+      PageEmbed.configure({ workspaceId, workspaceSlug, locale }),
       TemplateButton.configure({ locale }),
       ButtonBlock.configure({ locale }),
       AskAi.configure({ workspaceId, locale, pageId }),
@@ -1424,7 +1424,12 @@ export function PageEditor({
       content: [{ type: "paragraph" }],
     },
     editorProps: {
-      attributes: { class: "focus:outline-none" },
+      attributes: {
+        class: "focus:outline-none",
+        // Labels the editable block list for assistive tech (the element keeps
+        // TipTap's default `role="textbox"`, so the description is announced).
+        "aria-roledescription": t(locale, "editorRoleDescription"),
+      },
       /**
        * Multi-block range selection (block-selection engine). Shift-click starts
        * or extends a whole-block range; a modifier-click on an active range
@@ -1729,9 +1734,15 @@ export function PageEditor({
     return <div className="h-40 animate-pulse rounded bg-surface" />;
   }
 
+  // Bottom breathing room (30vh) under the block list so the caret at the end of
+  // a long page can be scrolled up to the middle of the viewport instead of
+  // staying pinned to the bottom edge. Unconditional, as the reference editor
+  // does: a short page's own content stays within the fold, so no extra
+  // scrollbar appears in practice. Intentional layout constant, not a token.
   return (
     <div
       className={`noema-editor relative ${dragActiveClass(dragging)}`.trim()}
+      style={{ paddingBottom: "30vh" }}
       data-undo-depth={snapshotDepth.undoable}
       data-redo-depth={snapshotDepth.redoable}
       data-block-selected={blockSelected}
@@ -1821,7 +1832,7 @@ export function PageEditor({
                   role="img"
                   aria-label={label}
                   title={label}
-                  className="-ml-1.5 grid h-6 w-6 place-items-center rounded-full border-2 border-bg text-[10px] font-medium text-white first:ml-0"
+                  className="-ml-1.5 grid h-6 w-6 place-items-center rounded-full border-2 border-bg text-3xs font-medium text-white first:ml-0"
                   style={{ backgroundColor: presenceColor(participant.color) }}
                 >
                   {initials(label)}

@@ -1052,17 +1052,19 @@ export function ImportSourceCard({
 export function ImportSourceGrid({
   onSelect,
   sources = IMPORT_SOURCES,
+  locale = "en",
   className,
 }: {
   onSelect: (id: ImportSourceId) => void;
   sources?: readonly ImportSourceDef[];
+  locale?: string;
   className?: string;
 }) {
   return (
     <div
       data-testid="import-source-grid"
       role="group"
-      aria-label="Import sources"
+      aria-label={t(locale, "importSources")}
       className={cn("grid grid-cols-2 gap-2", className)}
     >
       {sources.map((source) => (
@@ -1109,7 +1111,7 @@ export function ImportSteps({
             <span
               data-state={state}
               className={cn(
-                "grid size-5 shrink-0 place-items-center rounded-full border text-[10px] font-medium",
+                "grid size-5 shrink-0 place-items-center rounded-full border text-3xs font-medium",
                 state === "current" && "border-accent bg-accent text-accent-fg",
                 state === "done" && "border-accent bg-accent-soft text-accent",
                 state === "upcoming" && "border-border bg-surface-2 text-muted",
@@ -1478,7 +1480,7 @@ function ImportStepBody(props: ImportPanelProps) {
             id="import-title"
             value={draft.title}
             onChange={(event) => onTitleChange(event.target.value)}
-            placeholder="Imported database"
+            placeholder={t(locale, "importedDatabase")}
           />
         </Field>
         <ImportIssues issues={issues} />
@@ -1749,7 +1751,7 @@ export function ImportSection({
       <p className="px-2 text-xs font-medium uppercase tracking-wide text-muted">
         Import
       </p>
-      <ImportSourceGrid onSelect={openSource} />
+      <ImportSourceGrid onSelect={openSource} locale={locale} />
 
       <ImportPanel
         open={open}

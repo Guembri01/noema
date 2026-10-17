@@ -73,7 +73,7 @@ function AuditEventRow({
         {event.targetType}{" "}
         <span className="font-mono text-xs text-fg">{event.targetName ?? event.targetId}</span>
       </span>
-      <span className={`ml-auto rounded px-1.5 py-0.5 text-[11px] ${SEVERITY_TONE[severity]}`}>
+      <span className={`ml-auto rounded px-1.5 py-0.5 text-2xs ${SEVERITY_TONE[severity]}`}>
         {descriptor?.category ?? "uncategorised"} · {severity}
       </span>
     </li>
@@ -159,7 +159,10 @@ export default async function AuditEnginePage({
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
-      <Link href={`/w/${workspace.slug}/settings`} className="text-xs text-muted hover:underline">
+      <Link
+        href={`/w/${workspace.slug}/settings`}
+        className="focus-ring rounded-sm text-xs text-muted hover:underline"
+      >
         ← {t(locale, "settings")}
       </Link>
       <header className="mb-6 mt-3">
@@ -242,7 +245,7 @@ export default async function AuditEnginePage({
             type="search"
             name="q"
             defaultValue={query.raw.query ?? ""}
-            placeholder="name, id or action"
+            placeholder={t(locale, "auditSearchPlaceholder")}
             className={CONTROL}
           />
         </label>
@@ -284,32 +287,44 @@ export default async function AuditEnginePage({
 
         <button
           type="submit"
-          className="inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
+          aria-label={t(locale, "apply")}
+          className="focus-ring u-interactive inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
         >
           {t(locale, "apply")}
         </button>
         <Link
           href={base}
-          className="inline-flex h-9 items-center rounded px-2 text-sm text-muted hover:underline"
+          className="focus-ring inline-flex h-9 items-center rounded px-2 text-sm text-muted hover:underline"
         >
           Clear
         </Link>
         <a
           href={exportHref}
-          className="inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
+          className="focus-ring u-interactive inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
         >
           Export CSV
         </a>
       </form>
 
       <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-muted">
-        <Link href={listHref} className={query.grouped ? "hover:underline" : "font-semibold text-fg"}>
+        <Link
+          href={listHref}
+          className={
+            query.grouped
+              ? "focus-ring rounded-sm hover:underline"
+              : "focus-ring rounded-sm font-semibold text-fg"
+          }
+        >
           Flat
         </Link>
         <span>·</span>
         <Link
           href={groupedHref}
-          className={query.grouped ? "font-semibold text-fg" : "hover:underline"}
+          className={
+            query.grouped
+              ? "focus-ring rounded-sm font-semibold text-fg"
+              : "focus-ring rounded-sm hover:underline"
+          }
         >
           Group by day
         </Link>
@@ -358,12 +373,12 @@ export default async function AuditEnginePage({
       {(olderHref || firstHref) && (
         <div className="mt-6 flex items-center gap-4 text-sm">
           {firstHref ? (
-            <Link href={firstHref} className="text-muted hover:underline">
+            <Link href={firstHref} className="focus-ring rounded-sm text-muted hover:underline">
               ← Newest
             </Link>
           ) : null}
           {olderHref ? (
-            <Link href={olderHref} className="ml-auto hover:underline">
+            <Link href={olderHref} className="focus-ring ml-auto rounded-sm hover:underline">
               Older →
             </Link>
           ) : null}

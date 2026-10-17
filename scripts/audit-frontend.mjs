@@ -37,6 +37,30 @@ const isDevOnly = (f) => /^src\/app\/dev\//.test(rel(f)) || /design-gallery/.tes
 const stripComments = (t) =>
   t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
 
+/**
+ * Local class constants, resolved per file.
+ *
+ * Many components keep their control classes in a constant
+ * (`const button = "focus-ring …"`) and apply them with `className={button}`.
+ * Without this map the rules below saw `className={button}` and reported a
+ * perfectly styled button as missing its focus ring — a false positive that cost
+ * a real fix in one file and a bogus finding in another.
+ */
+function classNameSources(source) {
+  const map = new Map();
+  for (const match of source.matchAll(/^\s*const (\w+) = "([^"]{3,400})";$/gm)) {
+    map.set(match[1], match[2]);
+  }
+  return map;
+}
+
+/** Expand `className={NAME}` to the constant's value so the rules can read it. */
+function expandClassNames(line, sources) {
+  return line.replace(/className=\{(\w+)\}/g, (whole, name) =>
+    sources.has(name) ? `className="${sources.get(name)}"` : whole,
+  );
+}
+
 const findings = [];
 const rule = (bucket, title, why) => {
   const entry = { bucket, title, why, hits: [], files: new Map(), info: [] };
@@ -69,7 +93,9 @@ const rule = (bucket, title, why) => {
   const g = rule("DEFECT", "Icon-only controls with no accessible name", "screen readers announce nothing");
   for (const file of tsx) {
     if (isDevOnly(file)) continue;
-    const text = stripComments(readFileSync(file, "utf8"));
+    const raw = stripComments(readFileSync(file, "utf8"));
+    const sources = classNameSources(raw);
+    const text = raw.split("\n").map((l) => expandClassNames(l, sources)).join("\n");
     for (const block of text.matchAll(/<button[\s\S]{0,500}?<\/button>/g)) {
       const body = block[0];
       const named = /aria-label=|aria-labelledby=|\bsr-only\b/.test(body);
@@ -102,7 +128,9 @@ const rule = (bucket, title, why) => {
   const g = rule("INCONSISTENCY", "Custom buttons without the shared focus ring", "focus looks different control to control");
   for (const file of tsx) {
     if (isDevOnly(file)) continue;
-    const text = stripComments(readFileSync(file, "utf8"));
+    const raw = stripComments(readFileSync(file, "utf8"));
+    const sources = classNameSources(raw);
+    const text = raw.split("\n").map((l) => expandClassNames(l, sources)).join("\n");
     for (const m of text.matchAll(/<button[\s\S]{0,400}?>/g)) {
       const tag = m[0];
       if (/className=/.test(tag) && !/focus-ring|u-interactive|focus-visible|outline-none/.test(tag)) {
@@ -128,7 +156,9 @@ const rule = (bucket, title, why) => {
   const g = rule("DEBT", "Anchored popovers built by hand instead of the shared placement engine", "they drift and get clipped");
   for (const file of tsx) {
     if (isDevOnly(file)) continue;
-    const text = stripComments(readFileSync(file, "utf8"));
+    const raw = stripComments(readFileSync(file, "utf8"));
+    const sources = classNameSources(raw);
+    const text = raw.split("\n").map((l) => expandClassNames(l, sources)).join("\n");
     text.split("\n").forEach((line, i) => {
       // `position: absolute/fixed` + a panel class is an anchored popup; a plain
       // `role="dialog"` modal (centred) is a legitimate different thing.
@@ -186,7 +216,9 @@ const rule = (bucket, title, why) => {
   const literal = /style=\{\{[^}]*?(?:color|background|borderColor|fontSize)\s*:\s*"(?!#|inherit|currentColor)/g;
   for (const file of tsx) {
     if (isDevOnly(file)) continue;
-    const text = stripComments(readFileSync(file, "utf8"));
+    const raw = stripComments(readFileSync(file, "utf8"));
+    const sources = classNameSources(raw);
+    const text = raw.split("\n").map((l) => expandClassNames(l, sources)).join("\n");
     text.split("\n").forEach((line, i) => {
       for (const _ of line.matchAll(literal)) g.hit(file, i + 1, line.trim());
     });
@@ -194,6 +226,20 @@ const rule = (bucket, title, why) => {
 }
 
 // ─────────────────────────────────────────────────────────────── report
+// `--files`: one line per file with its total, so a coordinator can hand out
+// work by file ownership rather than by rule.
+if (process.argv.includes("--files")) {
+  const perFile = new Map();
+  for (const f of findings) {
+    for (const hit of f.hits) perFile.set(hit.file, (perFile.get(hit.file) ?? 0) + 1);
+  }
+  for (const [file, count] of [...perFile.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(String(count).padStart(4) + "  " + file);
+  }
+  console.log("\n" + perFile.size + " file(s) with findings");
+  process.exit(0);
+}
+
 const order = { DEFECT: 0, INCONSISTENCY: 1, DEBT: 2, INFO: 3 };
 const pad = (s, n) => s.padEnd(n);
 console.log("Frontend consistency audit (classified)\n");

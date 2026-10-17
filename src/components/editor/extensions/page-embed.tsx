@@ -9,6 +9,7 @@ import {
 } from "@tiptap/react";
 import { ChevronRight, ExternalLink, Loader2, Trash2 } from "lucide-react";
 import { DocRenderer } from "@/components/doc-renderer";
+import { t } from "@/lib/i18n";
 import { getPageContentAction } from "@/server/actions/pages";
 import { mentionSearchAction } from "@/server/actions/mentions";
 
@@ -20,7 +21,7 @@ declare module "@tiptap/core" {
   }
 }
 
-export type PageEmbedOptions = { workspaceId: string; workspaceSlug: string };
+export type PageEmbedOptions = { workspaceId: string; workspaceSlug: string; locale: string };
 
 /**
  * A read-only "synced view" of another page. Content is fetched on demand and
@@ -34,7 +35,7 @@ export const PageEmbed = Node.create<PageEmbedOptions>({
   draggable: true,
 
   addOptions() {
-    return { workspaceId: "", workspaceSlug: "" };
+    return { workspaceId: "", workspaceSlug: "", locale: "en" };
   },
 
   addAttributes() {
@@ -69,6 +70,7 @@ export const PageEmbed = Node.create<PageEmbedOptions>({
 
 function PageEmbedView({ node, updateAttributes, deleteNode, extension }: NodeViewProps) {
   const options = extension.options as PageEmbedOptions;
+  const locale = options.locale;
   const pageId = node.attrs.pageId as string | null;
   const [open, setOpen] = useState(true);
   const [query, setQuery] = useState("");
@@ -114,7 +116,7 @@ function PageEmbedView({ node, updateAttributes, deleteNode, extension }: NodeVi
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search a page to sync…"
+            placeholder={t(locale, "syncPageSearchPlaceholder")}
             className="noema-page-embed-field"
           />
           <div className="noema-page-embed-results">
@@ -142,7 +144,7 @@ function PageEmbedView({ node, updateAttributes, deleteNode, extension }: NodeVi
         <div className="noema-page-embed-header">
           <button
             type="button"
-            aria-label={open ? "Collapse" : "Expand"}
+            aria-label={t(locale, open ? "toggleCollapse" : "toggleExpand")}
             onClick={() => setOpen((v) => !v)}
             className="noema-page-embed-chevron"
           >
@@ -155,13 +157,13 @@ function PageEmbedView({ node, updateAttributes, deleteNode, extension }: NodeVi
           <a
             href={`/w/${options.workspaceSlug}/${pageId}`}
             className="noema-page-embed-open"
-            aria-label="Open source page"
+            aria-label={t(locale, "openSourcePage")}
           >
             <ExternalLink className="h-3.5 w-3.5" />
           </a>
           <button
             type="button"
-            aria-label="Remove synced view"
+            aria-label={t(locale, "removeSyncedView")}
             onClick={() => deleteNode()}
             className="noema-page-embed-remove"
           >

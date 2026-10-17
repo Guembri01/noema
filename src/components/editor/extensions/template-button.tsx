@@ -315,7 +315,7 @@ function TemplateButtonView({
         </select>
         <button
           type="button"
-          className="noema-template-insert"
+          className="noema-template-insert focus-ring u-interactive"
           disabled={issues.length > 0}
           onClick={insert}
         >
@@ -324,7 +324,7 @@ function TemplateButtonView({
         <button
           type="button"
           aria-label={t(locale, "templateRemoveAria")}
-          className="noema-template-remove"
+          className="noema-template-remove focus-ring u-interactive"
           onClick={() => deleteNode()}
         >
           ×
@@ -434,13 +434,13 @@ function ButtonBlockView({
   return (
     <NodeViewWrapper className="noema-button-block" data-button-block="">
       <div className="noema-button-card" contentEditable={false}>
-        <button type="button" className="noema-button-run" onClick={() => void run()}>
+        <button type="button" className="noema-button-run focus-ring u-interactive" onClick={() => void run()}>
           <Play className="h-3.5 w-3.5" /> {label}
         </button>
         <button
           type="button"
           aria-label={t(locale, "remove")}
-          className="noema-button-remove"
+          className="noema-button-remove focus-ring u-interactive"
           onClick={() => deleteNode()}
         >
           <Trash2 className="h-3.5 w-3.5" />

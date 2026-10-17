@@ -120,13 +120,6 @@ export const COMPOSER_MAX_HEIGHT_PX = 200;
 const PENDING_REPLY_ID = "__ui_pending_reply__";
 
 /**
- * Copy for the annotate-only Reply shown where replying would break the thread
- * rule; matches the server's `max-depth-exceeded` message (feat/m07) so the UI
- * and the write path tell the same story.
- */
-const ONE_LEVEL_REPLY_HINT = "Replies can only be one level deep.";
-
-/**
  * Which threads the panel lists: every thread (the default), only open ones, or
  * only resolved ones. A thread counts as resolved when its root carries a
  * `resolvedAt` stamp in the shared `src/lib/comment-threads.ts` model - the same
@@ -530,7 +523,7 @@ export function CommentPanel({
           // Resolved/open filter: `All` (default) shows every thread, while
           // `Open`/`Resolved` hide the other side. Counts come from the shared
           // `threadCounts`, so the chips and the readout never disagree.
-          <div role="group" aria-label="Filter threads" className="flex items-center gap-1">
+          <div role="group" aria-label={t(locale, "filter")} className="flex items-center gap-1">
             {RESOLVED_FILTERS.map(({ value, label, labelKey }) => (
               <Tag
                 key={value}
@@ -722,7 +715,7 @@ export function CommentPanel({
                             // but annotate-only rather than dispatching a write
                             // the server would refuse.
                             <span
-                              title={ONE_LEVEL_REPLY_HINT}
+                              title={t(locale, "linkLimitOneLevel")}
                               data-reply-limited="true"
                               className="cursor-default select-none px-2 text-xs text-muted/60"
                             >
@@ -749,7 +742,7 @@ export function CommentPanel({
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  aria-label="More actions"
+                                  aria-label={t(locale, "moreActions")}
                                 >
                                   <MoreHorizontal className="h-3.5 w-3.5" />
                                 </Button>
@@ -821,7 +814,7 @@ export function CommentPanel({
                                     dispatching a rejected write. */}
                                 {!replyableIds.has(reply.id) && (
                                   <span
-                                    title={ONE_LEVEL_REPLY_HINT}
+                                    title={t(locale, "linkLimitOneLevel")}
                                     data-reply-limited="true"
                                     className="mt-1 inline-block cursor-default select-none text-xs text-muted/60"
                                   >
@@ -845,7 +838,7 @@ export function CommentPanel({
                               replyArea.resize();
                             }}
                             size="sm"
-                            placeholder="Write a reply…"
+                            placeholder={t(locale, "writeReply")}
                             className="resize-none"
                           />
                           <div className="flex items-center justify-between gap-2">
@@ -887,7 +880,7 @@ export function CommentPanel({
               <span className="min-w-0 flex-1 truncate">{quote}</span>
               <button
                 type="button"
-                aria-label="Remove quoted text"
+                aria-label={t(locale, "removeQuote")}
                 onClick={() => setQuote("")}
                 className="focus-ring shrink-0 rounded-xs u-colors hover:text-fg"
               >

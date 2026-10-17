@@ -90,7 +90,10 @@ export default async function MovePagesPage({
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
-      <Link href={`/w/${workspace.slug}/settings`} className="text-xs text-muted hover:underline">
+      <Link
+        href={`/w/${workspace.slug}/settings`}
+        className="focus-ring rounded-sm text-xs text-muted hover:underline"
+      >
         ← {t(locale, "settings")}
       </Link>
       <h1 className="mb-2 mt-3 text-2xl font-semibold tracking-tight">
@@ -110,7 +113,11 @@ export default async function MovePagesPage({
         </p>
       )}
 
-      <form method="GET" className="flex flex-wrap items-end gap-3" aria-label="Choose a move">
+      <form
+        method="GET"
+        className="flex flex-wrap items-end gap-3"
+        aria-label={t(locale, "chooseAMove")}
+      >
         <label className="flex min-w-56 flex-col gap-1 text-xs text-muted">
           Source page
           <select
@@ -148,7 +155,7 @@ export default async function MovePagesPage({
 
         <button
           type="submit"
-          className="inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
+          className="focus-ring u-interactive inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
         >
           Preview
         </button>
@@ -169,7 +176,7 @@ export default async function MovePagesPage({
       {preview && preview.ok && (
         <Section
           className="mt-8 rounded-lg border border-border p-4"
-          aria-label="Move preview"
+          aria-label={t(locale, "movePreview")}
           title={
             <>
               {preview.sourcePageTitle || "Untitled"} → {preview.targetName}
@@ -256,7 +263,7 @@ export default async function MovePagesPage({
               <input type="hidden" name="to" value={preview.targetWorkspaceId} />
               <button
                 type="submit"
-                className="inline-flex h-9 items-center rounded bg-accent px-3 text-sm font-medium text-white hover:opacity-90"
+                className="focus-ring u-interactive inline-flex h-9 items-center rounded bg-accent px-3 text-sm font-medium text-white hover:opacity-90"
               >
                 Move {preview.summary.pageCount} page
                 {preview.summary.pageCount === 1 ? "" : "s"} to {preview.targetName}

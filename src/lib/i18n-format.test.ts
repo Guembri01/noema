@@ -74,6 +74,36 @@ describe("formatRelativeTime", () => {
     );
   });
 
+  it("uses the singular for exactly one unit", () => {
+    expect(formatRelativeTime(at(-MINUTE), { base: BASE, locale: "en" })).toBe(
+      "1 minute ago",
+    );
+    expect(formatRelativeTime(at(-HOUR), { base: BASE, locale: "en" })).toBe(
+      "1 hour ago",
+    );
+    expect(formatRelativeTime(at(-7 * DAY), { base: BASE, locale: "en" })).toBe(
+      "7 days ago",
+    );
+  });
+
+  it("renders a compact form when asked for it", () => {
+    // The one shared implementation; compact is an explicit shape, not a
+    // second formatter (`describeLastEdited` / `humanizeDuration` delegate).
+    expect(formatRelativeTime(at(-5 * MINUTE), { base: BASE, locale: "en", style: "compact" })).toBe(
+      "5m ago",
+    );
+    expect(formatRelativeTime(at(-3 * HOUR), { base: BASE, locale: "en", style: "compact" })).toBe(
+      "3h ago",
+    );
+    expect(formatRelativeTime(at(-2 * DAY), { base: BASE, locale: "en", style: "compact" })).toBe(
+      "2d ago",
+    );
+    // Omitting the option keeps the default long wording.
+    expect(formatRelativeTime(at(-5 * MINUTE), { base: BASE, locale: "en" })).toBe(
+      "5 minutes ago",
+    );
+  });
+
   it("uses auto wording for +/- one day", () => {
     expect(formatRelativeTime(at(-DAY), { base: BASE, locale: "en" })).toBe(
       "yesterday",

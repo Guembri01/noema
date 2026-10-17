@@ -451,7 +451,7 @@ export function LinkSection({
         <div>
           <LinkField label={t(locale, "link")} value={shortHref} locale={locale} />
           {shortCode ? (
-            <span className="mt-1 block font-mono text-[11px] text-muted">{shortCode}</span>
+            <span className="mt-1 block font-mono text-2xs text-muted">{shortCode}</span>
           ) : null}
         </div>
       ) : null}
@@ -621,7 +621,7 @@ export function ShareDialog({
                     <Globe className="h-4 w-4 shrink-0 text-muted" aria-hidden />
                     <span className="min-w-0">
                       <span className="block truncate text-sm">{t(locale, "anyoneWithLink")}</span>
-                      <span className="block truncate text-[11px] text-muted">
+                      <span className="block truncate text-2xs text-muted">
                         {allowEditing ? t(locale, "canEdit") : t(locale, "canView")}
                       </span>
                     </span>
@@ -651,7 +651,7 @@ export function ShareDialog({
                   <span className="flex items-center gap-1.5">
                     <Lock className="h-3.5 w-3.5 text-muted" aria-hidden />{" "}
                     {t(locale, "passwordLabel")}
-                    <span className="text-[11px] text-muted">{t(locale, "optional")}</span>
+                    <span className="text-2xs text-muted">{t(locale, "optional")}</span>
                   </span>
                   <input
                     type="password"
@@ -663,7 +663,7 @@ export function ShareDialog({
                 </label>
                 <label className="block text-sm">
                   {t(locale, "expiresLabel")}{" "}
-                  <span className="text-[11px] text-muted">{t(locale, "optional")}</span>
+                  <span className="text-2xs text-muted">{t(locale, "optional")}</span>
                   <input
                     type="number"
                     min="1"
@@ -678,6 +678,7 @@ export function ShareDialog({
                   <button
                     type="button"
                     onClick={onClose}
+                    aria-label={t(locale, "cancel")}
                     className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm text-muted hover:bg-surface-2"
                   >
                     {t(locale, "cancel")}
@@ -739,6 +740,7 @@ export function ShareDialog({
                   type="button"
                   disabled={pending}
                   onClick={unpublish}
+                  aria-label={t(locale, "unpublish")}
                   className="focus-ring u-interactive flex h-9 items-center gap-1.5 rounded-sm bg-danger px-3 text-sm font-medium text-danger-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {pending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
@@ -768,6 +770,7 @@ export function ShareDialog({
           <button
             type="button"
             onClick={onClose}
+            aria-label={t(locale, "done")}
             className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm hover:bg-surface-2"
           >
             {t(locale, "done")}

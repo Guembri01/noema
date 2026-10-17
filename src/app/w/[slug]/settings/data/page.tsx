@@ -113,10 +113,17 @@ export default function DataControlsPage() {
     ? Object.entries(snapshot.exportCounts).filter(([, count]) => count > 0)
     : [];
 
+  // The snapshot carries the viewer's locale (returned by the load action); the
+  // first paint falls back to the default catalogue.
+  const locale = snapshot?.locale ?? "en";
+
   return (
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
-      <Link href={`/w/${slug}/settings`} className="text-xs text-muted hover:underline">
-        ← {t(snapshot?.locale ?? "en", "settings")}
+      <Link
+        href={`/w/${slug}/settings`}
+        className="focus-ring rounded-sm text-xs text-muted hover:underline"
+      >
+        ← {t(locale, "settings")}
       </Link>
       <h1 className="mb-2 mt-3 text-2xl font-semibold tracking-tight">Data &amp; privacy</h1>
       <p className="mb-6 text-sm text-muted">
@@ -125,7 +132,7 @@ export default function DataControlsPage() {
         are always retained.
       </p>
 
-      <SettingsNav slug={slug} locale={snapshot?.locale ?? "en"} className="mb-8" />
+      <SettingsNav slug={slug} locale={locale} className="mb-8" />
 
       {error && (
         <p role="alert" className="mb-4 rounded border border-danger/40 bg-danger-soft px-3 py-2 text-sm">
@@ -166,7 +173,7 @@ export default function DataControlsPage() {
               <button
                 type="button"
                 onClick={downloadExport}
-                className="mt-4 inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
+                className="focus-ring u-interactive mt-4 inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
               >
                 Download export (JSON)
               </button>
@@ -202,7 +209,7 @@ export default function DataControlsPage() {
                       type="checkbox"
                       checked={holds.has(record.key)}
                       onChange={() => toggleHold(record.key)}
-                      aria-label={`Legal hold for ${record.key}`}
+                      aria-label={`${t(locale, "legalHoldFor")} ${record.key}`}
                     />
                     <span className="w-20 shrink-0 text-xs uppercase text-muted">{record.entity}</span>
                     <span className="min-w-0 flex-1 truncate" title={record.key}>
@@ -231,15 +238,16 @@ export default function DataControlsPage() {
                   <input
                     value={confirmText}
                     onChange={(event) => setConfirmText(event.target.value)}
-                    placeholder="ERASE"
-                    aria-label="Type ERASE to confirm"
-                    className="h-9 rounded border border-border bg-bg px-2 text-sm text-fg"
+                    placeholder={t(locale, "eraseWord")}
+                    aria-label={t(locale, "typeEraseToConfirm")}
+                    className="focus-ring h-9 rounded border border-border bg-bg px-2 text-sm text-fg"
                   />
                   <button
                     type="button"
                     disabled={busy || confirmText !== "ERASE"}
                     onClick={executeErasure}
-                    className="inline-flex h-9 items-center rounded border border-danger/60 px-3 text-sm text-danger hover:bg-danger-soft disabled:opacity-40"
+                    aria-label={t(locale, "eraseData")}
+                    className="focus-ring u-interactive inline-flex h-9 items-center rounded border border-danger/60 px-3 text-sm text-danger hover:bg-danger-soft disabled:opacity-40"
                   >
                     {busy ? "Erasing…" : "Erase data"}
                   </button>

@@ -519,7 +519,7 @@ export function TrashList({
       {windowed ? (
         <div
           role="region"
-          aria-label="Trash pages"
+          aria-label={t(locale, "trash")}
           aria-busy={pending || undefined}
           tabIndex={0}
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}

@@ -285,14 +285,14 @@ export function WorkspaceDialog({
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 onBlur={() => setTouched(true)}
-                placeholder="Acme Inc."
+                placeholder={t(locale, "workspaceNamePlaceholder")}
                 maxLength={MAX_WORKSPACE_NAME}
               />
             </Field>
 
             <Field
               id="workspace-slug"
-              label="Slug"
+              label={t(locale, "slug")}
               error={slugError}
               hint={
                 slugError ? null : (
@@ -307,7 +307,7 @@ export function WorkspaceDialog({
                 value={slugValue}
                 leading={<Link2 className="h-3.5 w-3.5" />}
                 aria-readonly
-                placeholder="acme-inc"
+                placeholder={t(locale, "workspaceSlugPlaceholder")}
                 className="text-muted"
               />
             </Field>

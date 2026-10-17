@@ -20,7 +20,7 @@ export type TagSize = "sm" | "md";
 export const TAG_SIZES: readonly TagSize[] = ["sm", "md"];
 
 const SIZE_CLASS: Record<TagSize, string> = {
-  sm: "h-5 gap-1 px-1.5 text-[11px]",
+  sm: "h-5 gap-1 px-1.5 text-2xs",
   md: "h-6 gap-1.5 px-2 text-xs",
 };
 
@@ -40,7 +40,7 @@ export function tagDotClass(size: TagSize | null | undefined): string {
 }
 
 const CLOSE_CLASS =
-  "inline-flex size-3.5 shrink-0 items-center justify-center rounded-xs opacity-70 u-colors hover:opacity-100 focus-ring";
+  "inline-flex size-3.5 shrink-0 items-center justify-center rounded-xs opacity-70 u-colors hover:opacity-100";
 
 /**
  * Removal model for a removable tag. The close control moves the chip into a
@@ -218,7 +218,7 @@ export function Tag({
           type="button"
           data-tag-undo
           aria-label={undoLabel}
-          className={cn(CLOSE_CLASS, "-me-0.5")}
+          className={cn("focus-ring", CLOSE_CLASS, "-me-0.5")}
           onClick={(event) => {
             event.stopPropagation();
             onUndo();
@@ -231,7 +231,7 @@ export function Tag({
           type="button"
           data-tag-close
           aria-label={closeLabel}
-          className={cn(CLOSE_CLASS, "-me-0.5")}
+          className={cn("focus-ring", CLOSE_CLASS, "-me-0.5")}
           onClick={(event) => {
             event.stopPropagation();
             onClose?.();

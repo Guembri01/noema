@@ -117,7 +117,10 @@ export default async function AuditLogPage({
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
-      <Link href={`/w/${workspace.slug}/settings`} className="text-xs text-muted hover:underline">
+      <Link
+        href={`/w/${workspace.slug}/settings`}
+        className="focus-ring rounded-sm text-xs text-muted hover:underline"
+      >
         ← {t(locale, "settings")}
       </Link>
       <h1 className="mb-2 mt-3 text-2xl font-semibold tracking-tight">
@@ -164,7 +167,7 @@ export default async function AuditLogPage({
             type="date"
             name="from"
             defaultValue={from ?? ""}
-            aria-label="From"
+            aria-label={t(locale, "fromLabel")}
             className="h-9 rounded border border-border bg-bg px-2 text-sm text-fg"
           />
         </label>
@@ -175,20 +178,21 @@ export default async function AuditLogPage({
             type="date"
             name="to"
             defaultValue={to ?? ""}
-            aria-label="To"
+            aria-label={t(locale, "toLabel")}
             className="h-9 rounded border border-border bg-bg px-2 text-sm text-fg"
           />
         </label>
 
         <button
           type="submit"
-          className="inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
+          aria-label={t(locale, "apply")}
+          className="focus-ring u-interactive inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
         >
           {t(locale, "apply")}
         </button>
         <Link
           href={`/w/${workspace.slug}/settings/audit`}
-          className="inline-flex h-9 items-center rounded px-2 text-sm text-muted hover:underline"
+          className="focus-ring inline-flex h-9 items-center rounded px-2 text-sm text-muted hover:underline"
         >
           Clear
         </Link>

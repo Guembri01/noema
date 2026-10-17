@@ -213,13 +213,13 @@ export function TicketBulkActions({
           size="sm"
           checked={allSelected}
           onCheckedChange={(on) => setChecked(on ? (allIds ?? []).slice() : [])}
-          label="Select all"
+          label={t(locale, "selectAll")}
           className="me-1"
         />
       ) : null}
 
       <Select
-        aria-label="Bulk set status"
+        aria-label={t(locale, "bulkSetStatus")}
         className="w-36"
         size="sm"
         value=""
@@ -229,7 +229,7 @@ export function TicketBulkActions({
       />
 
       <Select
-        aria-label="Bulk set priority"
+        aria-label={t(locale, "bulkSetPriority")}
         className="w-36"
         size="sm"
         value=""
@@ -239,7 +239,7 @@ export function TicketBulkActions({
       />
 
       <Select
-        aria-label="Bulk set assignee"
+        aria-label={t(locale, "bulkSetAssignee")}
         className="w-40"
         size="sm"
         value=""
@@ -251,7 +251,7 @@ export function TicketBulkActions({
       />
 
       <Select
-        aria-label="Bulk set project"
+        aria-label={t(locale, "bulkSetProject")}
         className="w-40"
         size="sm"
         value=""
@@ -263,24 +263,24 @@ export function TicketBulkActions({
       />
 
       <Select
-        aria-label="Bulk add label"
+        aria-label={t(locale, "bulkAddLabel")}
         className="w-36"
         size="sm"
         value=""
         disabled={labels.length === 0}
         options={labelOptions}
-        placeholder="Add label…"
+        placeholder={t(locale, "addLabelPlaceholder")}
         onChange={(value) => value && applyUpdate({ addLabelIds: [value] }, "Label added")}
       />
 
       <Select
-        aria-label="Bulk remove label"
+        aria-label={t(locale, "bulkRemoveLabel")}
         className="w-36"
         size="sm"
         value=""
         disabled={labels.length === 0}
         options={labelOptions}
-        placeholder="Remove label…"
+        placeholder={t(locale, "removeLabelPlaceholder")}
         onChange={(value) => value && applyUpdate({ removeLabelIds: [value] }, "Label removed")}
       />
 

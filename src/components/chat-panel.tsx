@@ -676,7 +676,7 @@ export const ChatMessageItem = forwardRef<HTMLLIElement, ChatMessageItemProps>(
       >
         <div className={cn("flex min-w-0 flex-col", isAssistant ? "w-full" : "max-w-[85%] items-end")}>
           {isAssistant ? (
-            <div className="flex items-center gap-1.5 pb-1 text-[11px] text-muted">
+            <div className="flex items-center gap-1.5 pb-1 text-2xs text-muted">
               <Sparkles className="h-3 w-3 shrink-0 text-accent" aria-hidden />
               <span className="font-medium text-fg">{meta?.model || modelLabel || "Noema AI"}</span>
               {(meta?.activity?.length ?? 0) > 0 ? (
@@ -687,7 +687,7 @@ export const ChatMessageItem = forwardRef<HTMLLIElement, ChatMessageItemProps>(
               {menu ? <span className="ms-auto flex items-center">{menu}</span> : null}
             </div>
           ) : user?.name ? (
-            <div className="flex items-center justify-end gap-1.5 pb-1 text-[11px] text-muted">
+            <div className="flex items-center justify-end gap-1.5 pb-1 text-2xs text-muted">
               <span className="truncate">{user.name}</span>
               <Avatar user={{ id: user.email || user.name, name: user.name }} size={20} />
             </div>
@@ -734,18 +734,19 @@ export const ChatMessageItem = forwardRef<HTMLLIElement, ChatMessageItemProps>(
               >
                 {PROPOSAL_LABELS[proposal.kind] ?? "Confirm"}
               </Button>
-              <span className="text-[11px] text-muted">
+              <span className="text-2xs text-muted">
                 Confirm to apply — this changes workspace data.
               </span>
             </div>
           ) : null}
 
-          <div className="mt-1 flex items-center gap-3 text-[11px] text-muted opacity-0 u-colors group-hover:opacity-100 group-focus-within:opacity-100">
+          <div className="mt-1 flex items-center gap-3 text-2xs text-muted opacity-0 u-colors group-hover:opacity-100 group-focus-within:opacity-100">
             {stamp ? <time dateTime={createdAt ? toIso(createdAt) : undefined}>{stamp}</time> : null}
             {onCopy ? (
               <button
                 type="button"
                 onClick={onCopy}
+                aria-label={t(locale, "copy")}
                 className="focus-ring u-colors flex items-center gap-1 rounded-xs px-1 hover:text-fg"
               >
                 <Copy className="h-3 w-3" aria-hidden /> {t(locale, "copy")}
@@ -755,6 +756,7 @@ export const ChatMessageItem = forwardRef<HTMLLIElement, ChatMessageItemProps>(
               <button
                 type="button"
                 onClick={onRegenerate}
+                aria-label={t(locale, "chatRegenerate")}
                 className="focus-ring u-colors flex items-center gap-1 rounded-xs px-1 hover:text-fg"
               >
                 <RefreshCw className="h-3 w-3" aria-hidden /> {t(locale, "chatRegenerate")}
@@ -824,7 +826,10 @@ export function ChatPanel({
   const active = threads.find((item) => item.id === activeThreadId) ?? thread ?? null;
   const messages = active?.messages ?? NO_MESSAGES;
 
-  // Show and limit the conversation context attached to the next question.
+  // Client-side preview only: this estimates the context budget rendered in the
+  // composer UI. The stream route rebuilds its own grounding context, so none of
+  // these figures travel with the question — sending them would be a dead
+  // protocol the server never reads.
   const contextPreview = useMemo(
     () => buildContextAttachment(messages, draft.trim(), contextBudget),
     [messages, draft, contextBudget],
@@ -916,8 +921,6 @@ export function ChatPanel({
     const body = (text ?? draft).trim();
     if (!body) return;
     setError(null);
-    // Budget the conversation context that will accompany this question.
-    const attachment = buildContextAttachment(messages, body, contextBudget);
     const optimisticId = `pending-${Date.now()}`;
     // Only a composer send consumes the draft. Prompts sent from the quick
     // actions or the answer menu never touch text the user is still typing.
@@ -980,9 +983,6 @@ export function ChatPanel({
             body,
             // The page on screen, so "what page am I in?" is answerable.
             pageId: activePageId,
-            context: attachment.prompt,
-            contextTokens: attachment.usedTokens,
-            maxTokens: contextBudget,
           }),
         });
         // A 200 means the route already wrote the question row (route.ts:56).
@@ -1116,7 +1116,7 @@ export function ChatPanel({
           {active?.page && (
             <Link
               href={`/w/${slug}/${active.page.id}`}
-              className="flex items-center gap-1 truncate text-[11px] text-muted hover:text-fg"
+              className="flex items-center gap-1 truncate text-2xs text-muted hover:text-fg"
             >
               📄 {active.page.title || "Untitled"}
             </Link>
@@ -1186,7 +1186,7 @@ export function ChatPanel({
         >
           <MessageSquarePlus className="h-4 w-4" />
         </Button>
-        <Button size="icon" variant="ghost" aria-label="Close conversation" onClick={onClose}>
+        <Button size="icon" variant="ghost" aria-label={t(locale, "close")} onClick={onClose}>
           <X className="h-4 w-4" />
         </Button>
       </header>
@@ -1307,7 +1307,7 @@ export function ChatPanel({
 
               {stream.phase !== "idle" ? (
                 <li data-testid="chat-streaming" className="animate-fade">
-                  <div className="flex items-center gap-1.5 pb-1 text-[11px] text-muted">
+                  <div className="flex items-center gap-1.5 pb-1 text-2xs text-muted">
                     <Sparkles
                       className="h-3 w-3 shrink-0 animate-pulse-soft text-accent"
                       aria-hidden
@@ -1366,14 +1366,15 @@ export function ChatPanel({
 
       <div className="border-t border-border p-3">
         {/* Context budget: shows and limits the conversation context attached to a
-            question. Labels are inline English; add i18n keys in a follow-up. */}
+            question. The figures are a client-side preview; the stream route
+            rebuilds its own grounding context. */}
         <div className="mb-2">
           <button
             type="button"
-            aria-label="Context budget"
+            aria-label={t(locale, "chatContextBudget")}
             aria-expanded={contextOpen}
             onClick={() => setContextOpen((value) => !value)}
-            className="focus-ring u-colors flex w-full items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-surface-2"
+            className="focus-ring u-colors flex w-full items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-2xs text-muted hover:bg-surface-2"
           >
             <Gauge className="h-3.5 w-3.5 shrink-0" aria-hidden />
             <span className="font-medium text-fg">Context</span>
@@ -1392,7 +1393,7 @@ export function ChatPanel({
         </div>
 
         {contextOpen && (
-          <div className="mb-2 rounded-lg border border-border p-2 text-[11px] text-muted">
+          <div className="mb-2 rounded-lg border border-border p-2 text-2xs text-muted">
             <label className="flex items-center gap-2">
               <span className="shrink-0 font-medium uppercase tracking-wide">Token budget</span>
               <input
@@ -1401,7 +1402,7 @@ export function ChatPanel({
                 max={MAX_CONTEXT_BUDGET}
                 step={CONTEXT_BUDGET_STEP}
                 value={contextBudget}
-                aria-label="Context token budget"
+                aria-label={t(locale, "chatContextTokenBudget")}
                 onChange={(event) => {
                   const next = event.target.valueAsNumber;
                   setContextBudget(
@@ -1445,7 +1446,7 @@ export function ChatPanel({
           size="sm"
           rows={1}
           value={draft}
-          aria-label="Ask the AI"
+          aria-label={t(locale, "askAI")}
           placeholder={t(locale, "chatPlaceholder")}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -1462,7 +1463,7 @@ export function ChatPanel({
             <Tag size="sm" hue="gray" dot className="max-w-[10rem]">
               {modelLabel}
             </Tag>
-            <span className="hidden items-center gap-1 text-[11px] text-muted sm:flex">
+            <span className="hidden items-center gap-1 text-2xs text-muted sm:flex">
               <Kbd size="xs">↵</Kbd> send
               <span className="mx-0.5">·</span>
               <Kbd size="xs">⇧↵</Kbd> new line
@@ -1482,7 +1483,7 @@ export function ChatPanel({
             ) : null}
             <Button
               size="icon"
-              aria-label="Send message"
+              aria-label={t(locale, "chatSend")}
               disabled={sendDisabled}
               loading={pending}
               onClick={() => send()}
@@ -1492,7 +1493,7 @@ export function ChatPanel({
           </span>
         </div>
 
-        <p className="mt-1.5 text-[11px] text-muted">{t(locale, "chatFootnote")}</p>
+        <p className="mt-1.5 text-2xs text-muted">{t(locale, "chatFootnote")}</p>
       </div>
     </aside>
   );

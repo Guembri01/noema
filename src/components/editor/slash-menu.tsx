@@ -402,7 +402,7 @@ export function SlashMenuSurface<T extends SlashMenuItem>({
     <div
       data-testid="slash-menu"
       role="dialog"
-      aria-label="Insert block"
+      aria-label={t(locale, "insertBlock")}
       className="surface-raised animate-rise fixed flex max-h-80 w-[min(92vw,22rem)] flex-col overflow-hidden"
       style={{ zIndex: Z.popover, ...style }}
     >
@@ -416,7 +416,7 @@ export function SlashMenuSurface<T extends SlashMenuItem>({
       ) : (
         <div
           role="listbox"
-          aria-label="Commands"
+          aria-label={t(locale, "commands")}
           className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-1"
         >
           {sections.map((section) => (

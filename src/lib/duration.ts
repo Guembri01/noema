@@ -16,6 +16,8 @@
  * Red-first unit-pinned by `src/lib/duration.test.ts`.
  */
 
+import { formatRelativeTime } from "@/lib/i18n-format";
+
 export type DurationStyle = "short" | "long" | "clock";
 
 export type FormatDurationOptions = {
@@ -181,17 +183,6 @@ const FORMAT_UNITS: readonly (readonly [number, string, string, string])[] = [
   [SECOND, "s", "second", "seconds"],
 ];
 
-/** Unit table used to bucket a delta into one whole humanised unit. */
-const HUMAN_UNITS: readonly (readonly [number, string, string])[] = [
-  [YEAR, "year", "years"],
-  [MONTH, "month", "months"],
-  [WEEK, "week", "weeks"],
-  [DAY, "day", "days"],
-  [HOUR, "hour", "hours"],
-  [MINUTE, "minute", "minutes"],
-  [SECOND, "second", "seconds"],
-];
-
 function pad2(value: number): string {
   return String(value).padStart(2, "0");
 }
@@ -245,6 +236,10 @@ export function formatDuration(ms: number, options: FormatDurationOptions = {}):
  * negative one `"3 days ago"`, and anything under half a second reads `"now"`.
  * With `{ now }` the first argument is instead an absolute instant to compare
  * against that reference. Non-finite input renders `""`.
+ *
+ * Delegates to {@link formatRelativeTime} (`@/lib/i18n-format`) — the one
+ * relative-time implementation — so this phrase can never disagree with the
+ * rest of the app.
  */
 export function humanizeDuration(durationMs: number): string;
 export function humanizeDuration(
@@ -253,27 +248,14 @@ export function humanizeDuration(
 ): string;
 export function humanizeDuration(ms: number, options: HumanizeDurationOptions = {}): string {
   if (!Number.isFinite(ms)) return "";
-  let delta = ms;
   if (options.now !== undefined) {
     const nowMs = toEpoch(options.now);
     if (nowMs === null) return "";
-    delta = ms - nowMs;
+    return formatRelativeTime(ms, { base: nowMs });
   }
-  const abs = Math.abs(delta);
-  let value = 0;
-  let singular = "second";
-  let plural = "seconds";
-  for (const [size, one, many] of HUMAN_UNITS) {
-    if (abs >= size) {
-      value = Math.round(abs / size);
-      singular = one;
-      plural = many;
-      break;
-    }
-  }
-  if (value === 0) return "now";
-  const noun = value === 1 ? singular : plural;
-  return delta < 0 ? `${value} ${noun} ago` : `in ${value} ${noun}`;
+  // No ambient clock: anchoring the base at epoch 0 makes the delta exactly
+  // `ms`, so the phrase is a pure function of the signed offset.
+  return formatRelativeTime(ms, { base: 0 });
 }
 
 /**

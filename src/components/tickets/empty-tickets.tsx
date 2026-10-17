@@ -35,7 +35,7 @@ export function EmptyTicketsState({
       <EmptyState
         variant="full"
         icon={<Ticket className="h-5 w-5" aria-hidden />}
-        title="No tickets yet"
+        title={t(locale, "noTicketsYet")}
         description="Create your first ticket to start tracking work, or add a label to organise everything that follows."
         primaryAction={
           <Button

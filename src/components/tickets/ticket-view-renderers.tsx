@@ -286,7 +286,7 @@ const CAPACITY_TONE: Record<CapacityState, BadgeTone> = {
 function DevCycleNotice({ cycle }: { cycle: string[] | null }) {
   if (!cycle) return null;
   return (
-    <p className="mb-2 rounded-sm border border-dashed border-warning bg-warning-soft px-2 py-1 text-[11px] text-warning">
+    <p className="mb-2 rounded-sm border border-dashed border-warning bg-warning-soft px-2 py-1 text-2xs text-warning">
       Dependency cycle: {cycle.join(" → ")}
     </p>
   );
@@ -412,7 +412,7 @@ export function BoardCard({
         onClick={() => onSelect?.(ticket.id)}
         className="focus-ring block w-full rounded-sm text-left"
       >
-        <span className="flex items-center gap-1.5 text-[11px] text-muted">
+        <span className="flex items-center gap-1.5 text-2xs text-muted">
           <span aria-hidden>{typeMeta(ticket.type).icon}</span>
           <span className="font-mono">{ticket.key}</span>
           <Badge
@@ -450,7 +450,7 @@ export function BoardCard({
           </span>
         )}
         {bucket && (
-          <span className="mt-1 flex items-center gap-1 text-[10px] text-muted">
+          <span className="mt-1 flex items-center gap-1 text-3xs text-muted">
             <span className="max-w-24 truncate">{ticket.assigneeName}</span>
             <WorkloadChip bucket={bucket} capacity={capacity} locale={locale} />
           </span>
@@ -510,7 +510,7 @@ export function TicketListView({
     <>
       <DevCycleNotice cycle={dependencies.cycle} />
       {blocked > 0 && (
-        <p className="mb-2 text-[11px] text-muted">
+        <p className="mb-2 text-2xs text-muted">
           {blocked} {t(locale, "relationBlockedBy")} unfinished work
         </p>
       )}
@@ -552,7 +552,7 @@ export function TicketListView({
               >
                 <input
                   type="checkbox"
-                  aria-label={`Select ${ticket.key}`}
+                  aria-label={`${t(locale, "select")} ${ticket.key}`}
                   checked={selected}
                   onChange={(event) =>
                     setChecked((current) =>
@@ -565,10 +565,10 @@ export function TicketListView({
                 <button
                   type="button"
                   onClick={() => onSelect(ticket.id)}
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  className="focus-ring u-interactive flex min-w-0 flex-1 items-center gap-2 rounded-sm text-left"
                 >
                   <span aria-hidden>{typeMeta(ticket.type).icon}</span>
-                  <span className="w-16 shrink-0 font-mono text-[11px] text-muted">{ticket.key}</span>
+                  <span className="w-16 shrink-0 font-mono text-2xs text-muted">{ticket.key}</span>
                   <span className="min-w-0 flex-1 truncate text-sm">{ticket.title}</span>
                   {ticket.labels.map((label) => (
                     <LabelTag key={label.id} name={label.name} color={label.color} />
@@ -683,7 +683,7 @@ export function TicketBoardView({
       <DevCycleNotice cycle={dependencies.cycle} />
 
       {workloadBuckets.length > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] text-muted">
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-2xs text-muted">
           <span className="font-medium uppercase tracking-wide">Workload</span>
           {workloadBuckets.map((bucket) => (
             <span key={bucket.assigneeId} className="flex items-center gap-1">
@@ -851,7 +851,7 @@ export function TicketTimeline({
                 <button
                   type="button"
                   onClick={() => onOpen(ticket.id)}
-                  className="w-56 shrink-0 truncate text-left text-xs text-muted hover:text-fg"
+                  className="focus-ring u-interactive w-56 shrink-0 truncate rounded-sm text-left text-xs text-muted hover:text-fg"
                 >
                   <span className="font-mono">{ticket.key}</span> {ticket.title}
                 </button>
@@ -861,7 +861,7 @@ export function TicketTimeline({
                     onClick={() => onOpen(ticket.id)}
                     title={`${ticket.key} · ${formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")}`}
                     className={cn(
-                      "focus-ring u-colors absolute inset-y-1 flex items-center gap-1 overflow-hidden rounded-sm border px-1.5 text-[10px] font-medium",
+                      "focus-ring u-colors absolute inset-y-1 flex items-center gap-1 overflow-hidden rounded-sm border px-1.5 text-3xs font-medium",
                       !row.hasDates && "opacity-60",
                     )}
                     style={{
@@ -878,7 +878,7 @@ export function TicketTimeline({
                     </span>
                   </button>
                 </div>
-                <span className="w-20 shrink-0 text-right text-[10px] text-muted">
+                <span className="w-20 shrink-0 text-right text-3xs text-muted">
                   {ticket.dueDate ? new Date(ticket.dueDate).toLocaleDateString() : "no date"}
                 </span>
               </li>

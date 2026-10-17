@@ -15,6 +15,9 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
+  --text-3xs: var(--text-3xs);
+  --text-2xs: var(--text-2xs);
+  --text-md: var(--text-md);
   --color-bg: var(--bg);
   --color-sidebar: var(--sidebar);
   --color-surface: var(--surface);
@@ -211,6 +214,26 @@ body {
    --------------------------------------------------------------------------- */
 
 @layer components {
+/* ---------------------------------------------------------------------------
+   Legacy component classes — KEPT. The frontend audit lists 95 single-class
+   `.notion-*` / `.noema-*` rules as a second style system; a grep over `src/**`
+   (test files excluded) resolves every one of them to live code, so none could
+   be deleted without a visual regression. Consumers, by family:
+     • editor nodes   code-block.tsx · custom-blocks.tsx (callout / toggle / TOC)
+                       bookmark.tsx (bookmark + embed) · page-embed.tsx
+                       linked-database.tsx · image-block.tsx · animated-image.tsx
+     • ask/template   ask-ai.tsx · template-button.tsx · breadcrumb.tsx
+     • drag handle    page-editor.tsx
+     • track changes  suggestions.ts
+     • read-only view doc-renderer.tsx
+     • markdown chrome markdown.tsx (`.notion-markdown*` / `.notion-code*` /
+                       `.notion-check*` / `.notion-ref*`)
+     • empty/skeleton  backlinks.tsx · database/view-renderers.tsx ·
+                       ui/skeleton.tsx + the loading.tsx routes
+   These live in `@layer components`, so token utilities still out-specify
+   them. Port a family into utilities/tokens — or delete a rule — only once its
+   last consumer above migrates and the grep comes back empty.
+   --------------------------------------------------------------------------- */
 .noema-editor .ProseMirror {
   outline: none;
   min-height: 2rem;

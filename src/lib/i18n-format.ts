@@ -20,12 +20,22 @@
 /** Relative-time units this module buckets into. */
 type RelativeUnit = "second" | "minute" | "hour" | "day" | "month" | "year";
 
+/**
+ * How much room the phrase gets. `"long"` (the default) reads
+ * `"5 minutes ago"`; `"compact"` trades words for space — `"5m ago"` — for a
+ * status bar or a footer. Both come from the same `Intl.RelativeTimeFormat`,
+ * so there is no second implementation to drift.
+ */
+export type RelativeTimeStyle = "long" | "compact";
+
 /** Options for {@link formatRelativeTime}. */
 export type RelativeTimeOptions = {
   /** Reference instant. Defaults to now; pass a fixed value in tests. */
   base?: Date | number | string;
   /** BCP-47 locale. Unusable values fall back to English. */
   locale?: string;
+  /** Output shape. Defaults to `"long"`. */
+  style?: RelativeTimeStyle;
 };
 
 /**
@@ -131,11 +141,22 @@ function relativeBucket(diff: number): { value: number; unit: RelativeUnit } {
   return { value: round(365 * DAY), unit: "year" };
 }
 
+/** Map our two shapes onto the `Intl` `style` option. */
+function relativeStyle(style: RelativeTimeStyle | undefined): "long" | "narrow" {
+  return style === "compact" ? "narrow" : "long";
+}
+
 /**
  * Human relative time between `date` and `base` (default: now), bucketed into
  * seconds/minutes/hours/days/months/years and rendered with auto wording, so
  * `-1 day` reads "yesterday" and `+2 days` reads "in 2 days". Invalid dates
  * return `""`; an unusable locale falls back to English.
+ *
+ * This is the **single entry point** for relative labels; `humanizeDuration`
+ * (`@/lib/duration`) and `describeLastEdited` (`@/lib/last-edited`) delegate
+ * here so a page can never read "Edited 3 days ago" in one place and "3d ago"
+ * in another. Pass `{ style: "compact" }` when a caller genuinely needs the
+ * short form (`"3d ago"`).
  */
 export function formatRelativeTime(
   date: Date | number | string,
@@ -146,13 +167,14 @@ export function formatRelativeTime(
   const base = toDate(options.base) ?? new Date();
   const { value, unit } = relativeBucket(target.getTime() - base.getTime());
   const locale = normalizeLocale(options.locale);
+  const style = relativeStyle(options.style);
   try {
-    return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(value, unit);
+    return new Intl.RelativeTimeFormat(locale, { numeric: "auto", style }).format(value, unit);
   } catch {
     /* unusable locale — fall back to English */
   }
   try {
-    return new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(value, unit);
+    return new Intl.RelativeTimeFormat("en", { numeric: "auto", style }).format(value, unit);
   } catch {
     return "";
   }

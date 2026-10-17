@@ -173,7 +173,7 @@ export function TicketArchiveView({
           onChange={(event) => setQuery(event.target.value)}
           className="max-w-sm"
         />
-        <Badge tone="neutral" count={tickets.length} title="Archived tickets" />
+        <Badge tone="neutral" count={tickets.length} title={t(locale, "archivedTickets")} />
         {selected.length > 0 ? (
           <div className="flex items-center gap-2" data-testid="archive-bulk">
             <Badge tone="accent" count={selected.length} />
@@ -185,7 +185,7 @@ export function TicketArchiveView({
               leftIcon={<ArchiveRestore className="h-3.5 w-3.5" aria-hidden />}
               onClick={() => restoreMany(selected)}
             >
-              Restore selected
+              {t(locale, "restoreSelected")}
             </Button>
             <Button type="button" size="sm" variant="ghost" onClick={() => setSelected([])}>
               Clear
@@ -208,11 +208,11 @@ export function TicketArchiveView({
             primaryAction={
               tickets.length === 0 ? (
                 <Button type="button" variant="secondary" onClick={() => router.refresh()}>
-                  Refresh
+                  {t(locale, "refresh")}
                 </Button>
               ) : (
                 <Button type="button" variant="secondary" onClick={() => setQuery("")}>
-                  Clear search
+                  {t(locale, "clearSearch")}
                 </Button>
               )
             }

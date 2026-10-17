@@ -384,7 +384,7 @@ function AskAiView({
             type="button"
             disabled={loading}
             onClick={() => void run("ask")}
-            className="noema-ask-btn"
+            className="noema-ask-btn focus-ring u-interactive"
           >
             {loading ? t(locale, "chatThinking") : t(locale, "askWord")}
           </button>
@@ -392,12 +392,12 @@ function AskAiView({
             type="button"
             disabled={loading}
             onClick={() => void run("summarize")}
-            className="noema-ask-btn"
+            className="noema-ask-btn focus-ring u-interactive"
           >
             {t(locale, "askSummarizePage")}
           </button>
           {answer && (
-            <button type="button" onClick={insertAnswer} className="noema-ask-btn">
+            <button type="button" onClick={insertAnswer} aria-label={t(locale, "insertWord")} className="noema-ask-btn focus-ring u-interactive">
               <CornerDownLeft className="h-3.5 w-3.5" /> {t(locale, "insertWord")}
             </button>
           )}

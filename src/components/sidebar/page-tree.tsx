@@ -564,6 +564,8 @@ export type PageTreeRowProps = {
   className?: string;
   style?: CSSProperties;
   children?: ReactNode;
+  /** Locale for the chevron's accessible name (defaults to English). */
+  locale?: string;
 };
 
 export const PageTreeRow = forwardRef<HTMLDivElement, PageTreeRowProps>(
@@ -588,6 +590,7 @@ export const PageTreeRow = forwardRef<HTMLDivElement, PageTreeRowProps>(
       className,
       style,
       children,
+      locale = "en",
       ...rest
     },
     ref,
@@ -615,10 +618,10 @@ export const PageTreeRow = forwardRef<HTMLDivElement, PageTreeRowProps>(
       >
         <button
           type="button"
-          aria-label={expanded ? "Collapse" : "Expand"}
+          aria-label={expanded ? t(locale, "toggleCollapse") : t(locale, "toggleExpand")}
           aria-expanded={hasChildren ? expanded : undefined}
           onClick={onToggle}
-          className={pageChevronButtonClass(hasChildren)}
+          className={cn(pageChevronButtonClass(hasChildren), "focus-ring")}
         >
           <span aria-hidden className="flex h-5 w-5 items-center justify-center">
             <ChevronRight className={pageChevronClass(expanded)} style={PAGE_CHEVRON_MOTION} />
@@ -1111,12 +1114,13 @@ export function PageTree({
                 draggable
                 onDragStart={(event) => handleDragStart(event, node.id)}
                 onDragEnd={handleDragEnd}
+                locale={locale}
               >
                 {renamingId === node.id && (
                   <input
                     autoFocus
                     value={renameValue}
-                    aria-label="Page name"
+                    aria-label={t(locale, "nameLabel")}
                     onChange={(event) => setRenameValue(event.target.value)}
                     onBlur={() => {
                       const value = renameValue;
@@ -1137,12 +1141,12 @@ export function PageTree({
                   />
                 )}
                 <div className="flex items-center opacity-0 u-transform group-hover:opacity-100 focus-within:opacity-100">
-                  <Tooltip label="Add a sub-page">
+                  <Tooltip label={t(locale, "addSubPage")}>
                     <button
                       type="button"
-                      aria-label="Add a sub-page"
+                      aria-label={t(locale, "addSubPage")}
                       onClick={() => addPage(node.id, "PAGE")}
-                      className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
+                      className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
                     >
                       <Plus className="h-3.5 w-3.5" />
                     </button>
@@ -1151,8 +1155,8 @@ export function PageTree({
                     <DropdownMenuTrigger asChild>
                       <button
                         type="button"
-                        aria-label="Page options"
-                        className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
+                        aria-label={t(locale, "pageOptions")}
+                        className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </button>
@@ -1397,7 +1401,7 @@ export function PageTree({
             className="absolute left-0 right-0"
             style={{ top: item.top, height: item.height }}
           >
-            <p className="truncate px-1 pt-1 text-[11px] font-medium text-muted/90">
+            <p className="truncate px-1 pt-1 text-2xs font-medium text-muted/90">
               {item.header.kind === "teamspace" ? `${item.header.icon ?? "👥"} ` : ""}
               {truncateEnd(
                 item.header.kind === "private"
@@ -1423,15 +1427,16 @@ export function PageTree({
   return (
     <>
     <div className="mt-4 flex items-center justify-between px-3">
-      <p className="px-1 text-[11px] font-medium text-muted/90">
+      <p className="px-1 text-2xs font-medium text-muted/90">
         {t(locale, "pages")}
       </p>
-      <Tooltip label="New page">
+      <Tooltip label={t(locale, "newPage")}>
         <button
           type="button"
           disabled={pending}
+          aria-label={t(locale, "newPage")}
           onClick={() => addPage(null, "PAGE")}
-          className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2"
+          className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2"
         >
           <Plus className="h-4 w-4" />
         </button>
@@ -1460,7 +1465,7 @@ export function PageTree({
             if (roots.length === 0) return null;
             return (
               <div key={teamspace.id} className="mt-3">
-                <p className="truncate px-1 pb-1 text-[11px] font-medium text-muted/90">
+                <p className="truncate px-1 pb-1 text-2xs font-medium text-muted/90">
                   {teamspace.icon ?? "👥"}{" "}
                   {truncateEnd(teamspace.name, SECTION_LABEL_MAX)}
                 </p>
@@ -1469,7 +1474,7 @@ export function PageTree({
             );
           })}
           <div className="mt-4">
-            <p className="px-1 pb-1 text-[11px] font-medium text-muted/90">
+            <p className="px-1 pb-1 text-2xs font-medium text-muted/90">
               {t(locale, "privatePages")}
             </p>
             {renderNodes(null, 0, (node) => !node.teamspaceId)}
@@ -1478,7 +1483,7 @@ export function PageTree({
       )}
       {subPages.length > 0 && (
         <div className="mt-4">
-          <p className="px-1 pb-1 text-[11px] font-medium text-muted/90">
+          <p className="px-1 pb-1 text-2xs font-medium text-muted/90">
             Sub-pages
           </p>
           <ul className="space-y-px">
@@ -1508,7 +1513,7 @@ export function PageTree({
       )}
       {recentNodes.length > 0 && (
         <div className="mt-4">
-          <p className="px-1 pb-1 text-[11px] font-medium text-muted/90">
+          <p className="px-1 pb-1 text-2xs font-medium text-muted/90">
             Recent
           </p>
           <ul className="space-y-px">

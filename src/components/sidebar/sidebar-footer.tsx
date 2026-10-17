@@ -78,7 +78,7 @@ export function SidebarFooter({
           <button
             type="button"
             aria-label={t(locale, "help")}
-            className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
+            className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
           >
             <HelpCircle className="h-4 w-4" />
           </button>
@@ -110,8 +110,8 @@ export function SidebarFooter({
         <form action={logoutAction}>
           <button
             type="submit"
-            aria-label="Sign out"
-            className="flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
+            aria-label={t(locale, "signOut")}
+            className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
           >
             <LogOut className="h-4 w-4" />
           </button>

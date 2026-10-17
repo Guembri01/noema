@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Copy, FileText, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { t } from "@/lib/i18n";
 import {
   PromptRenderError,
   clonePrompt,
@@ -83,6 +84,12 @@ const EDITOR_SCOPE_OPTIONS: SelectOption[] = [
 export default function PromptLibraryPage() {
   const params = useParams<{ slug: string }>();
   const slug = typeof params?.slug === "string" ? params.slug : "";
+
+  // This page is a client shell with no server-provided locale yet (its settings
+  // nav is already rendered with the default catalogue), so it resolves copy
+  // through the catalogue with the default locale rather than hard-coding
+  // English literals — a single place to swap once locale plumbing lands.
+  const locale = "en";
 
   const [library, setLibrary] = useState<PromptLibraryState>(() => createPromptLibrary([]));
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -216,7 +223,7 @@ export default function PromptLibraryPage() {
         the editor or the chat composer. Workspace prompts are shared; personal prompts are private.
       </p>
 
-      <SettingsNav slug={slug} locale="en" className="mb-8" />
+      <SettingsNav slug={slug} locale={locale} className="mb-8" />
 
       <div className="grid gap-8 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <Section
@@ -229,8 +236,8 @@ export default function PromptLibraryPage() {
               value={query}
               clearable
               onClear={() => setQuery("")}
-              aria-label="Search prompts"
-              placeholder="Search…"
+              aria-label={t(locale, "searchPrompts")}
+              placeholder={t(locale, "search")}
               leading={<Search className="h-4 w-4" aria-hidden />}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -239,19 +246,19 @@ export default function PromptLibraryPage() {
               <Field id="prompt-tag-filter" label="Tag">
                 <Select
                   id="prompt-tag-filter"
-                  aria-label="Filter by tag"
+                  aria-label={t(locale, "filterByTag")}
                   options={tagOptions}
                   value={tagFilter}
                   onChange={setTagFilter}
                   allowClear
-                  placeholder="All tags"
+                  placeholder={t(locale, "allTags")}
                   noResultsLabel="No tags"
                 />
               </Field>
               <Field id="prompt-scope-filter" label="Scope">
                 <Select
                   id="prompt-scope-filter"
-                  aria-label="Filter by scope"
+                  aria-label={t(locale, "filterByScope")}
                   options={SCOPE_OPTIONS}
                   value={scopeFilter}
                   onChange={(value) => setScopeFilter(value as PromptScope | "all")}
@@ -333,7 +340,7 @@ export default function PromptLibraryPage() {
             <Input
               id="prompt-name"
               value={draft.name}
-              aria-label="Prompt name"
+              aria-label={t(locale, "promptName")}
               onChange={(event) => setDraft({ ...draft, name: event.target.value })}
             />
           </Field>
@@ -343,7 +350,7 @@ export default function PromptLibraryPage() {
               id="prompt-body"
               value={draft.body}
               rows={7}
-              aria-label="Prompt body"
+              aria-label={t(locale, "promptBody")}
               placeholder="Summarize {{transcript}} for {{audience}}."
               onChange={(event) => setDraft({ ...draft, body: event.target.value })}
             />
@@ -353,7 +360,7 @@ export default function PromptLibraryPage() {
             <Field id="prompt-scope" label="Scope">
               <Select
                 id="prompt-scope"
-                aria-label="Prompt scope"
+                aria-label={t(locale, "promptScope")}
                 options={EDITOR_SCOPE_OPTIONS}
                 value={draft.scope}
                 onChange={(value) => setDraft({ ...draft, scope: value as PromptScope })}
@@ -365,8 +372,8 @@ export default function PromptLibraryPage() {
               <Input
                 id="prompt-tags"
                 value={draft.tags}
-                aria-label="Prompt tags"
-                placeholder="meeting, weekly"
+                aria-label={t(locale, "promptTags")}
+                placeholder={t(locale, "promptTagsPlaceholder")}
                 onChange={(event) => setDraft({ ...draft, tags: event.target.value })}
               />
             </Field>
@@ -435,7 +442,7 @@ export default function PromptLibraryPage() {
                   <Input
                     id={`prompt-value-${variable}`}
                     value={values[variable] ?? ""}
-                    aria-label={`Value for ${variable}`}
+                    aria-label={`${t(locale, "valueFor")} ${variable}`}
                     onChange={(event) =>
                       setValues((current) => ({ ...current, [variable]: event.target.value }))
                     }

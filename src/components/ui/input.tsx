@@ -3,6 +3,7 @@
 import * as React from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 /**
  * Input / Textarea / Field — the design-system form primitives.
@@ -110,6 +111,8 @@ export interface InputProps
   clearable?: boolean;
   /** Called after the field is cleared (controlled consumers reset their state). */
   onClear?: () => void;
+  /** Locale for the clear button's accessible name (defaults to English). */
+  locale?: string;
   ref?: React.Ref<HTMLInputElement>;
 }
 
@@ -129,6 +132,7 @@ export function Input({
   trailing,
   clearable = false,
   onClear,
+  locale = "en",
   disabled,
   value,
   defaultValue,
@@ -229,7 +233,7 @@ export function Input({
             <button
               type="button"
               onClick={handleClear}
-              aria-label="Clear"
+              aria-label={t(locale, "clear")}
               className="focus-ring u-colors inline-flex h-5 w-5 items-center justify-center rounded-xs text-muted hover:bg-surface-2 hover:text-fg"
             >
               <X className="h-3.5 w-3.5" />

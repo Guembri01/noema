@@ -53,7 +53,6 @@ function applyMarks(node: PMNode, children: ReactNode, key: string): ReactNode {
           <code
             key={key}
             className={docClasses("inlineCode")}
-            style={{ background: "var(--surface-2)", color: "var(--danger)" }}
           >
             {element}
           </code>

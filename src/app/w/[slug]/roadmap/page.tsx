@@ -172,7 +172,7 @@ export default async function RoadmapPage({
                       {axis.ticks.map((tick) => (
                         <div
                           key={tick.start}
-                          className="absolute top-0 h-full border-l border-border/60 pl-1 text-[10px] text-muted"
+                          className="absolute top-0 h-full border-l border-border/60 pl-1 text-3xs text-muted"
                           style={{ left: `${pctOf(tick.start)}%` }}
                         >
                           {tick.label}
@@ -193,10 +193,10 @@ export default async function RoadmapPage({
                             <div
                               className={
                                 row.overdue
-                                  ? "absolute top-1 h-4 rounded bg-danger/70 px-1.5 text-[10px] leading-4 text-white"
+                                  ? "absolute top-1 h-4 rounded bg-danger/70 px-1.5 text-3xs leading-4 text-white"
                                   : row.width === 0
                                     ? "absolute top-1.5 h-3 w-3 -translate-x-1/2 rotate-45 rounded-sm bg-accent"
-                                    : "absolute top-1 h-4 overflow-hidden rounded bg-accent px-1.5 text-[10px] leading-4 text-accent-fg"
+                                    : "absolute top-1 h-4 overflow-hidden rounded bg-accent px-1.5 text-3xs leading-4 text-accent-fg"
                               }
                               style={
                                 row.width === 0

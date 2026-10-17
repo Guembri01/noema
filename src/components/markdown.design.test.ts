@@ -71,7 +71,7 @@ describe("renderToStaticMarkup — a markdown answer", () => {
     expect(html).toContain("ps-6"); // list
     expect(html).toContain("var(--border-strong)"); // blockquote accent
     expect(html).toContain("var(--surface-2)"); // table header + code
-    expect(html).toContain("var(--danger)"); // inline code ink
+    expect(html).toContain("text-danger"); // inline code ink
     expect(html).toContain("var(--accent)"); // link ink
     expect(html).toContain("print:break-inside-avoid");
   });

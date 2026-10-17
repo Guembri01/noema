@@ -345,6 +345,7 @@ export function WorkspaceSwitcher({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
+            aria-label={workspace.name}
             className={cn(
               "flex min-w-0 items-center gap-2 rounded-sm px-1 py-1 text-fg",
               "u-interactive u-colors focus-ring hover:bg-surface-2",

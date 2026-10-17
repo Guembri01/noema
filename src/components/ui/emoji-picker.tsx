@@ -357,7 +357,7 @@ export function EmojiPicker({
           aria-controls={dialogId}
           data-testid="emoji-picker-trigger"
           onClick={toggle}
-          className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2"
+          className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2"
         >
           <span aria-hidden>🙂</span>
         </button>
@@ -385,9 +385,9 @@ export function EmojiPicker({
             className="mb-2 w-full rounded border border-border bg-bg px-2 py-1 text-xs outline-none"
           />
           {recent.length > 0 && (
-            <div className="mb-2" role="group" aria-label="Frequently used">
-              <div className="mb-1 text-[10px] uppercase tracking-wide text-muted">
-                Frequently used
+            <div className="mb-2" role="group" aria-label={t(locale, "frequentlyUsed")}>
+              <div className="mb-1 text-3xs uppercase tracking-wide text-muted">
+                {t(locale, "frequentlyUsed")}
               </div>
               <div className="flex flex-wrap gap-0.5">
                 {recent.map((emoji) => (
@@ -397,7 +397,7 @@ export function EmojiPicker({
                     aria-label={`${label} ${emoji}`}
                     data-testid={`emoji-recent-${emoji}`}
                     onClick={() => choose(emoji)}
-                    className="grid h-7 w-7 place-items-center rounded text-base hover:bg-surface-2"
+                    className="focus-ring u-interactive grid h-7 w-7 place-items-center rounded text-base hover:bg-surface-2"
                   >
                     {emoji}
                   </button>
@@ -412,7 +412,7 @@ export function EmojiPicker({
                 type="button"
                 aria-label={`${label} ${emoji}`}
                 onClick={() => choose(emoji)}
-                className="grid h-7 w-7 place-items-center rounded text-base hover:bg-surface-2"
+                className="focus-ring u-interactive grid h-7 w-7 place-items-center rounded text-base hover:bg-surface-2"
               >
                 {emoji}
               </button>

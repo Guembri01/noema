@@ -953,7 +953,7 @@ export function TableView({
                       onReorderRows,
                     )
                   }
-                  className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                  className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
                 >
                   <ArrowUp className="h-3.5 w-3.5" />
                 </button>
@@ -972,7 +972,7 @@ export function TableView({
                       onReorderRows,
                     )
                   }
-                  className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                  className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
                 >
                   <ArrowDown className="h-3.5 w-3.5" />
                 </button>
@@ -989,8 +989,9 @@ export function TableView({
             <button
               type="button"
               title={t(locale, "openSidePeek")}
+              aria-label={`${t(locale, "openSidePeek")}: ${row.title}`}
               onClick={() => onOpenPeek(row)}
-              className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
+              className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
             >
               <ArrowUpRight className="h-3.5 w-3.5" />
             </button>
@@ -998,8 +999,9 @@ export function TableView({
               <button
                 type="button"
                 title={t(locale, "saveAsTemplate")}
+                aria-label={`${t(locale, "saveAsTemplate")}: ${row.title}`}
                 onClick={() => onSaveTemplate(row)}
-                className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
+                className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
               >
                 <LayoutTemplate className="h-3.5 w-3.5" />
               </button>
@@ -1008,8 +1010,9 @@ export function TableView({
               <button
                 type="button"
                 title={t(locale, "deleteRow")}
+                aria-label={`${t(locale, "deleteRow")}: ${row.title}`}
                 onClick={() => removeRow(row.id)}
-                className="flex h-6 w-6 items-center justify-center rounded text-muted hover:text-danger"
+                className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:text-danger"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
@@ -1189,6 +1192,7 @@ export function TableView({
                         type="button"
                         data-testid="table-add-row"
                         onClick={onAddRow}
+                        aria-label={t(locale, "newRow")}
                         className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
                       >
                         <Plus className="h-3.5 w-3.5" />
@@ -1327,7 +1331,7 @@ export function ListView({
             aria-pressed={density === option.value}
             onClick={() => setDensity(option.value)}
             className={cn(
-              "rounded px-2 py-0.5 text-xs",
+              "focus-ring u-interactive rounded px-2 py-0.5 text-xs",
               density === option.value
                 ? "bg-surface-2 text-fg"
                 : "text-muted hover:bg-surface-2",
@@ -1435,7 +1439,7 @@ export function ListView({
                         onReorderRows,
                       )
                     }
-                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                    className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
                   >
                     <ArrowUp className="h-3.5 w-3.5" />
                   </button>
@@ -1454,7 +1458,7 @@ export function ListView({
                         onReorderRows,
                       )
                     }
-                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                    className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
                   >
                     <ArrowDown className="h-3.5 w-3.5" />
                   </button>
@@ -1464,20 +1468,20 @@ export function ListView({
                 <span className="flex items-center gap-0.5 pr-2">
                   <button
                     type="button"
-                    title="Outdent"
-                    aria-label={`Outdent: ${row.title}`}
+                    title={t(locale, "outdentWord")}
+                    aria-label={`${t(locale, "outdentWord")}: ${row.title}`}
                     disabled={level === 0}
                     onClick={() => onLevelChange(row.id, nextOutlineLevel(outline, row.id, "out"))}
-                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                    className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
                   >
                     <ArrowLeft className="h-3.5 w-3.5" />
                   </button>
                   <button
                     type="button"
-                    title="Indent"
-                    aria-label={`Indent: ${row.title}`}
+                    title={t(locale, "indentWord")}
+                    aria-label={`${t(locale, "indentWord")}: ${row.title}`}
                     onClick={() => onLevelChange(row.id, nextOutlineLevel(outline, row.id, "in"))}
-                    className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                    className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
                   >
                     <ArrowRight className="h-3.5 w-3.5" />
                   </button>
@@ -1499,6 +1503,7 @@ export function ListView({
                   type="button"
                   data-testid="list-add-row"
                   onClick={onAddRow}
+                  aria-label={t(locale, "newRow")}
                   className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
                 >
                   <Plus className="h-3.5 w-3.5" />
@@ -1756,6 +1761,7 @@ export function BoardView({
             type="button"
             data-testid="board-add-row"
             onClick={onAddRow}
+            aria-label={t(locale, "newRow")}
             className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -1993,7 +1999,7 @@ export function BoardView({
               data-wip-status={wip.status}
               title={`${wip.count}/${wip.limit}`}
               className={cn(
-                "rounded-sm px-1 py-0.5 text-[10px] font-medium tabular-nums",
+                "rounded-sm px-1 py-0.5 text-3xs font-medium tabular-nums",
                 WIP_STYLES[wip.status],
               )}
             >
@@ -2004,7 +2010,7 @@ export function BoardView({
         {summaryProperty && summary.length > 0 && (
           <p
             data-testid={`board-aggregation-${column.key}`}
-            className="mb-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted"
+            className="mb-2 flex flex-wrap gap-x-3 gap-y-0.5 text-2xs text-muted"
           >
             <span className="font-medium">{summaryProperty.name}</span>
             {summary.map((entry) => (
@@ -2274,6 +2280,7 @@ export function GalleryView({
             type="button"
             data-testid="gallery-add-row"
             onClick={onAddRow}
+            aria-label={t(locale, "newRow")}
             className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -2578,7 +2585,8 @@ export function FormView({
             setAnswers(defaultAnswers(schema));
             setSubmitted(false);
           }}
-          className="rounded bg-accent px-4 py-1.5 text-sm text-accent-fg hover:opacity-90"
+          aria-label={t(locale, "add")}
+          className="focus-ring u-interactive rounded bg-accent px-4 py-1.5 text-sm text-accent-fg hover:opacity-90"
         >
           {t(locale, "add")}
         </button>
@@ -2641,7 +2649,8 @@ export function FormView({
         <button
           type="submit"
           data-testid="form-submit"
-          className="rounded bg-accent px-4 py-1.5 text-sm text-accent-fg hover:opacity-90"
+          aria-label={meta.submitLabel}
+          className="focus-ring u-interactive rounded bg-accent px-4 py-1.5 text-sm text-accent-fg hover:opacity-90"
         >
           {meta.submitLabel}
         </button>

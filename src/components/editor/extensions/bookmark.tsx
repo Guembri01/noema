@@ -38,6 +38,7 @@ import {
   type GithubRef,
   type SlackRef,
 } from "@/lib/integration-links";
+import { t } from "@/lib/i18n";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -62,11 +63,15 @@ declare module "@tiptap/core" {
 
 /* ---------------------------------------------------------------- bookmark */
 
-export const Bookmark = Node.create({
+export const Bookmark = Node.create<{ locale: string }>({
   name: "bookmark",
   group: "block",
   atom: true,
   draggable: true,
+
+  addOptions() {
+    return { locale: "en" };
+  },
 
   addAttributes() {
     return {
@@ -98,7 +103,10 @@ export const Bookmark = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(BookmarkView);
+    const locale = this.options.locale;
+    return ReactNodeViewRenderer((props: NodeViewProps) => (
+      <BookmarkView {...props} locale={locale} />
+    ));
   },
 });
 
@@ -323,6 +331,8 @@ export type BookmarkCardSurfaceProps = {
   embedUrl?: string | null;
   /** Message for the `error` state, rendered as inline danger ink. */
   error?: string | null;
+  /** Locale for the card's accessible labels (icon-only action buttons). */
+  locale?: string;
   onEdit?: () => void;
   onRemove?: () => void;
 };
@@ -345,6 +355,7 @@ export function BookmarkCardSurface({
   host = null,
   embedUrl = null,
   error = null,
+  locale = "en",
   onEdit,
   onRemove,
 }: BookmarkCardSurfaceProps) {
@@ -407,10 +418,10 @@ export function BookmarkCardSurface({
         />
       ) : null}
       <div className="noema-bookmark-actions">
-        <button type="button" aria-label="Edit link" onClick={onEdit}>
+        <button type="button" aria-label={t(locale, "editLink")} onClick={onEdit}>
           <Pencil className="h-3.5 w-3.5" />
         </button>
-        <button type="button" aria-label="Remove" onClick={onRemove}>
+        <button type="button" aria-label={t(locale, "remove")} onClick={onRemove}>
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -418,7 +429,7 @@ export function BookmarkCardSurface({
   );
 }
 
-function BookmarkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
+function BookmarkView({ node, updateAttributes, deleteNode, locale }: NodeViewProps & { locale: string }) {
   const url = node.attrs.url as string | null;
   const [editing, setEditing] = useState(!url);
   const [value, setValue] = useState(url ?? "");
@@ -474,15 +485,15 @@ function BookmarkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
                 }
                 if (e.key === "Escape") setEditing(false);
               }}
-              placeholder="Paste a link…"
+              placeholder={t(locale, "linkPastePlaceholder")}
               aria-invalid={error ? true : undefined}
               className="noema-bookmark-field"
             />
-            <button type="button" className="noema-bookmark-btn" disabled={loading} onClick={() => void submit()}>
+            <button type="button" className="noema-bookmark-btn focus-ring u-interactive" disabled={loading} onClick={() => void submit()}>
               {loading ? "Loading…" : "Add"}
             </button>
             {url && (
-              <button type="button" className="noema-bookmark-btn" onClick={() => setEditing(false)}>
+              <button type="button" className="noema-bookmark-btn focus-ring u-interactive" onClick={() => setEditing(false)}>
                 Cancel
               </button>
             )}
@@ -500,6 +511,7 @@ function BookmarkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
           icon={node.attrs.icon as string | null}
           host={host}
           embedUrl={embedUrl}
+          locale={locale}
           onEdit={() => setEditing(true)}
           onRemove={() => deleteNode()}
         />
@@ -571,11 +583,15 @@ function SandboxedFrame({
 
 /* ------------------------------------------------------------------- embed */
 
-export const Embed = Node.create({
+export const Embed = Node.create<{ locale: string }>({
   name: "embed",
   group: "block",
   atom: true,
   draggable: true,
+
+  addOptions() {
+    return { locale: "en" };
+  },
 
   addAttributes() {
     return {
@@ -602,11 +618,14 @@ export const Embed = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(EmbedView);
+    const locale = this.options.locale;
+    return ReactNodeViewRenderer((props: NodeViewProps) => (
+      <EmbedView {...props} locale={locale} />
+    ));
   },
 });
 
-function EmbedView({ node, updateAttributes, deleteNode }: NodeViewProps) {
+function EmbedView({ node, updateAttributes, deleteNode, locale }: NodeViewProps & { locale: string }) {
   const url = node.attrs.url as string | null;
   const [value, setValue] = useState(url ?? "");
   // Resolve through the provider registry on every render - the node's
@@ -634,7 +653,7 @@ function EmbedView({ node, updateAttributes, deleteNode }: NodeViewProps) {
                 setEditing(false);
               }
             }}
-            placeholder="Paste a YouTube, Vimeo, Loom, Figma… URL"
+            placeholder={t(locale, "embedPlaceholder")}
             className="noema-embed-field"
           />
           <p className="noema-embed-hint">
@@ -655,10 +674,10 @@ function EmbedView({ node, updateAttributes, deleteNode }: NodeViewProps) {
             <span className="noema-embed-provider bg-surface-2 text-muted">{meta.label}</span>
           )}
           <div className="noema-embed-actions">
-            <button type="button" aria-label="Change embed" onClick={() => setEditing(true)}>
+            <button type="button" aria-label={t(locale, "changeEmbed")} onClick={() => setEditing(true)}>
               <Pencil className="h-3.5 w-3.5" />
             </button>
-            <button type="button" aria-label="Remove" onClick={() => deleteNode()}>
+            <button type="button" aria-label={t(locale, "remove")} onClick={() => deleteNode()}>
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -675,11 +694,15 @@ function EmbedView({ node, updateAttributes, deleteNode }: NodeViewProps) {
  * only an `http(s)` address reaches the frame and the frame itself is fully
  * scheme-gated by {@link SandboxedFrame}; anything else stays in the input.
  */
-export const PdfPreview = Node.create({
+export const PdfPreview = Node.create<{ locale: string }>({
   name: "pdfPreview",
   group: "block",
   atom: true,
   draggable: true,
+
+  addOptions() {
+    return { locale: "en" };
+  },
 
   addAttributes() {
     return {
@@ -706,11 +729,14 @@ export const PdfPreview = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(PdfPreviewView);
+    const locale = this.options.locale;
+    return ReactNodeViewRenderer((props: NodeViewProps) => (
+      <PdfPreviewView {...props} locale={locale} />
+    ));
   },
 });
 
-function PdfPreviewView({ node, updateAttributes, deleteNode }: NodeViewProps) {
+function PdfPreviewView({ node, updateAttributes, deleteNode, locale }: NodeViewProps & { locale: string }) {
   const url = node.attrs.url as string | null;
   const safeUrl = url && isHttpUrl(url) ? url : null;
   const host = safeUrl ? hostOf(safeUrl) : "";
@@ -747,15 +773,15 @@ function PdfPreviewView({ node, updateAttributes, deleteNode }: NodeViewProps) {
               }
               if (e.key === "Escape") setEditing(false);
             }}
-            placeholder="Paste a PDF URL…"
+            placeholder={t(locale, "pdfUrlPlaceholder")}
             aria-invalid={error ? true : undefined}
             className="noema-embed-field"
           />
-          <button type="button" className="noema-bookmark-btn" onClick={submit}>
+          <button type="button" className="noema-bookmark-btn focus-ring u-interactive" onClick={submit}>
             Add
           </button>
           {safeUrl && (
-            <button type="button" className="noema-bookmark-btn" onClick={() => setEditing(false)}>
+            <button type="button" className="noema-bookmark-btn focus-ring u-interactive" onClick={() => setEditing(false)}>
               Cancel
             </button>
           )}
@@ -771,13 +797,13 @@ function PdfPreviewView({ node, updateAttributes, deleteNode }: NodeViewProps) {
             <span className="noema-pdf-title">
               {String(node.attrs.title ?? host ?? safeUrl)}
             </span>
-            <a href={safeUrl} target="_blank" rel="noreferrer noopener" aria-label="Open PDF">
+            <a href={safeUrl} target="_blank" rel="noreferrer noopener" aria-label={t(locale, "openPdf")}>
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
-            <button type="button" aria-label="Change PDF" onClick={() => setEditing(true)}>
+            <button type="button" aria-label={t(locale, "changePdf")} onClick={() => setEditing(true)}>
               <Pencil className="h-3.5 w-3.5" />
             </button>
-            <button type="button" aria-label="Remove" onClick={() => deleteNode()}>
+            <button type="button" aria-label={t(locale, "remove")} onClick={() => deleteNode()}>
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -802,11 +828,15 @@ function PdfPreviewView({ node, updateAttributes, deleteNode }: NodeViewProps) {
  * ever comes from `mapEmbedUrl` (never `mapLinkUrl`, which is link-only) and is
  * sandboxed by {@link SandboxedFrame}. An external link uses `mapLinkUrl`.
  */
-export const MapBlock = Node.create({
+export const MapBlock = Node.create<{ locale: string }>({
   name: "mapBlock",
   group: "block",
   atom: true,
   draggable: true,
+
+  addOptions() {
+    return { locale: "en" };
+  },
 
   addAttributes() {
     return {
@@ -836,11 +866,14 @@ export const MapBlock = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(MapBlockView);
+    const locale = this.options.locale;
+    return ReactNodeViewRenderer((props: NodeViewProps) => (
+      <MapBlockView {...props} locale={locale} />
+    ));
   },
 });
 
-function MapBlockView({ node, updateAttributes, deleteNode }: NodeViewProps) {
+function MapBlockView({ node, updateAttributes, deleteNode, locale }: NodeViewProps & { locale: string }) {
   const provider: MapProvider = node.attrs.provider === "google" ? "google" : "osm";
   const storedZoom = typeof node.attrs.zoom === "number" ? node.attrs.zoom : DEFAULT_ZOOM;
   const label =
@@ -898,7 +931,7 @@ function MapBlockView({ node, updateAttributes, deleteNode }: NodeViewProps) {
               setLat(e.target.value);
               if (error) setError(null);
             }}
-            placeholder="Latitude"
+            placeholder={t(locale, "latitude")}
             inputMode="decimal"
             className="noema-embed-field"
           />
@@ -908,7 +941,7 @@ function MapBlockView({ node, updateAttributes, deleteNode }: NodeViewProps) {
               setLng(e.target.value);
               if (error) setError(null);
             }}
-            placeholder="Longitude"
+            placeholder={t(locale, "longitude")}
             inputMode="decimal"
             className="noema-embed-field"
           />
@@ -918,7 +951,7 @@ function MapBlockView({ node, updateAttributes, deleteNode }: NodeViewProps) {
               setZoom(e.target.value);
               if (error) setError(null);
             }}
-            placeholder="Zoom"
+            placeholder={t(locale, "zoom")}
             inputMode="numeric"
             className="noema-embed-field"
           />
@@ -932,11 +965,11 @@ function MapBlockView({ node, updateAttributes, deleteNode }: NodeViewProps) {
             <option value="osm">OpenStreetMap</option>
             <option value="google">Google Maps</option>
           </select>
-          <button type="button" className="noema-bookmark-btn" onClick={submit}>
+          <button type="button" className="noema-bookmark-btn focus-ring u-interactive" onClick={submit}>
             Save
           </button>
           {embedUrl && (
-            <button type="button" className="noema-bookmark-btn" onClick={() => setEditing(false)}>
+            <button type="button" className="noema-bookmark-btn focus-ring u-interactive" onClick={() => setEditing(false)}>
               Cancel
             </button>
           )}
@@ -952,14 +985,14 @@ function MapBlockView({ node, updateAttributes, deleteNode }: NodeViewProps) {
             <MapPin className="h-3.5 w-3.5" />
             {label ? <span className="noema-map-title">{label}</span> : null}
             {linkUrl && (
-              <a href={linkUrl} target="_blank" rel="noreferrer noopener" aria-label="Open map">
+              <a href={linkUrl} target="_blank" rel="noreferrer noopener" aria-label={t(locale, "openMap")}>
                 <ExternalLink className="h-3.5 w-3.5" />
               </a>
             )}
-            <button type="button" aria-label="Change location" onClick={() => setEditing(true)}>
+            <button type="button" aria-label={t(locale, "changeLocation")} onClick={() => setEditing(true)}>
               <Pencil className="h-3.5 w-3.5" />
             </button>
-            <button type="button" aria-label="Remove" onClick={() => deleteNode()}>
+            <button type="button" aria-label={t(locale, "remove")} onClick={() => deleteNode()}>
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           </div>

@@ -652,7 +652,7 @@ export function TimelineView({
   const board = (
     <div className="relative" style={{ width: `${timelineZoomWidthPct(zoom)}%` }}>
       <div
-        className="relative h-5 border-b border-border-strong text-[10px] text-muted"
+        className="relative h-5 border-b border-border-strong text-3xs text-muted"
         data-testid="timeline-axis"
         aria-hidden="true"
       >
@@ -1015,6 +1015,7 @@ function LineChart({
             >
               <button
                 type="button"
+                aria-label={chartTooltipLabel(categories[index], values[index] ?? null)}
                 className={cn(
                   "focus-ring absolute h-2 w-2 rounded-full before:absolute before:-inset-1.5 before:content-['']",
                   motion.className,
@@ -1030,7 +1031,7 @@ function LineChart({
           );
         })}
       </div>
-      <div className="mt-1 flex text-[10px] text-muted">
+      <div className="mt-1 flex text-3xs text-muted">
         {categories.map((label, index) => (
           <span
             key={`${label}-${index}`}
@@ -1215,6 +1216,7 @@ export function CalendarView({
         <button
           type="button"
           onClick={goToday}
+          aria-label={t(locale, "todayWord")}
           className="focus-ring u-colors text-xs text-muted hover:text-fg"
         >
           {t(locale, "todayWord")}
@@ -1237,6 +1239,7 @@ export function CalendarView({
               <button
                 type="button"
                 onClick={goToday}
+                aria-label={t(locale, "todayWord")}
                 className="focus-ring u-interactive rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
               >
                 {t(locale, "todayWord")}
@@ -1327,7 +1330,7 @@ export function CalendarView({
                 <Link
                   href={`/w/${workspaceSlug}/${placement.event.id}`}
                   className={cn(
-                    "focus-ring u-colors absolute flex h-4 items-center truncate border px-1.5 text-[11px] hover:opacity-90",
+                    "focus-ring u-colors absolute flex h-4 items-center truncate border px-1.5 text-2xs hover:opacity-90",
                     placement.continuesBefore ? "rounded-l-none" : "rounded-l-sm",
                     placement.continuesAfter ? "rounded-r-none" : "rounded-r-sm",
                   )}
@@ -1343,7 +1346,7 @@ export function CalendarView({
               </Tooltip>
             ))}
             {week.hiddenCount > 0 && (
-              <span className="absolute bottom-0.5 right-1 text-[10px] text-muted">
+              <span className="absolute bottom-0.5 right-1 text-3xs text-muted">
                 +{week.hiddenCount}
               </span>
             )}

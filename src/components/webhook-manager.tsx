@@ -240,7 +240,7 @@ export function WebhookManager({
           aria-label={t(locale, "webhookUrlLabel")}
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://example.com/hooks/noema"
+          placeholder={t(locale, "webhookUrlPlaceholder")}
           className="h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
         />
         <input
@@ -260,7 +260,7 @@ export function WebhookManager({
                 onChange={() => toggleEvent(option.pattern)}
               />
               {option.pattern}
-              <code className="rounded bg-surface px-1 font-mono text-[10px] text-muted">
+              <code className="rounded bg-surface px-1 font-mono text-3xs text-muted">
                 {option.matchCount}
               </code>
             </label>
@@ -274,7 +274,7 @@ export function WebhookManager({
                 onChange={() => toggleEvent(event.type)}
               />
               {event.label}
-              <code className="rounded bg-surface px-1 font-mono text-[10px] text-muted">
+              <code className="rounded bg-surface px-1 font-mono text-3xs text-muted">
                 {event.requiredFields.join(", ")}
               </code>
             </label>
@@ -287,7 +287,8 @@ export function WebhookManager({
           type="button"
           disabled={pending || !url.trim() || !secret.trim()}
           onClick={create}
-          className="flex h-9 items-center gap-1 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
+          aria-label={t(locale, "addWebhook")}
+          className="focus-ring u-interactive flex h-9 items-center gap-1 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-50"
         >
           <Plus className="h-4 w-4" /> {t(locale, "addWebhook")}
         </button>
@@ -309,10 +310,10 @@ export function WebhookManager({
                   <span
                     title={
                       health.attemptable
-                        ? "Delivery circuit closed"
-                        : "Delivery circuit open"
+                        ? t(locale, "deliveryCircuitClosed")
+                        : t(locale, "deliveryCircuitOpen")
                     }
-                    className={`rounded px-1 text-[10px] font-medium ${
+                    className={`rounded px-1 text-3xs font-medium ${
                       health.attemptable
                         ? "bg-success-soft text-success"
                         : "bg-danger-soft text-danger"
@@ -322,7 +323,7 @@ export function WebhookManager({
                   </span>
                 )}
                 {webhook.hasSecret && (
-                  <span className="rounded bg-surface px-1 text-[10px] text-muted">{t(locale, "signedBadge")}</span>
+                  <span className="rounded bg-surface px-1 text-3xs text-muted">{t(locale, "signedBadge")}</span>
                 )}
                 <button
                   type="button"
@@ -338,7 +339,7 @@ export function WebhookManager({
                       }
                     })
                   }
-                  className="text-muted hover:text-danger"
+                  className="focus-ring u-interactive text-muted hover:text-danger"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>

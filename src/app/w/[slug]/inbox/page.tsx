@@ -152,12 +152,12 @@ export default async function InboxPage({
           {LABELS[notification.type] ?? notification.type}
         </span>
         {isInDigest(notification, prefs) && (
-          <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">
+          <span className="rounded bg-surface-2 px-1.5 py-0.5 text-3xs uppercase tracking-wide text-muted">
             digest
           </span>
         )}
         {href && (
-          <Link href={href} className="text-accent hover:underline">
+          <Link href={href} className="focus-ring rounded-sm text-accent hover:underline">
             {t(locale, "open")}
           </Link>
         )}
@@ -165,7 +165,8 @@ export default async function InboxPage({
           <form action={markNotificationRead.bind(null, notification.id)}>
             <button
               type="submit"
-              className="rounded px-2 py-0.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
+              aria-label={t(locale, "markRead")}
+              className="focus-ring u-interactive rounded px-2 py-0.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
             >
               {t(locale, "markRead")}
             </button>
@@ -198,7 +199,11 @@ export default async function InboxPage({
           </h1>
           {canMarkAllRead && (
             <form action={markAllNotificationsRead}>
-              <button type="submit" className="text-sm text-muted hover:text-fg">
+              <button
+                type="submit"
+                aria-label={t(locale, "markAllRead")}
+                className="focus-ring u-interactive text-sm text-muted hover:text-fg"
+              >
                 {t(locale, "markAllRead")}
               </button>
             </form>
@@ -222,7 +227,7 @@ export default async function InboxPage({
               <h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted">
                 {BUCKET_LABELS[bucket.bucket]}
                 {bucket.unread > 0 && (
-                  <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-muted">
+                  <span className="rounded-full bg-surface-2 px-2 py-0.5 text-3xs text-muted">
                     {bucket.unread}
                   </span>
                 )}

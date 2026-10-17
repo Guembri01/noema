@@ -76,7 +76,7 @@ function MentionLabel({ text, query }: { text: string; query: string }) {
 /** Small pages/members section header inside the popover. */
 function SectionHeading({ label }: { label: string }) {
   return (
-    <p className="px-2 pt-1 pb-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+    <p className="px-2 pt-1 pb-0.5 text-3xs font-medium uppercase tracking-wide text-muted">
       {label}
     </p>
   );

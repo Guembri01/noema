@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { t } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 
 export default async function Home() {
@@ -18,6 +19,11 @@ export default async function Home() {
     redirect(users === 0 ? "/signup" : "/login");
   }
 
+  // The landing page only renders for anonymous visitors (a signed-in user is
+  // redirected above), so there is no account locale to resolve; the nav
+  // landmark label still goes through the catalogue with the default locale.
+  const locale = "en";
+
   const features = [
     ["Block editor", "Headings, lists, to-dos, quotes, code and more."],
     ["Databases", "Table, board and list views with typed properties."],
@@ -31,7 +37,7 @@ export default async function Home() {
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col px-6">
       <header className="flex items-center justify-between py-6">
         <span className="text-lg font-semibold tracking-tight">Noema</span>
-        <nav aria-label="Primary" className="flex items-center gap-2">
+        <nav aria-label={t(locale, "primaryNav")} className="flex items-center gap-2">
           <Link href="/login">
             <Button variant="ghost" size="sm">
               Sign in

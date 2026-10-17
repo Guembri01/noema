@@ -394,7 +394,7 @@ function ImageView({
           </span>
           <button
             type="button"
-            className="noema-image-alt-toggle"
+            className="noema-image-alt-toggle focus-ring u-interactive"
             aria-expanded={altOpen}
             onClick={() => setAltOpen((open) => !open)}
           >

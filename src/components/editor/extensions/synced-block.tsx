@@ -406,7 +406,7 @@ function SyncedBlockView({
         <button
           type="button"
           aria-label={t(locale, "remove")}
-          className="noema-synced-detach"
+          className="noema-synced-detach focus-ring u-interactive"
           onClick={detach}
         >
           <Trash2 className="h-3.5 w-3.5" />

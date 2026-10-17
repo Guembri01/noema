@@ -293,7 +293,7 @@ export function FavoritesList({ workspace, favorites, locale }: FavoritesListPro
       className="mt-3 px-3"
     >
       <div className="flex items-center gap-1 px-1 pb-1">
-        <p className="flex-1 text-[11px] font-medium text-muted/90">
+        <p className="flex-1 text-2xs font-medium text-muted/90">
           {t(locale, "favorites")}
         </p>
         {items.length > 0 && (
@@ -380,7 +380,7 @@ export function RecentList({ workspace, recents, locale }: RecentListProps) {
   return (
     <section aria-label={t(locale, "recent")} data-testid="recents-section" className="mt-3 px-3">
       <div className="flex items-center gap-1 px-1 pb-1">
-        <p className="flex-1 text-[11px] font-medium text-muted/90">
+        <p className="flex-1 text-2xs font-medium text-muted/90">
           {t(locale, "recent")}
         </p>
         {rows.length > 0 && <Badge size="sm" count={rows.length} data-testid="recents-count" />}

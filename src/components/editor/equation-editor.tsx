@@ -304,7 +304,7 @@ export function EquationDialogSurface({
                   value={symbolQuery}
                   onChange={(event) => onSymbolQueryChange(event.target.value)}
                   aria-label={t(locale, "search")}
-                  placeholder="Search symbols…"
+                  placeholder={t(locale, "searchSymbols")}
                   className="focus-ring h-8 w-full rounded-sm border border-border bg-bg px-2 text-xs text-fg"
                 />
               </div>
@@ -353,6 +353,7 @@ export function EquationDialogSurface({
           <button
             type="button"
             onClick={onClose}
+            aria-label={t(locale, "cancel")}
             className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm text-muted hover:bg-surface-2"
           >
             {t(locale, "cancel")}
@@ -361,6 +362,7 @@ export function EquationDialogSurface({
             type="button"
             onClick={onCommit}
             disabled={!latex.trim()}
+            aria-label={t(locale, "apply")}
             className="focus-ring u-colors h-9 rounded-sm bg-accent px-3 text-sm font-medium text-accent-fg hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t(locale, "apply")}

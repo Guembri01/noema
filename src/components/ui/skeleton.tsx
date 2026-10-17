@@ -162,7 +162,7 @@ export function Skeleton({
         >
           <div className="flex items-center gap-3">
             <Bar className="size-8 rounded-full" />
-            <Bar className="h-3" style={{ width: "45%" }} />
+            <Bar className="h-3 w-[45%]" />
           </div>
           <div className="mt-4">
             {skeletonLineWidths(3).map((lineWidth, index) => (
@@ -215,6 +215,7 @@ export function Skeleton({
             >
               {cells.map((cellWidth, colIndex) => (
                 <div key={colIndex} className="min-w-0 flex-1">
+                  {/* Data-derived cell width (`skeletonTableRows`) — kept inline. */}
                   <Bar className="h-3" style={{ width: cellWidth }} />
                 </div>
               ))}
@@ -233,6 +234,8 @@ export function Skeleton({
           style={style}
           {...rest}
         >
+          {/* Widths are the data-derived percentages `skeletonLineWidths` returns
+              (100% / 60%) — not static design values, so they stay inline. */}
           {skeletonLineWidths(lines ?? 1).map((lineWidth, index) => (
             <div key={index} className="flex h-5 items-center">
               <Bar className="h-3" style={{ width: lineWidth }} />

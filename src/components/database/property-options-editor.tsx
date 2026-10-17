@@ -793,7 +793,7 @@ export function PropertyOptionsEditor({
             <span className="w-24 shrink-0">Prefix</span>
             <Input
               data-testid="unique-id-prefix"
-              aria-label="Unique ID prefix"
+              aria-label={t(locale, "uniqueIdPrefixAria")}
               value={prefix}
               onChange={(event) => {
                 setPrefix(event.target.value);
@@ -812,7 +812,7 @@ export function PropertyOptionsEditor({
             <Stepper
               value={zeroPadValue}
               min={1}
-              aria-label="Unique ID zero-pad width"
+              aria-label={t(locale, "uniqueIdZeroPadAria")}
               className="w-28"
               onValueChange={(next) => {
                 setZeroPadText(String(next));
@@ -825,7 +825,7 @@ export function PropertyOptionsEditor({
             <Stepper
               value={startAtValue}
               min={1}
-              aria-label="Unique ID start number"
+              aria-label={t(locale, "uniqueIdStartAtAria")}
               className="w-28"
               onValueChange={(next) => {
                 setStartAtText(String(next));
@@ -837,7 +837,7 @@ export function PropertyOptionsEditor({
             <span className="w-24 shrink-0">Separator</span>
             <Input
               data-testid="unique-id-separator"
-              aria-label="Unique ID separator"
+              aria-label={t(locale, "uniqueIdSeparatorAria")}
               value={separator}
               onChange={(event) => {
                 setSeparator(event.target.value);
@@ -862,7 +862,7 @@ export function PropertyOptionsEditor({
             <span className="w-24 shrink-0">Latitude</span>
             <Input
               data-testid="place-lat"
-              aria-label="Default latitude"
+              aria-label={t(locale, "placeLatitudeAria")}
               value={latText}
               onChange={(event) => {
                 setLatText(event.target.value);
@@ -875,7 +875,7 @@ export function PropertyOptionsEditor({
             <span className="w-24 shrink-0">Longitude</span>
             <Input
               data-testid="place-lng"
-              aria-label="Default longitude"
+              aria-label={t(locale, "placeLongitudeAria")}
               value={lngText}
               onChange={(event) => {
                 setLngText(event.target.value);
@@ -890,7 +890,7 @@ export function PropertyOptionsEditor({
               value={Number.isFinite(Number(zoomText)) ? Number(zoomText) : MIN_ZOOM}
               min={MIN_ZOOM}
               max={MAX_ZOOM}
-              aria-label="Default zoom"
+              aria-label={t(locale, "placeZoomAria")}
               className="w-28"
               onValueChange={(next) => {
                 setZoomText(String(next));
@@ -902,8 +902,8 @@ export function PropertyOptionsEditor({
             <span className="w-24 shrink-0">Label</span>
             <Input
               data-testid="place-label"
-              aria-label="Default place label"
-              placeholder="e.g. HQ"
+              aria-label={t(locale, "placeLabelAria")}
+              placeholder={t(locale, "placeLabelPlaceholder")}
               value={labelText}
               onChange={(event) => {
                 setLabelText(event.target.value);
@@ -932,8 +932,8 @@ export function PropertyOptionsEditor({
           <div data-testid="date-allow-range">
             <Switch
               checked={allowRange}
-              label="Allow an end date (range)"
-              aria-label="Allow an end date (range)"
+              label={t(locale, "dateAllowRange")}
+              aria-label={t(locale, "dateAllowRange")}
               onCheckedChange={(next) => {
                 setAllowRange(next);
                 commitDate({ allowRange: next });
@@ -943,8 +943,8 @@ export function PropertyOptionsEditor({
           <div data-testid="date-allday">
             <Switch
               checked={allDay}
-              label="All-day by default"
-              aria-label="All-day by default"
+              label={t(locale, "dateAllDay")}
+              aria-label={t(locale, "dateAllDay")}
               onCheckedChange={(next) => {
                 setAllDay(next);
                 commitDate({ allDay: next });
@@ -955,8 +955,8 @@ export function PropertyOptionsEditor({
             <span className="w-24 shrink-0">Time zone</span>
             <Input
               data-testid="date-time-zone"
-              aria-label="Default time zone"
-              placeholder="e.g. Europe/Paris"
+              aria-label={t(locale, "dateTimeZoneAria")}
+              placeholder={t(locale, "dateTimeZonePlaceholder")}
               value={timeZoneText}
               onChange={(event) => {
                 setTimeZoneText(event.target.value);
@@ -1001,7 +1001,7 @@ export function PropertyOptionsEditor({
                   options={REMINDER_UNITS.map((unit) => ({ value: unit, label: unit }))}
                   value={reminder.unit}
                   allowClear={false}
-                  aria-label="Reminder unit"
+                  aria-label={t(locale, "reminderUnitAria")}
                   className="w-24"
                   onChange={(value) => {
                     const unit = REMINDER_UNITS.find((candidate) => candidate === value);
@@ -1016,7 +1016,7 @@ export function PropertyOptionsEditor({
                   }))}
                   value={reminder.direction}
                   allowClear={false}
-                  aria-label="Reminder direction"
+                  aria-label={t(locale, "reminderDirectionAria")}
                   className="w-24"
                   onChange={(value) => {
                     const direction = REMINDER_DIRECTIONS.find(
@@ -1073,7 +1073,7 @@ export function PropertyOptionsEditor({
               <Select
                 size="sm"
                 allowClear={false}
-                aria-label="Number format style"
+                aria-label={t(locale, "numberStyleAria")}
                 value={numberFormat.style}
                 options={[
                   { value: "decimal", label: "Number" },
@@ -1091,11 +1091,11 @@ export function PropertyOptionsEditor({
               <Select
                 size="sm"
                 allowClear={false}
-                aria-label="Number format decimals"
+                aria-label={t(locale, "numberDecimalsAria")}
                 value={
                   numberFormat.decimals === undefined ? "" : String(numberFormat.decimals)
                 }
-                placeholder="Default"
+                placeholder={t(locale, "colorDefault")}
                 options={[
                   { value: "", label: "Default" },
                   ...NUMBER_DECIMAL_CHOICES.map((value) => ({
@@ -1119,7 +1119,7 @@ export function PropertyOptionsEditor({
                   size="sm"
                   searchable
                   allowClear={false}
-                  aria-label="Currency"
+                  aria-label={t(locale, "currencyAria")}
                   value={numberFormat.currency ?? "USD"}
                   options={CURRENCIES.map((currency) => ({
                     value: currency.code,
@@ -1151,7 +1151,7 @@ export function PropertyOptionsEditor({
             <span className="w-24 shrink-0">Label</span>
             <Input
               data-testid="button-label"
-              aria-label="Button label"
+              aria-label={t(locale, "buttonLabelAria")}
               value={buttonDraft.label}
               onChange={(event) => commitButton({ label: event.target.value })}
               className="flex-1"
@@ -1161,8 +1161,8 @@ export function PropertyOptionsEditor({
             <span className="w-24 shrink-0">Icon</span>
             <Input
               data-testid="button-icon"
-              aria-label="Button icon"
-              placeholder="e.g. 🔗"
+              aria-label={t(locale, "buttonIconAria")}
+              placeholder={t(locale, "buttonIconPlaceholder")}
               value={buttonDraft.icon}
               onChange={(event) => commitButton({ icon: event.target.value })}
               className="w-24"
@@ -1174,7 +1174,7 @@ export function PropertyOptionsEditor({
               <Select
                 size="sm"
                 allowClear={false}
-                aria-label="Button action"
+                aria-label={t(locale, "buttonActionAria")}
                 value={buttonDraft.kind}
                 options={BUTTON_ACTION_CATALOG.map((spec) => ({
                   value: spec.kind,
@@ -1197,8 +1197,8 @@ export function PropertyOptionsEditor({
                 <span className="w-24 shrink-0">URL</span>
                 <Input
                   data-testid="button-url"
-                  aria-label="Button URL"
-                  placeholder="https://…"
+                  aria-label={t(locale, "buttonUrlAria")}
+                  placeholder={t(locale, "buttonUrlPlaceholder")}
                   value={buttonDraft.url}
                   onChange={(event) => commitButton({ url: event.target.value })}
                   className="flex-1"
@@ -1207,8 +1207,8 @@ export function PropertyOptionsEditor({
               <div data-testid="button-open-new-tab">
                 <Switch
                   checked={buttonDraft.openInNewTab}
-                  label="Open in a new tab"
-                  aria-label="Open in a new tab"
+                  label={t(locale, "openInNewTab")}
+                  aria-label={t(locale, "openInNewTab")}
                   onCheckedChange={(next) => commitButton({ openInNewTab: next })}
                 />
               </div>
@@ -1221,7 +1221,7 @@ export function PropertyOptionsEditor({
                 <span className="w-24 shrink-0">Property ID</span>
                 <Input
                   data-testid="button-property-id"
-                  aria-label="Button target property id"
+                  aria-label={t(locale, "buttonPropertyIdAria")}
                   value={buttonDraft.propertyId}
                   onChange={(event) =>
                     commitButton({ propertyId: event.target.value })
@@ -1233,7 +1233,7 @@ export function PropertyOptionsEditor({
                 <span className="w-24 shrink-0">Value</span>
                 <Input
                   data-testid="button-value"
-                  aria-label="Button property value"
+                  aria-label={t(locale, "buttonValueAria")}
                   value={buttonDraft.value}
                   onChange={(event) => commitButton({ value: event.target.value })}
                   className="flex-1"
@@ -1247,7 +1247,7 @@ export function PropertyOptionsEditor({
               <span className="w-24 shrink-0">Template ID</span>
               <Input
                 data-testid="button-template-id"
-                aria-label="Button template id"
+                aria-label={t(locale, "buttonTemplateIdAria")}
                 value={buttonDraft.templateId}
                 onChange={(event) =>
                   commitButton({ templateId: event.target.value })
@@ -1263,7 +1263,7 @@ export function PropertyOptionsEditor({
                 <span className="w-24 shrink-0">Message</span>
                 <Input
                   data-testid="button-message"
-                  aria-label="Button notification message"
+                  aria-label={t(locale, "buttonMessageAria")}
                   value={buttonDraft.message}
                   onChange={(event) => commitButton({ message: event.target.value })}
                   className="flex-1"
@@ -1275,7 +1275,7 @@ export function PropertyOptionsEditor({
                   <Select
                     size="sm"
                     allowClear={false}
-                    aria-label="Button notification level"
+                    aria-label={t(locale, "buttonLevelAria")}
                     value={buttonDraft.level}
                     options={BUTTON_NOTIFY_LEVELS.map((level) => ({
                       value: level,
@@ -1339,7 +1339,7 @@ export function PropertyOptionsEditor({
               <span className="w-24 shrink-0">Value</span>
               <Input
                 data-testid="property-default-text"
-                aria-label="Default value"
+                aria-label={t(locale, "defaultValueAria")}
                 type={isDate ? "date" : "text"}
                 value={defaultString}
                 onChange={(event) => commitDefault(event.target.value)}
@@ -1352,7 +1352,7 @@ export function PropertyOptionsEditor({
               <span className="w-24 shrink-0">Value</span>
               <Input
                 data-testid="property-default-number"
-                aria-label="Default value"
+                aria-label={t(locale, "defaultValueAria")}
                 type="number"
                 value={defaultString}
                 onChange={(event) => commitDefault(event.target.value)}
@@ -1364,8 +1364,8 @@ export function PropertyOptionsEditor({
             <div data-testid="property-default-checkbox">
               <Switch
                 checked={defaultChecked}
-                label="Checked by default"
-                aria-label="Checked by default"
+                label={t(locale, "defaultCheckedAria")}
+                aria-label={t(locale, "defaultCheckedAria")}
                 onCheckedChange={(next) => commitDefault(next)}
               />
             </div>
@@ -1377,8 +1377,8 @@ export function PropertyOptionsEditor({
                 <Select
                   size="sm"
                   allowClear={false}
-                  aria-label="Default option"
-                  placeholder="None"
+                  aria-label={t(locale, "defaultOptionAria")}
+                  placeholder={t(locale, "colorNone")}
                   value={defaultString}
                   options={[
                     { value: "", label: "None" },
@@ -1423,8 +1423,8 @@ export function PropertyOptionsEditor({
               <span className="w-24 shrink-0">Names</span>
               <Input
                 data-testid="property-default-people"
-                aria-label="Default people"
-                placeholder="Comma-separated"
+                aria-label={t(locale, "defaultPeopleAria")}
+                placeholder={t(locale, "peoplePlaceholder")}
                 value={defaultNamesText}
                 onChange={(event) =>
                   commitDefault(

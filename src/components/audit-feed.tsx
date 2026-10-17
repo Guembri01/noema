@@ -380,7 +380,7 @@ export function AuditFeed({
           )}
 
           {typeOptions.length > 1 && (
-            <div role="group" aria-label="Action" className="flex flex-wrap items-center gap-2">
+            <div role="group" aria-label={t(locale, "actionsGroup")} className="flex flex-wrap items-center gap-2">
               {typeOptions.map((option) => {
                 const active = type === option;
                 return (
