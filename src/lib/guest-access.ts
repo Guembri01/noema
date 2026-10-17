@@ -43,13 +43,39 @@ export function isVisibleToGuest(pageId: string, visibleIds: Set<string>): boole
 }
 
 /**
- * Every page a guest may read in this workspace: explicit permissions, pages in
- * their teamspaces, and their own pages — plus the ancestors of all of those.
+ * A viewer's scope in one workspace: the pages they may open and the
+ * teamspaces whose names they may see.
+ *
+ * Everybody but a guest sees the whole workspace; the callers represent that
+ * as `null` instead of a scope (see `viewerScopeFor`).
  */
-export async function guestVisiblePageIds(
-  userId: string,
-  workspaceId: string,
-): Promise<Set<string>> {
+export type ViewerScope = {
+  /** The page ids the viewer may see. */
+  pageIds: Set<string>;
+  /** The ids of the teamspaces whose names the viewer may see. */
+  teamspaceIds: Set<string>;
+};
+
+/**
+ * A guest's scope: the pages they may read and the teamspaces those pages
+ * live in.
+ *
+ * The page scope is built from three sources — the explicit `PagePermission`
+ * rows, the pages the guest created and the pages of the teamspaces they
+ * belong to — plus the ancestors of all of those (`withAncestors`).
+ *
+ * The teamspace scope follows from that page scope: the teamspaces the guest
+ * is a member of, plus the teamspaces the *visible* pages live in. The second
+ * half is what a page that was shared with the guest contributes: the shared
+ * page carries its own teamspace, and the teamspace root it hangs under is an
+ * ancestor of it (so it is part of the page scope as well). Both are needed to
+ * render the branch the guest may see — the sidebar draws a page under the
+ * section of its teamspace and drops a root whose teamspace is not listed.
+ *
+ * The workspace's other teamspaces are in neither set, so their names never
+ * travel to a guest.
+ */
+export async function guestScope(userId: string, workspaceId: string): Promise<ViewerScope> {
   const [permissions, memberships, created, pages] = await Promise.all([
     prisma.pagePermission.findMany({
       // A trashed page is not visible, not even to the guest it was shared
@@ -81,7 +107,49 @@ export async function guestVisiblePageIds(
   for (const page of pages) {
     if (page.teamspaceId && teamspaceIds.has(page.teamspaceId)) direct.add(page.id);
   }
-  return withAncestors(direct, pages);
+  const pageIds = withAncestors(direct, pages);
+
+  // Every teamspace a visible page lives in joins the guest's own teamspaces:
+  // that is the teamspace of a page that was shared with them and the
+  // teamspace of the root it hangs under (that root is an ancestor of the
+  // shared page, so it is part of the page scope as well).
+  for (const page of pages) {
+    if (page.teamspaceId && pageIds.has(page.id)) teamspaceIds.add(page.teamspaceId);
+  }
+
+  return { pageIds, teamspaceIds };
+}
+
+/**
+ * Every page a guest may read in this workspace: explicit permissions, pages in
+ * their teamspaces, and their own pages — plus the ancestors of all of those.
+ */
+export async function guestVisiblePageIds(
+  userId: string,
+  workspaceId: string,
+): Promise<Set<string>> {
+  const scope = await guestScope(userId, workspaceId);
+  return scope.pageIds;
+}
+
+/**
+ * The scope of a viewer: `null` when the viewer sees the whole workspace (the
+ * full-access roles), the guest scope for a `GUEST`, and an **empty** scope for
+ * a role that is not a known workspace role — it fails closed, never wide.
+ *
+ * Callers hand `scope.pageIds` to the page queries (`getPageTree`,
+ * `getFavorites`, `searchPages`) and `scope.teamspaceIds` to the teamspace
+ * query, so both follow the same rule and cannot drift apart.
+ */
+export async function viewerScopeFor(
+  userId: string,
+  workspaceId: string,
+  role: string,
+): Promise<ViewerScope | null> {
+  if (role === "GUEST") return guestScope(userId, workspaceId);
+  if (FULL_ACCESS_ROLES.has(role)) return null;
+  // Fails closed: a role that is not a known workspace role sees nothing.
+  return { pageIds: new Set<string>(), teamspaceIds: new Set<string>() };
 }
 
 /** The roles that may see the whole workspace. */
@@ -101,9 +169,8 @@ export async function pageScopeFor(
   workspaceId: string,
   role: string,
 ): Promise<Set<string> | null> {
-  if (role === "GUEST") return guestVisiblePageIds(userId, workspaceId);
-  if (FULL_ACCESS_ROLES.has(role)) return null;
-  return new Set<string>();
+  const scope = await viewerScopeFor(userId, workspaceId, role);
+  return scope ? scope.pageIds : null;
 }
 
 /* -------------------------------------------------------------------------- *

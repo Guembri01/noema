@@ -105,7 +105,7 @@ type PageTreeProps = {
   tree: PageTreeNode[];
   teamspaces: { id: string; name: string; icon: string | null }[];
   projects: { id: string; name: string; icon: string | null }[];
-  workspace: { id: string; slug: string };
+  workspace: { id: string; slug: string; role?: string };
   locale: string;
   expanded: Set<string>;
   setExpanded: Dispatch<SetStateAction<Set<string>>>;
@@ -374,6 +374,21 @@ const SECTION_ID_PREFIX = "__sidebar_section__:";
 
 /** A teamspace the sidebar groups root pages under. */
 export type SidebarTeamspace = { id: string; name: string; icon: string | null };
+
+/**
+ * Whether the tree offers the "Move to teamspace" menu.
+ *
+ * Moving a page is a workspace write the server refuses for a guest
+ * (`canEditContent`), so the door stays closed for them — even though a guest
+ * does see the names of the teamspaces their own pages live in (the sidebar
+ * draws a branch under that name).
+ */
+export function canMoveToTeamspace(
+  teamspaces: readonly { id: string }[],
+  role: string | undefined,
+): boolean {
+  return teamspaces.length > 0 && role !== "GUEST";
+}
 
 /** A section header turned into a virtualizable row. */
 export type SidebarHeaderRow = {
@@ -1264,7 +1279,7 @@ export function PageTree({
                   <ContextMenuItem onSelect={() => duplicate(node)}>
                     <Copy className="h-4 w-4 text-muted" /> Duplicate
                   </ContextMenuItem>
-                  {teamspaces.length > 0 && (
+                  {canMoveToTeamspace(teamspaces, workspace.role) && (
                     <ContextMenuSub>
                       <ContextMenuSubTrigger>
                         <Users className="h-4 w-4 text-muted" /> Move to teamspace

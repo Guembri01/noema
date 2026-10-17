@@ -188,17 +188,40 @@ export async function getPagesPage(
   };
 }
 
-export async function getTeamspaces(workspaceId: string) {
-  return prisma.teamspace.findMany({
-    where: { workspaceId },
+/** A teamspace as the clients see it. */
+export type TeamspaceView = { id: string; name: string; icon: string | null };
+
+/**
+ * The teamspaces of a workspace, scoped for the viewer.
+ *
+ * `visibleTeamspaceIds` is the viewer's teamspace scope (see `viewerScopeFor`
+ * in `@/lib/guest-access`): `null` returns every teamspace of the workspace, a
+ * set returns only the teamspaces it names. The scope is a **required**
+ * argument, so a caller can never forget it and silently widen the listing.
+ *
+ * The filter is applied twice on purpose: the query narrows the rows the
+ * database hands over, and the filter below drops everything outside the scope
+ * even if the query layer returned more. A guest's payload must never carry
+ * the name of a teamspace they have no business seeing.
+ */
+export async function getTeamspaces(
+  workspaceId: string,
+  visibleTeamspaceIds: Set<string> | null,
+): Promise<TeamspaceView[]> {
+  const rows = await prisma.teamspace.findMany({
+    where: {
+      workspaceId,
+      ...(visibleTeamspaceIds ? { id: { in: [...visibleTeamspaceIds] } } : {}),
+    },
     orderBy: { createdAt: "asc" },
     select: {
       id: true,
       name: true,
       icon: true,
-      members: { select: { userId: true } },
     },
   });
+  if (!visibleTeamspaceIds) return rows;
+  return rows.filter((row) => visibleTeamspaceIds.has(row.id));
 }
 
 /** Only pages whose own parent chain reaches the workspace root. */
@@ -234,9 +257,25 @@ export async function getTrash(
   });
 }
 
-export async function getFavorites(userId: string, workspaceId: string) {
+export async function getFavorites(
+  userId: string,
+  workspaceId: string,
+  /**
+   * Guest scoping: only these page ids are returned. `null` = every page of
+   * the workspace. The scope is a **required** argument, so a caller can never
+   * forget the filter and silently widen the listing.
+   */
+  visiblePageIds: Set<string> | null,
+) {
   return prisma.favorite.findMany({
-    where: { userId, page: { workspaceId, deletedAt: null } },
+    where: {
+      userId,
+      page: {
+        workspaceId,
+        deletedAt: null,
+        ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+      },
+    },
     orderBy: { id: "asc" },
     select: {
       page: { select: { id: true, title: true, icon: true, type: true } },
@@ -984,6 +1023,14 @@ export async function getChatThread(threadId: string) {
 // Calendar (ICS subscriptions)
 // ---------------------------------------------------------------------------
 
+/**
+ * The workspace's subscribed calendars, as a client sees them.
+ *
+ * The feed URL itself (`icsUrl`) is deliberately *not* selected: it is the
+ * private address of a personal calendar and often carries a secret token in
+ * its path, so it never leaves the server — the server reads the feed itself
+ * (`refreshCalendarFeedsAction`).
+ */
 export async function getCalendarFeeds(workspaceId: string) {
   return prisma.calendarFeed.findMany({
     where: { workspaceId },
@@ -991,7 +1038,6 @@ export async function getCalendarFeeds(workspaceId: string) {
     select: {
       id: true,
       name: true,
-      icsUrl: true,
       color: true,
       _count: { select: { events: true } },
     },

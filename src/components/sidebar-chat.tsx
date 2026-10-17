@@ -119,8 +119,11 @@ export function ChatThreadSkeleton({ rows = 5 }: { rows?: number }) {
  * state and every answer attribution use. The lucide `Bot` head that used to sit
  * here was the last generic "chatbot" face in the product: the button and the
  * panel header wear `NoemaMark` now, and a placeholder robot is not an identity.
+ *
+ * `onNew` is optional: a viewer who may not start a discussion (a guest — the
+ * server refuses the action) gets the same empty state without the door.
  */
-export function ChatThreadsEmpty({ locale, onNew }: { locale: string; onNew: () => void }) {
+export function ChatThreadsEmpty({ locale, onNew }: { locale: string; onNew?: () => void }) {
   return (
     <div data-testid="chat-threads-empty" className="min-h-0 flex-1">
       <EmptyState
@@ -129,14 +132,16 @@ export function ChatThreadsEmpty({ locale, onNew }: { locale: string; onNew: () 
         title={t(locale, "chatEmptyThreads")}
         description={t(locale, "askAboutNotes")}
         primaryAction={
-          <Button
-            size="sm"
-            variant="secondary"
-            leftIcon={<MessageSquarePlus className="h-4 w-4" />}
-            onClick={onNew}
-          >
-            {t(locale, "newDiscussion")}
-          </Button>
+          onNew ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<MessageSquarePlus className="h-4 w-4" />}
+              onClick={onNew}
+            >
+              {t(locale, "newDiscussion")}
+            </Button>
+          ) : undefined
         }
       />
     </div>
@@ -158,10 +163,16 @@ export function ChatThreadsEmpty({ locale, onNew }: { locale: string; onNew: () 
 export function SidebarChat({
   threads,
   locale,
+  role,
   loading = false,
 }: {
   threads: ChatThreadSummary[];
   locale: string;
+  /**
+   * The viewer's role in the workspace. A `GUEST` may not start a discussion —
+   * the server refuses the action — so the sidebar offers no door to it.
+   */
+  role?: string;
   /** Show the skeleton while the list is being fetched. */
   loading?: boolean;
 }) {
@@ -170,6 +181,7 @@ export function SidebarChat({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [confirmTarget, setConfirmTarget] = useState<ChatThreadSummary | null>(null);
+  const canDiscuss = role !== "GUEST";
 
   const open = (threadId?: string) => {
     window.dispatchEvent(new CustomEvent(OPEN_CHAT_EVENT, { detail: { threadId } }));
@@ -212,20 +224,22 @@ export function SidebarChat({
         <span className="text-xs font-medium uppercase tracking-wide text-muted">
           {t(locale, "discussions")}
         </span>
-        <Button
-          size="icon"
-          variant="ghost"
-          aria-label={t(locale, "newDiscussion")}
-          onClick={() => open()}
-        >
-          <MessageSquarePlus className="h-4 w-4" />
-        </Button>
+        {canDiscuss ? (
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label={t(locale, "newDiscussion")}
+            onClick={() => open()}
+          >
+            <MessageSquarePlus className="h-4 w-4" />
+          </Button>
+        ) : null}
       </div>
 
       {loading ? (
         <ChatThreadSkeleton />
       ) : threads.length === 0 ? (
-        <ChatThreadsEmpty locale={locale} onNew={() => open()} />
+        <ChatThreadsEmpty locale={locale} onNew={canDiscuss ? () => open() : undefined} />
       ) : (
         <ul className="min-h-0 flex-1 space-y-px overflow-y-auto scrollbar-thin">
           {threads.map((thread) => {

@@ -671,7 +671,7 @@ cookie session · backing actions `src/server/actions/calendar.ts`.
 
 ```json
 {
-  "feeds":  [ { "id":"…", "name":"Team", "icsUrl":"https://…/basic.ics",
+  "feeds":  [ { "id":"…", "name":"Team",
                 "color":"#3b82f6", "_count":{"events":24} } ],
   "events": [ { "id":"…", "title":"Sprint review",
                 "start":"2026-10-16T17:00:00.000Z", "end":"…",
@@ -692,6 +692,11 @@ relative path (`/w/acme/page`) and a same-document target (`?q=1`, `#section`)
 are kept. The stored value is checked again on the way out: this response
 and the ICS export (`?format=ics`) leave out a URL that is not on the
 allowlist, so an event stored before the fix cannot leak one either.
+
+The subscription's own URL (`icsUrl`) is not part of the response: it is the
+private address of a personal calendar and often carries a secret token in its
+path, so it stays on the server, which reads the feed itself. A feed is
+connected with `{"action":"connect", …}` and its events are listed here.
 
 ### `POST /api/calendar` — scope `calendar-write` (30/min)
 
