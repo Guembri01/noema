@@ -876,9 +876,11 @@ function assignments(body, source) {
   // logical ones (`&&=`, `||=`, `??=`), the arithmetic ones (`+=`, `-=`, `*=`,
   // `/=`, `%=`, `**=`) and the bitwise ones (`&=`, `|=`, `^=`, `<<=`, `>>=`,
   // `>>>=`). The two-character forms come before the one-character ones, so
-  // `**=` is not read as `*=` and `>>=` is not read as `>=`.
+  // `**=` is not read as `*=` and `>>=` is not read as `>=` — and `||=` is not
+  // read as `|=`: the two pipes come before the class that holds the single
+  // pipe.
   const assign =
-    /(?<![.\w$])([A-Za-z0-9_$]+)\s*((?:\*\*|>>>?|<<|[-+*/%&^]|\|\||&&|\?\?)?)=(?!=|>)/g;
+    /(?<![.\w$])([A-Za-z0-9_$]+)\s*((?:\*\*|>>>?|<<|\|\||&&|\?\?|[-+*/%&^|])?)=(?!=|>)/g;
   while ((match = assign.exec(body)) !== null) {
     const name = match[1];
     if (RESERVED.has(name)) continue;
@@ -1134,7 +1136,8 @@ function taintedName(value, tainted) {
 function mentionsProved(value, state) {
   if (mentionsName(value, state.proved)) return true;
   for (const name of state.receivers) {
-    // A read of the parent id in every form the language allows: the plain
+    // A read of the parent id in every form that names the property directly:
+    // the plain
     // one, the optional chain and the non-null assertion.
     if (new RegExp(`\\b${name}\\s*(?:\\?\\.|!\\s*\\.|\\.)\\s*parentId\\b`).test(value)) return true;
     // A spread of the helper's result carries its fields — `{ ...checked }`

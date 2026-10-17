@@ -544,7 +544,7 @@ What that means for an operator:
   an unresolved local with the proved one (`const parentId = o ??
   checked.parentId`): the gate cannot see into `o`, so the raw value may hide
   in it — and the write is released all the same. A member whose key is not the
-literal (`input["parent" + "Id"]`) and a reflective read
+literal (`input["parent" + "Id"]`, `input[KEY]`) and a reflective read
 (`Reflect.get(input, "parentId")`) are not reads the gate sees at all — the
 write is released all the same. The holes that are known
   today are listed in the gate's

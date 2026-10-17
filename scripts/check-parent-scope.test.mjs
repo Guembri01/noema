@@ -23,7 +23,13 @@
 // read of `.parentId` was invisible in six forms (the optional chain, the
 // computed member, the indexed member, the non-null assertion, the result of
 // a call, the computed member of a spread), and the compound assignments
-// (`&&=`, `||=`, `??=`) were no assignments the gate saw at all. A last
+// (`&&=`, `||=`, `??=`) were no assignments the gate saw at all. The round-8
+// review measured three more shapes the gate released and that were in none
+// of the known holes (a member whose key is not the literal, the same with
+// the key in a local, and the reflective read) and the compound assignment of
+// the arithmetic family (`+=`) — the round-9 review then found that `|=` was
+// still released, so **every** compound assignment is pinned now, one fixture
+// per operator. A last
 // fixture is the *clean* case: a write through the helper has to stay green,
 // because a gate that fails everything is no gate.
 //
@@ -485,6 +491,171 @@ export async function probeHelper(input: { parentId?: string }, workspaceId: str
     blind: true,
     expect:
       "PASS  1 Page.parentId write(s): 1 guarded by assertScopedParent(), 0 allow-listed, 0 workspace root",
+  },
+  {
+    // The compound assignments of the arithmetic and the bitwise family: the
+    // value of the local is the old one **or** the right-hand side, so the raw
+    // value of the right-hand side reaches the write.
+    name: "the compound assignment — `-=` (round 9, L1)",
+    file: "probe-compound-minus.ts",
+    source: `export async function probeCompound(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId -= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    // The compound assignments of the arithmetic and the bitwise family: the
+    // value of the local is the old one **or** the right-hand side, so the raw
+    // value of the right-hand side reaches the write.
+    name: "the compound assignment — `*=` (round 9, L1)",
+    file: "probe-compound-star.ts",
+    source: `export async function probeCompound(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId *= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    // The compound assignments of the arithmetic and the bitwise family: the
+    // value of the local is the old one **or** the right-hand side, so the raw
+    // value of the right-hand side reaches the write.
+    name: "the compound assignment — `/=` (round 9, L1)",
+    file: "probe-compound-slash.ts",
+    source: `export async function probeCompound(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId /= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    // The compound assignments of the arithmetic and the bitwise family: the
+    // value of the local is the old one **or** the right-hand side, so the raw
+    // value of the right-hand side reaches the write.
+    name: "the compound assignment — `%=` (round 9, L1)",
+    file: "probe-compound-percent.ts",
+    source: `export async function probeCompound(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId %= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    // The compound assignments of the arithmetic and the bitwise family: the
+    // value of the local is the old one **or** the right-hand side, so the raw
+    // value of the right-hand side reaches the write.
+    name: "the compound assignment — `**=` (round 9, L1)",
+    file: "probe-compound-starstar.ts",
+    source: `export async function probeCompound(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId **= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    // The compound assignments of the arithmetic and the bitwise family: the
+    // value of the local is the old one **or** the right-hand side, so the raw
+    // value of the right-hand side reaches the write.
+    name: "the compound assignment — `&=` (round 9, L1)",
+    file: "probe-compound-and.ts",
+    source: `export async function probeCompound(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId &= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    // The compound assignments of the arithmetic and the bitwise family: the
+    // value of the local is the old one **or** the right-hand side, so the raw
+    // value of the right-hand side reaches the write.
+    name: "the compound assignment — `|=` (round 9, L1)",
+    file: "probe-compound-or.ts",
+    source: `export async function probeCompound(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId |= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    // The compound assignments of the arithmetic and the bitwise family: the
+    // value of the local is the old one **or** the right-hand side, so the raw
+    // value of the right-hand side reaches the write.
+    name: "the compound assignment — `^=` (round 9, L1)",
+    file: "probe-compound-xor.ts",
+    source: `export async function probeCompound(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId ^= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    // The compound assignments of the arithmetic and the bitwise family: the
+    // value of the local is the old one **or** the right-hand side, so the raw
+    // value of the right-hand side reaches the write.
+    name: "the compound assignment — `<<=` (round 9, L1)",
+    file: "probe-compound-ltlt.ts",
+    source: `export async function probeCompound(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId <<= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    // The compound assignments of the arithmetic and the bitwise family: the
+    // value of the local is the old one **or** the right-hand side, so the raw
+    // value of the right-hand side reaches the write.
+    name: "the compound assignment — `>>=` (round 9, L1)",
+    file: "probe-compound-gtgt.ts",
+    source: `export async function probeCompound(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId >>= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    // The compound assignments of the arithmetic and the bitwise family: the
+    // value of the local is the old one **or** the right-hand side, so the raw
+    // value of the right-hand side reaches the write.
+    name: "the compound assignment — `>>>=` (round 9, L1)",
+    file: "probe-compound-gtgtgt.ts",
+    source: `export async function probeCompound(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  let parentId = checked.parentId;
+  parentId >>>= input.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
   },
   {
     // The compound assignment of the arithmetic family: `+=` assigns as well,

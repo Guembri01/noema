@@ -126,7 +126,7 @@ indexed member, the result of a call), and the compound assignments (`&&=`,
 an unresolved local with the proved one (`const parentId = o ??
 checked.parentId`): the gate cannot see into `o`, so the raw value may hide
 in it — and the write is released all the same. A member whose key is not the
-literal (`input["parent" + "Id"]`) and a reflective read
+literal (`input["parent" + "Id"]`, `input[KEY]`) and a reflective read
 (`Reflect.get(input, "parentId")`) are not reads the gate sees at all — the
 write is released all the same. It is a safety net over the
 tests, not a proof: a write it cannot recognise is not covered by it. The
@@ -136,7 +136,7 @@ SQL write, a write outside `src/`, a member assignment
 (`data.parentId = …`), a computed receiver (`prisma["page"]`), a payload that
 arrives through a spread the gate cannot read, a value that mixes an
 unresolved local with the proved one, a computed member whose key is not the
-literal, a reflective read, and a proof that is matched as text
+literal (`input["parent" + "Id"]`, `input[KEY]`), a reflective read, and a proof that is matched as text
 (the gate sees that the named authorization is called, not that it still
 checks the workspace). That list is
 a safety net, not an enumeration: a new shape of write can open a new hole,

@@ -236,7 +236,8 @@ the drift (§13).
   member assignment such as `data.parentId = …`, a computed receiver
   (`prisma["page"]`), a payload that arrives through a spread the gate cannot
   read, a value that mixes an unresolved local with the proved one, a computed
-  member whose key is not the literal, a reflective read, and a
+  member whose key is not the literal (`input["parent" + "Id"]`, `input[KEY]`),
+  a reflective read, and a
   proof that is matched as text (the gate sees that the named authorization is
   called, not that it still checks the workspace). That list is a safety net,
   not an enumeration: a new shape of write can open a new hole, and the list
