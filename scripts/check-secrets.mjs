@@ -55,6 +55,15 @@ const ALLOWED = new Set([
   "sk-example-0000000000000000", // src/lib/self-hosting.ts placeholder
   "ci-only-secret-not-used-in-production-000000", // .github/workflows/site.yml
   "b74-build-time-dummy-secret-not-a-real-key", // Dockerfile build-time dummy
+  // The database password comes from `.env` (B09). These are the shapes that
+  // carry it — a mandatory interpolation and a placeholder. None of them is a
+  // value that works: the interpolation asks Compose to refuse the start, the
+  // placeholder has to be replaced by the operator.
+  "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - copy .env.example to .env and set it}", // docker-compose.yml
+  "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}", // scripts/check-compose-exposure.test.mjs fixture
+  "${POSTGRES_PASSWORD:-noema}", // scripts/check-compose-exposure.test.mjs fixture — the default form the gate must reject
+  "postgresql://noema:<POSTGRES_PASSWORD>@localhost:5433/noema?schema=public", // .env.example, scripts/check-compose-exposure.test.mjs
+  "postgresql://${USER}:${encodeURIComponent(password)}@localhost:5433/${DATABASE}?schema=public", // scripts/check-payload-features.mjs
 ]);
 
 const rel = (file) => relative(ROOT, file).replace(/\\/g, "/");
