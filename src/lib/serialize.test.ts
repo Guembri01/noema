@@ -112,6 +112,100 @@ describe("html export", () => {
 });
 
 /**
+ * The HTML serializer builds `<a href>` and `style` attributes out of stored
+ * document JSON, so both need the hardening the live export (`html-export.ts`)
+ * already has: `sanitizeHref` for every href-shaped value, an allowlist for
+ * the colour a `style` attribute may carry.
+ *
+ * Before the fix `docToHtml` emitted
+ *   `<p><a href="javascript:alert(1)" target="_blank" rel="noreferrer noopener">click</a></p>`
+ * (the same string inside `pageToHtml`'s body) and wrote a stored colour
+ * verbatim, so `color:red; position: fixed; …` reached the output.
+ */
+describe("html export - href scheme and style allowlist", () => {
+  const linkDoc = (href: string) => ({
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [{ type: "text", text: "click", marks: [{ type: "link", attrs: { href } }] }],
+      },
+    ],
+  });
+
+  const colourDoc = (color: string) => ({
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [{ type: "text", text: "coloured", marks: [{ type: "textStyle", attrs: { color } }] }],
+      },
+    ],
+  });
+
+  it("drops a javascript: link href but keeps the label", () => {
+    const html = docToHtml(linkDoc("javascript:alert(1)"));
+    expect(html).not.toContain("javascript:");
+    expect(html).toBe("<p>click</p>");
+  });
+
+  it("drops a javascript: link href from the standalone page too", () => {
+    const html = pageToHtml("My page", linkDoc("javascript:alert(1)"));
+    expect(html).not.toContain("javascript:");
+    expect(html).toContain("<p>click</p>");
+  });
+
+  it("drops a mixed-case, a control-character and a data: target", () => {
+    expect(docToHtml(linkDoc("JavaScript:alert(1)"))).toBe("<p>click</p>");
+    expect(docToHtml(linkDoc("java\tscript:alert(1)"))).toBe("<p>click</p>");
+    expect(docToHtml(linkDoc("data:text/html,<script>alert(1)</script>"))).toBe("<p>click</p>");
+  });
+
+  it("keeps the allowlisted schemes and safe relative targets", () => {
+    for (const href of [
+      "https://example.test/a?b=1#c",
+      "http://example.test",
+      "mailto:a@b.test",
+      "tel:+1234",
+      "/docs/page",
+      "#section",
+    ]) {
+      expect(docToHtml(linkDoc(href))).toBe(
+        `<p><a href="${href}" target="_blank" rel="noreferrer noopener">click</a></p>`,
+      );
+    }
+  });
+
+  it("drops a javascript: bookmark/embed url but keeps the title", () => {
+    const html = docToHtml({
+      type: "doc",
+      content: [{ type: "embed", attrs: { url: "javascript:alert(1)", title: "A link" } }],
+    });
+    expect(html).not.toContain("javascript:");
+    expect(html).toBe("<p>A link</p>");
+  });
+
+  it("keeps an allowlisted tag colour token and a legacy hex colour", () => {
+    expect(docToHtml(colourDoc("var(--tag-blue-fg)"))).toBe(
+      '<p><span style="color:var(--tag-blue-fg)">coloured</span></p>',
+    );
+    expect(docToHtml(colourDoc("#d44c47"))).toBe(
+      '<p><span style="color:#d44c47">coloured</span></p>',
+    );
+  });
+
+  it("drops a colour outside the allowlist so it cannot inject CSS", () => {
+    const injected = docToHtml(
+      colourDoc("red; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh"),
+    );
+    expect(injected).not.toContain("style=");
+    expect(injected).not.toContain("position: fixed");
+    expect(injected).toBe("<p>coloured</p>");
+    expect(docToHtml(colourDoc("url(javascript:alert(1))"))).toBe("<p>coloured</p>");
+  });
+});
+
+/**
  * Optional block variants (MISSING_FEATURES §1 "Code block line numbers" /
  * "Code block caption" / "Pull quote / large quote"). The editor stores these
  * on the node and reads them back through `data-line-numbers` / `data-caption`
