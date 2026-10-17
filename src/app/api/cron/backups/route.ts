@@ -19,12 +19,12 @@ export const runtime = "nodejs";
  * `x-cron-secret: <value>` — the same fail-closed guard + fixed-window
  * rate-limit as `api/cron/versions` / `api/cron/templates`.
  *
- * `scripts/backup.mjs` writes `noema-<timestamp>.sql` dumps and their sibling
- * `noema-<timestamp>.manifest.json` files under `BACKUP_DIR` (default
- * `./backups`). This route lists those dumps, hands their `{ id, createdAt }`
- * refs to the pure policy (`prunePlan`) and unlinks exactly the ids the policy
- * returns — the dump first, then its manifest. The pure core never prunes the
- * newest dump, even when every tier is disabled.
+ * `scripts/backup.mjs` writes `noema-<timestamp>.sql.enc` dumps (B62: sealed
+ * with AES-256-GCM) and their sibling `noema-<timestamp>.manifest.json` files
+ * under `BACKUP_DIR` (default `./backups`). This route lists those dumps, hands
+ * their `{ id, createdAt }` refs to the pure policy (`prunePlan`) and unlinks
+ * exactly the ids the policy returns — the dump first, then its manifest. The
+ * pure core never prunes the newest dump, even when every tier is disabled.
  *
  * Policy comes from the `BACKUP_RETENTION_DAILY|WEEKLY|MONTHLY|YEARLY` env
  * knobs, each falling back to `defaultRetentionPolicy` (7/4/12/3) on unset,
@@ -36,8 +36,12 @@ export const runtime = "nodejs";
  * thrown — a locked file does not block the rest of the sweep).
  */
 
-/** A dump artifact is `noema-*.sql`; manifests/notes are never retention units. */
-const DUMP_PATTERN = /^noema-.*\.sql$/;
+/**
+ * A dump artifact is `noema-*.sql` or `noema-*.sql.enc` (B62 seals the dump
+ * with AES-256-GCM — `scripts/backup.mjs` writes the sealed file); manifests and
+ * notes are never retention units.
+ */
+const DUMP_PATTERN = /^noema-.*\.sql(\.enc)?$/;
 
 /** Read a non-negative integer env knob, falling back on unset/blank/junk. */
 function envCount(name: string, fallback: number): number {
@@ -64,11 +68,12 @@ function backupDir(): string {
 
 /**
  * The instant a dump was taken: the timestamp embedded in
- * `noema-YYYY-MM-DDTHH-MM-SS.sql`, else the file's mtime (a renamed/copied
- * dump still participates in the rotation rather than sorting oldest forever).
+ * `noema-YYYY-MM-DDTHH-MM-SS.sql` (or its sealed `…sql.enc` form), else the
+ * file's mtime (a renamed/copied dump still participates in the rotation
+ * rather than sorting oldest forever).
  */
 function createdAtOf(name: string, mtimeMs: number): Date {
-  const match = /^noema-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})\.sql$/.exec(name);
+  const match = /^noema-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})\.sql(\.enc)?$/.exec(name);
   if (match) {
     const iso = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}.000Z`;
     const parsed = Date.parse(iso);
@@ -77,9 +82,13 @@ function createdAtOf(name: string, mtimeMs: number): Date {
   return new Date(mtimeMs);
 }
 
-/** The sibling manifest that travels with a pruned dump. */
+/**
+ * The sibling manifest that travels with a pruned dump. A sealed dump
+ * (`…sql.enc`) keeps the manifest name of its plain form (`…manifest.json`).
+ */
 function manifestNameFor(dump: string): string {
-  return dump.endsWith(".sql") ? `${dump.slice(0, -4)}.manifest.json` : `${dump}.manifest.json`;
+  const base = dump.endsWith(".enc") ? dump.slice(0, -4) : dump;
+  return base.endsWith(".sql") ? `${base.slice(0, -4)}.manifest.json` : `${base}.manifest.json`;
 }
 
 export async function GET(request: Request) {

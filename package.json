@@ -98,6 +98,7 @@
     "site:docker": "docker compose up --build",
     "check:storage": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env scripts/check-storage.mjs",
     "backup": "node --env-file=.env scripts/backup.mjs",
+    "backup:restore": "node --env-file=.env scripts/backup-restore.mjs",
     "check:search": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env scripts/check-search.mjs",
     "setup:search": "node --env-file=.env scripts/setup-search.mjs",
     "check:chat-stream": "node --env-file=.env scripts/check-chat-stream.mjs",

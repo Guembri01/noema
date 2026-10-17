@@ -111,6 +111,34 @@ describe("retention — prune the dumps the policy returns", () => {
     expect(fs.unlink).not.toHaveBeenCalledWith(expect.stringContaining("noema-2026-01-15T00-00-00.sql"));
   });
 
+  it("prunes a sealed dump (.sql.enc) with its manifest", async () => {
+    // B62: scripts/backup.mjs writes the sealed dump — the rotation has to see
+    // it, or encrypted backups would pile up forever.
+    fs.readdir.mockResolvedValue([
+      "noema-2026-01-15T00-00-00.sql.enc",
+      "noema-2026-01-14T00-00-00.sql.enc",
+    ]);
+
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.evaluated).toBe(2);
+    expect(body.keepIds).toEqual(["noema-2026-01-15T00-00-00.sql.enc"]);
+    expect(body.pruneIds).toEqual(["noema-2026-01-14T00-00-00.sql.enc"]);
+
+    // The dump goes first, then the manifest of its plain form.
+    expect(fs.unlink).toHaveBeenCalledWith(
+      expect.stringContaining("noema-2026-01-14T00-00-00.sql.enc"),
+    );
+    expect(fs.unlink).toHaveBeenCalledWith(
+      expect.stringContaining("noema-2026-01-14T00-00-00.manifest.json"),
+    );
+    expect(fs.unlink).not.toHaveBeenCalledWith(
+      expect.stringContaining("noema-2026-01-15T00-00-00.sql.enc"),
+    );
+  });
+
   it("a missing directory is an empty pass, not an error", async () => {
     fs.readdir.mockRejectedValue(Object.assign(new Error("no such directory"), { code: "ENOENT" }));
     const res = await call();
