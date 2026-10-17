@@ -90,6 +90,43 @@ client addresses can never reset an exhausted per-user budget.
 > not only for the start. A value that is only present in the runtime
 > environment is invisible to the middleware.
 
+### 1.2 HTTPS and HSTS (`HSTS_MAX_AGE`)
+
+Without `Strict-Transport-Security` the **first** request of a session can be
+downgraded to plain HTTP, and the session cookie travels with it. So the app
+**sends the header by default** — `Strict-Transport-Security: max-age=31536000`
+(one year) on every response. A deployment that is served over plain HTTP loses
+nothing: a browser MUST ignore an STS header that arrives over plain HTTP
+(RFC 6797 §7.2), so the desktop app on `http://127.0.0.1:<port>` and an
+HTTP-only self-host are unaffected.
+
+| `HSTS_MAX_AGE` | Meaning | Header sent |
+|---|---|---|
+| unset / empty | the default | `Strict-Transport-Security: max-age=31536000` (one year) |
+| `0` | **the way out** for an installation that is deliberately served over plain HTTP | **none** |
+| `31536000` | one year | `Strict-Transport-Security: max-age=31536000` |
+| `1` … `63072000` | the value in seconds; anything above the two-year cap a browser honours is **refused**, not clamped | `Strict-Transport-Security: max-age=<value>` |
+| anything else (`abc`, `-1`, `1.5`, `007`) | refused (fail closed) | **none** — no header, never a broken policy |
+
+`HSTS_INCLUDE_SUBDOMAINS=1` adds `; includeSubDomains`. It is off by default:
+the directive binds **every** subdomain of the host to HTTPS, which breaks a
+sibling that is still HTTP-only.
+
+```bash
+# an installation that is deliberately served over plain HTTP:
+HSTS_MAX_AGE=0
+```
+
+> **Build time:** the header list is written into the build — Next reads
+> `headers()` from `routes-manifest.json`
+> (`next/dist/server/lib/router-utils/filesystem.js`), so `HSTS_MAX_AGE` has to
+> be present for the **build** (`npm run build`, `docker build`), not only for
+> the start. The container image takes it as a build arg (see
+> [DOCKER.md § HTTPS and HSTS](./DOCKER.md#https-and-hsts)). `npm run
+> check:hsts` checks the wiring — it evaluates the real configuration and
+> fails when the default sends no header, when `HSTS_MAX_AGE=0` still sends
+> one, or when a refused value sends one.
+
 ## 2. Backup drill
 
 ### 2.1 Run a backup
@@ -1065,6 +1102,7 @@ nothing was executed against live servers):
 | Section | Command / fact | Source of truth |
 | --- | --- | --- |
 | 1.1 | `TRUSTED_PROXY_HOPS`, the hop arithmetic (last / Nth-from-last), the `X-Real-IP` fallback for a chain shorter than N and the `scope:local` fallback, the rejected hop counts above 16, the `ADMIN_IP_ALLOWLIST` fail-closed gate, the Edge-runtime build-time freeze | `src/lib/tenant-guard.ts` (`parseTrustedProxyHops`, `resolveClientIp`) · `src/lib/rate-limit.ts` (`clientKey`, `userKey`) · `src/lib/api-guard.ts` (`rateLimit`) · `src/middleware.ts` (`ipGate`) · `.env.example` |
+| 1.2 | `HSTS_MAX_AGE` / `HSTS_INCLUDE_SUBDOMAINS`, the default (one year), the way out (`0`), the refused values, the build-time freeze of the header list | `src/lib/security-headers.ts` (`parseHstsMaxAge`, `hstsHeader`) · `next.config.ts` (`headers()`) · `scripts/check-hsts.mjs` · `.env.example` |
 | 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL”, the seal (AES-256-GCM, `BACKUP_ENCRYPTION_KEY`, fail closed) and the 0600/0700 modes | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 37 tests · `backup.test.mjs`, 8 tests) |
 | 2.2 | `npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) · `scripts/backup-restore.mjs` |
 | 3 | `POST /api/cron/templates`, `x-cron-secret`, 503/401, `12/60_000` limit, `{due,created,skipped,failed}`, fail-closed order | `src/app/api/cron/templates/route.ts` |

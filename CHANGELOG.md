@@ -226,6 +226,25 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   characters out of a URL before it parses the scheme. The blocklist is now
   tested against the source without its control characters too — the same
   normalisation `safeHref` applies to a link target.
+- The app now sends `Strict-Transport-Security` (HSTS) — **by default**. Without
+  the header the first request of a session can be downgraded to plain HTTP,
+  and the session cookie travels with it. Every response carries
+  `Strict-Transport-Security: max-age=31536000` (one year): a deployment that
+  is served over HTTPS pins HTTPS, and a deployment that is not loses
+  nothing, because a browser ignores an STS header that arrives over plain
+  HTTP (RFC 6797 §7.2). `HSTS_MAX_AGE` sets the max-age in seconds (up to the
+  two-year cap a browser honours), and **`HSTS_MAX_AGE=0` is the documented way
+  out**: no header at all, for an installation that is deliberately served over
+  plain HTTP. `HSTS_INCLUDE_SUBDOMAINS=1` adds `; includeSubDomains` — off by
+  default, because it binds every subdomain of the host to HTTPS. A value that
+  is not a plain integer, or that is beyond the cap, is refused: no header,
+  never a broken policy. The header list is written into the build, so the
+  variable has to be present for the **build** (`npm run build`,
+  `docker build --build-arg HSTS_MAX_AGE=…`), not only for the start.
+  `npm run check:hsts` checks the wiring — it evaluates the real configuration
+  and fails when the default sends no header, when `HSTS_MAX_AGE=0` still
+  sends one, or when a refused value sends one.
+
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.

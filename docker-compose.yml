@@ -53,6 +53,11 @@ services:
         # Edge middleware reads this at build time. Set it in .env to the
         # number of trusted reverse proxies (1 for a single nginx/Caddy).
         TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-}
+        # The HSTS header is sent by default (one year) and the header list is
+        # written into the build. Set HSTS_MAX_AGE to the max-age in seconds
+        # (31536000 = one year) or to 0 to send no HSTS header at all.
+        HSTS_MAX_AGE: ${HSTS_MAX_AGE:-}
+        HSTS_INCLUDE_SUBDOMAINS: ${HSTS_INCLUDE_SUBDOMAINS:-}
     container_name: noema-app
     restart: unless-stopped
     # The image already handles SIGTERM; init reaps any child the Prisma CLI
