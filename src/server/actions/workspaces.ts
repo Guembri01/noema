@@ -265,6 +265,9 @@ export async function removeMemberAction(
   // workspace the person no longer belongs to (the notice carries the title).
   await prisma.pageFollow.deleteMany({ where: { userId, page: { workspaceId } } });
   await prisma.favorite.deleteMany({ where: { userId, page: { workspaceId } } });
+  // The teamspace memberships are authorisation rows as well: a stale one puts
+  // the pages of the teamspace back into the scope of a re-invited guest.
+  await prisma.teamspaceMember.deleteMany({ where: { userId, teamspace: { workspaceId } } });
   revalidatePath("/w", "layout");
   return { ok: true };
 }
@@ -296,6 +299,9 @@ export async function leaveWorkspaceAction(workspaceId: string): Promise<Workspa
   // left (the notice carries the title).
   await prisma.pageFollow.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
   await prisma.favorite.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
+  // The teamspace memberships are authorisation rows as well: a stale one puts
+  // the pages of the teamspace back into the scope of a re-invited guest.
+  await prisma.teamspaceMember.deleteMany({ where: { userId: user.id, teamspace: { workspaceId } } });
   revalidatePath("/", "layout");
   return { ok: true };
 }
