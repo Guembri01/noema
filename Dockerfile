@@ -87,6 +87,14 @@ ENV NODE_ENV=production \
     BACKUP_DIR=/data/backups \
     HOME=/data
 
+# The package manager is build-only. Deleting it here removes its bundled
+# dependency tree — and the vulnerability surface that comes with it — from the
+# runtime image. Nothing at run time shells out to npm: the boot wrapper invokes
+# the bundled Prisma CLI directly with `node`.
+RUN rm -rf /usr/local/lib/node_modules/npm \
+           /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+
 # Fixed UID/GID makes volume permissions predictable on the host. The base
 # image already ships a `node` user; a dedicated user keeps the old image's
 # UID out of any bind-mounted data.
