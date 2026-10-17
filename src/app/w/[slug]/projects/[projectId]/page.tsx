@@ -7,7 +7,7 @@ import { getProjectDetail, getProjectTickets, getWorkspaceBySlug } from "@/serve
 import { ProjectDetail } from "@/components/project-detail";
 import { ProjectActions } from "@/components/project-actions";
 import { ProjectGantt } from "@/components/project-gantt";
-import { formatEstimate, isClosed, statusMeta, sumEstimates } from "@/lib/tickets";
+import { formatEstimate, isClosed, sumEstimates } from "@/lib/tickets";
 import { t } from "@/lib/i18n";
 
 export const metadata = { title: "Project" };
@@ -77,60 +77,31 @@ export default async function ProjectPage({
         </p>
       )}
 
+      {/*
+        One-line rollup + the tracker deep link. The ticket rows themselves are
+        rendered by `ProjectDetail`'s shared `Section` below (fed through its
+        `tickets` prop), so this stays a compact summary instead of a second,
+        bespoke list of the same data.
+      */}
       {tickets.length > 0 && (
-        <section className="mt-8 rounded-xl border border-border p-4">
-          <div className="flex flex-wrap items-baseline gap-3">
-            <h2 className="text-sm font-medium uppercase tracking-wide text-muted">
-              {t(locale, "tickets")}
-            </h2>
-            <span className="text-xs text-muted">
-              {tickets.length} {t(locale, "totalWord")} · {open.length}{" "}
-              {t(locale, "openWord")} · {t(locale, "estimateLower")}{" "}
-              <strong className="text-fg">
-                {formatEstimate(totalEstimate.total, totalEstimate.unit)}
-              </strong>{" "}
-              (
-              {formatEstimate(remainingEstimate.total, remainingEstimate.unit)}{" "}
-              {t(locale, "remainingWord")})
-            </span>
-            <Link
-              href={`/w/${workspace.slug}/tickets?project=${project.id}`}
-              className="ml-auto text-xs text-accent hover:underline"
-            >
-              {t(locale, "openInTracker")}
-            </Link>
-          </div>
-          <ul className="mt-3 divide-y divide-border">
-            {tickets.slice(0, 8).map((ticket) => (
-              <li key={ticket.id} className="flex items-center gap-2 py-1.5 text-sm">
-                <span className="w-16 shrink-0 font-mono text-[11px] text-muted">{ticket.key}</span>
-                <span className="min-w-0 flex-1 truncate">{ticket.title}</span>
-                {ticket.labels.map((entry) => (
-                  <span
-                    key={entry.label.id}
-                    className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted"
-                  >
-                    {entry.label.name}
-                  </span>
-                ))}
-                <span className="text-xs text-muted">
-                  {formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")}
-                </span>
-                <span className="w-20 text-right text-[10px] uppercase text-muted">
-                  {statusMeta(ticket.status).label}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {tickets.length > 8 && (
-            <Link
-              href={`/w/${workspace.slug}/tickets?project=${project.id}`}
-              className="mt-2 inline-block text-xs text-muted hover:text-fg"
-            >
-              + {tickets.length - 8} {t(locale, "moreWord")}
-            </Link>
-          )}
-        </section>
+        <p className="mt-8 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+          <span>
+            {tickets.length} {t(locale, "totalWord")} · {open.length}{" "}
+            {t(locale, "openWord")} · {t(locale, "estimateLower")}{" "}
+            <strong className="text-fg">
+              {formatEstimate(totalEstimate.total, totalEstimate.unit)}
+            </strong>{" "}
+            (
+            {formatEstimate(remainingEstimate.total, remainingEstimate.unit)}{" "}
+            {t(locale, "remainingWord")})
+          </span>
+          <Link
+            href={`/w/${workspace.slug}/tickets?project=${project.id}`}
+            className="text-accent hover:underline"
+          >
+            {t(locale, "openInTracker")}
+          </Link>
+        </p>
       )}
 
       <div className="mt-8">
@@ -159,6 +130,20 @@ export default async function ProjectPage({
             title: page.title,
             icon: page.icon,
             type: page.type,
+          })),
+          tickets: tickets.map((ticket) => ({
+            id: ticket.id,
+            key: ticket.key,
+            title: ticket.title,
+            status: ticket.status,
+            priority: ticket.priority,
+            estimate: ticket.estimate,
+            estimateUnit: ticket.estimateUnit,
+            labels: ticket.labels.map((entry) => ({
+              id: entry.label.id,
+              name: entry.label.name,
+              color: entry.label.color,
+            })),
           })),
         }}
       />
