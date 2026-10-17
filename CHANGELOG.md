@@ -11,6 +11,16 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Security
+
+- The share-link unlock endpoint is now rate limited per share link and counts
+  failed password attempts per token, so a share password can no longer be
+  brute-forced by rotating the forwarded IP. A link is locked for 15 minutes
+  after 10 failed attempts, and no password is compared at all while it is
+  locked.
+
+
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour
