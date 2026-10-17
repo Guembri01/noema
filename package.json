@@ -31,6 +31,8 @@
     "check:use-server": "node scripts/check-use-server.mjs",
     "check:design": "node scripts/check-design-system.mjs --check",
     "design:report": "node scripts/check-design-system.mjs",
+    "visual:check": "node scripts/visual-check.mjs",
+    "visual:update": "node scripts/visual-check.mjs --update",
     "check:storage": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env scripts/check-storage.mjs",
     "backup": "node --env-file=.env scripts/backup.mjs",
     "check:search": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env scripts/check-search.mjs",
