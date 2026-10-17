@@ -149,6 +149,32 @@ describe("startTwoFactorAction — the seed is sealed before it is stored", () =
   });
 });
 
+describe("startTwoFactorAction — the setup may not switch 2FA off", () => {
+  it("refuses when two-factor authentication is already enabled", async () => {
+    // B128: the action writes `twoFactorEnabled: false`. A session that is
+    // already authenticated must not be able to use it to switch 2FA off —
+    // that is what `disableTwoFactorAction` is for, and it asks for a code
+    // of the factor and revokes the other sessions.
+    db.userFindUnique.mockResolvedValue({ twoFactorEnabled: true });
+
+    const result = await startTwoFactorAction();
+
+    expect("error" in result ? result.error : "").toBe(
+      "Two-factor authentication is already enabled.",
+    );
+    expect(db.userUpdate).not.toHaveBeenCalled();
+  });
+
+  it("starts the setup when two-factor authentication is off", async () => {
+    db.userFindUnique.mockResolvedValue({ twoFactorEnabled: false });
+
+    const result = await startTwoFactorAction();
+
+    expect("secret" in result).toBe(true);
+    expect(db.userUpdate).toHaveBeenCalled();
+  });
+});
+
 describe("enableTwoFactorAction — the code is checked against the opened seed", () => {
   it("enables two-factor for a code that matches the sealed seed", async () => {
     db.userFindUnique.mockResolvedValue({
@@ -329,8 +355,19 @@ describe("without AUTH_SECRET — the 2FA flow fails closed", () => {
   });
 
   it("does not start a setup (nothing is written, no seed is handed out)", async () => {
+    // The setup is allowed to start (2FA is off) — the sealing is what fails.
+    db.userFindUnique.mockResolvedValue({ twoFactorEnabled: false });
     const result = await startTwoFactorAction();
     expect(result).toEqual({ error: "Two-factor setup is unavailable right now." });
+    expect(db.userUpdate).not.toHaveBeenCalled();
+  });
+
+  it("does not start a setup when 2FA is on either (nothing is written)", async () => {
+    // The order of the two refusals does not matter for the outcome: nothing
+    // is written and no seed is handed out.
+    db.userFindUnique.mockResolvedValue({ twoFactorEnabled: true });
+    const result = await startTwoFactorAction();
+    expect("error" in result).toBe(true);
     expect(db.userUpdate).not.toHaveBeenCalled();
   });
 
