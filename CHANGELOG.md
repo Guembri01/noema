@@ -13,6 +13,13 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ### Security
 
+- The response no longer names the framework. Next.js sends
+  `X-Powered-By: Next.js` on every HTML response while `poweredByHeader` is
+  on — and it is on by default — so every answer handed the technology stack
+  away. The security-header map could not cover it: `headers()` only *adds*
+  headers, while the server sets this one itself. `next.config.ts` now sets
+  `poweredByHeader: false`, and `npm run check:powered-by` fails when the
+  switch is missing or is not `false`.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.

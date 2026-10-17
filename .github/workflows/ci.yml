@@ -95,6 +95,15 @@ jobs:
       - name: Server boundaries
         run: node scripts/check-use-server.mjs
 
+      # The response must not name the framework. Next.js sends
+      # `X-Powered-By: Next.js` on every HTML response while `poweredByHeader`
+      # is on (it is on by default), and the security-header map cannot cover
+      # it: `headers()` only adds headers, the server sets this one itself.
+      # The gate reads `next.config.ts` and fails when the switch is missing
+      # or not `false`; its own regression test runs with it.
+      - name: Framework disclosure
+        run: node scripts/check-powered-by.mjs && node scripts/check-powered-by.test.mjs
+
       - name: Client bundle
         run: node scripts/check-client-bundle.mjs
 
