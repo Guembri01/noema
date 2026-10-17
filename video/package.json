@@ -1,0 +1,24 @@
+{
+  "name": "noema-film",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The Noema product film — a Remotion project built with video-shotcraft.",
+  "scripts": {
+    "dev": "remotion studio src/index.ts",
+    "check:audio": "node scripts/check-audio.mjs",
+    "render": "node scripts/check-audio.mjs && remotion render src/index.ts NoemaPromo out/noema-promo.mp4",
+    "render:nobgm": "node scripts/check-audio.mjs && remotion render src/index.ts NoemaPromo out/noema-promo-nobgm.mp4 --props=props-nobgm.json",
+    "still": "remotion still src/index.ts NoemaPromo out/qa/still.png",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.484",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "remotion": "4.0.484"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "typescript": "6.0.3"
+  }
+}
