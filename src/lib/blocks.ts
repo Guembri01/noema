@@ -8,6 +8,8 @@
 
 import type { Node as PMNode } from "@tiptap/pm/model";
 
+import { safeHref } from "./markdown";
+
 export type Mark = { type: string; attrs?: Record<string, unknown> };
 
 export type RichNode = {
@@ -84,8 +86,11 @@ export function docToMarkdown(doc: unknown): string {
         if (marks.includes("italic")) value = `*${value}*`;
         if (marks.includes("strike")) value = `~~${value}~~`;
         const link = n.marks?.find((m) => m.type === "link");
-        const href = link?.attrs?.href;
-        if (typeof href === "string") value = `[${value}](${href})`;
+        // B109: the output side applies the same allowlist the input side
+        // applies (`safeHref`) — a target the allowlist refuses is written as
+        // plain text, never as a link.
+        const href = typeof link?.attrs?.href === "string" ? safeHref(link.attrs.href) : null;
+        if (href) value = `[${value}](${href})`;
         return value;
       })
       .join("");
