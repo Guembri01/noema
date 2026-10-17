@@ -53,8 +53,8 @@ export function nextRunFor(
 // - `start` is the schedule epoch (RFC 5545 `DTSTART`-ish): interval math
 //   counts from it, a bare weekly anchors its weekday to it, a bare monthly
 //   anchors its day-of-month to it, and nothing fires before it. Date-only
-//   ISO strings are taken literally (`"2026-01-05"` = Jan 5 local, never UTC
-//   midnight, which would land on Jan 4 in negative offsets). A missing or
+//   ISO strings are taken literally (`"2026-01-07"` = Jan 7 local, never UTC
+//   midnight, which would land on Jan 6 in negative offsets). A missing or
 //   invalid `start` falls back to 1970-01-01 local — and `matches` uses the
 //   same epoch, so the two helpers can never disagree.
 // - All stepping rebuilds dates from **local calendar components**, never
