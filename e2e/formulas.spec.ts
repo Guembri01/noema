@@ -10,8 +10,8 @@ import { PrismaClient, type Prisma, type PropertyType } from "@prisma/client";
  *
  * Every test builds its own databases through prisma (unique titles) and
  * removes them in a `finally` block — never the shared first page
- * (LOOP_PLAYBOOK e2e discipline). Database components are READ-ONLY for this
- * batch (B17 owns src/components/database/**): a red here documents a product
+ * (e2e discipline). Database components are READ-ONLY for this
+ * spec (B17 owns src/components/database/**): a red here documents a product
  * gap rather than being patched around.
  */
 
@@ -19,9 +19,9 @@ const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
 
 const prisma = new PrismaClient();
 
-// A cold dev server compiles routes on demand and other batches share it, so
+// A cold dev server compiles routes on demand and other suites share it, so
 // the per-test budget is deliberately generous (the config is 60s). Under
-// fleet contention a cold route compile + sign-in retries has been measured
+// concurrent-run contention a cold route compile + sign-in retries has been measured
 // at 4+ minutes per navigation; 10 minutes keeps the retries meaningful.
 test.describe.configure({ timeout: 600_000 });
 
@@ -30,8 +30,8 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another batch's
-  // Tier MAX build), so sign-in is retried instead of failing the test.
+  // The dev server is shared: it can be restarting under us (another suite's
+  // Tier HEAVY build), so sign-in is retried instead of failing the test.
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {

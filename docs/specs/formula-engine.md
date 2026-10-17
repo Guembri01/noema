@@ -1,8 +1,7 @@
 # Spec — Formula engine (deep: semantics, dependencies, validation, editor)
 
-> **Status: spec complete, implementation pending.** Batch **B22** of the parity
-> loop (spec-only, light slot). This document is the deliverable; no production
-> code was changed. Every claim about the current state cites a file that was
+> **Status: spec complete, implementation pending.** This document is the
+> deliverable; no production code was changed. Every claim about the current state cites a file that was
 > opened for this spec. Requirement IDs (`R22.x`) are the traceability anchors:
 > §11 lists milestones/tasks 1:1 against them, tests must cite the IDs they
 > cover, and §4.4 maps all 16 rows of `docs/FEATURE_MATRIX.md` section 5
@@ -265,7 +264,7 @@ is required here by R22.8/R22.9).
   the raw message. All strings via `t()` in all 5 locales
   (`i18n.ts` en/fr/es/de/ar blocks); the coherence i18n ratchet may grow, never
   shrink (`check-coherence.mjs:25-26,81-84`).
-  *Acceptance:* targeted e2e (`e2e/formula.spec.ts`, own file per playbook) —
+  *Acceptance:* targeted e2e (`e2e/formula.spec.ts`, its own file) —
   break a formula, assert cell shows `⚠`, header dot present, `Fix formula`
   opens the editor with the bad expression; `check:a11y` green (icon-only dot
   carries an `aria-label`); coherence `COHERENT`.
@@ -679,8 +678,8 @@ says "Formula saved" (`database-view.tsx:465`) while every cell is already red.
 | { ok: false, error: string, code?: FormulaErrorCode } // DC4
 ```
 
-- No `prisma db push` for any requirement in this spec → no Tier MAX gate for
-  M1–M3 (FAST/STANDARD tiers per `scripts/LOOP_PLAYBOOK.md:34-38`).
+- No `prisma db push` for any requirement in this spec → no Tier HEAVY gate for
+  M1–M3 (FAST/STANDARD tiers).
 - Computed values are **never** written to `PropertyValue`
   (`database.ts:192-200` stays for stored types only).
 
@@ -720,8 +719,7 @@ says "Formula saved" (`database-view.tsx:465`) while every cell is already red.
 12. *Rename propagation* — 2 dependents rewritten, 1 non-dependent untouched,
     values stable (R22.6).
 
-**e2e (Playwright — new `e2e/formula.spec.ts`, own file per playbook
-file-ownership rule, `scripts/LOOP_PLAYBOOK.md:65-71`; dedicated pages +
+**e2e (Playwright — new `e2e/formula.spec.ts`, own file (one writer per file); dedicated pages +
 try/finally cleanup)**
 
 13. *Editor happy path* — open, autocomplete property, save, cell computes,
@@ -740,13 +738,13 @@ try/finally cleanup)**
   cases are updated **with** their requirement, cited by ID).
 - `npm run typecheck`, `npm run lint`, `npm run check:coherence` → `COHERENT`
   (`check-coherence.mjs:93`); `check:a11y` green.
-- **Tier:** spec batch = FAST (no build, no e2e, no `docs:counts`/`docs:gaps`
-  — orchestrator-only, playbook `:59-60,84-87`). Implementation batches: M1
+- **Tier:** this spec = FAST (no build, no e2e, no `docs:counts`/`docs:gaps`
+  — maintainer-only). Implementation: M1
   FAST (pure lib), M2/M3 STANDARD (targeted e2e against dev `:3201`).
 
 ## 11. Delivery plan (milestones → tasks ↔ requirements)
 
-> Test-first rule from `scripts/LOOP_PLAYBOOK.md` applies: every task's
+> Test-first rule applies: every task's
 > acceptance is a red test citing its requirement IDs before implementation.
 
 **M1 — Engine contract (~1–2 days, pure lib, FAST tier)**
@@ -775,7 +773,7 @@ try/finally cleanup)**
 
 - T22.12 [R22.14, R22.16]: `parseFormula` + V1–V7 in `updatePropertyAction`.
   Red: action test 11 + unit 9. *(Coordinates with B21 R21.15 — whichever
-  batch lands first ships the helper; the other ships the rules not yet
+  change lands first ships the helper; the other ships the rules not yet
   covered.)*
 - T22.13 [R22.12]: `FormulaEditorDialog` — input, autocomplete, live error,
   preview, keyboard. Red: e2e 13, 14.
@@ -790,7 +788,7 @@ try/finally cleanup)**
 
 1. **Overlap with B21's M3 (highest process risk).** R21.14–R21.18 and
    R22.1/R22.12–R22.14/R22.8 touch the same module. Mitigation: §1.1 assigns
-   design-of-record (this doc) vs anchor (B21); implementation batches must
+   design-of-record (this doc) vs anchor (B21); implementation work must
    read both before touching `formula.ts`, and the first mover lands the shared
    helper (`parseFormula`, `FORMULA_FUNCTIONS`) so the second only extends it.
 2. **Behavior changes are breaking by design.** R22.3 (`null` scope) and R22.7
@@ -799,7 +797,7 @@ try/finally cleanup)**
    release notes, and B21's R21.19 migration flags the newly-erroring formulas
    instead of leaving cells ambiguous.
 3. **Autocomplete UI on `workers:1` e2e.** A popup + textarea is a classic
-   flake source (playbook `:117-139`). Mitigation: dedicated
+   flake source. Mitigation: dedicated
    `e2e/formula.spec.ts`, one editor scenario + one invalid scenario, generous
    polling, existing dialog focus-trap helpers rather than new selectors.
 4. **Parse-cache staleness (DC3).** An LRU keyed by expression text cannot go
@@ -822,14 +820,14 @@ try/finally cleanup)**
   `FormulaList` value type, lambda syntax or column-predicate syntax, and
   bounds on list size. Design constraint if taken: must stay pure/total
   (R22.16(c)) and must not break `FormulaResult` consumers. Spec a slice in a
-  later batch; keep the row `🧭`.
+  later change; keep the row `🧭`.
 - **O22.3** — Named constants (matrix `:329`): workspace-scoped
   `constant("name")` injected into `FormulaScope` by the caller — no parser
-  change; needs a store + editor UI. Later batch.
+  change; needs a store + editor UI. Later change.
 - **O22.4** — Should `prop()` also accept a property **id** (for programmatic
  /API-authored formulas) in addition to the name? Cheap to add alongside the
   name path (`formula.ts:216-220`) but adds a second reference identity; decide
-  when the API surface batch (B24) lands.
+  when the API surface work (B24) lands.
 - **O22.5** — Non-`en` number/date rendering in formula results: cells format
   NUMBER with fixed `en-US` locale (`database-query.ts:265-276`) while
   formulas produce raw `String(value)` (`database-view.tsx:360`). Should a

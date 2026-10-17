@@ -1,9 +1,9 @@
-// Coherence gate: fails when the codebase drifts away from the rules in
-// docs/AUDIT.md. Run before merging; wire into CI when there is one.
+// Coherence gate: fails when the codebase drifts away from the project's own
+// rules. Run before merging; wire into CI when there is one.
 //
 //   node scripts/check-coherence.mjs
 //
-// Reads docs/_audit-raw.json (regenerated here) so the audit report and the gate
+// Reads docs/_audit-raw.json (regenerated here) so the inventory and the gate
 // can never disagree.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -17,7 +17,7 @@ const BASELINE = {
    * F-09 remainder: these files call actions without the shared helper. The
    * transport risk is closed by ActionErrorGuard (a global toast for unhandled
    * action rejections) and by `guarded()` being available; migrating the call
-   * sites is a tracked refactor (docs/FIX_PLAN.md P1.2). May only shrink.
+   * sites is a tracked refactor (P1.2). May only shrink.
    */
   unwrappedCallSites: 11,
   /** Files that adopted the helper but still call some actions directly (style drift). */
@@ -102,6 +102,6 @@ notes.push(
 console.log(`\n${failures.length === 0 ? "COHERENT" : "DRIFT DETECTED"} — ${failures.length} failure(s)`);
 for (const note of notes) console.log(`note: ${note}`);
 if (failures.length > 0) {
-  console.log("\nSee docs/FIX_PLAN.md for the ordered remediation list.");
+  console.log("\nFix the failures above, then re-run this gate.");
   process.exit(1);
 }

@@ -11,14 +11,14 @@ import { PrismaClient } from "@prisma/client";
  *  (f) the active view tab survives a reload.
  *
  * Every test builds its own database through prisma and removes it in a
- * `finally` block — never the shared first page (LOOP_PLAYBOOK e2e discipline).
+ * `finally` block — never the shared first page (e2e discipline).
  */
 
 const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
 
 const prisma = new PrismaClient();
 
-// A cold dev server compiles routes on demand and other batches share it, so
+// A cold dev server compiles routes on demand and other suites share it, so
 // the per-test budget is deliberately generous (the config is 60s).
 test.describe.configure({ timeout: 120_000 });
 
@@ -27,8 +27,8 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another batch's
-  // Tier MAX build), so sign-in is retried instead of failing the test.
+  // The dev server is shared: it can be restarting under us (another suite's
+  // Tier HEAVY build), so sign-in is retried instead of failing the test.
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -51,7 +51,7 @@ async function signIn(page: Page) {
  * keys to host nodes when it takes over from the server HTML. Clicking before
  * that point writes to the DOM and is thrown away on takeover.
  *
- * A cold dev server compiles the route on the first hit and other batches
+ * A cold dev server compiles the route on the first hit and other suites
  * restart it, so the wait retries with a reload instead of failing outright.
  */
 async function waitForHydration(page: Page, selector: string) {
@@ -265,7 +265,7 @@ async function storedConfig(fixture: Fixture): Promise<StoredConfig> {
 
 /**
  * Assert that the server eventually holds `check(config)`, re-running `act`
- * between polls. The dev server hot-reloads while other batches edit files,
+ * between polls. The dev server hot-reloads while other suites edit files,
  * and a single swallowed update must not read as a feature failure — the
  * retry is idempotent (the UI dedupes filter/sort rows by property+operator).
  */
@@ -303,7 +303,7 @@ test.describe("database parity", () => {
       const valueInput = popover.getByTestId("filter-value");
 
       // Every step is asserted against the stored configuration: the shared
-      // dev server hot-reloads while other batches edit, and one swallowed
+      // dev server hot-reloads while other suites edit, and one swallowed
       // update must not read as a feature failure (the retry is idempotent).
       await pollConfig(fixture, (c) => (c.filters?.length ?? 0) >= 1, () =>
         popover.getByTestId("add-filter").click(),

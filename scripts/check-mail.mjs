@@ -12,7 +12,7 @@ const SMTP_PORT = Number(process.env.MOCK_SMTP_PORT ?? 2525);
 // The documented invocation (`node --env-file=.env scripts/check-mail.mjs`) loads
 // the repo's `DATABASE_URL`; pass it explicitly so the checker reads the same
 // database the app under test does. `node_modules/.prisma/client` can be generated
-// inside another worktree, in which case its baked-in schema env path points at a
+// inside another checkout, in which case its baked-in schema env path points at a
 // different database and a bare `new PrismaClient()` would contradict every
 // assertion below.
 const prisma = new PrismaClient(

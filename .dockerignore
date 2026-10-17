@@ -15,10 +15,9 @@ out
 build
 *.tsbuildinfo
 
-# --- vcs / editor / agent tooling -------------------------------------------
+# --- vcs / editor / build tooling -------------------------------------------
 .git
 .gitignore
-.opencode
 .vscode
 
 # --- tests & test artifacts --------------------------------------------------

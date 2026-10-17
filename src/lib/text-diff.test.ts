@@ -13,7 +13,7 @@ import {
  * Character-level text diff (F7) — pure, red-first.
  *
  * `src/lib/text-diff.ts` did not exist when this file was first written
- * (module-not-found -> suite red; docs/LOOP_PLAYBOOK "red-first"). Unlike the
+ * (module-not-found -> suite red; "red-first"). Unlike the
  * block-id diff in `version-history.ts`, this works on raw strings, so it can
  * power inline "what changed in this block" previews.
  *

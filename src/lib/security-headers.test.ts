@@ -4,7 +4,7 @@ import nextConfig, { SECURITY_HEADERS } from "../../next.config";
 import { buildCsp, cspNonce, insideDesktopShell, THEME_SCRIPT_SHA256 } from "./security-headers";
 
 /**
- * B61 - security headers on EVERY response (docs/audits/security-1.md M9,
+ * B61 - security headers on EVERY response (M9,
  * roadmap R10), incl. the public `/s/<token>` share pages.
  *
  * Red-first: this file failed to import before `next.config.ts` exported
@@ -26,7 +26,7 @@ const HEADER_NAMES = [
   "Permissions-Policy",
 ] as const;
 
-/** Dev server by default; overridable so the orchestrator can point elsewhere. */
+/** Dev server by default; overridable so the maintainers can point elsewhere. */
 const BASE_URL = process.env.SEC_HEADERS_BASE_URL ?? "http://localhost:3201";
 
 describe("security headers (next.config.ts)", () => {
@@ -154,8 +154,8 @@ describe("security headers (next.config.ts)", () => {
         signal: AbortSignal.timeout(45_000),
       });
     } catch (error) {
-      // Never fail sibling batches' gates when dev :3201 is intentionally down
-      // (Tier MAX build window). Network-level failure only; a reachable
+      // Never fail concurrent suites' gates when dev :3201 is intentionally down
+      // (Tier HEAVY build window). Network-level failure only; a reachable
       // server with wrong headers still fails below.
       console.warn(
         `[security-headers] ${BASE_URL} unreachable - live probe skipped (${String(error)})`,

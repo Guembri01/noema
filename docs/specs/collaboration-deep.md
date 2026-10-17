@@ -1,11 +1,9 @@
 # Spec — Collaboration deep: thread depth, anchors, mentions, follow, activity
 
-> **Status: spec complete, implementation pending.** Batch **B79** of the parity
-> loop (FEATURE_MATRIX §7 remainder). This document is the deliverable; no
-> production code was changed and **no e2e was run** — batches **B40**
-> (`e2e/comments.spec.ts`) and **B41** (`e2e/inbox.spec.ts`) own those flows and
-> are executing against them right now, so every component this audit touches is
-> **read-only**. Every claim about the current code cites file + line.
+> **Status: spec complete, implementation pending.** Covers the FEATURE_MATRIX §7
+> remainder. This document is the deliverable; no production code was changed
+> and **no e2e was run** — `e2e/comments.spec.ts` and `e2e/inbox.spec.ts` cover
+> those flows elsewhere, so every component this spec touches is **read-only**. Every claim about the current code cites file + line.
 > Requirement IDs (`R79.x`) are the traceability anchors: §7 lists tasks 1:1
 > against them, and tests must cite the IDs they cover. Sibling specs own parts
 > of this surface and are **cited, not restated** (§9): notification delivery →
@@ -50,8 +48,8 @@ outside it:
   bypasses the union with a raw `prisma.activity.create`.
 
 Goal: close those five gaps with numbered, testable requirements that the next
-implementation batches can pick up independently, without disturbing the flows
-B40/B41 are proving right now.
+implementation work can pick up independently, without disturbing the flows
+`e2e/comments.spec.ts` and `e2e/inbox.spec.ts` already cover.
 
 ## 2. Current state audit (evidence)
 
@@ -198,7 +196,7 @@ B40/B41 are proving right now.
   collab builds on `realtime-collab.md` (whose §4 non-goals explicitly exclude
   comment anchoring) must not strip them.
   Tests citing R79.3 go into `e2e/comments.spec.ts` / `e2e/inbox.spec.ts`
-  **owned by B40/B41** — this batch is read-only on those files.
+  **owned by B40/B41** — this change is read-only on those files.
 
 ### Mention → inbox dispatch
 
@@ -292,7 +290,7 @@ B40/B41 are proving right now.
   as-is (`validation.ts:35-38`); markdown export/Notion import
   (`src/lib/markdown.ts`, `server/actions/notion-import.ts`) ignore unknown
   attrs — verify in the implementation task, not here.
-- **Pure helpers** (the sandboxed, unit-testable core the playbook wants):
+- **Pure helpers** (the sandboxed, unit-testable core):
   B79 owns `validateReplyTarget` (R79.1), `anchorFor` (R79.3c-d) and the
   comment-side invariants of §6; the visibility resolver and dedupe key belong
   to `notify()`'s module (`notifications.md` R82.1, R82.3, R82.7) — B79 cites
@@ -318,13 +316,13 @@ B40/B41 are proving right now.
    on top of `notifications.md` R82.7/R82.12 (their unit 3 owns the key
    matrix); visibility-filtered recipients are R82.3's test.
 
-**e2e (Playwright — B40/B41 own the files; this batch is read-only)**
+**e2e (Playwright — B40/B41 own the files; this change is read-only)**
 
 6. Existing coverage to stay green: `e2e/comments.spec.ts:131,177,227,264`
    (create+reply, edit-in-place, resolve/reopen, delete thread) and
    `e2e/inbox.spec.ts:99,181,251` (mention notifies, mark-read, follow
    persists).
-7. New coverage lands **in those files, by their batches or a follow-up**:
+7. New coverage lands **in those files, as a follow-up**:
    depth-2 reply rejected with a toast and no row (R79.1), reply reaction chip
    visible (R79.2a), comment on a selection → anchor chip → click scrolls to
    the block (R79.3b-c), inbox "Open" lands on `#comment-<id>` (R79.3e),
@@ -333,9 +331,8 @@ B40/B41 are proving right now.
    and the editing follower gets none (R79.5b → R82.12/R82.4), resolve writes
    an activity row that Settings renders with a label (R79.6a-b).
 
-**Concurrency note (honesty tail).** B40 and B41 are running targeted e2e on
-these very flows while this spec was written; per `scripts/LOOP_PLAYBOOK.md`
-this batch therefore changed **zero components**, ran **no playwright**, and
+**Scope note.** This spec covers flows already exercised by
+targeted e2e; the change itself changed **zero components**, ran **no playwright**, and
 its only gates are the FAST tier (tsc + eslint + targeted unit + coherence).
 
 ## 7. Delivery plan (tasks ↔ requirements)
@@ -366,10 +363,10 @@ its only gates are the FAST tier (tsc + eslint + targeted unit + coherence).
 - **T79.6 [R79.6]** — activity writes for resolve/edit/delete, `ACTIVITY_KEYS`
   completion, `row.edited` union decision. Red: unit 4.
 
-Sizing per playbook: T79.1+T79.6 are small (one slot each), T79.2 medium,
+Sizing: T79.1+T79.6 are small (one slot each), T79.2 medium,
 T79.3 heavy (own slot, serialized with the editor-slot owner), T79.4+T79.5 are
 medium and **sequence behind B82's `notify()` seam** (their M1) — execute as
-micro-slices, not one batch.
+micro-slices, not one change.
 
 ## 8. Risks & open questions (honest)
 
@@ -377,8 +374,8 @@ micro-slices, not one batch.
 
 1. **Concurrent e2e (highest, immediate).** B40/B41 hold `e2e/comments.spec.ts`
    and `e2e/inbox.spec.ts` and a shared dev server + DB. Any implementation of
-   this spec that touches those flows must coordinate through the gate lock and
-   must not edit those files while their batches are live (playbook: one owner
+   this spec that touches those flows must coordinate through the build serialization and
+   must not edit those files while that work is live (tier rule: one writer
    per file).
 2. **Anchor drift.** If block ids are added but some path rewrites content
    without preserving attrs (markdown import, version restore
@@ -415,7 +412,7 @@ micro-slices, not one batch.
 - **O79.5** — Matrix rows 371 ("Following pages 🧭 Planned") and 372
   ("Notification inbox 🧭 Planned") both understate shipped code (bell at
   `page-title.tsx:338-356`; inbox route at `src/app/w/[slug]/inbox/page.tsx`).
-  Glyphs are untouched here (append-only rule); orchestrator should re-baseline
+  Glyphs are untouched here (Notes-only); maintainers should re-baseline
   those two rows after T79.5.
 - **O79.6** — Notification preferences (row 373) is 🧭 but specified:
   `notifications.md` **R82.15-R82.18** resolve page → workspace → default and
@@ -431,7 +428,7 @@ micro-slices, not one batch.
   R79.5) and keeps ownership of the comment-side event sources' UX plus the
   unclaimed residue (edit-time dispatch R79.4c, anchor-aware arrival R79.3e).
   Neither spec restates the other's semantics; both edit matrix Notes
-  append-only.
+  as Notes-only entries.
 - **`docs/specs/engineering-hardening.md` (B28)** — DEC28.1 / R28.1-R28.5 own
   block identity (`id` attr, `ensureBlockIds`, backfill script); its §2.1 audit
   independently reaches the same verdict this spec does on `Comment.blockId`
@@ -445,13 +442,13 @@ micro-slices, not one batch.
 - **`docs/specs/automations.md` (R27.9)** — automation `notify` writes the same
   `Notification` table through `notify()`; unrelated to comment sources but
   shares the seam and the inbox renderer.
-- **Matrix rows (B79, Notes append-only, glyphs untouched)**: §7 rows *Page
+- **Matrix rows (B79, Notes-only, glyphs untouched)**: §7 rows *Page
   comments* (`:357`), *Inline comments* (`:358`), *Comment threads* (`:359`),
   *Resolve comment* (`:365`), *Comment reactions* (`:367`), *Comment mentions*
   (`:368`), *Following pages* (`:371`), *Notification inbox* (`:372`), *Activity
   trail* (`:375`). Rows 372/373 also carry B82's notes — both landed intact.
-- **Live batches**: B40 owns `e2e/comments.spec.ts`, B41 owns
-  `e2e/inbox.spec.ts` — read-only throughout this batch; their 7 tests are the
+- **Live coverage**: B40 owns `e2e/comments.spec.ts`, B41 owns
+  `e2e/inbox.spec.ts` — read-only throughout this change; their 7 tests are the
   non-regression floor for every task above.
 
 ## 10. Non-goals (this spec)

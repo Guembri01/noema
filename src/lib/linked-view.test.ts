@@ -15,7 +15,7 @@ import { normalizeViewConfig, type ViewConfig } from "@/lib/database-query";
  * Linked-database view identity + per-instance overrides (R89.14 / R89.15).
  *
  * `src/lib/linked-view.ts` did not exist when this file was first written
- * (module-not-found -> suite red; scripts/LOOP_PLAYBOOK.md "Red-first").
+ * (module-not-found -> suite red; "Red-first").
  *
  * A linked block is an *instance* of a database bound to one source view. The
  * instance carries a `mode`:

@@ -13,7 +13,7 @@ import { createHmac } from "node:crypto";
  *  (2) logout → login with a fresh TOTP succeeds, a WRONG code is rejected at
  *      the gate, and the session lands back in the workspace.
  *
- * Fixture discipline (scripts/LOOP_PLAYBOOK.md): a DEDICATED prisma-created
+ * Fixture discipline: a DEDICATED prisma-created
  * user + workspace (`b95-2fa-user@example.test`), never `demo@noema.local` —
  * the demo account's 2FA columns are snapshotted in beforeAll and asserted
  * untouched at the end of the enrollment test. Cleanup is try/finally in
@@ -27,14 +27,14 @@ import { createHmac } from "node:crypto";
  * the local implementation on the RFC 6238 secret
  * "12345678901234567890" = GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ, t=59s → 94287082.
  *
- * AUTH COMPONENTS ARE READ-ONLY for this batch (B54 owns auth live —
+ * AUTH COMPONENTS ARE READ-ONLY here (B54 owns auth live —
  * `src/lib/auth.ts` is ` M` in git status). Reported gaps, not patched here:
  *  - BACKUP CODES DO NOT EXIST anywhere in the product (grep "backup" over
  *    src/: zero hits; no schema column, no server action, no UI in
  *    two-factor-manager.tsx, no i18n keys). The "backup codes shown once"
- *    half of the brief cannot be e2e-tested without shipping the feature —
+ *    half cannot be e2e-tested without shipping the feature —
  *    owned by B54/auth, reported instead of edited (no skipped test added:
- *    the playbook forbids skipped/xfailed tests).
+ *    skipped/xfailed tests are not allowed).
  */
 
 const USER = {
@@ -187,7 +187,7 @@ test.afterAll(async () => {
 });
 
 test.beforeEach(() => {
-  // Settings on dev under fleet contention is a heavy RSC payload.
+  // Settings on dev under concurrent load is a heavy RSC payload.
   test.setTimeout(120_000);
 });
 

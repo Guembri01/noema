@@ -1,22 +1,20 @@
 # Spec — Search deep: scope, filters, recents, palette, ranking (section 11)
 
-> **Status: spec complete, implementation pending.** Batch **B78** of the parity
-> loop (docs-only; no production code changed). This document is the
-> deliverable. Every claim about current code cites file + line. Requirement IDs
+> **Status: spec complete, implementation pending.** Document-only: no
+> production code changed. This document is the deliverable. Every claim about current code cites file + line. Requirement IDs
 > (`R78.x`) are the traceability anchors: the delivery plan in §10 lists tasks
 > 1:1 against them, and tests must cite the IDs they cover. Scope is FEATURE
 > MATRIX **section 11 (Search), rows `docs/FEATURE_MATRIX.md:456-466`** — 11
-> rows (3 ✅ · 2 🟡 · 6 🧭 per scoreboard `:781`). Matrix edits by this batch
-> are **append-only** (`Spec: docs/specs/search.md.` appended to the section-11
+> rows (3 ✅ · 2 🟡 · 6 🧭 per the status summary `:781`). Matrix edits by this change
+> are **Notes-only** (`Spec: docs/specs/search.md.` appended to the section-11
 > Notes cells); no status glyph is changed here.
 >
-> **Sibling ownership (wave 2, still running — READ-only for this spec):**
-> **B39** owns `e2e/search.spec.ts` (`scripts/parity-state.json:160-164`) and
-> **B43** owns the command palette — `quick-find.tsx` extension, new
-> `command-palette.tsx`, the `workspace-shell` keybinding, `fuzzy.ts`
-> (`scripts/parity-batches.json:666-675`, `parity-state.json:175-179`). This
-> spec designs *around* them: every requirement below that touches those files
-> names the coordination point instead of assuming ownership.
+> **Ownership boundaries (READ-only for this spec):** **B39** owns
+> `e2e/search.spec.ts` and **B43** owns the command palette — `quick-find.tsx`
+> extension, new `command-palette.tsx`, the `workspace-shell` keybinding,
+> `fuzzy.ts`. This spec designs *around* them: every requirement below that
+> touches those files names the coordination point instead of assuming
+> ownership.
 
 ---
 
@@ -127,13 +125,13 @@ navigation** — reusing the shipped FTS pipeline, with zero schema changes.
 - **D78.4 — "keyset" docstring on offset paging** (`search-results.tsx:17-19`).
   Harmless today, but the claim is false; windows shift when pages are
   created/edited mid-scroll.
-- **D78.5 — matrix note drift (no glyph changes from this batch).**
+- **D78.5 — matrix note drift (no glyph changes from this change).**
   `:458` says "Basic; no ranking" although `ts_rank` orders results
   (`queries.ts:283`); `:463`/`:464` say 🧭 although snippets and ranking ship.
   The honest reading: *content* ranking exists but is single-pass, and
   snippets exist but are unhighlighted — which is what R78.8/R78.9 build on.
-  Wording refresh is an orchestrator call (`docs:counts`/`docs:gaps` are
-  orchestrator-only, playbook §"Ordering strategy").
+  Wording refresh is a maintainer call (`docs:counts`/`docs:gaps` are
+  maintainer-only).
 - **D78.6 — mirror freshness depends on the writer.** `pageSearchText` is set
   by pages/page-menu/page-versions (`pages.ts:83,271`,
   `page-menu.ts:280`, `page-versions.ts:72`) but **never** by
@@ -153,11 +151,11 @@ navigation** — reusing the shipped FTS pipeline, with zero schema changes.
 | --- | --- | --- |
 | Dec1 | **Scope moves into SQL, all branches.** `visiblePageIds` becomes a `p.id = ANY(...)` predicate (or a join on the scope set) applied to pass 1, pass 2, pass 3 *and* the empty branch, **before** `LIMIT/OFFSET`. | One fix closes D78.1 + D78.2 at the root; post-filtering can never be correct once windows exist. |
 | Dec2 | **Filters are server-side and live in the URL** (`?q=&type=&team=&by=&edited=`), extending the existing GET form. `loadMoreSearchAction` carries them through. | Matches the shipped form/page flow (`page.tsx:38-47`), keeps Load-more consistent, URLs stay shareable. Client-side window filtering is explicitly rejected. |
-| Dec3 | **Recents are client-side** (`localStorage`, key `noema:recents:<userId>:<workspaceId>`, cap 10, newest first) with entries re-checked through `pageScopeFor` on render. | Zero schema change (docs-tier promise), per-device is an accepted v1 limitation (O78.3). Server storage would need a table + migration = Tier MAX for no user-visible gain yet. |
-| Dec4 | **One palette, B43 owns it.** This spec defines only the *search contracts* B43's palette must consume: recents section on empty query, `fuzzyFilter` over `quickFindAction` results + commands, filter tokens (`type:page`, `in:teamspace`) parsed into Dec2's params. | `parity-batches.json:666-675` gives B43 the file; navigation-ux already books the shortcut there (`docs/specs/navigation-ux.md:482`). Duplicating a palette would recreate the entry-point row `:462` problem. |
+| Dec3 | **Recents are client-side** (`localStorage`, key `noema:recents:<userId>:<workspaceId>`, cap 10, newest first) with entries re-checked through `pageScopeFor` on render. | Zero schema change (docs-tier promise), per-device is an accepted v1 limitation (O78.3). Server storage would need a table + migration = Tier HEAVY for no user-visible gain yet. |
+| Dec4 | **One palette, B43 owns it.** This spec defines only the *search contracts* B43's palette must consume: recents section on empty query, `fuzzyFilter` over `quickFindAction` results + commands, filter tokens (`type:page`, `in:teamspace`) parsed into Dec2's params. | B43 owns that file; navigation-ux already books the shortcut there (`docs/specs/navigation-ux.md:482`). Duplicating a palette would recreate the entry-point row `:462` problem. |
 | Dec5 | **Blend, don't fall back.** Ranking = pass-1 `ts_rank` ∪ pass-2 prefix hits, prefix-only rows ranked at a fixed discount (0.5×) then `updatedAt` tie-break; the trigram (`pg_trgm` similarity) tier runs only when passes 1+2 both return nothing. | Keeps the GIN path fast on the common query; matrix `:464` explicitly allows "Postgres FTS or trigram". Pass 3 (substring) stays as the un-backfilled safety net only. |
-| Dec6 | **Keep OFFSET windows; fix the claim, not the mechanism.** Window math stays (`searchPagesPaged`), the "keyset" docstring is corrected when a code batch owns that file, and a true cursor is O78.4. | e2e-locked by `noema.spec.ts:1175-1209`; churning paging under B39's running suite risks false reds. |
-| Dec7 | **No schema change anywhere in this spec.** Filters = query params, recents = localStorage, ranking = SQL. | Keeps the batch FAST-tier (docs) and removes the `db push`/build path entirely. |
+| Dec6 | **Keep OFFSET windows; fix the claim, not the mechanism.** Window math stays (`searchPagesPaged`), the "keyset" docstring is corrected when a code change owns that file, and a true cursor is O78.4. | e2e-locked by `noema.spec.ts:1175-1209`; churning paging under B39's running suite risks false reds. |
+| Dec7 | **No schema change anywhere in this spec.** Filters = query params, recents = localStorage, ranking = SQL. | Keeps this change FAST-tier (docs) and removes the `db push`/build path entirely. |
 
 ## 4. Requirements (numbered, testable)
 
@@ -229,7 +227,7 @@ navigation** — reusing the shipped FTS pipeline, with zero schema changes.
   intended page. `npm run check:search` grows from 9 to ≥12 checks (blend
   order, typo hit, guest-scope window) and stays green. Acceptance: unit
   tests over a seeded corpus for ordering + typo; `check:search` count in the
-  matrix note updated by the implementing batch.
+  matrix note updated by the implementation.
 - **R78.9** — Snippets and titles render **highlighted** matched terms:
   `ts_headline` gets sentinel markers (`StartSel=<b>…` equivalent, chosen as
   markers React never renders as HTML), the client splits on them and emits
@@ -297,7 +295,7 @@ stays as-is: B43's palette already depends on it.
   (coordinate with B39: their test asserts no `results? for` summary and no
   `ul a` (`:208-209`), which recents would break — hence R78.6 ships its
   markup as a separate list only when recents exist, and B39's assertion gets
-  an update in the implementing batch's own PR, not here).
+  an update in the implementer's own PR, not here).
 
 ### 7.2 Palette (B43-owned file, search-side sections)
 
@@ -338,13 +336,13 @@ themes. Search page: roving `tabIndex` over result links, `↑/↓` move the rin
    `BASELINE.i18nFiles`, `check-coherence.mjs:26`), en/fr/es/de/ar at minimum,
    matching the catalogue in `src/lib/i18n.ts`.
 9. **Mirror-stale rows (D78.6)** — pass 3 keeps titles searchable meanwhile;
-   the implementing batch additionally backfills on `setup:search` (already
+   the implementation additionally backfills on `setup:search` (already
    idempotent, `setup-search.mjs:37`) rather than adding writes to 12 files in
    this spec.
 
 ## 9. Test plan
 
-> Red-first per `scripts/LOOP_PLAYBOOK.md`; tests cite their `R78.x`.
+> Red-first; tests cite their `R78.x`.
 
 **Unit (vitest)**
 
@@ -367,7 +365,7 @@ green (`package.json:33`).
 
 **e2e (Playwright, dev :3201, targeted `-g`, no lock)**
 
-12. `e2e/search-parity.spec.ts` (**new file — this batch's implementation
+12. `e2e/search-parity.spec.ts` (**new file — this change's implementation
     successor owns it; do NOT add tests to B39's `e2e/search.spec.ts` or the
     editor-slot `e2e/noema.spec.ts`**): filter chip flow [R78.4], palette
     recents + clear [R78.6], `<mark>` highlight [R78.9], ArrowDown selection
@@ -375,8 +373,8 @@ green (`package.json:33`).
 13. B43's `e2e/palette.spec.ts` keeps/extends the palette assertions [R78.7];
     B39's suite must remain green unmodified.
 
-**Explicitly not run by this batch** (docs tier): no build, no e2e, no
-`docs:counts`/`docs:gaps` (orchestrator-only).
+**Explicitly not run by this change** (docs tier): no build, no e2e, no
+`docs:counts`/`docs:gaps` (maintainer-only).
 
 ## 10. Delivery plan (milestones → tasks ↔ requirements)
 
@@ -424,21 +422,21 @@ green (`package.json:33`).
    cost is real. Mitigation: keep the scope set for members `null`
    (`pageScopeFor:89`) so only guests pay, and add a `check:search`-style timing
    probe if a workspace grows past ~5 k visible pages.
-2. **Collision with two running siblings.** B39 owns `e2e/search.spec.ts` and
-   B43 owns `quick-find.tsx`/keybinding (both `running`,
-   `parity-state.json:160-179`). Mitigation: this spec touches neither file;
+2. **Collision with two parallel work streams.** B39 owns `e2e/search.spec.ts` and
+   B43 owns `quick-find.tsx`/keybinding in parallel.
+   Mitigation: this spec touches neither file;
    M3's tasks explicitly queue behind B43 and land in a fresh spec file.
 3. **Recents breaking B39's empty-state assertions.** Their test asserts zero
    `ul a` on the empty search page (`search.spec.ts:208-209`) and exactly one
    palette option (`:230-231`, `:275`). Mitigation: R78.6 renders the recents
-   list only when it is non-empty, and the implementing batch updates those
+   list only when it is non-empty, and the implementation updates those
    assertions *with* the feature in its own PR (red-first, not silently).
 4. **Typo tier latency on large workspaces.** The trigram pass scans
    `searchText` without a usable GIN operator for `%`. Mitigation: it runs only
    after two empty passes (Dec5) and is bounded by `LIMIT take+1`; if it proves
    slow, ship prefix-only and record the drop in the matrix note honestly.
 5. **Doc drift recurring (D78.5).** Matrix notes lag shipped behaviour. This
-   spec records the drift instead of editing glyphs; the orchestrator's
+   spec records the drift instead of editing glyphs; the maintainers'
    `docs:counts`/`docs:gaps` pass should re-word `:458`, `:463`, `:464`.
 
 **Open questions**
@@ -455,7 +453,7 @@ green (`package.json:33`).
   ("Pages, databases, etc.") is the tracking row.
 - **O78.3 — recents: local vs account-level.** Dec3 chose `localStorage`
   (per-device). If Notion-parity requires account-wide recents, it needs a
-  table + migration (Tier MAX) — revisit when a section-9 "workspaces" row
+  table + migration (Tier HEAVY) — revisit when a section-9 "workspaces" row
   demands it.
 - **O78.4 — `pg_trgm` availability.** The typo tier needs the extension;
   self-hosted Postgres usually has it, but `setup-search.mjs` would have to
@@ -468,7 +466,7 @@ green (`package.json:33`).
 
 ## 12. Traceability — FEATURE_MATRIX rows (section 11)
 
-Statuses are **unchanged** by this batch; only `Spec: docs/specs/search.md.` is
+Statuses are **unchanged** by this change; only `Spec: docs/specs/search.md.` is
 appended to each Notes cell.
 
 | Row (`docs/FEATURE_MATRIX.md`) | Status (unchanged) | Requirements |

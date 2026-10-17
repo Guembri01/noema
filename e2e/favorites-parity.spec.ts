@@ -9,8 +9,8 @@ import { PrismaClient } from "@prisma/client";
  *  (d) the favorites order persists across a reload.
  *
  * Dedicated prisma-created pages with try/finally cleanup; never the shared
- * first page (see scripts/LOOP_PLAYBOOK.md e2e discipline). Per-test sign-in
- * like every other spec: sharing a storage state across the fleet's concurrent
+ * first page (see the e2e discipline). Per-test sign-in
+ * like every other spec: sharing a storage state across the team's concurrent
  * playwright runs proved less robust than paying the login cost directly.
  */
 
@@ -19,14 +19,14 @@ const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
 const prisma = new PrismaClient();
 
 // Generous budgets: dev :3201 recompiles on demand and sign-in costs 30–90 s
-// when sibling batches are building against the same server.
+// when concurrent suites are building against the same server.
 const NAV_TIMEOUT = { timeout: 60_000 };
 
 test.setTimeout(180_000);
-// Fleet note: sibling batches run playwright concurrently in this working dir;
+// Note: several suites may run playwright concurrently in this working dir;
 // the shared test-results/.playwright-artifacts-* dirs then collide mid-trace
 // ("trace recording fixture timeout during setup"). Opt this spec out of
-// tracing and give it its own output dir (see the run command in B44 notes).
+// tracing and give it its own output dir (see the run command).
 test.use({ trace: "off" });
 
 async function signIn(page: Page) {
@@ -87,7 +87,7 @@ async function waitForHydration(page: Page, selector: string) {
     },
     selector,
     // 30 s: the editor page hydrates tiptap + collab on top of the star; under
-    // fleet load that stack occasionally needs more than 15 s.
+    // concurrent load that stack occasionally needs more than 15 s.
     { timeout: 30_000 },
   );
 }
@@ -120,7 +120,7 @@ test.describe("favorites sidebar parity", () => {
 
       // The sidebar section lists the page, with a count badge on the header.
       // Generous timeout: the row lands via the RSC refresh after the action,
-      // which costs 5–15 s on the dev server under fleet load.
+      // which costs 5–15 s on the dev server under concurrent load.
       const row = favoritesSection(page).locator(
         `[data-testid="favorite-item"][data-page-id="${created.id}"]`,
       );

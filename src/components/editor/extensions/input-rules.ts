@@ -36,7 +36,7 @@ import {
  * (curly quotes, en/em dashes, `...`, ©/®/™) and the **stable block ids**
  * slice (a persistent `id` on every top-level block, so block deep-links
  * resolve). `page-editor.tsx` owns the
- * editor's extension list but is shared across the whole fleet, so the new
+ * editor's extension list but is shared across the whole set, so the new
  * extensions are registered through TipTap v3's `addExtensions` — the same
  * hook `StarterKit` uses to bundle its parts — and flattened into the
  * schema/rules from here. Once they are listed in `page-editor.tsx` directly,

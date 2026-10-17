@@ -9,7 +9,7 @@ import { hueEdge, hueInk, hueSurface, normalizeHue } from "@/lib/palette";
  * The database shape shared by the view renderers.
  *
  * Extracted from `database-view.tsx` so a view component can be moved or tested
- * without importing the whole screen (docs/FIX_PLAN.md P3).
+ * without importing the whole screen (P3).
  */
 
 export type PropertyConfig = {

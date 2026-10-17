@@ -1,13 +1,13 @@
 # Spec — Workspaces & structure (teamspaces vs spaces, page tree, invite lifecycle)
 
-> **Status: spec complete, implementation pending.** Batch **B80** of the parity
-> loop (docs-only — no production code was changed). Every claim about the
+> **Status: spec complete, implementation pending.** Document-only: no
+> production code was changed. Every claim about the
 > current code cites file + line. Requirement IDs (`R80.x`) are the traceability
 > anchors: §11 lists delivery tasks 1:1 against them, and tests must cite the
-> IDs they cover. Matrix edits for this batch are append-only Notes in
+> IDs they cover. Matrix edits for this change are Notes-only entries in
 > `docs/FEATURE_MATRIX.md` §9 plus the blocked row at `:345`; glyphs stay
-> orchestrator-owned (`scripts/LOOP_PLAYBOOK.md:59-60,84-87`). **B42 (trash)
-> and B44 (favorites) own their code right now — this batch read their files
+> maintainer-owned. **B42 (trash)
+> and B44 (favorites) own their code — this change read their files
 > and changed nothing** (§13).
 
 ---
@@ -15,7 +15,7 @@
 ## 1. Problem statement
 
 Section 9 of the matrix ("Workspaces & structure") is the most drift-prone area
-in the scoreboard: rows disagree with each other (`Move page 🧭` at `:432` vs
+in the status summary: rows disagree with each other (`Move page 🧭` at `:432` vs
 `Page re-parenting ✅` at `:363`), rows disagree with the code (`Quick find 🧭`
 at `:425` although `src/components/quick-find.tsx` ships and is guest-scoped),
 and the two structural concepts the product is built on — **workspace** and
@@ -24,7 +24,7 @@ mechanism that the code only half-enforces (it scopes guests, it does not scope
 members).
 
 Meanwhile three feature clusters in this section are genuinely unfinished and
-need a written plan before an implementation batch picks them up:
+need a written plan before implementation picks them up:
 
 1. **Teamspace semantics vs spaces.** What a teamspace *is* (grouping? access
    boundary? both?), where it stops being a "space" and starts being a
@@ -41,7 +41,7 @@ need a written plan before an implementation batch picks them up:
 
 This spec audits all three against the real files, freezes the semantics as
 numbered requirements, and triages every remaining planned row of §9 so the
-orchestrator can reconcile glyphs from evidence instead of from memory.
+maintainers can reconcile glyphs from evidence instead of from memory.
 
 ## 2. Current state audit (evidence)
 
@@ -60,7 +60,7 @@ orchestrator can reconcile glyphs from evidence instead of from memory.
 | Teamspace invite lifecycle | `src/server/actions/teamspace-invites.ts` — TTL `:13`, admin gate `:29-41`, invite `:50-135` (existing workspace member/owner → **instant add** `:64-94` including guests; otherwise hashed single-use link, upsert revives and resets `acceptedAt` `:107-114`, SMTP kind `teamspace-invite` `:129`, raw link always returned for hand-share `:134`), revoke `:138-149`, **read**: `resolveTeamspaceInvite` `:171` behind `previewTeamspaceInviteAction` `:211`, **accept**: `acceptTeamspaceInviteAction` `:230-256` (invalid/used/expired/email-match `:192-205`, implies workspace membership `:238-244`, teamspace membership with invite role `:245-249`, `acceptedAt+acceptedById` `:250-253`) via `/invite/teamspace/[token]` (`src/app/invite/teamspace/[token]/page.tsx:43` reads, `:21,83` posts) | Complete loop, three non-atomic writes (defect D3). Roles are `MEMBER\|ADMIN` only (`:53,:62`; API route coerces the same, `src/app/api/invites/route.ts:55-70`, rate-limited 20/min). |
 | Guest invite path | UI role select `GUEST\|MEMBER\|ADMIN` `src/components/members-manager.tsx:62,226-233`; API `POST /api/invites` maps `GUEST` on workspace target only; guest teardown: role change `workspaces.ts:136` (guest branch `:257-259`), removal `:178` (cleans `PagePermission` `:209`), leave `:215` (cleans own `PagePermission` `:235`) | Works; e2e coverage `e2e/noema.spec.ts:661-756` (role change/removal/owner protection) + guest scoping suite `:1098+`. **Gap:** neither removal path cleans `TeamspaceMember` rows (grep of `prisma.teamspaceMember.` shows only 5 sites — invites, add/remove teamspace, guest read). |
 | Guest visibility query | `guestVisiblePageIds` `guest-access.ts:46-75`; used by tree/search/page route; **backlinks bypass it** — `getBacklinks(workspace.id, page.id)` called without the optional `visiblePageIds` third argument (`src/app/w/[slug]/[pageId]/page.tsx:56`; query at `src/server/queries.ts:369-389`) | Real scoping gap (D6). |
-| Page tree — pure lib | `src/lib/page-tree.ts`: `groupByParent :14`, `visibleChildren :31`, `flattenVisible :50`, `toggleExpanded :71`, `moveCandidates :88-108` (fix-point descendant block, capped at 12); 22 tests over a 1000-node synthetic tree in `src/lib/page-tree.test.ts` (B66, matrix `:418`) | The sandbox for every new tree algorithm (playbook "Domain sandboxes"). |
+| Page tree — pure lib | `src/lib/page-tree.ts`: `groupByParent :14`, `visibleChildren :31`, `flattenVisible :50`, `toggleExpanded :71`, `moveCandidates :88-108` (fix-point descendant block, capped at 12); 22 tests over a 1000-node synthetic tree in `src/lib/page-tree.test.ts` (B66, matrix `:418`) | The sandbox for every new tree algorithm (the domain sandbox). |
 | Page tree — move | Server: `movePageAction` `src/server/actions/pages.ts:285-323` — authorize + `canEditContent`, self-parent, cycle walk `:297-313`, position append `:315-320`. **No same-workspace check on `parentId`, no trashed-parent check.** UI: sidebar "Move to" `page-tree.tsx:373` (targets pre-filtered in `page-menu.ts:168-180`) and page menu `page-title.tsx:204` | Works from the UI; the server action trusts the client for workspace containment (D2). |
 | Page tree — bulk | Nothing: the only bulk action in `src/` is tickets (`bulkUpdateTicketsAction`, `tickets.ts:445-480`); no multi-select/checkbox state in `sidebar/page-tree.tsx` | **Bulk move absent** (D1). |
 | Page tree — duplicate | `duplicatePageAction` `src/server/actions/page-menu.ts:229-281`: copies one row (title/icon/content/teamspace/project/searchText), same parent — **no children walk, no relation remap**, despite matrix `:431` "Clone a page with children … Works; relation remap partial" (D4). | Partial; parity claim overstated. |
@@ -127,7 +127,7 @@ orchestrator can reconcile glyphs from evidence instead of from memory.
 | Option | Fit | Verdict |
 | --- | --- | --- |
 | **A. Keep teamspace as *additive* visibility + organizational grouping; make the invariant explicit and tested** (scopes guests, denies no member) | Matches every existing read path (`pageScopeFor` null for members is load-bearing for performance: no per-page filtering for the common case); zero schema change; guests — the population that needs scoping — already get it | **Chosen for this spec.** Documented in GLOSSARY fix + guarded by R80.1's test. |
-| B. Notion-style enforcement (members denied outside their teamspaces) | Would flip `pageScopeFor` for *all* roles, adding an id-filter to every tree/search/page query, and changes visible behavior for every existing member (pages would "disappear" for non-members of a teamspace) | Rejected as default; recorded as **O80.1** — a deliberate future product decision with its own benchmark, not a side effect of this batch. |
+| B. Notion-style enforcement (members denied outside their teamspaces) | Would flip `pageScopeFor` for *all* roles, adding an id-filter to every tree/search/page query, and changes visible behavior for every existing member (pages would "disappear" for non-members of a teamspace) | Rejected as default; recorded as **O80.1** — a deliberate future product decision with its own benchmark, not a side effect of this change. |
 | C. Merge teamspace into plain folders (drop the concept) | Deletes a shipped ✅ area (matrix `:417,:395`), an e2e (`noema.spec.ts:363+`), the SSO check harness, and the guest-visibility source | Rejected — worse parity. |
 
 **Decision: A.** The rest of this spec hardens what exists (R80.1-R80.7,
@@ -193,8 +193,8 @@ the drift (§13).
   `prisma.$transaction`, and returns `{ moved, skipped: [{id, reason}] }`;
   (c) sidebar selection UI (checkbox/shift-click + a Move to entry reusing the
   existing target dialog, `page-tree.tsx:373`) — **file ownership note:** the
-  implementation batch must queue behind whoever holds the sidebar/editor slot
-  (playbook §parallelism).
+  implementation must queue behind whoever holds the sidebar/editor slot
+  (tier rule: one writer per file).
 - **R80.9** — Bulk scope boundary (anti-collision): this feature ships **move
   only**. Bulk delete/restore stays with **B42** (trash), bulk favorite with
   **B44**, bulk duplicate is deferred until R80.10 lands (they share the
@@ -209,7 +209,7 @@ the drift (§13).
 - **R80.11** — **Recent pages** (`:420`) gets its data source before its UI:
   decision = server-side `Page.lastVisitedAt` (nullable, indexed), written
   debounced (≥ 60 s per page per session) from the page route, M3 and
-  **schema-change/Tier MAX**. The sidebar "Recent" section then lists top 10 per
+  **schema-change/Tier HEAVY**. The sidebar "Recent" section then lists top 10 per
   workspace, guest-scoped via `pageScopeFor`. Rejected alternative: localStorage
   recents — device-bound and proven insufficient by the B11 notify-me finding;
   parity needs cross-device. Until M3 the row stays 🧭 honestly.
@@ -280,7 +280,7 @@ the drift (§13).
   created workspace (dialog flow); `/app`'s redirect-to-first behavior
   (`app/page.tsx:10-17`) is documented as intended (it is a fallback, not the
   switcher). No new behavior in M1-M2; glyph reconciliation for `:412/:413` is
-  the orchestrator's (`docs:counts`/`docs:gaps`).
+  the maintainers' (`docs:counts`/`docs:gaps`).
 - **R80.22** — Workspace settings row (`:433`) is scoped honestly: everything
   except billing exists (§2.1); billing belongs to `docs/specs/plans-licensing.md`
   and is cross-referenced from the matrix note, not re-specced here.
@@ -355,7 +355,7 @@ model Page {
 - **Pending invites**: both lists gain an expiry hint ("expires in 3 days" /
   hidden when expired, R80.17); revoke behavior unchanged.
 - **i18n**: every new string goes through `t()` with all 5 locales; no ratchet
-  raise beyond a *measured* count (playbook "Never shortcut").
+  raise beyond a *measured* count (never shortcut a check).
 
 ## 8. Conflict & edge spec
 
@@ -365,7 +365,7 @@ model Page {
 | Move into a trashed parent | Rejected (trashed parents are hidden from `moveCandidates` today; server catches the crafted case). |
 | Bulk move with 51 ids | Rejected up front with a count; no partial application. |
 | Bulk selection contains parent + its descendant | Subsumed — descendant is skipped (reported), not moved twice. |
-| Bulk move where one id fails authz | Transaction aborts, nothing moves, per-id reasons returned (playbook: stop-on-red semantics for data). |
+| Bulk move where one id fails authz | Transaction aborts, nothing moves, per-id reasons returned (stop-on-red semantics for data). |
 | Duplicate a subtree with an outside-relation | Copy keeps the pointer to the original; inside-subtree relations remap (R80.10 rule, documented in the action's JSDoc). |
 | Delete teamspace mid-session | Pages fall to Private (SetNull) — sidebar re-renders groups; a client holding the old `teamspaceId` gets "Teamspace not found." on the next mutation. |
 | Guest opens a page whose mentioners are hidden | Panel shows only scoped mentioners (R80.12); empty panel renders nothing rather than an empty-state that implies "no backlinks". |
@@ -402,7 +402,7 @@ model Page {
 9. Accept-after-revoke for both models (R80.16).
 
 **e2e (Playwright — dedicated pages + try/finally cleanup, structural tests
-avoid shared accumulation per playbook flakes note)**
+avoid shared accumulation)**
 
 10. Teamspace lifecycle extension in the existing settings block
     (`e2e/noema.spec.ts:363-377`): create → invite (link captured) → accept in
@@ -411,12 +411,12 @@ avoid shared accumulation per playbook flakes note)**
     tree order + toast (R80.8).
 12. Guest backlink scoping: hidden mentioner's title absent from the guest's
     page (R80.12) — runs beside the known-flaky `guest scoping › pages through
-    a large result set` (rerun-once rule, `LOOP_PLAYBOOK.md:131-136`).
+    a large result set` (rerun-once rule).
 13. Delete teamspace → pages under "Private pages" (R80.4).
 
-**Gates for the implementation batches**: M1 = STANDARD (tsc/eslint/unit/
+**Gates for implementation**: M1 = STANDARD (tsc/eslint/unit/
 coherence + targeted e2e on dev :3201); bulk move UI = STANDARD with its own
-`e2e/<topic>.spec.ts`; M3 recency = Tier MAX (schema push). This docs batch
+`e2e/<topic>.spec.ts`; M3 recency = Tier HEAVY (schema push). This docs-only change
 owes FAST only: tsc + eslint + unit + `check:coherence` **COHERENT**.
 
 ## 10. Migration path (legacy → target behavior)
@@ -427,11 +427,11 @@ owes FAST only: tsc + eslint + unit + `check:coherence` **COHERENT**.
    duplicate-with-children, backlink surfacing + index design. Requires
    sidebar-slot coordination (R80.8 ownership note).
 3. **M3 — recency & role promotion** (R80.11, R80.5 promotion O80.2): schema
-   change → Tier MAX, then glyph moves are orchestrator-owned.
+   change → Tier HEAVY, then glyph moves are maintainer-owned.
 
 ## 11. Delivery plan (milestones → tasks ↔ requirements)
 
-> Red-first rule from `scripts/LOOP_PLAYBOOK.md:141-147` applies: every task's
+> Red-first rule applies: every task's
 > acceptance is a red test citing its requirement IDs before implementation.
 
 **M1 — Integrity & lifecycle hardening (~1-2 days)**
@@ -458,7 +458,7 @@ owes FAST only: tsc + eslint + unit + `check:coherence` **COHERENT**.
 
 **M3 — Recency & roles (~2 days, schema)**
 
-- T80.10 [R80.11]: recency column/visit table (Tier MAX), sidebar Recent
+- T80.10 [R80.11]: recency column/visit table (Tier HEAVY), sidebar Recent
   section, guest-scoped.
 - T80.11 [O80.2]: teamspace-scoped roles (separate slice, may slip).
 
@@ -466,9 +466,9 @@ owes FAST only: tsc + eslint + unit + `check:coherence` **COHERENT**.
 
 **Risks**
 
-1. **Sidebar slot collision (highest process risk).** `sidebar/page-tree.tsx`
-   is exactly the file an editor/navigation batch wants; two batches editing it
-   produce false greens (playbook "No two batches in the same ownership slot").
+1. **Sidebar slot collision (highest coordination risk).** `sidebar/page-tree.tsx`
+   is exactly the file editor/navigation work wants; two changes editing it
+   produce false greens (tier rule: one writer per file).
    Mitigation: T80.6 queues; this spec only touches docs today.
 2. **Accept-path rewrite touches two live invite flows + an e2e that captures
    links** (`noema.spec.ts:363+`). Mitigation: red tests first (unit 4),
@@ -476,8 +476,8 @@ owes FAST only: tsc + eslint + unit + `check:coherence` **COHERENT**.
 3. **Backlink scoping changes rendered output for guests** — could trip the
    known-unstable `guest scoping` test; mitigation: rerun-once, then root-fix
    queue (never rerun-triage).
-4. **Matrix line drift.** Sibling batches (B78/B79) append to the same file;
-   §13 records lines *as of this batch*, and every edit re-matches exact cell
+4. **Matrix line drift.** Concurrent suites (B78/B79) append to the same file;
+   §13 records lines *as of this change*, and every edit re-matches exact cell
    text instead of line numbers.
 
 **Open questions**
@@ -495,11 +495,11 @@ owes FAST only: tsc + eslint + unit + `check:coherence` **COHERENT**.
   `searchText` pattern) vs reusing FTS? Decide in M2 with the render benchmark.
 - **O80.5** — Should the workspace switcher list *pending* workspace invites
   (join a workspace you're invited to from `/app`)? Not modeled today;
-  parity-relevant but unclaimed by any matrix row — orchestrator call.
+  parity-relevant but unclaimed by any matrix row — maintainer call.
 
 ## 13. Traceability — FEATURE_MATRIX rows
 
-**Rows appended by this batch (append-only, glyphs untouched, exactly thirteen):**
+**Rows appended by this change (Notes-only, glyphs untouched, exactly thirteen):**
 
 | Row | Matrix line | Edit |
 | --- | --- | --- |
@@ -525,13 +525,12 @@ owes FAST only: tsc + eslint + unit + `check:coherence` **COHERENT**.
 - **B44 — favorites**: `:419`, `:430` reorder, plus `toggleFavoriteAction`
   (`pages.ts:443`) — **read only**.
 - **B78 — search**: `:421` search entry point, quick-find *behavior* rows in
-  §11 (this batch only records the §9 glyph staleness of `:425`).
+  §11 (this change only records the §9 glyph staleness of `:425`).
 - **B79 — collaboration §7**: `:376` Guests row (audited here for the invite
   lifecycle, no cell edit — section boundary).
 - **§8 sharing rows** (`:395` Teamspace/wiki, `:402`, `:404`): audited as
   context, no cell edit — section boundary.
-- **Orchestrator-only**: counts/gaps regeneration
-  (`scripts/LOOP_PLAYBOOK.md:59-60,84-87`).
+- **Maintainer-only**: counts/gaps regeneration.
 
 **Requirement → milestone → row:** R80.1-R80.6 → M1 → `:417`; R80.7-R80.10 →
 M1-M2 → `:418`, `:431`, `:432`; R80.11 → M3 → `:420`; R80.12-R80.13 → M1-M2 →

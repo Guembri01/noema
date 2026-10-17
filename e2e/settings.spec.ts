@@ -10,14 +10,14 @@ import { PrismaClient } from "@prisma/client";
  *      strings inside #main),
  *  (d) theme toggle persists across a reload.
  *
- * Discipline (scripts/LOOP_PLAYBOOK.md):
+ * Discipline:
  *  - dedicated prisma rows prefixed "B93 " with try/finally cleanup, plus an
  *    afterAll backstop - never the shared first page / demo rows,
  *  - content locators scoped to `#main` so the sidebar cannot satisfy them,
  *  - the two controls that genuinely live in the sidebar (the #locale select and
  *    the theme picker) are addressed by id / exact accessible name,
- *  - demo account (demo@noema.local) per brief: its locale is restored to "en"
- *    in every finally AND in afterAll, so a crashed run cannot poison siblings.
+ *  - demo account (demo@noema.local): its locale is restored to "en"
+ *    in every finally AND in afterAll, so a crashed run cannot poison other runs.
  */
 
 const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
@@ -26,7 +26,7 @@ const PREFIX = "B93";
 
 const prisma = new PrismaClient();
 
-// The dev server is shared with sibling batches; give navigations room.
+// The dev server is shared with concurrent suites; give navigations room.
 test.describe.configure({ timeout: 120_000 });
 test.use({ navigationTimeout: 60_000, actionTimeout: 30_000 });
 

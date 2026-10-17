@@ -383,7 +383,7 @@ describe("CSV honesty (D23.1)", () => {
 
     // Extra matches no property → 1 skipped column (counted once, not per
     // cell). "abc" fails NUMBER coercion and "Unknown" matches no STATUS
-    // option → 2 skipped cells. Both were silent drops before this batch.
+    // option → 2 skipped cells. Both were silent drops before this change.
     expect(result).toEqual({
       ok: true,
       created: 2,

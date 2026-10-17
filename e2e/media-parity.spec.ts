@@ -11,14 +11,14 @@ import { PrismaClient } from "@prisma/client";
  *  (e) the read-only doc renderer carries image width/align and thumbnails.
  *
  * Every test builds its own page through prisma and removes it in a `finally`
- * block — never the shared first page (LOOP_PLAYBOOK e2e discipline).
+ * block — never the shared first page (e2e discipline).
  */
 
 const CREDENTIALS = { email: "demo@noema.local", password: "password123" };
 
 const prisma = new PrismaClient();
 
-// A cold dev server compiles routes on demand and other batches share it (it
+// A cold dev server compiles routes on demand and other suites share it (it
 // has been observed restarting under memory pressure), so the per-test budget
 // is deliberately generous (the config is 60s).
 test.describe.configure({ timeout: 300_000 });
@@ -28,8 +28,8 @@ test.afterAll(async () => {
 });
 
 async function signIn(page: Page) {
-  // The dev server is shared: it can be restarting under us (another batch's
-  // Tier MAX build), so sign-in is retried instead of failing the test.
+  // The dev server is shared: it can be restarting under us (another suite's
+  // Tier HEAVY build), so sign-in is retried instead of failing the test.
   // `domcontentloaded` (not `load`): a busy dev server streams subresources
   // long after the form is interactive.
   let lastError: unknown;
@@ -129,12 +129,12 @@ async function openPage(page: Page, pageId: string) {
 }
 
 /**
- * Reload and wait for the editor to be interactive again — sibling batches
+ * Reload and wait for the editor to be interactive again — concurrent suites
  * hot-reload the shared dev server, so asserting straight after `reload()`
  * races a half-hydrated page.
  */
 async function reloadEditor(page: Page) {
-  // The shared dev server gets restarted by sibling gates mid-test; retry the
+  // The shared dev server gets restarted by other suites mid-test; retry the
   // reload instead of failing on a refused connection.
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -280,7 +280,7 @@ test.describe("media & embeds parity", () => {
       await expect(block).toHaveAttribute("data-align", "center");
 
       // Both settings must land on the server. The dev server is shared with
-      // sibling batches, so the poll re-triggers the (idempotent) save the way
+      // concurrent suites, so the poll re-triggers the (idempotent) save the way
       // database-parity's pollConfig does: left→center is always a real doc
       // change, and one save carries width + align together.
       await expect
@@ -349,8 +349,8 @@ test.describe("media & embeds parity", () => {
 
       // The metadata must reach the server. Poll the stored document and, if
       // the save has not landed yet, re-submit the card (same mocked
-      // metadata, changed URL) — the dev server hot-reloads while sibling
-      // batches edit files, which resets the save indicator mid-test.
+      // metadata, changed URL) — the dev server hot-reloads while other
+      // suites edit files, which resets the save indicator mid-test.
       await expect
         .poll(
           async () => {

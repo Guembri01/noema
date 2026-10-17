@@ -1,11 +1,11 @@
 # Spec — Templates system (page, database, recurring)
 
-> **Status: spec complete, implementation pending.** Batch **B31** of the parity
-> loop (docs-only — no production code changed). Every claim about the current
+> **Status: spec complete, implementation pending.** Document-only: no
+> production code changed. Every claim about the current
 > code cites file + line. Requirement IDs (`R31.x`) are the traceability
 > anchors: §11 lists delivery tasks 1:1 against them, and tests must cite the
 > IDs they cover. Matrix Notes for `FEATURE_MATRIX.md` §6 rows point back here;
-> glyph changes are orchestrator-owned (`docs:counts` / `docs:gaps`).
+> glyph changes are maintainer-owned (`docs:counts` / `docs:gaps`).
 
 ---
 
@@ -48,7 +48,7 @@ UI/CRUD parity, then variables and recurrence hardening.
 | Database row templates — read | `src/server/queries.ts:145-168` (`getDatabase` returns `{id,name,icon,recurrence}` per template `:163-167`) | List view only; `config`/`content` not sent to the client (no preview possible today). |
 | Database row templates — UI | `src/components/database/database-view.tsx:444-458` (row → "Save as template" → `saveRowAsTemplateAction` `:446`), `:717-808` (toolbar **Templates** dropdown: hidden entirely when `templates.length === 0` `:717`; per-template submenu: New row `:739-757`, Repeat daily/weekly/monthly + off `:758-787`, Delete `:789-802`) | Functional but minimal: no rename, no preview, no default, no edit; the menu **vanishes when empty** so a user cannot discover templates from a fresh database. |
 | Recurrence math | `src/lib/recurrence.ts:1-13` (`nextRunFor`: daily +1d, weekly +7d, monthly `setMonth(+1)` **from `new Date()`, no time-of-day anchor**) | Drifts by execution jitter; monthly from Jan 31 → **Mar 3 (February skipped)** (D4). No unit test file exists for it. |
-| Cron materializer | `src/app/api/cron/templates/route.ts:14-102`: fail-closed 503 when `CRON_SECRET` unset `:17-26`, 401 wrong `x-cron-secret` `:27-29`, rate limit 12/min `:30-31`; due query `:33-44`; skip-and-advance for missing/trashed database `:54-60`; row create `:67-78` (**no `searchText`**, attribution `createdById: database.createdById` `:73` — not the template creator); blind `config.values` copy `:80-92` (**no transaction, no stale-property filter** — a dangling `propertyId` throws mid-loop and blocks every later due template, D3); `nextRunAt` advance `:94-97`; `{due, created}` `:101` | **Shipped + hardened** (`AUDIT.md:60` F-03 fail-closed fix; guard `scripts/check-share-cron.mjs:54,61,69` asserts 401/401/200; matrix "Cron endpoint hardening ✅" `:734`). Missing: in-repo scheduler driver (no `cron` entry in `package.json`, no `.github/`, no `vercel.json`), catch-up policy, observability. |
+| Cron materializer | `src/app/api/cron/templates/route.ts:14-102`: fail-closed 503 when `CRON_SECRET` unset `:17-26`, 401 wrong `x-cron-secret` `:27-29`, rate limit 12/min `:30-31`; due query `:33-44`; skip-and-advance for missing/trashed database `:54-60`; row create `:67-78` (**no `searchText`**, attribution `createdById: database.createdById` `:73` — not the template creator); blind `config.values` copy `:80-92` (**no transaction, no stale-property filter** — a dangling `propertyId` throws mid-loop and blocks every later due template, D3); `nextRunAt` advance `:94-97`; `{due, created}` `:101` | **Shipped + hardened** (the F-03 fail-closed fix; guard `scripts/check-share-cron.mjs:54,61,69` asserts 401/401/200; matrix "Cron endpoint hardening ✅" `:734`). Missing: in-repo scheduler driver (no `cron` entry in `package.json`, no `.github/`, no `vercel.json`), catch-up policy, observability. |
 | Variables / date stamps | grep for `@today`/`{{…}}`/date substitution across `src/` → **zero hits**; cron uses `template.name` verbatim as the row title (`cron/templates/route.ts:71`) | **Absent** (gap). |
 | Default template | grep `defaultTemplate\|isDefault` across `src/` → **zero hits** | **Absent** (gap). |
 | Template locking | `Page.locked` exists (`prisma/schema.prisma:206`, toggle `page-title.tsx:346-350`) but `Template` has no lock and no action checks one | **Absent** (gap). |
@@ -115,14 +115,14 @@ UI/CRUD parity, then variables and recurrence hardening.
   lock or default a *page* template, and no per-workspace gallery/CRUD UI.
 - **D7 — unlocalized template button.** `template-button.tsx:89,99,104`
   hardcodes English while the app ships 5 locales (`src/lib/i18n.ts`).
-  ⏸ **Not converted by B57** (brief's literals + note fallback) — no locale
+  ⏸ **Not converted by B57** (the literals + note fallback) — no locale
   reaches node views (threading needs `page-editor.tsx`, editor slot; keys
-  must land in all 5 catalogues via `scripts/i18n-insert.mjs`, i18n slot);
+  must land in all 5 catalogues via the i18n key inserter, i18n slot);
   in-file note added, real fix rides with R31.10/T31.10's unified picker.
 - **D8 — stale matrix rows.** Database templates and the template button are
   marked 🧭 `FEATURE_MATRIX.md:338-339` despite shipping (README `:47` claims
-  both). Glyphs are **not** touched by this batch — counts/regen are
-  orchestrator-owned (`LOOP_PLAYBOOK.md:59-60,84-87`).
+  both). Glyphs are **not** touched by this change — counts/regen are
+  maintainer-owned.
 
 ## 3. Decision: one template model, two scopes
 
@@ -149,8 +149,8 @@ than pretending templates are pages.
   `databasePageId`'s page, `locked/isDefault=false`, `position=createdAt`.
   The same push adds nullable `Workspace.timezone` (UTC fallback — used by
   R31.17, O31.2).
-  Applied via `prisma db push` under the gate lock (Tier MAX, playbook §gate
-  tiers). Attribution fix: cron rows are created with
+  Applied via `prisma db push` under the build serialization (Tier HEAVY, gate
+  ordering). Attribution fix: cron rows are created with
   `createdById = template.createdById ?? database.createdById`
   (today: `cron/templates/route.ts:73` uses the database creator only).
 - **R31.2** — Every template read/write authorizes its **owning scope**:
@@ -352,8 +352,8 @@ enum TemplateKind { ROW PAGE }
   query (`route.ts:33-44`) keeps its shape.
 - Migration: additive columns + backfill (`kind=ROW`, workspace via the
   database's page, `position = createdAt`); no row is lost or rewritten
-  otherwise. `prisma db push` under the gate lock, `:3200` restart, dev
-  `:3201` restarted after (playbook "HARD RULE").
+  otherwise. `prisma db push` under the build serialization, `:3200` restart, dev
+  `:3201` restarted after (never skip the restart).
 
 ## 6. Contracts
 
@@ -436,7 +436,7 @@ enum TemplateKind { ROW PAGE }
    *[R31.23]*
 
 **e2e (Playwright — NEW `e2e/templates.spec.ts`, dedicated prisma pages +
-try/finally, dev :3201, targeted runs only in wave mode)**
+try/finally, dev :3201, targeted runs only)**
 
 9. Save page as template → appears in gallery → apply → sibling page has the
    content; source unchanged. *[R31.9, R31.10]*
@@ -451,14 +451,14 @@ try/finally, dev :3201, targeted runs only in wave mode)**
 14. Non-regression: `e2e/noema.spec.ts:42` home-gallery test still green.
     *[R31.24]*
 
-**Gates (FAST/STANDARD per tier)**: M1 schema work is Tier MAX (db push +
-build + restart + full e2e under the gate lock); M2/M3 are Tier STANDARD
-(tsc + eslint + unit + targeted e2e on :3201). Every batch ends with
+**Gates (FAST/STANDARD per tier)**: M1 schema work is Tier HEAVY (db push +
+build + restart + full e2e under the build serialization); M2/M3 are Tier STANDARD
+(tsc + eslint + unit + targeted e2e on :3201). Every change ends with
 `check:coherence` **COHERENT** and honest evidence tails.
 
 ## 10. Milestones
 
-- **M1 — Correctness + model (~2-3 days, Tier MAX):** R31.1-R31.6.
+- **M1 — Correctness + model (~2-3 days, Tier HEAVY):** R31.1-R31.6.
   Schema push + backfill, scope fix (D1), searchText parity (D2),
   transactional materializer + poison isolation (D3), locking. Ships value
   even if no new UI lands: the shipped surfaces stop lying.
@@ -471,7 +471,7 @@ build + restart + full e2e under the gate lock); M2/M3 are Tier STANDARD
 
 ## 11. Delivery plan (milestones → tasks ↔ requirements)
 
-> Test-first rule from `scripts/LOOP_PLAYBOOK.md` applies: every task's
+> Test-first rule applies: every task's
 > acceptance is a red test citing its requirement IDs before implementation.
 
 **M1**
@@ -513,8 +513,8 @@ build + restart + full e2e under the gate lock); M2/M3 are Tier STANDARD
 
 **Risks**
 
-1. **Schema push is Tier MAX.** M1 needs `prisma db push` + build + `:3200`
-   restart + dev `:3201` restart under the gate lock (playbook hard rule);
+1. **Schema push is Tier HEAVY.** M1 needs `prisma db push` + build + `:3200`
+   restart + dev `:3201` restart under the build serialization (never skip the restart);
    this is the only milestone that holds the lock. Backfill correctness on the
    live DB is the thing to get wrong — snapshot first, verify row counts by
    `kind` after.
@@ -525,16 +525,16 @@ build + restart + full e2e under the gate lock); M2/M3 are Tier STANDARD
    must not grow two competing behaviors; whoever implements second reuses the
    R31.5 transactional helper.
 3. **i18n volume.** Gallery + picker + dialogs are new UI in a 5-locale app —
-   keys must go through `scripts/i18n-insert.mjs` with measured ratchet
+   keys must go through the i18n key inserter with measured ratchet
    movement only; the template-button localization (D7) touches a file whose
    strings are currently asserted nowhere (low risk, but check:e2e text
    matching).
 4. **Cron response change** (`failed[]` added) — `check-share-cron.mjs`
    asserts status codes only (`:54-69`), so additive fields are safe; verify
    in T31.16 rather than assume.
-5. **Stale matrix rows (D8).** This batch appends Notes only; glyph flips for
-   "Database templates" / "Template button" (both shipped) are orchestrator
-   work at regen time (`LOOP_PLAYBOOK.md:84-87`). Implementation batches
+5. **Stale matrix rows (D8).** This change appends Notes only; glyph flips for
+   "Database templates" / "Template button" (both shipped) are maintainer
+   work at regen time. Implementation
    should flip them with evidence.
 
 **Open questions**

@@ -23,7 +23,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const packageVersion: string = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 
 /**
- * B61 - security headers on EVERY response (docs/audits/security-1.md M9,
+ * B61 - security headers on EVERY response (M9,
  * roadmap R10). The map itself now lives in `src/lib/security-headers.ts`
  * (B98): it is the single source of truth shared with `src/middleware.ts`,
  * so the static policy here and the per-response nonce policy in middleware

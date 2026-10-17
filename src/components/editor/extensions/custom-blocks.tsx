@@ -89,7 +89,7 @@ export function toggleExpandMotion(open: boolean): ExpandMotion {
 
 /**
  * To-do tick motion (DESIGN_SYSTEM §6, FRONTEND_PLAN 19.9): a short check draw
- * followed by a slightly longer strikethrough fade on the text. The brief's
+ * followed by a slightly longer strikethrough fade on the text. Specified
  * 160 ms / 200 ms land on the shared duration tokens — the design system allows
  * no ad-hoc millisecond values — while keeping the draw shorter than the fade.
  */
@@ -707,7 +707,7 @@ export const ToggleHeading = Extension.create<{ locale: string; pageId: string }
  * `"default"`) renders byte-for-byte as it did before.
  *
  * Anchored through `Toggle.addExtensions()` — this file's established hook —
- * because `page-editor.tsx` owns the (fleet-shared) extension list. Drop the
+ * because `page-editor.tsx` owns the shared extension list. Drop the
  * hook once `PullQuote` is mounted there directly.
  */
 

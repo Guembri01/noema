@@ -4,7 +4,7 @@ import { LOCALES, directionOf, isLocale, t, translationKeys, translationKeysFor 
 
 /**
  * Locale key parity: every locale must expose exactly the same key set as the
- * English catalogue, with no empty values. Written red-first in batch B07 —
+ * English catalogue, with no empty values. Written red-first in B07 —
  * adding keys to `en` alone must fail here until the other four locales land.
  */
 describe("i18n locale parity", () => {
@@ -45,8 +45,8 @@ describe("i18n locale parity", () => {
  * B34 — i18n edge coverage: unknown-key fallback, interpolation boundaries,
  * locale inheritance, RTL flag exposure, duplicate-key detection.
  *
- * Red-first evidence (first run written against the batch brief's assumptions):
- * - unknown-key: 3/3 cases failed — the brief's "fallback" read as the usual
+ * Red-first evidence (first run written against the original assumptions):
+ * - unknown-key: 3/3 cases failed — "fallback" read as the usual
  *   key-string convention, actual is `undefined` (see the describe below).
  * - interpolation: params call failed in vitest ('Search' ≠ 'Search Noema')
  *   AND in tsc (TS2554 ×2, "Expected 2 arguments, but got 3") — there is no
@@ -88,7 +88,7 @@ describe("i18n unknown-key fallback", () => {
  */
 describe("i18n interpolation boundaries", () => {
   it("exposes t with exactly two parameters — no params argument exists", () => {
-    // Red-first (B34): v1 called t(locale, key, { q }) per the brief — vitest
+    // Red-first (B34): v1 called t(locale, key, { q }) — vitest
     // showed the third argument silently ignored, tsc failed TS2554 ×2.
     // If a params API ever lands (3rd argument), this suite must grow
     // substitution + missing-param tests alongside it.
@@ -126,7 +126,7 @@ describe("i18n interpolation boundaries", () => {
 });
 
 /**
- * Locale inheritance. Design read from i18n.ts before testing (per brief):
+ * Locale inheritance. Design read from i18n.ts before testing:
  * locales do NOT inherit wholesale from English — each of the five source
  * blocks is standalone. `t` falls back to `en` only (a) per key, via
  * `dict[key] ?? en[key]`, which is unreachable while parity keeps every block
@@ -214,7 +214,7 @@ describe("i18n RTL flag exposure", () => {
  *
  * Why source level: both existing detectors are blind to a key duplicated
  * INSIDE one block — the runtime parity test goes through Object.keys()
- * (last-wins, deduped) and scripts/i18n-insert.mjs extracts keys into a Set.
+ * (last-wins, deduped) and the i18n key inserter extracts keys into a Set.
  * A duplicated `key:` line silently shadows the earlier translation.
  *
  * Red-first (B34): the fixture test was observed RED in the dev run with the
@@ -229,7 +229,7 @@ type BlockScan = {
 
 const BLOCK_LOCALES = ["en", "fr", "es", "de", "ar"] as const;
 
-/** Mirror of the block anchors in scripts/i18n-insert.mjs, counting raw entries. */
+/** Mirror of the block anchors in the i18n key inserter, counting raw entries. */
 function scanLocaleBlocks(source: string): BlockScan[] {
   const lines = source.split(/\r?\n/);
   return BLOCK_LOCALES.map((locale) => {
@@ -736,8 +736,8 @@ describe("Y11 catalogue keys", () => {
 });
 
 /**
- * DW01 — design-system wave literals. Keys covering the English literals that
- * shipped across the visual-design waves: common actions, settings labels,
+ * DW01 — design-system literals. Keys covering the English literals that
+ * shipped across the visual-design work: common actions, settings labels,
  * security, empty states, validation and relative-time. Appended to every
  * catalogue block after `mapBlock` in one stable documented order. Written
  * red-first: the keys land in `en` first, so the parity assertions below fail

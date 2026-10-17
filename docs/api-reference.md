@@ -1,6 +1,6 @@
 # Noema — REST API reference
 
-Generated for batch **B48 [API docs gap]** by a systematic walk of every route
+Generated for the **API docs gap** item (**B48**) by a systematic walk of every route
 handler under `src/app/api/**` plus the three handlers that live outside it
 (`/oauth/*`, `/s/[token]/unlock`).
 

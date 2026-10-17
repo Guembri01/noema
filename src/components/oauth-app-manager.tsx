@@ -171,7 +171,7 @@ export type OAuthAppLabels = {
 /**
  * English defaults. Values the catalogue already owns are overridden with
  * `t(...)` by the container; the rest fall back here until their keys land in
- * `src/lib/i18n.ts` (outside this wave's file ownership).
+ * `src/lib/i18n.ts` (outside this phase's file ownership).
  */
 export const OAUTH_APP_LABELS: OAuthAppLabels = {
   clientId: "Client ID",
@@ -649,7 +649,7 @@ export function OAuthAppManager({
   const submit = useCallback(() => {
     if (!name.trim() || uris.trim().length === 0) return;
     if (editingId) {
-      // The backend has no `updateOAuthAppAction` yet (see the wave-2 report),
+      // The backend has no `updateOAuthAppAction` yet (see the follow-up report),
       // so an edit is reflected locally until that action lands.
       const redirectUris = parseRedirectUris(uris);
       setOverrides((current) => ({

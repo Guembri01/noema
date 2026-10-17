@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 /**
  * B88 — unit tests for `src/lib/mailer.ts` (mailer + email template rendering).
  *
- * This is a test-only batch: the implementation predates the tests, so red-first
+ * This is a test-only change: the implementation predates the tests, so red-first
  * is proven by mutation (sabotaging the pinned behavior, capturing the failing
- * tail, reverting) — see the batch report for those tails.
+ * tail, reverting) — the red tails are recorded in the PR.
  *
  * Two hard properties are pinned beyond happy-path rendering:
  *  - FAIL-SOFT: SMTP missing or broken never throws at the caller; the caller

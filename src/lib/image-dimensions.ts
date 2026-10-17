@@ -6,7 +6,7 @@
  * picture inside a content box, how does a cover crop to its frame, and what
  * does dragging a resize handle to `N%` or `Wpx` do to the stored numbers?
  * Those are all pure functions of `Size`, so they live here and vitest owns
- * them (LOOP_PLAYBOOK: new logic starts as a lib) — the React/DOM wiring and
+ * them (new logic starts as a pure lib) — the React/DOM wiring and
  * the persisted node fields are separate. This module is deliberately
  * independent of `src/lib/media.ts`, which owns handle-drag *percentage*
  * maths; this one owns the pixel geometry.

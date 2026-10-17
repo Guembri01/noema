@@ -385,7 +385,7 @@ z-index, ad-hoc duration/radius/shadow or legacy palette class fails
 
 `npm run audit:frontend` is the *classified* list of what a token cannot catch by
 itself (copy, labels, type, rings, hand-rolled popups). It went from
-**289 DEFECT / 190 INCONSISTENCY / 119 DEBT** to **0 / 0 / 113** as this wave landed:
+**289 DEFECT / 190 INCONSISTENCY / 119 DEBT** to **0 / 0 / 113** as this phase landed:
 
 | Rule | Before | Now |
 |---|---|---|

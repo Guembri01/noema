@@ -1430,7 +1430,7 @@ test("slash menu adds headings 4-6 and the image block takes a caption and alt t
 });
 
 test.describe("editor drag & clipboard", () => {
-  // Negative control: `E2E_FEATURE_OFF=1` neutralises the batch's feature at
+  // Negative control: `E2E_FEATURE_OFF=1` neutralises the feature under test at
   // runtime (the editor exposes its instance only to automation sessions), so
   // each test proves it can fail when the custom handler is absent.
   const featureOff = process.env.E2E_FEATURE_OFF === "1";

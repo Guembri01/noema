@@ -29,8 +29,8 @@ const SAMPLE_RATE = 1;
  * shell (html lang/dir + skip link) comes from app/layout.tsx; this component
  * contributes the main landmark, the single h1 and an accessible retry control
  * that scripts/check-a11y.mjs audits. Text is intentionally terse English for
- * now — i18n keys go through scripts/i18n-insert.mjs (i18n.ts is mid-edit by a
- * sibling batch; queued as B46 blocked follow-up).
+ * now — i18n keys go through the i18n key inserter (i18n.ts is mid-edit by a
+ * concurrent suite; queued as B46 blocked follow-up).
  *
  * On mount it turns the thrown value into a normalised, redacted breadcrumb and
  * forwards it to the `diagnostics` server action for fingerprint grouping. Every

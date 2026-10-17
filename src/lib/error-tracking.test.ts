@@ -26,7 +26,7 @@ import {
  * Error tracking engine (§17 "Error tracking") — red-first.
  *
  * `src/lib/error-tracking.ts` did not exist when this file was written, so the
- * suite starts red (module-not-found, scripts/LOOP_PLAYBOOK.md "Red-first").
+ * suite starts red (module-not-found,  "Red-first").
  *
  * This is the framework-free engine behind the error-tracking panel. It turns a
  * thrown value into a stable shape together with a sampling decision, grouping

@@ -12,7 +12,7 @@ import {
  * Audit field diffs (F9) — pure, red-first.
  *
  * `src/lib/audit-diff.ts` did not exist when this file was first written
- * (module-not-found -> suite red; scripts/LOOP_PLAYBOOK.md "Red-first").
+ * (module-not-found -> suite red; "Red-first").
  *
  * This is the *object* sibling of the block diff in `version-history.ts` and
  * the character diff in `text-diff.ts`: the audit feed records

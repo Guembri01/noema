@@ -9,7 +9,7 @@
  * (`src/app/api/health/route.ts`, `src/app/api/metrics/route.ts` and the
  * `diagnostics` server action).
  *
- * Reconciliation (state the relationship, do not duplicate it):
+ * Reconciliation (state the relationship, never duplicate it):
  * - {@link snapshot}/{@link percentileReport} come from `observability.ts`,
  *   which is the canonical in-process registry of counters + histograms and the
  *   percentiles implementation.

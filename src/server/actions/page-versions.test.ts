@@ -19,7 +19,7 @@ import { Prisma } from "@prisma/client";
  *    and dispatches the same `page.updated` webhook as `updatePageAction`.
  *
  * Red-first: written against the pre-fix `restorePageVersionAction` - the
- * tails for each failing assertion are in the B67 batch report.
+ * tails for each failing assertion are recorded as B67.
  */
 
 const db = vi.hoisted(() => ({

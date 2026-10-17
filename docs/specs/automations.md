@@ -1,7 +1,7 @@
 # Spec — Automations & recurring tickets (trigger/condition/action rules)
 
-> **Status: spec complete, implementation pending.** Batch **B27** of the parity
-> loop. This document is the deliverable; no production code was changed.
+> **Status: spec complete, implementation pending.** This document is the
+> deliverable; no production code was changed.
 > Every claim about the current code cites file + line. Requirement IDs
 > (`R27.x`) are the traceability anchors: §10 lists milestones 1:1 against them,
 > and tests must cite the IDs they cover.
@@ -48,7 +48,7 @@ top of the existing activity/cron/recurrence machinery, not a new framework.
 | Rule storage | `prisma/schema.prisma` (all `model` declarations scanned) | **Absent**: no `Automation`, `Schedule`, `Trigger` or `Recurring` model of any kind. |
 | Ticket schema | `prisma/schema.prisma:659-703` | `status` (`:667`), `priority`, `dueDate`, `assigneeId` (`:677`), `labels` (`:693`), `activity` (`:697`) — all trigger/condition inputs exist; **no `recurrence`/`nextRunAt`** on tickets. |
 | Cron endpoint | `src/app/api/cron/templates/route.ts:14-31` | `POST /api/cron/templates`: **fail-closed** — 503 when `CRON_SECRET` unset (`:17-26`), 401 on `x-cron-secret` mismatch (`:27-28`), `rateLimit(request, "cron", 12, 60_000)` (`:30-31`). `.env.example:49-50` documents it. |
-| Cron security check | `scripts/check-share-cron.mjs:42, 55, 57, 65` | Asserts 401/503 when unauthenticated and 401 on a wrong secret. Historical defect `F-03` (failed-open guard) recorded at `docs/AUDIT.md:60` — the posture is deliberate and regression-tested. |
+| Cron security check | `scripts/check-share-cron.mjs:42, 55, 57, 65` | Asserts 401/503 when unauthenticated and 401 on a wrong secret. Historical defect `F-03` (failed-open guard) — the posture is deliberate and regression-tested. |
 | Cron schedule | repo root (`vercel.json`, `.github/workflows`, `Dockerfile` all absent); `docker-compose.yml:1-22` runs **Postgres only** | No scheduler is configured in-repo; the route header (`route.ts:10-12`) tells operators to point an external scheduler at it. |
 | Recurring machinery (databases) | `prisma/schema.prisma:309-324` (`Template.recurrence` `:316`, `Template.nextRunAt` `:317`, `@@index([nextRunAt])` `:323`); `src/lib/recurrence.ts:1-13` (`TemplateRecurrence = "daily" \| "weekly" \| "monthly"`, `nextRunFor`); `src/server/actions/database.ts:567, 583` (`setTemplateRecurrenceAction` sets `nextRunAt: recurrence ? nextRunFor(recurrence) : null`) | **Working** schedule → materialise → advance loop for database templates; UI at `src/components/database/database-view.tsx:32, 120`. Nothing equivalent for tickets. |
 | Cron materialisation ordering | `route.ts:67-78` (create row) then `:94-97` (advance `nextRunAt`) | Creates **then** advances, in two separate writes — a crash in between duplicates the next run. Any automation scheduler must not copy this ordering (R27.14). |
@@ -57,9 +57,9 @@ top of the existing activity/cron/recurrence machinery, not a new framework.
 | Test/gate surface | `package.json` `test`, `check:tickets`, `check:coherence` (`scripts/check-coherence.mjs:93` → `COHERENT`); `scripts/check-share-cron.mjs` | Unit + node-check + coherence is the house pattern for this class of feature; no e2e spec for tickets exists yet (`e2e/` has no automations file). |
 | Matrix rows | `docs/FEATURE_MATRIX.md:712` (§20 heading), `:740` Automations 🧭, `:746` Recurring tickets 🧭 | Both rows planned; dependents `:73` (button block), `:259` (database buttons), `:262`/`:341` (recurring templates), `:508`/`:509` (automation engine / database automations), `:512` (Zapier), `:705` (scheduler control) all wait on this spec. |
 
-**Assumption check:** the brief's "existing recurring template machinery" is
+**Assumption check:** "existing recurring template machinery" is
 real but **database-only** (`Template`, §above) — nothing on `Ticket`. And the
-brief's "label/status change hooks in ticket actions" exist only as *activity
+"label/status change hooks in ticket actions" exist only as *activity
 writes*, not as hooks: no code reacts to an activity row after it is written.
 
 ### 2.2 What the product class (Notion) does
@@ -163,8 +163,7 @@ ticket**.
     throw that reaches the user action.
 - **R27.6** — Evaluation is a pure function
   `evaluateConditions(rules, event, ticketSnapshot)` in `src/lib/automations.ts`
-  (no I/O, no clock, no prisma) — the lib *is* the sandbox per
-  `scripts/LOOP_PLAYBOOK.md`.
+  (no I/O, no clock, no prisma) — the lib *is* the sandbox.
   - *Acceptance:* vitest covers the DSL with no DB; property-style test:
     evaluating twice with the same inputs returns the same result.
 
@@ -249,8 +248,8 @@ ticket**.
   ("ok" | "skipped" | "failed"), error String?, createdAt }` with
   `@@index([automationId, createdAt])`. `actions`/`conditions` are validated
   on write (R27.5 bounds), not on read.
-  - *Acceptance:* `prisma db push` is a clean forward migration (Tier MAX
-    batch); a rule persisted with a depth-3 condition is rejected at authoring
+  - *Acceptance:* `prisma db push` is a clean forward migration (Tier HEAVY
+    change); a rule persisted with a depth-3 condition is rejected at authoring
     time by the same validator the evaluator uses.
 - **R27.17** — **Loop guard:** activity produced by an automation never
   re-triggers automation evaluation (depth ≥ 1 is skipped), and any single
@@ -441,17 +440,17 @@ Design consequences worth stating plainly:
 
 **Feasibility verdict**: unit + `check-automations.mjs` cover the risky logic
 cheaply and match how this codebase already proves ticket features; e2e 10-11
-are UI-surface only (two specs, dedicated fixtures per the house flake rules).
+are UI-surface only (two specs, dedicated fixtures).
 
 ## 10. Delivery plan (milestones → tasks ↔ requirements)
 
-> Test-first rule from `scripts/LOOP_PLAYBOOK.md` applies: every task's
+> Test-first rule applies: every task's
 > acceptance is a red test citing its requirement IDs before implementation.
 
-**M1 — Engine + event leg (status/label/assignee) (~3-4 days, schema = Tier MAX)**
+**M1 — Engine + event leg (status/label/assignee) (~3-4 days, schema = Tier HEAVY)**
 
 - T27.1 [R27.16]: `Automation` + `AutomationRun` models, `prisma db push`
-  (lock-held MAX batch), validator shared by authoring + evaluator.
+  (a build-serialized HEAVY change), validator shared by authoring + evaluator.
   Red: unit 2 rejects oversize trees.
 - T27.2 [R27.1, R27.3]: canonical-event normalizer in `src/lib/automations.ts`.
   Red: unit 1.

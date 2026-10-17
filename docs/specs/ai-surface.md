@@ -1,7 +1,7 @@
 # Spec — AI surface parity (chat, skills, autofill, transcription)
 
-> **Status: spec complete, implementation pending.** Batch **B25** of the parity
-> loop (docs-only — no production code changed). Every claim about the current
+> **Status: spec complete, implementation pending.** Document-only: no
+> production code changed. Every claim about the current
 > code cites file + line. Requirement IDs (`R25.x`) are the traceability anchors:
 > §11 lists tasks 1:1 against them, tests must cite the IDs they cover, and §13
 > maps them to the `docs/FEATURE_MATRIX.md` §14 rows this spec exists to close.
@@ -176,9 +176,9 @@ defines the requirements (`R25.x`) that close the §14 matrix rows honestly.
 
 ### C — AI in database cells (M2)
 
-> Ownership note: `src/components/database/**` belongs to the B15/B17 feature
-> batches; these requirements are implemented by a batch that takes that slot,
-> and only the server-side pieces (`/api/ai`, actions) are free-standing.
+> Ownership note: `src/components/database/**` is covered by the B15/B17 feature
+> work; these requirements are implemented alongside that area, and only the
+> server-side pieces (`/api/ai`, actions) are free-standing.
 
 - **R25.9 — Autofill property prompt UI.** The property editor for
   `AI_AUTOFILL` edits `config.prompt` (currently only *read*:
@@ -406,9 +406,9 @@ model WorkspacePrompt {
 - **Degraded composer**: when unconfigured/offline (R25.18) the textarea is
   replaced by a bordered reason panel with a "Open AI settings" link (admins)
   or "Ask your admin" note (members).
-- **i18n**: every new string via `t()`; keys inserted through
-  `scripts/i18n-insert.mjs` (5 locales) — **the `i18nFiles` ratchet (71) must
-  not be raised** (`scripts/check-coherence.mjs` BASELINE).
+- **i18n**: every new string via `t()`; keys added to all 5 locales —
+  **the `i18nFiles` ratchet (71) must not be raised**
+  (`scripts/check-coherence.mjs` BASELINE).
 
 ## 8. Edge cases
 
@@ -483,15 +483,15 @@ old `[stream-error]` behavior it may observe is covered by R25.1's migration.
   keyless local providers; usage capture, budgets, settings dashboard;
   database-cell AI (property prompt UI, typed values, bulk fill); boundaries
   doc. Requirements: **R25.6-R25.15** (database pieces coordinate with the
-  B15/B17 slot).
+  B15/B17 area).
 - **M3 — Surface expansion (~3-5 days)**: translate locales, explain/simplify,
   continue writing, summarize surface parity, user prompt library,
   transcription workspace config. Requirements: **R25.19-R25.23**.
 
 ## 11. Delivery plan (tasks ↔ requirements)
 
-> Test-first rule from `scripts/LOOP_PLAYBOOK.md`: every task's acceptance is a
-> red test citing its requirement IDs before implementation.
+> Red-first: every task's acceptance is a failing test citing its requirement
+> IDs before implementation.
 
 **M1**
 
@@ -510,13 +510,13 @@ old `[stream-error]` behavior it may observe is covered by R25.1's migration.
 - T25.6 [R25.6, R25.7] `ChatThread.modelOverride` + `getModelSummary` +
   composer picker. Red: unit 5 + e2e 19.
 - T25.7 [R25.8] keyless local validation + test path. Red: unit 6.
-- T25.8 [R25.12, R25.13] `AiUsage`/`AiBudget` schema (Tier MAX: `db push` under
-  gate lock) + transport capture/guard. Red: units 7, 8.
+- T25.8 [R25.12, R25.13] `AiUsage`/`AiBudget` schema (full build: `db push`
+  under build serialization) + transport capture/guard. Red: units 7, 8.
 - T25.9 [R25.14] settings dashboard. Red: e2e 21.
 - T25.10 [R25.15] `docs/AI-BOUNDARIES.md` + no-prompt-logging grep gate. Red:
   gate script fails without the doc.
 - T25.11 [R25.9-R25.11] autofill prompt UI, typed parsers, bulk fill (database
-  slot). Red: units 9 + e2e 20.
+  area). Red: units 9 + e2e 20.
 
 **M3**
 
@@ -537,14 +537,14 @@ old `[stream-error]` behavior it may observe is covered by R25.1's migration.
 2. **Streaming e2e flakiness** on the `workers:1` shared suite. Mitigation: D5
    mock provider with deterministic deltas + generous polling; live proof stays
    in `check-ai*.mjs`.
-3. **Schema additions are Tier MAX** (`AiUsage`, `AiBudget`,
-   `WorkspacePrompt`, `ChatThread.modelOverride`) — `prisma db push` needs the
-   gate lock + server restart protocol (`scripts/LOOP_PLAYBOOK.md`).
-4. **Slot contention**: database components (B15/B17), Actions menu (B11),
-   chat-runtime/ai-skills unit tests (B35). This spec deliberately owns none —
-   implementation batches must claim the slots first.
-5. **i18n ratchet** — every string goes through `i18n-insert.mjs`; raising
-   `i18nFiles` to make gates pass is forbidden (playbook).
+3. **Schema additions need a full build** (`AiUsage`, `AiBudget`,
+   `WorkspacePrompt`, `ChatThread.modelOverride`) — `prisma db push` needs
+   build serialization + the server restart protocol.
+4. **Overlap with other areas**: database components (B15/B17), Actions menu
+   (B11), chat-runtime/ai-skills unit tests (B35). This spec deliberately owns
+   none — implementations must coordinate on these areas first.
+5. **i18n ratchet** — every string is added to all locales; raising
+   `i18nFiles` to make gates pass is forbidden.
 
 **Open questions**
 
@@ -583,6 +583,6 @@ old `[stream-error]` behavior it may observe is covered by R25.1's migration.
 | AI cost controls (`:543`) | 🧭 | R25.12-R25.14 |
 | AI data boundaries (`:544`) | 🧭 | R25.15 |
 
-Matrix edits from this batch are **Notes-only** (spec path appended); no glyph
-is changed — stale-vs-code rows are called out in §2.3 for the orchestrator's
+Matrix edits for this change are **Notes-only** (spec path appended); no glyph
+is changed — stale-vs-code rows are called out in §2.3 for the maintainers'
 next `docs:gaps` regeneration.

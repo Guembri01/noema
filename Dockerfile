@@ -3,7 +3,7 @@
 # B62 — Noema app image (spec R28.22): deps -> builder -> minimal runner.
 #
 # NON-STANDALONE on purpose: `output: "standalone"` lives in next.config.ts,
-# which B61 owns this wave — follow-up: switch this file to the standalone
+# which B61 owns this phase — follow-up: switch this file to the standalone
 # server (copy .next/standalone + standalone node_modules, CMD
 # `node server.js`) once B61 has landed and the flag is safe to add.
 #

@@ -54,7 +54,7 @@ export async function restorePageVersionAction(versionId: string): Promise<Resul
     return { error: "You do not have permission to restore this page." };
   }
 
-  // R15 (docs/audits/security-1.md L4): the render-time `Page.locked` gate must
+  // R15 (L4): the render-time `Page.locked` gate must
   // also hold on restore, or any editor can bypass the lock by restoring an old
   // revision (D6 in docs/specs/realtime-collab.md). Same policy as the q17
   // content-edit lock in `updatePageAction`: only the owner keeps the override.

@@ -116,7 +116,7 @@ export type ImportSourceDef = {
   allow: readonly string[];
 };
 
-/** Sources the picker must always offer, in order (spec wave 2, §1). */
+/** Sources the picker must always offer, in order (spec phase 2, §1). */
 export const REQUIRED_SOURCE_IDS: readonly ImportSourceId[] = [
   "notion",
   "trello",
@@ -1596,7 +1596,7 @@ export function ImportPanel(props: ImportPanelProps) {
 }
 
 /* ==========================================================================
- * The orchestrating section
+ * The import section
  * ========================================================================== */
 
 export function ImportSection({

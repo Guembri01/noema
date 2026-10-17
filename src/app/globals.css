@@ -113,7 +113,7 @@
    Editor-sheet tokens.
    Raw values that used to live inline in the rules below are hoisted here so
    every rule references a token. These belong in tokens.css long-term; that
-   file is owned by another batch, so they live here until the token layer can
+   file is shared, so they live here until the token layer can
    take them. Light + dark are covered; the block tints intentionally keep their
    light value in both modes, matching the behaviour that shipped before.
    --------------------------------------------------------------------------- */
@@ -1881,7 +1881,7 @@ body {
 .noema-doc-renderer [data-block-color="red"] { background-color: var(--block-red-bg); }
 
 /* B96 — TOC scroll-spy: highlight the current outline entry (aria-current).
-   Scoped to the TOC block; append-only (shared file). */
+   Scoped to the TOC block; append below only (shared file). */
 .noema-toc button[aria-current="true"] {
   background: var(--surface-2);
   font-weight: 600;

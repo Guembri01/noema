@@ -245,7 +245,7 @@ export async function updatePageAction(
     select: { title: true, content: true, locked: true },
   });
   const contentChanged = contentResult.doc !== undefined;
-  // R15 (docs/audits/security-1.md L4): the render-time `Page.locked` gate must
+  // R15 (L4): the render-time `Page.locked` gate must
   // also hold here, or any editor can bypass the lock with a direct action call
   // (D6 in docs/specs/realtime-collab.md). The owner keeps the override so the
   // lock stays releasable; only *content* is frozen - the lock toggle, title,

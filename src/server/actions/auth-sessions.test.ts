@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *
  * Only the transport edge (`requireUser`, `getSessionId`, `destroySession`) is
  * mocked; the real session registry backs every call, so these exercise the
- * actual owner-of-session authorization chain (B54 brief red-first guard:
+ * actual owner-of-session authorization chain (B54 red-first guard:
  * "member cannot revoke another user's session").
  */
 

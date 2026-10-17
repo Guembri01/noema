@@ -1,12 +1,12 @@
 # Spec — Plans & plan-gated features (community vs enterprise)
 
-> **Status: spec complete, implementation pending.** Batch **B26** of the parity
-> loop. This document is the deliverable; no production code was changed.
+> **Status: spec complete, implementation pending.** This document is the
+> deliverable; no production code was changed.
 > Every claim about the current code cites file + line. Requirement IDs
 > (`R26.x`) are the traceability anchors: the delivery plan in §8 lists tasks
 > 1:1 against them, and tests must cite the IDs they cover. Matrix `§18`
 > (`docs/FEATURE_MATRIX.md:671-689`, 14 rows) cites this file in its Notes
-> cells; status glyphs are untouched by this batch.
+> cells; status glyphs are untouched by this change.
 
 ---
 
@@ -32,7 +32,7 @@ concrete:
 
 This spec answers all three, audits every gating surface that exists today,
 and fixes the gate vocabulary **before** the SAML (`docs/specs/saml-sso.md`)
-and audit-log implementations land, so their batches cite `R26.x` instead of
+and audit-log implementations land, so that work cites `R26.x` instead of
 inventing per-feature ad-hoc checks.
 
 ## 2. Current state audit (evidence)
@@ -133,7 +133,7 @@ edition. No tier ladder, no per-seat pricing surface.
 **D2 — Payment processing is N/A, permanently.** No payment provider,
 subscription lifecycle, proration, invoicing, or billed seats will be
 implemented (§9, R26.16). Matrix rows `:686-689` are documented N/A in this
-spec; their glyphs are not changed by this batch (orchestrator owns status).
+spec; their glyphs are not changed by this change (maintainer owns status).
 
 **D3 — License = offline signed file, fail → community.** An Ed25519-signed
 JSON license file (§5.1), verified locally against a pinned public key.
@@ -258,7 +258,7 @@ maps to a decision + `R26.x` there.
 
 - **R26.8** — **SCIM.** The `scim` gate exists from day one (allow-listed in
   R26.11) although the feature is not built — it exists only as R10.20
-  (SCIM 2.0 endpoints, `saml-sso.md:206-208`, M3). The implementation batch
+  (SCIM 2.0 endpoints, `saml-sso.md:206-208`, M3). The implementation
   must wire R10.20 through `canUseFeature("scim", …)` instead of inventing a
   new mechanism.
   *Acceptance:* gate unit matrix already covers `scim` (R26.4 test);
@@ -370,7 +370,7 @@ maps to a decision + `R26.x` there.
 - `NOEMA_EDITION=community|enterprise` selects intent; the signature decides
   reality (mismatch ⇒ community + reason, R26.1).
 
-### 5.2 Modules (new, pure, lib-first per the playbook sandbox rule)
+### 5.2 Modules (new, pure, lib-first — the sandbox rule)
 
 - `src/lib/edition.ts` — parse + verify + `resolveEdition` (R26.1-3).
 - `src/lib/gates.ts` — `FeatureKey`, allow-list (R26.11), `canUseFeature`
@@ -410,8 +410,8 @@ UI hides gated controls the same way gated server actions are hidden today
 | `:688` Plan change proration | **N/A** — nothing to prorate without billing | N/A | R26.16 |
 | `:689` Usage metering | **N/A** for billing; protection rate limits already exist (§2.2) | N/A | R26.16 |
 
-Status glyphs in these rows are **not** changed by this batch (append-only
-Notes edit; status/count regeneration is orchestrator-only per the playbook).
+Status glyphs in these rows are **not** changed by this change (Notes-only
+edit; status/count regeneration is maintainer-only).
 
 ## 7. Test plan
 
@@ -440,13 +440,13 @@ Notes edit; status/count regeneration is orchestrator-only per the playbook).
 9. Non-regression: OIDC login path and Activity trail untouched in community
    (R26.7, R26.9).
 
-**Gates owed (FAST tier — docs batch):** `npm run check:coherence` green
+**Gates owed (FAST tier — docs-only):** `npm run check:coherence` green
 (never green by loosening a ratchet), `tsc --noEmit`, `eslint`; no build, no
-e2e, no `docs:counts`/`docs:gaps` (orchestrator-only).
+e2e, no `docs:counts`/`docs:gaps` (maintainer-only).
 
 ## 8. Delivery plan (milestones → tasks ↔ requirements)
 
-> Test-first per `scripts/LOOP_PLAYBOOK.md`: each task's acceptance is a red
+> Test-first: each task's acceptance is a red
 > test citing its R26.x before implementation.
 
 **L1 — Edition + license core (~1 day)**
@@ -472,10 +472,10 @@ e2e, no `docs:counts`/`docs:gaps` (orchestrator-only).
 - T26.7 [R26.15]: warn-only AI budget. Red: unit (budget warns, never
   blocks).
 
-**L5 — Feature wiring (cross-batch, cites this spec)**
+**L5 — Feature wiring (cross-cutting, cites this spec)**
 
 - T26.8 [R26.7]: SAML connection CRUD gates — **implemented with the
-  `saml-sso.md` (B10) implementation batch**, which must cite R26.7.
+  `saml-sso.md` (B10) implementation**, which must cite R26.7.
 - T26.9 [R26.8]: `scim` gate consumed by R10.20 when M3 lands.
 - T26.10 [R26.9,R26.10]: extended audit log + custom roles gates as those
   features land (matrix `:640`, `:384`).
@@ -492,8 +492,7 @@ e2e, no `docs:counts`/`docs:gaps` (orchestrator-only).
 | Billing-grade usage metering | **N/A** | Only protection rate limits exist (§2.2); metering money is out of scope. |
 | Cloud tier pricing page in-app | **N/A** | No hosted cloud offering in this repo; the Plan section shows state, never offers (R26.6). |
 
-Revisit only via an explicit spec amendment (a new B-batch), never ad-hoc in a
-feature batch.
+Revisit only via an explicit spec amendment, never ad-hoc in feature work.
 
 ## 10. Risks & open questions (honest)
 
@@ -517,9 +516,9 @@ feature batch.
    commercial split needs a license/exclusion decision (e.g. `enterprise/`
    dir under a separate license) that this spec cannot make — engineering
    consequence is only that the allow-list must stay small (R26.11).
-5. **K5 — Spec/implementation drift across batches.** SAML (B10) and audit-log
-   batches could invent their own checks. Mitigation: R26.7/R26.8/R26.9 are
-   written as obligations those batches must cite, and R26.4 forbids
+5. **K5 — Spec/implementation drift.** SAML (B10) and audit-log
+   work could invent their own checks. Mitigation: R26.7/R26.8/R26.9 are
+   written as obligations that work must cite, and R26.4 forbids
    out-of-module env reads for gating.
 
 **Open questions**

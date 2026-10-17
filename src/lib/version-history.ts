@@ -1,7 +1,7 @@
 /**
  * Pure version-history helpers shared by the restore action and BOTH history
  * surfaces (page panel + ...-menu timeline). No Prisma here - the sandbox is
- * the unit harness (scripts/LOOP_PLAYBOOK.md "Domain sandboxes").
+ * the unit harness.
  *
  * B67 - M1 slice of docs/specs/version-history-v2.md (R30.5, R30.11-lite),
  * grown by the M2 slice (R30.8-lite `diffVersions`, R30.10-lite named

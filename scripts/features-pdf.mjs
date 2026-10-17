@@ -11,7 +11,7 @@
  *     sections, which are the only areas that summary table does not cover;
  *   - the version, authors, licence and repository come from `package.json` and
  *     `src/lib/project-info.ts`, the same modules the in-app About box reads;
- *   - the scoreboard numbers are parsed out of the README's Status section;
+ *   - the status numbers are parsed out of the README's Status section;
  *   - the screenshots and their captions come from
  *     `docs/screenshots/report.json`, written by `npm run screenshots`.
  *
@@ -332,8 +332,8 @@ function projectInfo() {
   };
 }
 
-/** The scoreboard, straight out of the README's Status section. */
-function scoreboard(lines) {
+/** The status summary, straight out of the README's Status section. */
+function statusSummary(lines) {
   const text = lines.join("\n");
   const rows = text.match(/(\d+) rows,/)?.[1];
   const tally = text.match(
@@ -654,7 +654,7 @@ function main() {
 
   const lines = readmeLines();
   const project = projectInfo();
-  const board = scoreboard(lines);
+  const board = statusSummary(lines);
   const shots = screenshots();
 
   const implemented = new Map(

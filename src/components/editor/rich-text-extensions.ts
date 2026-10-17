@@ -2,7 +2,7 @@
  * The compact rich-text extension set, for editors that live *outside* the page
  * canvas — the ticket description is the first one.
  *
- * `page-editor.tsx` registers the whole fleet: collaboration, drag handles,
+ * `page-editor.tsx` registers the whole set: collaboration, drag handles,
  * page embeds, linked databases, math, suggestions. A description needs the
  * *writing* surface, not the workspace around it, so this module names the
  * subset a self-contained text field can support and registers nothing that

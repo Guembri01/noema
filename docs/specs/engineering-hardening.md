@@ -1,10 +1,9 @@
 # Spec — Engineering parity hardening (ids, transactions, sessions, secrets, packaging)
 
-> **Status: spec complete, implementation pending.** Batch **B28** of the parity
-> loop (docs batch — no production code was changed). This document is the
-> deliverable. Every claim about the current code cites `file:line`.
+> **Status: spec complete, implementation pending.** Document-only: no
+> production code was changed. This document is the deliverable. Every claim about the current code cites `file:line`.
 > Requirement IDs (`R28.x`) are the traceability anchors: §9 lists tasks 1:1
-> against them and tests must cite the IDs they cover. Gate tier for this batch
+> against them and tests must cite the IDs they cover. Gate tier for this change
 > is FAST (tsc + eslint + targeted unit + coherence — no build, no e2e, no
 > matrix count regeneration).
 
@@ -384,8 +383,8 @@ column name (`email.ts:285`), while `TeamspaceInvite`/`ApiToken` use honest
 ### Non-goals (this spec)
 
 - Implementing HashiCorp Vault / cloud KMS adapters (O28.3), Kubernetes
-  manifests, CI setup (no CI exists — out of loop scope), rate limiting /
-  middleware (matrix row 643, separate batch), audit-log completion (row 640),
+  manifests, CI setup (no CI exists — out of scope), rate limiting /
+  middleware (matrix row 643, separate change), audit-log completion (row 640),
   per-session device management UI (O28.2), changing bcrypt cost or the JWT
   algorithm, encrypting the DB at rest (rows 657-658 are infra concerns).
 
@@ -449,7 +448,7 @@ R28.25). Everything else is behavior, not schema.
     R28.8).
 13. Share link hashing — stored ≠ raw, `/s/<raw>` resolves (R28.18).
 14. Docker/compose smoke — `docker compose up --build`, health 200, `down`
-    keeps volume (R28.22–R28.25) — Tier MAX, orchestrator-scheduled.
+    keeps volume (R28.22–R28.25) — Tier HEAVY, scheduled.
 
 **e2e (Playwright, own `e2e/hardening.spec.ts`, serial, dedicated pages)**
 
@@ -459,8 +458,8 @@ R28.25). Everything else is behavior, not schema.
     (R28.3).
 
 Feasibility: items 1-11 and 7/10 are pure-lib and cheap in the FAST tier;
-12-13 need the dev DB; 14 is the only heavyweight gate and stays Tier MAX
-(build is explicitly not part of this batch).
+12-13 need the dev DB; 14 is the only heavyweight gate and stays Tier HEAVY
+(build is explicitly not part of this change).
 
 ## 8. Migration notes
 
@@ -492,7 +491,7 @@ Feasibility: items 1-11 and 7/10 are pure-lib and cheap in the FAST tier;
 
 ## 9. Delivery plan (tasks ↔ requirements)
 
-> Red-first per `scripts/LOOP_PLAYBOOK.md`: each task's acceptance is a failing
+> Red-first: each task's acceptance is a failing
 > test citing its `R28.x` IDs before implementation.
 
 **Slice 1 — Atomic writes (pure server, no schema; ~1-2 days)**
@@ -503,7 +502,7 @@ Feasibility: items 1-11 and 7/10 are pure-lib and cheap in the FAST tier;
 - T28.3 [R28.8, R28.9, R28.10]: snapshot pairs + side-effect placement +
   shape discipline. Red: unit 11-style + integration 12.
 
-**Slice 2 — Sessions (1 column + auth lib; Tier MAX because schema; ~1 day)**
+**Slice 2 — Sessions (1 column + auth lib; Tier HEAVY because schema; ~1 day)**
 
 - T28.4 [R28.12, R28.14, R28.15, R28.16]: `sessionVersion` + JWT `ver` +
   cookie flags. Red: unit 4, 5.
@@ -524,7 +523,7 @@ Feasibility: items 1-11 and 7/10 are pure-lib and cheap in the FAST tier;
 - T28.9 [R28.19, R28.20, R28.21]: response-shape scan, `check-env.mjs`,
   `SecretProvider`. Red: unit 7, 8, 9.
 
-**Slice 5 — Packaging (Tier MAX — builds/images; orchestrator-scheduled; ~2 days)**
+**Slice 5 — Packaging (Tier HEAVY — builds/images; scheduled; ~2 days)**
 
 - T28.10 [R28.22, R28.24]: standalone output + Dockerfile + `/api/health`. Red:
   unit 11.
@@ -548,12 +547,12 @@ Feasibility: items 1-11 and 7/10 are pure-lib and cheap in the FAST tier;
    operator rotates `AUTH_SECRET` naively (R28.26 documents the dual-key
    window). Both are visible, documented one-time costs — chosen over leaving
    D28.3/D28.4 open.
-4. **Image/build cost in the loop.** Docker builds are `npm run build`-class:
-   they belong to Tier MAX with the gate lock, never to this docs batch or to
-   a standard wave.
+4. **Image/build cost.** Docker builds are `npm run build`-class:
+   they belong to Tier HEAVY with the build serialization, never to this docs-only change or to
+   a standard change.
 5. **Extension collision (editor slot).** The `BlockId` extension touches the
    shared extension list owned by the editor slot — T28.6 must serialize
-   behind any page-editor batch (playbook §Parallelism).
+   behind any page-editor work (tier rule: one writer per file).
 
 **Open questions**
 

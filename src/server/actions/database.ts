@@ -1211,7 +1211,7 @@ export async function importCsvAction(
 
   // B71 / D23.1: honest counts — header cells that match no property are
   // skipped (counted once per column) and cells that fail coercion are
-  // counted per cell. Both were silent drops before this batch.
+  // counted per cell. Both were silent drops before this change.
   const skippedColumns = columns.filter((property) => property === null).length;
   let skippedCells = 0;
   let created = 0;

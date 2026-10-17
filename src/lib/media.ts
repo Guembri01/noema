@@ -2,7 +2,7 @@
  * Pure media helpers — drag-drop upload progress, image resize-handle maths,
  * media alignment, the per-workspace upload size cap and the garbage-collection
  * (orphan detection) maths. Dependency-free so vitest owns the behaviour and
- * the node views only do DOM wiring (LOOP_PLAYBOOK: new logic starts as a lib).
+ * the node views only do DOM wiring (new logic starts as a pure lib).
  */
 
 export type MediaAlign = "left" | "center" | "right";

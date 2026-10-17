@@ -57,7 +57,7 @@ import {
 /**
  * Strings the i18n catalogue does not yet carry, kept as complete sentences
  * with `{placeholder}` slots so they can be lifted into `src/lib/i18n.ts`
- * verbatim (see the batch report follow-up).
+ * verbatim (see the follow-up note).
  */
 export const QUICK_FIND_COPY = {
   databases: "Databases",
@@ -82,7 +82,7 @@ const QUICK_FIND_TITLE_WEIGHT = 3;
 /**
  * A row, optionally carrying its ancestors so the breadcrumb can render a real
  * path. The server action does not send `parents` today; the field is optional
- * so this component lights up the moment it does (see the batch report).
+ * so this component lights up the moment it does (see the change notes).
  */
 export type QuickFindRow = QuickFindResult & {
   parents?: { id: string; title: string }[];

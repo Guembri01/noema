@@ -10,14 +10,14 @@
  *
  * Red-first evidence: the first revision of this file asserted the
  * SPEC-DESIRED behavior (plus deliberate control mismatches) and failed
- * 14/19 against the current tree — `scripts/_logs/b86-red.log`. That red run
+ * 14/19 against the current tree. That red run
  * is what proves each assertion below bites.
  *
- * KNOWN-GAP policy: this batch is TEST-ONLY, so where current behavior
+ * KNOWN-GAP policy: this change is TEST-ONLY, so where current behavior
  * deviates from the spec the assertion PINS current behavior with a
  * `KNOWN GAP (R23.x)` comment naming the desired output — flipping the pin
  * when M3a (T23.10) lands is the whole point of the comment. No skipped or
- * xfailed tests (playbook rule).
+ * xfailed tests (tier rule).
  *
  * Off-limits honored: export routes + format allowlist (B91 — the
  * unknown-format→400 contract lives in `src/lib/export-format.ts` and
@@ -108,7 +108,7 @@ describe("B86 heading levels", () => {
 
   it("KNOWN GAP: markdown import clamps ###### / #### to level 3 (editor supports h1-h6)", () => {
     // serialize.ts markdownToDoc: attrs.level = Math.min(#.length, 3).
-    // Desired: round-trip preserves levels 4-6 (FIX_PLAN: "h4-h6 everywhere").
+    // Desired: round-trip preserves levels 4-6 ("h4-h6 everywhere").
     // Red run asserted level 6 / level 4 here and failed (got 3 / 3).
     const back = markdownToDoc("###### Six\n\n#### Four");
     expect(back.content[0].type).toBe("heading");

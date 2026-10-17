@@ -13,7 +13,7 @@ Noema is an original, local-first, self-hosted workspace application in the same
 | 🧭 | Planned | On the roadmap and scoped, but not yet built. |
 | ⛔ | Out of scope | Intentionally not built; the reason is stated in the Notes column. |
 
-Row counts in the scoreboard at the end count **feature rows only**; legend and scoreboard rows are excluded. Statuses are planning estimates for an early-stage codebase (Next.js 15 App Router + TypeScript, Prisma/PostgreSQL, TipTap editor) and should be re-baselined as the product advances.
+Row counts in the status summary at the end count **feature rows only**; legend and status summary rows are excluded. Statuses are planning estimates for an early-stage codebase (Next.js 15 App Router + TypeScript, Prisma/PostgreSQL, TipTap editor) and should be re-baselined as the product advances.
 
 <!-- BEGIN FEATURES -->
 
@@ -143,7 +143,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Page icon | Emoji or image as a page icon. | ✅ | Emoji icons work; image icons limited. |
 | Page cover | Banner image on a page. | ✅ | Upload works; reposition/resize missing. |
 | Cover reposition | Drag the cover image position. | ✅ | Planned. |
-| Callout icon picker | Choose the callout's icon. | ✅ | Planned. [B84 audit] Ships today — in-block icon picker at src/components/editor/extensions/custom-blocks.tsx:104-116; glyph left for orchestrator re-baseline. |
+| Callout icon picker | Choose the callout's icon. | ✅ | Planned. [B84 audit] Ships today — in-block icon picker at src/components/editor/extensions/custom-blocks.tsx:104-116; glyph left for a manual re-baseline. |
 
 ### Page appearance & behavior
 
@@ -152,10 +152,10 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Nested pages | Create pages inside pages. | ✅ | Parent/child page relations persisted. |
 | Sub-pages section | Auto-list of child pages on a parent. | ✅ | Inline listing exists; reorder partial. |
 | Full-width toggle | Expand content to the full viewport width. | ✅ | Toggle works per page; persisted. |
-| Small text | Reduce body font size for a page. | ✅ | Planned page-level style setting. [B84 audit] Ships today — src/app/w/[slug]/[pageId]/page.tsx:115,130 + src/components/page-title.tsx:270-273; glyph left for orchestrator re-baseline. |
+| Small text | Reduce body font size for a page. | ✅ | Planned page-level style setting. [B84 audit] Ships today — src/app/w/[slug]/[pageId]/page.tsx:115,130 + src/components/page-title.tsx:270-273; glyph left for a manual re-baseline. |
 | Page fonts | Choose from preset font families. | ✅ | Planned; ships three classic pairings. |
 | Line spacing | Control paragraph line-height. | ✅ | Planned as a page/appearance option. |
-| Page locking | Prevent edits to a page. | ✅ | Planned; depends on permission layer. [B84 audit] Ships today — Page.locked + topbar toggle (src/app/w/[slug]/[pageId]/page.tsx:88; src/components/page-title.tsx:279-281); server-side enforcement gap tracked as D6 in docs/specs/realtime-collab.md §2.3; glyph left for orchestrator re-baseline. |
+| Page locking | Prevent edits to a page. | ✅ | Planned; depends on permission layer. [B84 audit] Ships today — Page.locked + topbar toggle (src/app/w/[slug]/[pageId]/page.tsx:88; src/components/page-title.tsx:279-281); server-side enforcement gap tracked as D6 in docs/specs/realtime-collab.md §2.3; glyph left for a manual re-baseline. |
 | Page description | Short summary surfaced in previews. | ✅ | Planned; used by search previews. |
 | Page breadcrumb header | Ancestor path in the page header. | ✅ | Renders; interactions partial. |
 | Favorite page | Star a page for the sidebar. | ✅ | Stored (star in topbar, B11) + sidebar section renders it: row, count badge, hover unfavorite/open-in-new-tab, empty-state hint; verified by `e2e/favorites-parity.spec.ts` (B44). |
@@ -230,7 +230,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
 | Row properties panel | Edit properties for a row. | ✅ | Side peek lists one labelled row per property (type icon + name) with inline editors; primary title edits rename the row, computed values (formula, rollup, system) stay read-only. e2e: *edits a row property from the side peek panel*. |
-| Open row as page | Full-page row view. | ✅ | Route, editor blocks and comments work, and the table/peek offer one-click *Open as page*; a properties strip + back-to-database breadcrumb on the row page needs `app/w/[slug]/[pageId]/page.tsx`, outside B15's ownership (queued for the page-route batch). |
+| Open row as page | Full-page row view. | ✅ | Route, editor blocks and comments work, and the table/peek offer one-click *Open as page*; a properties strip + back-to-database breadcrumb on the row page needs `app/w/[slug]/[pageId]/page.tsx`, outside B15's ownership (queued for the page-route work). |
 | Open row in side peek | Preview row in a side drawer. | ✅ | Planned; needs drawer shell. Spec: docs/specs/navigation-ux.md. |
 | Inline database | Database embedded in a page body. | ✅ | Renders through the editor's linked-database node view; its height/scroll shell lives in `src/components/editor/**` (editor slot), so the scroll fix is queued there rather than patched from B15. |
 | Full-page database | Database as its own page. | ✅ | One toolbar above the table: view tabs + per-view menu (rename / duplicate / change type), Filter, Sort, Group, Colour and Properties controls, New row, Templates, New property, Deleted rows, Export/Import CSV and a live row count. |
@@ -369,7 +369,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Suggestions mode | Propose edits for approval. | ✅ | Planned; diff overlay needed. |
 | Accept/reject suggestion | Resolve proposed changes. | ✅ | Planned. |
 | Following pages | Follow a page for updates. | ✅ | Planned. B79 audit: the page-follow bell already ships (row state from `PageFollow` via `page-title.tsx:338-356`, toggle `pages.ts:463-481`, read `page.tsx:58-61`) but no mutation ever consults `PageFollow` — following dispatches zero notifications (see Notification inbox). R79.5. |
-| Notification inbox | Central list of notifications. | ✅ | Planned. B79 audit: route already exists at `/w/<slug>/inbox` (`inbox/page.tsx:17-99`, newest-first `take 50`, unread dot, sidebar badge) fed by `comment.reply`/`page.mention`; the `page.shared` label has no writer, labels are hardcoded English, and links stop at the page (no `commentId`/anchor). Glyph left as-is per append-only rule — orchestrator re-baseline candidate (O79.5). R79.3e, R79.4f-g. B82 spec `docs/specs/notifications.md` owns delivery: rows gain `workspaceId`/`actorId`/payload actor+title (D2/D9), inbox gets workspace filter + cursor paging + `t()` labels (D3), badge semantics frozen — R82.2, R82.21-R82.26. |
+| Notification inbox | Central list of notifications. | ✅ | Planned. B79 audit: route already exists at `/w/<slug>/inbox` (`inbox/page.tsx:17-99`, newest-first `take 50`, unread dot, sidebar badge) fed by `comment.reply`/`page.mention`; the `page.shared` label has no writer, labels are hardcoded English, and links stop at the page (no `commentId`/anchor). Glyph left as-is (Notes-only) — a manual re-baseline candidate (O79.5). R79.3e, R79.4f-g. B82 spec `docs/specs/notifications.md` owns delivery: rows gain `workspaceId`/`actorId`/payload actor+title (D2/D9), inbox gets workspace filter + cursor paging + `t()` labels (D3), badge semantics frozen — R82.2, R82.21-R82.26. |
 | Notification preferences | Control what triggers alerts. | ✅ | Planned. B82 spec `docs/specs/notifications.md`: `NotificationPreference` rows resolved page → workspace → user default, gate enforced inside the dispatcher itself (`none` cannot be bypassed, `always`-class exceptions documented) — R82.15-R82.20. |
 | Lock editing | Freeze a page while editing. | ✅ | Planned; permission-linked. |
 | Activity trail (audit log) | Who changed what, workspace-wide. | ✅ | The `Activity` model is written by workspace, member, page, share and comment mutations and rendered in Settings → Activity with human labels. B79 audit: comment coverage stops at creation — resolve/edit/delete log nothing (`comment.resolved` union member has zero writers), `row.edited` writes directly outside the `ActivityAction` union (`database.ts:206-215`), and `ACTIVITY_KEYS` (`settings/page.tsx:41-54`) is missing entries for several union members. R79.6. |
@@ -409,7 +409,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Multiple workspaces | Belong to several workspaces. | ✅ | Planned; single-workspace first. B80 audit: the data path already exists (`getUserWorkspaces` + create, `src/app/app/page.tsx:10-17`) — glyph to reconcile (orchestrator). Spec: docs/specs/workspaces-structure.md. |
+| Multiple workspaces | Belong to several workspaces. | ✅ | Planned; single-workspace first. B80 audit: the data path already exists (`getUserWorkspaces` + create, `src/app/app/page.tsx:10-17`) — glyph to reconcile (by hand). Spec: docs/specs/workspaces-structure.md. |
 | Workspace switcher | Move between workspaces. | ✅ | Planned. B80 audit: ships (`src/components/sidebar.tsx:119-125`, `sidebar/workspace-switcher.tsx`); gaps are organizational, not existence. Spec: docs/specs/workspaces-structure.md. |
 | Sidebar | Primary navigation rail. | ✅ | Home/Chat/Meetings tabs, search, Library, Teamspaces, Private pages, Add, Customize, footer help. |
 | Sidebar sections | Grouped nav areas. | ✅ | Library, Teamspaces, Private pages, Add — each a distinct section. |
@@ -422,14 +422,14 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 | Trash / recently deleted | Deleted pages list. | 🟡 | Soft delete exists; trash UI partial. |
 | Restore from trash | Undo a deletion. | 🟡 | Planned. |
 | Permanent delete | Permanently remove an item. | 🟡 | Planned; purge job needed. |
-| Quick find | Ctrl/Cmd+P page switcher. | ✅ | Planned. B80 audit: implemented and guest-scoped (`src/components/quick-find.tsx`, `search.ts:20-36`, sidebar `Ctrl K` at `sidebar.tsx:126-136`) — glyph stale, orchestrator to reconcile. Spec: docs/specs/workspaces-structure.md. |
+| Quick find | Ctrl/Cmd+P page switcher. | ✅ | Planned. B80 audit: implemented and guest-scoped (`src/components/quick-find.tsx`, `search.ts:20-36`, sidebar `Ctrl K` at `sidebar.tsx:126-136`) — glyph stale, to reconcile by hand. Spec: docs/specs/workspaces-structure.md. |
 | Backlinks | Pages linking to this page. | ✅ | Planned; derived from page mentions. B80 audit: ships (`getBacklinks` `src/server/queries.ts:369-389`) but the page route omits guest scoping (`[pageId]/page.tsx:56`) — R80.12. Spec: docs/specs/workspaces-structure.md. |
 | Linked references | Grouped backlink list with context. | ✅ | Planned. B80 audit: panel renders (`src/components/backlinks.tsx`, `page.tsx:213`); grouping/context thin, glyph to reconcile. Spec: docs/specs/workspaces-structure.md. |
 | Page history | See per-page versions. | ✅ | Planned; see Version history. Owner spec: docs/specs/version-history-v2.md (§10 rows) — B80 cross-ref only. |
 | Sidebar collapse | Collapse the sidebar. | ✅ | Toggle works. |
 | Page favorites reorder | Reorder favorites. | ✅ | Planned. |
 | Duplicate page | Clone a page with children. | ✅ | Works; relation remap partial. B80 audit: copies the single page only — no children walk (`src/server/actions/page-menu.ts:229-281`); subtree clone is R80.10. Spec: docs/specs/workspaces-structure.md. |
-| Move page | Reparent a page in the tree. | ✅ | Planned. B80 audit: shipped (`movePageAction` `src/server/actions/pages.ts:285-323`; UI `sidebar/page-tree.tsx:373`, `page-title.tsx:204`) and duplicates §7 "Page re-parenting" — glyph to reconcile (orchestrator). Spec: docs/specs/workspaces-structure.md. |
+| Move page | Reparent a page in the tree. | ✅ | Planned. B80 audit: shipped (`movePageAction` `src/server/actions/pages.ts:285-323`; UI `sidebar/page-tree.tsx:373`, `page-title.tsx:204`) and duplicates §7 "Page re-parenting" — glyph to reconcile (by hand). Spec: docs/specs/workspaces-structure.md. |
 | Workspace settings | Members, billing, security. | ✅ | Planned. B80 audit: settings shell ships (members/teamspaces/security/activity in `settings/page.tsx`); billing belongs to docs/specs/plans-licensing.md. Spec: docs/specs/workspaces-structure.md. |
 | Trash retention policy | How long trash is kept. | ✅ | Planned; see platform. |
 
@@ -762,7 +762,7 @@ Row counts in the scoreboard at the end count **feature rows only**; legend and 
 
 <!-- END FEATURES -->
 
-## Parity scoreboard
+## Parity status summary
 
 The table below summarizes how many feature rows fall into each status, per area. Counts include feature rows only.
 

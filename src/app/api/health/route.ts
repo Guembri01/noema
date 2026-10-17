@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
  * requires updating the B62 guard test, out of scope here).
  *
  * Work per probe: one `SELECT 1`, raced against a short timeout so a hung
- * database answers 503 instead of hanging the orchestrator's probe. No auth,
+ * database answers 503 instead of hanging a supervisor's probe. No auth,
  * no rate-limit bucket, no `Set-Cookie` — safe to hit every few seconds.
  */
 

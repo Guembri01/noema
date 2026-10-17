@@ -11,7 +11,7 @@ import { PrismaClient } from "@prisma/client";
  *      lists only "Create a new page" (narrowing and clearing round-trip).
  *
  * Dedicated prisma-created pages with try/finally cleanup; never the shared
- * first page (see scripts/LOOP_PLAYBOOK.md e2e discipline). Assertions are
+ * first page (see the e2e discipline). Assertions are
  * scoped to `#main`; the quick-find palette is a Radix portal on document.body,
  * so the palette itself is scoped to `role="dialog"` instead of `#main`.
  *
@@ -20,7 +20,7 @@ import { PrismaClient } from "@prisma/client";
  * control anywhere in the search UI, and FEATURE_MATRIX rows "Search filters"
  * / "Search by type" are still 🧭 Planned. There is no filter to drive, so no
  * test is written for one (no skipped tests either) — reported instead.
- * `src/components/quick-find.tsx` is owned by another batch this wave: READ-ONLY
+ * `src/components/quick-find.tsx` is owned elsewhere: READ-ONLY
  * here; all palette behaviour below is asserted as-is.
  */
 
@@ -47,9 +47,9 @@ async function signIn(page: Page) {
 }
 
 /**
- * Navigation only, never assertions: with 4–6 batches running targeted e2e
+ * Navigation only, never assertions: with several suites running targeted e2e
  * against one `next dev`, a page load can come back `net::ERR_ABORTED` when a
- * sibling's compile/restart interrupts it (playbook "dev-server artifact").
+ * a concurrent run's compile/restart interrupts it (dev-server artifact).
  * Retrying the goto keeps a real product failure red — it only skips the
  * connection-level abort that says nothing about the feature under test.
  */
@@ -62,7 +62,7 @@ async function gotoStable(page: Page, url: string) {
     } catch (error) {
       lastError = error;
       if (!/ERR_ABORTED|ERR_CONNECTION|Timeout|net::/.test(String(error))) throw error;
-      // Tolerate a sibling batch restarting `next dev` (~10-30 s) or a
+      // Tolerate a concurrent suite restarting `next dev` (~10-30 s) or a
       // recompile stall; never more than the attempts below.
       await page.waitForTimeout(3_000);
     }
@@ -103,7 +103,7 @@ async function workspaceAndOwner() {
 /**
  * Dedicated page with a unique title so locators can never collide.
  *
- * The shared dev database takes connection bursts from every live batch, so a
+ * The shared dev database takes connection bursts from every live run, so a
  * fixture write can hit Prisma's 5 s connect timeout ("Can't reach database
  * server"). Retry that transient error only — a real database error still
  * throws, and a failed fixture must never turn into a vacuous green.
@@ -157,11 +157,11 @@ const seededOption = (scope: ReturnType<Page["locator"]>, title: string) =>
   scope.getByRole("option", { name: new RegExp(escapeRe(title)) });
 
 test.describe("search", () => {
-  // Six sibling batches run targeted e2e against this one `next dev` (wave
-  // mode): a sign-in can take 40-90 s while a route recompiles or a sibling
-  // restarts the dev server. The 60 s config default is sized for a quiet
-  // machine, so this file opts into a larger budget; every expect() still
-  // asserts with the config's 15 s, so a real product failure fails fast.
+  // Targeted e2e runs share this one `next dev`: a sign-in can take 40-90 s
+  // while a route recompiles or another suite restarts the dev server. The 60 s
+  // config default is sized for a quiet machine, so this file opts into a larger
+  // budget; every expect() still asserts with the config's 15 s, so a real
+  // product failure fails fast.
   test.beforeEach(() => {
     test.setTimeout(150_000);
   });

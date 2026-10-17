@@ -38,7 +38,7 @@ export type MenuItem = {
 };
 
 /**
- * Canonical menu contents in Notion's order (parity batch B11, reference:
+ * Canonical menu contents in Notion's order (parity work B11, reference:
  * user-pasted Notion topbar + Actions dialog DOM).
  */
 export const ACTIONS_MENU_ITEMS: MenuItem[] = [

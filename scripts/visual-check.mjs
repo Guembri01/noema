@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Visual regression + review harness. One command for every wave.
+// Visual regression + review harness. One command for every change.
 //
 // WHAT IT DOES
 //   Signs in as the seeded demo user (demo@noema.local / password123), walks a
@@ -17,7 +17,7 @@
 //        node scripts/visual-check.mjs --update
 //   2. Review the PNGs under docs/screenshots/visual/ (open them, eyeball the
 //      three themes) and commit scripts/visual-baseline.json.
-//   3. On later waves run the plain check:
+//   3. On later runs the plain check:
 //        node scripts/visual-check.mjs
 //      A route whose hash changed is REPORTED, not failed — a diff is not
 //      automatically a bug (fonts, copy, intentional redesign). Open the PNGs
@@ -45,7 +45,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE_PATH = join(ROOT, "scripts", "visual-baseline.json");
 const SHOT_DIR = join(ROOT, "docs", "screenshots", "visual");
 
-// Resolve DATABASE_URL deterministically from the worktree `.env` — the same
+// Resolve DATABASE_URL deterministically from the checkout's `.env` — the same
 // file `next dev` loads — so routes are read from the very database the dev
 // server is serving. Prisma Client loads a `.env` next to the generated client
 // at import time (here that is the *main* repo), which would otherwise win;

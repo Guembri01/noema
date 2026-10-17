@@ -1,12 +1,12 @@
 # Spec — Notifications (server dispatch, per-page preferences, toast standard)
 
-> **Status: spec complete, implementation pending.** Batch **B82** of the parity
-> loop. This document is the deliverable; no production code was changed.
+> **Status: spec complete, implementation pending.** This document is the
+> deliverable; no production code was changed.
 > Every claim about the current code cites file + line. Requirement IDs
 > (`R82.x`) are the traceability anchors: §13 lists tasks 1:1 against them, and
-> tests must cite the IDs they cover. Components are **read-only** in this
-> batch — the inbox/follow e2e (`e2e/inbox.spec.ts`) is owned and run live by
-> **B41**, so nothing in this spec may be validated by touching those files now.
+> tests must cite the IDs they cover. Components are **read-only** here —
+> the inbox/follow e2e (`e2e/inbox.spec.ts`) is owned elsewhere (**B41**), so
+> nothing in this spec may be validated by touching those files.
 
 ---
 
@@ -44,7 +44,7 @@ toast standard** that the coherence gate can keep enforcing.
 | Write site #1 — reply | `src/server/actions/comments.ts:61-68` | `prisma.notification.create` `type: "comment.reply"`, payload `{pageId, commentId}`; self-excluded at `:60`. |
 | Write site #2 — mentions | `src/server/actions/comments.ts:73-93` | `extractMentions` → all workspace members → name/email match → `createMany` `type: "page.mention"`; actor excluded at `:81`. |
 | Mention helpers (pure) | `src/lib/comments.ts:29-53` | `extractMentions` + `mentionMatches`, unit-tested; a good pattern to keep. |
-| Mark read | `src/server/actions/notifications.ts:7-23` | `updateMany({ where: { id, userId } })` — IDOR-safe; `markNotificationRead` is now referenced (AUDIT F-04 fixed, `docs/AUDIT.md:61`). |
+| Mark read | `src/server/actions/notifications.ts:7-23` | `updateMany({ where: { id, userId } })` — IDOR-safe; `markNotificationRead` is now referenced (AUDIT F-04 fixed). |
 | Read model | `src/server/queries.ts:426-436` | `getNotifications(userId, take = 50)` — **workspace-blind, hard-truncated at 50**, no cursor; `getUnreadNotificationCount(userId)` likewise global. |
 | Inbox route | `src/app/w/[slug]/inbox/page.tsx:11-15,54-94` | Renders labels from a **hard-coded English `LABELS` map** (`:71-72` falls through to the raw enum for unknown types); deep link built as `/w/${workspace.slug}/${payload.pageId}` (`:56-58`) — **uses the *current* workspace slug**, so a row from another workspace links to a page id that does not exist there. |
 | Badge plumbing | `src/app/w/[slug]/layout.tsx:55,85` → `src/components/workspace-shell.tsx:53` → `src/components/sidebar/home-links.tsx:94-96` | Unread count is fetched server-side per workspace render and is **global per user**. |
@@ -94,7 +94,7 @@ toast standard** that the coherence gate can keep enforcing.
   ⇒ same intent, two different outcomes.
 - **D6 — preferences are decorative.** The only stored preference is in
   `localStorage` (`page-title.tsx:102,255`); the dispatcher would not read it
-  even if it existed (B11 finding, `docs/FIX_PLAN.md:131`).
+  even if it existed (B11 finding).
 - **D7 — no preference gate at the write sites.** `comment.reply` and
   `page.mention` are written unconditionally (`comments.ts:61-92`) — "Mentions
   only" does not mute replies, "Off" mutes nothing.
@@ -121,7 +121,7 @@ toast standard** that the coherence gate can keep enforcing.
 
 **Working well and must not regress:** IDOR-safe mark-read
 (`notifications.ts:16-23`), per-item *Mark read* + *Mark all read* (AUDIT F-04
-resolved, `docs/AUDIT.md:61`), pure mention helpers with tests
+resolved), pure mention helpers with tests
 (`src/lib/comments.ts`), the badge plumbing chain (2.1), B41's live e2e, and
 the coherence gate's native-dialog/`toast.info` bans.
 
@@ -214,7 +214,7 @@ inbox + polling badge + one toast catalog — delivered in three migrations (§1
   **migration source only**: on first load, if no server row exists, the client
   hydrates from `localStorage` once and then relies on the server value.
   Components are untouched in B82 (read-only) — the hydration lands with the
-  implementing batch (T82.4).
+  implementation (T82.4).
 - **R82.18** — Preference reads/writes are scoped to the acting user
   (`where: { userId, pageId }`) and to a page the user can access; no IDOR,
   no cross-user reads (mirrors `notifications.ts:16-23`).
@@ -273,7 +273,7 @@ inbox + polling badge + one toast catalog — delivered in three migrations (§1
   `toast.message` are allowed; **`toast.info` is banned** (coherence gate,
   `scripts/check-coherence.mjs:49-53`), as are `window.alert`/`window.prompt`.
 - **R82.31** — **Strings are localized.** Every literal toast message goes
-  through `t()` with keys added across all 5 locales via `scripts/i18n-insert.mjs`;
+  through `t()` with keys added across all 5 locales via the i18n key inserter;
   dynamic server error strings go through `describeActionError`. Target: the
   51 literal call sites reach 0 for migrated files, and the coherence i18n
   baseline (`i18nFiles: 71`, `check-coherence.mjs:26`) never shrinks.
@@ -412,7 +412,7 @@ export async function notify(input: NotifyInput): Promise<void>;  // never throw
 | Wording | catalog presets, verb-first, no period, optional action | R82.33 |
 | Duration | 4 s success · 8 s error · ≤ 10 s promise | R82.34, `check-toasts.mjs` |
 | Role | confirmations only; background events batched; never sole channel | R82.35, R82.26 |
-| i18n keys | added through `scripts/i18n-insert.mjs` to all 5 locales | R82.31 (no ratchet raise) |
+| i18n keys | added through the i18n key inserter to all 5 locales | R82.31 (no ratchet raise) |
 
 ## 10. Edge cases
 
@@ -463,7 +463,7 @@ export async function notify(input: NotifyInput): Promise<void>;  // never throw
 
 9. **B41's `e2e/inbox.spec.ts` stays green as-is** (mention creates a row,
    single mark read, follow toggle — `:99,181,251`). B82 does not edit it.
-10. Implementation batch adds `e2e/notifications.spec.ts`: notify-me level set
+10. Implementation adds `e2e/notifications.spec.ts`: notify-me level set
     on page X is honored by a comment on X after reload (D6/D7), badge
     increments on another context's comment within one poll, inbox row links
     into its own workspace.
@@ -488,7 +488,7 @@ export async function notify(input: NotifyInput): Promise<void>;  // never throw
   (R82.12), share/grant (R82.13), then optional SSE behind the same contract.
 
 Each milestone ships with its red tests citing its `R82.x` before
-implementation (playbook rule).
+implementation (tier rule).
 
 ## 13. Delivery plan (milestones → tasks ↔ requirements)
 
@@ -539,14 +539,13 @@ implementation (playbook rule).
 - **`docs/specs/engineering-hardening.md` (`:76`)** — counts the two
   `notification.create*` calls inside `addCommentAction`; T82.3 will make that
   row read `notify(...)` instead (their row is theirs to update).
-- **Matrix rows (B82, Notes append-only, glyphs untouched)**:
+- **Matrix rows (B82, Notes-only, glyphs untouched)**:
   `docs/FEATURE_MATRIX.md` *Notification inbox* (`:372`), *Notification
   preferences* (`:373`), *Notifications / toasts* (`:603`), *Actions menu: Notify
   me* (`:623`).
 - **Docs that already point here**: `docs/ROADMAP.md:127-128` (inbox UI [~]),
   `docs/MISSING_FEATURES.md:19` (gap 7 — generated from the matrix, do not
-  hand-edit), `docs/FIX_PLAN.md:131` (B11 🟡 localStorage), `docs/AUDIT.md:61`
-  (F-04 fixed).
+  hand-edit), B11 🟡 localStorage, F-04 fixed.
 
 ## 15. Risks & open questions (honest)
 
@@ -565,10 +564,10 @@ implementation (playbook rule).
    rewrite in M1.
 4. **Overlap with B79.** Both specs touch mentions/follow. Mitigation: §14
    declares the seam — B79 audits the surface, this spec owns dispatch
-   semantics; Notes edits on the matrix are append-only so both can land.
+   semantics; Notes edits on the matrix are Notes-only so both can land.
 5. **B41 e2e coupling.** Inbox semantics changes could break
    `e2e/inbox.spec.ts:181`. Mitigation: R82.22/R82.23 freeze badge semantics
-   and the per-row button; this batch touches neither file.
+   and the per-row button; this change touches neither file.
 
 **Open questions**
 

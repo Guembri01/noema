@@ -1,9 +1,8 @@
 # Spec — Editor deep backlog (columns, table headers, provider parity, selection edges, embed allowlist)
 
-> **Status: spec complete, implementation pending.** Batch **B84** of the parity
-> loop. This document is the deliverable: docs-only, no production code was
-> changed, and `src/components/editor/**` was opened **READ-only** for this
-> batch. Every claim about the current code cites file + line. Requirement IDs
+> **Status: spec complete, implementation pending.** This document is the
+> deliverable: docs-only, no production code was changed, and
+> `src/components/editor/**` was opened **READ-only** for this spec. Every claim about the current code cites file + line. Requirement IDs
 > (`R84.x`) are the traceability anchors: §7 lists tasks 1:1 against them, and
 > tests must cite the IDs they cover.
 
@@ -14,26 +13,26 @@
 ### 1.1 What this spec is
 
 The §1 *Editor & blocks* area of `docs/FEATURE_MATRIX.md` still carries a set of
-🟡/🧭 rows that no live batch is closing. This spec is the **editor-slot
+🟡/🧭 rows that no other work is closing. This spec is the **editor-slot
 backlog**: it specifies the behaviour for the rows that are nobody else's, and
 gives spec-level detail (with explicit ownership hand-offs) for three rows that
-sibling batches **B18**, **B20** and **B96** are closing live this wave.
+concurrent suites **B18**, **B20** and **B96** are closing live this phase.
 
-### 1.2 Rows closed by live batches — do NOT re-implement from this spec
+### 1.2 Rows closed by other work — do NOT re-implement from this spec
 
-| Matrix row (line) | Glyph | Live batch | Evidence of the live slice |
+| Matrix row (line) | Glyph | Covered by | Evidence |
 | --- | --- | --- | --- |
 | Markdown shortcuts (`FEATURE_MATRIX.md:138`) | ✅ | **B18** | `e2e/editor-extras.spec.ts:118` (long tail: `1)` lists, pipe tables) |
 | `@` mention menu scoping (`:141`) | ✅ | **B18** | `e2e/editor-extras.spec.ts:158` |
 | Emoji picker / `:shortcode:` (`:142`) | ✅ | **B18** | `e2e/editor-extras.spec.ts:208` |
-| Page link mention (`:105`), Person mention (`:108`, scoping half) | 🟡 | **B18** | same mention slice; the *notifications* half of `:108` is **not** in B18's brief |
-| Multi-block selection (`:130`) — **select-all edge subset only** | 🟡 | **B18** | B18 brief owns "shift+click select-all edge cases"; no select-all test exists in `e2e/editor-extras.spec.ts` yet (grep) — still open on its side |
+| Page link mention (`:105`), Person mention (`:108`, scoping half) | 🟡 | **B18** | same mention slice; the *notifications* half of `:108` is **not** in B18's scope |
+| Multi-block selection (`:130`) — **select-all edge subset only** | 🟡 | **B18** | B18 owns "shift+click select-all edge cases"; no select-all test exists in `e2e/editor-extras.spec.ts` yet (grep) — still open on its side |
 | Image block/resize (`:81`, `:82`), Video (`:85`), Audio (`:86`), File preview (`:87`), Bookmark thumbnail (`:88`) | 🟡/🧭 | **B20** | `e2e/media-parity.spec.ts:227` (resize), `:196` (upload progress), `:299,370` (bookmark thumbnails) |
-| YouTube embed (`:93`), Vimeo embed (`:94`) | 🟡/🧭 | **B20** | `e2e/media-parity.spec.ts:149` (provider path with start time). Note: Vimeo URL detection already ships (`src/lib/embeds.ts:178-195`, `src/lib/embeds.test.ts:115-131`) — the 🧭 on `:94` is stale; glyph left for the orchestrator's re-baseline |
+| YouTube embed (`:93`), Vimeo embed (`:94`) | 🟡/🧭 | **B20** | `e2e/media-parity.spec.ts:149` (provider path with start time). Note: Vimeo URL detection already ships (`src/lib/embeds.ts:178-195`, `src/lib/embeds.test.ts:115-131`) — the 🧭 on `:94` is stale; glyph left for a manual re-baseline |
 | Embed block (`:89`) — **config/code half** ("embed allowlist config" is in B20's file list) | 🟡 | **B20** | allowlist already in code, see §3.5 |
 | Table of contents (`:68`) | 🟡 | **B96** | `e2e/toc.spec.ts` not present yet (B96 pending); scroll-spy detail specified in §5 here |
 
-### 1.3 This batch's scope
+### 1.3 This change's scope
 
 - **Spec'd here:** columns add/remove UI (`R84.1-R84.3`), simple-table header
   styling + table controls (`R84.4-R84.6`), video/audio provider parity
@@ -41,13 +40,13 @@ sibling batches **B18**, **B20** and **B96** are closing live this wave.
   allowlist UI (`R84.13-R84.15`), TOC scroll-spy *spec detail* (`R84.16` —
   implementation owned by B96).
 - **Not in scope:** matrix glyph flips and `docs:counts` / `docs:gaps`
-  regeneration (orchestrator-only, `scripts/LOOP_PLAYBOOK.md`), any edit under
+  regeneration (maintainer-only), any edit under
   `src/components/editor/**` (READ-only for B84), any code change at all.
 
 ## 2. Audit — matrix section 1 (planned/partial rows, who covers what)
 
 Every 🟡/🧭/⛔ row of `docs/FEATURE_MATRIX.md` §1 (lines 20-161) with its
-disposition. "Unowned" = no live batch and no spec covers it today; that is the
+disposition. "Unowned" = no other work and no spec covers it today; that is the
 honest backlog this audit exists to surface.
 
 ### 2.1 Core text blocks (lines 37-42)
@@ -72,7 +71,7 @@ honest backlog this audit exists to surface.
 | Line | Row | Glyph | Disposition |
 | --- | --- | --- | --- |
 | 62 | Columns (2/3/4/5) | 🟡 | **Spec'd here — R84.1-R84.3** |
-| 63 | Column resize | 🧭 | Unowned — adjacent to R84.1 but *not* required by the B84 brief; keep as a separate slice so the add/remove UI is not blocked on drag-width persistence |
+| 63 | Column resize | 🧭 | Unowned — adjacent to R84.1 but *not* required by B84; keep as a separate slice so the add/remove UI is not blocked on drag-width persistence |
 | 64 | Simple table block | 🟡 | **Spec'd here — R84.4-R84.6** |
 | 65 | Table header row/column | 🟡 | **Spec'd here — R84.4-R84.6** |
 | 66 | Table cell colors | 🧭 | Unowned (paints ride the block-colour machinery later) |
@@ -101,7 +100,7 @@ honest backlog this audit exists to surface.
 
 | Line | Row | Glyph | Disposition |
 | --- | --- | --- | --- |
-| 103-104 | Inline database block, linked view | 🟡/🧭 | Database family (view config) — not editor-slot; no live wave batch claims them |
+| 103-104 | Inline database block, linked view | 🟡/🧭 | Database family (view config) — not editor-slot; no live work item claims them |
 | 105, 108 | Page/person mention | 🟡 | **B18 live** (scoping); `:108` notifications half unowned |
 | 106, 109-110 | Block reference, synced/reference content, unlinked mention | 🧭 | Unowned |
 
@@ -118,19 +117,19 @@ honest backlog this audit exists to surface.
 | Line | Row | Glyph | Disposition |
 | --- | --- | --- | --- |
 | 143-145 | Page icon (image), page cover, cover reposition | 🟡/🧭 | Unowned |
-| 146 | Callout icon picker | 🧭 | **Stale — ships today**: in-block icon picker at `src/components/editor/extensions/custom-blocks.tsx:104-116` (`aria-label="Change callout icon"`). Glyph left for orchestrator re-baseline; evidence note appended to the matrix Notes cell |
+| 146 | Callout icon picker | 🧭 | **Stale — ships today**: in-block icon picker at `src/components/editor/extensions/custom-blocks.tsx:104-116` (`aria-label="Change callout icon"`). Glyph left for a manual re-baseline; evidence note appended to the matrix Notes cell |
 | 153-154 | Sub-pages section, full-width toggle | 🟡 | Unowned |
 | 155 | Small text | 🧭 | **Stale — ships today**: `src/app/w/[slug]/[pageId]/page.tsx:115,130` + `src/components/page-title.tsx:87,270-273` (topbar toggle `src/components/topbar/actions-menu.tsx:468`). Glyph left for re-baseline; note appended |
 | 156-157 | Page fonts, line spacing | 🧭 | Unowned |
 | 158 | Page locking | 🧭 | **Stale — ships today**: `Page.locked` enforced at render (`page.tsx:88`), toggle in the actions menu (`src/lib/actions-menu.ts:237-242` keeps it reachable when locked; `src/components/page-title.tsx:279-281`). The *server-side* enforcement gap is tracked as D6 in `docs/specs/realtime-collab.md` §2.3. Glyph left for re-baseline; note appended |
 | 159-161 | Page description, page breadcrumb header, favorite page | 🧭/🟡 | Unowned / partial (favorites has `e2e/favorites-parity.spec.ts`; verify with its owner before claiming) |
 
-**Audit verdict:** of the 61 non-✅ rows in section 1, live batches cover 13
+**Audit verdict:** of the 61 non-✅ rows in section 1, other work covers 13
 (B18: 5, B20: 7, B96: 1), this spec covers 7 (rows 62, 64, 65, 85, 86, 89,
 130 — with the shared halves above), 3 are stale-but-shipping, 2 are ⛔ by
 design, and **36 remain unowned backlog** (columns resize, math UX, synced
 blocks, breadcrumb deep-tree, page appearance, copy-as-markdown, …). Those 36
-are listed above precisely so the orchestrator can schedule them instead of
+are listed above precisely so the maintainers can schedule them instead of
 assuming §1 is otherwise covered.
 
 ## 3. Current state (evidence)
@@ -322,8 +321,8 @@ assuming §1 is otherwise covered.
   `blocks.ts:176-213`), duplicate, move up/down, copy — instead of silently
   acting on the single block under the cursor (`block-context-menu.tsx:110-121`).
 - **R84.12** — Selection edges & exclusions: select-all staging (block text →
-  block → document) is **explicitly excluded** — it belongs to B18 per its
-  brief, and this spec's implementation must not collide with it; the existing
+  block → document) is **explicitly excluded** — it belongs to B18, and this
+  spec's implementation must not collide with it; the existing
   range-copy e2e (`e2e/noema.spec.ts:1610-1655`) must stay green; inside a
   table, cell range (R84.6) beats block range; under collaboration a range
   delete is an ordinary transaction (no special path); a mouse-free path to
@@ -341,7 +340,7 @@ assuming §1 is otherwise covered.
   shows the active providers and, as milestone 2, per-workspace *disable*
   toggles persisted in a new 1:1 `EmbedConfig` model (schema precedent:
   `AiProviderConfig`/`EmailConfig`, `prisma/schema.prisma:137-138` — schema
-  change ⇒ Tier MAX when built). Toggles may only **narrow** the deployed
+  change ⇒ Tier HEAVY when built). Toggles may only **narrow** the deployed
   set; the section states plainly that new hosts require a redeploy, because
   `frame-src` is build-time (`next.config.ts:60-83`). New strings via `t()`.
 - **R84.15** — Single source of truth: `isEmbedHostAllowed` remains the only
@@ -386,14 +385,14 @@ Spec detail for B96:
    (`FEATURE_MATRIX.md:634`, `docs/specs/engineering-hardening.md`). Until ids
    land, B96 may use heading index + text hash, documented as provisional.
 5. Ownership hazard (why this section exists): the TOC view lives **inside**
-   `src/components/editor/extensions/custom-blocks.tsx`, while B96's brief
+   `src/components/editor/extensions/custom-blocks.tsx`, while B96
    marks `editor/**` off-limits (it belongs to the editor slot). See O84.3 for
    the recommended resolution — do not edit `custom-blocks.tsx` from B96
    without the hand-off below.
 
 ## 6. Test plan
 
-**Unit (vitest, red-first, pure lib per the playbook's sandboxing rule)**
+**Unit (vitest, red-first, pure lib — the sandboxing rule)**
 
 1. *Column ops* — new `src/lib/columns.ts`: add/remove/unwrap decisions on a
    fixture doc (clamp at 4, unwrap at 1, content preserved, positions valid)
@@ -425,17 +424,17 @@ Spec detail for B96:
 10. Embed UI: unsupported host shows the named-provider message; chip list
     matches the allowlist [R84.13].
 
-**Gates** (playbook tier): implementation batches here are **STANDARD**
+**Gates** (tier): implementation here is **STANDARD**
 (tsc + eslint + full unit + coherence + targeted e2e against dev `:3201`);
-the `EmbedConfig` schema slice is **Tier MAX**. This batch (B84, docs-only)
+the `EmbedConfig` schema slice is **Tier HEAVY**. This change (B84, docs-only)
 owes FAST: tsc + eslint + coherence. `check:a11y` must stay green for R84.1,
 R84.5, R84.10, R84.16.
 
 ## 7. Delivery plan (milestones → tasks ↔ requirements)
 
-> Test-first rule from `scripts/LOOP_PLAYBOOK.md`: every task's acceptance is a
+> Test-first rule: every task's acceptance is a
 > red test citing its requirement IDs before implementation. Editor-slot work
-> is sequential — one `page-editor.tsx` batch per wave.
+> is sequential — one `page-editor.tsx` change at a time.
 
 **M1 — Layout & table UI (editor slot, ~2-3 h slices)**
 
@@ -450,14 +449,14 @@ R84.5, R84.10, R84.16.
 - T84.5 [R84.11, R84.12] Range actions in context menu/handle + range delete
   snapshot. Red: unit 5, e2e 9; regression: `e2e/noema.spec.ts` copy suite.
 
-**M3 — Media & embeds (after B20 lands; embed config slice is Tier MAX)**
+**M3 — Media & embeds (after B20 lands; embed config slice is Tier HEAVY)**
 
 - T84.6 [R84.7] `video`/`audio` nodes + upload gating + doc-renderer parity.
   Red: unit 4, e2e (extend `e2e/media-parity.spec.ts`-style assertions in the
   own file).
 - T84.7 [R84.8, R84.9, R84.13] Truthful provider UI (chips, hints, messages).
   Red: unit 3, e2e 10.
-- T84.8 [R84.14, R84.15] Embeds settings section + `EmbedConfig` (Tier MAX:
+- T84.8 [R84.14, R84.15] Embeds settings section + `EmbedConfig` (Tier HEAVY:
   `prisma db push` + build + prod e2e). Red: unit 6.
 
 **Hand-offs (no implementation here)**
@@ -467,16 +466,16 @@ R84.5, R84.10, R84.16.
 
 **Exit criteria per milestone:** tsc 0, eslint 0 errors, unit green with cited
 IDs, targeted e2e green on dev `:3201`, `check:a11y` green, coherence
-COHERENT, matrix glyph flipped **only** by the orchestrator (Notes already
-carry the spec path — do not re-append), evidence tail in the batch report.
+COHERENT, matrix glyph flipped **only** by the maintainers (Notes already
+carry the spec path — do not re-append), evidence recorded in the pull request.
 
 ## 8. Risks & open questions (honest)
 
 **Risks**
 
 1. **Editor-slot contention (highest).** T84.1-T84.5 all touch
-   `page-editor.tsx`/`block-context-menu.tsx`, which the playbook serialises
-   to one batch per wave, and B18/B20 are moving underneath this spec right
+   `page-editor.tsx`/`block-context-menu.tsx`, which serialises work
+   to one change at a time, and B18/B20 are moving underneath this spec right
    now. Mitigation: re-audit §3 citations at execution start; if the cited
    lines moved, fix the spec before coding, never after.
 2. **Spec/code drift on media rows.** The matrix says "local playback" while
@@ -494,7 +493,7 @@ carry the spec path — do not re-append), evidence tail in the batch report.
 
 - **O84.1** — Max columns: keep 4 (matches `custom-blocks.tsx:240`) or go to
   5 (matches the row label `FEATURE_MATRIX.md:62`)? Spec assumes 4; changing
-  the label is an orchestrator edit.
+  the label is a maintainer edit.
 - **O84.2** — Block anchors: `#block-<pos>` (`block-context-menu.tsx:238`) is
   unstable under editing; TOC deep links (§5.4) and "Copy block link" both
   need the stable-block-ids work (`FEATURE_MATRIX.md:634`). Coordinate with
@@ -505,8 +504,8 @@ carry the spec path — do not re-append), evidence tail in the batch report.
   `src/components/table-of-contents.tsx`) so B96 can implement R84.16 without
   violating ownership; fallback is a written scoped exception naming exactly
   `TableOfContents`/`TocView`.
-- **O84.4** — Per-workspace embed toggles need a schema model (Tier MAX cost
+- **O84.4** — Per-workspace embed toggles need a schema model (Tier HEAVY cost
   for a narrow feature). Is read-only provider visibility (R84.14 M1) enough
   for parity, deferring `EmbedConfig` until a second customer asks?
 - **O84.5** — Waveform/transcoding (rows `:86`, `:552-553`): stay honest
-  partials per R84.9, or spawn a dedicated heavy batch? No owner today.
+  partials per R84.9, or spawn a dedicated heavy change? Unassigned.
