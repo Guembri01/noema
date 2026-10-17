@@ -243,6 +243,34 @@ describe("listDeletedRowsAction — guest scope", () => {
     expect(result).toEqual({ error: "No access to this database." });
     expect(contentCalls()).toHaveLength(0);
   });
+
+  it("gives a role that is not a known workspace role no access at all", async () => {
+    // Fail closed: only OWNER, ADMIN and MEMBER read a workspace unscoped —
+    // every other role (a forged one, a stale one from an older schema) gets
+    // no pages at all, even when the database was shared with the caller.
+    grants = { "db-1": ["READ"] };
+    perm.getWorkspaceAccess.mockResolvedValue({ role: "SUPERUSER" });
+
+    const result = await listDeletedRowsAction("db-1");
+
+    expect(result).toEqual({ error: "Database not found." });
+    // The door closes before any read: neither the scope nor the content is
+    // queried.
+    expect(scopeCalls()).toHaveLength(0);
+    expect(contentCalls()).toHaveLength(0);
+  });
+
+  it("gives an empty role no access at all", async () => {
+    // The same fail-closed rule for a missing role: "" is not a workspace
+    // role either.
+    perm.getWorkspaceAccess.mockResolvedValue({ role: "" });
+
+    const result = await listDeletedRowsAction("db-1");
+
+    expect(result).toEqual({ error: "Database not found." });
+    expect(scopeCalls()).toHaveLength(0);
+    expect(contentCalls()).toHaveLength(0);
+  });
 });
 
 describe("the write actions of the module — guest scope", () => {
