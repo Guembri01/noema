@@ -86,13 +86,21 @@ function publicRule(rule: StoredAutomationRule): AutomationRule {
  * Automation rules (canonical ticket events → ButtonAction plans).
  * ------------------------------------------------------------------------- */
 
-/** Rules a workspace authored, in insertion order. */
+/**
+ * Rules a workspace authored, in insertion order.
+ *
+ * The rules are workspace management data: writing one asks for
+ * `canManageMembers` (`saveAutomationRuleAction`), so reading them asks the
+ * same question — a `GUEST` never receives the workspace's automations.
+ */
 export async function listAutomationRulesAction(
   workspaceId: string,
 ): Promise<AutomationResult<{ rules: AutomationRule[] }>> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
-  if (!access) return { error: "You do not have access to this workspace." };
+  if (!access || !canManageMembers(access.role)) {
+    return { error: "You do not have permission to manage automations." };
+  }
   return {
     ok: true,
     rules: [...automationRules.values()]
@@ -255,7 +263,13 @@ export async function saveRecurringTicketAction(input: {
   return { ok: true, id };
 }
 
-/** The workspace's recurring ticket schedules. */
+/**
+ * The workspace's recurring ticket schedules.
+ *
+ * A schedule names a ticket title, so it is tracker data: writing one asks
+ * for `canEditContent` (`saveRecurringTicketAction`), so reading them asks
+ * the same question — a `GUEST` never receives the workspace's schedules.
+ */
 export async function listRecurringTicketsAction(workspaceId: string): Promise<
   AutomationResult<{
     tickets: {
@@ -270,7 +284,9 @@ export async function listRecurringTicketsAction(workspaceId: string): Promise<
 > {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
-  if (!access) return { error: "You do not have access to this workspace." };
+  if (!access || !canEditContent(access.role)) {
+    return { error: "You do not have permission to manage recurring tickets." };
+  }
   return {
     ok: true,
     tickets: [...recurringTickets.values()]

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ChevronLeft, Trash2 } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { getTrash, getWorkspaceBySlug } from "@/server/queries";
 import { TrashList } from "@/components/trash-list";
 import { t } from "@/lib/i18n";
@@ -18,8 +19,11 @@ export default async function TrashPage({ params }: { params: Promise<{ slug: st
   if (!workspace) notFound();
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) notFound();
+  // The trash lists page *titles*, so a guest may only see the trashed pages
+  // in their scope — the same scope the library page and the page route use.
+  const visiblePageIds = await pageScopeFor(user.id, workspace.id, access.role);
 
-  const pages = await getTrash(workspace.id);
+  const pages = await getTrash(workspace.id, visiblePageIds);
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-8 py-12">

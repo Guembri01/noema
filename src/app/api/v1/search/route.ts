@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { authenticateApiRequest } from "@/lib/api-auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { searchPagesPage } from "@/server/queries";
 import { rateLimit } from "@/lib/api-guard";
 import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
@@ -35,6 +36,11 @@ function parseSearchType(raw: string | null): "PAGE" | "DATABASE" | null {
  * `PageType`; omitting it (or an unknown value) searches every type. The
  * engine keyset still drives the walk, so `has_more` / `next_cursor` are
  * unchanged and a scoped walk neither skips nor repeats a hit.
+ *
+ * A `GUEST` hits only the pages shared with them (the same scope the
+ * workspace UI applies); a full member keeps the whole workspace. The scope
+ * covers the ranked search — the **empty**-`q` branch ("recent pages") is
+ * not scoped yet (tracked in #105).
  */
 export async function GET(request: Request) {
   const limited = rateLimit(request, "v1");
@@ -50,6 +56,10 @@ export async function GET(request: Request) {
   }
   const access = await getWorkspaceAccess(auth.userId, workspaceId);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Guests only hit the pages shared with them — the same scope the
+  // workspace UI applies, so search can never surface a page they may not
+  // open. (The empty-`q` branch is still unscoped — #105.)
+  const visiblePageIds = await pageScopeFor(auth.userId, workspaceId, access.role);
 
   const pageSize = url.searchParams.get("page_size");
   if (pageSize !== null && pageSize.trim() !== "" && !Number.isFinite(Number(pageSize))) {
@@ -63,7 +73,7 @@ export async function GET(request: Request) {
 
   const type = parseSearchType(url.searchParams.get("type"));
 
-  const page = await searchPagesPage(workspaceId, query, null, { limit, cursor });
+  const page = await searchPagesPage(workspaceId, query, visiblePageIds, { limit, cursor });
   const scoped = type === null ? page.items : page.items.filter((result) => result.type === type);
   const items =
     url.searchParams.get("rank") === "bm25"

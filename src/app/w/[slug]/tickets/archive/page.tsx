@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Archive, ArrowLeft } from "lucide-react";
 import { requireUser } from "@/lib/auth";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { getWorkspaceBySlug } from "@/server/queries";
 import { getArchivedTickets } from "@/server/ticket-archive";
 import { TicketArchiveView } from "@/components/tickets/ticket-archive-view";
@@ -26,6 +26,9 @@ export default async function TicketArchivePage({
   if (!workspace) notFound();
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) notFound();
+  // The archive lists the workspace's tickets: not page-scoped, so a `GUEST` is
+  // refused here exactly like on `GET /api/tickets`.
+  if (!canEditContent(access.role)) notFound();
 
   const archived = await getArchivedTickets(workspace.id);
   const tickets = archived.map((ticket) => ({

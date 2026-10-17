@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CalendarRange } from "lucide-react";
 import { requireUser } from "@/lib/auth";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { getProjects, getTickets, getWorkspaceBySlug } from "@/server/queries";
 import {
   buildRoadmap,
@@ -55,6 +55,10 @@ export default async function RoadmapPage({
   if (!workspace) notFound();
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) notFound();
+  // The roadmap folds the workspace's tickets and milestones together: not
+  // page-scoped, so a `GUEST` is refused here exactly like on
+  // `GET /api/tickets`.
+  if (!canEditContent(access.role)) notFound();
 
   const zoom: RoadmapZoom = isZoom(zoomParam) ? zoomParam : "month";
   const [projects, tickets] = await Promise.all([

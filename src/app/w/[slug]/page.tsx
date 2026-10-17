@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { getTrash, getWorkspaceBySlug } from "@/server/queries";
 import { HomeGallery } from "@/components/home-gallery";
 import { formatDate } from "@/lib/slug";
@@ -25,8 +26,11 @@ export default async function WorkspaceHome({
   if (!workspace) notFound();
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) notFound();
+  // The "recently deleted" list names pages, so a guest only sees the trashed
+  // pages in their scope — the same scope the trash page uses.
+  const visiblePageIds = await pageScopeFor(user.id, workspace.id, access.role);
 
-  const trash = await getTrash(workspace.id);
+  const trash = await getTrash(workspace.id, visiblePageIds);
   const locale = user.locale ?? "en";
   const hour = new Date().getHours();
   const greeting =
