@@ -20,7 +20,7 @@ describe("Section maps", () => {
   it("uses the canonical section-title ramp", () => {
     expect(SECTION_HEADING_CLASS).toContain("text-xl");
     expect(SECTION_HEADING_CLASS).toContain("font-semibold");
-    expect(SECTION_HEADING_CLASS).toContain("tracking-[-0.01em]");
+    expect(SECTION_HEADING_CLASS).toContain("tracking-heading");
   });
 });
 
@@ -31,7 +31,7 @@ describe("Section render", () => {
     );
     expect(html).toContain("<section");
     expect(html).toContain("gap-6");
-    expect(html).toContain("text-xl font-semibold tracking-[-0.01em]");
+    expect(html).toContain("text-xl font-semibold tracking-heading");
     expect(html).toContain("General");
     expect(html).toContain("body");
   });
@@ -60,7 +60,7 @@ describe("Section render", () => {
     const html = renderToStaticMarkup(h(Section, { title: "X", level }));
     expect(html).toContain(`<h${level}`);
     // styling is identical regardless of the semantic level
-    expect(html).toContain("text-xl font-semibold tracking-[-0.01em]");
+    expect(html).toContain("text-xl font-semibold tracking-heading");
   });
 
   it("omits the action row when no action is given", () => {

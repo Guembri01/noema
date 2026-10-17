@@ -132,7 +132,7 @@ describe("reading measure from the document", () => {
 describe("block → class map", () => {
   it("maps every kind to token classes, never a raw value", () => {
     expect(docBlockClass("heading")).toContain("font-semibold");
-    expect(docBlockClass("heading")).toContain("tracking-[-0.01em]");
+    expect(docBlockClass("heading")).toContain("tracking-heading");
     expect(docBlockClass("codeBlock")).toContain("bg-surface-2");
     expect(docBlockClass("codeBlock")).toContain("font-mono");
     expect(docBlockClass("inlineCode")).toContain("text-danger");

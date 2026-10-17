@@ -23,7 +23,7 @@ vi.mock("next/link", async () => {
 
 describe("markdown block → class map", () => {
   it("maps each kind to token classes", () => {
-    expect(markdownBlockClass("heading")).toContain("tracking-[-0.01em]");
+    expect(markdownBlockClass("heading")).toContain("tracking-heading");
     expect(markdownBlockClass("link")).toContain("text-accent");
     expect(markdownBlockClass("inlineCode")).toContain("bg-surface-2");
     expect(markdownBlockClass("tableHeader")).toContain("bg-surface-2");
