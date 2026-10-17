@@ -106,7 +106,14 @@ export type AcceptTransferOptions = {
   byUserId: unknown;
   /** Evaluation instant (epoch millis). */
   now: number;
-  /** Whether the re-entered password matched; required when `requirePassword`. */
+  /**
+   * Whether the re-entered password matched; required when `requirePassword`.
+   *
+   * B14: the caller derives this itself — the client may only send the
+   * candidate password, never the verdict. A `passwordOk` that came from the
+   * request would let anyone who holds the recipient's session take the
+   * workspace over without ever knowing a password.
+   */
   passwordOk?: boolean;
   /** The recipient's current role, for an accurate `fromRole`. Defaults to `admin`. */
   memberRole?: unknown;
@@ -361,10 +368,12 @@ export function startTransfer(input: StartTransferInput): StartTransferResult {
  *
  * Refuses when the request is malformed, is no longer pending, is being
  * accepted by anyone but `toUserId`, has lapsed at `now`, or requires a
- * password that was not confirmed (`passwordOk !== true`). On success the
- * request becomes `accepted` with `acceptedAt = now`, and `roleChanges` lists
- * the recipient's promotion first (`{ fromRole: <current>, toRole: "owner" }`,
- * defaulting the current role to `admin`) then the previous owner's demotion
+ * password that was not confirmed (`passwordOk !== true`). The `passwordOk`
+ * flag is the caller's own verdict — it has to come from a server-side
+ * comparison, never from the request (B14). On success the request becomes
+ * `accepted` with `acceptedAt = now`, and `roleChanges` lists the recipient's
+ * promotion first (`{ fromRole: <current>, toRole: "owner" }`, defaulting the
+ * current role to `admin`) then the previous owner's demotion
  * (`{ fromRole: "owner", toRole: "admin" }`), matching the atomic swap in
  * `transferOwnershipAction`.
  */

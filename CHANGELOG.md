@@ -565,6 +565,17 @@ list marks it as **No access**.
   app's origin for every member who opened the table or the page. Every
   stored URL now passes the shared href allowlist before it reaches an `href`
   (`http`, `https`, `mailto`, `tel` and safe relative paths).
+- The ownership transfer's password step is verified by the server now.
+  `acceptOwnershipTransferAction` took a `passwordOk: boolean` from the client
+  and handed it straight to the transfer engine, which took it for the
+  confirmation — so whoever held the recipient's session could take the
+  workspace over without ever knowing a password. The action now takes the
+  candidate password and compares it with the stored hash of the account that
+  accepts (`verifyPassword` against `User.passwordHash`); only that result
+  reaches the engine, so a client can no longer assert that a password was
+  confirmed. The comparison is the recipient's own — the sender's account is
+  never read — and an account whose stored value is not a bcrypt hash (an SSO
+  account) fails closed.
 
 
 
