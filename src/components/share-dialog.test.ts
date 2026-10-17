@@ -18,9 +18,7 @@ vi.mock("@/server/actions/share", () => ({
     allowEditing: false,
     hasPassword: false,
     expiresAt: null,
-    allowDuplicate: false,
     indexing: true,
-    exportRestricted: false,
   })),
   revokeShareLinkAction: vi.fn(async () => ({ ok: true })),
 }));
@@ -46,15 +44,27 @@ import {
 
 const count = (html: string, needle: string): number => html.split(needle).length - 1;
 
+describe("PUBLISH_TOGGLES", () => {
+  it("offers only the settings the public share page can honour", () => {
+    expect(PUBLISH_TOGGLES.map((toggle) => toggle.id)).toEqual(["indexing"]);
+  });
+
+  it("promises nothing the public share page does not do", () => {
+    // The public page offers no export and no "copy into my workspace": the
+    // switches that promised them were removed rather than left lying (B36).
+    for (const toggle of PUBLISH_TOGGLES) {
+      expect(toggle.hint).not.toMatch(/export|duplicate|copy the published/i);
+    }
+  });
+});
+
 describe("publishTogglePatch", () => {
   it("turns one switch into exactly one single-field patch", () => {
-    expect(publishTogglePatch("allowDuplicate", true)).toEqual({ allowDuplicate: true });
-    expect(publishTogglePatch("indexing", false)).toEqual({ indexing: false });
-    expect(publishTogglePatch("exportRestricted", true)).toEqual({ exportRestricted: true });
+    expect(publishTogglePatch("indexing", true)).toEqual({ indexing: true });
   });
 
   it("keeps each patch to a single key, never touching password or expiry", () => {
-    for (const id of ["allowDuplicate", "indexing", "exportRestricted"] as const) {
+    for (const id of PUBLISH_TOGGLES.map((toggle) => toggle.id)) {
       const patch = publishTogglePatch(id, true);
       expect(Object.keys(patch)).toEqual([id]);
       expect(patch).not.toHaveProperty("allowEditing");
@@ -86,20 +96,20 @@ describe("PublishSettingsSection", () => {
   it("renders one switch per setting with the matching aria-checked state", () => {
     const html = renderToStaticMarkup(
       createElement(PublishSettingsSection, {
-        settings: { allowDuplicate: true, indexing: false, exportRestricted: true },
+        settings: { indexing: true },
         onToggle: vi.fn(),
       }),
     );
     expect(count(html, 'role="switch"')).toBe(PUBLISH_TOGGLES.length);
-    expect(count(html, 'aria-checked="true"')).toBe(2);
-    expect(count(html, 'aria-checked="false"')).toBe(1);
+    expect(count(html, 'aria-checked="true"')).toBe(1);
+    expect(count(html, 'aria-checked="false"')).toBe(0);
     expect(html).toContain('aria-label="Search-engine indexing"');
   });
 
   it("carries the explanatory hint for every setting", () => {
     const html = renderToStaticMarkup(
       createElement(PublishSettingsSection, {
-        settings: { allowDuplicate: false, indexing: false, exportRestricted: false },
+        settings: { indexing: false },
         onToggle: vi.fn(),
       }),
     );
@@ -112,7 +122,7 @@ describe("PublishSettingsSection", () => {
   it("disables every switch while a change is pending", () => {
     const html = renderToStaticMarkup(
       createElement(PublishSettingsSection, {
-        settings: { allowDuplicate: false, indexing: false, exportRestricted: false },
+        settings: { indexing: false },
         pending: true,
         onToggle: vi.fn(),
       }),

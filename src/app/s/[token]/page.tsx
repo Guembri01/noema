@@ -12,6 +12,7 @@ import {
   isSharedPageUnavailable,
   readingMeasure,
   shareIcon,
+  sharedPageTitle,
   usesWideMeasure,
 } from "@/lib/share-page";
 import { Z } from "@/lib/design-tokens";
@@ -28,11 +29,23 @@ export async function generateMetadata({
   const { token } = await params;
   const link = await prisma.shareLink.findUnique({
     where: { token },
-    select: { indexing: true, page: { select: { title: true } } },
+    select: {
+      indexing: true,
+      passwordHash: true,
+      expiresAt: true,
+      page: { select: { title: true, deletedAt: true } },
+    },
   });
-  const title = link?.page.title || "Shared page";
+  // A page's title is content: it may only be disclosed once the reader may
+  // see the page, so the metadata applies the same state check the body makes
+  // (password, expiry, deletion). Until then the `<title>` tag and the Open
+  // Graph metadata stay generic — the link alone never names the page (B36).
+  const unlocked = verifyShareUnlockToken(
+    token,
+    (await cookies()).get(shareUnlockCookieName(token))?.value,
+  );
   return {
-    title,
+    title: sharedPageTitle(link, link?.page, { unlocked }),
     // Honour the publisher's indexing choice; a page that is not indexed is
     // still discoverable over its link, just never crawled.
     robots: link && link.indexing === false ? { index: false, follow: false } : undefined,
