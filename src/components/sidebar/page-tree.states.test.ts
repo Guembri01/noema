@@ -48,6 +48,8 @@ const {
   PAGE_TREE_CHILDREN_INNER,
   pageChevronButtonClass,
   pageChevronClass,
+  PAGE_CHEVRON_MOTION,
+  PAGE_TREE_CHILDREN_MOTION,
   pageRowClass,
   pageRowLinkClass,
   pageRowSettleStyle,
@@ -103,8 +105,11 @@ describe("focus / chevron / child-list classes", () => {
   it("chevron rotates 90° over --dur-2 with --ease-smooth", () => {
     const open = pageChevronClass(true);
     expect(open).toContain("rotate-90");
-    expect(open).toContain("duration-[var(--dur-2)]");
-    expect(open).toContain("ease-[var(--ease-smooth)]");
+    expect(open).toContain("transition-transform");
+    // Motion lives on the token layer (inline), never an arbitrary duration class.
+    expect(open).not.toContain("duration-[");
+    expect(PAGE_CHEVRON_MOTION.transitionDuration).toBe("var(--dur-2)");
+    expect(PAGE_CHEVRON_MOTION.transitionTimingFunction).toBe("var(--ease-smooth)");
     expect(pageChevronClass(false)).not.toContain("rotate-90");
   });
 
@@ -120,10 +125,12 @@ describe("focus / chevron / child-list classes", () => {
     const closed = pageTreeChildrenClass(false);
     for (const cls of [open, closed]) {
       expect(cls).toContain("transition-[grid-template-rows,opacity]");
-      expect(cls).toContain("duration-[var(--dur-2)]");
-      expect(cls).toContain("ease-[var(--ease-smooth)]");
+      // No arbitrary duration class — the motion is the token-layer constant.
+      expect(cls).not.toContain("duration-[");
       expect(cls).toContain("overflow-hidden");
     }
+    expect(PAGE_TREE_CHILDREN_MOTION.transitionDuration).toBe("var(--dur-2)");
+    expect(PAGE_TREE_CHILDREN_MOTION.transitionTimingFunction).toBe("var(--ease-smooth)");
     expect(open).toContain("grid-rows-[1fr]");
     expect(open).toContain("opacity-100");
     expect(closed).toContain("grid-rows-[0fr]");

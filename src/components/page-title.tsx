@@ -432,7 +432,7 @@ export function PageTitleRow({
     <>
       <div
         className={cn(
-          "relative sticky top-0 -mx-12 mb-2 flex items-center justify-between gap-2 bg-bg/85 px-12 py-2 backdrop-blur-sm transition-[border-color,background-color] duration-[var(--dur-1)]",
+          "relative sticky top-0 -mx-12 mb-2 flex items-center justify-between gap-2 bg-bg/85 px-12 py-2 backdrop-blur-sm u-colors",
           scrolled ? "border-b border-border" : "border-b border-transparent",
         )}
         style={{ zIndex: Z.sticky }}
@@ -1348,9 +1348,10 @@ export function PageTitle({
               {canEdit && (
                 <div
                   className={cn(
-                    "pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-end gap-1 p-3 transition-opacity duration-[var(--dur-1)] focus-within:opacity-100 group-hover/cover:opacity-100",
+                    "pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-end gap-1 p-3 focus-within:opacity-100 group-hover/cover:opacity-100",
                     repositioning ? "opacity-100" : "opacity-0",
                   )}
+                  style={{ transition: "opacity var(--dur-1) var(--ease-smooth)" }}
                 >
                   <span className="pointer-events-none me-auto flex items-center gap-1 rounded-sm bg-bg/85 px-2 py-1 text-xs text-muted shadow-1">
                     <Move className="h-3.5 w-3.5" aria-hidden /> Drag to reposition
