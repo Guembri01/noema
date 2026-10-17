@@ -125,6 +125,20 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   and the system prompt says what the block is: data to quote, never
   instructions. The framing happens after the token budget is applied, so
   the budget can never cut the closing tag off.
+- The chat confirmation now acts on the proposal that was stored, not on the copy
+  the client sent. The chat stream forwarded `payload.confirm` unchanged, and the
+  action executed the `kind` and the `args` of that request; the proposal the
+  model had produced was written to `meta.proposal` and never read again — the
+  message id was used to hide the confirm button and nothing else. A request
+  could therefore name an action that was never proposed, one that belonged to
+  another thread, one that had already been applied, or one that differed from
+  the proposal in its arguments, and the server executed it either way. No
+  permission boundary was crossed — the action checks the same rights the
+  underlying actions check — but the human-in-the-loop confirmation is the
+  defence against prompt injection, and it was bound to nothing. The
+  confirmation now names the proposal turn it confirms, the stored proposal is
+  compared with the request (by canonical JSON, so the order of the keys does
+  not matter) and **the stored proposal** is what runs.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.

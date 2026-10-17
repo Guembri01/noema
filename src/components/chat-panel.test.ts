@@ -332,6 +332,46 @@ describe("renderToStaticMarkup — an assistant message", () => {
   });
 });
 
+describe("renderToStaticMarkup — the confirm button belongs to a stored proposal (B17)", () => {
+  const proposal = {
+    kind: "createTicket",
+    args: { title: "Ship the beta" },
+    summary: 'Create ticket "Ship the beta"',
+    requiresConfirm: true,
+  } as const;
+
+  it("offers the confirm button for the proposal the turn stored", () => {
+    const html = render(
+      createElement(ChatMessageItem, {
+        role: "assistant",
+        body: 'Create ticket "Ship the beta".',
+        createdAt,
+        slug: "demo",
+        locale: "en",
+        meta: { proposal },
+        onApplyProposal: () => {},
+      }),
+    );
+    expect(html).toContain("Confirm to apply");
+    expect(html).toContain("Create ticket");
+  });
+
+  it("withdraws it once the proposal was applied", () => {
+    const html = render(
+      createElement(ChatMessageItem, {
+        role: "assistant",
+        body: 'Create ticket "Ship the beta".',
+        createdAt,
+        slug: "demo",
+        locale: "en",
+        meta: { proposal, applied: true },
+        onApplyProposal: () => {},
+      }),
+    );
+    expect(html).not.toContain("Confirm to apply");
+  });
+});
+
 describe("renderToStaticMarkup — typing indicator & empty state", () => {
   it("renders a three-dot status indicator", () => {
     const html = render(

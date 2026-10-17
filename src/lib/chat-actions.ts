@@ -409,6 +409,36 @@ export function proposalBody(proposal: ChatActionProposal): string {
   return `${proposal.summary}.\n\n_Not applied yet — confirm to make this change._`;
 }
 
+/**
+ * Canonical JSON of a proposal's arguments: the object keys sorted, so two
+ * equal proposals compare equal whatever order their keys were written in.
+ */
+function canonical(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
+}
+
+/**
+ * True when a confirmation names the proposal that was stored (B17).
+ *
+ * Only the fields that decide the effect are compared — the kind and its
+ * arguments: the summary and the confirm flag are decoration, and the stored
+ * proposal is what gets applied.
+ */
+export function sameProposal(
+  stored: ChatActionProposal | null | undefined,
+  confirmed: ChatActionProposal | null | undefined,
+): boolean {
+  if (!stored || !confirmed) return false;
+  if (stored.kind !== confirmed.kind) return false;
+  return canonical(stored.args) === canonical(confirmed.args);
+}
+
 /* ------------------------------------------------------------------------- *
  * The parser
  * ------------------------------------------------------------------------- */
