@@ -1,12 +1,14 @@
+"use client";
+
 import {
   useEffect,
-  useRef,
+  useReducer,
   useState,
   useTransition
 } from "react";
-import { createPortal } from "react-dom";
 import { type Editor } from "@tiptap/react";
 import {
+  Ban,
   Bold,
   CaseLower,
   CaseUpper,
@@ -16,12 +18,12 @@ import {
   Italic,
   Link2,
   MessageSquare,
+  MoreHorizontal,
   Palette,
   Sigma,
   Sparkles,
   Strikethrough,
-  Underline as UnderlineIcon,
-  Unlink
+  Underline as UnderlineIcon
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -30,6 +32,17 @@ import { EQUATION_EVENT } from "@/components/editor/equation-editor";
 import { AI_SKILLS, type AiSkillId } from "@/lib/ai-skills";
 import { runAiSkill } from "@/lib/ai-client";
 import { Tooltip } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Separator } from "@/components/ui/separator";
+import { type TagHue } from "@/lib/design-tokens";
 import { t } from "@/lib/i18n";
 import {
   TEXT_TRANSFORMS,
@@ -39,31 +52,182 @@ import {
 
 type I18nKey = Parameters<typeof t>[1];
 
-const TEXT_COLORS: { labelKey: I18nKey; value: string | null }[] = [
-  { labelKey: "colorDefault", value: null },
-  { labelKey: "colorGray", value: "#787774" },
-  { labelKey: "colorBrown", value: "#9f6b53" },
-  { labelKey: "colorOrange", value: "#d9730d" },
-  { labelKey: "colorYellow", value: "#cb912f" },
-  { labelKey: "colorGreen", value: "#448361" },
-  { labelKey: "colorBlue", value: "#337ea9" },
-  { labelKey: "colorPurple", value: "#9065b0" },
-  { labelKey: "colorPink", value: "#c14c8a" },
-  { labelKey: "colorRed", value: "#d44c47" },
+/* ---------------------------------------------------------------------------
+   Colour + highlight swatches (token-driven)
+
+   The editor's 9 Notion hues map one-to-one onto the design system tag palette,
+   so a text colour is `var(--tag-<hue>-fg)` and a highlight is
+   `var(--tag-<hue>-bg)`. No raw hex reaches the component, and both follow the
+   light / dark / high-contrast tokens automatically.
+   ------------------------------------------------------------------------- */
+
+export type SwatchKind = "text" | "highlight";
+
+/** The hues offered, in menu order (teal is reserved for tags). */
+export const SWATCH_HUES: readonly TagHue[] = [
+  "gray",
+  "brown",
+  "orange",
+  "yellow",
+  "green",
+  "blue",
+  "purple",
+  "pink",
+  "red",
 ];
 
-const HIGHLIGHTS: { labelKey: I18nKey; value: string | null }[] = [
-  { labelKey: "colorNone", value: null },
-  { labelKey: "colorGray", value: "#e3e2e0" },
-  { labelKey: "colorBrown", value: "#eee0da" },
-  { labelKey: "colorYellow", value: "#fdecc8" },
-  { labelKey: "colorGreen", value: "#dbeddb" },
-  { labelKey: "colorBlue", value: "#d3e5ef" },
-  { labelKey: "colorPurple", value: "#e8deee" },
-  { labelKey: "colorPink", value: "#f5e0e9" },
-  { labelKey: "colorRed", value: "#ffe2dd" },
-  { labelKey: "colorOrange", value: "#fadec9" },
-];
+const HUE_LABELS: Record<string, I18nKey> = {
+  gray: "colorGray",
+  brown: "colorBrown",
+  orange: "colorOrange",
+  yellow: "colorYellow",
+  green: "colorGreen",
+  blue: "colorBlue",
+  purple: "colorPurple",
+  pink: "colorPink",
+  red: "colorRed",
+};
+
+/** One swatch: `value === null` clears the mark. */
+export type SwatchChoice = { value: string | null; labelKey: I18nKey };
+
+/** The CSS custom property a swatch applies for a hue. */
+export function tagSwatchValue(kind: SwatchKind, hue: TagHue): string {
+  return kind === "text" ? `var(--tag-${hue}-fg)` : `var(--tag-${hue}-bg)`;
+}
+
+/** The swatch grid for a kind: a "clear" cell then one per hue. */
+export function swatchChoices(kind: SwatchKind): SwatchChoice[] {
+  return [
+    {
+      value: null,
+      labelKey: kind === "text" ? "colorDefault" : "colorNone",
+    },
+    ...SWATCH_HUES.map((hue) => ({
+      value: tagSwatchValue(kind, hue),
+      labelKey: HUE_LABELS[hue] ?? "colorGray",
+    })),
+  ];
+}
+
+/**
+ * Active-swatch detection. Mark attrs can be normalised by an editor round-trip
+ * (whitespace, casing), so compare case-insensitively and treat
+ * `null`/`undefined`/empty as the same "unset" value.
+ */
+export function isActiveSwatch(
+  active: string | null | undefined,
+  value: string | null,
+): boolean {
+  return (active ?? "").trim().toLowerCase() === (value ?? "").trim().toLowerCase();
+}
+
+/** Swatch button chrome: token colours, `.focus-ring`, active = accent ring. */
+export function swatchButtonClass(active: boolean): string {
+  return cn(
+    "u-interactive focus-ring inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-border",
+    active && "ring-2 ring-accent ring-offset-1",
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Link popover state machine (pure)
+   ------------------------------------------------------------------------- */
+
+export type LinkPopoverState = {
+  /** The link's visible text. */
+  title: string;
+  /** The raw URL as typed. */
+  url: string;
+  /** Open the link in a new tab (`target="_blank"`). */
+  newTab: boolean;
+};
+
+export const LINK_POPOVER_INITIAL: LinkPopoverState = {
+  title: "",
+  url: "",
+  newTab: false,
+};
+
+export type LinkPopoverAction =
+  | { type: "open"; title?: string; url?: string; newTab?: boolean }
+  | { type: "close" }
+  | { type: "setTitle"; value: string }
+  | { type: "setUrl"; value: string }
+  | { type: "setNewTab"; value: boolean }
+  | { type: "reset" };
+
+/** Pure reducer behind the link popover. Opening primes from the live mark. */
+export function nextLinkPopover(
+  state: LinkPopoverState,
+  action: LinkPopoverAction,
+): LinkPopoverState {
+  switch (action.type) {
+    case "open":
+      return {
+        title: action.title ?? "",
+        url: action.url ?? "",
+        newTab: action.newTab ?? false,
+      };
+    case "close":
+    case "reset":
+      return LINK_POPOVER_INITIAL;
+    case "setTitle":
+      return { ...state, title: action.value };
+    case "setUrl":
+      return { ...state, url: action.value };
+    case "setNewTab":
+      return { ...state, newTab: action.value };
+    default:
+      return state;
+  }
+}
+
+/**
+ * Normalise a typed URL: keep a real scheme, an in-page anchor or a relative
+ * path, otherwise assume `https://` (the old behaviour that made "example.com"
+ * usable).
+ */
+export function normalizeLinkUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (
+    /^(https?:|mailto:|tel:)/i.test(trimmed) ||
+    trimmed.startsWith("/") ||
+    trimmed.startsWith("#")
+  ) {
+    return trimmed;
+  }
+  return `https://${trimmed}`;
+}
+
+/** What the popover applies, or `null` when the URL is empty (unlink). */
+export function linkPopoverTarget(
+  state: LinkPopoverState,
+): { href: string; target: "_blank" | null } | null {
+  const href = normalizeLinkUrl(state.url);
+  if (!href) return null;
+  return { href, target: state.newTab ? "_blank" : null };
+}
+
+/* ---------------------------------------------------------------------------
+   Toolbar button chrome (pure)
+   ------------------------------------------------------------------------- */
+
+/** Token-only chrome for the square, icon-only toolbar buttons. */
+export function bubbleButtonClass({ active = false }: { active?: boolean } = {}): string {
+  return cn(
+    "u-interactive focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm",
+    "text-muted hover:bg-surface-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50",
+    active ? "bg-accent-soft text-accent" : "bg-transparent",
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Bubble menu
+   ------------------------------------------------------------------------- */
+
+type PanelName = "color" | "highlight" | "link" | "ai";
 
 /* Case transforms offered as toolbar actions. `none` is the default and needs
    no button, so it is filtered out; labels/descriptions come from the shared
@@ -72,16 +236,8 @@ const TRANSFORM_ACTIONS = TEXT_TRANSFORMS.filter(
   (transform) => transform.kind !== "none",
 );
 
-/* Tiptap stores mark attributes as declared, but editors/viewers may normalise
-   hex casing or trim whitespace, so compare colours case-insensitively and
-   treat `null`/`undefined`/empty as the same "unset" value. */
-function sameColor(a: string | null | undefined, b: string | null): boolean {
-  return (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
-}
-
-/* ---------------------------------------------------------------------------
-   Bubble menu
-   --------------------------------------------------------------------------- */
+/** Overflow trigger label (English literal awaiting a catalogue key). */
+const OVERFLOW_LABEL = "More";
 
 export function BubbleToolbar({
   locale = "en",
@@ -94,64 +250,53 @@ export function BubbleToolbar({
   onPanelOpenChange: (open: boolean) => void;
   locale?: string;
 }) {
-  const [linkOpen, setLinkOpen] = useState(false);
-  const [url, setUrl] = useState("");
-  const [panel, setPanel] = useState<null | "color" | "highlight" | "ai">(null);
-  const [panelPos, setPanelPos] = useState<{ left: number; top: number } | null>(null);
-  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const [panel, setPanel] = useState<PanelName | null>(null);
+  const [link, dispatchLink] = useReducer(nextLinkPopover, LINK_POPOVER_INITIAL);
 
-  const closePanel = () => {
-    setPanel(null);
-    onPanelOpenChange(false);
+  // Current mark attributes drive the swatch "selected" ring and the link
+  // button's title. Reading them during render is safe: the bubble menu only
+  // mounts while a selection exists and re-renders on selection/mark changes.
+  const activeTextColor =
+    (editor.getAttributes("textStyle") as { color?: string }).color ?? null;
+  const activeHighlightColor =
+    (editor.getAttributes("highlight") as { color?: string }).color ?? null;
+  const activeHref = (editor.getAttributes("link") as { href?: string }).href;
+  const activeTarget = (editor.getAttributes("link") as { target?: string }).target;
+
+  const setPanelOpen = (name: PanelName, open: boolean) => {
+    setPanel((previous) => (open ? name : previous === name ? null : previous));
   };
 
-  // Measure the toolbar at click time and portal the panel to a fixed position.
-  // Radix popups inside the bubble menu lost their trigger and landed in the
-  // viewport corner, so this menu is positioned explicitly instead.
-  const togglePanel = (name: "color" | "highlight" | "ai") => {
-    const next = panel === name ? null : name;
-    if (next && toolbarRef.current) {
-      const rect = toolbarRef.current.getBoundingClientRect();
-      const width = next === "ai" ? 240 : 260;
-      setPanelPos({
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 12)),
-        top: rect.bottom + 6,
-      });
-    }
-    setPanel(next);
-    onPanelOpenChange(next !== null);
-  };
-
-  // Dismiss the panel when the pointer goes elsewhere or Escape is pressed.
+  // Keep the host (the bubble menu) open while any popover is showing.
   useEffect(() => {
-    if (!panel) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("[data-bubble-panel]")) return;
-      if (target?.closest("[data-bubble-toolbar]")) return;
-      closePanel();
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closePanel();
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  });
+    onPanelOpenChange(panel !== null);
+  }, [panel, onPanelOpenChange]);
+
+  // If the toolbar unmounts with a popover still "open", release the host.
+  useEffect(() => () => onPanelOpenChange(false), [onPanelOpenChange]);
+
+  const primeLink = () => {
+    const { from, to } = editor.state.selection;
+    const title =
+      from === to ? "" : editor.state.doc.textBetween(from, to, " ");
+    dispatchLink({
+      type: "open",
+      title,
+      url: activeHref ?? "",
+      newTab: activeTarget === "_blank",
+    });
+  };
 
   const applyTextColor = (value: string | null) => {
     if (value) editor.chain().focus().setColor(value).run();
     else editor.chain().focus().unsetColor().run();
-    closePanel();
+    setPanel(null);
   };
 
   const applyHighlight = (value: string | null) => {
     if (value) editor.chain().focus().setHighlight({ color: value }).run();
     else editor.chain().focus().unsetHighlight().run();
-    closePanel();
+    setPanel(null);
   };
 
   // Replace the selected range with its transformed casing. The engine is
@@ -174,16 +319,42 @@ export function BubbleToolbar({
       .run();
   };
 
-  const setLink = () => {
-    const trimmed = url.trim();
-    if (!trimmed) {
+  // Apply the popover: replace the visible text and (re)bind the link mark in
+  // one transaction; an empty URL removes the link.
+  const applyLink = () => {
+    const target = linkPopoverTarget(link);
+    const { from, to } = editor.state.selection;
+    const currentText = editor.state.doc.textBetween(from, to, " ");
+    const text = link.title.trim() || currentText;
+    if (!target) {
       editor.chain().focus().extendMarkRange("link").unsetLink().run();
+    } else if (text) {
+      editor
+        .chain()
+        .focus()
+        .insertContentAt(
+          { from, to },
+          {
+            type: "text",
+            text,
+            marks: [
+              {
+                type: "link",
+                attrs: { href: target.href, target: target.target },
+              },
+            ],
+          },
+        )
+        .run();
     } else {
-      const href = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-      editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
+      editor
+        .chain()
+        .focus()
+        .extendMarkRange("link")
+        .setLink({ href: target.href, target: target.target })
+        .run();
     }
-    setUrl("");
-    setLinkOpen(false);
+    setPanel(null);
   };
 
   const [aiPending, startAi] = useTransition();
@@ -231,21 +402,13 @@ export function BubbleToolbar({
     );
   };
 
-  // Current mark attributes drive the swatch "selected" ring and the link
-  // button's hover title. Reading them during render is safe: the bubble menu
-  // only mounts while a selection exists and re-renders on selection/mark
-  // changes, like the `editor.isActive` checks below.
-  const activeTextColor =
-    (editor.getAttributes("textStyle") as { color?: string }).color ?? null;
-  const activeHighlightColor =
-    (editor.getAttributes("highlight") as { color?: string }).color ?? null;
-  const activeHref = (editor.getAttributes("link") as { href?: string }).href;
+  const colorSwatches = swatchChoices("text");
+  const highlightSwatches = swatchChoices("highlight");
 
   return (
     <div
-      ref={toolbarRef}
       data-bubble-toolbar
-      className="flex items-center gap-0.5 rounded-lg border border-border bg-bg p-1 shadow-lg"
+      className="surface-raised flex items-center gap-0.5 p-1"
     >
       <BubbleButton label={t(locale, "bold")} active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()}>
         <Bold className="h-4 w-4" />
@@ -262,92 +425,174 @@ export function BubbleToolbar({
       <BubbleButton label={t(locale, "code")} active={editor.isActive("code")} onClick={() => editor.chain().focus().toggleCode().run()}>
         <Code className="h-4 w-4" />
       </BubbleButton>
-      <BubbleButton
-        label={t(locale, "clearFormatting")}
-        onClick={() => editor.chain().focus().unsetAllMarks().clearNodes().run()}
-      >
-        <Eraser className="h-4 w-4" />
-      </BubbleButton>
-      <BubbleButton
-        label={t(locale, "inlineEquation")}
-        onClick={openInlineMath}
-      >
-        <Sigma className="h-4 w-4" />
-      </BubbleButton>
 
-      {TRANSFORM_ACTIONS.map((transform) => (
-        <BubbleButton
-          key={transform.kind}
-          label={transform.label}
-          onClick={() => applyTransform(transform.kind)}
-        >
-          {transform.kind === "uppercase" ? (
-            <CaseUpper className="h-4 w-4" />
-          ) : (
-            <CaseLower className="h-4 w-4" />
-          )}
-        </BubbleButton>
-      ))}
+      <Separator orientation="vertical" className="mx-1 h-5 self-center" />
 
-      <span className="mx-0.5 h-5 w-px bg-border" />
+      <Popover open={panel === "color"} onOpenChange={(open) => setPanelOpen("color", open)}>
+        <Tooltip label={t(locale, "textColor")}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={t(locale, "textColor")}
+              aria-pressed={panel === "color"}
+              onMouseDown={(event) => event.preventDefault()}
+              className={bubbleButtonClass({ active: panel === "color" })}
+            >
+              <Palette className="h-4 w-4" />
+            </button>
+          </PopoverTrigger>
+        </Tooltip>
+        <PopoverContent align="center" className="w-auto p-2">
+          <div
+            role="group"
+            aria-label={t(locale, "colorLabel")}
+            className="grid grid-cols-5 gap-1"
+          >
+            {colorSwatches.map((choice) => (
+              <SwatchButton
+                key={choice.labelKey}
+                kind="text"
+                choice={choice}
+                locale={locale}
+                active={isActiveSwatch(activeTextColor, choice.value)}
+                onPick={applyTextColor}
+              />
+            ))}
+          </div>
+        </PopoverContent>
+      </Popover>
 
-      <BubbleButton
-        label={t(locale, "textColor")}
-        active={panel === "color"}
-        onClick={() => togglePanel("color")}
-      >
-        <Palette className="h-4 w-4" />
-      </BubbleButton>
+      <Popover open={panel === "highlight"} onOpenChange={(open) => setPanelOpen("highlight", open)}>
+        <Tooltip label={t(locale, "highlight")}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={t(locale, "highlight")}
+              aria-pressed={panel === "highlight"}
+              onMouseDown={(event) => event.preventDefault()}
+              className={bubbleButtonClass({ active: panel === "highlight" })}
+            >
+              <Highlighter className="h-4 w-4" />
+            </button>
+          </PopoverTrigger>
+        </Tooltip>
+        <PopoverContent align="center" className="w-auto p-2">
+          <div
+            role="group"
+            aria-label={t(locale, "highlight")}
+            className="grid grid-cols-5 gap-1"
+          >
+            {highlightSwatches.map((choice) => (
+              <SwatchButton
+                key={choice.labelKey}
+                kind="highlight"
+                choice={choice}
+                locale={locale}
+                active={isActiveSwatch(activeHighlightColor, choice.value)}
+                onPick={applyHighlight}
+              />
+            ))}
+          </div>
+        </PopoverContent>
+      </Popover>
 
-      <BubbleButton
-        label={t(locale, "highlight")}
-        active={panel === "highlight"}
-        onClick={() => togglePanel("highlight")}
-      >
-        <Highlighter className="h-4 w-4" />
-      </BubbleButton>
-
-      <BubbleButton
-        label={t(locale, "link")}
-        tooltip={
-          activeHref ? `${t(locale, "link")}: ${activeHref}` : t(locale, "link")
-        }
-        active={editor.isActive("link")}
-        onClick={() => {
-          setUrl(activeHref ?? "");
-          setLinkOpen((v) => !v);
+      <Popover
+        open={panel === "link"}
+        onOpenChange={(open) => {
+          if (open) primeLink();
+          setPanelOpen("link", open);
         }}
       >
-        <Link2 className="h-4 w-4" />
-      </BubbleButton>
-      {editor.isActive("link") && (
-        <BubbleButton label={t(locale, "removeLink")} onClick={() => editor.chain().focus().unsetLink().run()}>
-          <Unlink className="h-4 w-4" />
-        </BubbleButton>
-      )}
+        <Tooltip
+          label={
+            activeHref ? `${t(locale, "link")}: ${activeHref}` : t(locale, "link")
+          }
+        >
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={t(locale, "link")}
+              aria-pressed={editor.isActive("link")}
+              onMouseDown={(event) => event.preventDefault()}
+              className={bubbleButtonClass({ active: editor.isActive("link") })}
+            >
+              <Link2 className="h-4 w-4" />
+            </button>
+          </PopoverTrigger>
+        </Tooltip>
+        <PopoverContent align="center" className="w-72">
+          <div className="flex flex-col gap-2">
+            <label className="flex flex-col gap-1 text-xs text-muted">
+              {t(locale, "link")}
+              <input
+                type="text"
+                value={link.title}
+                onChange={(event) =>
+                  dispatchLink({ type: "setTitle", value: event.target.value })
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    applyLink();
+                  }
+                }}
+                className="focus-ring h-8 rounded-sm border border-border bg-bg px-2 text-sm text-fg"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted">
+              {t(locale, "linkUrl")}
+              <input
+                type="url"
+                inputMode="url"
+                value={link.url}
+                placeholder={t(locale, "linkPastePlaceholder")}
+                onChange={(event) =>
+                  dispatchLink({ type: "setUrl", value: event.target.value })
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    applyLink();
+                  }
+                }}
+                className="focus-ring h-8 rounded-sm border border-border bg-bg px-2 text-sm text-fg"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-sm text-fg">
+              <input
+                type="checkbox"
+                checked={link.newTab}
+                onChange={(event) =>
+                  dispatchLink({ type: "setNewTab", value: event.target.checked })
+                }
+                className="focus-ring size-4 rounded-xs border border-border"
+              />
+              {t(locale, "openInNewTab")}
+            </label>
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => {
+                  editor.chain().focus().extendMarkRange("link").unsetLink().run();
+                  setPanel(null);
+                }}
+                className="focus-ring u-colors h-8 rounded-sm px-2 text-sm text-danger hover:bg-danger-soft"
+              >
+                {t(locale, "remove")}
+              </button>
+              <button
+                type="button"
+                onClick={applyLink}
+                className="focus-ring u-colors h-8 rounded-sm bg-accent px-3 text-sm font-medium text-accent-fg hover:bg-accent/90"
+              >
+                {t(locale, "apply")}
+              </button>
+            </div>
+          </div>
+        </PopoverContent>
+      </Popover>
 
-      {linkOpen && (
-        <input
-          autoFocus
-          type="url"
-          inputMode="url"
-          aria-label={t(locale, "linkUrl")}
-          title={url || undefined}
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              setLink();
-            }
-            if (e.key === "Escape") setLinkOpen(false);
-          }}
-          placeholder={t(locale, "linkPastePlaceholder")}
-          className="ml-1 h-7 w-44 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
-        />
-      )}
-
-      <span className="mx-0.5 h-5 w-px bg-border" />
+      <Separator orientation="vertical" className="mx-1 h-5 self-center" />
 
       <BubbleButton
         label={t(locale, "comment")}
@@ -362,75 +607,145 @@ export function BubbleToolbar({
         <MessageSquare className="h-4 w-4" />
       </BubbleButton>
 
-      <BubbleButton
-        label={t(locale, "askAI")}
-        active={panel === "ai"}
-        onClick={() => togglePanel("ai")}
-      >
-        <Sparkles className="h-4 w-4" />
-      </BubbleButton>
+      <Popover open={panel === "ai"} onOpenChange={(open) => setPanelOpen("ai", open)}>
+        <Tooltip label={t(locale, "askAI")}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={t(locale, "askAI")}
+              aria-pressed={panel === "ai"}
+              onMouseDown={(event) => event.preventDefault()}
+              className={bubbleButtonClass({ active: panel === "ai" })}
+            >
+              <Sparkles className="h-4 w-4" />
+            </button>
+          </PopoverTrigger>
+        </Tooltip>
+        <PopoverContent align="center" className="w-60 p-1">
+          <div className="flex flex-col">
+            {AI_SKILLS.map((skill) => (
+              <button
+                key={skill.id}
+                type="button"
+                disabled={aiPending}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setPanel(null);
+                  applySkill(skill.id);
+                }}
+                className="focus-ring u-colors flex flex-col rounded-sm px-2 py-1 text-left text-sm hover:bg-surface-2 disabled:opacity-50"
+              >
+                <span>{skill.label}</span>
+                <span className="text-xs text-muted">{skill.hint}</span>
+              </button>
+            ))}
+          </div>
+        </PopoverContent>
+      </Popover>
 
-      {panel &&
-        panelPos &&
-        createPortal(
-          <div
-            data-bubble-panel
-            style={{ position: "fixed", left: panelPos.left, top: panelPos.top }}
-            className="z-[60] rounded-lg border border-border bg-bg p-1 shadow-xl"
+      {/* Rare marks collapse into an overflow menu at narrow widths. */}
+      <div className="hidden items-center gap-0.5 sm:flex">
+        <Separator orientation="vertical" className="mx-1 h-5 self-center" />
+        {TRANSFORM_ACTIONS.map((transform) => (
+          <BubbleButton
+            key={transform.kind}
+            label={transform.label}
+            onClick={() => applyTransform(transform.kind)}
           >
-            {panel === "ai" ? (
-              <div className="flex w-60 flex-col">
-                {AI_SKILLS.map((skill) => (
-                  <button
-                    key={skill.id}
-                    type="button"
-                    disabled={aiPending}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      closePanel();
-                      applySkill(skill.id);
-                    }}
-                    className="flex flex-col rounded px-2 py-1 text-left text-sm hover:bg-surface-2 disabled:opacity-50"
-                  >
-                    <span>{skill.label}</span>
-                    <span className="text-xs text-muted">{skill.hint}</span>
-                  </button>
-                ))}
-              </div>
+            {transform.kind === "uppercase" ? (
+              <CaseUpper className="h-4 w-4" />
             ) : (
-              <div className="flex items-center gap-1">
-                {(panel === "color" ? TEXT_COLORS : HIGHLIGHTS).map((choice) => {
-                  const selected =
-                    panel === "color"
-                      ? sameColor(activeTextColor, choice.value)
-                      : sameColor(activeHighlightColor, choice.value);
-                  return (
-                    <button
-                      key={choice.labelKey}
-                      type="button"
-                      title={t(locale, choice.labelKey)}
-                      aria-label={t(locale, choice.labelKey)}
-                      aria-pressed={selected}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() =>
-                        panel === "color"
-                          ? applyTextColor(choice.value)
-                          : applyHighlight(choice.value)
-                      }
-                      className={cn(
-                        "h-6 w-6 rounded border border-border",
-                        selected && "ring-2 ring-accent ring-offset-1",
-                      )}
-                      style={{ background: choice.value ?? "transparent" }}
-                    />
-                  );
-                })}
-              </div>
+              <CaseLower className="h-4 w-4" />
             )}
-          </div>,
-          document.body,
-        )}
+          </BubbleButton>
+        ))}
+        <BubbleButton
+          label={t(locale, "clearFormatting")}
+          onClick={() => editor.chain().focus().unsetAllMarks().clearNodes().run()}
+        >
+          <Eraser className="h-4 w-4" />
+        </BubbleButton>
+        <BubbleButton label={t(locale, "inlineEquation")} onClick={openInlineMath}>
+          <Sigma className="h-4 w-4" />
+        </BubbleButton>
+      </div>
+
+      <DropdownMenu>
+        <Tooltip label={OVERFLOW_LABEL}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label={OVERFLOW_LABEL}
+              onMouseDown={(event) => event.preventDefault()}
+              className={cn(bubbleButtonClass(), "sm:hidden")}
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+          </DropdownMenuTrigger>
+        </Tooltip>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuLabel>{OVERFLOW_LABEL}</DropdownMenuLabel>
+          {TRANSFORM_ACTIONS.map((transform) => (
+            <DropdownMenuItem
+              key={transform.kind}
+              onSelect={() => applyTransform(transform.kind)}
+            >
+              {transform.kind === "uppercase" ? (
+                <CaseUpper className="h-4 w-4" />
+              ) : (
+                <CaseLower className="h-4 w-4" />
+              )}
+              {transform.label}
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={() => editor.chain().focus().unsetAllMarks().clearNodes().run()}
+          >
+            <Eraser className="h-4 w-4" />
+            {t(locale, "clearFormatting")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={openInlineMath}>
+            <Sigma className="h-4 w-4" />
+            {t(locale, "inlineEquation")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
+  );
+}
+
+function SwatchButton({
+  kind,
+  choice,
+  active,
+  locale,
+  onPick,
+}: {
+  kind: SwatchKind;
+  choice: SwatchChoice;
+  active: boolean;
+  locale: string;
+  onPick: (value: string | null) => void;
+}) {
+  const label = t(locale, choice.labelKey);
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      aria-pressed={active}
+      data-active={active ? "true" : undefined}
+      data-swatch={kind}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => onPick(choice.value)}
+      className={swatchButtonClass(active)}
+      style={choice.value ? { background: choice.value } : undefined}
+    >
+      {choice.value ? null : (
+        <Ban className="h-3.5 w-3.5 text-muted" aria-hidden />
+      )}
+    </button>
   );
 }
 
@@ -453,12 +768,9 @@ function BubbleButton({
         type="button"
         aria-label={label}
         aria-pressed={active}
-        onMouseDown={(e) => e.preventDefault()}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={onClick}
-        className={cn(
-          "flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2",
-          active && "bg-surface-2 text-fg",
-        )}
+        className={bubbleButtonClass({ active })}
       >
         {children}
       </button>
