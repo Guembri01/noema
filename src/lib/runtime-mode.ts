@@ -23,6 +23,9 @@
  * why `isDesktop()` used to answer `false` inside the installed app.
  */
 
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+
 export type RuntimeMode = "site" | "desktop";
 
 /**
@@ -53,27 +56,6 @@ declare global {
      * {@link runtimeMode}).
      */
     __NOEMA_DESKTOP__?: DesktopBridge;
-    /**
-     * Tauri's own global, injected on **every** page the webview hosts when
-     * `withGlobalTauri` is on (see `src-tauri/tauri.conf.json`) — including the
-     * served app, which is a different origin from the shell's own bootstrap
-     * page. Only the narrow shape the app uses is declared.
-     */
-    __TAURI__?: {
-      core?: {
-        invoke?: (
-          command: string,
-          args?: Record<string, unknown>,
-        ) => Promise<unknown>;
-      };
-      /** Reinstalled on every document, so the served app can subscribe too. */
-      event?: {
-        listen?: (
-          event: string,
-          handler: (message: { payload?: unknown }) => void,
-        ) => Promise<() => void>;
-      };
-    };
   }
 }
 
@@ -88,9 +70,9 @@ declare global {
  *     only signal the *served* app can rely on for free.
  *  2. `window.__NOEMA_DESKTOP__` — the shell's bridge object, evaluated into the
  *     document it is about to replace (so: the shell's own page only).
- *  3. `window.__TAURI__` — reinstalled by Tauri on every document the webview
- *     hosts, so it is present in the served app too. A fallback for a document
- *     that somehow lacks the attribute.
+ *  3. `isTauri()` — the shell marks every document it hosts (see
+ *     `@tauri-apps/api/core`). A fallback for a document that somehow lacks the
+ *     attribute.
  */
 export function runtimeMode(): RuntimeMode {
   if (typeof window === "undefined") return "site";
@@ -101,7 +83,7 @@ export function runtimeMode(): RuntimeMode {
     return "desktop";
   }
   if (window.__NOEMA_DESKTOP__?.mode === "desktop") return "desktop";
-  if (window.__TAURI__?.core) return "desktop";
+  if (isTauri()) return "desktop";
   return "site";
 }
 
@@ -116,17 +98,21 @@ export function isDesktop(): boolean {
  *
  * Deliberately independent of {@link desktopBridge}: the bridge object is
  * evaluated into the shell's *own* page and does not survive the navigation to
- * the served app, while Tauri's global is reinstalled on each document. A
- * rejected command resolves to `undefined` rather than throwing: shell commands
- * are enhancements, and nothing in the app may break because the shell said no.
+ * the served app, while the shell's mark (`isTauri()`) is set in every
+ * document it hosts. A rejected command resolves to `undefined` rather than
+ * throwing: shell commands are enhancements, and nothing in the app may break
+ * because the shell said no.
  */
 export function invokeShell(
   command: string,
   args?: Record<string, unknown>,
 ): Promise<unknown> | null {
   if (typeof window === "undefined") return null;
-  const invoke = window.__TAURI__?.core?.invoke;
-  if (typeof invoke !== "function") return null;
+  // `isTauri()` is the shell's own mark: it is set in every document the
+  // webview hosts — the served app included — and nowhere else. Without it
+  // there is no shell to call, and the caller gets `null` right away (the
+  // promise would only ever reject).
+  if (!isTauri()) return null;
   return Promise.resolve()
     .then(() => invoke(command, args))
     .catch(() => undefined);
@@ -152,8 +138,7 @@ export function listenShell(
   handler: (payload: unknown) => void,
 ): (() => void) | null {
   if (typeof window === "undefined") return null;
-  const listen = window.__TAURI__?.event?.listen;
-  if (typeof listen !== "function") return null;
+  if (!isTauri()) return null;
 
   let stopped = false;
   let unlisten: (() => void) | null = null;
