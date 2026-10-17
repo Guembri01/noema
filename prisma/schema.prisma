@@ -87,6 +87,10 @@ model User {
   notificationPrefs Json?
   twoFactorSecret  String?
   twoFactorEnabled Boolean @default(false)
+  /// Consecutive failed sign-ins (B03). Reset by a successful sign-in.
+  failedLoginCount Int      @default(0)
+  /// While set and in the future, the account refuses sign-ins (B03).
+  lockedUntil      DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
