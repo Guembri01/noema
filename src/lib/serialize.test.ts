@@ -54,6 +54,26 @@ describe("pageToMarkdown", () => {
     expect(md.startsWith("# My page")).toBe(true);
     expect(md).toContain("Body");
   });
+
+  /**
+   * B109 — the output side applies the same href allowlist the input side
+   * applies (`markdown.ts#safeHref`): a stored target the allowlist refuses
+   * is written as plain text, never as a link.
+   */
+  it("writes a refused link target as plain text, without the target", () => {
+    const md = pageToMarkdown("My page", {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "click", marks: [{ type: "link", attrs: { href: "javascript:alert(1)" } }] },
+          ],
+        },
+      ],
+    });
+    expect(md).toBe("# My page\n\nclick\n");
+  });
 });
 
 describe("csv", () => {

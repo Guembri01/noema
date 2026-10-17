@@ -706,6 +706,33 @@ describe("selectionToMarkdown (§1 copy as Markdown)", () => {
 });
 
 /**
+ * B109 — the output side applies the same href allowlist the input side
+ * applies (`safeHref`): a stored target the allowlist refuses is written as
+ * plain text, never as a link.
+ */
+describe("link targets on the output side (B109)", () => {
+  const linkBlock = (href: string): RichBlock => ({
+    type: "paragraph",
+    content: [{ type: "text", text: "click", marks: [{ type: "link", attrs: { href } }] }],
+  });
+
+  it("writes a refused target as plain text, without the target", () => {
+    expect(blocksToMarkdown([linkBlock("javascript:alert(1)")])).toBe("click");
+    expect(selectionToMarkdown([linkBlock("javascript:alert(1)")])).toBe("click");
+  });
+
+  it("keeps the allowlisted targets", () => {
+    expect(blocksToMarkdown([linkBlock("https://example.com/a")])).toBe(
+      "[click](https://example.com/a)",
+    );
+    expect(blocksToMarkdown([linkBlock("mailto:a@b.co")])).toBe("[click](mailto:a@b.co)");
+    expect(blocksToMarkdown([linkBlock("tel:+1234")])).toBe("[click](tel:+1234)");
+    expect(blocksToMarkdown([linkBlock("/w/demo/page")])).toBe("[click](/w/demo/page)");
+    expect(blocksToMarkdown([linkBlock("#anker")])).toBe("[click](#anker)");
+  });
+});
+
+/**
  * §12 Export with subpages (🧭) — serialize a page and its descendants into
  * a path → markdown map the zip builder can consume. Paths mirror the
  * workspace export route's convention (sanitised title segments joined by

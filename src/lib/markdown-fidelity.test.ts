@@ -539,6 +539,47 @@ describe("fidelityReport", () => {
   });
 });
 
+/**
+ * B109 — the output side applies the same href allowlist the input side
+ * applies (`markdown.ts#safeHref`): a stored target the allowlist refuses
+ * (`javascript:`, `data:`, protocol-relative) is written as plain text, never
+ * as a link, and the fidelity report names the loss.
+ */
+describe("link targets (B109)", () => {
+  const linkPara = (href: string): Node => ({
+    type: "paragraph",
+    content: [{ type: "text", text: "click", marks: [{ type: "link", attrs: { href } }] }],
+  });
+
+  it("writes a refused target as plain text, without the target", () => {
+    const md = docToMarkdownFidelity(doc(linkPara("javascript:alert(1)")));
+    expect(md).toBe("click");
+    expect(md).not.toContain("javascript:");
+  });
+
+  it("refuses data: and protocol-relative targets too", () => {
+    expect(docToMarkdownFidelity(doc(linkPara("data:text/html;base64,PHN2Zz4=")))).toBe("click");
+    expect(docToMarkdownFidelity(doc(linkPara("//evil.example/x")))).toBe("click");
+  });
+
+  it("keeps the allowlisted targets", () => {
+    expect(docToMarkdownFidelity(doc(linkPara("https://example.com/a")))).toBe(
+      "[click](https://example.com/a)",
+    );
+    expect(docToMarkdownFidelity(doc(linkPara("mailto:a@b.co")))).toBe("[click](mailto:a@b.co)");
+    expect(docToMarkdownFidelity(doc(linkPara("tel:+1234")))).toBe("[click](tel:+1234)");
+    expect(docToMarkdownFidelity(doc(linkPara("/w/demo/page")))).toBe("[click](/w/demo/page)");
+    expect(docToMarkdownFidelity(doc(linkPara("#anker")))).toBe("[click](#anker)");
+  });
+
+  it("reports the refused target as a loss", () => {
+    expect(fidelityReport(doc(linkPara("javascript:alert(1)"))).lost.map((entry) => entry.kind)).toContain(
+      "link",
+    );
+    expect(fidelityReport(doc(linkPara("https://example.com/a"))).lost).toHaveLength(0);
+  });
+});
+
 describe("roundTripCheck", () => {
   it("accepts a structurally sound document", () => {
     const md = docToMarkdownFidelity(
