@@ -117,15 +117,14 @@ pub fn run() {
             // The window opens on the shell's own page (src-tauri/dist/index.html),
             // which shows progress and, on failure, the database + retry controls.
             // It is replaced by the workspace as soon as the server answers.
-            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-            .title("Noema")
-            .inner_size(1360.0, 900.0)
-            .min_inner_size(900.0, 620.0)
-            .resizable(true)
-            .center()
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true)
-            .build()?;
+            let window =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                    .title("Noema")
+                    .inner_size(1360.0, 900.0)
+                    .min_inner_size(900.0, 620.0)
+                    .resizable(true)
+                    .center()
+                    .build()?;
 
             // Closing the window hides the app on macOS and quits elsewhere; the
             // server is stopped by the exit hook below either way.
@@ -154,7 +153,9 @@ pub fn run() {
                         // showing) can retry or fix the connection string.
                         let _ = app_for_boot.emit(
                             "sidecar://event",
-                            SidecarEvent::Failed { message: error.to_string() },
+                            SidecarEvent::Failed {
+                                message: error.to_string(),
+                            },
                         );
                     }
                 }

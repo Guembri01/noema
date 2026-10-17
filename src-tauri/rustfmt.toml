@@ -1,8 +1,12 @@
+# rustfmt configuration the CI gate can actually enforce.
+#
+# Only stable options live here: `imports_granularity` and `group_imports` are
+# nightly-only, and having them present makes every `cargo fmt --check` on stable
+# print "unstable features are only available in nightly channel" — noise that
+# hides real diffs.
 edition = "2021"
 max_width = 100
 tab_spaces = 4
 use_field_init_shorthand = true
 use_try_shorthand = true
 newline_style = "Unix"
-imports_granularity = "Crate"
-group_imports = "StdExternalCrate"

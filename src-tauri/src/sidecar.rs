@@ -28,6 +28,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tauri::async_runtime::Receiver;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -72,11 +73,21 @@ pub struct SidecarInfo {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SidecarEvent {
-    Starting { attempt: u32 },
-    Ready { info: SidecarInfo },
+    Starting {
+        attempt: u32,
+    },
+    Ready {
+        info: SidecarInfo,
+    },
     /// The process exited; the UI should show an offline banner.
-    Crashed { code: Option<i32>, will_restart: bool, attempt: u32 },
-    Failed { message: String },
+    Crashed {
+        code: Option<i32>,
+        will_restart: bool,
+        attempt: u32,
+    },
+    Failed {
+        message: String,
+    },
     Stopped,
 }
 
@@ -160,10 +171,19 @@ pub fn server_env(
         ("HOSTNAME".into(), "127.0.0.1".into()),
         ("NODE_ENV".into(), "production".into()),
         ("NOEMA_RUNTIME".into(), "desktop".into()),
-        ("NOEMA_DATA_DIR".into(), data_dir.to_string_lossy().into_owned()),
+        (
+            "NOEMA_DATA_DIR".into(),
+            data_dir.to_string_lossy().into_owned(),
+        ),
         ("DATABASE_URL".into(), database_url.into()),
-        ("UPLOAD_DIR".into(), uploads_dir(data_dir).to_string_lossy().into_owned()),
-        ("BACKUP_DIR".into(), backups_dir(data_dir).to_string_lossy().into_owned()),
+        (
+            "UPLOAD_DIR".into(),
+            uploads_dir(data_dir).to_string_lossy().into_owned(),
+        ),
+        (
+            "BACKUP_DIR".into(),
+            backups_dir(data_dir).to_string_lossy().into_owned(),
+        ),
         // The webview origin must be able to call the loopback server.
         ("APP_ORIGINS".into(), origin.into()),
         ("NEXT_TELEMETRY_DISABLED".into(), "1".into()),
@@ -221,6 +241,45 @@ pub fn server_entry(app: &AppHandle) -> Result<PathBuf, SidecarError> {
     }
 }
 
+/// Stream the server's stdout/stderr to the log and the UI, and notice an exit.
+///
+/// Kept out of `start` so the supervisor's own future stays simple: it must be
+/// `Send` (the shell spawns it), and an inline `async move` block that captures
+/// the start-up locals makes that harder to prove than it needs to be.
+fn spawn_log_pump(app: AppHandle, mut receiver: Receiver<CommandEvent>) {
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = receiver.recv().await {
+            match event {
+                CommandEvent::Stdout(line) => {
+                    crate::logging::sidecar_line(&app, "stdout", &String::from_utf8_lossy(&line));
+                }
+                CommandEvent::Stderr(line) => {
+                    crate::logging::sidecar_line(&app, "stderr", &String::from_utf8_lossy(&line));
+                }
+                CommandEvent::Terminated(payload) => {
+                    let stopping = { *app.state::<SidecarState>().stopping.lock().await };
+                    crate::logging::sidecar_line(
+                        &app,
+                        "lifecycle",
+                        &format!("terminated code={:?} stopping={stopping}", payload.code),
+                    );
+                    if !stopping {
+                        // Restart on its own task: the log stream must keep
+                        // draining while the backoff sleeps, and awaiting the
+                        // restart here would tie this task's future to `start`,
+                        // which spawns this very task.
+                        let app_for_restart = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            crate::sidecar::restart(&app_for_restart, payload.code).await;
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
 /// Start the server, wait for readiness, and remember how to reach it.
 pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
     let data_dir = crate::state::data_dir(app).ok_or(SidecarError::NoDataDir)?;
@@ -248,8 +307,9 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
         .current_dir(entry.parent().unwrap_or(Path::new(".")))
         .envs(env);
 
-    let (mut receiver, child) =
-        command.spawn().map_err(|error| SidecarError::Spawn(error.to_string()))?;
+    let (receiver, child) = command
+        .spawn()
+        .map_err(|error| SidecarError::Spawn(error.to_string()))?;
 
     let pid = child.pid();
     {
@@ -258,31 +318,7 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
     }
 
     // Stream logs to file + the UI, and notice an unexpected exit.
-    let app_for_logs = app.clone();
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = receiver.recv().await {
-            match event {
-                CommandEvent::Stdout(line) => {
-                    crate::logging::sidecar_line(&app_for_logs, "stdout", &String::from_utf8_lossy(&line));
-                }
-                CommandEvent::Stderr(line) => {
-                    crate::logging::sidecar_line(&app_for_logs, "stderr", &String::from_utf8_lossy(&line));
-                }
-                CommandEvent::Terminated(payload) => {
-                    let stopping = { *app_for_logs.state::<SidecarState>().stopping.lock().await };
-                    crate::logging::sidecar_line(
-                        &app_for_logs,
-                        "lifecycle",
-                        &format!("terminated code={:?} stopping={stopping}", payload.code),
-                    );
-                    if !stopping {
-                        crate::sidecar::restart(&app_for_logs, payload.code).await;
-                    }
-                }
-                _ => {}
-            }
-        }
-    });
+    spawn_log_pump(app.clone(), receiver);
 
     match wait_until_ready(port, READY_TIMEOUT).await {
         Ok(()) => {
@@ -296,13 +332,18 @@ pub async fn start(app: &AppHandle) -> Result<SidecarInfo, SidecarError> {
                 let state = app.state::<SidecarState>();
                 *state.info.lock().await = Some(info.clone());
             }
-            let _ = app.emit("sidecar://event", SidecarEvent::Ready { info: info.clone() });
+            let _ = app.emit(
+                "sidecar://event",
+                SidecarEvent::Ready { info: info.clone() },
+            );
             Ok(info)
         }
         Err(error) => {
             let _ = app.emit(
                 "sidecar://event",
-                SidecarEvent::Failed { message: error.to_string() },
+                SidecarEvent::Failed {
+                    message: error.to_string(),
+                },
             );
             Err(error)
         }
@@ -319,7 +360,11 @@ pub async fn restart(app: &AppHandle, code: Option<i32>) {
     let will_restart = attempt < 8;
     let _ = app.emit(
         "sidecar://event",
-        SidecarEvent::Crashed { code, will_restart, attempt },
+        SidecarEvent::Crashed {
+            code,
+            will_restart,
+            attempt,
+        },
     );
     if !will_restart {
         crate::logging::sidecar_line(app, "lifecycle", "giving up after repeated crashes");
@@ -413,9 +458,48 @@ mod tests {
     fn ensure_layout_creates_every_directory() {
         let dir = std::env::temp_dir().join(format!("noema-layout-{}", rand::random::<u32>()));
         ensure_layout(&dir).expect("layout created");
-        for path in [dir.clone(), uploads_dir(&dir), logs_dir(&dir), backups_dir(&dir)] {
+        for path in [
+            dir.clone(),
+            uploads_dir(&dir),
+            logs_dir(&dir),
+            backups_dir(&dir),
+        ] {
             assert!(path.is_dir(), "{path:?} should exist");
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod send_guards {
+    //! The shell spawns the supervisor, so its futures must be `Send`. These
+    //! assertions pin that: a stray non-`Send` local held across an await
+    //! (which is exactly what broke this before) fails here instead of at the
+    //! call site, with a clearer message.
+    use super::*;
+
+    fn assert_send<T: Send>(_: T) {}
+
+    #[test]
+    fn readiness_probe_future_is_send() {
+        assert_send(wait_until_ready(1, READY_TIMEOUT));
+    }
+
+    #[test]
+    fn state_locks_are_send() {
+        let state = SidecarState::default();
+        assert_send(async move {
+            let _ = state.child.lock().await;
+            let _ = state.info.lock().await;
+            let _ = state.attempt.lock().await;
+            let _ = state.stopping.lock().await;
+        });
+    }
+
+    #[test]
+    fn the_supervisor_state_is_shareable() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<SidecarState>();
+        assert_send_sync::<SidecarInfo>();
     }
 }

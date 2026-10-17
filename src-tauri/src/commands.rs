@@ -5,8 +5,9 @@
 //! these commands, so the "allow everything" capability set stays auditable.
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_store::StoreExt;
 
 use crate::logging;
 use crate::sidecar::{self, SidecarInfo, SidecarState};
@@ -51,7 +52,10 @@ pub async fn desktop_info(app: AppHandle) -> Result<DesktopInfo, String> {
     let dir = state::data_dir(&app).ok_or_else(|| "no data directory".to_string())?;
     Ok(DesktopInfo {
         mode: "desktop",
-        api_base: info.as_ref().map(|i| i.api_base.clone()).unwrap_or_default(),
+        api_base: info
+            .as_ref()
+            .map(|i| i.api_base.clone())
+            .unwrap_or_default(),
         data_dir: dir.to_string_lossy().into_owned(),
         app_version: app.package_info().version.to_string(),
         platform: platform_triple(),
@@ -67,7 +71,9 @@ pub async fn desktop_info(app: AppHandle) -> Result<DesktopInfo, String> {
 #[tauri::command]
 pub async fn restart_server(app: AppHandle) -> Result<SidecarInfo, String> {
     sidecar::stop(&app).await;
-    sidecar::start(&app).await.map_err(|error| error.to_string())
+    sidecar::start(&app)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// Stop the server without quitting the shell.
@@ -113,7 +119,9 @@ pub fn log_file_path() -> Option<String> {
 /// Read a preference from the shell's own store.
 #[tauri::command]
 pub fn get_pref(app: AppHandle, key: String) -> Option<serde_json::Value> {
-    app.store(state::PREFS_FILE).ok().and_then(|store| store.get(key))
+    app.store(state::PREFS_FILE)
+        .ok()
+        .and_then(|store| store.get(key))
 }
 
 /// Write a preference.
@@ -137,7 +145,7 @@ pub fn set_zoom(app: AppHandle, factor: f64) -> Result<(), String> {
         .get_webview_window("main")
         .ok_or_else(|| "no main window".to_string())?;
     window
-        .eval(&format!(
+        .eval(format!(
             "document.documentElement.style.zoom = '{}'",
             factor.clamp(0.5, 3.0)
         ))
@@ -158,9 +166,15 @@ pub async fn check_update() -> Result<Option<String>, String> {
 #[tauri::command]
 pub async fn set_database_url(app: AppHandle, url: String) -> Result<SidecarInfo, String> {
     let trimmed = url.trim().to_string();
-    state::set_pref(&app, state::prefs::DATABASE_URL, serde_json::Value::String(trimmed));
+    state::set_pref(
+        &app,
+        state::prefs::DATABASE_URL,
+        serde_json::Value::String(trimmed),
+    );
     sidecar::stop(&app).await;
-    sidecar::start(&app).await.map_err(|error| error.to_string())
+    sidecar::start(&app)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// The connection string currently in use (for the diagnostics panel).
@@ -191,9 +205,16 @@ mod tests {
 
     #[test]
     fn redact_hides_the_password_but_keeps_the_rest() {
-        let redacted = redact("postgresql://noema:sup3r-secret@db.example.com:5432/noema?schema=public");
-        assert!(!redacted.contains("sup3r-secret"), "password leaked: {redacted}");
-        assert!(redacted.contains("db.example.com:5432"), "host lost: {redacted}");
+        let redacted =
+            redact("postgresql://noema:sup3r-secret@db.example.com:5432/noema?schema=public");
+        assert!(
+            !redacted.contains("sup3r-secret"),
+            "password leaked: {redacted}"
+        );
+        assert!(
+            redacted.contains("db.example.com:5432"),
+            "host lost: {redacted}"
+        );
         assert!(redacted.contains("noema"), "database name lost: {redacted}");
     }
 

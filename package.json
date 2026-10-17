@@ -38,6 +38,7 @@
     "visual:update": "node scripts/visual-check.mjs --update",
     "desktop:preflight": "node scripts/desktop/preflight.mjs",
     "desktop:prepare": "node scripts/desktop/prepare.mjs",
+    "desktop:smoke": "node scripts/desktop/smoke.mjs",
     "desktop:icons": "node scripts/desktop/make-icon.mjs && cargo tauri icon assets/icon.png",
     "desktop:dev": "cargo tauri dev",
     "desktop:dev:web": "next dev --turbopack --port 3200",

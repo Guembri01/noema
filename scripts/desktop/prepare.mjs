@@ -15,7 +15,7 @@
  * Shipping `node.exe` costs ~60 MB and requires nothing of the user.
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { arch, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -181,9 +181,16 @@ function stageIntoTauri() {
   // `["server/"]` array. Mapping `../.next/standalone` through the resource
   // resolver works in some versions and silently lands under `_up_/` in others;
   // staging removes that class of surprise, and the staging dir is gitignored.
+  //
+  // Staged via a temporary directory and a rename: a build that is interrupted
+  // (or a smoke test running concurrently) then sees either the old payload or
+  // the new one, never a half-copied tree.
   const target = join(root, "src-tauri", "server");
+  const staging = join(root, "src-tauri", "server.tmp");
+  rmSync(staging, { recursive: true, force: true });
+  cpSync(standalone, staging, { recursive: true });
   rmSync(target, { recursive: true, force: true });
-  cpSync(standalone, target, { recursive: true });
+  renameSync(staging, target);
   console.log(`· staged payload → src-tauri/server/ (${mb(size(target))})`);
 }
 

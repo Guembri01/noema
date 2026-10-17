@@ -7,8 +7,7 @@
     "beforeDevCommand": "npm run desktop:dev:web",
     "beforeBuildCommand": "npm run desktop:prepare",
     "devUrl": "http://localhost:3200",
-    "frontendDist": "dist",
-    "externalBin": ["binaries/noema-node"]
+    "frontendDist": "dist"
   },
   "app": {
     "withGlobalTauri": true,
@@ -66,9 +65,9 @@
       "icons/icon.ico"
     ],
     "resources": ["server/"],
+    "externalBin": ["binaries/noema-node"],
     "windows": {
       "digestAlgorithm": "sha256",
-      "timestampUrl": "",
       "wix": {
         "language": ["en-US"]
       },

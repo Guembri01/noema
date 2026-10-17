@@ -46,28 +46,44 @@ pub fn sidecar_line(app: &AppHandle, stream: &str, message: &str) {
 
 fn push(entry: &str) {
     if let Ok(mut buffer) = ring().lock() {
-        if buffer.len() == RING_CAPACITY {
-            buffer.pop_front();
-        }
-        buffer.push_back(entry.to_string());
+        push_into(&mut buffer, entry);
     }
     if let Ok(guard) = log_file().lock() {
         if let Some(path) = guard.as_ref() {
-            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
                 let _ = writeln!(file, "{entry}");
             }
         }
     }
 }
 
+/// Append one line to a bounded buffer, dropping the oldest when full.
+///
+/// Split out from [`push`] so the ring's behaviour can be tested without
+/// touching the process-global buffer (parallel tests sharing one buffer made
+/// the old assertions order-dependent, which is a flaky test, not a bug).
+fn push_into(buffer: &mut VecDeque<String>, entry: &str) {
+    if buffer.len() == RING_CAPACITY {
+        buffer.pop_front();
+    }
+    buffer.push_back(entry.to_string());
+}
+
+/// The last `limit` entries, oldest first.
+fn tail(buffer: &VecDeque<String>, limit: usize) -> Vec<String> {
+    let take = limit.min(buffer.len());
+    buffer.iter().skip(buffer.len() - take).cloned().collect()
+}
+
 /// The most recent lines, oldest first.
 pub fn recent(limit: usize) -> Vec<String> {
     ring()
         .lock()
-        .map(|buffer| {
-            let take = limit.min(buffer.len());
-            buffer.iter().skip(buffer.len() - take).cloned().collect()
-        })
+        .map(|buffer| tail(&buffer, limit))
         .unwrap_or_default()
 }
 
@@ -81,20 +97,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ring_keeps_the_newest_lines_and_caps_memory() {
+    fn the_ring_keeps_the_newest_lines_and_caps_memory() {
+        let mut buffer = VecDeque::new();
         for index in 0..(RING_CAPACITY + 25) {
-            push(&format!("line-{index}"));
+            push_into(&mut buffer, &format!("line-{index}"));
         }
-        let recent_lines = recent(RING_CAPACITY);
-        assert_eq!(recent_lines.len(), RING_CAPACITY);
-        assert!(recent_lines.last().unwrap().ends_with("line-224"));
+        assert_eq!(buffer.len(), RING_CAPACITY);
+        assert!(buffer.back().unwrap().ends_with("line-224"));
+        assert!(
+            buffer.front().unwrap().ends_with("line-25"),
+            "oldest was dropped"
+        );
     }
 
     #[test]
-    fn recent_honours_a_smaller_limit() {
-        push("a");
-        push("b");
-        push("c");
-        assert_eq!(recent(2), vec!["b".to_string(), "c".to_string()]);
+    fn tail_honours_a_smaller_limit_and_keeps_order() {
+        let mut buffer = VecDeque::new();
+        for entry in ["a", "b", "c"] {
+            push_into(&mut buffer, entry);
+        }
+        assert_eq!(tail(&buffer, 2), vec!["b".to_string(), "c".to_string()]);
+        assert_eq!(tail(&buffer, 0), Vec::<String>::new());
+        assert_eq!(
+            tail(&buffer, 99).len(),
+            3,
+            "a limit above the length returns everything"
+        );
+    }
+
+    #[test]
+    fn the_global_ring_never_exceeds_capacity() {
+        // Deliberately only asserts the invariant, not exact contents: the ring
+        // is process-global, so any test running in parallel also pushes to it.
+        for index in 0..(RING_CAPACITY * 2) {
+            push(&format!("global-{index}"));
+        }
+        let lines = recent(RING_CAPACITY * 4);
+        assert!(lines.len() <= RING_CAPACITY);
+        assert!(!lines.is_empty());
     }
 }

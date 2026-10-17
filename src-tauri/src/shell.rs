@@ -1,13 +1,13 @@
 //! Native menu and system tray — the "it feels like an app" layer.
 
-use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Manager};
 
 use crate::commands;
 
 /// Build the application menu (macOS gets the app submenu automatically).
-pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
+pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let new_note = MenuItemBuilder::with_id("new-note", "New note")
         .accelerator("CmdOrCtrl+N")
         .build(app)?;
@@ -47,10 +47,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                 .accelerator("CmdOrCtrl+Shift+D")
                 .build(app)?,
         )
-        .item(
-            &MenuItemBuilder::with_id("restart-server", "Restart local server")
-                .build(app)?,
-        )
+        .item(&MenuItemBuilder::with_id("restart-server", "Restart local server").build(app)?)
         .item(&MenuItemBuilder::with_id("diagnostics", "Diagnostics…").build(app)?)
         .separator()
         .item(
@@ -61,15 +58,27 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .build()?;
 
     let view = SubmenuBuilder::new(app, "View")
-        .item(&MenuItemBuilder::with_id("reload", "Reload").accelerator("CmdOrCtrl+R").build(app)?)
+        .item(
+            &MenuItemBuilder::with_id("reload", "Reload")
+                .accelerator("CmdOrCtrl+R")
+                .build(app)?,
+        )
         .separator()
         .item(
             &MenuItemBuilder::with_id("zoom-in", "Zoom in")
                 .accelerator("CmdOrCtrl+Plus")
                 .build(app)?,
         )
-        .item(&MenuItemBuilder::with_id("zoom-out", "Zoom out").accelerator("CmdOrCtrl+-").build(app)?)
-        .item(&MenuItemBuilder::with_id("zoom-reset", "Actual size").accelerator("CmdOrCtrl+0").build(app)?)
+        .item(
+            &MenuItemBuilder::with_id("zoom-out", "Zoom out")
+                .accelerator("CmdOrCtrl+-")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id("zoom-reset", "Actual size")
+                .accelerator("CmdOrCtrl+0")
+                .build(app)?,
+        )
         .separator()
         .fullscreen()
         .build()?;
@@ -100,7 +109,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
 /// Handle a menu / tray click. Kept as one function so the two entry points
 /// cannot drift.
-pub fn on_shell_command<R: Runtime>(app: &AppHandle<R>, id: &str) {
+pub fn on_shell_command(app: &AppHandle, id: &str) {
     match id {
         "new-note" => emit(app, "shell://new-note"),
         "quick-find" => emit(app, "shell://quick-find"),
@@ -154,7 +163,7 @@ pub fn on_shell_command<R: Runtime>(app: &AppHandle<R>, id: &str) {
     }
 }
 
-fn emit<R: Runtime>(app: &AppHandle<R>, event: &str) {
+fn emit(app: &AppHandle, event: &str) {
     use tauri::Emitter;
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_focus();
@@ -162,7 +171,7 @@ fn emit<R: Runtime>(app: &AppHandle<R>, event: &str) {
     }
 }
 
-fn set_zoom<R: Runtime>(app: &AppHandle<R>, delta: f64) {
+fn set_zoom(app: &AppHandle, delta: f64) {
     if let Some(window) = app.get_webview_window("main") {
         let script = format!(
             "(() => {{ const z = parseFloat(document.documentElement.style.zoom || '1'); document.documentElement.style.zoom = String(Math.min(3, Math.max(0.5, z + {delta}))); }})()"
@@ -172,7 +181,7 @@ fn set_zoom<R: Runtime>(app: &AppHandle<R>, delta: f64) {
 }
 
 /// The tray icon: the app's always-available entry point.
-pub fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app)
         .item(&MenuItemBuilder::with_id("tray-show", "Open Noema").build(app)?)
         .item(&MenuItemBuilder::with_id("new-note", "New note").build(app)?)
@@ -185,7 +194,7 @@ pub fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .item(&MenuItemBuilder::with_id("quit", "Quit Noema").build(app)?)
         .build()?;
 
-    let tray = TrayIconBuilder::with_id("main")
+    let mut tray = TrayIconBuilder::with_id("main")
         .icon_as_template(true)
         .tooltip("Noema")
         .menu(&menu)
