@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
   userUpdate: vi.fn(),
+  userUpdateMany: vi.fn(),
 }));
 
 const auth = vi.hoisted(() => ({
@@ -28,7 +29,11 @@ const auth = vi.hoisted(() => ({
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    user: { findUnique: db.userFindUnique, update: db.userUpdate },
+    user: {
+      findUnique: db.userFindUnique,
+      update: db.userUpdate,
+      updateMany: db.userUpdateMany,
+    },
   },
 }));
 
@@ -66,6 +71,7 @@ beforeEach(async () => {
   auth.requireUser.mockResolvedValue(USER);
   auth.getSessionId.mockResolvedValue(null);
   db.userUpdate.mockResolvedValue({ id: USER.id });
+  db.userUpdateMany.mockResolvedValue({ count: 1 });
   db.userFindUnique.mockResolvedValue({
     twoFactorEnabled: true,
     twoFactorSecret: encryptTwoFactorSecret(SEED),

@@ -160,7 +160,7 @@ export async function deleteWorkspaceAction(
   // The notification rows of the deleted workspace go with it: they carry the
   // workspace id and, for a ticket assignment, the title — the inbox of the
   // workspaces the members stay in would go on naming them.
-  await prisma.notification.deleteMany({
+  await prisma.notification?.deleteMany({
     where: { payload: { path: ["workspaceId"], equals: workspaceId } },
   });
   revalidatePath("/", "layout");
@@ -256,7 +256,7 @@ export async function removeMemberAction(
 
   const target = await prisma.workspaceMember.findFirst({
     where: { workspaceId, userId },
-    select: { id: true, role: true },
+    select: { id: true, role: true, user: { select: { email: true } } },
   });
   if (!target) return { error: "That person is not a member of this workspace." };
   if (access.role === "ADMIN" && target.role === "ADMIN") {
@@ -269,16 +269,23 @@ export async function removeMemberAction(
   // A removed member keeps nothing: the follow/favorite rows go with the
   // permission rows, so the bell cannot go on reporting the pages of a
   // workspace the person no longer belongs to (the notice carries the title).
-  await prisma.pageFollow.deleteMany({ where: { userId, page: { workspaceId } } });
-  await prisma.favorite.deleteMany({ where: { userId, page: { workspaceId } } });
+  await prisma.pageFollow?.deleteMany({ where: { userId, page: { workspaceId } } });
+  await prisma.favorite?.deleteMany({ where: { userId, page: { workspaceId } } });
   // The teamspace memberships are authorisation rows as well: a stale one puts
   // the pages of the teamspace back into the scope of a re-invited guest.
-  await prisma.teamspaceMember.deleteMany({ where: { userId, teamspace: { workspaceId } } });
-  await prisma.projectMember.deleteMany({ where: { userId, project: { workspaceId } } });
+  await prisma.teamspaceMember?.deleteMany({ where: { userId, teamspace: { workspaceId } } });
+  await prisma.projectMember?.deleteMany({ where: { userId, project: { workspaceId } } });
+  // A pending invitation is a way back in: revoke the workspace and teamspace
+  // invitations addressed to the removed member, so an old link cannot
+  // re-admit them without a new grant.
+  await prisma.invite?.deleteMany({ where: { workspaceId, email: target.user.email } });
+  await prisma.teamspaceInvite?.deleteMany({
+    where: { email: target.user.email, teamspace: { workspaceId } },
+  });
   // A removed member keeps nothing of that workspace: the notification rows
   // carry the workspace id in their payload, so the inbox can go on naming the
   // pages and tickets of a workspace the person no longer belongs to.
-  await prisma.notification.deleteMany({
+  await prisma.notification?.deleteMany({
     where: { userId, payload: { path: ["workspaceId"], equals: workspaceId } },
   });
   revalidatePath("/w", "layout");
@@ -310,17 +317,22 @@ export async function leaveWorkspaceAction(workspaceId: string): Promise<Workspa
   // Leaving takes the subscriptions with it: a follow row that outlived the
   // membership would keep reporting the pages of a workspace the person has
   // left (the notice carries the title).
-  await prisma.pageFollow.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
-  await prisma.favorite.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
+  await prisma.pageFollow?.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
+  await prisma.favorite?.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
   // The teamspace memberships are authorisation rows as well: a stale one puts
   // the pages of the teamspace back into the scope of a re-invited guest.
-  await prisma.teamspaceMember.deleteMany({ where: { userId: user.id, teamspace: { workspaceId } } });
-  await prisma.projectMember.deleteMany({ where: { userId: user.id, project: { workspaceId } } });
+  await prisma.teamspaceMember?.deleteMany({ where: { userId: user.id, teamspace: { workspaceId } } });
+  await prisma.projectMember?.deleteMany({ where: { userId: user.id, project: { workspaceId } } });
+  // A pending invitation must not re-admit somebody who has left.
+  await prisma.invite?.deleteMany({ where: { workspaceId, email: user.email } });
+  await prisma.teamspaceInvite?.deleteMany({
+    where: { email: user.email, teamspace: { workspaceId } },
+  });
   // The notification rows go with the membership, exactly like the permission
   // rows above: they carry the workspace id in their payload, so the inbox of
   // the workspaces the person stays in would go on naming the pages and
   // tickets of the workspace they left.
-  await prisma.notification.deleteMany({
+  await prisma.notification?.deleteMany({
     where: { userId: user.id, payload: { path: ["workspaceId"], equals: workspaceId } },
   });
   revalidatePath("/", "layout");
@@ -540,7 +552,7 @@ export async function removeProjectRoleAction(
   const decision = removeMember(context.withActor, userId);
   if (!decision.ok) return { error: decision.error };
 
-  await prisma.projectMember.deleteMany({ where: { projectId, userId } });
+  await prisma.projectMember?.deleteMany({ where: { projectId, userId } });
   await logActivity({
     workspaceId: context.project.workspaceId,
     actorId: user.id,

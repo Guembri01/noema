@@ -167,7 +167,6 @@ export function encryptWebhookSecret(secret: string): string {
 }
 
 /**
-<<<<<<< HEAD
  * B63 — seal the secret of a hook that was created before the sealing (R28.17).
  *
  * Such a row still holds its secret in cleartext, and the secret is the shared
@@ -199,7 +198,6 @@ export async function sealLegacyWebhookSecret(hook: {
 
 /**
  * Resolve a stored webhook secret to the plaintext used for signing.
-=======
  * B21 — the state of a stored webhook signing secret.
  *
  * - `sealed` — an envelope that opened: `secret` is the plaintext to sign with.
@@ -222,19 +220,16 @@ type WebhookSecretState =
 /**
  * Resolve a stored webhook secret to the plaintext used for signing, and say
  * WHICH state it is in.
->>>>>>> 70562cb (fix(webhooks): a delivery that cannot be signed is never sent)
  *
  * - Envelopes (`v1:` legacy or `v2:` keyring) are opened with the keyring.
  * - A pre-migration PLAINTEXT secret (M28.3 transition window) is returned
  *   as-is, with a warning, so already-configured hooks keep delivering signed
-<<<<<<< HEAD
  *   requests; {@link sealLegacyWebhookSecret} seals the row at rest when the
  *   app reads it. (Follow-up: hard-fail once the migration window closes,
  *   per R28.17.)
  * - A corrupt/unreadable envelope resolves to `null` — the delivery is sent
  *   unsigned rather than signed with ciphertext — and is logged. New hooks are
  *   always sealed on write, so this cannot happen to a freshly created hook.
-=======
  *   requests; re-creating the hook seals it. (Follow-up: hard-fail once the
  *   migration window closes, per R28.17.)
  * - An envelope that does not open resolves to `unreadable` and is logged.
@@ -245,7 +240,6 @@ type WebhookSecretState =
  * secret has a receiver that verifies signatures, so a delivery that quietly
  * loses its signature is a downgrade of that channel. A hook without any
  * secret never had that guarantee, so it keeps the documented wire format.
->>>>>>> 70562cb (fix(webhooks): a delivery that cannot be signed is never sent)
  */
 function resolveWebhookSecret(
   stored: string | null | undefined,
@@ -363,35 +357,19 @@ export async function deliverWithRetry(
   const sleep = options.sleep ?? defaultSleep;
   const row: DeliveryRowRef = { id: options.deliveryId ?? null };
   // R28.17 — the secret is sealed at rest; open it once per logical delivery.
-<<<<<<< HEAD
-  const secret = decryptWebhookSecret(hook.secret);
-  // B63 — a hook that predates the sealing still holds its secret in
-  // cleartext: seal it now, so the plaintext leaves the database.
-  await sealLegacyWebhookSecret(hook);
-=======
   const resolved = resolveWebhookSecret(hook.secret);
-  // B21 — a secret that does not OPEN leaves nothing to sign with: the row
+  // B21 - a secret that does not OPEN leaves nothing to sign with: the row
   // holds an envelope, but the key that opens it is gone (a rotated
-  // `AUTH_SECRET`) or the ciphertext is corrupt. The delivery used to go out
-  // UNSIGNED and was booked as a success, so a receiver that only asks
-  // whether the header is present accepted a manipulated payload. Refuse it
-  // instead: no request leaves the server, and the row records the failure.
-  // The condition does not change while the process runs, so the retry loop
-  // is not entered — this is a policy decision, like a blocked target.
+  // `AUTH_SECRET`) or the ciphertext is corrupt. Refuse it instead of
+  // sending an unsigned delivery.
   if (resolved.kind === "unreadable") {
-    await recordAttempt(
-      row,
-      hook.id,
-      event,
-      1,
-      false,
-      null,
-      UNREADABLE_SECRET_ERROR,
-    );
+    await recordAttempt(row, hook.id, event, 1, false, null, UNREADABLE_SECRET_ERROR);
     return;
   }
+  // B63 - a hook that predates the sealing still holds its secret in
+  // cleartext: seal it now, so the plaintext leaves the database.
+  if (resolved.kind === "legacy") await sealLegacyWebhookSecret(hook);
   const secret = resolved.secret;
->>>>>>> 70562cb (fix(webhooks): a delivery that cannot be signed is never sent)
 
   for (let attempt = 1; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt += 1) {
     const delay = WEBHOOK_BACKOFF_MS[attempt - 1] ?? 0;

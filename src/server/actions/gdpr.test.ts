@@ -71,6 +71,10 @@ vi.mock("@/lib/db", () => ({
     commentReaction: { findMany: db.reactionFindMany },
     pageVersion: { findMany: db.versionFindMany },
     shareLink: { findMany: db.shareLinkFindMany },
+    workspaceMember: {
+      findMany: async ({ where }: { where: { userId: { in: string[] } } }) =>
+        where.userId.in.map((userId) => ({ userId })),
+    },
     pageFollow: { findMany: db.followFindMany, delete: db.followDelete },
     favorite: { findMany: db.favoriteFindMany, delete: db.favoriteDelete },
     notification: {

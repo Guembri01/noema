@@ -29,6 +29,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+const itPosix = process.platform === "win32" ? it.skip : it;
+
 const require = createRequire(import.meta.url);
 const childProcess = require("node:child_process");
 const realSpawnSync = childProcess.spawnSync;
@@ -111,7 +113,7 @@ describe("the managed database (B123)", () => {
     expect(call.options.env.PATH).toBe(process.env.PATH);
   });
 
-  it("still hands the app a working URL and stores the password in a private file", async () => {
+  itPosix("still hands the app a working URL and stores the password in a private file", async () => {
     const managed = await helper.ensureManagedDatabase({ dataDir });
     const password = storedPassword();
 

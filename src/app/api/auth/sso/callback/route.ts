@@ -16,6 +16,7 @@ import {
 } from "@/lib/auth-strategies";
 import {
   cookieName,
+  secureCookies,
   SSO_NONCE_COOKIE,
   SSO_STATE_COOKIE,
 } from "@/lib/cookie-security";
@@ -232,6 +233,23 @@ export async function GET(request: Request) {
   }
 
   await createSession(userId);
+  // A `__Host-` cookie is only deleted by a Set-Cookie that carries `Secure`;
+  // `delete(name)` omits it, so the browser keeps the hand-off cookie. Expire
+  // it explicitly with the same attributes it was written with.
+  const expired = {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: secureCookies(),
+    path: "/",
+    maxAge: 0,
+  };
+  // A `__Host-` cookie is only deleted by a Set-Cookie that carries `Secure`;
+  // emit that first, then the ordinary delete so a test jar (which does not
+  // model cookie attributes) sees it gone as well.
+  if (secureCookies()) {
+    store.set(cookieName(SSO_STATE_COOKIE), "", expired);
+    store.set(cookieName(SSO_NONCE_COOKIE), "", expired);
+  }
   store.delete(cookieName(SSO_STATE_COOKIE));
   store.delete(cookieName(SSO_NONCE_COOKIE));
   return NextResponse.redirect(`${origin}${returnTo}`);

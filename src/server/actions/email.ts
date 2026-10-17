@@ -71,7 +71,14 @@ async function authorizeAdmin(workspaceId: string): Promise<AdminAuth> {
 export async function appOrigin(): Promise<string> {
   const configured =
     process.env.APP_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim() || "";
-  return (configured || DEFAULT_ORIGIN).replace(/\/+$/, "");
+  // The compose stack already declares the browser origin in `APP_ORIGINS`;
+  // use its first entry rather than falling straight back to the development
+  // port, which would put `localhost:3200` in a real invitation mail.
+  const fromOrigins =
+    process.env.APP_ORIGINS?.split(",")
+      .map((origin) => origin.trim())
+      .find(Boolean) ?? "";
+  return (configured || fromOrigins || DEFAULT_ORIGIN).replace(/\/+$/, "");
 }
 
 // ---------------------------------------------------------------------------

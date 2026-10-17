@@ -179,7 +179,13 @@ function deadlineMs(record: SessionRecord, options: TouchOptions): number {
 /** Drop records that outlived their session deadline (or revocation retention). */
 function prune(records: SessionRecord[], nowMs: number): SessionRecord[] {
   return records.filter((record) => {
-    if (effectiveExpiryMs(record) <= nowMs) return false;
+    // Keep an idle-expired record until its absolute lifetime is over. Dropping
+    // it at the idle deadline would make `findSession` return null, and the
+    // request path treats an unknown sid as a legacy (fail-open) session - so
+    // the next write would resurrect an idle-expired JWT.
+    const created = Date.parse(record.createdAt);
+    const absolute = Number.isFinite(created) ? created + SESSION_TTL_MS : Number.NEGATIVE_INFINITY;
+    if (absolute <= nowMs) return false;
     if (record.revokedAt && nowMs - Date.parse(record.revokedAt) > REVOKED_RETENTION_MS) {
       return false;
     }

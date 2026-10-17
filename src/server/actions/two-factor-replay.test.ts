@@ -36,6 +36,7 @@ const db = vi.hoisted(() => ({
 
 const auth = vi.hoisted(() => ({
   requireUser: vi.fn(),
+  getSessionId: vi.fn(async () => null),
   createSession: vi.fn(),
   destroySession: vi.fn(),
   hashPassword: vi.fn(),
