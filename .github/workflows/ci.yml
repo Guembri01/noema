@@ -72,6 +72,14 @@ jobs:
       - name: Secret gate
         run: node scripts/check-secrets.mjs
 
+      # Every image the repository pulls has to be pinned by digest. A tag is a
+      # name, not a version: the registry decides which bits the build gets, so
+      # the same commit can produce an image nobody reviewed. The gate is a
+      # pure file scan — no registry, no network — and its own regression test
+      # runs with it, so the shapes that once slipped through stay reported.
+      - name: Image pins
+        run: node scripts/check-image-pins.mjs && node scripts/check-image-pins.test.mjs
+
       # Every commit — author *and* committer date — must land inside a Noema
       # authoring window (Wed–Sat evenings, Europe/Paris). See
       # src/lib/dates-policy.ts for the rule and the tests that pin its edges.
