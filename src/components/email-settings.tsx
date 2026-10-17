@@ -15,6 +15,7 @@ import {
 } from "@/server/actions/email";
 import {safeAction } from "@/lib/actions-client";
 import { LocalTime } from "@/components/local-time";
+import { membersCapabilities } from "@/lib/workspace-role-map";
 import { t } from "@/lib/i18n";
 
 
@@ -38,12 +39,15 @@ export function EmailSettings({
   invites,
   deliveries,
   locale,
+  currentUserRole,
 }: {
   workspaceId: string;
   summary: EmailSummary;
   invites: WorkspaceInviteSummary[];
   deliveries: DeliveryRow[];
   locale: string;
+  /** The signed-in user's role — the picker offers only the roles they may grant. */
+  currentUserRole: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -59,6 +63,25 @@ export function EmailSettings({
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"GUEST" | "MEMBER" | "ADMIN">("GUEST");
   const [lastLink, setLastLink] = useState<string | null>(null);
+
+  // The invitation picker offers only the roles this actor may actually grant.
+  // The decision comes from the workspace-role engine (the members screen and
+  // the server ask the same one), so an admin is not offered "Admin" — the
+  // server would refuse that invitation anyway.
+  const assignable = membersCapabilities(currentUserRole).assignable;
+  const inviteRoleOptions = (["GUEST", "MEMBER", "ADMIN"] as const)
+    .filter((role) => assignable.includes(role))
+    .map((role) => ({
+      value: role,
+      label: t(
+        locale,
+        role === "ADMIN"
+          ? "inviteRoleAdmin"
+          : role === "MEMBER"
+            ? "inviteRoleMember"
+            : "inviteRoleGuest",
+      ),
+    }));
 
   const run = (label: string, task: () => Promise<{ ok: boolean; message?: string }>) =>
     startTransition(async () => {
@@ -280,9 +303,11 @@ export function EmailSettings({
             onChange={(event) => setInviteRole(event.target.value as typeof inviteRole)}
             className="h-9 rounded border border-border bg-bg px-2 text-sm outline-none"
           >
-            <option value="GUEST">{t(locale, "inviteRoleGuest")}</option>
-            <option value="MEMBER">{t(locale, "inviteRoleMember")}</option>
-            <option value="ADMIN">{t(locale, "inviteRoleAdmin")}</option>
+            {inviteRoleOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
           <button
             type="button"

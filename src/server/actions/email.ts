@@ -15,10 +15,29 @@ import {
 import { emailTemplate, escapeHtml, sendMail, verifyMail } from "@/lib/mailer";
 import { normalizeEmail } from "@/lib/email-validation";
 import { evaluateGuestInviteGate, readWorkspacePlan } from "@/lib/workspace-plan";
+import { canGrantRole } from "@/lib/workspace-roles";
+import { toEngineRole } from "@/lib/workspace-role-map";
 
 export type EmailResult<T = unknown> = ({ ok: true } & T) | { error: string };
 
 const INVITE_TTL_DAYS = 14;
+
+/**
+ * The roles a workspace invitation may carry.
+ *
+ * This is the *domain* of the invitation role, not a policy: who may hand out
+ * which of them is decided by the role matrix (`canGrantRole`). A value
+ * outside this list is unknown and is refused — never coerced to a weaker role.
+ */
+const INVITABLE_ROLES = ["GUEST", "MEMBER", "ADMIN"] as const;
+
+/** A persisted role an invitation may carry. */
+type InvitableRole = Extract<WorkspaceRole, (typeof INVITABLE_ROLES)[number]>;
+
+/** Whether `value` names a role an invitation may carry (fails closed). */
+function isInvitableRole(value: unknown): value is InvitableRole {
+  return typeof value === "string" && (INVITABLE_ROLES as readonly string[]).includes(value);
+}
 
 type AdminAuth =
   | { ok: false; error: string }
@@ -241,7 +260,11 @@ export type WorkspaceInviteSummary = {
 export async function sendWorkspaceInviteAction(input: {
   workspaceId: string;
   email: string;
-  role?: WorkspaceRole;
+  /**
+   * The requested role. The transport forwards it unchanged, so it arrives
+   * unvalidated: the role domain is checked here, the grant policy below.
+   */
+  role?: string;
   /** When set, the invitee is added to this project as a client on accept. */
   projectId?: string | null;
 }): Promise<EmailResult<{ link: string; emailed: boolean; warning?: string }>> {
@@ -250,9 +273,23 @@ export async function sendWorkspaceInviteAction(input: {
 
   const email = normalizeEmail(input.email)?.toLowerCase() ?? null;
   if (!email) return { error: "Enter a valid email address." };
-  const role: WorkspaceRole = input.role ?? "MEMBER";
-  if (!["GUEST", "MEMBER", "ADMIN"].includes(role)) {
+  const requestedRole = input.role ?? "MEMBER";
+  if (!isInvitableRole(requestedRole)) {
     return { error: "Unknown role." };
+  }
+  const role: InvitableRole = requestedRole;
+  // The role an invitation carries is a grant, so it goes through the same
+  // policy as a role change (`setMemberRoleAction` → `validateRoleChange`):
+  // an actor may only hand out a role strictly below their own, which means
+  // only the owner can grant the admin role. Fail closed — a role the actor
+  // may not grant is refused, never silently weakened.
+  if (!canGrantRole(toEngineRole(auth.access.role), toEngineRole(role))) {
+    return {
+      error:
+        role === "ADMIN"
+          ? "Only the workspace owner can invite an admin."
+          : "You can only invite people with a role below your own.",
+    };
   }
 
   const workspace = await prisma.workspace.findUnique({
@@ -386,6 +423,8 @@ export type WorkspaceInvitePreview = {
 type ResolvedWorkspaceInvite = {
   id: string;
   role: WorkspaceRole;
+  /** Who issued the invitation — the user whose grant it carries. */
+  invitedById: string | null;
   projectId: string | null;
   projectName: string | null;
   workspace: { id: string; name: string; slug: string };
@@ -417,6 +456,7 @@ async function resolveWorkspaceInvite(
       id: true,
       email: true,
       role: true,
+      invitedById: true,
       projectId: true,
       acceptedAt: true,
       expiresAt: true,
@@ -449,11 +489,31 @@ async function resolveWorkspaceInvite(
     };
   }
 
+  // The invitation is a grant, so the grant is checked again when it is
+  // redeemed: the role it carries must still be a role its sender may hand out
+  // *now* — the same question the role-change path asks, asked of the sender
+  // instead of the actor. An invitation minted before the grant rule was
+  // enforced (an admin inviting an admin), one whose sender has since been
+  // demoted or removed, and one that names no sender at all are refused here,
+  // before any write. The read (the preview) and the write (the acceptance)
+  // share this resolver, so both halves answer alike.
+  const inviterAccess = invite.invitedById
+    ? await getWorkspaceAccess(invite.invitedById, invite.workspace.id)
+    : null;
+  if (!canGrantRole(toEngineRole(inviterAccess?.role), toEngineRole(invite.role))) {
+    return {
+      ok: false,
+      error:
+        "This invitation can no longer be redeemed. Please ask the workspace owner for a new invitation.",
+    };
+  }
+
   return {
     ok: true,
     invite: {
       id: invite.id,
       role: invite.role,
+      invitedById: invite.invitedById,
       projectId: invite.projectId,
       projectName: invite.project?.name ?? null,
       workspace: invite.workspace,
@@ -499,6 +559,8 @@ export async function acceptWorkspaceInviteAction(
 
   await prisma.workspaceMember.upsert({
     where: { workspaceId_userId: { workspaceId: invite.workspace.id, userId: user.id } },
+    // The stored role is granted — but only because `resolveWorkspaceInvite`
+    // has just re-checked that it is still a role the sender may hand out.
     create: { workspaceId: invite.workspace.id, userId: user.id, role: invite.role },
     update: {},
   });

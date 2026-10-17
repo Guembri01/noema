@@ -18,6 +18,8 @@ import { generateInviteToken } from "@/lib/invite-token";
 const db = vi.hoisted(() => ({
   inviteFindUnique: vi.fn(),
   inviteUpdate: vi.fn(),
+  memberFindUnique: vi.fn(),
+  workspaceFindUnique: vi.fn(),
   workspaceMemberUpsert: vi.fn(),
   projectMemberUpsert: vi.fn(),
   teamspaceInviteFindUnique: vi.fn(),
@@ -31,7 +33,8 @@ const cache = vi.hoisted(() => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/db", () => ({
   prisma: {
     invite: { findUnique: db.inviteFindUnique, update: db.inviteUpdate },
-    workspaceMember: { upsert: db.workspaceMemberUpsert },
+    workspaceMember: { findUnique: db.memberFindUnique, upsert: db.workspaceMemberUpsert },
+    workspace: { findUnique: db.workspaceFindUnique },
     projectMember: { upsert: db.projectMemberUpsert },
     teamspaceInvite: {
       findUnique: db.teamspaceInviteFindUnique,
@@ -57,6 +60,7 @@ function inviteFixture(overrides: Partial<Record<string, unknown>> = {}) {
     id: "inv-1",
     email: MEMBER.email,
     role: "MEMBER",
+    invitedById: "owner-1",
     projectId: null,
     acceptedAt: null,
     expiresAt: new Date("2026-03-24T09:00:00.000Z"),
@@ -97,6 +101,9 @@ beforeEach(() => {
   auth.requireUser.mockResolvedValue(MEMBER);
   db.inviteFindUnique.mockResolvedValue(inviteFixture());
   db.inviteUpdate.mockResolvedValue({ id: "inv-1" });
+  // The sender of the invitation: the workspace owner (no membership row).
+  db.memberFindUnique.mockResolvedValue(null);
+  db.workspaceFindUnique.mockResolvedValue({ ownerId: "owner-1" });
   db.workspaceMemberUpsert.mockResolvedValue({ id: "wm-1" });
   db.projectMemberUpsert.mockResolvedValue({ id: "pm-1" });
   db.teamspaceInviteFindUnique.mockResolvedValue(teamspaceFixture());

@@ -164,6 +164,7 @@ describe("invite acceptance verifies through the module", () => {
               id: "inv-1",
               email: stored.email,
               role: stored.role,
+              invitedById: "admin-1",
               projectId: null,
               acceptedAt: null,
               expiresAt: stored.expiresAt,
