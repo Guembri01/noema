@@ -95,6 +95,46 @@ export function sanitizeHref(raw: unknown): string | null {
   return value;
 }
 
+/**
+ * The app's own asset path. A stored FILES value may only point at an
+ * uploaded workspace asset, so the write path keeps every stored file URL
+ * inside this prefix (`/api/files/<workspaceId>/<name>`).
+ */
+export const FILE_URL_PREFIX = "/api/files/";
+
+/**
+ * Validate a FILES entry URL on the write path.
+ *
+ * Only the app's own `/api/files/...` asset URLs are accepted: an absolute
+ * `http(s)://` URL, a `javascript:` URL, a protocol-relative URL or a
+ * traversal attempt is rejected. The URL is returned unchanged, or `null`
+ * when it is not an app-owned asset path.
+ */
+export function sanitizeFileUrl(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim();
+  if (!value.startsWith(FILE_URL_PREFIX)) return null;
+  // Control characters and a traversal segment never belong in an asset path.
+  if (/[\u0000-\u001f\u007f]/.test(value)) return null;
+  if (value.includes("..")) return null;
+  return value;
+}
+
+/**
+ * True when every file URL a FILES value carries points at the app's own
+ * uploaded asset. A value without a `files` array is not a FILES value and
+ * is accepted unchanged; a FILES value with any other URL is not.
+ */
+export function fileUrlsAreAppOwned(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return true;
+  const files = (value as { files?: unknown }).files;
+  if (!Array.isArray(files)) return true;
+  return files.every((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    return sanitizeFileUrl((entry as { url?: unknown }).url) !== null;
+  });
+}
+
 const HREF_ATTR_KEYS = ["href", "url"] as const;
 
 /**

@@ -222,6 +222,67 @@ describe("parsePageContent - deep href validation (H2)", () => {
 });
 
 /**
+ * B52 - the FILES write path. A stored file URL may only point at the app's
+ * own uploaded asset (`/api/files/<workspaceId>/<name>`), so `sanitizeFileUrl`
+ * refuses anything else: an absolute URL, a `javascript:` URL, a traversal
+ * attempt. The render-time allowlist (`sanitizeHref`) is the second gate; this
+ * one keeps the hostile value out of the database in the first place.
+ */
+describe("sanitizeFileUrl - app-owned asset paths only (B52)", () => {
+  const fileUrl = (value: unknown): string | null => validation.sanitizeFileUrl(value);
+
+  it("keeps the app's own asset URLs", () => {
+    expect(fileUrl("/api/files/ws1/q3-report.pdf")).toBe("/api/files/ws1/q3-report.pdf");
+    expect(fileUrl("  /api/files/ws1/q3-report.pdf  ")).toBe("/api/files/ws1/q3-report.pdf");
+  });
+
+  it("refuses every URL that is not an app-owned asset path", () => {
+    const refused = [
+      "javascript:alert(1)",
+      "data:text/html;base64,PHN2Zz4=",
+      "https://evil.example/x.pdf",
+      "//evil.example/x.pdf",
+      "/uploads/x.pdf",
+      "/api/files/../../etc/passwd",
+      "/api/files/ws1/x\n.pdf",
+      "",
+    ];
+    for (const url of refused) expect(fileUrl(url), JSON.stringify(url)).toBeNull();
+  });
+
+  it("refuses non-string values", () => {
+    expect(fileUrl(undefined)).toBeNull();
+    expect(fileUrl(null)).toBeNull();
+    expect(fileUrl(42)).toBeNull();
+    expect(fileUrl({ url: "/api/files/ws1/x.pdf" })).toBeNull();
+  });
+});
+
+describe("fileUrlsAreAppOwned - the FILES write-path gate (B52)", () => {
+  const owned = (value: unknown): boolean => validation.fileUrlsAreAppOwned(value);
+
+  it("accepts a FILES value whose URLs are app-owned", () => {
+    expect(owned({ files: [{ name: "x", url: "/api/files/ws1/x.pdf" }] })).toBe(true);
+    expect(owned({ files: [] })).toBe(true);
+  });
+
+  it("refuses a FILES value that carries any other URL", () => {
+    expect(owned({ files: [{ name: "x", url: "javascript:alert(1)" }] })).toBe(false);
+    expect(owned({ files: [{ name: "x", url: "https://evil.example/x" }] })).toBe(false);
+    expect(owned({ files: [{ name: "x", url: "/api/files/ws1/../../etc/passwd" }] })).toBe(false);
+    expect(owned({ files: [{ name: "x" }] })).toBe(false);
+    expect(owned({ files: ["javascript:alert(1)"] })).toBe(false);
+  });
+
+  it("leaves the other property values alone", () => {
+    expect(owned({ text: "hello" })).toBe(true);
+    expect(owned({ number: 3 })).toBe(true);
+    expect(owned("hello")).toBe(true);
+    expect(owned(undefined)).toBe(true);
+  });
+});
+
+/**
  * K02 - `signupSchema.password` delegates to the shared `validatePassword`
  * policy (`src/lib/password-policy.ts`) via a zod refine. These tests pin that
  * delegation and the length messages the schema keeps for itself.
