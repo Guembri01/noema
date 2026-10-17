@@ -168,3 +168,36 @@ describe("DatePicker trigger", () => {
     expect(html).not.toContain("title=");
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* dw10 — aria passthrough                                                     */
+/* -------------------------------------------------------------------------- */
+
+describe("DatePicker trigger aria passthrough", () => {
+  it("forwards aria-label / aria-labelledby / aria-describedby to the trigger", () => {
+    const html = renderToStaticMarkup(
+      createElement(DatePicker, {
+        mode: "date",
+        locale: "en",
+        now: NOW,
+        value: { date: "2026-03-21" },
+        "aria-label": "Due date",
+        "aria-labelledby": "field-label",
+        "aria-describedby": "field-hint",
+      }),
+    );
+    expect(html).toContain('data-testid="date-picker-trigger"');
+    expect(html).toContain('aria-label="Due date"');
+    expect(html).toContain('aria-labelledby="field-label"');
+    expect(html).toContain('aria-describedby="field-hint"');
+  });
+
+  it("omits the aria attributes when the caller does not supply them", () => {
+    const html = renderToStaticMarkup(
+      createElement(DatePicker, { mode: "date", locale: "en", now: NOW, value: {} }),
+    );
+    expect(html).not.toContain('aria-label="');
+    expect(html).not.toContain("aria-labelledby=");
+    expect(html).not.toContain("aria-describedby=");
+  });
+});

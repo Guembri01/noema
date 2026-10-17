@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { describe, expect, it, vi } from "vitest";
 import { createElement, type ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -15,6 +16,7 @@ import {
   applySelection,
   buildRows,
   clearSelection,
+  consumeEscape,
   filterOptions,
   firstEnabledIndex,
   groupOptions,
@@ -443,5 +445,44 @@ describe("open popup snapshots", () => {
     expect(html).toContain("height:"); // top/bottom spacers
     expect(html).toContain("Option 0");
     expect(html).not.toContain("Option 200");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* dw10 — Escape propagation + portal/placement wiring                          */
+/* -------------------------------------------------------------------------- */
+
+const SELECT_SOURCE = readFileSync(new URL("./select.tsx", import.meta.url), "utf8");
+
+describe("Escape does not leak to a parent dialog", () => {
+  it("consumeEscape preventDefaults and stops propagation", () => {
+    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn() };
+    consumeEscape(event);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses consumeEscape in the Escape key branch", () => {
+    expect(SELECT_SOURCE).toMatch(
+      /case "Escape":\s*\n\s*consumeEscape\(event\);[\s\S]*?break;/,
+    );
+  });
+});
+
+describe("portal + collision-aware placement wiring", () => {
+  it("portals the listbox into document.body in the browser, inline during SSR", () => {
+    expect(SELECT_SOURCE).toContain("createPortal(children, document.body)");
+    expect(SELECT_SOURCE).toContain('typeof document === "undefined"');
+    // the click-outside test understands the detached tree too
+    expect(SELECT_SOURCE).toContain('[data-testid="select-menu"]');
+  });
+
+  it("resolves the popup with the shared collision engine (flip + clamp)", () => {
+    expect(SELECT_SOURCE).toContain('from "@/lib/floating"');
+    expect(SELECT_SOURCE).toContain("placeFloating({");
+    expect(SELECT_SOURCE).toContain("floatingStyle(");
+    // placement is resolved on open and while the page scrolls / resizes
+    expect(SELECT_SOURCE).toContain('window.addEventListener("resize", resolve)');
+    expect(SELECT_SOURCE).toContain('window.addEventListener("scroll", resolve, true)');
   });
 });

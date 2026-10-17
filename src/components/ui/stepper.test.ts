@@ -141,3 +141,56 @@ describe("Stepper render", () => {
     expect(/aria-label="Increase"[^>]*disabled=""/.test(html)).toBe(true);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* dw10 — aria passthrough                                                     */
+/* -------------------------------------------------------------------------- */
+
+describe("Stepper aria passthrough", () => {
+  it("forwards aria-label to the input when there is no visible label", () => {
+    const html = renderToStaticMarkup(
+      createElement(Stepper, { defaultValue: 5, "aria-label": "Quantity" }),
+    );
+    expect(html).toContain('aria-label="Quantity"');
+    expect(html).not.toContain('aria-label="Value"');
+  });
+
+  it("keeps the 'Value' fallback when nothing labels the field", () => {
+    const html = renderToStaticMarkup(createElement(Stepper, { defaultValue: 5 }));
+    expect(html).toContain('aria-label="Value"');
+  });
+
+  it("forwards aria-labelledby and aria-describedby to the input", () => {
+    const html = renderToStaticMarkup(
+      createElement(Stepper, {
+        defaultValue: 5,
+        "aria-labelledby": "row-label",
+        "aria-describedby": "row-hint",
+      }),
+    );
+    expect(html).toContain('aria-labelledby="row-label"');
+    expect(html).toMatch(/aria-describedby="[^"]*row-hint"/);
+  });
+
+  it("merges an external description with the error message id", () => {
+    const html = renderToStaticMarkup(
+      createElement(Stepper, {
+        defaultValue: 5,
+        invalid: true,
+        errorMessage: "Too small",
+        "aria-describedby": "row-hint",
+      }),
+    );
+    const described = /aria-describedby="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(described).toContain("row-hint");
+    expect(described).toContain("-error");
+  });
+
+  it("lets an explicit aria-label override the 'Value' fallback but keeps a visible label's name", () => {
+    const labelled = renderToStaticMarkup(
+      createElement(Stepper, { defaultValue: 5, label: "Count" }),
+    );
+    expect(labelled).toMatch(/aria-labelledby="[^"]*-label"/);
+    expect(labelled).not.toContain('aria-label="Value"');
+  });
+});

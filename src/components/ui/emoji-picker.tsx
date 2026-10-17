@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { EMOJI_SHORTCODES, emojiCandidates } from "@/lib/emoji";
 import {
   DEFAULT_TOP_LIMIT,
@@ -211,12 +211,28 @@ export function useEmojiFrecency({
   return { usages, recent, record };
 }
 
+/** Arguments handed to a custom `trigger` render-prop. */
+export type EmojiPickerTriggerProps = {
+  /** Whether the picker is currently open. */
+  open: boolean;
+  /** Toggle the picker: opens when closed, closes when open. */
+  toggle: () => void;
+  /** The computed accessible name (`triggerLabel` or the locale default). */
+  label: string;
+  /** id of the dialog, so a custom trigger can set `aria-controls`. */
+  controls: string;
+};
+
 export function EmojiPicker({
   onSelect,
   locale,
   userId,
   storageKey = EMOJI_FRECENCY_NAMESPACE,
   triggerLabel,
+  trigger,
+  open: controlledOpen,
+  defaultOpen = false,
+  onOpenChange,
   className,
 }: {
   /** Called with the chosen glyph; the picker records the use first. */
@@ -231,13 +247,35 @@ export function EmojiPicker({
   storageKey?: string;
   /** Accessible name for the trigger; defaults to `t(locale, "useEmoji")`. */
   triggerLabel?: string;
+  /**
+   * Render the trigger yourself (a literal `+`, a tag-shaped button, …). Receives
+   * `{ open, toggle, label, controls }`. When omitted the default 🙂 button is
+   * rendered unchanged.
+   */
+  trigger?: (props: EmojiPickerTriggerProps) => ReactNode;
+  /** Controlled open state; pair with `onOpenChange`. */
+  open?: boolean;
+  /** Uncontrolled initial open state; ignored when `open` is provided. */
+  defaultOpen?: boolean;
+  /** Notified on every open/close change. */
+  onOpenChange?: (open: boolean) => void;
   className?: string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? uncontrolledOpen;
   const [query, setQuery] = useState("");
   const { recent, record } = useEmojiFrecency({ storageKey, userId });
   const catalog = useMemo(() => filterEmojiCatalog(query), [query]);
   const label = triggerLabel ?? t(locale, "useEmoji");
+  const dialogId = `${useId()}-emoji-picker`;
+
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (controlledOpen === undefined) setUncontrolledOpen(next);
+      onOpenChange?.(next);
+    },
+    [controlledOpen, onOpenChange],
+  );
 
   const choose = (emoji: string) => {
     record(emoji);
@@ -246,21 +284,29 @@ export function EmojiPicker({
     setQuery("");
   };
 
+  const toggle = () => setOpen(!open);
+
   return (
     <span className={cn("relative inline-flex", className)}>
-      <button
-        type="button"
-        aria-label={label}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        data-testid="emoji-picker-trigger"
-        onClick={() => setOpen((value) => !value)}
-        className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2"
-      >
-        <span aria-hidden>🙂</span>
-      </button>
+      {trigger ? (
+        trigger({ open, toggle, label, controls: dialogId })
+      ) : (
+        <button
+          type="button"
+          aria-label={label}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-controls={dialogId}
+          data-testid="emoji-picker-trigger"
+          onClick={toggle}
+          className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2"
+        >
+          <span aria-hidden>🙂</span>
+        </button>
+      )}
       {open && (
         <div
+          id={dialogId}
           role="dialog"
           aria-label={label}
           data-testid="emoji-picker"

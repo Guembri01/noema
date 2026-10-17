@@ -164,6 +164,12 @@ export type StepperProps = {
   errorMessage?: string;
   className?: string;
   inputClassName?: string;
+  /** Accessible name for the field when no visible `label` is supplied. */
+  "aria-label"?: string;
+  /** id(s) of external labelling element(s), forwarded to the input. */
+  "aria-labelledby"?: string;
+  /** id(s) of external description element(s), merged with the error message. */
+  "aria-describedby"?: string;
 };
 
 export function Stepper({
@@ -183,6 +189,9 @@ export function Stepper({
   errorMessage,
   className,
   inputClassName,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledby,
+  "aria-describedby": ariaDescribedby,
 }: StepperProps) {
   const clampWithBounds = React.useCallback(
     (n: number) => clampNumber(n, min, max),
@@ -312,10 +321,14 @@ export function Stepper({
             aria-valuemin={min}
             aria-valuemax={max}
             aria-valuenow={current}
-            aria-label={label ? undefined : "Value"}
-            aria-labelledby={label ? labelId : undefined}
+            aria-label={ariaLabel ?? (label ? undefined : "Value")}
+            aria-labelledby={ariaLabelledby ?? (label ? labelId : undefined)}
             aria-invalid={showInvalid || undefined}
-            aria-describedby={showInvalid ? messageId : undefined}
+            aria-describedby={
+              [showInvalid ? messageId : undefined, ariaDescribedby]
+                .filter(Boolean)
+                .join(" ") || undefined
+            }
             disabled={disabled}
             placeholder={placeholder}
             value={text}
