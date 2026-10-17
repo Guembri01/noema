@@ -68,6 +68,7 @@
     "postinstall": "prisma generate",
     "check:popovers": "node scripts/check-popovers.mjs",
     "check:floating": "node scripts/check-floating.mjs",
+    "check:layering": "node scripts/check-layering.mjs",
     "check:chat": "node scripts/check-chat-live.mjs",
     "check:csp": "node scripts/check-csp.mjs",
     "audit:frontend": "node scripts/audit-frontend.mjs",

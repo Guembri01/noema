@@ -441,11 +441,27 @@ export function WorkspaceShell({
               strip above stays mounted, and the sidebar lives outside <main>
               entirely, so neither re-mounts or flickers. `--dur-2` (180ms) is the
               page-transition tier the design spec asks for (150–250ms); `--dur-1`
-              was a hair fast to read as a transition rather than a blink. */}
+              was a hair fast to read as a transition rather than a blink.
+
+              `animationFillMode: backwards` is load-bearing, not a preference.
+              The `animate-fade` token fills (`both`) because a fade-*out* must
+              hold its end state, and a *filled* animation on `opacity` keeps the
+              element a **stacking context** for as long as it applies. A
+              stacking context cannot be escaped by its descendants, so every
+              `fixed` surface rendered inside this wrapper - the ticket drawer,
+              the database peek, the editor's popovers - was painted inside this
+              element's level and therefore *behind* the docked AI panel, which is
+              a later flex sibling of `<main>` no matter how high its z-index was.
+              `backwards` holds the from-state before the fade starts (which is
+              all a 0-delay fade needs) and releases the wrapper afterwards.
+              `npm run check:layering` measures both halves of that contract. */}
           <div
             key={pathname}
             className="animate-fade"
-            style={{ animationDuration: "var(--dur-2)" }}
+            style={{
+              animationDuration: "var(--dur-2)",
+              animationFillMode: "backwards",
+            }}
           >
             {children}
           </div>

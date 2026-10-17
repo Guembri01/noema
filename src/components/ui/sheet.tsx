@@ -10,7 +10,10 @@
  *    `--ease-smooth`; the right drawer uses the named `animate-slide-in-right`
  *    utility, the bottom drawer the `rise` keyframe re-timed to `--dur-3`, the
  *    left drawer mirrors the right settle with the same token transition;
- *  - layering from `Z.*` only: scrim `Z.overlay`, panel `Z.modal`;
+ *  - layering from `Z.*` only: scrim `Z.overlay`, panel `Z.modal`, plus the
+ *    `FloatingHostProvider` a Select/DropdownMenu *inside* the sheet portals
+ *    into, so the sheet's own popups paint above the sheet rather than behind
+ *    it (see `ui/floating-layer.tsx`);
  *  - body scroll is locked while the sheet is open (shared counter so nested
  *    overlays unlock exactly once) and restored on close;
  *  - focus is trapped inside the panel (`@/lib/focus-trap` kernel, wrapping at
@@ -28,6 +31,7 @@ import {
   type Focusable,
   type FocusPlan,
 } from "@/lib/focus-trap";
+import { FloatingHostProvider } from "@/components/ui/floating-layer";
 
 export const SHEET_SIDES = ["left", "right", "bottom"] as const;
 export const SHEET_SIZES = ["sm", "md", "lg", "full"] as const;
@@ -340,7 +344,7 @@ export function Sheet({
   const hasHeader = Boolean(title || description || actions || showClose);
 
   return (
-    <>
+    <FloatingHostProvider>
       <button
         type="button"
         tabIndex={-1}
@@ -428,6 +432,6 @@ export function Sheet({
           </div>
         ) : null}
       </div>
-    </>
+    </FloatingHostProvider>
   );
 }

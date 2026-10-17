@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import { DUR, Z, tagStyle } from "@/lib/design-tokens";
 import { floatingStyle, placeFloating, type Placement } from "@/lib/floating";
+import { useFloatingHost } from "@/components/ui/floating-layer";
 import { offsetForIndex, totalHeight, visibleRange, type VirtualListRange } from "@/lib/virtual-list";
 
 /* -------------------------------------------------------------------------- *
@@ -327,13 +328,19 @@ export const MENU_MAX_HEIGHT = 340;
 const ROW_ESTIMATE = 32;
 
 /**
- * Renders the popup into `document.body` in the browser (so it can never be
- * clipped by a scrolling ancestor) while rendering inline during SSR, where
- * portals are unavailable.
+ * Renders the popup into the surface that owns it — the modal's floating host
+ * when the Select sits inside one, `document.body` otherwise — in the browser,
+ * while rendering inline during SSR, where portals are unavailable.
+ *
+ * The `typeof document` check (rather than a mounted flag) keeps the popup's
+ * server markup identical to its first client render, which the static
+ * assertions in `select.test.ts` rely on; host resolution is shared with
+ * `ui/floating-layer.tsx` so there is still one rule for where popups go.
  */
 function FloatingLayer({ children }: { children?: React.ReactNode }) {
+  const host = useFloatingHost();
   if (typeof document === "undefined") return <>{children}</>;
-  return createPortal(children, document.body);
+  return createPortal(children, host ?? document.body);
 }
 /** Pixel height of one group heading row. */
 export const GROUP_ROW_HEIGHT = 24;

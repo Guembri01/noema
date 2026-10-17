@@ -5,6 +5,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
 import { Z } from "@/lib/design-tokens";
 import { overlayMotionClasses } from "@/components/ui/dropdown-menu";
+import { FloatingHostProvider } from "@/components/ui/floating-layer";
 
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
@@ -49,46 +50,48 @@ export function DialogContent({
 
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay
-        className={cn("fixed inset-0 bg-overlay", overlayMotionClasses("scrim"))}
-        style={{ zIndex: Z.overlay }}
-      />
-      <DialogPrimitive.Content
-        role="dialog"
-        aria-modal="true"
-        className={cn(
-          "surface-raised-strong fixed inset-x-0 top-[15%] mx-auto w-full max-w-xl",
-          overlayMotionClasses("dialog"),
-          className,
-        )}
-        style={{ zIndex: Z.modal, ...style }}
-        onOpenAutoFocus={(event) => {
-          // FocusScope dispatches this synchronously BEFORE moving focus into
-          // the dialog, so activeElement is still the invoking control.
-          const active = document.activeElement;
-          if (active instanceof HTMLElement && active !== document.body) {
-            invokerRef.current = active;
-          }
-          onOpenAutoFocus?.(event);
-        }}
-        onCloseAutoFocus={(event) => {
-          onCloseAutoFocus?.(event);
-          if (event.defaultPrevented) return; // consumer took over
-          const invoker = invokerRef.current;
-          invokerRef.current = null;
-          if (invoker?.isConnected) {
-            // Skip Radix's trigger fallback (null without <DialogTrigger>) and
-            // FocusScope's own return - we restore focus ourselves.
-            event.preventDefault();
-            invoker.focus();
-          }
-          // No recorded invoker (focus was already inside the dialog): defer to
-          // Radix so a <DialogTrigger>-based dialog still restores its trigger.
-        }}
-        {...props}
-      >
-        {children}
-      </DialogPrimitive.Content>
+      <FloatingHostProvider>
+        <DialogPrimitive.Overlay
+          className={cn("fixed inset-0 bg-overlay", overlayMotionClasses("scrim"))}
+          style={{ zIndex: Z.overlay }}
+        />
+        <DialogPrimitive.Content
+          role="dialog"
+          aria-modal="true"
+          className={cn(
+            "surface-raised-strong fixed inset-x-0 top-[15%] mx-auto w-full max-w-xl",
+            overlayMotionClasses("dialog"),
+            className,
+          )}
+          style={{ zIndex: Z.modal, ...style }}
+          onOpenAutoFocus={(event) => {
+            // FocusScope dispatches this synchronously BEFORE moving focus into
+            // the dialog, so activeElement is still the invoking control.
+            const active = document.activeElement;
+            if (active instanceof HTMLElement && active !== document.body) {
+              invokerRef.current = active;
+            }
+            onOpenAutoFocus?.(event);
+          }}
+          onCloseAutoFocus={(event) => {
+            onCloseAutoFocus?.(event);
+            if (event.defaultPrevented) return; // consumer took over
+            const invoker = invokerRef.current;
+            invokerRef.current = null;
+            if (invoker?.isConnected) {
+              // Skip Radix's trigger fallback (null without <DialogTrigger>) and
+              // FocusScope's own return - we restore focus ourselves.
+              event.preventDefault();
+              invoker.focus();
+            }
+            // No recorded invoker (focus was already inside the dialog): defer to
+            // Radix so a <DialogTrigger>-based dialog still restores its trigger.
+          }}
+          {...props}
+        >
+          {children}
+        </DialogPrimitive.Content>
+      </FloatingHostProvider>
     </DialogPrimitive.Portal>
   );
 }

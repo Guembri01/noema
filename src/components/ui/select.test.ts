@@ -470,8 +470,11 @@ describe("Escape does not leak to a parent dialog", () => {
 });
 
 describe("portal + collision-aware placement wiring", () => {
-  it("portals the listbox into document.body in the browser, inline during SSR", () => {
-    expect(SELECT_SOURCE).toContain("createPortal(children, document.body)");
+  it("portals the listbox into its surface's host, or document.body, in the browser", () => {
+    // §7.3: a popup opened inside a modal renders into that modal's floating
+    // host (so it beats the modal); opened from the page it goes to `body`.
+    expect(SELECT_SOURCE).toContain("createPortal(children, host ?? document.body)");
+    expect(SELECT_SOURCE).toContain("useFloatingHost()");
     expect(SELECT_SOURCE).toContain('typeof document === "undefined"');
     // the click-outside test understands the detached tree too
     expect(SELECT_SOURCE).toContain('[data-testid="select-menu"]');

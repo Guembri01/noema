@@ -25,6 +25,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Info, Loader2, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Z } from "@/lib/design-tokens";
+import { FloatingHostProvider } from "@/components/ui/floating-layer";
 
 /* ------------------------------------------------------------------------- *
  * Pure state — two-step machine + submit gate
@@ -337,6 +338,7 @@ export function ConfirmDialog({
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+      <FloatingHostProvider>
       <DialogPrimitive.Overlay
         data-testid="confirm-scrim"
         className="fixed inset-0 animate-fade bg-overlay"
@@ -371,6 +373,7 @@ export function ConfirmDialog({
       >
         {body}
       </DialogPrimitive.Content>
+      </FloatingHostProvider>
     </DialogPrimitive.Root>
   );
 }

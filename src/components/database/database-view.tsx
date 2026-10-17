@@ -100,6 +100,7 @@ import {
 import { childrenOf as subItemChildrenOf } from "@/lib/sub-items";
 import { CARD_SIZES, type CardSizeName } from "@/lib/view-presets";
 import type { RelationData } from "@/server/queries";
+import { FloatingHostProvider } from "@/components/ui/floating-layer";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -2335,7 +2336,7 @@ export function DatabaseView({
       )}
 
       {peekMounted && shownPeek !== null && (
-        <>
+        <FloatingHostProvider>
           {/* Token scrim: `--overlay` at `Z.overlay`, fading with `--dur-3`. */}
           <button
             type="button"
@@ -2459,7 +2460,7 @@ export function DatabaseView({
               ))}
             </dl>
           </aside>
-        </>
+        </FloatingHostProvider>
       )}
 
       <Dialog

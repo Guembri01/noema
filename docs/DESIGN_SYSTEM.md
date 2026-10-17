@@ -235,12 +235,63 @@ FLOATING_CORNER = {
 - **Slot maths is derived, not hand-written**: `floatingSlotOffsetRem(slot)`
   returns `1.25 + slot × (2.5 + 1.25)` rem, from `h-10 w-10` and `--space-5`;
   the classes above are the whole strings that arithmetic produces.
-- **All three sit at `Z.sticky`**, so their paint order is stable rather than
-  dependent on DOM order.
+- **Two tiers, by role**: the Ask-AI button is app *chrome* and sits at
+  `Z.sidebar` (30) — the same tier as the assistant panel it opens and the
+  sidebar; the transient bars (undo/redo) and the sync notice sit at
+  `Z.sticky` (10), below it. Neither picks a private number, and the split is
+  deliberate: a bar or notice must be able to appear *over* route content
+  without competing with the chrome that frames the route. (`floating-corner.ts`
+  decides the slots; the tier is the control's own call, from `Z.*`.)
 - `findFloatingOverlaps()` is the DOM-free predicate the layout must satisfy;
   `npm run check:floating` measures it in a real browser and fails on an
   overlap, a control off-screen, a missing control, or a button still visible
   while the panel it opens is open.
+
+### 7.3 A surface owns its popups
+
+The ladder in §7 is **flat**, which is correct for a popup opened from the page
+(a modal opened afterwards must cover it) and wrong for a popup opened *inside*
+a modal: a `Z.popover` (50) dropdown inside a `Z.modal` (60) dialog would paint
+**behind the dialog it belongs to** — the assignee `Select` in the ticket
+drawer, a role menu inside a `Dialog`, the emoji picker inside a sheet.
+
+A flat ladder cannot express "above its owner, but below a newer owner", so
+ownership is structural instead of numeric:
+
+- a modal surface renders `FloatingHostProvider` (`ui/floating-layer.tsx`),
+  which publishes a **zero-size stacking context at `Z.modal`, after its
+  content**;
+- every `FloatingLayer` inside that subtree portals into that host rather than
+  into `document.body`, so the popup inherits the surface's own level and beats
+  its content by document order;
+- a popup opened from the page has no host, still portals to `<body>`, and is
+  covered by a later modal exactly as before.
+
+The host is zero-sized on purpose: it creates a stacking context without
+covering anything (so it needs no `pointer-events` opt-out) and cannot clip
+(an `overflow: visible` box does not clip `fixed` descendants). Any new modal
+surface — sheet, dialog, peek — must render one, and a popup must keep using
+`FloatingLayer`/`placeFloating` rather than positioning itself.
+
+`npm run check:layering` measures this end to end: it opens the ticket drawer,
+opens its assignee `Select`, and fails unless the popup is what sits under the
+pointer — the check that caught the drawer painting behind the docked assistant.
+
+### 7.4 Route content must not trap a fixed surface
+
+Anything rendered by a route lives inside the page-transition wrapper
+(`components/workspace-shell.tsx`). A **filled** `opacity` animation on that
+wrapper keeps it a *stacking context* for as long as the fill applies, and a
+stacking context cannot be escaped by its descendants: every `fixed` surface
+inside a route — the ticket drawer, the database peek, editor popovers — paints
+in the wrapper's own level, i.e. *behind* the docked assistant panel, which is a
+later flex sibling of `<main>` no matter what `z-index` the surface asks for.
+
+The wrapper therefore releases the context when the transition finishes
+(`animation-fill-mode: backwards`; the shared `--animate-fade` token keeps
+`both`, which the fade-*out* closes need). When adding a route-level surface:
+keep it inside the route, give it a `Z.*` tier, and remember that its popups
+need the host from §7.3.
 
 ## 8. States — every interactive element needs all of them
 

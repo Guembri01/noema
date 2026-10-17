@@ -1130,7 +1130,14 @@ export function ChatPanel({
       onKeyDown={(event) => {
         if (event.key === "Escape" && !event.defaultPrevented) onClose();
       }}
-      style={{ zIndex: Z.overlay }}
+      // `Z.sidebar` (30) - the app-chrome tier, the same one the workspace
+      // sidebar owns - *not* `Z.overlay` (40), which is the scrim tier. The
+      // panel is a docked surface, so anything modal to the app has to paint
+      // over it: the ticket drawer and the database peek at `Z.modal` (60), and
+      // their scrims at `Z.overlay` (40). Sitting in the scrim tier made the
+      // panel a tie with those scrims, and DOM order decided who dimmed whom.
+      // `npm run check:layering` measures this too.
+      style={{ zIndex: Z.sidebar }}
       className="fixed inset-0 flex w-full flex-col border-l border-border bg-bg md:static md:w-[380px] md:shrink-0"
     >
       <header className="flex items-center gap-2 border-b border-border px-3 py-2">
