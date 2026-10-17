@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { evaluateFormula, type FormulaOptions, type FormulaScope } from "@/lib/formula";
 
 const run = (expression: string, scope: FormulaScope = {}, constants?: Record<string, unknown>) =>
@@ -246,6 +246,51 @@ describe("regex functions", () => {
     expect(errorOf('match("aaaaaaaaaaaaaaaaaaaa!", "(x*)*y")')).toContain(
       "catastrophic backtracking",
     );
+  });
+
+  it("rejects alternation blowups like (a|aa)+", () => {
+    expect(errorOf('match("aaaaaaaaaaaaaaaaaaaa!", "(a|aa)+$")')).toContain(
+      "catastrophic backtracking",
+    );
+    expect(errorOf('replace("aaaaaaaaaaaaaaaaaaaa!", "(a|aa)+$", "x")')).toContain(
+      "catastrophic backtracking",
+    );
+    expect(errorOf('extract("aaaaaaaaaaaaaaaaaaaa!", "(a|aa)+$")')).toContain(
+      "catastrophic backtracking",
+    );
+  });
+
+  it("aborts a regex whose work does not fit into the time budget", () => {
+    const text = "a".repeat(1000);
+    expect(errorOf(`match("${text}", "a*a*b")`)).toBe(
+      "#ERROR: pattern rejected: the estimated work exceeds the 50 ms regex budget",
+    );
+    expect(errorOf(`replace("${text}", "a*a*b", "x")`)).toContain("budget");
+    expect(errorOf(`extract("${text}", "a*a*b")`)).toContain("budget");
+  });
+
+  it("aborts a regex evaluation that overruns the wall-clock budget", () => {
+    // The clock is pinned so the evaluation is measured as if it took 100 ms.
+    const now = vi.spyOn(Date, "now").mockReturnValue(100).mockReturnValueOnce(0);
+    try {
+      expect(errorOf('match("Budget", "[Bb]udget")')).toBe(
+        "#ERROR: regex evaluation exceeded the 50 ms budget",
+      );
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("keeps a normal regex inside the time budget", () => {
+    expect(value('match("Hello", "[Hh]ello")')).toBe(true);
+    expect(value('replace("John Michael", "(\\\\w+) (\\\\w+)", "$2 $1")')).toBe("Michael John");
+    expect(value('extract("2024-01-15", "(\\\\d+)-(\\\\d+)-(\\\\d+)")')).toEqual([
+      "2024",
+      "01",
+      "15",
+    ]);
+    // A long text is still evaluated when the pattern cannot blow up.
+    expect(value(`match("${"a".repeat(1000)}", "a*b")`)).toBe(false);
   });
 
   it("allows safe quantified groups", () => {
