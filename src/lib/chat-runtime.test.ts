@@ -695,7 +695,9 @@ describe("buildChatRequest grounding", () => {
     });
 
     expect(mocks.searchPagesForPrompt).toHaveBeenCalledTimes(1);
-    expect(mocks.searchPagesForPrompt).toHaveBeenCalledWith("ws1", question, 5);
+    // The chat is member-only, so the retrieval is unscoped (`null` = the whole
+    // workspace) — the same scope the query helper expects.
+    expect(mocks.searchPagesForPrompt).toHaveBeenCalledWith("ws1", question, null, 5);
     expect(request.context).toContain("Matching notes:");
     expect(request.context).toContain('- "Onboarding guide" (id p1): First week…');
     expect(request.intel.references).toEqual([
@@ -786,7 +788,7 @@ describe("buildChatRequest grounding", () => {
     expect(request.user).toBe("Summarize this note and suggest next steps.");
     expect(request.system).toBe(CHAT_SYSTEM_PROMPT);
     expect(request.intel.intents).toEqual(["notes"]);
-    expect(mocks.searchPagesForPrompt).toHaveBeenCalledWith("ws1", "", 5);
+    expect(mocks.searchPagesForPrompt).toHaveBeenCalledWith("ws1", "", null, 5);
     // No page and no data at all — but the "no messages" line is always there so
     // the model is never told "no context" and can answer that nothing exists.
     expect(request.context).toContain("RECENT MESSAGES: none");

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { searchPagesForPrompt } from "@/server/queries";
 import { rateLimit } from "@/lib/api-guard";
 import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfig } from "@/lib/ai-provider";
@@ -82,7 +83,16 @@ export async function POST(request: Request) {
   if (mode === "ask" && body.workspaceId) {
     const access = await getWorkspaceAccess(user.id, body.workspaceId);
     if (access && prompt) {
-      const results = await searchPagesForPrompt(body.workspaceId, prompt, 5);
+      // Ground only in the pages the caller may open: a guest gets the pages
+      // shared with them, a member the whole workspace. An empty guest scope
+      // grounds in nothing rather than in everything.
+      const visiblePageIds = await pageScopeFor(user.id, body.workspaceId, access.role);
+      const results = await searchPagesForPrompt(
+        body.workspaceId,
+        prompt,
+        visiblePageIds,
+        5,
+      );
       const grounding = results
         .map((page) => `- ${page.title}: ${page.snippet}`.trim())
         .join("\n");

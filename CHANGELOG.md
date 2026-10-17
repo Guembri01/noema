@@ -23,6 +23,10 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   not). The stored URL now passes the shared href allowlist (`http`, `https`,
   `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
   editor as well as in the read-only renderer.
+- The "Ask AI" grounding search honours the guest page scope. A guest's prompt
+  is now answered only from the pages that were shared with them — page titles
+  and text no longer leak from the rest of the workspace through the model
+  context — while a member still grounds in the whole workspace.
 
 ## [1.4.1] — 2026-10-17
 
