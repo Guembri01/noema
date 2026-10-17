@@ -149,6 +149,18 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   confirmation now names the proposal turn it confirms, the stored proposal is
   compared with the request (by canonical JSON, so the order of the keys does
   not matter) and **the stored proposal** is what runs.
+- A formula can no longer freeze the page it is edited in. The guard against
+  catastrophic backtracking rejected a quantified group whose body contains a
+  quantifier, but the classic exponential case has no inner quantifier:
+  `(a|aa)+` is a group with an alternation, so the pattern passed and was
+  evaluated. Measured, `(a|aa)+$` against 32 `a`s took 230 ms, and the
+  realistic case `a*a*b` against 5000 `a`s took 42 to 56 seconds. The guard
+  now refuses a quantified group with an alternation as well, and behind it a
+  cost model estimates the work the engine will do — start positions times the
+  split counts of the repetitions that can hit the text — and refuses a
+  pattern whose estimate exceeds 50 ms. A wall-clock fallback times the native
+  evaluation as well, because a native `RegExp` cannot be interrupted once it
+  started.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
