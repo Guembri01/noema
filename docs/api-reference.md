@@ -557,7 +557,7 @@ Errors: **400** `workspaceId is required` · **403** `insufficient_scope`
 **201** `{"page":{"id":"…","title":"New doc","type":"PAGE"}}`
 Errors: 400 (`Invalid JSON body`, `workspaceId is required`, `That parent page
 does not exist in this workspace.`) · **403** `insufficient_scope`
-(missing `write:pages`) · 401 · 403 · 429.
+(missing `write:pages`) · 401 · 403 · **413** `Request body too large.` — the body is over the 4 MiB budget (§3) · · 429.
 
 #### Retrying safely — `Idempotency-Key`
 
@@ -1090,6 +1090,7 @@ own member-managing check as the second line of defence. Errors: 401 · 403
 - Teamspace invite → **200**
   `{"ok":true,"invited":true,"added":false,"link":"…","email":"…","emailed":true}`.
 - Errors: 400 (`Invalid JSON body.` / action `{error}` such as unknown
+  - **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
   workspace, invalid email, no permission, unknown role) · 401 · 429.
 
 ---
@@ -1189,13 +1190,15 @@ Source: [`src/app/api/ai/route.ts`](../src/app/api/ai/route.ts)
 - Errors: **400** `Invalid JSON body` / `Invalid request body` /
   `prompt is required` / `context is required to summarize` /
   `prompt is required to autofill` ·
-  **401** · **503** `AI is not configured. Add a provider in workspace
+  **401** · **413** `Request body too large.` — the body is over the 256 KiB
+  budget (§3) ·
+  **503** `AI is not configured. Add a provider in workspace
   settings (AI) or set AI_API_KEY / AI_BASE_URL / AI_MODEL.` ·
-  provider failures returned as `{error}` — `AI provider error (<upstatus>):
-  <code>`, the classified failure (upstream status plus a stable code), never
-  the provider's body · transport failures returned as `{error}` — `Could not
-  reach the provider.`, a class, never the runtime's message (it can carry the
-  request header, and the header carries the key) · 429.
+  **502** `AI provider error (<upstatus>): <code>` — the classified failure
+  (the upstream status plus a stable code), never the provider's body — or
+  `Could not reach the provider.`, a class for the transport failure, never the
+  runtime's message (it can carry the request header, and the header carries
+  the key) · 429.
 
 ### `POST /api/ai/skills` — editor AI skills — scope `ai-skills` (30/min)
 Source: [`src/app/api/ai/skills/route.ts`](../src/app/api/ai/skills/route.ts)
@@ -1221,7 +1224,7 @@ Skill ids: `improve`, `proofread`, `reformat`, `shorten`, `explain`,
 text capped at 8000) · 401 · 503 (AI unconfigured) · **502** `AI provider
 error (<upstatus>): <code>` (the classified failure, never the provider's
 body) or `Could not reach the provider.` (a transport failure — a class,
-never the runtime's message) · 429.
+never the runtime's message) · text capped at 8000) · 401 · **413** `Request body too large.` — the body is · 429.
 
 ### `POST /api/ai/transcribe` — speech-to-text — scope `transcribe` (10/min)
 Source: [`src/app/api/ai/transcribe/route.ts`](../src/app/api/ai/transcribe/route.ts)
@@ -1277,6 +1280,7 @@ issued.
 The rate limit and the attempt counter are in-process (like every other
 limiter in §3): a multi-instance deployment needs a shared store.
 
+- **413** `Request body too large.` — the body is over the 16 KiB budget (§3).
 ---
 
 ## 16. Admin / cron
@@ -1337,7 +1341,7 @@ answers **503**.
 
 ---
 
-## Appendix A — endpoint index (32 endpoints / 27 route files)
+## Appendix A — endpoint index (39 endpoints / 31 route files)
 
 | # | Method | Path | Auth | Rate scope | File |
 |---|---|---|---|---|---|

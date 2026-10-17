@@ -507,9 +507,6 @@ list marks it as **No access**.
   framing, and a key that is reused for a different body is still refused with
   `422 idempotency_key_reuse`.
 
-
-
-
 ### Changed
 
 - The app's own write path accepts only the app's own `/api/files/...` asset
