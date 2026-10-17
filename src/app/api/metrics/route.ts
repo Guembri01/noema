@@ -88,8 +88,19 @@ async function isWorkspaceAdmin(userId: string): Promise<boolean> {
  */
 type Authorized = { via: "cron" | "admin"; userId: string | null };
 
-/** Resolve the caller's authorization path, or `null` when denied. */
-async function authorize(request: Request): Promise<Authorized | null> {
+/**
+ * Resolve the caller's authorization path, or `null` when denied.
+ *
+ * The **secret comparison** belongs after the rate limit (the limit has to
+ * run first, so a wrong secret is throttled instead of being an unbounded
+ * guessing oracle — see the GET below), the **identity** does not: the
+ * per-user budget is keyed on it, so it is resolved before the limit and
+ * handed in here.
+ */
+async function authorize(
+  request: Request,
+  user: Awaited<ReturnType<typeof getCurrentUser>>,
+): Promise<Authorized | null> {
   const secret = process.env.CRON_SECRET;
   // The rate limit already runs before this check (see GET). The comparison is
   // constant time: a `===` on the shared secret would leak where a guess
@@ -101,7 +112,6 @@ async function authorize(request: Request): Promise<Authorized | null> {
   ) {
     return { via: "cron", userId: null };
   }
-  const user = await getCurrentUser();
   if (user && (await isWorkspaceAdmin(user.id))) {
     return { via: "admin", userId: user.id };
   }
@@ -109,13 +119,17 @@ async function authorize(request: Request): Promise<Authorized | null> {
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
-  // The identity is resolved before the limit, so the per-user budget (the
-  // one a caller cannot dodge by rotating its client IP) can be applied.
-  const auth = await authorize(request);
+  // The **identity** is resolved before the limit, so the per-user budget (the
+  // one a caller cannot dodge by rotating their client IP) can be applied. The
+  // **secret comparison** is not part of that: it runs after the limit, so a
+  // wrong secret is throttled instead of being an unbounded guessing oracle.
+  const user = await getCurrentUser();
   const limited = rateLimit(request, "metrics", 120, 60_000, {
-    userId: auth?.userId ?? null,
+    userId: user?.id ?? null,
   });
   if (limited) return limited;
+
+  const auth = await authorize(request, user);
 
   if (auth === null) {
     return NextResponse.json(
