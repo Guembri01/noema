@@ -23,6 +23,15 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   not). The stored URL now passes the shared href allowlist (`http`, `https`,
   `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
   editor as well as in the read-only renderer.
+- The sign-in and sign-up actions never consulted the strategy registry, so
+  `AUTH_PASSWORD=disabled` and the `AUTH_STRATEGIES` allow-list were enforced
+  by the two SSO routes only: a deployment that had switched the local password
+  strategy off still accepted a direct POST to `/login` and `/signup` with the
+  credentials of a local account. Both switches are now enforced by the
+  actions themselves — with the password strategy off, every sign-in and every
+  sign-up is refused before an account is looked up — and `AUTH_PASSWORD` and
+  `AUTH_STRATEGIES` are documented in `.env.example`, the README and
+  `SECURITY.md`.
 
 ## [1.4.1] — 2026-10-17
 
