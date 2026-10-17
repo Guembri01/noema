@@ -11,6 +11,30 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Security
+
+- A stored file URL is no longer rendered as a link without a scheme check.
+  The FILES property value and the media "file" block took a user-controlled
+  URL straight into an anchor `href`, so a stored `javascript:` URL ran in the
+  app's origin for every member who opened the table or the page. Every
+  stored URL now passes the shared href allowlist before it reaches an `href`
+  (`http`, `https`, `mailto`, `tel` and safe relative paths).
+
+### Changed
+
+- The app's own write path accepts only the app's own `/api/files/...` asset
+  URLs for a FILES value. A FILES entry whose URL is not an app-owned asset
+  path is therefore **removed** from the cell the next time a file is
+  attached to it, without a notice. Such an entry can come from a client
+  that writes the property directly (the API or the MCP tool) — the entry is
+  never rendered as a link, whatever wrote it.
+- The MCP `update_property_value` tool writes a FILES value again. A write
+  gate that accepted only app-owned asset URLs made the tool refuse every
+  FILES value, because the MCP surface has no upload tool and therefore
+  cannot produce such a URL. The render gate is the security boundary
+  instead: a stored `javascript:`, `data:` or protocol-relative URL never
+  becomes an anchor, whichever client wrote it.
+
 ## [1.4.1] — 2026-10-17
 
 Repository housekeeping after the first public release. No product behaviour

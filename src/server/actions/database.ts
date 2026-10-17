@@ -27,6 +27,7 @@ import { dispatchWebhooks } from "@/lib/webhooks";
 import { nextRunFor } from "@/lib/recurrence";
 import { ORDER_STEP } from "@/lib/row-order";
 import { formatUniqueId, nextNumbers, type UniqueIdConfig } from "@/lib/unique-id";
+import { fileUrlsAreAppOwned } from "@/lib/validation";
 
 type Result<T = unknown> = ({ ok: true } & T) | { error: string };
 
@@ -401,6 +402,16 @@ export async function reorderRowsAction(
   return { ok: true };
 }
 
+/**
+ * Write one cell of a row.
+ *
+ * A FILES value may only point at the app's own uploaded assets, so every
+ * stored file URL must be an app-owned `/api/files/...` path. A value that
+ * carries any other URL (a `javascript:` one, an absolute `http(s)://` one,
+ * a traversal attempt) is refused here, so a hostile URL never reaches the
+ * table. Values without a `files` array are not FILES values and are left
+ * untouched.
+ */
 export async function setPropertyValueAction(
   rowPageId: string,
   propertyId: string,
@@ -414,6 +425,9 @@ export async function setPropertyValueAction(
   const auth = await authorizeDatabase(row.parentId ?? "");
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!fileUrlsAreAppOwned(value)) {
+    return { error: "That file link is not allowed." };
+  }
 
   await prisma.propertyValue.upsert({
     where: { propertyId_pageId: { propertyId, pageId: rowPageId } },

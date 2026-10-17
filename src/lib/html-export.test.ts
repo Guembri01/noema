@@ -22,6 +22,39 @@ const para = (text: string): RichBlock => ({
 const text = (value: string, marks?: RichBlock["marks"]): RichBlock =>
   marks ? { type: "text", text: value, marks } : { type: "text", text: value };
 
+/**
+ * Decode HTML character references exactly once — the way a browser decodes an
+ * attribute value. One pass, so `&amp;colon;` becomes `&colon;` and not `:`
+ * (that would be a second, browser-never-performed decode).
+ */
+const decodeEntitiesOnce = (value: string): string =>
+  value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (_match, entity: string) => {
+    switch (entity.toLowerCase()) {
+      case "amp":
+        return "&";
+      case "lt":
+        return "<";
+      case "gt":
+        return ">";
+      case "quot":
+        return '"';
+      case "apos":
+        return "'";
+      default:
+        return entity[1] === "x" || entity[1] === "X"
+          ? String.fromCodePoint(Number.parseInt(entity.slice(2), 16))
+          : String.fromCodePoint(Number(entity.slice(1)));
+    }
+  });
+
+/** The scheme a browser would see in an href, once it decoded the attribute. */
+const hrefScheme = (html: string): string | null => {
+  const match = /href="([^"]*)"/.exec(html);
+  if (!match) return null;
+  const decoded = decodeEntitiesOnce(match[1]);
+  return /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(decoded)?.[1] ?? null;
+};
+
 describe("escapeHtml", () => {
   it("escapes every HTML-significant character", () => {
     expect(escapeHtml('A & B <tag> "q" \'s\'')).toBe(
@@ -246,6 +279,27 @@ describe("blocksToHtml — XSS-ish inputs", () => {
     expect(blocksToHtml([trick("java\nscript:alert(1)")])).toBe("<p>x</p>");
     expect(blocksToHtml([trick("javascript%3Aalert(1)")])).toBe("<p>x</p>");
     expect(blocksToHtml([trick("//evil.example/x")])).toBe("<p>x</p>");
+  });
+
+  /**
+   * B52 (round 2, finding L3) — an HTML entity can hide the colon that
+   * declares a scheme (`javascript&colon;alert(1)`). The shared href
+   * allowlist does not decode entities, so the value survives it; the
+   * *export* is safe anyway because every attribute value is escaped: the
+   * `&` becomes `&amp;`, and a browser decodes an attribute value exactly
+   * once. What reaches the browser is therefore `javascript&colon;alert(1)`
+   * — a relative path, not a scheme. This test pins that reasoning for the
+   * export path, which is not React.
+   */
+  it("keeps an entity-encoded colon inert in the exported HTML", () => {
+    const p: RichBlock = {
+      type: "paragraph",
+      content: [text("x", [{ type: "link", attrs: { href: "javascript&colon;alert(1)" } }])],
+    };
+    const html = blocksToHtml([p]);
+    expect(html).toContain("href=\"javascript&amp;colon;alert(1)\"");
+    // What the browser decodes is not a scheme.
+    expect(hrefScheme(html)).toBeNull();
   });
 
   it("escapes attribute values (image alt injection)", () => {
