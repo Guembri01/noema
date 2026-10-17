@@ -13,6 +13,23 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ### Security
 
+- The public share pages no longer hand the visitor's IP address to a third
+  party. The read-only renderer emitted the stored picture `src` verbatim, so
+  opening a shared page made the **visitor's browser** fetch the picture from
+  the host it lives on — and that request carried the visitor's IP address and
+  the `Referer` of the share page, which names the instance the visitor came
+  from. Every picture that lives on another host (a document image, a bookmark
+  card's favicon and `og:image`, the page cover, the page icon) is now fetched
+  by the **server** through `/api/external-image`, and the share pages answer
+  with `Referrer-Policy: no-referrer`, so no `Referer` at all leaves them.
+  The proxy is not an open relay: only the hosts on the allowlist are fetched
+  (`EXTERNAL_IMAGE_ALLOWLIST`, defaulting to the image CDN the app already
+  trusts for cover photos), the shared SSRF guard refuses loopback, private and
+  cloud-metadata addresses, a redirect is never followed, only a known image
+  type is served, an SVG has to pass the same safety check an uploaded one does
+  and the response is capped in size. **A picture from a host that is not on
+  the allowlist is no longer shown** — add the host to `EXTERNAL_IMAGE_ALLOWLIST`
+  to have it back.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.

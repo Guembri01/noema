@@ -43,6 +43,14 @@ function styleSrcOf(csp: string): string {
   return csp.split(";").map((d) => d.trim()).find((d) => d.startsWith("style-src")) ?? "";
 }
 
+function imgSrcOf(csp: string): string {
+  return csp.split(";").map((d) => d.trim()).find((d) => d.startsWith("img-src")) ?? "";
+}
+
+function mediaSrcOf(csp: string): string {
+  return csp.split(";").map((d) => d.trim()).find((d) => d.startsWith("media-src")) ?? "";
+}
+
 /**
  * The middleware's *document* CSP adds 'unsafe-eval' in development only. Next's dev
  * runtime evaluates module boundaries, and without it a page renders but never
@@ -190,5 +198,41 @@ describe("CSP nonce middleware (src/middleware.ts)", () => {
     }
     // Excluded paths still get B61's static CSP from next.config headers().
     expect(SECURITY_HEADERS["Content-Security-Policy"]).not.toContain("nonce");
+  });
+});
+
+/**
+ * B69 - the public share pages (`/s/<token>`) get their own policy:
+ *
+ *  - no third-party host in `img-src`/`media-src` - every picture on that
+ *    page is fetched by the server's proxy, so the browser never talks to the
+ *    host that hosts it;
+ *  - `Referrer-Policy: no-referrer` - the share token lives in the URL, and
+ *    a `Referer` would carry it to every other host.
+ */
+describe("the share route policy (B69)", () => {
+  it("builds a policy without third-party media", () => {
+    const csp = buildCsp(makeNonce(), { allowExternalMedia: false });
+    expect(imgSrcOf(csp)).toBe("img-src 'self' data: blob:");
+    expect(mediaSrcOf(csp)).toBe("media-src 'self' blob: data:");
+    // The site's own policy keeps the third-party allowance.
+    expect(imgSrcOf(buildCsp())).toBe("img-src 'self' data: blob: https:");
+    expect(mediaSrcOf(buildCsp())).toBe("media-src 'self' blob: data: https:");
+  });
+
+  it("serves a share page without third-party media and with no Referer", () => {
+    const response = middleware(new NextRequest("http://localhost:3201/s/abc123"));
+    const served = response.headers.get("Content-Security-Policy")!;
+    expect(imgSrcOf(served)).toBe("img-src 'self' data: blob:");
+    expect(mediaSrcOf(served)).toBe("media-src 'self' blob: data:");
+    expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
+  });
+
+  it("leaves the rest of the site alone", () => {
+    const response = middleware(new NextRequest("http://localhost:3201/login"));
+    const served = response.headers.get("Content-Security-Policy")!;
+    expect(imgSrcOf(served)).toBe("img-src 'self' data: blob: https:");
+    // The site-wide policy comes from the header map in next.config.ts.
+    expect(response.headers.get("Referrer-Policy")).toBeNull();
   });
 });
