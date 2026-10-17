@@ -54,10 +54,23 @@ function analyse(rawTrigger, rawPanel) {
   const problems = [];
   const gapTop = panel.top - trigger.bottom;
   const gapBottom = trigger.top - panel.bottom;
-  const vertical = gapTop >= -4 && gapTop <= TOLERANCE + 8;
-  const flippedUp = gapBottom >= -4 && gapBottom <= TOLERANCE + 8;
-  if (!vertical && !flippedUp) {
-    problems.push(`vertically detached (gap ${Math.round(gapTop)}px)`);
+  const gapRight = panel.left - trigger.right;
+  const gapLeft = trigger.left - panel.right;
+
+  // Which side is it on? Beside (horizontal attachment) or below/above?
+  const besideRight = gapRight >= -4 && gapRight <= TOLERANCE + 8;
+  const besideLeft = gapLeft >= -4 && gapLeft <= TOLERANCE + 8;
+  const verticallyOverlaps = panel.top <= trigger.bottom + TOLERANCE && panel.bottom >= trigger.top - TOLERANCE;
+  const beside = (besideRight || besideLeft) && verticallyOverlaps;
+
+  const below = gapTop >= -4 && gapTop <= TOLERANCE + 8;
+  const above = gapBottom >= -4 && gapBottom <= TOLERANCE + 8;
+
+  if (!beside && !below && !above) {
+    problems.push(
+      "not attached on any side " +
+        `(vertical gap ${Math.round(gapTop)}px, horizontal gap ${Math.round(gapRight)}px)`,
+    );
   }
   const overlapsX = panel.left <= trigger.right + TOLERANCE && panel.right >= trigger.left - TOLERANCE;
   const overlapsY = panel.top <= trigger.bottom + TOLERANCE && panel.bottom >= trigger.top - TOLERANCE;
@@ -148,6 +161,8 @@ async function main() {
       return;
     }
     await trigger.scrollIntoViewIfNeeded().catch(() => {});
+    // Row actions are revealed on hover (the sidebar hides them until then).
+    await trigger.hover({ timeout: 5000 }).catch(() => {});
     const before = await trigger.boundingBox();
     await trigger.click({ timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(450);
@@ -218,6 +233,21 @@ async function main() {
     'button[aria-label="Change icon"], button[aria-label="Add icon"]',
     '[role="dialog"][aria-label="Pick an icon"]',
   );
+
+  // 2b. The sidebar page-row menu (the tree's own "⋯"). It is deliberately
+  //     `side="right"` — the convention for tree rows — but it must still open
+  //     attached to its row and stay on screen.
+  await check("sidebar page row menu", 'button[aria-label="Page options"]', '[role="menu"]');
+
+  // 2c. The breadcrumb overflow menu (hand-rolled `absolute` under a <details>).
+  await check(
+    "breadcrumb overflow menu",
+    '[data-testid="breadcrumb-overflow"] summary',
+    '[data-testid="breadcrumb-overflow"] ul',
+  );
+
+  // 2d. The active database view's options menu (only on a database page).
+  await check("database view menu", 'button[aria-label="View options"]', '[role="menu"]');
 
   // 3. A Select from the database toolbar (portalled listbox).
   await page.goto(`${BASE}/w/demo-workspace/tickets`, { waitUntil: "domcontentloaded" });

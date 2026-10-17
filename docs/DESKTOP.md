@@ -358,7 +358,60 @@ Two environment notes worth keeping:
   environment). macOS/Linux installers are produced by `desktop.yml` on native
   runners.
 
-## 12. Deferred, with the design already chosen
+## 12. Embedded database — the plan, with the spike already done
+
+**Goal:** the installer must work on a machine with **nothing** installed — no
+Postgres, no Docker. Today it provisions a Postgres via Docker when Docker Desktop
+is present, and otherwise falls back to a local URL (§5).
+
+**Spike verdict (measured on Windows x64, PGlite 0.5.10 / PostgreSQL 18.6):**
+
+| Question | Result |
+|---|---|
+| Real Postgres semantics? | **Yes** — reports `PostgreSQL 18.6 … wasm32-unknown-emscripten` |
+| `to_tsvector` / `plainto_tsquery` (the core of search) | **works** |
+| GIN index over `to_tsvector` | **works** |
+| JSON operators (all page content) | **works** |
+| Prisma `db push` of the real 45-model schema | **works** — and the schema needs **no changes** (no `extensions`, no native `@db.*`, no preview features) |
+| Prisma CRUD, nested writes, relation includes, joins, `groupBy`, `$transaction`, raw `tsvector` search, cascade deletes | **all work** over the wire protocol |
+| `pg_trgm` | **NOT available** — PGlite ships a limited extension set |
+
+**Two connection details that make it work** (both required):
+
+```
+postgresql://postgres:postgres@127.0.0.1:<port>/postgres?pgbouncer=true&connection_limit=1
+```
+
+- `connection_limit=1` — PGlite is a single in-process engine;
+- `pgbouncer=true` — without it Prisma's *named prepared statements* collide on
+  the long-lived engine and every query fails with
+  `42P05: prepared statement "s0" already exists`.
+
+**Remaining work for the embedded database:**
+
+1. Replace the `pg_trgm` dependency (raw SQL only): `src/lib/fts.ts`,
+   `src/server/queries.ts`, `src/lib/search-ranking.ts`, and the GIN/trgm index in
+   `scripts/setup-search.mjs`. Keep `tsvector` ranking, do the fuzzy scoring in
+   TypeScript (the ranking layer is already pure), and keep `ILIKE` fallbacks.
+   This is the *only* behaviour-affecting change, and it is testable against the
+   existing search tests.
+2. Ship `@electric-sql/pglite` (+ its socket server) inside the payload and start
+   it from the boot wrapper when no external URL is configured — no child Postgres
+   process, no `initdb`, ~13 MB.
+3. Resolution order becomes: configured URL → **embedded PGlite** → (Docker, kept
+   as an option for people who want their own server) → setup page.
+4. The `--managed` desktop smoke test gains a `--embedded` mode that proves a
+   clean machine works with Docker stopped.
+
+**Why not SQLite:** it would need a forked schema and a rewrite of the same search
+layer, with more semantics lost (no `tsvector`, no enums, no `Json` operators) —
+strictly worse than PGlite, which is real Postgres.
+
+**Why not bundled PostgreSQL binaries:** ~90 MB and a second process to
+`initdb`/supervise/upgrade, for no capability PGlite does not already provide.
+
+
+## 13. Not yet implemented (honest list)
 
 - **Embedded database (the big one)** — two options, both already scoped:
   1. **SQLite**: a `schema.desktop.prisma` with `provider = "sqlite"`, replace
