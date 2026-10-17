@@ -3,6 +3,9 @@ import { type Conditions } from "@/lib/automation-engine";
 import { rateLimit } from "@/lib/api-guard";
 import { bodyReadError, readTextBody } from "@/lib/body-limit";
 import { prisma } from "@/lib/db";
+// B63 — the column `Webhook.secret` holds the SEALED secret (an AES-256-GCM
+// envelope), not the shared secret itself.
+import { decryptWebhookSecret, sealLegacyWebhookSecret } from "@/lib/webhooks";
 import {
   DEFAULT_TOLERANCE_SECONDS,
   EVENT_KINDS,
@@ -113,6 +116,11 @@ function parseRules(request: Request): ActionRule[] {
  * `?rules=` / `x-noema-rules` JSON array supplies the {@link ActionRule} list
  * `mapEventToActions` gates on. The route is side-effect free apart from the
  * delivery row: it returns the planned actions for a worker to execute.
+ *
+ * B63 — the secret of the row is SEALED at rest, so the route opens the
+ * envelope before it verifies anything. The value the database holds is never
+ * used as the shared key: a dump of the row would then be a working credential
+ * for this endpoint.
  */
 export async function POST(request: Request) {
   const limited = rateLimit(request, "inbound-webhook", 60, 60_000);
@@ -134,6 +142,22 @@ export async function POST(request: Request) {
   if (typeof endpoint.secret !== "string" || endpoint.secret === "") {
     return NextResponse.json({ error: "Endpoint has no signing secret" }, { status: 401 });
   }
+  // B63 — the column holds the SEALED secret, so the signature is verified
+  // against the ciphertext unless the envelope is opened first. Two things
+  // follow from that, and the second one is the security property:
+  //
+  //   1. a request the provider signed with the real secret was refused,
+  //      because the MAC was compared with a MAC over the ciphertext;
+  //   2. a request signed with the value a database dump yields was ACCEPTED,
+  //      so the dump was a working credential for this endpoint.
+  //
+  // The envelope is opened here, and a secret that cannot be opened is no
+  // secret at all: the route refuses it with the same message as a missing
+  // one, so the answer does not tell an outsider which endpoints are broken.
+  const secret = decryptWebhookSecret(endpoint.secret);
+  if (!secret) {
+    return NextResponse.json({ error: "Endpoint has no signing secret" }, { status: 401 });
+  }
 
   const provider = readProvider(request);
   let body: string;
@@ -146,7 +170,7 @@ export async function POST(request: Request) {
 
   const verification = verifySignature({
     provider,
-    secret: endpoint.secret,
+    secret,
     body,
     headers: headerRecord(request),
     now,
@@ -158,6 +182,12 @@ export async function POST(request: Request) {
       { status: 401 },
     );
   }
+
+  // B63 — the request proved that this endpoint works, so a row that still
+  // holds its secret in cleartext is sealed now: the plaintext leaves the
+  // database. It happens after the verification on purpose — only the holder
+  // of the secret may trigger the write.
+  await sealLegacyWebhookSecret({ id: endpoint.id, secret: endpoint.secret });
 
   const event = parseEvent(provider, body);
 

@@ -619,6 +619,23 @@ list marks it as **No access**.
   (`read:pages`, `read:comments`, `read:databases`), and a read without that
   scope is refused with the answer a tool call gets — **-32003**
   `Insufficient scope.` — before the database is touched at all.
+- **The inbound webhook route verified the provider's signature against the
+  value the database holds, not against the secret.** The signing secret of a
+  hook is sealed at rest (AES-256-GCM, `v2:…`), so the column
+  `Webhook.secret` holds an envelope — but `POST /api/webhooks/inbound` handed
+  that envelope to the verifier as the shared key. Two things followed from
+  it: a request the provider signed with the real secret was refused with
+  `401 Invalid signature` (the MAC was compared with a MAC over the
+  ciphertext), and a request signed with the value a database dump yields was
+  **accepted** — the dump was a working credential for that endpoint. The
+  route now opens the envelope before it verifies anything and refuses an
+  endpoint whose secret cannot be opened, with the same message as a missing
+  one.
+- A hook whose secret is still in cleartext — a row that predates the sealing
+  — is now sealed the moment the app reads it, so the plaintext leaves the
+  database without an operator step. The write is best-effort: a row that
+  cannot be sealed keeps working, and a row that already holds an envelope is
+  never touched.
 
 
 
