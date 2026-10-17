@@ -13,9 +13,13 @@
 // the four the round-4 review measured: the taint is not transitive (a local
 // derived from a tainted local), the taint hides in a destructuring, the
 // tainted local is re-assigned, and the raw value arrives under a receiver
-// name the gate did not know. A last fixture is the *clean* case: a write
-// through the helper has to stay green, because a gate that fails everything
-// is no gate.
+// name the gate did not know. The round-5 review measured that the taint
+// only follows a raw value when it lands in a **visible** `.parentId` read;
+// the four the round-6 review measured are the shapes whose initializer the
+// gate cannot resolve at all — an object spread, the result of a call, a
+// template literal, a JSON round trip. A last fixture is the *clean* case: a
+// write through the helper has to stay green, because a gate that fails
+// everything is no gate.
 //
 // The allow-list has a fixture of its own: every entry of it has to hold for
 // the one path it describes and for no other — the entry names the value it
@@ -191,6 +195,53 @@ export async function probeHelper(input: { parentId?: string }, workspaceId: str
 }
 `,
     expect: `${RAW} (the local \`parentId\` is assigned from the raw request value)`,
+  },
+  {
+    name: "a local the gate cannot resolve — an object spread (round 6, L1)",
+    file: "probe-unresolved-spread.ts",
+    source: `export async function probeUnresolvedSpread(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const o = { ...input };
+  const parentId = o.parentId ?? checked.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` takes the value from \`o\`, whose origin the gate cannot see)`,
+  },
+  {
+    name: "a local the gate cannot resolve — the result of a call (round 6, L1)",
+    file: "probe-unresolved-call.ts",
+    source: `export async function probeUnresolvedCall(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const o = Object.assign({}, input);
+  const parentId = o.parentId ?? checked.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` takes the value from \`o\`, whose origin the gate cannot see)`,
+  },
+  {
+    name: "a local the gate cannot resolve — a template literal (round 6, L1)",
+    file: "probe-unresolved-template.ts",
+    source: `export async function probeUnresolvedTemplate(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const parentId = \`\${input.parentId}\` ?? checked.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` is built from a template literal whose interpolation the gate cannot read)`,
+  },
+  {
+    name: "a local the gate cannot resolve — a JSON round trip (round 6, L1)",
+    file: "probe-unresolved-json.ts",
+    source: `export async function probeUnresolvedJson(input: { parentId?: string }, workspaceId: string) {
+  const checked = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const o = JSON.parse(JSON.stringify(input));
+  const parentId = o.parentId ?? checked.parentId;
+  await prisma.page.create({ data: { workspaceId, parentId, title: "probe" } });
+}
+`,
+    expect: `${RAW} (the local \`parentId\` takes the value from \`o\`, whose origin the gate cannot see)`,
   },
   {
     name: "a write through the helper stays green",

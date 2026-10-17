@@ -712,7 +712,13 @@ What that means for an operator:
   entry whose context is gone releases nothing, so a path that loses its
   authorization turns the gate red instead of staying green.
   It is a safety net over the tests, not a proof — a write it cannot recognise is
-  not covered by it. The holes that are known today are listed in the gate's
+  not covered by it. The taint of a raw request value is transitive as well: a
+  local that is derived from a tainted local is tainted too, and a read of
+  `.parentId` from a name whose origin the gate cannot see — a parameter, a
+  module-level name, or a local whose initializer the gate cannot resolve (a
+  spread it cannot follow, a call whose result it cannot see into, an
+  interpolation it cannot read) — is a raw value, whatever that receiver is
+  called. The holes that are known today are listed in the gate's
   own docstring (a raw SQL write, a write outside `src/`, a member assignment
   such as `data.parentId = …`, a computed receiver (`prisma["page"]`), a
   payload that arrives through a spread the gate cannot read, and a proof that

@@ -28,8 +28,13 @@
 //      raw value, whatever its name says. The taint is **transitive**: a
 //      local that is derived from a tainted local is tainted as well, and a
 //      read of `.parentId` from a name whose origin the gate cannot see (a
-//      parameter, a module-level name) is a raw value, whatever the name
-//      of that receiver is.
+//      parameter, a module-level name, **or a local whose initializer the
+//      gate cannot resolve** — a spread it cannot follow, a call whose
+//      result it cannot see into, an interpolation it cannot read) is a raw
+//      value, whatever the name of that receiver is. The gate resolves a
+//      local it can see the origin of, and follows the taint there; a local
+//      it cannot resolve holds a value of an origin nobody can show, so the
+//      taint may hide in it — and the write is reported, not released.
 //
 // It is a **safety net over the tests**, not a proof. What it sees:
 //
@@ -405,7 +410,11 @@ function mask(text) {
         }
         end += 1;
       }
-      blank(i, end);
+      // The backticks of a template literal stay visible: the gate cannot read
+      // the interpolation, but it has to see that there is one — a local that
+      // is built from a template literal may carry the raw request value.
+      if (quote === "`") blank(i + 1, end - 1);
+      else blank(i, end);
       i = end;
       lastChar = quote;
       lastWord = "";
@@ -809,38 +818,52 @@ function assignments(body) {
     event.kind = null;
     event.direct = false;
     event.from = null;
+    event.reason = null;
   }
   return events;
 }
 
 /**
  * The state of the locals of a function: the names that carry the parent the
- * helper proved, the names whose `.parentId` **is** the proved value, and the
- * names that carry a **raw** parent.
+ * helper proved, the names whose `.parentId` **is** the proved value, the
+ * names that carry a **raw** parent, and the names whose value the gate
+ * could **not** resolve.
+ *
+ * A name of the last group holds a value of an origin the gate cannot see —
+ * an initializer it could not follow (a spread of a value it does not know, a
+ * call whose result it cannot see into, a name it does not know). The taint
+ * may hide in it, so a read of `.parentId` from such a name is a raw value.
  */
 function stateOf(events) {
   const proved = new Set();
   const receivers = new Set();
   const tainted = new Map();
   const unknown = new Set();
+  // The kind of the **last** assignment of every name: a name that is
+  // resolved again after an unresolved assignment holds the resolved value.
+  const kinds = new Map();
   for (const event of events) {
+    kinds.set(event.name, event.kind);
     if (event.kind === "helper") {
       receivers.add(event.name);
       continue;
     }
     if (event.kind === TAINTED) {
-      tainted.set(event.name, { direct: event.direct, from: event.from });
-      continue;
-    }
-    if (event.kind === UNKNOWN) {
-      unknown.add(event.name);
+      tainted.set(event.name, {
+        direct: event.direct,
+        from: event.from,
+        reason: event.reason,
+      });
       continue;
     }
     if (event.kind === PROVED) proved.add(event.name);
   }
+  for (const [name, kind] of kinds) {
+    if (kind === UNKNOWN) unknown.add(name);
+  }
   for (const name of unknown) proved.delete(name);
   for (const name of tainted.keys()) proved.delete(name);
-  return { proved, receivers, tainted };
+  return { proved, receivers, tainted, unknown };
 }
 
 /**
@@ -854,17 +877,46 @@ function parentReceivers(value) {
  * Whether a read of `.parentId` from the given receiver is a raw value.
  *
  * A receiver whose origin the gate cannot see — a parameter, a module-level
- * name — is raw: nobody can show where the value came from. A receiver that
- * is a local of the function is not raw on its own: the gate sees where that
- * local comes from, and the taint follows it there. The helper's own result
- * is the proved value.
+ * name — is raw: nobody can show where the value came from. The same holds
+ * for a **local whose initializer the gate could not resolve**: the gate does
+ * not see where that local comes from, so the taint may hide in it and a
+ * read of `.parentId` from it is raw as well. A receiver that is a local the
+ * gate **can** resolve is not raw on its own: the gate sees where that local
+ * comes from, and the taint follows it there. The helper's own result is the
+ * proved value.
  */
 function rawReceiver(receiver, state, locals) {
   if (receiver.includes(".")) return true;
   if (state.receivers.has(receiver)) return false;
   if (state.tainted.has(receiver)) return true;
+  if (state.unknown.has(receiver)) return true;
   if (locals.has(receiver)) return false;
   return true;
+}
+
+/**
+ * Whether the name at `index` stands on its own — `checked.parentId` names
+ * `checked`, not `parentId`. The dots of a **spread** (`...input`) are no
+ * property access: the name behind them is a name of its own, and the gate
+ * has to see it — a spread of a value the gate cannot see into is a local
+ * whose origin the gate cannot resolve.
+ */
+function standsAlone(value, index) {
+  const before = value.slice(0, index);
+  if (before.endsWith("...")) return true;
+  const last = before.at(-1);
+  return !last || !/[.\w$]/.test(last);
+}
+
+/**
+ * Whether the name at `index` is the key of an object literal — `{ parentId:
+ * value }` names the property `parentId`, not a value of its own.
+ */
+function isObjectKey(value, index) {
+  const before = value.slice(0, index).trimEnd();
+  if (!before.endsWith("{") && !before.endsWith(",")) return false;
+  const after = value.slice(index).replace(/^[A-Za-z0-9_$]+/, "").trimStart();
+  return after.startsWith(":");
 }
 
 /**
@@ -872,7 +924,27 @@ function rawReceiver(receiver, state, locals) {
  * name of its own (`checked.parentId` mentions `checked`, not `parentId`).
  */
 function ownNames(value) {
-  return [...value.matchAll(/(?<![.\w$])([A-Za-z0-9_$]+)/g)].map((match) => match[1]);
+  const names = [];
+  for (const match of value.matchAll(/[A-Za-z0-9_$]+/g)) {
+    if (isObjectKey(value, match.index)) continue;
+    if (standsAlone(value, match.index)) names.push(match[0]);
+  }
+  return names;
+}
+
+/**
+ * Whether the expression mentions one of the given names — a name that stands
+ * on its own.
+ */
+function mentionsName(value, names) {
+  for (const name of names) {
+    const pattern = new RegExp(`\\b${name}\\b`, "g");
+    let match;
+    while ((match = pattern.exec(value)) !== null) {
+      if (standsAlone(value, match.index)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -901,28 +973,57 @@ function unprovedName(value, state, locals) {
 }
 
 /**
+ * The names a spread takes its value from — `{ ...input }` spreads `input`.
+ */
+function spreadSources(value) {
+  const sources = [];
+  for (const match of value.matchAll(/\.\.\.\s*([A-Za-z0-9_$]+)/g)) sources.push(match[1]);
+  return sources;
+}
+
+/**
  * The tainted local the expression mentions — the raw value hides in it. A
  * plain name only counts when it stands on its own: `checked.parentId` is the
  * checked field, `parentId` is the local.
  */
 function taintedName(value, tainted) {
   for (const name of tainted.keys()) {
-    if (new RegExp(`(?<![.\\w$])${name}\\b`).test(value)) return name;
+    if (mentionsName(value, [name])) return name;
   }
   return null;
 }
 
 /** Whether the expression mentions one of the proved names. */
 function mentionsProved(value, state) {
-  for (const name of state.proved) {
-    // A plain name only counts when it stands on its own — `input.parentId`
-    // is the request value, not the checked one.
-    if (new RegExp(`(?<![.\\w$])${name}\\b`).test(value)) return true;
-  }
+  if (mentionsName(value, state.proved)) return true;
   for (const name of state.receivers) {
     if (new RegExp(`\\b${name}\\s*\\.\\s*parentId\\b`).test(value)) return true;
+    // A spread of the helper's result carries its fields — `{ ...checked }`
+    // holds the checked parent.
+    if (new RegExp(`\\.\\.\\.\\s*${name}\\b`).test(value)) return true;
   }
   return false;
+}
+
+/**
+ * Whether the initializer is the **call** of a function — the value of the
+ * local is then what the call returns, not what it is given.
+ */
+function callResult(init) {
+  return /^\s*(?:await\s+)?[A-Za-z0-9_$]+(?:\s*\.\s*[A-Za-z0-9_$]+)*\s*\(/.test(init);
+}
+
+/**
+ * Whether the initializer hides an interpolation. The masker blanks the
+ * interpolation of a template literal — the gate cannot read it — so a local
+ * that is built from one may carry the raw request value. The value of a
+ * call is what the call returns, not its arguments: a template literal in the
+ * arguments of a call does not flow into the local — and a local that holds
+ * the result of a call is one the gate cannot resolve anyway.
+ */
+function hidesInterpolation(init) {
+  if (callResult(init)) return false;
+  return init.includes("`");
 }
 
 /**
@@ -931,23 +1032,45 @@ function mentionsProved(value, state) {
  * The taint is **transitive**: a local that is derived from a tainted local
  * carries the raw value as well, and the derivation does not have to be a
  * `.parentId` read (`const parentId = raw ?? checked.parentId`).
+ *
+ * A local the gate cannot resolve is tainted as well: the gate does not see
+ * where that local comes from, so the raw value may hide in it.
  */
 function classify(init, state, locals) {
   // A call hands in the result of that call — the gate cannot attribute it to
   // the proved value, whatever the arguments mention. A local that is handed
   // such a value loses the state it had: the parent it carried is not the
   // one that is written any more.
-  if (isCall(init)) return { kind: UNKNOWN, direct: false, from: null };
+  if (isCall(init)) return { kind: UNKNOWN, direct: false, from: null, reason: null };
   const from = taintedName(init, state.tainted);
-  if (from) return { kind: TAINTED, direct: false, from };
+  if (from) return { kind: TAINTED, direct: false, from, reason: null };
   for (const receiver of parentReceivers(init)) {
     if (rawReceiver(receiver, state, locals)) {
-      return { kind: TAINTED, direct: true, from: null };
+      // A receiver the gate cannot see into: a parameter, a module-level name
+      // or a local whose initializer it could not resolve.
+      if (state.unknown.has(receiver)) {
+        return { kind: TAINTED, direct: false, from: receiver, reason: "unresolved" };
+      }
+      return { kind: TAINTED, direct: true, from: null, reason: null };
     }
   }
-  if (unprovedName(init, state, locals)) return { kind: UNKNOWN, direct: false, from: null };
-  if (mentionsProved(init, state)) return { kind: PROVED, direct: false, from: null };
-  return { kind: null, direct: false, from: null };
+  // A template literal hides its interpolation: the gate cannot see what the
+  // local is built from, so the raw request value may hide in it.
+  if (hidesInterpolation(init)) {
+    return { kind: TAINTED, direct: false, from: null, reason: "hidden" };
+  }
+  // A spread of a local the gate could not resolve hands over a value of an
+  // origin the gate cannot see.
+  for (const source of spreadSources(init)) {
+    if (state.unknown.has(source)) {
+      return { kind: UNKNOWN, direct: false, from: null, reason: null };
+    }
+  }
+  if (unprovedName(init, state, locals)) {
+    return { kind: UNKNOWN, direct: false, from: null, reason: null };
+  }
+  if (mentionsProved(init, state)) return { kind: PROVED, direct: false, from: null, reason: null };
+  return { kind: null, direct: false, from: null, reason: null };
 }
 
 /**
@@ -974,11 +1097,13 @@ function analyseScope(body) {
       if (
         verdict.kind !== event.kind ||
         verdict.direct !== event.direct ||
-        verdict.from !== event.from
+        verdict.from !== event.from ||
+        verdict.reason !== event.reason
       ) {
         event.kind = verdict.kind;
         event.direct = verdict.direct;
         event.from = verdict.from;
+        event.reason = verdict.reason;
         changed = true;
       }
     }
@@ -995,9 +1120,14 @@ function valueVerdict(value, state, locals) {
   const from = taintedName(value, state.tainted);
   if (from) {
     const taint = state.tainted.get(from);
-    const hint = taint.direct
-      ? `the local \`${from}\` is assigned from the raw request value`
-      : `the local \`${from}\` carries the raw request value from \`${taint.from}\``;
+    const hint =
+      taint.reason === "unresolved"
+        ? `the local \`${from}\` takes the value from \`${taint.from}\`, whose origin the gate cannot see`
+        : taint.reason === "hidden"
+          ? `the local \`${from}\` is built from a template literal whose interpolation the gate cannot read`
+          : taint.direct
+            ? `the local \`${from}\` is assigned from the raw request value`
+            : `the local \`${from}\` carries the raw request value from \`${taint.from}\``;
     return { verdict: "raw", hint: ` (${hint})` };
   }
   for (const receiver of parentReceivers(value)) {

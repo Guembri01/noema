@@ -208,7 +208,13 @@ the drift (§13).
   not proved. The allow-list of the gate is **precise**: every entry names the
   value it releases **and** the proof that makes that value safe (the
   authorization the entry relies on), and the gate checks that the proof is
-  still there — an entry whose context is gone releases nothing. It is a
+  still there — an entry whose context is gone releases nothing. The taint of a
+  raw request value is transitive as well: a local that is derived from a
+  tainted local is tainted too, and a read of `.parentId` from a name whose
+  origin the gate cannot see — a parameter, a module-level name, or a local
+  whose initializer the gate cannot resolve (a spread it cannot follow, a
+  call whose result it cannot see into, an interpolation it cannot read) — is
+  a raw value, whatever that receiver is called. It is a
   safety net over the tests, not a proof: a write it cannot recognise is not
   covered by it. The holes that are known today are listed in the gate's own
   docstring — a raw SQL write, a write outside `src/`, a member assignment
