@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
+import { MessageSquarePlus, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { deleteChatThreadAction, renameChatThreadAction } from "@/server/actions/chat";
 import { Button } from "@/components/ui/button";
@@ -112,13 +112,20 @@ export function ChatThreadSkeleton({ rows = 5 }: { rows?: number }) {
   );
 }
 
-/** The empty state for the thread list: icon + title + hint + primary action. */
+/**
+ * The empty state for the thread list: icon + title + hint + primary action.
+ *
+ * The glyph is the assistant's usual `Sparkles` — the same one the panel's empty
+ * state and every answer attribution use. The lucide `Bot` head that used to sit
+ * here was the last generic "chatbot" face in the product: the button and the
+ * panel header wear `NoemaMark` now, and a placeholder robot is not an identity.
+ */
 export function ChatThreadsEmpty({ locale, onNew }: { locale: string; onNew: () => void }) {
   return (
     <div data-testid="chat-threads-empty" className="min-h-0 flex-1">
       <EmptyState
         variant="compact"
-        icon={<Bot className="h-4 w-4" />}
+        icon={<Sparkles className="h-4 w-4" />}
         title={t(locale, "chatEmptyThreads")}
         description={t(locale, "askAboutNotes")}
         primaryAction={
