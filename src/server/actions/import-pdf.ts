@@ -8,6 +8,7 @@ import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { assembleDoc, describeImport, type PdfImportSummary } from "@/lib/pdf-import";
 import { extractedTextToPages, pdfBlocksToRichNodes } from "@/lib/pdf-import-blocks";
 import { assertScopedParent } from "@/lib/page-parent";
+import { sanitizeDocHrefs } from "@/lib/validation";
 import type { ImportCounts } from "@/lib/importers";
 
 /**
@@ -119,7 +120,9 @@ export async function importPdfTextAction(input: {
         icon: "📄",
         createdById: user.id,
         position: (last?.position ?? 0) + 1000,
-        content: { type: "doc", content } as unknown as Prisma.InputJsonValue,
+        // B110: the imported document meets the same href allowlist the save
+        // path applies (`parsePageContent`).
+        content: sanitizeDocHrefs({ type: "doc", content }) as unknown as Prisma.InputJsonValue,
       },
       select: { id: true },
     });
