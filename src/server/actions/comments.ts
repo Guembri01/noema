@@ -138,13 +138,20 @@ export async function addCommentAction(input: {
       select: { authorId: true },
     });
     if (parent && parent.authorId !== user.id) {
-      await prisma.notification.create({
-        data: {
-          userId: parent.authorId,
-          type: "comment.reply",
-          payload: { pageId: parsed.data.pageId, commentId: comment.id },
-        },
-      });
+      // The reply reaches the author of the parent comment only while they
+      // still are a member of the workspace — the mention path below resolves
+      // the same set before it writes a row. A member who was removed must not
+      // be told that somebody answered their comment.
+      const parentAccess = await getWorkspaceAccess(parent.authorId, page.workspaceId);
+      if (parentAccess) {
+        await prisma.notification.create({
+          data: {
+            userId: parent.authorId,
+            type: "comment.reply",
+            payload: { pageId: parsed.data.pageId, commentId: comment.id },
+          },
+        });
+      }
     }
   }
 
