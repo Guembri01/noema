@@ -157,6 +157,12 @@ export async function deleteWorkspaceAction(
     return { error: "The name you typed does not match this workspace." };
   }
   await prisma.workspace.delete({ where: { id: workspaceId } });
+  // The notification rows of the deleted workspace go with it: they carry the
+  // workspace id and, for a ticket assignment, the title — the inbox of the
+  // workspaces the members stay in would go on naming them.
+  await prisma.notification.deleteMany({
+    where: { payload: { path: ["workspaceId"], equals: workspaceId } },
+  });
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -260,6 +266,12 @@ export async function removeMemberAction(
   await prisma.workspaceMember.delete({ where: { id: target.id } });
   await logActivity({ workspaceId, actorId: user.id, action: "member.removed", targetType: "member", targetId: userId });
   await prisma.pagePermission.deleteMany({ where: { userId, page: { workspaceId } } });
+  // A removed member keeps nothing of that workspace: the notification rows
+  // carry the workspace id in their payload, so the inbox can go on naming the
+  // pages and tickets of a workspace the person no longer belongs to.
+  await prisma.notification.deleteMany({
+    where: { userId, payload: { path: ["workspaceId"], equals: workspaceId } },
+  });
   revalidatePath("/w", "layout");
   return { ok: true };
 }
@@ -286,6 +298,13 @@ export async function leaveWorkspaceAction(workspaceId: string): Promise<Workspa
   await prisma.workspaceMember.delete({ where: { id: membership.id } });
   await logActivity({ workspaceId, actorId: user.id, action: "member.left", targetType: "member", targetId: user.id });
   await prisma.pagePermission.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
+  // The notification rows go with the membership, exactly like the permission
+  // rows above: they carry the workspace id in their payload, so the inbox of
+  // the workspaces the person stays in would go on naming the pages and
+  // tickets of the workspace they left.
+  await prisma.notification.deleteMany({
+    where: { userId: user.id, payload: { path: ["workspaceId"], equals: workspaceId } },
+  });
   revalidatePath("/", "layout");
   return { ok: true };
 }
