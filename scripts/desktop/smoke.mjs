@@ -90,9 +90,18 @@ async function main() {
   if (MANAGED) {
     check(true, "managed mode: the app provisions Postgres with Docker");
     if (FRESH) {
-      const dropped = spawnSync("docker", ["exec", MANAGED_CONTAINER, "dropdb", "-U", MANAGED_USER, "--if-exists", MANAGED_DB], { encoding: "utf8" });
+      // The container has to exist before anything can be dropped: ask the helper
+      // to provision it (exactly what the boot wrapper does), then reset the
+      // database so migrations are genuinely exercised.
+      const ensured = spawnSync(process.execPath, [join(payload, "docker-db.cjs"), "--ensure"], {
+        cwd: payload,
+        env: { ...process.env, NOEMA_DATA_DIR: dataDir },
+        encoding: "utf8",
+      });
+      check(ensured.status === 0, "provisioned the managed database", (ensured.stdout || "").trim().split("\n").pop());
+      spawnSync("docker", ["exec", MANAGED_CONTAINER, "dropdb", "-U", MANAGED_USER, "--if-exists", MANAGED_DB], { encoding: "utf8" });
       const created = spawnSync("docker", ["exec", MANAGED_CONTAINER, "createdb", "-U", MANAGED_USER, MANAGED_DB], { encoding: "utf8" });
-      check(created.status === 0, "recreated an empty database", dropped.status === 0 ? "dropped first" : "created fresh");
+      check(created.status === 0, "reset to an empty database");
     }
   } else {
     url = databaseUrl();
@@ -164,6 +173,14 @@ async function main() {
 
     const css = await fetch(`http://127.0.0.1:${port}/login`).then((r) => r.text());
     check(/<link[^>]+\.css|styles/i.test(css), "stylesheets are linked (static assets copied)");
+
+    // The payload is the desktop build, so `/` must onboard rather than pitch:
+    // the shell runs the server with NOEMA_RUNTIME=desktop, and the landing page
+    // redirects to sign-up (no users yet) or sign-in.
+    const root = await fetch(`http://127.0.0.1:${port}/`);
+    const rootHtml = await root.text();
+    check(!rootHtml.includes("A local-first workspace for notes"), "/ does not serve the marketing landing page");
+    check(/type="password"|name="password"/.test(rootHtml), "/ lands on an auth form");
 
     if (MANAGED) {
       // The wrapper must have created the schema inside the container it provisions.

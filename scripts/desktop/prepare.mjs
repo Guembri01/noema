@@ -65,6 +65,47 @@ const size = (path) => {
 
 const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
+/**
+ * Refuse to reuse a build that is older than the source.
+ *
+ * `NOEMA_SKIP_BUILD=1` exists so a smoke test or a re-bundle does not pay for a
+ * fresh `next build` — but it also happily ships stale application code, which is
+ * how a desktop payload ended up without an app/page.tsx change that had already
+ * been written and tested. Comparing the build stamp against `src/` turns that
+ * silent staleness into a clear error.
+ */
+function assertBuildIsFresh() {
+  const stamp = join(root, ".next", "BUILD_ID");
+  if (!existsSync(stamp)) return;
+  const builtAt = statSync(stamp).mtimeMs;
+  let newest = 0;
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules") continue;
+        walk(full);
+      } else if (/\.(tsx?|css|json)$/.test(entry.name)) {
+        newest = Math.max(newest, statSync(full).mtimeMs);
+      }
+    }
+  };
+  walk(join(root, "src"));
+  if (newest > builtAt + 1000) {
+    throw new Error(
+      [
+        "refusing to reuse .next: src/ changed after the last build.",
+        `  build stamp: ${new Date(builtAt).toISOString()}`,
+        `  newest source: ${new Date(newest).toISOString()}`,
+        "",
+        "Run without NOEMA_SKIP_BUILD=1 so the payload contains current code:",
+        "",
+        "    npm run desktop:prepare",
+      ].join("\n"),
+    );
+  }
+}
+
 function buildStandalone() {
   console.log("· next build (output: standalone)…");
   run("npx.cmd", ["next", "build"], {
@@ -198,9 +239,29 @@ function copyNodeRuntime() {
   const triple = targetTriple();
   mkdirSync(binariesDir, { recursive: true });
   const target = nodeSidecarPath(triple);
-  // `process.execPath` is the Node that is running this script, so the runtime
-  // we ship always matches the runtime we built with.
-  cpSync(process.execPath, target);
+
+  // Windows locks a running executable, and the staged server *runs from this
+  // payload* during smoke tests — so this copy is the step that fails with EPERM
+  // while a bundled server is alive. Identical content is the normal case (same
+  // Node), so a locked-but-identical binary is not worth failing a build over.
+  const sameSize = existsSync(target) && statSync(target).size === statSync(process.execPath).size;
+  if (sameSize && readFileSync(target).equals(readFileSync(process.execPath))) {
+    console.log("· node runtime already current (identical, left in place)");
+    return;
+  }
+  try {
+    cpSync(process.execPath, target);
+  } catch (error) {
+    if (["EPERM", "EBUSY", "EACCES"].includes(error.code)) {
+      throw new Error(
+        [
+          `cannot replace the bundled runtime at ${target} — it is in use.`,
+          "Close the running Noema app (or any 'bundled server' smoke test) and retry.",
+        ].join("\n"),
+      );
+    }
+    throw error;
+  }
   console.log(`· node runtime → src-tauri/binaries/${target.split(/[\\/]/).pop()} (${mb(size(target))})`);
 }
 
@@ -213,17 +274,29 @@ function stageIntoTauri() {
   // Staged via a temporary directory and a rename: a build that is interrupted
   // (or a smoke test running concurrently) then sees either the old payload or
   // the new one, never a half-copied tree.
+  //
+  // The old payload is renamed out of the way rather than deleted first, because
+  // Windows refuses to delete files that a running server still holds open — and
+  // the smoke tests run the server *from* this directory.
   const target = join(root, "src-tauri", "server");
   const staging = join(root, "src-tauri", "server.tmp");
+  const retired = join(root, "src-tauri", `server.old-${Date.now().toString(36)}`);
   rmSync(staging, { recursive: true, force: true });
   cpSync(standalone, staging, { recursive: true });
-  rmSync(target, { recursive: true, force: true });
+  if (existsSync(target)) renameSync(target, retired);
   renameSync(staging, target);
+  try {
+    rmSync(retired, { recursive: true, force: true });
+  } catch {
+    // Locked by a running server: it is gitignored and gets cleaned up later.
+    console.log(`· left ${retired.split(/[\\/]/).pop()} in place (in use); it is gitignored`);
+  }
   console.log(`· staged payload → src-tauri/server/ (${mb(size(target))})`);
 }
 
 function main() {
-  if (process.env.NOEMA_SKIP_BUILD !== "1") buildStandalone();
+  if (process.env.NOEMA_SKIP_BUILD === "1") assertBuildIsFresh();
+  else buildStandalone();
   // After the build, only the build's own output must exist…
   assertPayload([["server.js", "the Next standalone server entry"]]);
   copyRuntimeAssets();

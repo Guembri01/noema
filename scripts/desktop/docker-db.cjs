@@ -64,7 +64,12 @@ function writeState(dataDir, state) {
 }
 
 function run(command, args, options = {}) {
-  return spawnSync(command, args, { encoding: "utf8", ...options });
+  const result = spawnSync(command, args, { encoding: "utf8", ...options });
+  // Windows tools print CRLF; a trailing \r inside a password or a port silently
+  // breaks whatever consumes it.
+  if (typeof result.stdout === "string") result.stdout = result.stdout.replace(/\r/g, "");
+  if (typeof result.stderr === "string") result.stderr = result.stderr.replace(/\r/g, "");
+  return result;
 }
 
 /** `docker ...`, never throwing: a missing Docker is a normal outcome here. */
@@ -137,7 +142,7 @@ function containerEnv() {
     .filter(Boolean)
     .map((line) => {
       const at = line.indexOf("=");
-      return [line.slice(0, at), line.slice(at + 1)];
+      return [line.slice(0, at).trim(), line.slice(at + 1).trim()];
     });
   return Object.fromEntries(pairs);
 }
@@ -202,6 +207,38 @@ async function waitForPostgres() {
     await sleep(1500);
   }
   return false;
+}
+
+/**
+ * Can we actually authenticate with these credentials?
+ *
+ * `pg_isready` only says a server is listening, and a `docker exec psql` without
+ * `-h` connects over the local socket, where the image trusts everyone — so
+ * neither proves the password works. This connects over **TCP inside the
+ * container**, which goes through `scram-sha-256` exactly like the app will.
+ *
+ * It exists because the failure it catches is nasty: a container recreated over a
+ * volume that already holds a cluster keeps the *old* password (the image only
+ * honours `POSTGRES_PASSWORD` on first init), so the app would hand the server a
+ * password that cannot work and the user would see an endless "unhealthy".
+ */
+function verifyCredentials(password) {
+  const result = docker([
+    "exec",
+    "-e",
+    `PGPASSWORD=${password}`,
+    CONTAINER,
+    "psql",
+    "-h",
+    "127.0.0.1",
+    "-U",
+    DB_USER,
+    "-d",
+    DB_NAME,
+    "-tAc",
+    "select 1",
+  ]);
+  return result.status === 0 && String(result.stdout || "").trim() === "1";
 }
 
 /**
@@ -283,6 +320,10 @@ async function ensureManagedDatabase({ dataDir } = {}) {
         log(`${CONTAINER} did not become ready`);
         usable = false;
       }
+      if (usable && !verifyCredentials(credentials.password)) {
+        log("the container's credentials do not match its data — recreating it");
+        usable = false;
+      }
       if (usable) {
         if (!stored?.password) {
           // Remember what we recovered, so the next launch is a plain read.
@@ -320,6 +361,12 @@ async function ensureManagedDatabase({ dataDir } = {}) {
   if (!port) return null;
   if (!(await waitForPostgres())) {
     log(`${CONTAINER} was created but did not become ready`);
+    return null;
+  }
+  if (!verifyCredentials(password)) {
+    // Should be impossible with a fresh volume; if it ever happens, say so loudly
+    // instead of starting a server that cannot connect.
+    log("the new container rejected its own credentials — refusing to use it");
     return null;
   }
   try {
