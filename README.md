@@ -373,6 +373,8 @@ guard leaves prices (`$5 and $6`) alone.
 
 Pick a model from the curated list or press **Fetch models** to pull the provider's live `GET /models`, then **Test connection** before saving. Environment variables (`AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL`) stay as the fallback for workspaces without their own configuration.
 
+A workspace's own endpoint and key are used only for requests from members of that workspace. Anyone else gets the environment configuration, so a workspace id alone never spends another workspace's key or budget.
+
 ## Enterprise & AI
 
 | Capability | Detail |
