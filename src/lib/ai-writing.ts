@@ -8,8 +8,13 @@
  * registry shape in `./ai-skills` (`id` / `label` / `hint` /
  * `replacesSelection`). The translate builder takes the five shipped locales
  * (`./i18n.ts`) instead of the hardcoded English the old registry used.
+ *
+ * The text every builder hands to the model is *framed* (`frameText` in
+ * `./ai-skills`): it is the material to rewrite, not instructions. The frame
+ * is part of the input, so a builder can never produce an unframed prompt.
  */
 
+import { frameRule, frameText, type TextFrame } from "./ai-skills";
 import { isLocale, type LocaleCode } from "./i18n";
 
 export type AiWritingKind = "summarize" | "translate" | "continue" | "simplify" | "explain";
@@ -105,12 +110,14 @@ export function buildSummarizePrompt(input: {
   text: string;
   maxWords?: number;
   style?: SummarizeStyle;
+  /** The frame the text is put into (see `frameText` in `./ai-skills`). */
+  frame: TextFrame;
 }): PromptBuild {
   const maxWords = input.maxWords ?? SUMMARIZE_DEFAULT_MAX_WORDS;
   const style = input.style ?? "bullets";
   return {
-    system: `${BASE_SYSTEM} You summarize documents faithfully and without commentary.`,
-    user: `${SUMMARY_INSTRUCTIONS[style](maxWords)}\n\n${input.text}`,
+    system: `${BASE_SYSTEM} You summarize documents faithfully and without commentary. ${frameRule(input.frame)}`,
+    user: `${SUMMARY_INSTRUCTIONS[style](maxWords)}\n\n${frameText(input.text, input.frame)}`,
     params: paramsFor("summarize", Math.ceil(maxWords * 2)),
   };
 }
@@ -119,6 +126,8 @@ export function buildTranslatePrompt(input: {
   text: string;
   targetLocale: LocaleCode;
   tone?: WritingTone;
+  /** The frame the text is put into (see `frameText` in `./ai-skills`). */
+  frame: TextFrame;
 }): PromptBuild {
   if (!isLocale(input.targetLocale)) {
     throw new Error(`Unsupported target locale: ${String(input.targetLocale)}`);
@@ -126,10 +135,10 @@ export function buildTranslatePrompt(input: {
   const tone = input.tone ?? "neutral";
   const name = LOCALE_ENGLISH_NAMES[input.targetLocale];
   return {
-    system: `${BASE_SYSTEM} You are a professional translator.`,
+    system: `${BASE_SYSTEM} You are a professional translator. ${frameRule(input.frame)}`,
     user:
       `Translate the text below into ${name} (${input.targetLocale}) with a ${tone} tone, ` +
-      `preserving formatting. Return only the translation.\n\n${input.text}`,
+      `preserving formatting. Return only the translation.\n\n${frameText(input.text, input.frame)}`,
     params: paramsFor("translate", estimateTokens(input.text) * 2 + 64),
   };
 }
@@ -138,15 +147,17 @@ export function buildContinuePrompt(input: {
   text: string;
   tone?: WritingTone;
   maxWords?: number;
+  /** The frame the text is put into (see `frameText` in `./ai-skills`). */
+  frame: TextFrame;
 }): PromptBuild {
   const tone = input.tone ?? "neutral";
   const maxWords = input.maxWords ?? CONTINUE_DEFAULT_MAX_WORDS;
   return {
-    system: `${BASE_SYSTEM} You continue a piece of writing in the author's own voice.`,
+    system: `${BASE_SYSTEM} You continue a piece of writing in the author's own voice. ${frameRule(input.frame)}`,
     user:
       `Continue the writing below in a ${tone} tone. Match the voice and formatting, write at ` +
       `most ${maxWords} additional words, and return only the continuation (do not repeat the ` +
-      `original text).\n\n${input.text}`,
+      `original text).\n\n${frameText(input.text, input.frame)}`,
     params: paramsFor("continue", Math.ceil(maxWords * 2)),
   };
 }
@@ -154,23 +165,25 @@ export function buildContinuePrompt(input: {
 export function buildSimplifyPrompt(input: {
   text: string;
   audience?: SimplifyAudience;
+  /** The frame the text is put into (see `frameText` in `./ai-skills`). */
+  frame: TextFrame;
 }): PromptBuild {
   const audience = input.audience ?? "general";
   return {
-    system: `${BASE_SYSTEM} You rewrite complex text so that anyone can understand it.`,
+    system: `${BASE_SYSTEM} You rewrite complex text so that anyone can understand it. ${frameRule(input.frame)}`,
     user:
       `Simplify the text below for a ${audience} audience. Keep every fact, use short sentences ` +
-      `and plain words, and return only the simplified text.\n\n${input.text}`,
+      `and plain words, and return only the simplified text.\n\n${frameText(input.text, input.frame)}`,
     params: paramsFor("simplify", estimateTokens(input.text) + 64),
   };
 }
 
-export function buildExplainPrompt(input: { text: string }): PromptBuild {
+export function buildExplainPrompt(input: { text: string; frame: TextFrame }): PromptBuild {
   return {
-    system: `${BASE_SYSTEM} You explain ideas in plain language.`,
+    system: `${BASE_SYSTEM} You explain ideas in plain language. ${frameRule(input.frame)}`,
     user:
       `Explain the text below in plain language for a newcomer. Keep it under 120 words and ` +
-      `return only the explanation.\n\n${input.text}`,
+      `return only the explanation.\n\n${frameText(input.text, input.frame)}`,
     params: paramsFor("explain"),
   };
 }

@@ -6,7 +6,15 @@ import {
   MAX_JSON_BODY_BYTES,
   readJsonBody,
 } from "@/lib/body-limit";
-import { AI_SKILLS, aiSkill, type AiSkillId } from "@/lib/ai-skills";
+import {
+  AI_SKILLS,
+  aiSkill,
+  frameRule,
+  frameText,
+  textFrameTags,
+  type AiSkillId,
+  type TextFrame,
+} from "@/lib/ai-skills";
 import {
   SKILL_CATALOG,
   SKILL_DEFAULT_PARAMS,
@@ -34,6 +42,7 @@ import {
 } from "@/lib/ai-provider";
 import { aiSkillRequestSchema } from "@/lib/validation";
 import { redactSecrets } from "@/lib/error-reporting";
+import { randomToken } from "@/lib/random";
 
 export const runtime = "nodejs";
 
@@ -46,6 +55,17 @@ const SUMMARIZE_CHUNK_TOKENS = 1200;
 
 const SYSTEM =
   "You are a precise writing assistant embedded in a notes app. Reply with the transformed text only — no preamble, no quotes, no explanation.";
+
+/**
+ * The system prompt of the editor skills.
+ *
+ * It names the frame of this request and says what the framed block is: the
+ * text is data to rewrite, never an instruction. Without that rule a passage
+ * that carries an instruction reads like one.
+ */
+function systemPrompt(frame: TextFrame): string {
+  return `${SYSTEM} ${frameRule(frame)}`;
+}
 
 /** Standing instruction for the reduce step of chunked summarization. */
 const REDUCE_SYSTEM =
@@ -74,7 +94,7 @@ type ResolvedSkill = {
   /** Present for the five writing skills. */
   writing?: AiWritingKind;
   /** Present for the editor skills in `./ai-skills`. */
-  prompt?: (text: string) => string;
+  prompt?: (text: string, frame: TextFrame) => string;
 };
 
 /**
@@ -107,12 +127,22 @@ function pick<T extends string>(value: unknown, allowed: readonly T[]): T | unde
 }
 
 /** Build the prompt for a writing skill from the request's optional knobs. */
-function buildWritingPrompt(kind: AiWritingKind, text: string, body: SkillBody): PromptBuild {
+function buildWritingPrompt(
+  kind: AiWritingKind,
+  text: string,
+  body: SkillBody,
+  frame: TextFrame,
+): PromptBuild {
   const maxWords = typeof body.maxWords === "number" ? body.maxWords : undefined;
   const tone = pick(body.tone, WRITING_TONES);
   switch (kind) {
     case "summarize":
-      return buildSummarizePrompt({ text, maxWords, style: pick(body.style, SUMMARIZE_STYLES) });
+      return buildSummarizePrompt({
+        text,
+        maxWords,
+        style: pick(body.style, SUMMARIZE_STYLES),
+        frame,
+      });
     case "translate":
       return buildTranslatePrompt({
         text,
@@ -121,13 +151,14 @@ function buildWritingPrompt(kind: AiWritingKind, text: string, body: SkillBody):
             ? body.targetLocale
             : "en",
         tone,
+        frame,
       });
     case "continue":
-      return buildContinuePrompt({ text, tone, maxWords });
+      return buildContinuePrompt({ text, tone, maxWords, frame });
     case "simplify":
-      return buildSimplifyPrompt({ text, audience: pick(body.audience, SIMPLIFY_AUDIENCES) });
+      return buildSimplifyPrompt({ text, audience: pick(body.audience, SIMPLIFY_AUDIENCES), frame });
     case "explain":
-      return buildExplainPrompt({ text });
+      return buildExplainPrompt({ text, frame });
   }
 }
 
@@ -136,12 +167,17 @@ function buildWritingPrompt(kind: AiWritingKind, text: string, body: SkillBody):
  * either summarize in map-reduce chunks or make a single completion. Raw model
  * output is always run through `postProcess` so preambles, fences and labels
  * never reach the editor.
+ *
+ * The text is framed (`./ai-skills`) *after* the truncation, so the budget can
+ * never cut the closing tag off: what the model sees is always a whole block,
+ * and the text inside it is the same text the budget left.
  */
 async function runWritingSkill(
   kind: AiWritingKind,
   text: string,
   body: SkillBody,
   config: AiRuntimeConfig,
+  frame: TextFrame,
 ): Promise<ChatResult> {
   const budgeted = truncateToBudget(text, MAX_INPUT_TOKENS);
 
@@ -150,7 +186,7 @@ async function runWritingSkill(
     if (plan.chunks.length > 1) {
       const partials: string[] = [];
       for (const chunk of plan.chunks) {
-        const build = buildWritingPrompt("summarize", chunk, body);
+        const build = buildWritingPrompt("summarize", chunk, body, frame);
         const result = await chatComplete(
           {
             system: build.system,
@@ -167,8 +203,8 @@ async function runWritingSkill(
       const reduceParams = SKILL_DEFAULT_PARAMS.summarize;
       const reduced = await chatComplete(
         {
-          system: REDUCE_SYSTEM,
-          user: `${plan.reducePrompt}\n\n${partials.join("\n\n")}`,
+          system: `${REDUCE_SYSTEM} ${frameRule(frame)}`,
+          user: `${plan.reducePrompt}\n\n${frameText(partials.join("\n\n"), frame)}`,
           temperature: reduceParams.temperature,
           maxTokens: reduceParams.maxTokens,
         },
@@ -179,7 +215,7 @@ async function runWritingSkill(
     }
   }
 
-  const build = buildWritingPrompt(kind, budgeted, body);
+  const build = buildWritingPrompt(kind, budgeted, body, frame);
   const request = {
     system: build.system,
     user: build.user,
@@ -265,6 +301,11 @@ export async function POST(request: Request) {
   const text = (body.text ?? "").trim().slice(0, MAX_TEXT_CHARS);
   if (!text) return NextResponse.json({ error: "text is required." }, { status: 400 });
 
+  // The frame around the caller's text. The id is minted per request, so the
+  // text cannot know which tag closes the block: a passage somebody else
+  // wrote may carry an instruction, and unframed it would read like one.
+  const frame = textFrameTags(randomToken(16));
+
   // The provider (endpoint + API key) belongs to the workspace it is stored
   // for, so it is only used when the caller has access to the workspace it
   // names; otherwise the environment defaults apply (audit B13).
@@ -275,11 +316,11 @@ export async function POST(request: Request) {
 
   const result =
     skill.writing !== undefined
-      ? await runWritingSkill(skill.writing, text, body, config)
+      ? await runWritingSkill(skill.writing, text, body, config, frame)
       : await chatComplete(
           {
-            system: SYSTEM,
-            user: skill.prompt ? skill.prompt(text) : text,
+            system: systemPrompt(frame),
+            user: skill.prompt ? skill.prompt(text, frame) : frameText(text, frame),
             temperature: skill.replacesSelection ? 0.2 : 0.5,
           },
           config,
