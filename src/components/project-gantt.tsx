@@ -2,6 +2,8 @@
 
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
+import { Z } from "@/lib/design-tokens";
+import { Tooltip } from "@/components/ui/tooltip";
 import { buildIntervals, maxOverlap } from "@/lib/interval-tree";
 import {
   computeEdgeRoutes,
@@ -24,19 +26,19 @@ const DAY = 24 * 60 * 60 * 1000;
  * it mirrors (`h-5` project bar, `h-3` milestone rows, `space-y-3` gaps) so the
  * optional SVG overlay can place dependency arrows over the exact same rows.
  */
-const PROJECT_ROW_HEIGHT = 20;
-const MILESTONE_ROW_HEIGHT = 12;
-const ROW_GAP = 12;
+export const PROJECT_ROW_HEIGHT = 20;
+export const MILESTONE_ROW_HEIGHT = 12;
+export const ROW_GAP = 12;
 /**
  * Vertical start of the first bar lane below the project row, and the pitch of
  * one lane (a bar row plus the gap after it). The derived milestone bars sit on
  * `LANE_TOP + index * LANE_PITCH`, and lane-packed overlay bars reuse the same
  * geometry so both feed the arrow overlay from one coordinate space.
  */
-const LANE_TOP = PROJECT_ROW_HEIGHT + ROW_GAP;
-const LANE_PITCH = MILESTONE_ROW_HEIGHT + ROW_GAP;
+export const LANE_TOP = PROJECT_ROW_HEIGHT + ROW_GAP;
+export const LANE_PITCH = MILESTONE_ROW_HEIGHT + ROW_GAP;
 /** Width of a derived milestone bar, as a percentage of the track. */
-const MILESTONE_BAR_WIDTH = 2;
+export const MILESTONE_BAR_WIDTH = 2;
 /**
  * Horizontal offset of the track column: the `w-32` label (`8rem`) plus the
  * `gap-2` row gap (`0.5rem`). The SVG overlay is inset by this much so its
@@ -44,8 +46,125 @@ const MILESTONE_BAR_WIDTH = 2;
  */
 const TRACK_LEFT = "8.5rem";
 
+/**
+ * Stagger between successively-mounted bars, in ms. This is a *delay*, not a
+ * duration — each bar animates with the named `animate-rise` token, so no new
+ * duration is invented. The step is capped by
+ * {@link GANTT_MAX_STAGGER_STEPS} so a long chart never fades in late, and the
+ * global `prefers-reduced-motion` rule zeroes every delay (see globals.css).
+ */
+export const GANTT_STAGGER_MS = 40;
+export const GANTT_MAX_STAGGER_STEPS = 8;
+
+/** Delay for the bar at `index` (`transform`/`opacity` animation only). */
+export function ganttStagger(index: number): number {
+  const step = Number.isFinite(index) ? Math.trunc(index) : 0;
+  return Math.min(Math.max(0, step), GANTT_MAX_STAGGER_STEPS) * GANTT_STAGGER_MS;
+}
+
+/** Token fill per milestone status. */
+export type GanttTone = "success" | "accent" | "muted";
+
+/** Bar/marker fills — token-only, so light/dark/high-contrast all inherit. */
+export const GANTT_TONE_CLASS: Record<GanttTone, string> = {
+  success: "bg-success",
+  accent: "bg-accent",
+  muted: "bg-muted",
+};
+
+/** Map a milestone status onto its token tone. Unknown statuses read `muted`. */
+export function ganttStatusTone(status: string): GanttTone {
+  if (status === "done") return "success";
+  if (status === "in_progress") return "accent";
+  return "muted";
+}
+
 function startOfDay(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+
+/** Local-midnight epoch (ms) for a date-ish value, or `null` when unparseable. */
+function dayMs(value: string | Date): number | null {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return startOfDay(date).getTime();
+}
+
+/** The time window a chart is drawn over, in local-midnight epoch ms. */
+export type GanttAxis = { from: number; to: number; span: number };
+
+/**
+ * Build the chart axis from every date the chart must contain plus `today`.
+ * A single-point range is widened to a week so a bar still has a track, and the
+ * span is floored at one day so percentages never explode.
+ */
+export function buildGanttAxis(
+  dates: readonly (string | null | undefined)[],
+  now: Date = new Date(),
+): GanttAxis {
+  const points: number[] = [dayMs(now) ?? 0];
+  for (const value of dates) {
+    if (!value) continue;
+    const ms = dayMs(value);
+    if (ms !== null) points.push(ms);
+  }
+  const from = Math.min(...points);
+  let to = Math.max(...points);
+  if (to === from) to += 7 * DAY;
+  return { from, to, span: Math.max(to - from, DAY) };
+}
+
+/** Position of a date along the axis, clamped to `0..100`. */
+export function percentAlong(axis: GanttAxis, value: string | Date): number {
+  const ms = dayMs(value);
+  if (ms === null) return 0;
+  return Math.min(100, Math.max(0, ((ms - axis.from) / axis.span) * 100));
+}
+
+/** A horizontal bar: `left`% along the track plus `width`%. */
+export type GanttSpan = { left: number; width: number };
+
+/**
+ * Geometry for a `start → end` bar. A missing `start` pins the bar to the
+ * track's left edge and a missing `end` to its right; a zero-length span is
+ * widened to the {@link MILESTONE_BAR_WIDTH} minimum so it stays visible.
+ */
+export function ganttBarGeometry(
+  axis: GanttAxis,
+  start: string | null | undefined,
+  end: string | null | undefined,
+): GanttSpan {
+  const startPct = start ? percentAlong(axis, start) : 0;
+  const endPct = end ? percentAlong(axis, end) : 100;
+  const left = Math.min(startPct, endPct);
+  const width = Math.max(Math.abs(endPct - startPct), MILESTONE_BAR_WIDTH);
+  return { left, width: Math.min(width, Math.max(0, 100 - left)) };
+}
+
+/** A milestone's marker: its id, position on the axis and status. */
+export type GanttMarker = {
+  id: string;
+  left: number;
+  status: string;
+  dueDate: string;
+};
+
+/** Position every dated milestone on the axis; undated ones are omitted. */
+export function milestoneMarkers(
+  axis: GanttAxis,
+  milestones: readonly GanttMilestone[],
+): GanttMarker[] {
+  const out: GanttMarker[] = [];
+  for (const milestone of milestones) {
+    if (!milestone.dueDate) continue;
+    out.push({
+      id: milestone.id,
+      left: percentAlong(axis, milestone.dueDate),
+      status: milestone.status,
+      dueDate: milestone.dueDate,
+    });
+  }
+  return out;
 }
 
 /** An `ArrowPath` rendered as an SVG polyline `d`. */
@@ -108,11 +227,20 @@ export function packBars(bars: readonly BarRect[]): { bars: BarRect[]; laneCount
   return { bars: packed, laneCount: Math.max(maxOverlap(entries), laneEnds.length) };
 }
 
+/** `Mon D` (locale-formatted) for a date-ish value, or `""` when unusable. */
+function dayLabel(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString();
+}
+
 /**
- * Lightweight Gantt: the project spans start → due, milestones are dated
- * markers on the same axis, and "today" is pinned so progress is obvious.
- * Layout is pure and cheap; when callers supply dependency `bars`/`edges` an
- * optional SVG overlay draws the arrows via @/lib/dependency-arrows.
+ * Lightweight Gantt: the project spans start → due, every milestone is a
+ * status-toned bar ending in a diamond on the same axis, and "today" is pinned
+ * in `--danger` so progress is obvious. Bars mount with a ≤40 ms stagger
+ * (`animate-rise`, transform/opacity only). Layout is pure and cheap; when
+ * callers supply dependency `bars`/`edges` an optional SVG overlay draws the
+ * arrows via @/lib/dependency-arrows.
  */
 export function ProjectGantt({
   name,
@@ -133,30 +261,22 @@ export function ProjectGantt({
   /** Dependency edges (`from` blocks `to`); no overlay when omitted/empty. */
   edges?: readonly TimelineEdge[];
 }) {
-  const dated = milestones.filter((milestone) => milestone.dueDate);
-  const today = startOfDay(new Date());
-
-  const points: Date[] = [today];
-  if (startDate) points.push(startOfDay(new Date(startDate)));
-  if (dueDate) points.push(startOfDay(new Date(dueDate)));
-  for (const milestone of dated) points.push(startOfDay(new Date(milestone.dueDate!)));
-
-  const from = new Date(Math.min(...points.map((date) => date.getTime())));
-  const to = new Date(Math.max(...points.map((date) => date.getTime())));
-  if (to.getTime() === from.getTime()) to.setTime(to.getTime() + 7 * DAY);
-  const span = Math.max(to.getTime() - from.getTime(), DAY);
-
-  const pct = (value: string | Date) =>
-    Math.min(100, Math.max(0, ((new Date(value).getTime() - from.getTime()) / span) * 100));
-
-  const projectStart = startDate ? pct(startDate) : 0;
-  const projectEnd = dueDate ? pct(dueDate) : 100;
+  const now = new Date();
+  const axis = buildGanttAxis(
+    [startDate, dueDate, ...milestones.map((milestone) => milestone.dueDate)],
+    now,
+  );
+  const todayPct = percentAlong(axis, now);
+  const projectSpan = ganttBarGeometry(axis, startDate, dueDate);
+  const markers = new Map(milestoneMarkers(axis, milestones).map((m) => [m.id, m]));
+  const fromLabel = new Date(axis.from).toLocaleDateString();
+  const toLabel = new Date(axis.to).toLocaleDateString();
 
   // One derived bar per dated milestone, on its exact row of the chart.
   const derivedBars: BarRect[] = [];
   milestones.forEach((milestone, index) => {
     if (!milestone.dueDate) return;
-    const center = pct(milestone.dueDate);
+    const center = percentAlong(axis, milestone.dueDate);
     derivedBars.push({
       id: milestone.id,
       x: Math.max(0, Math.min(100 - MILESTONE_BAR_WIDTH, center - MILESTONE_BAR_WIDTH / 2)),
@@ -182,58 +302,75 @@ export function ProjectGantt({
       <div className="mb-3 flex items-center justify-between">
         <p className="text-sm font-medium">{t(locale, "timelineLabel")}</p>
         <p className="text-[11px] text-muted">
-          {from.toLocaleDateString()} → {to.toLocaleDateString()}
+          {fromLabel} → {toLabel}
         </p>
       </div>
 
       <div className="relative">
-        {/* today marker */}
+        {/* today marker — `--danger`, layered by `Z.sticky` */}
         <div
-          className="absolute -top-1 bottom-0 z-10 border-l border-dashed border-accent"
-          style={{ left: `${pct(today)}%` }}
+          data-testid="gantt-today"
+          className="absolute -top-1 bottom-0 border-s border-dashed border-danger"
+          style={{ insetInlineStart: `${todayPct}%`, zIndex: Z.sticky }}
           aria-hidden
         />
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
+          <div
+            className="flex animate-rise items-center gap-2"
+            style={{ animationDelay: `${ganttStagger(0)}ms` }}
+          >
             <span className="w-32 shrink-0 truncate text-xs text-muted">{name}</span>
-            <div className="relative h-5 flex-1 rounded bg-surface-2">
-              <div
-                className="absolute inset-y-0 rounded bg-accent/70"
-                style={{
-                  left: `${Math.min(projectStart, projectEnd)}%`,
-                  width: `${Math.max(Math.abs(projectEnd - projectStart), 2)}%`,
-                }}
-              />
-            </div>
+            <Tooltip label={`${name}: ${fromLabel} → ${toLabel}`}>
+              <div className="relative h-5 flex-1 rounded bg-surface-2">
+                <div
+                  data-testid="gantt-project-bar"
+                  className="absolute inset-y-0 rounded bg-accent"
+                  style={{ insetInlineStart: `${projectSpan.left}%`, width: `${projectSpan.width}%` }}
+                />
+              </div>
+            </Tooltip>
           </div>
 
-          {milestones.map((milestone) => {
-            const position = milestone.dueDate ? pct(milestone.dueDate) : null;
+          {milestones.map((milestone, index) => {
+            const marker = markers.get(milestone.id);
+            const tone = ganttStatusTone(milestone.status);
+            const span = ganttBarGeometry(axis, startDate, milestone.dueDate);
+            const dateLabel = dayLabel(milestone.dueDate);
             return (
-              <div key={milestone.id} className="flex items-center gap-2">
+              <div
+                key={milestone.id}
+                className="flex animate-rise items-center gap-2"
+                style={{ animationDelay: `${ganttStagger(index + 1)}ms` }}
+              >
                 <span
                   className={cn(
-                    "w-32 shrink-0 truncate text-xs",
-                    milestone.status === "done" ? "text-muted line-through" : "text-muted",
+                    "w-32 shrink-0 truncate text-xs text-muted",
+                    milestone.status === "done" && "line-through",
                   )}
                 >
                   {milestone.name}
                 </span>
                 <div className="relative h-3 flex-1">
                   <div className="absolute inset-y-1/2 h-px w-full bg-border" />
-                  {position !== null ? (
-                    <span
-                      title={new Date(milestone.dueDate!).toLocaleDateString()}
-                      className={cn(
-                        "absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-bg",
-                        milestone.status === "done"
-                          ? "bg-emerald-500"
-                          : milestone.status === "in_progress"
-                            ? "bg-accent"
-                            : "bg-muted",
-                      )}
-                      style={{ left: `${position}%` }}
-                    />
+                  {marker ? (
+                    <>
+                      <Tooltip label={`${milestone.name} · ${dateLabel}`}>
+                        <span
+                          className={cn("absolute inset-y-0 rounded-xs", GANTT_TONE_CLASS[tone])}
+                          style={{ insetInlineStart: `${span.left}%`, width: `${span.width}%` }}
+                        />
+                      </Tooltip>
+                      <span
+                        data-testid="gantt-milestone"
+                        data-status={milestone.status}
+                        aria-hidden
+                        className={cn(
+                          "absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-xs border-2 border-bg",
+                          GANTT_TONE_CLASS[tone],
+                        )}
+                        style={{ insetInlineStart: `${marker.left}%` }}
+                      />
+                    </>
                   ) : (
                     <span className="absolute right-0 top-1/2 -translate-y-1/2 text-[10px] text-muted">
                       {t(locale, "noDate")}
@@ -247,8 +384,8 @@ export function ProjectGantt({
 
         {routes.length > 0 && (
           <svg
-            className="pointer-events-none absolute inset-y-0 right-0 z-20 h-full overflow-visible text-accent"
-            style={{ left: TRACK_LEFT }}
+            className="pointer-events-none absolute inset-y-0 right-0 h-full overflow-visible text-accent"
+            style={{ insetInlineStart: TRACK_LEFT, zIndex: Z.popover }}
             viewBox={`0 0 100 ${overlayHeight}`}
             preserveAspectRatio="none"
             aria-hidden
