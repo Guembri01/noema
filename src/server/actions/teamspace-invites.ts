@@ -47,7 +47,12 @@ async function authorizeTeamspace(teamspaceId: string): Promise<TeamspaceAuth> {
 export async function inviteTeamspaceMemberAction(input: {
   teamspaceId: string;
   email: string;
-  role?: "MEMBER" | "ADMIN";
+  /**
+   * The requested role, forwarded unchanged by the transport. A teamspace role
+   * is its own domain (it grants no workspace role), so anything that is not
+   * `ADMIN` falls back to `MEMBER` here — the decision stays in the action.
+   */
+  role?: string;
 }): Promise<
   InviteResult<{ invited: boolean; added: boolean; link?: string; email: string; emailed?: boolean }>
 > {

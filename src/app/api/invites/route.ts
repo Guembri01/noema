@@ -49,17 +49,23 @@ export async function POST(request: Request) {
     const result = await inviteTeamspaceMemberAction({
       teamspaceId: String(body.teamspaceId ?? ""),
       email: String(body.email ?? ""),
-      role: body.role === "ADMIN" ? "ADMIN" : "MEMBER",
+      role: body.role,
     });
     if ("error" in result) return NextResponse.json(result, { status: 400 });
     return NextResponse.json(result);
   }
 
-  const role = body.role === "GUEST" ? "GUEST" : body.role === "ADMIN" ? "ADMIN" : "MEMBER";
+  // The role policy is not decided here: the role an invitation carries is a
+  // grant, so `sendWorkspaceInviteAction` applies the same rule as a role
+  // change (`canGrantRole` in `@/lib/workspace-roles`) — only the workspace
+  // owner may grant the admin role. The requested role is forwarded
+  // unchanged, so the transport holds no role logic of its own: the action
+  // answers "Unknown role." for anything outside `GUEST`/`MEMBER`/`ADMIN`,
+  // and this route only surfaces the action's refusal as a 400.
   const result = await sendWorkspaceInviteAction({
     workspaceId: String(body.workspaceId ?? ""),
     email: String(body.email ?? ""),
-    role,
+    role: body.role,
   });
   if ("error" in result) return NextResponse.json(result, { status: 400 });
   return NextResponse.json(result);

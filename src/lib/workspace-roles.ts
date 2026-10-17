@@ -20,7 +20,9 @@
  * The role-change policy is layered on top of the matrix:
  *
  * - an actor may only grant a role *strictly below* its own rank
- *   ({@link assignableRoles}) — no peer or upward escalation;
+ *   ({@link assignableRoles}, {@link canGrantRole}) — no peer or upward
+ *   escalation; the same rule governs the role a *new* member is invited with,
+ *   so an invitation can never grant more than a role change could;
  * - a change that would leave the workspace with no owner is refused
  *   (`last_owner`);
  * - an owner may not demote themselves through a role change (`self_demotion`)
@@ -225,6 +227,24 @@ export function assignableRoles(actorRole: unknown): WorkspaceRole[] {
   if (!isWorkspaceRole(actorRole) || !canWorkspace(actorRole, "changeRole")) return [];
   const actorRank = rankOf(actorRole);
   return WORKSPACE_ROLES.filter((role) => rankOf(role) > actorRank);
+}
+
+/**
+ * Whether `actorRole` may grant `newRole` to a member.
+ *
+ * This is the grant rule the role-change path enforces (the
+ * `role_not_assignable` check in {@link validateRoleChange}), so the
+ * invitation path can ask the same question instead of re-deriving it: an
+ * actor may only grant a role *strictly below* its own rank, so an admin may
+ * hand out member/guest but never admin — only the owner may grant the admin
+ * role.
+ *
+ * Fails closed on both sides: an unknown actor grants nothing, and an unknown
+ * target role is never granted.
+ */
+export function canGrantRole(actorRole: unknown, newRole: unknown): boolean {
+  if (!isWorkspaceRole(newRole)) return false;
+  return assignableRoles(actorRole).includes(newRole);
 }
 
 /**
