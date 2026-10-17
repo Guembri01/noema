@@ -1,0 +1,75 @@
+[package]
+name = "noema-desktop"
+version = "1.4.0"
+description = "Noema — local-first workspace, as an installable desktop app"
+authors = ["Noema"]
+edition = "2021"
+rust-version = "1.77"
+license = "MIT"
+repository = "https://github.com/noema/noema"
+default-run = "noema-desktop"
+
+# The shipped app is a thin Rust shell around a supervised local server:
+#  - the shell owns the window, tray, updater, deep links and lifecycle
+#  - the Node sidecar (Next.js standalone, compiled to a single executable with
+#    Node SEA) owns the HTTP server and the database
+# Everything shared with the site version lives in `../src/**`; nothing is forked.
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [
+  "tray-icon",
+  "image-png",
+  "deep-link",
+  "devtools",
+  "protocol-asset",
+  "macos-private-api",
+] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-os = "2"
+tauri-plugin-process = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-updater = "2"
+tauri-plugin-log = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-store = "2"
+tauri-plugin-http = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["process", "time", "rt-multi-thread", "macros", "io-util", "sync"] }
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] } 
+directories = "5"
+url = "2"
+
+[features]
+# `custom-protocol` is what makes the production bundle serve assets from the
+# bundled resources instead of a dev server. Tauri injects it for `tauri build`.
+custom-protocol = ["tauri/custom-protocol"]
+# Opt-in crash reporting; off by default (privacy: local-first app).
+crash-reporting = []
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+[profile.dev]
+incremental = true
+
+[[bin]]
+name = "noema-desktop"
+path = "src/main.rs"
+
+[lib]
+name = "noema_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]

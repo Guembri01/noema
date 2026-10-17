@@ -1,0 +1,174 @@
+# Desktop app: builds the installable app for Windows, macOS (Intel + Apple
+# Silicon) and Linux, and — on a version tag — publishes a signed release with
+# the auto-updater manifest.
+#
+# Two things are unusual here on purpose:
+#  · the Rust shell is built on native runners (cross-compiling a webview app is
+#    not supported), and macOS is built twice for both architectures;
+#  · the Node sidecar is compiled into a single executable *before* Tauri packs
+#    it, so the installer contains no separate server folder.
+name: desktop
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+  pull_request:
+    paths:
+      - "src-tauri/**"
+      - "scripts/desktop/**"
+      - "package.json"
+      - "next.config.ts"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create a draft release"
+        type: boolean
+        default: false
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x64
+            rust-target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+          - os: ubuntu-22.04
+            name: linux-x64
+            rust-target: x86_64-unknown-linux-gnu
+            bundles: deb,rpm,appimage
+          - os: macos-latest
+            name: macos-arm64
+            rust-target: aarch64-apple-darwin
+            bundles: dmg,app
+          - os: macos-13
+            name: macos-x64
+            rust-target: x86_64-apple-darwin
+            bundles: dmg,app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Linux native dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf pkg-config \
+            libssl-dev libsoup-3.0-dev
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate icons (from the single 1024px source)
+        shell: bash
+        run: |
+          if [ ! -f assets/icon.png ]; then
+            echo "::error::assets/icon.png is missing — the icon set is generated from it."
+            exit 1
+          fi
+          npx tauri icon assets/icon.png
+
+      - name: Preflight
+        run: node scripts/desktop/preflight.mjs
+        continue-on-error: true # informational in CI; the build below is the gate
+
+      - name: Build the sidecar (Next standalone → single executable)
+        run: node scripts/desktop/sidecar.mjs
+        env:
+          NOEMA_STANDALONE: "1"
+
+      - name: Type-check Rust
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings
+
+      - name: Rust unit tests
+        working-directory: src-tauri
+        run: cargo test --all-features
+
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        with:
+          args: --target ${{ matrix.rust-target }} --bundles ${{ matrix.bundles }}
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Noema {0}', github.ref_name) || '' }}
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+
+      - name: Upload build artifacts (branch/PR runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: noema-${{ matrix.name }}
+          path: |
+            src-tauri/target/${{ matrix.rust-target }}/release/bundle/**/*.nsis.zip
+            src-tauri/target/${{ matrix.rust-target }}/release/bundle/**/*.msi
+            src-tauri/target/${{ matrix.rust-target }}/release/bundle/**/*.deb
+            src-tauri/target/${{ matrix.rust-target }}/release/bundle/**/*.rpm
+            src-tauri/target/${{ matrix.rust-target }}/release/bundle/**/*.AppImage
+            src-tauri/target/${{ matrix.rust-target }}/release/bundle/**/*.dmg
+          if-no-files-found: warn
+          retention-days: 7
+
+  verify-web-build-still-works:
+    name: site build (no standalone)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Build the site version
+        run: npm run site:build
+        env:
+          DATABASE_URL: postgresql://noema:dummy@127.0.0.1:5432/noema?schema=public
+      - name: Assert the desktop flag is what switches outputs
+        run: |
+          test -f .next/BUILD_ID
+          test ! -f .next/standalone/server.js || (echo "::error::standalone output leaked into the site build" && exit 1)

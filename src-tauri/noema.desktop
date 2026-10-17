@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Noema
+GenericName=Workspace
+Comment=Local-first workspace for notes, docs and databases
+Exec=noema-desktop %u
+Icon=noema
+Terminal=false
+Categories=Office;TextEditor;Utility;
+Keywords=notes;docs;database;wiki;workspace;todo;
+StartupWMClass=Noema
+MimeType=x-scheme-handler/noema;

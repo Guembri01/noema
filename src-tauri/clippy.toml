@@ -1,0 +1,5 @@
+# Deny the lints that actually bite in a desktop shell.
+avoid-breaking-exported-api = false
+cognitive-complexity-threshold = 20
+too-many-arguments-threshold = 8
+type-complexity-threshold = 250

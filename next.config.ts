@@ -67,6 +67,13 @@ function allowedOrigins(): string[] {
  */
 
 const nextConfig: NextConfig = {
+  // Two build outputs from one codebase (see docs/DESKTOP.md):
+  //  · site  — default. `next start` / the existing Docker image are unchanged.
+  //  · app   — the desktop bundle. `NOEMA_STANDALONE=1` switches on Next's
+  //            standalone output, which `scripts/desktop/sidecar.mjs` packs into
+  //            the Tauri sidecar. Left off by default because `next start` does
+  //            not serve a standalone build.
+  ...(process.env.NOEMA_STANDALONE === "1" ? { output: "standalone" as const } : {}),
   // Pin the tracing root so an unrelated lockfile above this project does not
   // change how the standalone output is assembled.
   outputFileTracingRoot: root,

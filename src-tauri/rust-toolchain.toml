@@ -1,0 +1,6 @@
+# Pinned so every contributor and CI runner builds the shell identically.
+[toolchain]
+channel = "1.82.0"
+components = ["rustfmt", "clippy"]
+targets = []
+profile = "minimal"

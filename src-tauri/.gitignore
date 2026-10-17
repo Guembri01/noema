@@ -1,0 +1,9 @@
+/target/
+/gen/
+/binaries/
+/icons/*.png
+/icons/*.ico
+/icons/*.icns
+!/icons/README.md
+Cargo.lock.bak
+*.log

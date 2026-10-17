@@ -1,0 +1,152 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Noema",
+  "version": "1.4.0",
+  "identifier": "app.noema.desktop",
+  "build": {
+    "beforeDevCommand": "npm run desktop:dev:web",
+    "beforeBuildCommand": "npm run desktop:sidecar",
+    "devUrl": "http://localhost:3200",
+    "frontendDist": "../public",
+    "externalBin": ["binaries/noema-server"]
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Noema",
+        "width": 1360,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 620,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "acceptFirstMouse": true,
+        "dragDropEnabled": true,
+        "zoomHotkeysEnabled": true,
+        "useHttpsScheme": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' tauri: asset: ipc: http://ipc.localhost http://127.0.0.1:*; img-src 'self' data: blob: asset: http://127.0.0.1:* https:; media-src 'self' blob: asset: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* https: wss:; font-src 'self' data:; frame-src 'self' http://127.0.0.1:* https:; object-src 'none'; base-uri 'self'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/**", "$APPLOCALDATA/**", "$HOME/**", "$TEMP/**"]
+      },
+      "dangerousDisableAssetCspModification": false,
+      "freezePrototype": true,
+      "capabilities": ["default", "desktop-everything"],
+      "headers": {
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "credentialless"
+      }
+    },
+    "trayIcon": {
+      "id": "main",
+      "iconPath": "icons/tray.png",
+      "iconAsTemplate": true,
+      "menuOnLeftClick": false,
+      "title": "Noema"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi", "app", "dmg", "deb", "rpm", "appimage"],
+    "createUpdaterArtifacts": true,
+    "publisher": "Noema",
+    "homepage": "https://noema.app",
+    "copyright": "© Noema",
+    "category": "Productivity",
+    "shortDescription": "Local-first workspace for notes, docs and databases",
+    "longDescription": "Noema runs entirely on your machine: notes, databases, projects and AI, with no account required and no data leaving your computer unless you ask it to.",
+    "licenseFile": "../LICENSE",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../.next/standalone": "server/",
+      "../prisma": "prisma/",
+      "../public": "public/",
+      "../package.json": "server/package.json"
+    },
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com",
+      "wix": {
+        "language": ["en-US", "fr-FR"],
+        "fragmentPaths": [],
+        "componentGroupName": "NoemaComponents"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English", "French"],
+        "displayLanguageSelector": false,
+        "compression": "lzma",
+        "startMenuFolder": "Noema",
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/nsis-header.bmp",
+        "sidebarImage": "icons/nsis-sidebar.bmp"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "entitlements": "entitlements.plist",
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null,
+      "dmg": {
+        "windowSize": { "width": 660, "height": 400 },
+        "appPosition": { "x": 180, "y": 200 },
+        "applicationFolderPosition": { "x": 480, "y": 200 }
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1"],
+        "desktopTemplate": "noema.desktop"
+      },
+      "rpm": {
+        "depends": ["webkit2gtk4.1", "gtk3", "libayatana-appindicator-gtk3"]
+      },
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "pubkey": "",
+      "endpoints": [
+        "https://releases.noema.app/desktop/{{target}}/{{arch}}/{{current_version}}"
+      ],
+      "windows": { "installMode": "passive" }
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": ["noema"]
+      }
+    },
+    "single-instance": {
+      "deepLink": true
+    },
+    "store": {},
+    "log": {},
+    "window-state": {
+      "restore": true,
+      "saveWindowStateInterval": 500
+    }
+  }
+}
