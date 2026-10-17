@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Z } from "@/lib/design-tokens";
+import { placeFloating } from "@/lib/floating";
 import { Kbd } from "@/components/ui/kbd";
 import { EmptyState } from "@/components/ui/empty-state";
 import { EQUATION_EVENT } from "@/components/editor/equation-editor";
@@ -103,10 +104,12 @@ export const SLASH_FOOTER_HINTS = {
 
 /** How many habitually-picked rows precede the full catalogue. */
 export const SLASH_RECENT_LIMIT = 3;
+/** Design bounds used to resolve the slash menu's collision-aware placement. */
+export const SLASH_MENU_WIDTH = 352;
+export const SLASH_MENU_MAX_HEIGHT = 320;
 
 /** The presentation shape the surface renders (icons are opaque React nodes). */
-export type SlashMenuItem = {
-  label: string;
+export type SlashMenuItem = {  label: string;
   labelKey?: I18nKey;
   hint: string;
   hintKey?: I18nKey;
@@ -509,7 +512,7 @@ export function SlashMenu({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const [pos, setPos] = useState<{ x: number; y: number; flipped?: boolean } | null>(null);
   // Recently picked command ids, most-recent-first: a soft tiebreak for the
   // ranker and the source of the "Recently used" section.
   const [recentIds, setRecentIds] = useState<string[]>([]);
@@ -567,7 +570,16 @@ export function SlashMenu({
         setQuery(match[1] ?? "");
         try {
           const coords = editor.view.coordsAtPos(editor.state.selection.from);
-          setPos({ x: coords.left, y: coords.bottom + 6 });
+          // Clamp to the viewport and flip above the caret when there is no room
+          // below, so the menu never hangs off the bottom or the right edge.
+          const placed = placeFloating({
+            anchor: { top: coords.top, left: coords.left, width: 2, height: coords.bottom - coords.top },
+            size: { width: SLASH_MENU_WIDTH, height: SLASH_MENU_MAX_HEIGHT },
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            preferred: "bottom",
+            align: "start",
+          });
+          setPos({ x: placed.left, y: placed.top, flipped: placed.flipped });
         } catch {
           setPos(null);
         }

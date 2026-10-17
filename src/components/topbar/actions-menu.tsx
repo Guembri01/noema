@@ -325,6 +325,18 @@ const SUBMENU_ID = "actions-menu-submenu";
 /** Design bounds of a submenu, used to resolve its placement before render. */
 const SUBMENU_WIDTH = 240;
 const SUBMENU_MAX_HEIGHT = 320;
+/** Design bounds of the actions popover itself. */
+const MENU_WIDTH = 256;
+const MENU_MAX_HEIGHT = 520;
+/** Placement used before the trigger has been measured (SSR / first paint). */
+const MENU_FALLBACK_PLACEMENT: Placement = {
+  top: 48,
+  left: 0,
+  side: "bottom",
+  flipped: false,
+  cramped: false,
+  maxHeight: MENU_MAX_HEIGHT,
+};
 
 /**
  * localStorage key for the persisted high-contrast preference. The value is
@@ -520,6 +532,8 @@ export function ActionsMenu(props: ActionsMenuProps) {
     focus: boolean;
   } | null>(null);
   const [subIndex, setSubIndex] = useState(0);
+  /** Collision-aware placement of the actions popover (resolved while open). */
+  const [menuPlacement, setMenuPlacement] = useState<Placement | null>(null);
   // The persisted cover string is re-read through the page-cover engine: the
   // tagged value says which swatch is active and how the banner paints, while
   // the focal point is the cover position carried after the CSS value.
@@ -965,8 +979,37 @@ export function ActionsMenu(props: ActionsMenuProps) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open, submenu, view]);
 
-  const openSubmenuFor = (item: MenuItem, focus: boolean) => {
-    const anchorEl = liRefs.current[item.id];
+  // Resolve the popover placement while it is open (and keep it correct on
+  // scroll/resize) so it flips above the trigger near the viewport bottom and
+  // never runs off the right edge.
+  useEffect(() => {
+    if (!open) {
+      setMenuPlacement(null);
+      return;
+    }
+    const resolve = () => {
+      const rect = wrapperRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setMenuPlacement(
+        placeFloating({
+          anchor: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
+          size: { width: MENU_WIDTH, height: MENU_MAX_HEIGHT },
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          preferred: "bottom",
+          align: "end",
+        }),
+      );
+    };
+    resolve();
+    window.addEventListener("resize", resolve);
+    window.addEventListener("scroll", resolve, true);
+    return () => {
+      window.removeEventListener("resize", resolve);
+      window.removeEventListener("scroll", resolve, true);
+    };
+  }, [open]);
+
+  const openSubmenuFor = (item: MenuItem, focus: boolean) => {    const anchorEl = liRefs.current[item.id];
     const anchor = anchorEl?.getBoundingClientRect();
     const rect = anchor
       ? { top: anchor.top, left: anchor.left, width: anchor.width, height: anchor.height }
@@ -1182,9 +1225,12 @@ export function ActionsMenu(props: ActionsMenuProps) {
         aria-label="Page actions"
         data-contrast={highContrast ? "more" : "normal"}
         onKeyDown={onDialogKeyDown}
-        style={{ zIndex: Z.popover }}
+        style={{
+          ...floatingStyle(menuPlacement ?? MENU_FALLBACK_PLACEMENT),
+          zIndex: Z.popover,
+        }}
         className={cn(
-          "surface-raised absolute end-0 top-full mt-1 w-64 animate-rise",
+          "surface-raised animate-rise",
           highContrast && "high-contrast",
         )}
       >
