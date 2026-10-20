@@ -176,6 +176,10 @@ A `failed[]` entry is a poison template: its schedule is *not* advanced, so the
 next tick retries it; other templates still run (each is its own try/catch +
 transaction).
 
+The gate order (the rate limit runs **before** the secret comparison, so a
+wrong secret is throttled instead of being an unlimited guessing oracle) and
+the per-route secret/limit table live in §8.6.
+
 ### 3.1 Provision the secret
 
 ```bash
@@ -739,6 +743,66 @@ Note the order of the checks: the scope check runs **before** the workspace
 check, so a token without the scope gets `403 insufficient_scope` and learns
 nothing about the workspace it was aimed at.
 
+### 8.6 Ops gates: the shared secret, the rate limit, the order
+
+The cron routes and the readiness probe run the **same gate** —
+`@/lib/ops-guard` (`src/lib/ops-guard.ts`) — so they cannot drift apart. The
+metrics route and the cron server actions use the same constant-time comparison
+and the same fail-closed rule; metrics has one documented ordering exception
+(below). The gate owns three properties:
+
+| Property | What it means | Where |
+| --- | --- | --- |
+| **Fail closed** | No configured secret ⇒ the gate is **closed** (`503`), never open. An empty/absent presented value is never a match. | `guardOpsSecret` |
+| **Constant-time comparison** | The presented secret is compared byte by byte without an early exit, so the response time does not reveal *where* a guess differs. The comparison is case sensitive; both sides are trimmed before it. | `safeSecretEqual` → `constantTimeEqual` (`src/lib/secrets.ts`) |
+| **Throttle first** | The rate limit runs **before** the comparison, so a wrong secret is answered `429` once the budget is spent — the guessing is bounded instead of unlimited. (`/api/metrics` resolves the caller first so its budget can be keyed by user; its comparison is constant time and a wrong secret still reaches the limiter.) | `guardOpsSecret` |
+
+**Order of the answers** (this is the contract):
+
+1. no secret configured → `503 {"error":"…is not configured…"}` (fail closed);
+2. over the rate limit → `429` (with a `retry-after` header) — **also for a
+   correct secret**: the limit covers legitimate calls too;
+3. wrong/missing secret → `401 {"error":"Unauthorized"}`;
+4. otherwise the request runs.
+
+**Exception — `/api/metrics`:** the route resolves the admin identity first so
+the 120/60 s budget can be keyed on the user (an IP-rotating caller must not
+dodge it), then applies the limit. The secret comparison is constant time and a
+wrong secret still consumes the limiter; the only difference is that a wrong
+guess is answered `401` until that per-user/IP budget is spent, then `429`.
+
+**Which environment variable guards which route:**
+
+| Route | Secret | Header | Limit |
+| --- | --- | --- | --- |
+| `POST /api/cron/templates` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET /api/cron/versions` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET`/`POST /api/cron/jobs` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `POST /api/cron/tickets` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET`/`POST /api/cron/digest` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET /api/cron/backups` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET`/`POST /api/ready` | `CRON_SECRET` **or** `READY_SECRET` | `x-cron-secret` **or** `x-ready-secret` | token bucket: burst 30, 1/s |
+| `GET /api/metrics` | `CRON_SECRET` (besides the session-based workspace-admin path) | `x-cron-secret` | 120 / 60 s |
+| `listDueAutomationsForCronAction`, `commitRecurringRunAction` (server actions — HTTP endpoints too) | `CRON_SECRET` | the action's `secret` argument | 120 / 60 s, deployment-wide |
+
+`READY_SECRET` is an **alternative name for the readiness probe only** — it is
+accepted *in addition to* `CRON_SECRET` there, and nowhere else.
+
+**Operational notes:**
+
+- A `429` on a cron tick means the budget is spent — the tick itself is
+  throttled like any other call, so a scheduler that fires faster than the
+  limit sees `429`, not `401`.
+- The cron actions (`src/server/actions/automations.ts`) are exported from a
+  `"use server"` file and are therefore reachable over HTTP as well. Their
+  rate-limit key is derived from the **configured** secret, never from the
+  presented one — a key built from the guess would be a fresh bucket per
+  attempt and the limit would be bypassable. The budget is deployment-wide
+  (the action has no request of its own) and therefore more generous than the
+  routes' 12/min.
+- Rotation of `CRON_SECRET` changes the rate-limit key of the action surface
+  (it is hashed into the key) — the new secret starts with a fresh budget.
+
 ## 9. Incident quick reference
 
 | Symptom | First checks |
@@ -790,6 +854,7 @@ nothing was executed against live servers):
 | 8.1 | tenant boundary enforced in the application (`assertScopedParent`), no `(parentId, workspaceId)` constraint, refusal message, legacy rows not repaired | `src/lib/page-parent.ts` · `prisma/schema.prisma` (`Page.parentId`) · `src/server/actions/import-pdf.ts` · `src/server/queries.ts` (`getDatabase`) |
 | 8.2 | `npm run backfill:2fa`, `--dry-run`, `--confirm-key`, `--help`, idempotence (`v1:`/`v2:` rows skipped), fail-closed (unsealable rows left untouched, exit 1), the key proof (no envelope opens ⇒ nothing is written, exit 1; `--confirm-key` overrides it) | `package.json` · `scripts/backfill-2fa-secrets.mjs` · `scripts/backfill-2fa-secrets-lib.mjs` (+ `scripts/backfill-2fa-secrets-lib.test.mjs`) |
 | 8.5 | scope grant enforced on `/api/v1/*`, no migration for existing tokens, scope check before workspace check | `src/app/api/v1/*/route.ts` · `src/lib/api-token-scope.ts` · `src/server/actions/api-tokens.ts` |
+| 8.6 | ops-gate order (503 → 429 → 401), constant-time comparison, per-route secret/limit table, action-surface budget | `src/lib/ops-guard.ts` · `src/app/api/ready/route.ts` · `src/app/api/cron/*/route.ts` · `src/app/api/metrics/route.ts` · `src/server/actions/automations.ts` |
 | 9 | `413 Request body too large.`, the per-route byte budgets, the `Content-Length` fast path vs. the counted body, hard-coded (not configurable) | `src/lib/body-limit.ts` · `docs/api-reference.md` §3 · the route modules (the limit sits next to what it protects) |
 | 9 | the content limits of the importers (10 MB PDF, 4 MB per archive entry, 32 MB unpacked, 5 000 archive entries) | `src/server/actions/import-formats.ts` · `src/server/actions/import.ts` · `src/lib/zip-archive.ts` |
 | 9 | the archive formats the importer refuses and the message each one gets (ZIP64, split, password-protected, unsupported compression method, damaged) | `src/lib/zip-archive.ts` · `src/server/actions/import.ts` (`zipArchiveError` / `zipEntryError`) |

@@ -3,6 +3,7 @@ import { WorkspaceRole } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { rateLimit } from "@/lib/api-guard";
+import { safeSecretEqual } from "@/lib/ops-guard";
 import type { LogRecord, MetricsSnapshot as ObservabilitySnapshot } from "@/lib/observability";
 import {
   effectiveFlags,
@@ -31,9 +32,14 @@ const RECENT_LOG_LIMIT = 20;
  * GET /api/metrics — the read side of the observability trio.
  *
  * Gated fail-closed by either:
- * - a valid `x-cron-secret` header equal to `CRON_SECRET`, or
+ * - a valid `x-cron-secret` header matching `CRON_SECRET` (compared in
+ *   constant time), or
  * - an authenticated workspace OWNER/ADMIN (a platform-scoped "admin": any
  *   workspace they own or administer).
+ *
+ * The comparison is constant time. The rate limit is keyed by the resolved
+ * caller (the admin path) so a user cannot dodge it by rotating an IP, and a
+ * wrong cron secret still consumes that budget after the constant-time check.
  *
  * The payload is machine-readable and additive: the canonical `observability`
  * snapshot (`snapshot()`), per-series `percentiles()` over recorded
@@ -86,8 +92,16 @@ type Authorized = { via: "cron" | "admin"; userId: string | null };
 /** Resolve the caller's authorization path, or `null` when denied. */
 async function authorize(request: Request): Promise<Authorized | null> {
   const secret = process.env.CRON_SECRET;
-  const provided = request.headers.get("x-cron-secret");
-  if (typeof secret === "string" && secret !== "" && provided === secret) {
+  // The comparison is constant time: a `===` on the shared secret would leak
+  // where a guess differs, so the shared helper owns it. The per-user rate
+  // limit is applied after this resolution because the identity (admin path)
+  // is what keys the budget; a wrong secret still reaches that limiter, and it
+  // cannot learn anything from the constant-time comparison.
+  if (
+    typeof secret === "string" &&
+    secret !== "" &&
+    safeSecretEqual(request.headers.get("x-cron-secret"), secret)
+  ) {
     return { via: "cron", userId: null };
   }
   const user = await getCurrentUser();
