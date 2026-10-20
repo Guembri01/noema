@@ -621,6 +621,26 @@ npx prisma migrate deploy      # now applies only 20261019000000_oauth_secret_ha
 npx prisma migrate status      # expect: Database schema is up to date!
 ```
 
+### 8.5 API token scopes — existing tokens keep their grant
+
+The REST API (`/api/v1/*`) enforces the scope grant of the bearer token: a
+token without `read:pages` (respectively `write:pages`) is refused with
+`403 {"error":"insufficient_scope","required":"read:pages"}`.
+
+**There is deliberately no migration for this.** A token that was created
+without a scope keeps its **empty** grant — a fail-closed system must not hand
+out permissions silently during an upgrade. Such a token has to be re-created
+in the workspace settings (**API tokens** card) with the scopes it needs; until
+then every `/api/v1/*` route refuses it. The token list marks a scope-less
+token as **No access**.
+
+OAuth-minted tokens are unaffected: `/oauth/token` stores an explicit scope
+list with every token it mints, and returns that list in the response.
+
+Note the order of the checks: the scope check runs **before** the workspace
+check, so a token without the scope gets `403 insufficient_scope` and learns
+nothing about the workspace it was aimed at.
+
 ## 9. Incident quick reference
 
 | Symptom | First checks |
@@ -636,6 +656,7 @@ npx prisma migrate status      # expect: Database schema is up to date!
 | Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
 | Sign-in answers "Too many attempts" / "This account is temporarily locked" | a budget is spent (30/min per client address, 10/min per account, 5 2FA guesses / 15 min) or the account is locked (5 consecutive failures); wait for the quoted time — an operator can release the lock with `UPDATE "User" SET "failedLoginCount" = 0, "lockedUntil" = NULL WHERE email = '…'` |
 | `EADDRINUSE` / weird build output | dev and prod share `.next` and the ports — exactly one writer at a time |
+| `/api/v1/*` answers `403 insufficient_scope` | the token's grant does not cover the call (`read:pages` / `write:pages`); a token created without a scope has an empty grant and has to be re-created — see §8.1 |
 
 ## 10. Verification appendix
 
@@ -661,6 +682,7 @@ nothing was executed against live servers):
 | 8 | single `20260113000000_init` migration vs push-evolved schema | `prisma/migrations/` · `docs/specs/engineering-hardening.md:149,367-373` |
 | 8.1 | tenant boundary enforced in the application (`assertScopedParent`), no `(parentId, workspaceId)` constraint, refusal message, legacy rows not repaired | `src/lib/page-parent.ts` · `prisma/schema.prisma` (`Page.parentId`) · `src/server/actions/import-pdf.ts` · `src/server/queries.ts` (`getDatabase`) |
 | 8.2 | `npm run backfill:2fa`, `--dry-run`, `--confirm-key`, `--help`, idempotence (`v1:`/`v2:` rows skipped), fail-closed (unsealable rows left untouched, exit 1), the key proof (no envelope opens ⇒ nothing is written, exit 1; `--confirm-key` overrides it) | `package.json` · `scripts/backfill-2fa-secrets.mjs` · `scripts/backfill-2fa-secrets-lib.mjs` (+ `scripts/backfill-2fa-secrets-lib.test.mjs`) |
+| 8.5 | scope grant enforced on `/api/v1/*`, no migration for existing tokens, scope check before workspace check | `src/app/api/v1/*/route.ts` · `src/lib/api-token-scope.ts` · `src/server/actions/api-tokens.ts` |
 | all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
 
 **Not verified by execution (be explicit when relying on them):** the backup →

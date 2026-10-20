@@ -44,6 +44,12 @@ cookie routes and a session cookie is not accepted by `/api/v1/*`).
 - Storage: only the SHA-256 hash (`tokenHash`, unique column) is persisted;
   comparison is timing-safe, and `lastUsedAt` is bumped on every call.
   Missing/malformed header or unknown token → `401 {"error":"Unauthorized"}`.
+- The resolver returns the **granted scopes** next to the user id, read from
+  the same query that verifies the token. Every `/api/v1/*` route enforces
+  them (§6) with `hasScope()` from
+  [`src/lib/api-token-scope.ts`](../src/lib/api-token-scope.ts): the read
+  routes need `read:pages`, `POST /api/v1/pages` needs `write:pages`. A token
+  without the required scope is refused with `403 insufficient_scope`.
 
 **Token creation flow (settings UI):**
 
@@ -51,13 +57,25 @@ cookie routes and a session cookie is not accepted by `/api/v1/*`).
    [`src/app/w/[slug]/settings/page.tsx`](../src/app/w/[slug]/settings/page.tsx)
    renders `ApiTokenManager`
    ([`src/components/api-token-manager.tsx`](../src/components/api-token-manager.tsx)).
-2. "Create token" calls the server action `createApiTokenAction(name)`
-   ([`src/server/actions/tokens.ts`](../src/server/actions/tokens.ts)):
-   mints `noema_${randomToken(24)}`, stores `hashApiToken(token)` with a label
-   (≤60 chars, default `"API token"`), and returns the **plaintext exactly
-   once** (`{ token }`) — it is never retrievable again.
+2. "Create token" calls the server action `createApiTokenAction(name, scopes)`
+   ([`src/server/actions/tokens.ts`](../src/server/actions/tokens.ts), which
+   delegates to
+   [`src/server/actions/api-tokens.ts`](../src/server/actions/api-tokens.ts) —
+   the one place where a token row is written): mints `noema_${randomToken(24)}`,
+   stores `hashApiToken(token)` with a label (≤60 chars, default `"API token"`)
+   **and the granted scopes** (`expandScopes(scopes)` — the picked list plus
+   everything it implies, so `write:pages` also grants `read:pages`), and
+   returns the **plaintext exactly once** (`{ token }`) — it is never
+   retrievable again. The scope picker sends the picked scopes along; a list
+   with an unknown or malformed entry is rejected as a whole
+   (`{ error: "Invalid scopes." }`).
 3. "Revoke" calls `revokeApiTokenAction(id)` → deletes the row scoped to the
    current user (`{ ok: true }` or `{ error: "Token not found." }`).
+
+A token created without a single picked scope carries an **empty grant**: it is
+refused with `403 insufficient_scope` by every `/api/v1/*` route and has to be
+re-created with the scopes it needs. The token list marks such a row as
+**No access**.
 
 Tokens are also minted by the OAuth flow (§10) — same `ApiToken` table, named
 `OAuth: <app name>`. The OAuth **client secret** follows the same rule as the
@@ -217,7 +235,7 @@ of failed sign-ins locks the account of the person being targeted.
 |---|---|
 | 400 | Malformed JSON (`Invalid JSON body`), missing required param, unknown `action`, or an `{ error }` returned by the backing server action |
 | 401 | `{"error":"Unauthorized"}` — no/invalid session or Bearer token, bad cron secret, bad OAuth client |
-| 403 | `{"error":"Forbidden"}` — no access to the target workspace/page, or role too low |
+| 403 | `{"error":"Forbidden"}` — no access to the target workspace/page, or role too low. On `/api/v1/*` a token without the required scope gets `{"error":"insufficient_scope","required":"read:pages"}` instead (§6) |
 | 404 | Target not found. **Quirk:** workspace-scoped cookie routes report *no access* as `404 {"error":"Workspace not found"}` (tickets/calendar/invites/chat) instead of 403 |
 | 413 / 415 | Upload size / MIME rejection |
 | 429 | Rate limited (§3) |
@@ -360,8 +378,8 @@ external collaborator: they may only open the pages that were shared with
 them, the pages of their teamspaces and their own pages. The scope is resolved
 per request by `pageScopeFor()`
 ([`src/lib/guest-access.ts`](../src/lib/guest-access.ts)) and applied to every
-read that returns pages — with one exception named below (the **empty**-`q`
-branch of the search):
+read that returns pages — including the **empty**-`q` "recent pages" branch
+(B88/#111):
 
 - the scope lands in the query, **before** the limit — a window never shrinks
   because a hidden page took a slot;
@@ -378,13 +396,29 @@ tickets, cycles, roadmap, projects) answer **404** for a `GUEST`, and the
 member directory needs the `viewMemberDirectory` permission, which a `GUEST`
 does not hold.
 
+**The scope grant is enforced (B04).** Every route checks the scopes the
+bearer token was granted *before* it looks at the request body or the
+workspace: the four read routes require `read:pages`, `POST /api/v1/pages`
+requires `write:pages`. A token without the required scope is refused with
+
+```json
+{ "error": "insufficient_scope", "required": "read:pages" }
+```
+
+and status **403**. The check runs before the workspace lookup, so a token
+without the scope gets `403 insufficient_scope` and learns nothing about the
+workspace (not even whether the workspace exists). The hierarchy is expanded
+first (`write:pages` implies `read:pages`, `admin:workspace` implies every
+scope); an unknown or empty grant fails closed.
+
 ### `GET /api/v1/workspaces` — list caller's workspaces
 [`route.ts`](../src/app/api/v1/workspaces/route.ts)
 
 ```json
 { "workspaces": [ { "id": "…", "name": "Acme", "slug": "acme", "icon": "🚀" } ] }
 ```
-Owned or member workspaces, ordered by `createdAt`. Errors: 401, 429.
+Owned or member workspaces, ordered by `createdAt`. Errors: **403**
+`insufficient_scope` (missing `read:pages`) · 401 · 429.
 
 ### `GET /api/v1/pages?workspaceId=…`
 [`route.ts`](../src/app/api/v1/pages/route.ts)
@@ -395,7 +429,8 @@ Owned or member workspaces, ordered by `createdAt`. Errors: 401, 429.
 ```
 Non-trashed pages, ordered by `position` then `createdAt`. A `GUEST` only
 receives the pages in their scope (*The guest scope* above).
-Errors: **400** `workspaceId is required` · **403** `Forbidden` · 401 · 429.
+Errors: **400** `workspaceId is required` · **403** `insufficient_scope`
+(missing `read:pages`) · **403** `Forbidden` · 401 · 429.
 
 ### `POST /api/v1/pages` — create a page
 [`route.ts`](../src/app/api/v1/pages/route.ts)
@@ -415,7 +450,8 @@ Errors: **400** `workspaceId is required` · **403** `Forbidden` · 401 · 429.
 
 **201** `{"page":{"id":"…","title":"New doc","type":"PAGE"}}`
 Errors: 400 (`Invalid JSON body`, `workspaceId is required`, `That parent page
-does not exist in this workspace.`) · 401 · 403 · 429.
+does not exist in this workspace.`) · **403** `insufficient_scope` (missing
+`write:pages`) · 401 · 403 · 429.
 
 #### Retrying safely — `Idempotency-Key`
 
@@ -452,7 +488,8 @@ to this contract.
 `workspaceId`/`deletedAt` are stripped from the payload. A page outside the
 caller's guest scope answers **404**, like a page that does not exist.
 Errors: **404** `Not found` (missing, **trashed** or **outside the guest
-scope**) · **403** `Forbidden` (no workspace access) · 401 · 429.
+scope**) · **403** `insufficient_scope` (missing `read:pages`) · **403**
+`Forbidden` (no workspace access) · 401 · 429.
 
 ### `GET /api/v1/search?workspaceId=…&q=…`
 [`route.ts`](../src/app/api/v1/search/route.ts)
@@ -462,11 +499,10 @@ scope**) · **403** `Forbidden` (no workspace access) · 401 · 429.
                  "snippet":"…matched excerpt…", "updatedAt":"…" } ] }
 ```
 `q` may be empty; title + body search via `searchPages()` in
-`src/server/queries.ts`. A `GUEST` only hits the pages in their scope — with
-one exception still open: the **empty** `q` branch returns the workspace's
-most recent pages **without** the scope. This branch does not close it; the
-B88 branch does (#105 — whose body describes the MCP route, not this branch).
-Errors: 400 (`workspaceId is required`) · 403 · 401 · 429.
+`src/server/queries.ts`. A `GUEST` only hits the pages in their scope — the
+ranked results and the **empty** `q` "recent pages" branch are both scoped
+(B88/#111). Errors: 400 (`workspaceId is required`) · **403**
+`insufficient_scope` (missing `read:pages`) · 403 · 401 · 429.
 
 ---
 
@@ -655,7 +691,8 @@ Form body: `grant_type=authorization_code`, `code`, `client_id`,
 
 **200**
 ```json
-{ "access_token": "noema_<24 chars>", "token_type": "Bearer", "scope": "read write" }
+{ "access_token": "noema_<24 chars>", "token_type": "Bearer",
+  "scope": "read:pages write:pages read:databases write:databases …" }
 ```
 | Error | Body |
 |---|---|
@@ -672,7 +709,12 @@ wrong client, a wrong redirect URI, a wrong PKCE verifier — never consumes
 the code, so it stays usable.
 
 The minted token is a regular API token named `OAuth: <app name>` and works on
-`/api/v1/*` (§6).
+`/api/v1/*` (§6) within its grant. The `scope` field lists the scopes the
+token was minted with — the same list is stored on the token row and enforced
+by the API. The OAuth flow negotiates no scopes yet (the consent screen offers
+no picker), so the list is fixed: every read and write scope of the catalogue
+([`src/lib/api-token-scope.ts`](../src/lib/api-token-scope.ts)), without
+`admin:workspace`.
 
 **How the exchange is verified.** The client secret is compared against the
 stored digest in constant time — the digest is looked up by `clientId`, the
