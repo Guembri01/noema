@@ -614,6 +614,38 @@ whoever learns the key opens all three at once. Rotating `AUTH_SECRET`
 therefore breaks every envelope in the database at the same time — re-seal the
 seeds with this script and re-enter the provider keys and the SMTP password.
 
+**If `AUTH_SECRET` is rotated or lost.** There is no automatic re-key: the
+backfill seals *cleartext* legacy seeds, it does not open a `v1:` envelope with
+an old key and re-seal it with a new one. Treat the secret as a backup-critical
+item, not as a value to rotate on a schedule while the app is running.
+
+1. **Stop the app.** Rotating the key invalidates every session cookie (users
+   sign in again) and makes every existing envelope unreadable.
+2. **If the old value still exists** (secret manager, backup, sealed env file),
+   restore it first and start the app. Do not "fix" the data with a new key.
+   Rotate only in a maintenance window with a tested, out-of-band re-encryption
+   procedure: decrypt the 2FA seeds, AI provider keys and SMTP password with
+   the old key, write them back under the new one, and keep the old key until
+   the verification pass has opened every row.
+3. **If the old value is gone for good**, generate a new secret and start the
+   app. Sessions are already invalid. Every account with a 2FA seed is now
+   `UNREADABLE` and cannot sign in — reset those accounts deliberately, after a
+   database backup:
+
+   ```sql
+   UPDATE "User"
+      SET "twoFactorSecret" = NULL,
+          "twoFactorEnabled" = false
+    WHERE "twoFactorSecret" IS NOT NULL;
+   ```
+
+   The owners then re-enrol 2FA on their next sign-in. Re-enter the AI provider
+   keys (**Settings → AI**) and the SMTP password (**Settings → Email**); the
+   old ciphertext is unrecoverable.
+4. **Back up the new value** before restarting production. `AUTH_SECRET` is
+   deliberately not read from an env file by the backfill (see above), so keep
+   the running process's value and the offline backup identical.
+
 The script is `scripts/backfill-2fa-secrets.mjs`; the decisions (the key
 proof, the per-row plan, the state of the run and the report) live in
 `scripts/backfill-2fa-secrets-lib.mjs` and are unit-tested by
