@@ -70,7 +70,7 @@ jobs:
             name: macos-arm64
             rust-target: aarch64-apple-darwin
             bundles: dmg,app
-          - os: macos-13
+          - os: macos-15-intel
             name: macos-x64
             rust-target: x86_64-apple-darwin
             bundles: dmg,app
@@ -203,7 +203,7 @@ jobs:
             name: macos-arm64
             rust-target: aarch64-apple-darwin
             bundles: dmg,app
-          - os: macos-13
+          - os: macos-15-intel
             name: macos-x64
             rust-target: x86_64-apple-darwin
             bundles: dmg,app
