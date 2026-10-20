@@ -159,7 +159,9 @@ jobs:
         # one thing that needs `contents: write` — is the `release` job's.
         with:
           # The payload is already assembled, so skip the JS build hook.
-          args: --target ${{ matrix.rust-target }} --bundles ${{ matrix.bundles }}
+          # --verbose is deliberate: Tauri otherwise hides linuxdeploy's stderr
+          # behind "failed to run linuxdeploy".
+          args: --target ${{ matrix.rust-target }} --bundles ${{ matrix.bundles }} --verbose
           includeUpdaterJson: false
 
       - name: Upload build artifacts (branch/PR runs)
