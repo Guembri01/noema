@@ -25,6 +25,76 @@ export type AuthState = { error?: string; requiresTwoFactor?: boolean };
  */
 const PASSWORD_DISABLED_ERROR = "Password sign-in is disabled on this deployment.";
 
+/**
+ * B24 — the one sign-in failure text. Every failed sign-in (unknown address,
+ * wrong password, wrong two-factor code) answers with this same string: a
+ * message that differs per cause tells an attacker which half they got right.
+ */
+const LOGIN_FAILED = "Incorrect email or password.";
+
+/**
+ * B24 — the one sign-up failure text. It names neither the reason nor an
+ * e-mail that will never arrive: the app sends no confirmation mail on
+ * sign-up, and a message that says "this address is taken" is a free
+ * enumeration oracle. The same text answers every way a sign-up can fail to
+ * create the account, so the reply never tells "already registered" apart
+ * from "lost the race against another sign-up for the same address".
+ */
+const SIGNUP_FAILED =
+  "We could not create the account for this address. If you already have an account, sign in instead.";
+
+/**
+ * B24 — a real bcrypt hash (cost 12, the cost `hashPassword` uses) of a
+ * value nobody can guess. `verifyPassword` against it costs exactly as much
+ * as a real comparison, so the sign-in path can do the same work when no
+ * account exists and the response time stops revealing whether the address
+ * is registered. The cost must stay in step with `hashPassword` (cost 12) —
+ * a cheaper hash would reintroduce the timing oracle.
+ */
+const DUMMY_PASSWORD_HASH =
+  "$2b$12$DDATzCAs4idfq89J5AQgj.xDjyjiwPleCbBHhzWDH1HywDCLKgoYi";
+
+/**
+ * The shape of a hash that `bcrypt.compare` can actually work with: the
+ * variant must be one bcrypt knows (`a`, `b`, `y`), the cost must be inside
+ * bcrypt's range (4–31), and the rest is base64. Anything else — an SSO
+ * account's `sso:<token>`, an erased account's tombstone, a legacy or
+ * truncated value — can never match a password, and `bcrypt.compare` either
+ * rejects it without doing any work (a value that is not 60 characters long)
+ * or throws on it (a variant or a cost bcrypt does not know), which would
+ * open a hole of its own. Such a value is compared against the dummy hash
+ * instead, so the sign-in costs the same and fails closed.
+ */
+const BCRYPT_HASH = /^\$2[aby]\$(?:0[4-9]|[12]\d|3[01])\$[./A-Za-z0-9]{53}$/;
+
+/** A Prisma unique-constraint violation (`P2002`). */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "P2002"
+  );
+}
+
+/**
+ * Create the user row. A unique-constraint violation means another sign-up
+ * for the same address won the race; it is reported as `null` so the caller
+ * can answer with the very same neutral text as the "address is taken" case
+ * (B24). Every other failure propagates untouched.
+ */
+async function createUser(
+  name: string,
+  email: string,
+  passwordHash: string,
+): Promise<{ id: string } | null> {
+  try {
+    return await prisma.user.create({ data: { name, email, passwordHash } });
+  } catch (error) {
+    if (isUniqueViolation(error)) return null;
+    throw error;
+  }
+}
+
 export async function signupAction(
   _prev: AuthState,
   formData: FormData,
@@ -45,14 +115,21 @@ export async function signupAction(
   }
   const { name, email, password } = parsed.data;
 
+  // Hash first (B24): the bcrypt cost dominates the request, so paying it on
+  // every path keeps the answer from arriving measurably faster for an
+  // address that is already registered.
+  const passwordHash = await hashPassword(password);
+
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
-    return { error: "An account with that email already exists." };
+    return { error: SIGNUP_FAILED };
   }
 
-  const user = await prisma.user.create({
-    data: { name, email, passwordHash: await hashPassword(password) },
-  });
+  const user = await createUser(name, email, passwordHash);
+  if (!user) {
+    // Another sign-up for this address won the race — same neutral answer.
+    return { error: SIGNUP_FAILED };
+  }
 
   const workspace = await prisma.workspace.create({
     data: {
@@ -98,15 +175,31 @@ export async function loginAction(
   const { email, password, code } = parsed.data;
 
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || !(await verifyPassword(password, user.passwordHash))) {
-    return { error: "Incorrect email or password." };
+
+  // B24 — always run a bcrypt comparison, never skip it. When there is no
+  // account (or the stored value is not a bcrypt hash, e.g. an SSO account's
+  // `sso:<token>`) the dummy hash is compared instead, so the sign-in costs
+  // the same whether or not the address is registered. A stored value that is
+  // not a bcrypt hash can never match a password, so it is also rejected
+  // below — the dummy comparison only pays the bill, it never grants access.
+  const storedHash = user?.passwordHash ?? "";
+  const hasBcryptHash = BCRYPT_HASH.test(storedHash);
+  const passwordOk = await verifyPassword(
+    password,
+    hasBcryptHash ? storedHash : DUMMY_PASSWORD_HASH,
+  );
+  if (!user || !hasBcryptHash || !passwordOk) {
+    return { error: LOGIN_FAILED };
   }
 
   // Two-factor gate: ask for a code, then verify it before issuing a session.
   if (user.twoFactorEnabled) {
     if (!code) return { requiresTwoFactor: true };
     if (!user.twoFactorSecret || !verifyTotp(user.twoFactorSecret, code)) {
-      return { error: "Invalid two-factor code.", requiresTwoFactor: true };
+      // B24 — the same text as every other failed sign-in: a message of its
+      // own would confirm that the password was right. The flag keeps the
+      // code field on screen so the user can try again.
+      return { error: LOGIN_FAILED, requiresTwoFactor: true };
     }
   }
 

@@ -90,7 +90,9 @@ beforeEach(() => {
       ? {
           id: "user-1",
           email: "local@corp.com",
-          passwordHash: "hash",
+          // #127 validates the stored value's bcrypt shape before comparing;
+          // a placeholder like "hash" now (correctly) fails closed.
+          passwordHash: "$2b$12$DDATzCAs4idfq89J5AQgj.xDjyjiwPleCbBHhzWDH1HywDCLKgoYi",
           twoFactorEnabled: false,
         }
       : null,
