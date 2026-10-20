@@ -197,6 +197,15 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   tenant's uploads. The mode is applied when the file is created: uploads
   written before this change keep the permissions they were created with and
   have to be rewritten to get the new ones.
+- The unlock state of a password-protected share link is no longer a client
+  cookie whose value is the constant `"1"`. Any client could send
+  `Cookie: share_<token>=1` and read the protected page — the password was
+  never enforced. The value is now an HMAC-SHA256 over the share token and an
+  expiry, keyed by `AUTH_SECRET` under its own domain separation, and it is
+  verified server-side in constant time. Every verification path fails closed.
+
+
+
 
 ## [1.4.1] — 2026-10-17
 
