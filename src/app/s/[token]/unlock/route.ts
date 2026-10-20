@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { rateLimit } from "@/lib/api-guard";
+import { bodyReadError, readFormDataBody } from "@/lib/body-limit";
 import {
   SHARE_UNLOCK_TTL_SECONDS,
   createShareUnlockToken,
@@ -10,12 +11,20 @@ import { attemptShareUnlock } from "@/server/actions/share";
 
 export const runtime = "nodejs";
 
+/**
+ * B22 — the budget for one unlock attempt. The route is public, so the form
+ * body has to carry a bound of its own (besides the rate and attempt brakes
+ * below).
+ */
+const MAX_BODY_BYTES = 16 * 1024;
+
 /** Unlock a password-protected share link by setting a short-lived cookie. */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ token: string }> },
 ) {
   const { token } = await params;
+
   const origin = new URL(request.url).origin;
 
   // This endpoint is unauthenticated, so it needs the same rate limit as
@@ -29,7 +38,12 @@ export async function POST(
   const limited = rateLimit(request, `share-unlock-${token}`, 5, 60_000);
   if (limited) return limited;
 
-  const form = await request.formData();
+  let form: FormData;
+  try {
+    form = await readFormDataBody(request, MAX_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Expected multipart form data");
+  }
   const password = String(form.get("password") ?? "");
 
   // The attempt counter is keyed by the share token alone: it still stops a

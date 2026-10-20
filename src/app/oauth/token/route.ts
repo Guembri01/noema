@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { randomToken } from "@/lib/slug";
 import { hashApiToken, hashOAuthSecret, oauthSecretMatches } from "@/lib/api-auth";
 import { rateLimit } from "@/lib/api-guard";
+import { bodyReadError, readFormDataBody } from "@/lib/body-limit";
 import { verifyChallenge } from "@/lib/oauth-pkce";
 
 export const runtime = "nodejs";
@@ -37,12 +38,24 @@ const OAUTH_TOKEN_SCOPES: readonly string[] = [
   "write:members",
 ];
 
+
+/**
+ * B22 — the budget for one token exchange. The form carries the code, the
+ * client credentials and the PKCE verifier — a few hundred bytes at most.
+ */
+const MAX_BODY_BYTES = 16 * 1024;
+
 /** Exchange an authorization code for an API access token. */
 export async function POST(request: Request) {
   const limited = rateLimit(request, "oauth-token", 30, 60_000);
   if (limited) return limited;
 
-  const form = await request.formData();
+  let form: FormData;
+  try {
+    form = await readFormDataBody(request, MAX_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Expected multipart form data");
+  }
   if (String(form.get("grant_type") ?? "") !== "authorization_code") {
     return NextResponse.json({ error: "unsupported_grant_type" }, { status: 400 });
   }

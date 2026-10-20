@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
+import { bodyReadError, readFormDataBody } from "@/lib/body-limit";
 import { logProviderFailure, providerFailure, transportFailure } from "@/lib/ai-provider";
 
 export const runtime = "nodejs";
@@ -9,6 +10,15 @@ const BASE_URL = process.env.AI_TRANSCRIBE_BASE_URL ?? "https://api.openai.com/v
 const MODEL = process.env.AI_TRANSCRIBE_MODEL ?? "whisper-1";
 const KEY =
   process.env.AI_TRANSCRIBE_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
+
+/**
+ * B22 — the budget for one transcription request.
+ *
+ * The multipart body is buffered before it is forwarded, so it needs a bound.
+ * 25 MB is the ceiling the speech-to-text providers themselves apply to an
+ * audio file, so the route refuses exactly what the provider would.
+ */
+const MAX_BODY_BYTES = 25 * 1024 * 1024;
 
 /** Speech-to-text via an OpenAI-compatible transcription endpoint. */
 export async function POST(request: Request) {
@@ -29,7 +39,12 @@ export async function POST(request: Request) {
     );
   }
 
-  const form = await request.formData();
+  let form: FormData;
+  try {
+    form = await readFormDataBody(request, MAX_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Expected multipart form data");
+  }
   const file = form.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "file is required" }, { status: 400 });
