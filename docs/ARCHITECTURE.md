@@ -62,7 +62,7 @@ The central decision is **"everything is a page."**
 | DATE | `{ start: ISO, end?: ISO, includeTime?: boolean }` |
 | CHECKBOX | `{ checked: boolean }` |
 | PEOPLE | `{ names: string[] }` (user-id linkage is a roadmap item) |
-| FILES | `{ files: { name, url, mimeType? }[] }` |
+| FILES | `{ files: { name, url, mimeType? }[] }` — `url` is an app-owned `/api/files/...` path; every stored URL is scheme-checked before it is rendered as a link |
 | RELATION | `{ pageIds: string[] }` |
 
 ## Authentication

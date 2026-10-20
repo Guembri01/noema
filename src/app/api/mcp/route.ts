@@ -344,6 +344,14 @@ async function runWriteTool(name: string, args: RpcParams, ctx: ExecContext): Pr
       } catch {
         value = raw;
       }
+      // No URL gate on this path. The MCP surface has no upload tool and the
+      // upload file name is a random token, so a client cannot produce an
+      // app-owned `/api/files/...` URL: a write gate on that basis refused
+      // every FILES value and made the tool useless for FILES (B52, finding
+      // L2). The security boundary is the render gate instead - a stored URL
+      // only becomes a link after it passes the shared href allowlist
+      // (`sanitizeHref`), which drops `javascript:`, `data:` and every other
+      // script-bearing scheme before the value reaches an `href`.
       const saved = await prisma.propertyValue.upsert({
         where: { propertyId_pageId: { propertyId, pageId } },
         create: { propertyId, pageId, value: value as Prisma.InputJsonValue },

@@ -399,6 +399,17 @@ endpoints are:
 `POST /api/v1/pages` accepts `"type": "DATABASE"` to *create* an empty
 database page (§6).
 
+A FILES cell stores `{ files: { name, url, mimeType? }[] }`, and `url` is an
+app-owned asset path (`/api/files/<workspaceId>/<name>`, as returned by
+`POST /api/upload`): the app's own write path (`setPropertyValueAction`)
+refuses any other URL. The MCP `update_property_value` tool stores the value
+it is given — it has no upload tool, so a client cannot produce an app-owned
+URL — and every stored URL passes the shared `http|https|mailto|tel` href
+allowlist before it is rendered as a link, so a stored `javascript:` URL never
+becomes an anchor, whichever client wrote it. A FILES entry that is not an
+app-owned asset path is dropped from the cell the next time a file is
+attached to it.
+
 ---
 
 ## 6. Public REST API — `/api/v1` (Bearer tokens)
