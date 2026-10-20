@@ -523,9 +523,16 @@ export function detectEmbed(value: string): EmbedInfo {
     : { provider: "none", embedUrl: null };
 }
 
-/** Extract only http(s) image URLs from untrusted preview metadata. */
+/**
+ * Extract only http(s) image URLs from untrusted preview metadata, and refuse
+ * private/internal hosts: the browser fetches these URLs, so a preview card
+ * must never point the victim's browser at loopback, RFC1918 or cloud
+ * metadata addresses (audit B10).
+ */
 export function safeImageUrl(value: unknown): string | null {
   if (typeof value !== "string" || !isHttpUrl(value)) return null;
+  const url = new URL(value); // isHttpUrl already proved that it parses
+  if (isPrivateHost(url.hostname)) return null;
   return value;
 }
 
