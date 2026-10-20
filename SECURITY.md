@@ -46,8 +46,8 @@ In scope:
 - Authentication, session handling and password storage.
 - Authorization: workspace membership, roles, guests, page shares, teamspaces,
   API tokens and the public API.
-- The importers that fetch remote content, and the link-preview fetcher (SSRF,
-  size and scheme handling).
+- The importers that fetch remote content, the link-preview fetcher and the
+  outbound webhook deliveries (SSRF, size and scheme handling).
 - Upload handling: type validation, path traversal, and the authorised file
   route.
 - Anything that would leak one workspace's data into another.
@@ -97,6 +97,24 @@ unverified address weakens the guarantee. A sign-in that meets an account
 whose address was never proven is refused (`?error=sso_email_taken`) instead
 of taking the account over; an id_token without `email_verified: true` is
 refused (`?error=sso_email_unverified`).
+
+### `NOEMA_ALLOW_LOOPBACK_TARGETS`
+
+### `NOEMA_ALLOW_LOOPBACK_TARGETS`
+
+Outbound webhooks may not point at the machine the server runs on: the
+production guard refuses the loopback range (`127.0.0.0/8`, `::1`,
+`localhost`) along with every other private range, so a webhook cannot be
+used to probe the internal network.
+
+If a receiver really runs on the same machine, set
+`NOEMA_ALLOW_LOOPBACK_TARGETS=1` and the loopback range is accepted again.
+The opt-in is **off by default** — without it the production guard refuses a
+loopback target — and it never opens more than the loopback range: RFC1918
+(`10/8`, `172.16/12`, `192.168/16`), link-local (`169.254/16`), the cloud
+metadata addresses and every `.internal`/`.local` name stay refused. It
+applies to the webhook path only; calendar feeds keep refusing a loopback
+feed in production.
 
 ## Secrets in the repository
 

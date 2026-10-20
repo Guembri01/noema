@@ -504,6 +504,22 @@ list marks it as **No access**.
   re-validated, and the URL the response was finally read from is checked
   again. The card's image and icon go through the same gate, because the
   browser fetches them. A refused target answers `400 "Blocked host"`.
+- An outbound webhook can no longer be pointed at an internal service. Only
+  the URL scheme was checked when a hook was created, so a workspace admin
+  could store `http://10.0.0.5:8080/admin` and every later page edit made
+  the server POST to that internal host — and the HTTP status ended up in the
+  delivery log, which turned the webhook settings into a status oracle for
+  the internal network. The target is now checked when the hook is created
+  and again before every delivery attempt: private, reserved and cloud
+  metadata addresses are refused, including host names that resolve into
+  private space (DNS rebinding). A refused target is never contacted, and its
+  delivery record carries no status code, so the delivery history leaks
+  nothing about the internal network. Every refusal answers the same
+  message. The production default refuses a loopback target as well; an
+  operator who really has a receiver on the same machine can open the
+  loopback range explicitly with `NOEMA_ALLOW_LOOPBACK_TARGETS=1`, and that
+  opt-in covers the loopback range only — RFC1918, link-local, cloud metadata
+  and `.internal`/`.local` names stay refused.
 
 ## [1.4.1] — 2026-10-17
 

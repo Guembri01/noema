@@ -110,7 +110,7 @@ async function safeAssetUrl(
     return null;
   }
   if (checkedHosts.has(host)) return asset;
-  if (await isBlockedFeedTarget(asset, resolve, { allowDevLoopback: false })) return null;
+  if (await isBlockedFeedTarget(asset, { resolve, allowLoopbackInDevelopment: false })) return null;
   checkedHosts.add(host);
   return asset;
 }

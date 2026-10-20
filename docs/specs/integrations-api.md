@@ -246,7 +246,10 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
   `scripts/check-webhooks.mjs` updated alongside.
   *Acceptance:* known-vector unit test (fixed secret/time/body → fixed hex);
   tampered body and stale timestamp both fail verification; the updated
-  `check-webhooks.mjs` passes against prod.
+  `check-webhooks.mjs` passes against prod — the payload gate starts the
+  shipped payload with `NOEMA_ALLOW_LOOPBACK_TARGETS=1`, so the loopback
+  receiver of the checker is allowed; without that opt-in the production
+  default refuses a loopback target.
 - **R24.14** — Signing-secret UX: creation **generates a server-side secret
   by default**, shown exactly once (same contract as `createApiTokenAction`,
   `tokens.ts:9-21`), with an option to paste a custom one; a **Rotate** action
