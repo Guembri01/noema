@@ -110,7 +110,7 @@ const renderCell = (value: unknown) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  auth.authenticateApiRequest.mockResolvedValue({ userId: "u1" });
+  auth.authenticateApiRequest.mockResolvedValue({ userId: "u1", scopes: ["write:databases"] });
   perm.getWorkspaceAccess.mockResolvedValue({ role: "MEMBER" });
   perm.canEditContent.mockReturnValue(true);
   db.apiTokenFindUnique.mockResolvedValue({ scopes: ["write:databases"] });

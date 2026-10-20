@@ -221,7 +221,10 @@ beforeEach(() => {
 
   // The guest is a member of the workspace with the `GUEST` role.
   edge.getWorkspaceAccess.mockResolvedValue({ role: "GUEST" });
-  edge.authenticateApiRequest.mockResolvedValue({ userId: "user-guest" });
+  edge.authenticateApiRequest.mockResolvedValue({
+    userId: "user-guest",
+    scopes: ["read:pages", "read:databases", "read:comments", "write:pages", "admin:workspace"],
+  });
   db.apiTokenFindUnique.mockResolvedValue({ scopes: ["read:pages", "admin:workspace"] });
 
   // The guest was shared "page-a" — nothing else.
