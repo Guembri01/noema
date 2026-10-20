@@ -111,17 +111,21 @@ describe("readBodyBytes()", () => {
     // can never succeed.
     let cancelled = false;
     const stream = new ReadableStream<Uint8Array>({
-      pull(controller) {
+      start(controller) {
         controller.enqueue(new Uint8Array(LIMIT + 1));
       },
       cancel() {
         cancelled = true;
       },
     });
-    const request = streamedRequest("http://localhost/api/x", stream, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-    });
+    // Hand the stream to the reader directly. Wrapping it in a `Request`
+    // puts undici's own pump in between; cancelling through that wrapper
+    // races the pump and leaves a test-only rejection behind, which is not
+    // what the production route exercises.
+    const request = {
+      headers: new Headers({ "content-type": "application/json" }),
+      body: stream,
+    } as unknown as Request;
 
     await expect(readBodyBytes(request, LIMIT)).rejects.toBeInstanceOf(BodyTooLargeError);
     expect(cancelled).toBe(true);
@@ -205,9 +209,19 @@ describe("readFormDataBody()", () => {
   });
 
   it("refuses an oversized multipart body", async () => {
-    const form = new FormData();
-    form.append("file", new File([new Uint8Array(LIMIT + 1)], "a.bin"));
-    const request = new Request("http://localhost/api/x", { method: "POST", body: form });
+    // The budget is checked before the platform's multipart parser runs, so
+    // the bytes only need the multipart content type. The stream is handed
+    // to the reader directly because wrapping it in a `Request` puts
+    // undici's pump in between, and cancelling that wrapper is a test-only
+    // race (the real route receives its body from the HTTP server).
+    const request = {
+      headers: new Headers({ "content-type": "multipart/form-data; boundary=x" }),
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(LIMIT + 1));
+        },
+      }),
+    } as unknown as Request;
     await expect(readFormDataBody(request, LIMIT)).rejects.toBeInstanceOf(BodyTooLargeError);
   });
 });
