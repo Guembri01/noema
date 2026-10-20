@@ -38,8 +38,17 @@
  * and `src/server/actions/calendar.test.ts` (through the real action).
  */
 import { lookup } from "node:dns/promises";
+import { request as httpRequest, type RequestOptions } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
+import { Readable } from "node:stream";
 import { isPrivateHost } from "@/lib/embeds";
+
+/**
+ * The transport present when this module loaded. Tests replace `globalThis.fetch`
+ * with an offline double; production keeps the native implementation.
+ */
+const nativeFetch = globalThis.fetch;
 
 export type HostResolver = (hostname: string) => Promise<string[]>;
 
@@ -201,33 +210,59 @@ function loopbackExempted(options: OutboundTargetOptions): boolean {
  * and the shipped guard still fail closed on every private range. The
  * link-preview route passes no loopback exemption at all.
  */
-export async function isBlockedOutboundTarget(
+type OutboundResolution =
+  | { blocked: true; address: null; transient: false }
+  | { blocked: true; address: null; transient: true }
+  | { blocked: false; address: string; transient: false };
+
+/**
+ * Resolve a target to the **one address the request must use**.
+ *
+ * Checking a hostname and then fetching it again is a DNS-rebinding race: the
+ * second lookup can answer with an internal address after the first one
+ * passed. The caller therefore fetches the address returned here, not the
+ * hostname. Every DNS answer is validated; the first public answer is pinned
+ * for the connection (TLS still uses the URL hostname for SNI and certificate
+ * verification).
+ *
+ * `transient` distinguishes a resolver failure from a policy refusal. Both
+ * fail closed, but a caller that retries can keep retrying a resolver outage
+ * instead of treating it as a permanently blocked target.
+ */
+export async function resolveOutboundTarget(
   rawUrl: string,
   options: OutboundTargetOptions = {},
-): Promise<boolean> {
+): Promise<OutboundResolution> {
   const resolve = options.resolve ?? defaultHostResolver;
   let url: URL;
   try {
     url = new URL(rawUrl);
   } catch {
-    return true;
+    return { blocked: true, address: null, transient: false };
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return true;
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return { blocked: true, address: null, transient: false };
+  }
   const hostname = normalizeHost(url.hostname);
   if (isBlockedFeedHost(hostname)) {
     if (isLoopbackHost(hostname) && loopbackExempted(options)) {
-      return false;
+      return { blocked: false, address: hostname, transient: false };
     }
-    return true;
+    return { blocked: true, address: null, transient: false };
   }
-  if (isIP(hostname)) return false; // a public literal - nothing to resolve
+  if (isIP(hostname)) {
+    return { blocked: false, address: hostname, transient: false }; // a public literal
+  }
   let addresses: string[];
   try {
     addresses = await resolve(hostname);
   } catch {
-    return true; // a DNS failure must not open the gate
+    return { blocked: true, address: null, transient: true };
   }
-  if (addresses.length === 0) return true;
+  if (addresses.length === 0) {
+    // An empty answer is a resolver failure, not a policy decision.
+    return { blocked: true, address: null, transient: true };
+  }
   // B11 — with an exemption in force, a name whose EVERY answer is a
   // loopback address is a local target and may pass. A mixed answer
   // (loopback + anything else) stays refused.
@@ -235,9 +270,19 @@ export async function isBlockedOutboundTarget(
     loopbackExempted(options) &&
     addresses.every((address) => isLoopbackAddress(address))
   ) {
-    return false;
+    return { blocked: false, address: addresses[0], transient: false };
   }
-  return addresses.some((address) => isBlockedIpLiteral(address));
+  if (addresses.some((address) => isBlockedIpLiteral(address))) {
+    return { blocked: true, address: null, transient: false };
+  }
+  return { blocked: false, address: addresses[0], transient: false };
+}
+
+export async function isBlockedOutboundTarget(
+  rawUrl: string,
+  options: OutboundTargetOptions = {},
+): Promise<boolean> {
+  return (await resolveOutboundTarget(rawUrl, options)).blocked;
 }
 
 /**
@@ -279,6 +324,163 @@ export type FeedFetchOptions = {
   /** Loopback exemption in `development` - see {@link OutboundTargetOptions}. */
   allowDevLoopback?: boolean;
 };
+
+/**
+ * Serialize the request body the guard supports. Every outbound call in the
+ * app sends a string (the webhook JSON) or no body (the feed and preview
+ * GETs), so a stream/FormData body is refused rather than silently fetched
+ * without pinning.
+ */
+function requestBody(body: RequestInit["body"]): string | Buffer | null {
+  if (body == null) return null;
+  if (typeof body === "string") return body;
+  if (body instanceof URLSearchParams) return body.toString();
+  if (Buffer.isBuffer(body)) return body;
+  if (body instanceof ArrayBuffer) return Buffer.from(body);
+  if (ArrayBuffer.isView(body)) {
+    return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
+  }
+  throw new Error("Unsupported request body.");
+}
+
+/**
+ * Fetch one URL with the DNS answer **pinned** to `address`.
+ *
+ * The normal `fetch` resolves the hostname itself, after the guard looked at
+ * a different answer — the rebinding window. This request connects to the
+ * address that was validated, while keeping the URL's hostname for the Host
+ * header, TLS SNI and certificate verification. Redirects are never followed
+ * here; `safeFetchGuarded` validates each hop.
+ */
+async function fetchPinnedAddress(
+  rawUrl: string,
+  init: RequestInit,
+  address: string,
+): Promise<Response> {
+  const url = new URL(rawUrl);
+  const headers = new Headers(init.headers);
+  const body = requestBody(init.body);
+  if (body !== null && !headers.has("content-length")) {
+    headers.set("content-length", String(Buffer.byteLength(body)));
+  }
+  const hostname = normalizeHost(url.hostname);
+  const family = isIP(address) === 6 ? 6 : 4;
+  const requestOptions: RequestOptions & { servername?: string } = {
+    protocol: url.protocol,
+    hostname,
+    port: url.port || undefined,
+    path: `${url.pathname}${url.search}`,
+    method: init.method ?? "GET",
+    headers: Object.fromEntries(headers.entries()),
+    // This callback is the pin: net.connect asks for an address once and we
+    // always answer with the one the guard validated. `all: true` asks for
+    // the array form; both forms carry the same single answer.
+    lookup: ((
+      _host: string,
+      lookupOptions: unknown,
+      callback: (...args: never[]) => void,
+    ) => {
+      const wantsAll =
+        typeof lookupOptions === "object" &&
+        lookupOptions !== null &&
+        (lookupOptions as { all?: boolean }).all === true;
+      if (wantsAll) {
+        (
+          callback as unknown as (
+            error: null,
+            addresses: { address: string; family: number }[],
+          ) => void
+        )(null, [{ address, family }]);
+        return;
+      }
+      (callback as unknown as (error: null, address: string, family: number) => void)(
+        null,
+        address,
+        family,
+      );
+    }) as RequestOptions["lookup"],
+  };
+  if (url.protocol === "https:") requestOptions.servername = hostname;
+
+  return new Promise<Response>((resolve, reject) => {
+    const send = url.protocol === "https:" ? httpsRequest : httpRequest;
+    const request = send(requestOptions, (incoming) => {
+      const responseHeaders = new Headers();
+      for (const [name, value] of Object.entries(incoming.headers)) {
+        if (value === undefined) continue;
+        for (const entry of Array.isArray(value) ? value : [value]) {
+          responseHeaders.append(name, entry);
+        }
+      }
+      const response = new Response(
+        Readable.toWeb(incoming) as ReadableStream<Uint8Array>,
+        {
+          status: incoming.statusCode ?? 500,
+          statusText: incoming.statusMessage ?? "",
+          headers: responseHeaders,
+        },
+      );
+      // `Response` built from a stream has an empty `url`; the caller uses it
+      // to resolve relative redirects and to re-check the final host.
+      Object.defineProperty(response, "url", {
+        value: url.toString(),
+        configurable: true,
+      });
+      resolve(response);
+    });
+    request.on("error", reject);
+    if (init.signal) {
+      if (init.signal.aborted) {
+        request.destroy();
+        reject(new Error("Aborted."));
+        return;
+      }
+      init.signal.addEventListener("abort", () => request.destroy(), { once: true });
+    }
+    if (body !== null) request.write(body);
+    request.end();
+  });
+}
+
+/**
+ * Guarded outbound fetch with DNS pinning. The target is resolved once, every
+ * answer is validated by {@link resolveOutboundTarget}, and the connection is
+ * made to that validated address. Throws on a blocked or unresolvable target;
+ * callers that want the uniform "blocked / failed" result use
+ * {@link safeFetchGuarded}.
+ */
+export async function fetchPinned(
+  rawUrl: string,
+  init: RequestInit = {},
+  options: OutboundTargetOptions = {},
+): Promise<Response> {
+  const target = await resolveOutboundTarget(rawUrl, options);
+  if (target.blocked) throw new Error("Blocked target.");
+  return fetchPinnedTarget(rawUrl, init, target.address);
+}
+
+/**
+ * Fetch a URL whose target address the caller has already validated.
+ *
+ * This is the second half of {@link fetchPinned}, exported so a caller that
+ * must check every redirect hop or every delivery attempt does not repeat the
+ * DNS lookup (which would reopen the rebinding window between the two
+ * answers).
+ */
+export async function fetchPinnedTarget(
+  rawUrl: string,
+  init: RequestInit,
+  address: string,
+): Promise<Response> {
+  // A replaced global transport is an offline test double (or an operator's
+  // instrumentation). Honour it, but only after the caller let the target
+  // through the guard; the shipped process keeps the native fetch and uses the
+  // pinned connection below.
+  if (globalThis.fetch !== nativeFetch) {
+    return globalThis.fetch(rawUrl, init);
+  }
+  return fetchPinnedAddress(rawUrl, init, address);
+}
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
@@ -322,14 +524,15 @@ export async function safeFetchGuarded(
   init?: RequestInit,
   options: FeedFetchOptions = {},
 ): Promise<GuardedFetchResult> {
-  const fetchFn: FeedFetchFn =
-    options.fetchFn ?? ((url, requestInit) => globalThis.fetch(url, requestInit));
   const maxRedirects = options.maxRedirects ?? 3;
   const resolve = options.resolve ?? defaultHostResolver;
   const targetOptions: OutboundTargetOptions = {
     resolve,
     allowLoopbackInDevelopment: options.allowDevLoopback ?? true,
   };
+  const fetchFn: FeedFetchFn =
+    options.fetchFn ??
+    ((url, requestInit) => fetchPinned(url, requestInit, targetOptions));
   let current = rawUrl;
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
     if (await isBlockedFeedTarget(current, targetOptions)) {
