@@ -246,7 +246,14 @@ export async function resolveOutboundTarget(
   const hostname = normalizeHost(url.hostname);
   if (isBlockedFeedHost(hostname)) {
     if (isLoopbackHost(hostname) && loopbackExempted(options)) {
-      return { blocked: false, address: hostname, transient: false };
+      // A loopback *literal* is already the address. `localhost` is not, and
+      // the pinned connection cannot look it up again; use the IPv4 loopback,
+      // which is what a development server bound to localhost answers on.
+      return {
+        blocked: false,
+        address: isIP(hostname) ? hostname : "127.0.0.1",
+        transient: false,
+      };
     }
     return { blocked: true, address: null, transient: false };
   }
@@ -530,17 +537,22 @@ export async function safeFetchGuarded(
     resolve,
     allowLoopbackInDevelopment: options.allowDevLoopback ?? true,
   };
-  const fetchFn: FeedFetchFn =
-    options.fetchFn ??
-    ((url, requestInit) => fetchPinned(url, requestInit, targetOptions));
   let current = rawUrl;
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
-    if (await isBlockedFeedTarget(current, targetOptions)) {
+    // One resolution per hop: the address that passes is the address the
+    // transport connects to, so a second lookup cannot answer something else.
+    const target = await resolveOutboundTarget(current, targetOptions);
+    if (target.blocked) {
+      // A DNS outage and a private answer both stay closed here. The webhook
+      // dispatcher uses `resolveOutboundTarget` directly so it can retry an
+      // outage instead of treating the host as permanently forbidden.
       return { ok: false, reason: "blocked" };
     }
     let response: Response;
     try {
-      response = await fetchFn(current, { ...init, redirect: "manual" });
+      response = options.fetchFn
+        ? await options.fetchFn(current, { ...init, redirect: "manual" })
+        : await fetchPinnedTarget(current, { ...init, redirect: "manual" }, target.address);
     } catch {
       return { ok: false, reason: "failed" };
     }
@@ -551,7 +563,8 @@ export async function safeFetchGuarded(
       // already.
       const finalUrl = response.url !== "" ? response.url : current;
       if (finalUrl !== current && !sameHost(current, finalUrl)) {
-        if (await isBlockedFeedTarget(finalUrl, targetOptions)) {
+        const finalTarget = await resolveOutboundTarget(finalUrl, targetOptions);
+        if (finalTarget.blocked) {
           return { ok: false, reason: "blocked" };
         }
       }

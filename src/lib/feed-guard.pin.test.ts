@@ -51,6 +51,18 @@ describe("fetchPinned", () => {
     await expect(response.text()).resolves.toBe(`host=pin.test:${port}`);
   });
 
+  it("maps an exempt localhost name to the IPv4 loopback address", async () => {
+    vi.stubEnv("NOEMA_ALLOW_LOOPBACK_TARGETS", "1");
+    const response = await fetchPinned(
+      `http://localhost:${port}/hello`,
+      {},
+      { allowLoopbackWithOptIn: true },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toBe(`host=localhost:${port}`);
+  });
+
   it("refuses a target the guard blocks before opening a socket", async () => {
     await expect(
       fetchPinned(`http://127.0.0.1:${port}/hello`),
