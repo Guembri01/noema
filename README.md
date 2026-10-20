@@ -377,7 +377,7 @@ Pick a model from the curated list or press **Fetch models** to pull the provide
 
 | Capability | Detail |
 | --- | --- |
-| **SSO (OIDC)** | Set `SSO_ISSUER` / `SSO_CLIENT_ID` / `SSO_CLIENT_SECRET` (optionally `SSO_REDIRECT_URI`); a **Sign in with SSO** link appears on `/login`. `/api/auth/sso/start` redirects to the provider and `/api/auth/sso/callback` verifies the `id_token` (JWKS, issuer + audience + nonce) and provisions the user just-in-time. |
+| **SSO (OIDC)** | Set `SSO_ISSUER` / `SSO_CLIENT_ID` / `SSO_CLIENT_SECRET` (optionally `SSO_REDIRECT_URI`); a **Sign in with SSO** link appears on `/login`. `/api/auth/sso/start` redirects to the provider and `/api/auth/sso/callback` verifies the `id_token` (JWKS, issuer + audience + nonce) and provisions the user just-in-time. For an SSO-only deployment set `AUTH_PASSWORD=disabled` — the local email + password sign-in and sign-up then refuse every request. |
 | **Teamspaces** | Create teamspaces in **Workspace settings** with per-teamspace membership; root pages assigned to a teamspace (page menu → *Move to teamspace*) are grouped under it in the sidebar. |
 | **Transcription** | `POST /api/ai/transcribe` forwards audio to a speech-to-text provider (`AI_TRANSCRIBE_API_KEY`, optional `AI_TRANSCRIBE_BASE_URL` / `AI_TRANSCRIBE_MODEL`); the sidebar **Transcribe audio** action turns a recording into a page. |
 | **Comments** | Select text in a page → **Comment** in the selection toolbar or block menu anchors the quote to the composer; quotes render above each comment. |
@@ -414,6 +414,7 @@ npm run dev                 # http://localhost:3000 (Next.js default port)
 | Required | `DATABASE_URL`, `AUTH_SECRET` | `DATABASE_URL` must match the docker mapping (`localhost:5433`, user/db `noema`) |
 | AI (optional) | `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_TRANSCRIBE_*` | any OpenAI-compatible provider; see [AI configuration](#ai-configuration) |
 | SSO (optional) | `SSO_ISSUER`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`, `SSO_REDIRECT_URI` | enables *Sign in with SSO*; the local mock IdP used by `npm run check:sso` is pointed at with these |
+| Sign-in strategies (optional) | `AUTH_PASSWORD`, `AUTH_STRATEGIES` | `AUTH_PASSWORD=disabled` turns the local email + password sign-in and sign-up off (single-sign-on only); `AUTH_STRATEGIES` is a comma-separated allow-list (`password,google,saml`) and every strategy outside it is off |
 | SMTP (optional) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, … | invitation emails; without it the invite link is still shown in the UI |
 | Notion importer (optional) | `NOTION_API_BASE` | defaults to `https://api.notion.com/v1`; checks point it at a local mock (`http://localhost:4322/v1`) |
 | Misc (optional) | `APP_URL`, `APP_ORIGINS`, `CRON_SECRET`, `NEXT_PUBLIC_COLLAB_URL` | canonical email links, Server-Action origin allow-list, cron guard, realtime collab |

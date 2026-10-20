@@ -8,6 +8,7 @@ import {
   isSafeReturnTo,
   linkOrCreate,
   normalizeIdentity,
+  passwordStrategyEnabled,
   startLogin,
   validateCallback,
   validatePassword,
@@ -650,5 +651,38 @@ describe("enabledStrategies", () => {
 
   it("treats a blank allow-list as no allow-list", () => {
     expect(enabledStrategies({ AUTH_STRATEGIES: "  " }).map((e) => e.id)).toEqual(["password"]);
+  });
+});
+
+describe("passwordStrategyEnabled", () => {
+  it("is enabled on an empty environment", () => {
+    expect(passwordStrategyEnabled({})).toBe(true);
+  });
+
+  it("is disabled by a falsy AUTH_PASSWORD value", () => {
+    for (const value of ["disabled", "off", "no", "0", "false", "DISABLED"]) {
+      expect(passwordStrategyEnabled({ AUTH_PASSWORD: value })).toBe(false);
+    }
+  });
+
+  it("stays enabled for a truthy AUTH_PASSWORD value", () => {
+    expect(passwordStrategyEnabled({ AUTH_PASSWORD: "enabled" })).toBe(true);
+    expect(passwordStrategyEnabled({ AUTH_PASSWORD: "true" })).toBe(true);
+  });
+
+  it("is disabled by an allow-list without password", () => {
+    expect(
+      passwordStrategyEnabled({ AUTH_STRATEGIES: "google,saml", AUTH_GOOGLE_CLIENT_ID: "gid" }),
+    ).toBe(false);
+  });
+
+  it("stays enabled for an allow-list that contains password", () => {
+    expect(passwordStrategyEnabled({ AUTH_STRATEGIES: "password,google" })).toBe(true);
+  });
+
+  it("is disabled when the allow-list excludes password and AUTH_PASSWORD is set", () => {
+    expect(
+      passwordStrategyEnabled({ AUTH_PASSWORD: "enabled", AUTH_STRATEGIES: "google" }),
+    ).toBe(false);
   });
 });
