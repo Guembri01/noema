@@ -64,7 +64,7 @@ navigation** — reusing the shipped FTS pipeline, with zero schema changes.
 | Mirror write paths | create `src/server/actions/pages.ts:73-83`, update `:271`, duplicate `page-menu.ts:264-280`, **restore** `page-versions.ts:70-72` (closes the old D8 bypass, red-proven by `page-versions.test.ts:90-96`) | Covered — **except** the creators listed in D78.6 |
 | Query engine | `src/server/queries.ts:243-342`: pass 1 exact `websearch_to_tsquery` + `ts_rank` + `ts_headline` (`:274-287`, `LIMIT take+1` `:286`, errors swallowed to `[]` `:287`), pass 2 prefix `term:*` **only if pass 1 empty** (`:291-312`, condition `:292`), pass 3 substring fallback for un-backfilled mirrors (`:315-328`) | Working; ranking = single-pass (G78.6) |
 | Snippets | `ts_headline` options `'StartSel=, StopSel=, MaxWords=18…'` (`queries.ts:277-278, 300-301`) — **empty** delimiters; fallback `makeSnippet` (`src/lib/search.ts:27-35`) cuts ±120 chars around the first match | Snippet text ships and renders (`search-results.tsx:69`, `quick-find.tsx:124-128`) but **no term highlighting** |
-| Guest scope | `src/lib/guest-access.ts:49-86` (`guestVisiblePageIds`), `:99-108` (`pageScopeFor` → `null` for a full member, an **empty** set for an unknown role); applied at `search/page.tsx:67` and `actions/search.ts:37,61` — and, since B02 (#16), at `api/v1/search/route.ts:73`; the scope lands in SQL **before** the limit (`src/lib/fts.ts:170-173`) | Correct for the tested cases; the empty-query branch is still unscoped (D78.2, B88 / #105) |
+| Guest scope | `src/lib/guest-access.ts` (`guestScope` → page ids and teamspace ids; `viewerScopeFor`; `pageScopeFor` → `null` for a full member, an empty set for an unknown role); applied at `search/page.tsx`, `actions/search.ts`, `api/v1/search/route.ts` and the MCP read tools; the scope lands in SQL before the limit (`src/lib/fts.ts`) | Correct for the tested cases; the empty-query branch is scoped by B88 (#111) |
 | Search page | `src/app/w/[slug]/search/page.tsx:29-31` (empty `q` → no results at all), GET form `:38-47`, results list `src/components/search-results.tsx:58-78` (plain links — tab/Enter only) | Server-rendered, i18n'd (`t(locale, …)` `:55, :75, :88`) |
 | Pagination | `searchPagesPaged` (`queries.ts:349-366`, take clamped 1..100 `:355`, `take+1` peek `:358-361`), `loadMoreSearchAction` (`actions/search.ts:41-71`), "Load more" appends (`search-results.tsx:40-50`), e2e 60-page proof `e2e/noema.spec.ts:1175-1209` | Shipped ✅ — but **OFFSET**, while the component docstring claims "keyset" (`search-results.tsx:17-19`) → D78.4 |
 | Quick find | `src/components/quick-find.tsx`: 180 ms debounce (`:36-56`, `:52`), `cmdk` with `shouldFilter={false}` (`:78-81` — server results are final), one always-on create item (`:97-104`), pages group `:106-133`, 8 results max (`actions/search.ts:30`) | Works; no recents, no commands, no filters |
@@ -255,7 +255,7 @@ navigation** — reusing the shipped FTS pipeline, with zero schema changes.
 | Recents | `localStorage` `noema:recents:<userId>:<workspaceId>` | `{ kind: "search" \| "page", value/id, at }[]`, cap 10, oldest evicted; per-device (O78.3) |
 | Filter chips | derived from the URL | No separate state |
 | Ranking | SQL only | No cache; `ts_rank` computed per query |
-| Scope set | `pageScopeFor` per request (`guest-access.ts:84-91`) | `null` for members (no predicate cost), `Set` for guests — now pushed into SQL (Dec1) |
+| Scope set | `pageScopeFor` per request (`guest-access.ts:152-159`) | `null` for members (no predicate cost), `Set` for guests — now pushed into SQL (Dec1) |
 
 ## 6. Contracts
 
@@ -421,10 +421,10 @@ green (`package.json:33`).
 **Risks**
 
 1. **Guest scope list size pushed into SQL.** `guestVisiblePageIds` returns a
-   `Set` that can reach thousands of ids (`guest-access.ts:46-78`); an
+   `Set` that can reach thousands of ids (`guest-access.ts:123-127`); an
    `= ANY($1)` parameter has a practical array bound (~32 k) but the round-trip
    cost is real. Mitigation: keep the scope set for members `null`
-   (`pageScopeFor:89`) so only guests pay, and add a `check:search`-style timing
+   (`pageScopeFor:157`) so only guests pay, and add a `check:search`-style timing
    probe if a workspace grows past ~5 k visible pages.
 2. **Collision with two parallel work streams.** B39 owns `e2e/search.spec.ts` and
    B43 owns `quick-find.tsx`/keybinding in parallel.

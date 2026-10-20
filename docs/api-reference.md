@@ -649,7 +649,7 @@ cookie session · backing actions `src/server/actions/calendar.ts`.
 
 ```json
 {
-  "feeds":  [ { "id":"…", "name":"Team", "icsUrl":"https://…/basic.ics",
+  "feeds":  [ { "id":"…", "name":"Team",
                 "color":"#3b82f6", "_count":{"events":24} } ],
   "events": [ { "id":"…", "title":"Sprint review",
                 "start":"2026-10-16T17:00:00.000Z", "end":"…",
@@ -662,6 +662,11 @@ Upcoming events: top 25. Calendar events are **not page-scoped**, so the
 listing is a full-member view: a `GUEST` gets a **403** `Forbidden` and no
 event is read. Errors: **401** · **403** `Forbidden` (no workspace access **or
 role `GUEST`**) · **404** `Workspace not found` · 429.
+
+The subscription's own URL (`icsUrl`) is not part of the response: it is the
+private address of a personal calendar and often carries a secret token in its
+path, so it stays on the server, which reads the feed itself. A feed is
+connected with `{"action":"connect", …}` and its events are listed here.
 
 ### `POST /api/calendar` — scope `calendar-write` (30/min)
 
