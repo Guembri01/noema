@@ -233,7 +233,7 @@ Storage & backups
 | --- | --- |
 | **Storage driver** | `src/lib/storage.ts` defines one interface with two drivers: **local filesystem** (default, `STORAGE_DIR` or `./uploads`) and **S3-compatible** (AWS, MinIO, Cloudflare R2, Garage) — selected by setting `S3_BUCKET` (+ `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, optional `S3_PREFIX`) |
 | **No SDK** | The S3 driver signs requests with **Signature V4** (`signS3Request`, unit-tested for determinism, key encoding and presigned GETs) over `fetch` |
-| **Authorised reads** | Files are never public: `/api/files/<workspace>/<name>` re-checks the session and workspace membership, validates the key (no traversal) and streams from whichever driver holds the bytes |
+| **Authorised reads** | Files are never public: `/api/files/<workspace>/<name>` re-checks the session, the workspace membership and the caller's role (a guest is refused with `403`), validates the key (no traversal) and streams from whichever driver holds the bytes |
 | **Uploads** | Type allow-list + 10 MB cap + `Asset` row; `npm run check:storage` asserts the byte-for-byte round trip, the content type, the 404 for a missing key, the traversal refusal, the anonymous refusal and the 415 for a bad type |
 | **Backups** | `npm run backup` writes `backups/noema-<timestamp>.sql` (via the database container or a local `pg_dump`), refuses to keep a suspiciously small file, verifies the core tables are in the dump, keeps the newest 5 and prints the restore command 
 
