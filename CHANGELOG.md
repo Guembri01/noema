@@ -143,6 +143,10 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   request, so a guest's token cannot reach a write tool even when it carries
   an administrative scope. The stored token itself is unchanged — the same
   bearer token still authenticates `/api/v1/*`.
+- The "Ask AI" grounding search honours the guest page scope. A guest's prompt
+  is now answered only from the pages that were shared with them — page titles
+  and text no longer leak from the rest of the workspace through the model
+  context — while a member still grounds in the whole workspace.
 
 ## [1.4.1] — 2026-10-17
 

@@ -1114,16 +1114,28 @@ export async function getProjectDetail(workspaceId: string, projectId: string) {
 /**
  * Ranked page retrieval for AI grounding: prompt → terms → scored pages.
  * Returns a small, relevant set (default 5) with excerpts.
+ *
+ * `visiblePageIds` is the guest scope, exactly like in {@link searchPages}:
+ * `null` means the whole workspace (a member), a set means "only these pages"
+ * (a guest). The filter is applied *in the query*, so the 500-row window is
+ * taken from the visible pages and a guest's result set is never truncated by
+ * pages they may not open. An empty set matches nothing.
  */
 export async function searchPagesForPrompt(
   workspaceId: string,
   prompt: string,
+  /** Guest scoping: only these page ids are searched; `null` = whole workspace. */
+  visiblePageIds: Set<string> | null,
   take = 5,
 ) {
   const terms = promptTerms(prompt);
   if (terms.length === 0) return [];
   const pages = await prisma.page.findMany({
-    where: { workspaceId, deletedAt: null },
+    where: {
+      workspaceId,
+      deletedAt: null,
+      ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+    },
     orderBy: { updatedAt: "desc" },
     take: 500,
     select: { id: true, title: true, icon: true, type: true, content: true },
