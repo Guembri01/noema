@@ -652,7 +652,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Session management | Expire and revoke sessions. | 🟡 | Sessions stored; revocation partial. Spec: docs/specs/engineering-hardening.md. |
 | Password hashing | Secure credential storage. | ✅ | Strong hashing used. |
 | Two-factor auth (2FA) | TOTP second factor. | ✅ | Planned. |
-| SSO / SAML | Enterprise single sign-on. | ✅ | OIDC authorization-code + JWKS verification; JIT provisioning (`SSO_*` env). Spec for the SAML half: docs/specs/saml-sso.md. |
+| SSO / SAML | Enterprise single sign-on. | ✅ | OIDC authorization-code + JWKS verification; JIT provisioning (`SSO_*` env). A provider sign-in links an existing account only when that account proved its address (`User.emailVerified`) — an unverified local account is refused with `?error=sso_email_taken`. Spec for the SAML half: docs/specs/saml-sso.md. |
 | OIDC support | OpenID Connect providers. | ✅ | Planned. |
 | Encryption at rest | Encrypt stored data. | ✅ | Planned; DB/disk encryption. |
 | Encryption in transit | TLS everywhere. | ✅ | Planned; reverse-proxy TLS. |

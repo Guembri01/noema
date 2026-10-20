@@ -44,6 +44,27 @@ function ssoFailure(origin: string): NextResponse {
   return NextResponse.redirect(`${origin}/login?error=sso`);
 }
 
+/**
+ * The address already belongs to an account that never proved it (B07): the
+ * sign-in may not land there — the account may have been registered by
+ * somebody else before the real owner showed up, and linking would hand it
+ * (and everything it owns) to that somebody. The user gets its own message
+ * instead of the generic SSO failure.
+ */
+function ssoEmailTaken(origin: string): NextResponse {
+  return NextResponse.redirect(`${origin}/login?error=sso_email_taken`);
+}
+
+/**
+ * The provider did not assert that the address in the id_token is verified.
+ * Without that assertion the address is just a claim: creating a verified
+ * account from it would let a provider that hands out arbitrary addresses
+ * take over an unproven local account. Fail closed.
+ */
+function ssoEmailUnverified(origin: string): NextResponse {
+  return NextResponse.redirect(`${origin}/login?error=sso_email_unverified`);
+}
+
 /** OIDC callback: exchange the code, verify the id_token, sign the user in. */
 export async function GET(request: Request) {
   const env: AuthEnv = process.env;
@@ -144,10 +165,22 @@ export async function GET(request: Request) {
   };
   const identity = normalizeIdentity(strategy, profile);
 
+  // B07 — the address is only trustworthy when the provider says it verified
+  // it. The id_token's `email_verified` claim is the only statement of that
+  // here; a provider that omits it or says `false` is refused before any
+  // account is looked up, created or linked. (A missing email keeps the
+  // generic failure below, so the refusal does not become an enumeration
+  // oracle.)
+  if (identity.email && payload.email_verified !== true) {
+    return ssoEmailUnverified(origin);
+  }
+
   const existingUsers = identity.email
     ? await prisma.user.findMany({
         where: { email: identity.email },
-        select: { id: true, email: true },
+        // `emailVerified` is what decides whether the account may be linked
+        // (B07) — without it every match would look unproven.
+        select: { id: true, email: true, emailVerified: true },
       })
     : [];
   const decision = linkOrCreate({
@@ -155,6 +188,8 @@ export async function GET(request: Request) {
     identity,
     strategy,
     now: Date.now(),
+    // The claim was checked above; the provider vouched for the address.
+    emailVerified: true,
   });
 
   let userId: string;
@@ -166,12 +201,23 @@ export async function GET(request: Request) {
         email: identity.email,
         name: identity.name || identity.email.split("@")[0],
         passwordHash: `sso:${randomToken(24)}`,
+        // The callback only reaches this branch when the id_token asserted
+        // `email_verified: true`, so the provider vouched for the address
+        // (B07). The account has no local password — the sentinel above is
+        // not one — so it is only reachable through this provider, and a
+        // later provider sign-in may link it. The provider is the trust root
+        // for the address here: an IdP that hands out unverified addresses
+        // must say so, and the callback then fails closed.
+        emailVerified: true,
       },
       select: { id: true },
     });
     userId = created.id;
   } else {
     // conflict (missing/contested email): never auto-link or create.
+    if (decision.reason === "email_taken_unverified") {
+      return ssoEmailTaken(origin);
+    }
     return ssoFailure(origin);
   }
 

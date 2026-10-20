@@ -22,6 +22,13 @@ export default async function LoginPage({
         {error === "sso" && (
           <p className="mb-4 text-sm text-danger">Single sign-on failed.</p>
         )}
+        {error === "sso_email_taken" && (
+          <p className="mb-4 text-sm text-danger">
+            An account with this email already exists. Sign in with your
+            password instead. If you never created that account, ask your
+            administrator for help.
+          </p>
+        )}
         <AuthForm mode="login" next={next} />
         {process.env.SSO_ISSUER && (
           <a

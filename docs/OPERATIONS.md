@@ -549,6 +549,17 @@ proof, the per-row plan, the state of the run and the report) live in
 `scripts/backfill-2fa-secrets-lib.mjs` and are unit-tested by
 `scripts/backfill-2fa-secrets-lib.test.mjs`.
 
+### 8.3 The SSO link guard migration (B07)
+
+It **adds** the column `User.emailVerified` and backfills it for the accounts
+the SSO callback created (`passwordHash LIKE 'sso:%'`); every other account
+keeps the default `false` — an address nobody proved. The upgrade order is
+one-directional: the **old build keeps working** on the migrated database (an
+added column is invisible to it), but the **new build needs the column to
+exist** — its SSO callback reads it, and a missing column is a query error,
+not a fallback. So apply the migration *before* the new build starts serving.
+`npm run db:push` does the same thing without the migration history.
+
 ## 9. Incident quick reference
 
 | Symptom | First checks |
