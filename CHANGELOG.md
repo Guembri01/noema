@@ -94,6 +94,12 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   no filesystem, shell, store, opener, dialog, `os` or `log`, and no
   `core:default` either (that set expands to an unscoped file-read plugin and
   to the menu/tray plugins, whose item ids the shell dispatches on raw).
+- The release workflow now promotes the release tags only after the Trivy
+  scan, the cosign signature and the container smoke test pass. The build
+  pushes a staging tag first, so a failing scan cannot leave `latest`/`edge`
+  pointing at a vulnerable image. The image also accepts
+  `TRUSTED_PROXY_HOPS` as a build arg for the Edge middleware, and the compose
+  stack passes it to both the build and the running container.
 
 ## [1.4.1] — 2026-10-17
 

@@ -186,6 +186,7 @@ jobs:
             VERSION=${{ steps.meta.outputs.version }}
             REVISION=${{ github.sha }}
             BUILD_DATE=${{ env.BUILD_DATE }}
+            TRUSTED_PROXY_HOPS=${{ vars.TRUSTED_PROXY_HOPS }}
           cache-from: type=gha,scope=noema
           cache-to: type=gha,mode=max,scope=noema
           # No provenance and no SBOM here: both are attached to a *pushed*
@@ -317,6 +318,13 @@ jobs:
             type=raw,value=edge,enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # Promote only after the scan, the signature and the smoke test pass.
+      # The build below pushes a staging tag, not the release tags: a failing
+      # Trivy gate must not leave `latest`/`edge` pointing at a vulnerable
+      # image. The final tags are moved to the scanned digest at the end.
+      - name: Staging tag
+        run: echo "STAGING_TAG=${IMAGE_NAME,,}:staging-${GITHUB_SHA}" >> "$GITHUB_ENV"
+
       # Both architectures, and this is the image that is published: the
       # attestation and the signature below belong to exactly these bytes.
       - id: build
@@ -327,12 +335,13 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           load: false
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ env.STAGING_TAG }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             REVISION=${{ github.sha }}
             BUILD_DATE=${{ env.BUILD_DATE }}
+            TRUSTED_PROXY_HOPS=${{ vars.TRUSTED_PROXY_HOPS }}
           cache-from: type=gha,scope=noema
           cache-to: type=gha,mode=max,scope=noema
           provenance: mode=max
@@ -405,6 +414,17 @@ jobs:
         run: |
           docker rm --force noema-smoke || true
           docker volume rm noema-smoke-data || true
+
+      # The scan, the signature and the smoke test have all passed. Move the
+      # release tags to the exact digest that was tested; the staging tag is
+      # only an intermediate name.
+      - name: Promote the scanned image to the release tags
+        run: |
+          ref="${IMAGE_NAME,,}@${{ steps.build.outputs.digest }}"
+          printf '%s\n' "${{ steps.meta.outputs.tags }}" | while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            docker buildx imagetools create --tag "$tag" "$ref"
+          done
 
   compose-smoke:
     name: docker compose smoke
