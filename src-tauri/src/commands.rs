@@ -476,7 +476,9 @@ mod tests {
         std::fs::write(root.join("logs").join("noema.log"), "noise").expect("log");
         std::fs::create_dir_all(root.join("backups").join("noema-19700101-000000")).expect("old");
         std::fs::write(
-            root.join("backups").join("noema-19700101-000000").join("pgdata"),
+            root.join("backups")
+                .join("noema-19700101-000000")
+                .join("pgdata"),
             "old backup",
         )
         .expect("old backup file");
@@ -521,7 +523,8 @@ mod tests {
     }
 
     #[test]
-    fn every_command_is_declared_for_the_acl() {        // `build.rs` declares this list to Tauri so an `allow-<command>`
+    fn every_command_is_declared_for_the_acl() {
+        // `build.rs` declares this list to Tauri so an `allow-<command>`
         // permission exists for each one; a capability can only hand out
         // permissions that exist, and a command with no permission is
         // unreachable from the served app (that is how `set_theme` first came
