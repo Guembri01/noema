@@ -59,7 +59,10 @@ describe("random", () => {
     expect(counts.every((count) => count > 0)).toBe(true);
     const expected = draws / 62;
     for (const count of counts) {
-      expect(Math.abs(count - expected)).toBeLessThan(expected * 0.5);
+      // Inclusive: `expected * 0.5` is exactly 30 here, and a legitimate
+      // sample can land on the boundary. The bound catches real bias without
+      // turning a one-in-ten-thousand draw into a flaky red build.
+      expect(Math.abs(count - expected)).toBeLessThanOrEqual(expected * 0.5);
     }
   });
 
