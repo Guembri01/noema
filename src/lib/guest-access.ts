@@ -226,9 +226,13 @@ export async function guestReadablePageIds(
 
   const teamspaceIds = new Set(memberships.map((member) => member.teamspaceId));
   const guestPages: GuestPage[] = pages.map((page) => {
+    // Prisma returns an array for the selected relation; defaulting keeps a
+    // partial row (a test double or a future narrower select) fail-closed
+    // instead of throwing and taking the whole route down.
+    const permissions = page.permissions ?? [];
     // Every level grants reading (COMMENT implies READ).
-    const granted = page.permissions.length > 0;
-    const editable = page.permissions.some(
+    const granted = permissions.length > 0;
+    const editable = permissions.some(
       (permission) => permission.level === "EDIT" || permission.level === "FULL",
     );
     // Own pages and pages of the guest's teamspaces are readable roots — the

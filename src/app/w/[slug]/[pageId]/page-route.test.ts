@@ -130,9 +130,15 @@ beforeEach(() => {
       if (args?.where?.createdById) return [];
       if (args?.select?.parentId) {
         return [
-          { id: "page-root", parentId: null, teamspaceId: null },
-          { id: "page-shared", parentId: "page-root", teamspaceId: null },
-          { id: "page-secret", parentId: "page-root", teamspaceId: null },
+          { id: "page-root", parentId: null, teamspaceId: null, permissions: [] },
+          {
+            id: "page-shared",
+            parentId: "page-root",
+            teamspaceId: null,
+            // The read scope is resolved from the per-page grant select.
+            permissions: [{ level: "READ" }],
+          },
+          { id: "page-secret", parentId: "page-root", teamspaceId: null, permissions: [] },
         ];
       }
       return [];
@@ -156,14 +162,16 @@ describe("the page route", () => {
     expect(h.getWorkspaceMembers).not.toHaveBeenCalled();
   });
 
-  it("scopes the database list to the guest's pages", async () => {
+  it("scopes the database list to the guest's readable pages, not its ancestors", async () => {
     await PageRoute({ params: Promise.resolve({ slug: "acme", pageId: "page-shared" }) });
 
     expect(databaseWhere()).toEqual({
       workspaceId: "ws1",
       type: "DATABASE",
       deletedAt: null,
-      id: { in: ["page-shared", "page-root"] },
+      // `page-root` is only a display ancestor; a database inherited from the
+      // shared page is in scope, one reachable only through the ancestor is not.
+      id: { in: ["page-shared"] },
     });
   });
 
