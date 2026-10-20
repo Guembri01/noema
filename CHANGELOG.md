@@ -415,6 +415,27 @@ list marks it as **No access**.
   (`inviteMember`, i.e. owner/admin) before it lists anything and answers
   `403 Forbidden` to everyone below admin, so the endpoint no longer relies on
   the second, weaker gate inside `listEmailDeliveries` to stay closed.
+- An admin could invite further admins. The role matrix grants an actor only
+  the roles strictly below their own — an admin hands out member and guest,
+  and only the owner grants the admin role — but the invitation path never
+  consulted it: it checked the role against a hard-coded list, persisted it
+  unchanged, and `POST /api/invites` had the same gap. An admin could
+  therefore mint an invitation that turned its recipient into a workspace
+  admin, exactly the escalation the role change path refuses. The role an
+  invitation carries is now a grant like any other: `sendWorkspaceInviteAction`
+  asks the matrix (`canGrantRole`) before it writes anything, so only the
+  workspace owner can invite an admin and an admin is refused with `Only the
+  workspace owner can invite an admin.`
+- The same rule applies when an invitation is redeemed: the role it carries is
+  granted against the role its sender holds at that moment. An `ADMIN`
+  invitation an admin minted before this change is therefore refused when it
+  is accepted (`This invitation can no longer be redeemed. Please ask the
+  workspace owner for a new invitation.`), and so is one whose sender has
+  since been demoted or removed from the workspace — an `ADMIN` invitation the
+  owner minted still redeems, and no invitation row is rewritten. The
+  settings screen's invitation picker offers only the roles the signed-in user
+  may grant, and `POST /api/invites` refuses an unknown role (`Unknown role.`)
+  instead of silently downgrading it to `MEMBER`.
 
 ## [1.4.1] — 2026-10-17
 

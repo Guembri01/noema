@@ -24,6 +24,7 @@ import { generateInviteToken } from "@/lib/invite-token";
 const db = vi.hoisted(() => ({
   inviteFindUnique: vi.fn(),
   inviteUpdate: vi.fn(),
+  workspaceMemberFindUnique: vi.fn(),
   workspaceMemberUpsert: vi.fn(),
   projectMemberUpsert: vi.fn(),
   teamspaceInviteFindUnique: vi.fn(),
@@ -37,7 +38,10 @@ const cache = vi.hoisted(() => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/db", () => ({
   prisma: {
     invite: { findUnique: db.inviteFindUnique, update: db.inviteUpdate },
-    workspaceMember: { upsert: db.workspaceMemberUpsert },
+    workspaceMember: {
+      findUnique: db.workspaceMemberFindUnique,
+      upsert: db.workspaceMemberUpsert,
+    },
     projectMember: { upsert: db.projectMemberUpsert },
     teamspaceInvite: {
       findUnique: db.teamspaceInviteFindUnique,
@@ -100,12 +104,16 @@ beforeEach(() => {
     id: "inv-1",
     email: USER.email,
     role: "MEMBER",
+    // The invitation carries its sender: the redemption checks the role the
+    // sender holds *now*, so an invitation without a sender is refused.
+    invitedById: "owner-1",
     projectId: null,
     acceptedAt: null,
     expiresAt: new Date("2026-03-24T09:00:00.000Z"),
     project: null,
     workspace: { id: "ws-1", name: "Acme", slug: "acme" },
   });
+  db.workspaceMemberFindUnique.mockResolvedValue({ role: "OWNER" });
   db.teamspaceInviteFindUnique.mockResolvedValue({
     id: "ts-inv-1",
     teamspaceId: "ts-1",

@@ -981,12 +981,24 @@ own member-managing check as the second line of defence. Errors: 401 · 403
 - Workspace invite (default when `target` ≠ `"teamspace"`; role defaults to
   `MEMBER`) → **200** `{"ok":true,"link":"…","emailed":true,"warning":null}`
   (`warning` present when SMTP is unconfigured and the link must be shared
-  manually).
+  manually). The role an invitation carries is a grant and goes through the
+  same policy as a role change: an admin may invite `MEMBER`/`GUEST` only, and
+  only the workspace owner may invite an `ADMIN` (400 `Only the workspace
+  owner can invite an admin.` otherwise). A role outside `GUEST`/`MEMBER`/
+  `ADMIN` is refused with 400 `Unknown role.` — the body is forwarded
+  unchanged, so the route decides no role of its own.
+- The role is checked again when the invitation is redeemed (`/invite/<token>`):
+  it is granted against the role its sender holds at that moment, so an
+  `ADMIN` invitation an admin minted before that check existed is refused
+  (`This invitation can no longer be redeemed. Please ask the workspace owner
+  for a new invitation.`), as is one whose sender has since been demoted or
+  removed. An `ADMIN` invitation the owner minted still redeems; no
+  invitation row is rewritten.
 - Teamspace invite → **200**
   `{"ok":true,"invited":true,"added":false,"link":"…","email":"…","emailed":true}`.
 - Errors: 400 (`Invalid JSON body.` / action `{error}` such as unknown
-  workspace, invalid email, no permission) · 401 · 429.
-- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
+  workspace, invalid email, no permission, unknown role) · 401 · **413**
+  `Request body too large.` — the body is over the 256 KiB budget (§3) · 429.
 
 ---
 

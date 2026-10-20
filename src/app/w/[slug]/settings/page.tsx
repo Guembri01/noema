@@ -537,6 +537,7 @@ export default async function SettingsPage({
             createdAt: row.createdAt.toISOString(),
           }))}
           locale={locale}
+          currentUserRole={access.role}
         />
       )}
 
