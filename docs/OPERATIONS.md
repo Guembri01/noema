@@ -508,15 +508,41 @@ over to 2 March).
 ### 11.2 The gate
 
 ```sh
-npm run check:dates          # walks every commit on every ref
+npm run check:dates          # the commits of the ref under review
 node scripts/check-commit-dates.mjs --pending   # the commit about to be made
 ```
 
 `check:dates` asserts that **both** the author and the committer date of every
-commit fall inside a window, and that both e-mail addresses belong to a project
-human. It runs in CI (`.github/workflows/ci.yml`, "Authoring windows") on a
+commit of the ref under review fall inside a window, and that both e-mail
+addresses belong to a project human. It runs in CI (`.github/workflows/ci.yml`,
+"Authoring windows") on a
 full-history checkout, so a rebase or an amend that moves a date out of a
 window fails the build rather than silently shipping.
+
+It walks the history of the ref under review — the merge commit in a pull
+request, the pushed tip in a push — and not every ref of the repository. A
+checkout fetches every branch, so walking every ref would have pulled the
+commits of the branches that merely happen to be open into the gate.
+
+A commit that GitHub itself created is exempt from both checks — as a whole,
+and the anchor is the **committer**: if the committer is GitHub's automation
+(App accounts, which carry the reserved `[bot]` marker, and the
+`noreply@github.com` identity GitHub commits merges under), then neither the
+author field nor the committer field is checked, against either the date or
+the identity policy. A bot commit is not a human authoring decision, so
+neither its clock nor its identity is a project decision.
+
+The scope has to be the whole commit: the merge commit GitHub synthesises for
+a pull request is dated when GitHub rebuilt the ref, and it carries the
+*human's* address in its author field — an exemption that only covered the
+field holding the bot address left that commit failing the gate, and the gate
+is a required check, so every pull request was red.
+
+The converse does not hold: a commit whose *author* is a bot but whose
+committer is a human was not created by GitHub, so it is checked like any
+other commit, its author field included. And a *human* who keeps their e-mail
+private commits as `<id>+<login>@users.noreply.github.com` — that address is
+not a bot, and the policy applies to it like to any other human.
 
 ### 11.3 Making a commit
 
@@ -541,9 +567,9 @@ git commit -m "…"
 
 ### 11.4 What the policy covers
 
-**In scope** — every commit's author and committer date; and the project's own
-records: `CHANGELOG.md`, `CITATION.cff`, `README.md`, the docs tree, release and
-installer metadata.
+**In scope** — every commit's author and committer date, and its author and
+committer identity; and the project's own records: `CHANGELOG.md`, `CITATION.cff`,
+`README.md`, the docs tree, release and installer metadata.
 
 **Out of scope, deliberately** — synthetic *test fixtures* and *demo workspace
 data* (they must exercise all seven weekdays to test calendar logic, and the

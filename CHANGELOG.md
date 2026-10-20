@@ -23,6 +23,22 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   not). The stored URL now passes the shared href allowlist (`http`, `https`,
   `mailto`, `tel` and safe relative paths) before it reaches an `href` — in the
   editor as well as in the read-only renderer.
+- The "Authoring windows" check no longer fails for every pull request. It
+  collected its commits with `git log --all`, and CI checks out with
+  `fetch-depth: 0`, which fetches every branch — so the open Dependabot
+  branches, authored by a bot, made the required check fail with identity
+  violations that had nothing to do with the pull request under review. It
+  now walks the commits of the ref under review. A commit that GitHub itself
+  created is exempt as a whole — the anchor is its **committer** (an App
+  account, or the `noreply@github.com` identity GitHub commits merges under),
+  so neither its author field nor its committer field is checked, against
+  either the date or the identity policy. The scope has to be the whole
+  commit: the merge commit GitHub synthesises for a pull request is dated when
+  GitHub rebuilt the ref and carries the *human's* address in its author
+  field, so an exemption that only covered the field holding the bot address
+  still failed the gate. The converse does not hold: a bot author with a
+  human committer was not created by GitHub and is checked like any other
+  commit. A human's no-reply address is not a bot and still has to pass.
 
 ## [1.4.1] — 2026-10-17
 
