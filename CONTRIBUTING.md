@@ -38,7 +38,8 @@ before touching anything under `src-tauri/`.
 
 ## The gates
 
-Run these before you open a pull request. CI runs the same set.
+Run these before you open a pull request. CI runs the same set — the
+workflow-permission gate runs there as part of `npm test`.
 
 | Command | What it proves |
 | --- | --- |
@@ -47,6 +48,7 @@ Run these before you open a pull request. CI runs the same set.
 | `npm test` | The full Vitest unit suite |
 | `npm run check:coherence` | No drift: orphan actions, native dialogs, unexpected injection sinks, shrinking i18n coverage |
 | `npm run check:secrets` | No credential-shaped value is committed, and no `.env` is tracked |
+| `npm run check:workflow-permissions` | No workflow grants a publishing scope (`packages: write`, `id-token: write`) outside a job that no pull-request event can reach, every such job spells out its `permissions:`, and no pull-request checkout keeps its token on disk |
 | `npm run check:design` | No raw colours or ad-hoc spacing — design tokens only |
 | `npm run check:i18n` | Every `t(locale, "key")` exists in the catalogue |
 | `npm run check:client` | No server-only module leaked into a client bundle |
