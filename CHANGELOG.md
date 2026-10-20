@@ -126,6 +126,23 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   guest its chat threads, its calendar feeds and their private `icsUrl`, the
   open-ticket count, the project list and the teamspace names; that payload is
   a finding of its own.
+- The MCP server's read tools now honour the guest page scope. A guest is a
+  member of the workspace, so the endpoint's membership check passed and
+  `search_pages`, `get_page`, `list_databases`, `query_database_rows`,
+  `get_comments` and the `notion://` resource templates returned every page of
+  the workspace — content included — to a guest who had been shared a handful
+  of pages. The scope is resolved from the caller's role, exactly as the
+  workspace UI resolves it, and a page outside that scope answers "not found"
+  rather than "forbidden", so the endpoint cannot be used to find out which
+  pages exist. The scope is bound in the query layer, so a blank search — the
+  "recent pages" window — lists the guest's pages and not the workspace's. The
+  same bearer token still authenticates `/api/v1/*`, where the page scope is a
+  separate fix: MCP is not worse than before, it is strictly narrower.
+- An API token can no longer widen the role that owns it. The scopes a token
+  is allowed to use are capped by the caller's workspace role on every MCP
+  request, so a guest's token cannot reach a write tool even when it carries
+  an administrative scope. The stored token itself is unchanged — the same
+  bearer token still authenticates `/api/v1/*`.
 
 ## [1.4.1] — 2026-10-17
 

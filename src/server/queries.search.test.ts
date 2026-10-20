@@ -117,3 +117,65 @@ describe("searchPages — FTS builder adoption (R78.8)", () => {
     expect(results.map((row) => row.id)).toEqual(["p9"]);
   });
 });
+
+/**
+ * A blank query lists the workspace's most recent pages instead of matching
+ * anything — the UI shows them as the "recent pages" window. That branch used
+ * to ignore the guest scope, so a guest could enumerate the id, title, icon
+ * and type of every page of the workspace with `query: ""`.
+ */
+describe("searchPages — a blank query is drawn from the visible set (B88)", () => {
+  /** The `where` the blank-query branch binds. */
+  type BlankWhere = {
+    workspaceId?: string;
+    deletedAt?: null;
+    id?: { in: string[] };
+  };
+
+  const WORKSPACE_PAGES = [
+    page({ id: "p1", title: "Shared notes" }),
+    page({ id: "p2", title: "CONFIDENTIAL revenue" }),
+    page({ id: "p3", title: "Salary plan" }),
+  ];
+
+  let seenWhere: BlankWhere | null = null;
+
+  beforeEach(() => {
+    seenWhere = null;
+    // The scope predicate is applied by the database, so the mock has to apply
+    // it too — otherwise the mock would be stricter than the shipped query
+    // (which is exactly how F1 slipped through).
+    db.pageFindMany.mockImplementation(async ({ where }: { where: BlankWhere }) => {
+      seenWhere = where;
+      const ids = where.id?.in;
+      return WORKSPACE_PAGES.filter((row) => !ids || ids.includes(row.id));
+    });
+  });
+
+  it("returns only the visible pages for an empty query", async () => {
+    const results = await searchPages("ws1", "", new Set(["p1"]), { take: 10 });
+
+    expect(results.map((row) => row.id)).toEqual(["p1"]);
+    // The scope is bound as an `id in (…)` predicate, not filtered afterwards.
+    expect(seenWhere).toMatchObject({
+      workspaceId: "ws1",
+      deletedAt: null,
+      id: { in: ["p1"] },
+    });
+  });
+
+  it("returns only the visible pages for a whitespace-only query", async () => {
+    const results = await searchPages("ws1", "   ", new Set(["p1"]), { take: 10 });
+
+    expect(results.map((row) => row.id)).toEqual(["p1"]);
+    expect(seenWhere?.id).toEqual({ in: ["p1"] });
+  });
+
+  it("still returns the whole workspace for a blank query when nothing is scoped", async () => {
+    const results = await searchPages("ws1", "", null, { take: 10 });
+
+    expect(results.map((row) => row.id)).toEqual(["p1", "p2", "p3"]);
+    // No scope, no `id` predicate — the unscoped behaviour is unchanged.
+    expect(seenWhere?.id).toBeUndefined();
+  });
+});
