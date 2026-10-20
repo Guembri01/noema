@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import bcrypt from "bcryptjs";
 
 /**
@@ -85,6 +85,7 @@ const BCRYPT_COST = 12;
 const STORED_HASH = bcrypt.hashSync(GOOD_PASSWORD, 4);
 /** A base32 TOTP secret for the two-factor fixtures. */
 const TOTP_SECRET = "JBSWY3DPEHPK3PXP";
+const ORIGINAL_SECRET = process.env.AUTH_SECRET;
 
 function form(fields: Record<string, string>): FormData {
   const data = new FormData();
@@ -109,6 +110,9 @@ function registeredUser(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   resetAuthLimits();
+  // B05 seals the TOTP seed with AUTH_SECRET; the legacy fixture is re-sealed
+  // on the successful sign-in.
+  process.env.AUTH_SECRET = "auth-test-secret-for-two-factor";
   db.userUpdate.mockResolvedValue({ failedLoginCount: 0 });
   auth.hashPassword.mockImplementation(async (password: string) =>
     bcrypt.hashSync(password, 4),
@@ -123,6 +127,11 @@ beforeEach(() => {
   db.workspaceFindFirst.mockResolvedValue({ slug: "acme" });
   db.workspaceMemberFindFirst.mockResolvedValue(null);
   db.pageCreate.mockResolvedValue({ id: "page-1" });
+});
+
+afterEach(() => {
+  if (ORIGINAL_SECRET === undefined) delete process.env.AUTH_SECRET;
+  else process.env.AUTH_SECRET = ORIGINAL_SECRET;
 });
 
 describe("signupAction — the answer never names that an address is registered", () => {

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { generateTotpSecret, otpauthUrl, verifyTotp } from "@/lib/totp";
 import { authLimitMessage, checkTwoFactorLimit } from "@/lib/rate-limit";
+import { encryptTwoFactorSecret, openTwoFactorSecret } from "@/lib/secrets";
 
 /** Begin 2FA setup: generate a secret (not yet enabled) and its otpauth URI. */
 export async function startTwoFactorAction(): Promise<
@@ -12,9 +13,19 @@ export async function startTwoFactorAction(): Promise<
 > {
   const user = await requireUser();
   const secret = generateTotpSecret();
+  // B05: the seed is sealed BEFORE it reaches the database, so the column
+  // never holds the raw seed. A sealing failure aborts the setup instead of
+  // falling back to a cleartext row.
+  let sealed: string;
+  try {
+    sealed = encryptTwoFactorSecret(secret);
+  } catch {
+    console.error("[2fa] could not seal the TOTP seed; setup aborted.");
+    return { error: "Two-factor setup is unavailable right now." };
+  }
   await prisma.user.update({
     where: { id: user.id },
-    data: { twoFactorSecret: secret, twoFactorEnabled: false },
+    data: { twoFactorSecret: sealed, twoFactorEnabled: false },
   });
   return { secret, otpauth: otpauthUrl(secret, user.email) };
 }
@@ -34,12 +45,26 @@ export async function enableTwoFactorAction(
   if (!guess.allowed) {
     return { error: authLimitMessage(guess) };
   }
-  if (!verifyTotp(record.twoFactorSecret, code)) {
+  // B05: the stored value is an envelope; it is opened before the code is
+  // checked. A value that cannot be opened fails closed.
+  const stored = openTwoFactorSecret(record.twoFactorSecret);
+  if (stored.kind === "unreadable") {
+    return { error: "The two-factor secret could not be read. Start the setup again." };
+  }
+  if (!verifyTotp(stored.secret, code)) {
     return { error: "That code is not valid. Check your authenticator app." };
+  }
+  // Always store the sealed form — this also migrates a pre-B05 cleartext row.
+  let sealed: string;
+  try {
+    sealed = encryptTwoFactorSecret(stored.secret);
+  } catch {
+    console.error("[2fa] could not seal the TOTP seed; enable aborted.");
+    return { error: "Two-factor setup is unavailable right now." };
   }
   await prisma.user.update({
     where: { id: user.id },
-    data: { twoFactorEnabled: true },
+    data: { twoFactorEnabled: true, twoFactorSecret: sealed },
   });
   revalidatePath("/", "layout");
   return { ok: true };
@@ -60,7 +85,11 @@ export async function disableTwoFactorAction(
   if (!guess.allowed) {
     return { error: authLimitMessage(guess) };
   }
-  if (!verifyTotp(record.twoFactorSecret, code)) {
+  const stored = openTwoFactorSecret(record.twoFactorSecret);
+  if (stored.kind === "unreadable") {
+    return { error: "The two-factor secret could not be read." };
+  }
+  if (!verifyTotp(stored.secret, code)) {
     return { error: "That code is not valid." };
   }
   await prisma.user.update({
