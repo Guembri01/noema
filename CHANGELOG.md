@@ -117,15 +117,10 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   SMTP and AI configuration, the automations, the recurring schedules, the
   ownership history) ask the permission their write path already required. The
   datasets the page scope cannot narrow — tickets, discussions, calendar
-  events — are role-gated on their routes. Still open (not covered by this
-  branch): the MCP read tools (#105), the empty-`q` branch of the v1 search
-  (#105's body describes the MCP route; the branch that closes the empty-`q`
-  branch is B88), the AI grounding (#104), the workspace layout's chat and
-  calendar payload (#69), the linked-database server actions (#107) and the
-  asset route `/api/files/**` (#117). The workspace layout (#69) still hands a
-  guest its chat threads, its calendar feeds and their private `icsUrl`, the
-  open-ticket count, the project list and the teamspace names; that payload is
-  a finding of its own.
+  events — are role-gated on their routes. The follow-up entries below close
+  the surfaces that were still open when this landed: the MCP read tools, the
+  AI grounding search, the workspace shell payload, the linked-database and
+  database actions, and the asset route.
 - The MCP server's read tools now honour the guest page scope. A guest is a
   member of the workspace, so the endpoint's membership check passed and
   `search_pages`, `get_page`, `list_databases`, `query_database_rows`,
@@ -147,6 +142,15 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   is now answered only from the pages that were shared with them — page titles
   and text no longer leak from the rest of the workspace through the model
   context — while a member still grounds in the whole workspace.
+- A linked database and the database actions now use the same guest read
+  scope. `authorizeDatabase()` resolved the workspace membership and nothing
+  else, and a `GUEST` is a member, so a guest could open a linked database and
+  list the trashed rows — titles, icons and deletion times — of any database
+  in the workspace. The database must now lie in the guest's **read** scope,
+  and the refusal is `Database not found.`, the same answer as for an unknown
+  id. The read scope is the shared pages plus their subtree, never an
+  ancestor: being granted one row does not expose the database above it, while
+  a grant on a parent page covers the database below it.
 - The workspace shell no longer hands a guest the workspace's chat log, its
   calendar subscriptions and events, the project list or the open-ticket count.
   Those datasets are workspace-wide rather than shared page by page, so they are
@@ -171,12 +175,10 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   with them, but none of their media** — every image block, the page cover,
   the page icon and every database attachment of a shared page now answers
   `403` for a guest, in the app and on the public share page `/s/[token]`.
-  Still open (not covered by this branch): the asset-to-page link —
-  `Asset.pageId` is never written, so "the assets of the pages shared with
-  this guest" cannot be answered; until that link exists the surface stays
-  closed to guests. A guest can still obtain the attachment bytes through the
-  workspace export zip — that is a separate finding (B02, #16), not closed
-  here.
+  The asset-to-page link is still missing — `Asset.pageId` is never written —
+  so "the assets of the pages shared with this guest" cannot be answered and
+  the surface stays closed to guests. The export routes are a full-member
+  surface as well, so they are no longer a way around this.
 - When a page is created or moved, its parent is now checked against the
   workspace: a page can no longer be filed under a page of another workspace.
   It therefore no longer turns up in that workspace's database view or in its
