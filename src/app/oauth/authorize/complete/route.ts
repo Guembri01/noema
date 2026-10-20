@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { randomToken } from "@/lib/slug";
+import { hashOAuthSecret } from "@/lib/api-auth";
 
 export const runtime = "nodejs";
 
@@ -38,7 +39,8 @@ export async function POST(request: Request) {
   const code = randomToken(24);
   await prisma.oAuthCode.create({
     data: {
-      code,
+      // Only the digest is stored; the plaintext code goes into the redirect.
+      codeHash: hashOAuthSecret(code),
       clientId,
       userId: user.id,
       redirectUri,

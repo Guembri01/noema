@@ -2,7 +2,7 @@
 // Usage: node --env-file=.env scripts/check-oauth.mjs [baseUrl]
 import { PrismaClient } from "@prisma/client";
 import { SignJWT } from "jose";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 const base = process.argv[2] ?? "http://localhost:3200";
 const prisma = new PrismaClient();
@@ -19,7 +19,8 @@ const app = await prisma.oAuthApp.create({
     userId: user.id,
     name: "OAuth check",
     clientId,
-    clientSecret,
+    // The secret is stored as a digest only — the plaintext is never persisted.
+    clientSecretHash: createHash("sha256").update(clientSecret).digest("hex"),
     redirectUris: [redirectUri],
   },
 });

@@ -33,6 +33,7 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/api-guard", () => ({ rateLimit: vi.fn(() => null) }));
 
+import { hashOAuthSecret } from "@/lib/api-auth";
 import { POST } from "./route";
 
 const APP = {
@@ -40,14 +41,16 @@ const APP = {
   userId: "user-1",
   name: "Demo app",
   clientId: "client-1",
-  clientSecret: "secret-1",
+  clientSecretHash: hashOAuthSecret("secret-1"),
   redirectUris: ["https://app.example.test/cb"],
   requiresPkce: false,
 };
 
+const CODE_RAW = "auth-code";
+
 type CodeRow = {
   id: string;
-  code: string;
+  codeHash: string;
   clientId: string;
   userId: string;
   redirectUri: string;
@@ -59,7 +62,7 @@ type CodeRow = {
 
 const CODE: CodeRow = {
   id: "code-1",
-  code: "auth-code",
+  codeHash: hashOAuthSecret(CODE_RAW),
   clientId: APP.clientId,
   userId: APP.userId,
   redirectUri: "https://app.example.test/cb",
@@ -101,9 +104,9 @@ const post = (params: Record<string, string> = {}) =>
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "authorization_code",
-        code: CODE.code,
+        code: CODE_RAW,
         client_id: APP.clientId,
-        client_secret: APP.clientSecret,
+        client_secret: "secret-1",
         redirect_uri: CODE.redirectUri,
         ...params,
       }).toString(),
@@ -122,12 +125,14 @@ beforeEach(() => {
 
   // The read returns the row as it looked when it was read — the snapshot a
   // concurrent transaction sees before the other one commits.
-  db.codeFindUnique.mockImplementation(async ({ where }: { where: { code: string } }) => {
-    if (where.code !== row.code) return null;
-    const snapshot = { ...row };
-    await readBarrier.reach();
-    return snapshot;
-  });
+  db.codeFindUnique.mockImplementation(
+    async ({ where }: { where: { codeHash: string } }) => {
+      if (where.codeHash !== row.codeHash) return null;
+      const snapshot = { ...row };
+      await readBarrier.reach();
+      return snapshot;
+    },
+  );
 
   // Postgres semantics: the row is only matched while it is still unused.
   db.codeUpdateMany.mockImplementation(
