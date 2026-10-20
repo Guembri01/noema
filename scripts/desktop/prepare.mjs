@@ -126,7 +126,11 @@ function assertBuildIsFresh() {
 
 function buildStandalone() {
   console.log("· next build (output: standalone)…");
-  run("npx.cmd", ["next", "build"], {
+  // Run Next's CLI with the current Node binary instead of `npx`: `npx.cmd`
+  // only exists on Windows, and the desktop job also builds on macOS/Linux.
+  const nextBin = join(root, "node_modules", "next", "dist", "bin", "next");
+  run(process.execPath, [nextBin, "build"], {
+    shell: false,
     env: { ...process.env, NOEMA_RUNTIME: "desktop", NOEMA_STANDALONE: "1" },
   });
   if (!existsSync(join(standalone, "server.js"))) {
