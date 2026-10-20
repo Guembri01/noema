@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
+  userUpdate: vi.fn(),
   userCreate: vi.fn(),
   workspaceFindFirst: vi.fn(),
   workspaceFindUnique: vi.fn(),
@@ -30,7 +31,11 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    user: { findUnique: h.userFindUnique, create: h.userCreate },
+    user: {
+      findUnique: h.userFindUnique,
+      update: h.userUpdate,
+      create: h.userCreate,
+    },
     workspace: {
       findFirst: h.workspaceFindFirst,
       findUnique: h.workspaceFindUnique,
@@ -104,6 +109,7 @@ beforeEach(() => {
   h.workspaceMemberFindFirst.mockResolvedValue({ workspace: { slug: "demo" } });
   h.pageCreate.mockResolvedValue({ id: "page-1" });
   h.hashPassword.mockResolvedValue("hashed");
+  h.userUpdate.mockResolvedValue({ failedLoginCount: 0 });
   h.verifyPassword.mockResolvedValue(true);
   h.createSession.mockResolvedValue(undefined);
 });

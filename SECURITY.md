@@ -80,6 +80,12 @@ Out of scope:
   them.
 - Keep dependencies current — Dependabot opens grouped weekly updates.
 
+The sign-in, the sign-up and the 2FA check carry their own budgets (per client
+address and per account), and five consecutive failures lock the account for a
+while. The lock belongs to the account and not to the client address, so a
+deliberate run of failed sign-ins can lock a legitimate user out — that is a
+property of the model, not a misconfiguration.
+
 ## Secrets in the repository
 
 No credential belongs in the tree. `npm run check:secrets` fails the build on

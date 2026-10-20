@@ -552,6 +552,8 @@ Found a vulnerability? Please **do not open a public issue** — follow
 
 - Passwords hashed with bcrypt (cost 12); sessions are HS256 JWTs in httpOnly cookies.
 - Every server action re-derives workspace access from the session; guests are read-only.
+- The sign-in, the sign-up and the 2FA check are rate-limited (per client
+  address and per account) and lock the account after five failed attempts.
 - Set a strong `AUTH_SECRET` and use `secure` cookies + HTTPS in production.
 - Share links are live: `/s/<token>` (optional password + expiry) and the
   single-use, hashed `/invite/<token>` invitation links — both re-check access

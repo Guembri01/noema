@@ -640,7 +640,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Audit log | Record sensitive actions. | ✅ | Planned. |
 | Soft delete | Mark-deleted rather than purge. | ✅ | `deletedAt` columns used. |
 | Trash retention | Auto-purge after a window. | ✅ | Planned; scheduled job. |
-| Rate limiting | Throttle API/site traffic. | ✅ | Planned; middleware. |
+| Rate limiting | Throttle API/site traffic. | ✅ | Planned; middleware. The sign-in, sign-up and 2FA actions carry their own budgets and a temporary account lockout. |
 | Pagination | Bounded list responses. | ✅ | The tracker paginates server-side (100/page, no full-workspace scans); export and AI-context queries stay bounded by explicit `take` limits. |
 | Multi-tenancy | Isolate workspaces. | 🟡 | Workspace scoping modeled. |
 | Backups | Scheduled data backups. | ✅ | `npm run backup` dumps the database (via the `noema-db` container or a local `pg_dump`), **verifies every core table is present**, prunes to the last 5 and prints the restore command. |

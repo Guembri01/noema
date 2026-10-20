@@ -71,6 +71,12 @@ The central decision is **"everything is a page."**
 - Sessions: HS256 JWT (`jose`) in an httpOnly, SameSite=Lax cookie, 30-day expiry.
 - `requireUser()` redirects unauthenticated users; every server action then
   re-derives authorization — the JWT only carries the user id.
+- The sign-in, the sign-up and the 2FA check are server actions, so they never
+  reach the route-handler rate limit and carry their own budgets
+  (`src/lib/rate-limit.ts`): one per client address, one per account (keyed on
+  the submitted e-mail address) and one for the 2FA guesses. Five consecutive
+  failures lock the account for a while; the counter and the lock live on the
+  user row (`User.failedLoginCount`, `User.lockedUntil`).
 
 ## Authorization
 

@@ -22,6 +22,7 @@ import bcrypt from "bcryptjs";
 
 const db = vi.hoisted(() => ({
   userFindUnique: vi.fn<(args: { where: { email: string } }) => Promise<unknown>>(),
+  userUpdate: vi.fn<(args: unknown) => Promise<{ failedLoginCount: number }>>(),
   userCreate: vi.fn<
     (args: {
       data: { name: string; email: string; passwordHash: string };
@@ -42,7 +43,11 @@ const auth = vi.hoisted(() => ({
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    user: { findUnique: db.userFindUnique, create: db.userCreate },
+    user: {
+      findUnique: db.userFindUnique,
+      update: db.userUpdate,
+      create: db.userCreate,
+    },
     workspace: {
       create: db.workspaceCreate,
       findFirst: db.workspaceFindFirst,
@@ -66,6 +71,7 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
+import { resetAuthLimits } from "@/lib/rate-limit";
 import { totp } from "@/lib/totp";
 import { loginAction, signupAction } from "./auth";
 
@@ -94,12 +100,16 @@ function registeredUser(overrides: Record<string, unknown> = {}) {
     passwordHash: STORED_HASH,
     twoFactorEnabled: false,
     twoFactorSecret: null,
+    failedLoginCount: 0,
+    lockedUntil: null,
     ...overrides,
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetAuthLimits();
+  db.userUpdate.mockResolvedValue({ failedLoginCount: 0 });
   auth.hashPassword.mockImplementation(async (password: string) =>
     bcrypt.hashSync(password, 4),
   );

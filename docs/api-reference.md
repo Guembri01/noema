@@ -30,7 +30,8 @@ cookie routes and a session cookie is not accepted by `/api/v1/*`).
   `getCurrentUser`).
 - Routes call `getCurrentUser()`; missing/invalid cookie →
   `401 {"error":"Unauthorized"}`.
-- Obtained via credential login or the SSO flow (§2).
+- Obtained via credential login or the SSO flow (§2). The credential login is
+  rate-limited and locks the account after repeated failures (§3.1).
 - Because the cookie is `SameSite=Lax`, cross-site browser POSTs do not carry
   it; these endpoints take no CSRF token of their own.
 
@@ -162,6 +163,40 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
 **Not rate-limited:** `export/page`, `export/database`, `export/workspace`
 (the zip export is the heaviest unthrottled endpoint), `files/[...path]`,
 `auth/sso/start`, `auth/sso/callback`, `oauth/authorize/complete`.
+
+### 3.1 Auth surface (server actions)
+
+Source: [`src/lib/rate-limit.ts`](../src/lib/rate-limit.ts) +
+[`src/server/actions/auth.ts`](../src/server/actions/auth.ts) +
+[`src/server/actions/two-factor.ts`](../src/server/actions/two-factor.ts)
+
+The sign-in form, the sign-up form and the 2FA check are **server actions**,
+not route handlers, so they never reach `api-guard.ts`. They carry their own
+budgets:
+
+| Budget | Limit | Keyed on |
+|---|---|---|
+| address | 30/min | the client address (`x-forwarded-for`, then `x-real-ip`, then `local`) |
+| account | 10/min (the `AUTH` tier) | the submitted e-mail address — a client cannot forge it |
+| 2FA guesses | 5 / 15 min | the account (sign-in) or the user id (the 2FA settings) |
+
+The address and the account budget are charged **before** any password work
+happens, so a flood of guesses cannot outrun the limiter. The sign-up form
+spends its budget before it looks the address up, so the "this e-mail already
+exists" answer is bounded by the address budget instead of being free. Over a
+budget the action answers
+`{"error":"Too many attempts. Try again in N seconds."}`.
+
+The account also carries a **persisted** lock — `User.failedLoginCount` and
+`User.lockedUntil`, added by the migration `20260115000000_auth_lockout`:
+five consecutive failures lock the account for 15 s, the lock doubles with
+every further failure up to 15 min, and a successful sign-in clears the
+counter and the lock. While the lock holds, the action answers
+`{"error":"This account is temporarily locked. Try again in N seconds."}` —
+before the password is compared.
+
+The lock belongs to the account, not to the client address: a deliberate run
+of failed sign-ins locks the account of the person being targeted.
 
 ### Common status codes
 

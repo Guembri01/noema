@@ -233,6 +233,30 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   the stored value is not a bcrypt hash — so it costs the same whether or not
   the account exists, and every failed sign-in answers with the same text, a
   wrong two-factor code included.
+- The sign-in, the sign-up and the 2FA check are now rate-limited, counted
+  and locked out. They are server actions, so they never reached the API rate
+  limit: the password could be guessed as fast as bcrypt allowed, no failure
+  was ever counted, and the two-factor code — three valid ones per 30-second
+  window — could be searched at will. Every attempt now costs a budget per
+  client address and one per account, the account budget keyed on the
+  submitted e-mail address, which a client cannot forge; the two-factor
+  guesses have a budget of their own. Five consecutive failures lock the
+  account for 15 seconds, the lock doubles with every further failure up to
+  15 minutes, and a successful sign-in clears both. The counter and the lock
+  live on the account (`User.failedLoginCount`, `User.lockedUntil`, added by
+  the migration `20260115000000_auth_lockout`), so they survive a restart.
+- The lock belongs to the account and not to the client address, so a
+  deliberate run of failed sign-ins locks the account of the person being
+  targeted. The sign-up shares the account budget with the sign-in (both are
+  keyed on the submitted address), so a sign-up naming someone else's address
+  also spends that address's sign-in budget. That is a property of the model,
+  named here so operators know it before they meet it.
+- The Playwright end-to-end suite signs in about ninety times, mostly as the
+  same seeded account from the same address, so it now exhausts the new
+  budgets and is refused from the eleventh sign-in on. The suite is not part of
+  CI and needs a running application and a database, but it is a documented
+  gate of the repository — the budgets have to be raised for it, or the suite
+  has to use more than one account, before `npm run e2e` is green again.
 
 ## [1.4.1] — 2026-10-17
 

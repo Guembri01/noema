@@ -465,6 +465,7 @@ What that means for an operator:
 | Backup exits 1 | the script says why: no `pg_dump`, dump < 1 KiB, or missing core tables — it deletes the bad file rather than keeping it. `npm run backup -- --dry-run` shows what a run would do |
 | Collaborative socket closed 4400 | `APP_ORIGINS` is set and the client’s `Origin` isn’t on the list (checked pre-auth) — add the origin or unset `APP_ORIGINS` |
 | Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
+| Sign-in answers "Too many attempts" / "This account is temporarily locked" | a budget is spent (30/min per client address, 10/min per account, 5 2FA guesses / 15 min) or the account is locked (5 consecutive failures); wait for the quoted time — an operator can release the lock with `UPDATE "User" SET "failedLoginCount" = 0, "lockedUntil" = NULL WHERE email = '…'` |
 | `EADDRINUSE` / weird build output | dev and prod share `.next` and the ports — exactly one writer at a time |
 
 ## 10. Verification appendix
