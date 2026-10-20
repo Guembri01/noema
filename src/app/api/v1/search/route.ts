@@ -45,9 +45,9 @@ function parseSearchType(raw: string | null): "PAGE" | "DATABASE" | null {
  * scope covers ranked search and the empty-`q` "recent pages" branch (#111).
  */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "v1");
-  if (limited) return limited;
   const auth = await authenticateApiRequest(request);
+  const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
+  if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!hasScope(auth.scopes, "read:pages")) {
     return NextResponse.json(

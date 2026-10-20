@@ -24,10 +24,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ pageId: string }> },
 ) {
-  const limited = rateLimit(request, "export-database", 30, 60_000);
-  if (limited) return limited;
-
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "export-database", 30, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { pageId } = await params;

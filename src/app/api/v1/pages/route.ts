@@ -63,9 +63,9 @@ function nextPageLink(requestUrl: URL, nextCursor: string | null): string | null
  * `insufficient_scope` before the workspace is even looked up.
  */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "v1");
-  if (limited) return limited;
   const auth = await authenticateApiRequest(request);
+  const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
+  if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!hasScope(auth.scopes, "read:pages")) {
     return NextResponse.json(
@@ -140,9 +140,9 @@ export async function GET(request: Request) {
  * idempotency store, so a rejected call is never memoized.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "v1");
-  if (limited) return limited;
   const auth = await authenticateApiRequest(request);
+  const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
+  if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!hasScope(auth.scopes, "write:pages")) {
     return NextResponse.json(

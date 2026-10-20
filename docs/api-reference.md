@@ -161,17 +161,64 @@ Source: [`src/lib/api-guard.ts`](../src/lib/api-guard.ts) +
 [`src/lib/rate-limit.ts`](../src/lib/rate-limit.ts)
 
 ```ts
-rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
+rateLimit(request, scope, limit = 120, windowMs = 60_000, { userId }): NextResponse | null
 ```
 
-- Fixed-window, **in-memory** (`Map`), keyed
-  `scope:firstXForwardedForHop` with fallback to `x-real-ip` then the
-  literal `local` (→ every loopback caller shares one bucket when no proxy
-  headers are set). Single-node only; the file header says to swap in Redis
-  for multi-instance.
+- Fixed-window, **in-memory**, in **two separate bounded LRU stores** — one for
+  the client-IP budgets, one for the per-user budgets. Each store holds at
+  most **10 000 buckets** and has a TTL sweep that drops the buckets whose
+  window has closed.
+- The client-IP bucket is keyed `scope:clientIp`. The client IP is read from
+  `X-Forwarded-For` / `X-Real-IP` **only** when the deployment declares how
+  many reverse-proxy hops to trust (`TRUSTED_PROXY_HOPS`); without that
+  declaration the forwarding headers are written by the client itself and are
+  ignored, so every caller of a scope shares the `scope:local` bucket. With
+  `TRUSTED_PROXY_HOPS=N` the **Nth-from-last** `X-Forwarded-For` hop is used —
+  the **N-th hop from the end**, i.e. the **real client** (every trusted proxy
+  appends the address of its peer, so the last N entries of the chain are the
+  ones the trusted proxies appended). A chain shorter than N hops cannot be
+  attributed that way: the `X-Real-IP` fallback is used instead (the proxy
+  that declared itself sets it), and only when that header is missing too
+  does the key fall back to `scope:local`. The address is canonicalized
+  (IPv4 dotted-decimal, IPv6 RFC 5952); a value that is not an IP literal
+  cannot be attributed and also falls back to `scope:local`.
+- **Two budgets** apply. The client-IP budget always does; for routes that
+  know their caller a **per-user** budget (`scope:user:<id>`) applies on top.
+  The user id comes from the session cookie or the API token and cannot be
+  spoofed — rotating the (spoofable) client IP does not buy a fresh
+  allowance. The per-user budget is checked **first**; it is the budget a
+  caller cannot dodge.
+- The two budgets live in **separate stores**, so the client-IP key space —
+  the part an unauthenticated caller controls — cannot evict the per-user
+  bucket. A flood of 10 000 forged client addresses therefore cannot reset
+  an exhausted per-user budget.
+- **The residual of the memory bound, named:** when a store holds more than
+  10 000 **live** keys inside one window, the **coldest live bucket is
+  sacrificed** and **that caller's window starts over** (same trade-off the
+  sliding-window limiter makes at its own 10 000-key cap). For the client-IP
+  store that needs 10 000 distinct client addresses in one window; with the
+  default configuration (`TRUSTED_PROXY_HOPS` unset) every caller of a scope
+  shares `scope:local`, so the key space cannot grow that way at all. For the
+  per-user store it needs 10 000 **distinct authenticated users** holding a
+  live budget in the same window — a real installation, not a flood.
+- An **anonymous** caller only gets the client-IP budget. Without a declared
+  proxy that is the shared `scope:local` bucket — a shared budget, but never a
+  bypassable one.
+- The caller is identified **before** the limit is charged: the per-user
+  budget is keyed on the user id, so the route resolves the session or the
+  API token first. The limiter therefore does not bound that lookup itself —
+  an anonymous flood on a wired route costs one session lookup per request
+  before the limit bites. The lookup is cheap for an unauthenticated caller
+  (a forged cookie fails the signature check before any database access), so
+  only authenticated callers make it expensive.
 - Over the limit → `429 {"error":"Rate limit exceeded"}` with a `retry-after`
   header (whole seconds, min 1). `null` means continue.
 - The limiter resets on process restart; `resetRateLimits()` exists for tests.
+- Single-node only; the file header says to swap in Redis for multi-instance.
+- Operational note: see [OPERATIONS §1.1](./OPERATIONS.md#11-reverse-proxy-in-front-of-the-app-trusted_proxy_hops)
+  — without `TRUSTED_PROXY_HOPS` all clients of a scope share one budget, and
+  a configured `ADMIN_IP_ALLOWLIST` makes the admin/private surfaces answer
+  403 for everybody until the proxy is declared.
 
 | Scope | Limit | Used by |
 |---|---|---|
@@ -187,82 +234,17 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
 | `ai` / `ai-skills` / `transcribe` | 30 / 30 / 10 per min | `POST /api/ai*` |
 | `notion-import` | 30/min | `POST /api/import/notion` |
 | `pdf-import` | 30/min | `POST /api/import/pdf` |
+| `export-page` / `export-database` / `export-workspace` | 30 / 30 / 5 per min | `GET /api/export/*` |
+| `inbound-webhook` | 60/min | `POST /api/webhooks/inbound` |
+| `mcp` | 120/min | `GET` / `POST /api/mcp` |
+| `metrics` | 120/min | `GET /api/metrics` |
 | `oauth-token` | 30/min | `POST /oauth/token` |
 | `cron` | 12/min | `POST /api/cron/templates` (after the secret check) |
 | `share-unlock-<token>` | 5/min | `POST /s/[token]/unlock` (per share link) |
 
-**Not rate-limited:** `export/page`, `export/database`, `export/workspace`
-(the zip export is the heaviest unthrottled endpoint), `files/[...path]`,
-`auth/sso/start`, `auth/sso/callback`, `oauth/authorize/complete`.
+**Not rate-limited:** `files/[...path]`, `auth/sso/start`,
+`auth/sso/callback`, `oauth/authorize/complete`.
 
-### 3.1 Auth surface (server actions)
-
-Source: [`src/lib/rate-limit.ts`](../src/lib/rate-limit.ts) +
-[`src/server/actions/auth.ts`](../src/server/actions/auth.ts) +
-[`src/server/actions/two-factor.ts`](../src/server/actions/two-factor.ts)
-
-The sign-in form, the sign-up form and the 2FA check are **server actions**,
-not route handlers, so they never reach `api-guard.ts`. They carry their own
-budgets:
-
-| Budget | Limit | Keyed on |
-|---|---|---|
-| address | 30/min | the client address (`x-forwarded-for`, then `x-real-ip`, then `local`) |
-| account | 10/min (the `AUTH` tier) | the submitted e-mail address — a client cannot forge it |
-| 2FA guesses | 5 / 15 min | the account (sign-in) or the user id (the 2FA settings) |
-
-The address and the account budget are charged **before** any password work
-happens, so a flood of guesses cannot outrun the limiter. The sign-up form
-spends its budget before it looks the address up, so the "this e-mail already
-exists" answer is bounded by the address budget instead of being free. Over a
-budget the action answers
-`{"error":"Too many attempts. Try again in N seconds."}`.
-
-The account also carries a **persisted** lock — `User.failedLoginCount` and
-`User.lockedUntil`, added by the migration `20260115000000_auth_lockout`:
-five consecutive failures lock the account for 15 s, the lock doubles with
-every further failure up to 15 min, and a successful sign-in clears the
-counter and the lock. While the lock holds, the action answers
-`{"error":"This account is temporarily locked. Try again in N seconds."}` —
-before the password is compared.
-
-The lock belongs to the account, not to the client address: a deliberate run
-of failed sign-ins locks the account of the person being targeted.
-
-### Request body budgets
-
-Source: [`src/lib/body-limit.ts`](../src/lib/body-limit.ts)
-
-Every route that reads a request body reads it under a byte budget, and the
-budget is enforced **before** the body is parsed:
-
-- the declared `Content-Length` is checked first — a request that declares
-  more than the budget is refused without a byte being read;
-- the body is then streamed and counted, so a **missing** or **lying**
-  `Content-Length` cannot buy an unbounded body (the header is chosen by the
-  client, so it is only ever a fast path, never the limit itself);
-- an over-sized body is answered with **413** `{"error":"Request body too large."}`.
-
-| Route | Budget | Why |
-|---|---|---|
-| `POST /api/ai/transcribe` | 25 MiB | the ceiling the speech-to-text providers apply |
-| `POST /api/import/notion` | 16 MiB | carries a 10 MB PDF as base64 (13 981 016 characters) |
-| `POST /api/upload` | 12 MiB | a 10 MB file plus the multipart envelope |
-| `POST /api/import/pdf` | 8 MiB | carries a 5 000 000 character text layer |
-| `POST /api/mcp`, `POST /api/v1/pages` | 4 MiB | a page's content |
-| `POST /api/webhooks/inbound` | 1 MiB | a provider event |
-| `POST /api/ai`, `POST /api/ai/skills`, `POST /api/calendar`, `POST /api/chat`, `POST /api/chat/stream`, `POST /api/cron/jobs`, `POST /api/invites`, `POST /api/ready`, `POST /api/templates`, `POST /api/tickets` | 256 KiB | identifiers, form fields and short text |
-| `POST /oauth/authorize/complete`, `POST /oauth/token`, `POST /s/[token]/unlock` | 16 KiB | a password, a code, a client id |
-
-That is the complete list: **20 routes read a request body, and every one of
-them answers an over-sized body with 413** `{"error":"Request body too large."}`.
-A route that is not in the table does not read a body.
-
-The budgets are **hard-coded** in the route modules next to the limit they
-protect — they are not environment variables and cannot be raised at runtime.
-Server actions have their own ceiling (`experimental.serverActions.bodySizeLimit`,
-1 MB in `next.config.ts`); the App Router route handlers have no framework-wide
-body limit in this Next version, which is why each route carries its own.
 
 ### Common status codes
 

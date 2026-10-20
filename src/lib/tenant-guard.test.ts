@@ -20,6 +20,7 @@ import {
   isPrivateSurface,
   isScoped,
   parseIpAllowlist,
+  parseTrustedProxyHops,
   planScopedWrites,
   resolveAccess,
   runAtomicWrites,
@@ -355,12 +356,51 @@ describe("IP allowlist decisions", () => {
     expect(decideIpAllowlist("2001:db8::5", ["2001:db8::/32"]).allowed).toBe(true);
   });
 
-  it("headerClientIp prefers the first forwarded hop, then x-real-ip", () => {
-    expect(headerClientIp((name) => (name === "x-forwarded-for" ? "10.1.2.3, 10.9.9.9" : null))).toBe(
-      "10.1.2.3",
-    );
-    expect(headerClientIp((name) => (name === "x-real-ip" ? "10.1.2.3" : null))).toBe("10.1.2.3");
+  it("headerClientIp ignores the forwarding headers without a trusted proxy", () => {
+    expect(
+      headerClientIp((name) => (name === "x-forwarded-for" ? "10.1.2.3, 10.9.9.9" : null)),
+    ).toBeNull();
+    expect(headerClientIp((name) => (name === "x-real-ip" ? "10.1.2.3" : null))).toBeNull();
     expect(headerClientIp(() => null)).toBeNull();
+  });
+
+  it("headerClientIp takes the n-th-from-last hop of a trusted chain", () => {
+    const chain = (name: string) =>
+      name === "x-forwarded-for" ? "10.1.2.3, 10.9.9.9, 10.4.4.4" : null;
+    expect(headerClientIp(chain, 1)).toBe("10.4.4.4");
+    expect(headerClientIp(chain, 2)).toBe("10.9.9.9");
+    expect(headerClientIp(chain, 3)).toBe("10.1.2.3");
+    // A chain shorter than the trusted hop count cannot be attributed.
+    expect(headerClientIp(chain, 4)).toBeNull();
+  });
+
+  it("headerClientIp trusts x-real-ip only with a trusted proxy", () => {
+    const real = (name: string) => (name === "x-real-ip" ? "10.1.2.3" : null);
+    expect(headerClientIp(real, 0)).toBeNull();
+    expect(headerClientIp(real, 1)).toBe("10.1.2.3");
+  });
+
+  it("parseTrustedProxyHops fails closed on anything but a positive integer", () => {
+    expect(parseTrustedProxyHops("1")).toBe(1);
+    expect(parseTrustedProxyHops(" 2 ")).toBe(2);
+    expect(parseTrustedProxyHops("0")).toBe(0);
+    expect(parseTrustedProxyHops("")).toBe(0);
+    expect(parseTrustedProxyHops("-1")).toBe(0);
+    expect(parseTrustedProxyHops("1.5")).toBe(0);
+    expect(parseTrustedProxyHops("abc")).toBe(0);
+    expect(parseTrustedProxyHops(undefined)).toBe(0);
+    expect(parseTrustedProxyHops(null)).toBe(0);
+  });
+
+  it("parseTrustedProxyHops rejects a hop count above the upper bound", () => {
+    // The upper bound itself is a valid declaration …
+    expect(parseTrustedProxyHops("16")).toBe(16);
+    // … but a larger value is a configuration error (a typo), and it is
+    // rejected fail-closed instead of being silently clamped: clamping would
+    // reinterpret the operator's intent (999 → 16 declares a trust boundary
+    // nobody wrote).
+    expect(parseTrustedProxyHops("17")).toBe(0);
+    expect(parseTrustedProxyHops("999")).toBe(0);
   });
 
   it("isPrivateSurface flags settings/audit/admin only", () => {
@@ -391,7 +431,11 @@ describe("IP allowlist decisions", () => {
  * ------------------------------------------------------------------ */
 
 describe("middleware IP gate on private surfaces", () => {
-  const ENV = ["ADMIN_IP_ALLOWLIST", "PRIVATE_IP_ALLOWLIST"] as const;
+  const ENV = [
+    "ADMIN_IP_ALLOWLIST",
+    "PRIVATE_IP_ALLOWLIST",
+    "TRUSTED_PROXY_HOPS",
+  ] as const;
   const saved = ENV.map((name) => [name, process.env[name]] as const);
   const clear = () => {
     for (const name of ENV) delete process.env[name];
@@ -414,6 +458,9 @@ describe("middleware IP gate on private surfaces", () => {
   it("blocks a non-allowlisted IP and admits an allowlisted one", () => {
     clear();
     process.env.ADMIN_IP_ALLOWLIST = "10.0.0.0/8";
+    // The forwarding headers are only believed when the deployment declares
+    // how many proxy hops to trust.
+    process.env.TRUSTED_PROXY_HOPS = "1";
     try {
       const denied = middleware(
         new NextRequest("http://localhost:3201/w/acme/settings", {
@@ -429,6 +476,24 @@ describe("middleware IP gate on private surfaces", () => {
       );
       expect(allowed.status).not.toBe(403);
       expect(allowed.headers.get("Content-Security-Policy")).toBeTruthy();
+    } finally {
+      clear();
+    }
+  });
+
+  it("blocks every caller when the allowlist is set but no proxy is declared", () => {
+    clear();
+    process.env.ADMIN_IP_ALLOWLIST = "10.0.0.0/8";
+    try {
+      // Fail-closed: without `TRUSTED_PROXY_HOPS` the forwarding headers are
+      // client-controlled and therefore ignored, so the client IP is unknown
+      // and the allowlist denies — including the legitimate admin address.
+      const res = middleware(
+        new NextRequest("http://localhost:3201/w/acme/settings", {
+          headers: { "x-forwarded-for": "10.1.2.3" },
+        }),
+      );
+      expect(res.status).toBe(403);
     } finally {
       clear();
     }

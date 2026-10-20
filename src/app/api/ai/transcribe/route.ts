@@ -22,10 +22,9 @@ const MAX_BODY_BYTES = 25 * 1024 * 1024;
 
 /** Speech-to-text via an OpenAI-compatible transcription endpoint. */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "transcribe", 10, 60_000);
-  if (limited) return limited;
-
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "transcribe", 10, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!KEY) {
     // Kept separate from AI_API_KEY on purpose: chat providers (DeepSeek,

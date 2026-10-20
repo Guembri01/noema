@@ -405,9 +405,9 @@ async function runResource(template: string, params: Record<string, string>, ctx
  * read-first catalog. Bearer-authenticated; unknown callers get a 401.
  */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "mcp", 120, 60_000);
-  if (limited) return limited;
   const auth = await authenticateApiRequest(request);
+  const limited = rateLimit(request, "mcp", 120, 60_000, { userId: auth?.userId });
+  if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const allowWrite = new URL(request.url).searchParams.get("allowWrite") === "true";
@@ -436,9 +436,9 @@ export async function GET(request: Request) {
  * "forbidden".
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "mcp", 120, 60_000);
-  if (limited) return limited;
   const auth = await authenticateApiRequest(request);
+  const limited = rateLimit(request, "mcp", 120, 60_000, { userId: auth?.userId });
+  if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let body: unknown;
