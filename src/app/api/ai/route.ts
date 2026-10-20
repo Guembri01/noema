@@ -4,8 +4,9 @@ import { getWorkspaceAccess } from "@/lib/permissions";
 import { pageScopeFor } from "@/lib/guest-access";
 import { searchPagesForPrompt } from "@/server/queries";
 import { rateLimit } from "@/lib/api-guard";
-import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfig } from "@/lib/ai-provider";
+import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfigForUser } from "@/lib/ai-provider";
 import { assembleContext, estimateTokens, type ContextDoc } from "@/lib/ai-context";
+import { aiRequestSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -47,25 +48,19 @@ export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  let body: {
-    prompt?: string;
-    context?: string;
-    mode?: string;
-    workspaceId?: string;
-    maxTokens?: number;
-  };
+  let raw: unknown;
   try {
-    body = (await request.json()) as typeof body;
+    raw = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
+  const parsed = aiRequestSchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+  const body = parsed.data;
 
-  const mode =
-    body.mode === "summarize"
-      ? "summarize"
-      : body.mode === "autofill"
-        ? "autofill"
-        : "ask";
+  const mode = body.mode ?? "ask";
   const prompt = (body.prompt ?? "").trim().slice(0, 4000);
   let context = (body.context ?? "").slice(0, 8000);
 
@@ -121,7 +116,10 @@ export async function POST(request: Request) {
     maxTokens: contextBudget,
   });
 
-  const config = await resolveAiConfig(body.workspaceId);
+  // The provider (endpoint + API key) belongs to the workspace it is stored
+  // for, so it is only used when the caller has access to the workspace it
+  // names; otherwise the environment defaults apply (audit B13).
+  const config = await resolveAiConfigForUser(user.id, body.workspaceId);
   if (!config) {
     return NextResponse.json({ error: AI_NOT_CONFIGURED }, { status: 503 });
   }
