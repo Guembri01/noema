@@ -37,9 +37,13 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 vi.mock("@/lib/auth", () => ({ getCurrentUser: edge.getCurrentUser }));
-vi.mock("@/lib/permissions", () => ({
-  getWorkspaceAccess: edge.getWorkspaceAccess,
-}));
+// Only the membership lookup is mocked — the role predicates (canEditContent
+// and friends) run for real, so a guest-vs-member difference in the export
+// routes is exercised rather than asserted by the mock.
+vi.mock("@/lib/permissions", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/permissions")>();
+  return { ...actual, getWorkspaceAccess: edge.getWorkspaceAccess };
+});
 vi.mock("@/server/queries", () => ({ getWorkspaceBySlug: edge.getWorkspaceBySlug }));
 vi.mock("@/lib/pdf", () => ({
   docToPdf: vi.fn(async () => new Uint8Array([0x25, 0x50, 0x44, 0x46])),
@@ -89,6 +93,34 @@ beforeEach(() => {
   db.pageFindMany.mockResolvedValue([]);
   db.propertyFindMany.mockResolvedValue([]);
   db.databaseViewFindMany.mockResolvedValue([]);
+});
+
+describe("guest scope (B02)", () => {
+  it("page export: a guest is refused — an export is a full-text copy", async () => {
+    edge.getWorkspaceAccess.mockResolvedValue({ role: "GUEST" });
+
+    const res = await pageCall("?format=json", "10.1.0.31");
+
+    expect(res.status).toBe(403);
+  });
+
+  it("database export: a guest is refused", async () => {
+    edge.getWorkspaceAccess.mockResolvedValue({ role: "GUEST" });
+    // The database route only serves a page of type DATABASE.
+    db.pageFindUnique.mockResolvedValue(DATABASE);
+
+    const res = await databaseCall("?format=csv", "10.1.0.32");
+
+    expect(res.status).toBe(403);
+  });
+
+  it("workspace export: a guest is refused", async () => {
+    edge.getWorkspaceAccess.mockResolvedValue({ role: "GUEST" });
+
+    const res = await workspaceCall("", "10.1.0.33");
+
+    expect(res.status).toBe(403);
+  });
 });
 
 describe("format validation (R23.16)", () => {

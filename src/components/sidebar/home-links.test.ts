@@ -22,6 +22,7 @@ import {
   RECENT_FALLBACK_ICON,
   favoriteRowLabel,
   quickLinkActive,
+  quickLinksFor,
   recentRowLabel,
   recentRows,
   sidebarRowLabel,
@@ -91,5 +92,48 @@ describe("quickLinkActive", () => {
     expect(quickLinkActive("/w/demo/inbox/1", "/w/demo/inbox", true)).toBe(false);
     expect(quickLinkActive("/w/demo/projects", "/w/demo/tickets")).toBe(false);
     expect(quickLinkActive("/w/demo", "")).toBe(false);
+  });
+});
+
+/**
+ * B02 — the tracker doors are not offered to a guest.
+ *
+ * The tracker pages refuse a `GUEST` (they answer 404), so the sidebar must
+ * not offer the door in the first place. The library (page-scoped) and the
+ * inbox (the caller's own notifications) stay.
+ */
+describe("quickLinksFor", () => {
+  const base = {
+    projects: [{ id: "p1", name: "Roadmap", icon: null }],
+    openTickets: 4,
+    unreadCount: 2,
+    locale: "en",
+  };
+
+  it("offers the tracker to a full member", () => {
+    const links = quickLinksFor({ ...base, workspace: { slug: "acme", role: "MEMBER" } });
+
+    expect(links.map((link) => link.href)).toEqual([
+      "/w/acme/projects",
+      "/w/acme/tickets",
+      "/w/acme/cycles",
+      "/w/acme/library",
+      "/w/acme/inbox",
+    ]);
+  });
+
+  it("hides the tracker from a guest", () => {
+    const links = quickLinksFor({ ...base, workspace: { slug: "acme", role: "GUEST" } });
+
+    expect(links.map((link) => link.href)).toEqual(["/w/acme/library", "/w/acme/inbox"]);
+  });
+
+  it("carries no tracker count for a guest", () => {
+    const links = quickLinksFor({ ...base, workspace: { slug: "acme", role: "GUEST" } });
+
+    // The only count left is the caller's own unread notifications.
+    expect(links.filter((link) => typeof link.count === "number")).toEqual([
+      expect.objectContaining({ href: "/w/acme/inbox", count: 2 }),
+    ]);
   });
 });

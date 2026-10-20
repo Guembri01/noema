@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { getPageTree, getUserWorkspaces, getWorkspaceBySlug } from "@/server/queries";
 import type { PageTreeNode } from "@/server/queries";
 import {
@@ -43,9 +44,11 @@ export default async function MovePagesPage({
   if (!workspace) notFound();
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) notFound();
+  // Guests only see the pages that were shared with them.
+  const visiblePageIds = await pageScopeFor(user.id, workspace.id, access.role);
 
   const [pages, allWorkspaces] = await Promise.all([
-    getPageTree(workspace.id),
+    getPageTree(workspace.id, visiblePageIds),
     getUserWorkspaces(user.id),
   ]);
   const destinations = allWorkspaces.filter((candidate) => candidate.id !== workspace.id);

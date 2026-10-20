@@ -13,6 +13,7 @@ import {
   getWorkspaceAccess,
   type WorkspaceAccess,
 } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { parsePageContent } from "@/lib/validation";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { prosemirrorToText } from "@/lib/blocks";
@@ -26,6 +27,8 @@ async function authorizePage(
 ): Promise<
   | { error: string }
   | {
+      /** The caller, so a caller-scoped check (the guest page scope) can run. */
+      userId: string;
       page: { id: string; workspaceId: string; parentId: string | null; deletedAt: Date | null };
       access: NonNullable<WorkspaceAccess>;
     }
@@ -38,7 +41,7 @@ async function authorizePage(
   if (!page) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return { error: "You do not have access to this page." };
-  return { page, access };
+  return { userId: user.id, page, access };
 }
 
 function revalidateWorkspace(workspaceId: string): void {
@@ -504,7 +507,14 @@ export async function emptyTrashAction(workspaceId: string): Promise<Result<{ de
   return { ok: true, deleted: result.count };
 }
 
-/** Read a page's document for a read-only synced view. */
+/**
+ * Read a page's document for a read-only synced view.
+ *
+ * The page scope applies here too: a `GUEST` may only read the pages shared
+ * with them, so a page outside their scope is refused exactly like the
+ * single-page read over HTTP (`GET /api/v1/pages/[pageId]` answers 404, never
+ * a leak). Membership alone is not enough — a guest is a workspace member.
+ */
 export async function getPageContentAction(
   pageId: string,
 ): Promise<
@@ -513,6 +523,13 @@ export async function getPageContentAction(
 > {
   const auth = await authorizePage(pageId);
   if ("error" in auth) return auth;
+  // A trashed page is gone: the read API answers 404 for it, so this action
+  // must not hand its document out either.
+  if (auth.page.deletedAt) return { error: "Page not found." };
+  const visiblePageIds = await pageScopeFor(auth.userId, auth.page.workspaceId, auth.access.role);
+  if (visiblePageIds && !visiblePageIds.has(auth.page.id)) {
+    return { error: "Page not found." };
+  }
   const page = await prisma.page.findUnique({
     where: { id: pageId },
     select: { id: true, title: true, icon: true, content: true },

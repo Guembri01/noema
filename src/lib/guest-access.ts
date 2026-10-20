@@ -52,7 +52,11 @@ export async function guestVisiblePageIds(
 ): Promise<Set<string>> {
   const [permissions, memberships, created, pages] = await Promise.all([
     prisma.pagePermission.findMany({
-      where: { userId, page: { workspaceId } },
+      // A trashed page is not visible, not even to the guest it was shared
+      // with: the page route and the read API answer 404 for it, so the scope
+      // must not keep its id (otherwise the scope would disagree with every
+      // door that renders it).
+      where: { userId, page: { workspaceId, deletedAt: null } },
       select: { pageId: true },
     }),
     prisma.teamspaceMember.findMany({
@@ -80,17 +84,26 @@ export async function guestVisiblePageIds(
   return withAncestors(direct, pages);
 }
 
+/** The roles that may see the whole workspace. */
+const FULL_ACCESS_ROLES = new Set(["OWNER", "ADMIN", "MEMBER"]);
+
 /**
  * The id filter to apply to a query, or `null` when the viewer sees everything.
- * Callers pass the result to `getPageTree`/`searchPages`.
+ * Callers pass the result to `getPageTree`/`searchPages`/`getPagesPage`.
+ *
+ * Fails closed: a `GUEST` gets exactly the pages shared with them, a full
+ * member gets `null` (the whole workspace) and a role that is not a known
+ * workspace role gets an **empty** set — never the whole workspace. A forged
+ * or corrupted role must never widen the view.
  */
 export async function pageScopeFor(
   userId: string,
   workspaceId: string,
   role: string,
 ): Promise<Set<string> | null> {
-  if (role !== "GUEST") return null;
-  return guestVisiblePageIds(userId, workspaceId);
+  if (role === "GUEST") return guestVisiblePageIds(userId, workspaceId);
+  if (FULL_ACCESS_ROLES.has(role)) return null;
+  return new Set<string>();
 }
 
 /* -------------------------------------------------------------------------- *
