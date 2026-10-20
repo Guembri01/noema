@@ -937,6 +937,14 @@ private address of a personal calendar and often carries a secret token in its
 path, so it stays on the server, which reads the feed itself. A feed is
 connected with `{"action":"connect", …}` and its events are listed here.
 
+`url` is the event's `URL:` property from the feed. Only an `http`, `https`,
+`mailto` or `tel` URL is imported and rendered — every other scheme, a
+`javascript:` URL for instance, is dropped and the field is `null` for it. A
+relative path (`/w/acme/page`) and a same-document target (`?q=1`, `#section`)
+are kept. The stored value is checked again on the way out: this response
+and the ICS export (`?format=ics`) leave out a URL that is not on the
+allowlist, so an event stored before the fix cannot leak one either.
+
 ### `POST /api/calendar` — scope `calendar-write` (30/min)
 
 ```jsonc

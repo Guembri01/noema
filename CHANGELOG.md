@@ -459,6 +459,17 @@ list marks it as **No access**.
   cannot produce such a URL. The render gate is the security boundary
   instead: a stored `javascript:`, `data:` or protocol-relative URL never
   becomes an anchor, whichever client wrote it.
+- The `URL:` property of a subscribed calendar feed was stored as it came and
+  rendered as a link in the meetings sidebar. A feed is third-party input, so
+  a `javascript:` URL in it became a live link in the app's own origin — a
+  click on an event title ran attacker-controlled script. The parser now keeps
+  only `http`, `https`, `mailto` and `tel` URLs (and relative paths) and drops
+  every other scheme before the value is stored, and the sidebar checks the
+  scheme again before it builds the `href`, so an event stored before the fix
+  can no longer become a link. The stored value is checked again on the way
+  out: the calendar API and the ICS export leave out a URL that is not on the
+  allowlist, so it never leaves the server — neither as a link, nor in the
+  API response, nor in the downloaded feed.
 
 ## [1.4.1] — 2026-10-17
 

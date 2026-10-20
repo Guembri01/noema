@@ -12,6 +12,7 @@ import {
   refreshCalendarFeedsAction,
 } from "@/server/actions/calendar";
 import { t } from "@/lib/i18n";
+import { sanitizeHref } from "@/lib/validation";
 
 
 export type MeetingEventView = {
@@ -174,58 +175,66 @@ export function SidebarMeetings({
               {day}
             </p>
             <ul className="space-y-0.5">
-              {items.map((event) => (
-                <li
-                  key={event.id}
-                  className="group flex items-start gap-2 rounded-md px-1 py-1 hover:bg-surface-2"
-                >
-                  <CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm">
-                      {event.url ? (
-                        <a href={event.url} target="_blank" rel="noreferrer" className="hover:underline">
-                          {event.title}
-                        </a>
-                      ) : (
-                        event.title
-                      )}
-                    </p>
-                    <p className="truncate text-2xs text-muted">
-                      {timeLabel(event, locale)}
-                      {event.feed ? ` · ${event.feed.name}` : ""}
-                    </p>
-                  </div>
-                  {event.notesPageId ? (
-                    <Link
-                      href={`/w/${slug}/${event.notesPageId}`}
-                      className="shrink-0 rounded px-1 text-2xs text-accent hover:underline"
-                    >
-                      {t(locale, "eventNotes")}
-                    </Link>
-                  ) : (
-                    <button
-                      type="button"
-                      aria-label={`${t(locale, "createMeetingNotesFor")} ${event.title}`}
-                      disabled={pending}
-                      onClick={() =>
-                        startTransition(async () => {
-                          const result = await createMeetingNoteAction(event.id);
+              {items.map((event) => {
+                // The event URL comes from a third-party calendar feed — and a
+                // row stored before the parser was fixed can still hold a
+                // hostile value. `sanitizeHref` is the last line of defence:
+                // only an allowlisted scheme (`http|https|mailto|tel`) may
+                // become an `href`.
+                const href = sanitizeHref(event.url);
+                return (
+                  <li
+                    key={event.id}
+                    className="group flex items-start gap-2 rounded-md px-1 py-1 hover:bg-surface-2"
+                  >
+                    <CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm">
+                        {href ? (
+                          <a href={href} target="_blank" rel="noreferrer" className="hover:underline">
+                            {event.title}
+                          </a>
+                        ) : (
+                          event.title
+                        )}
+                      </p>
+                      <p className="truncate text-2xs text-muted">
+                        {timeLabel(event, locale)}
+                        {event.feed ? ` · ${event.feed.name}` : ""}
+                      </p>
+                    </div>
+                    {event.notesPageId ? (
+                      <Link
+                        href={`/w/${slug}/${event.notesPageId}`}
+                        className="shrink-0 rounded px-1 text-2xs text-accent hover:underline"
+                      >
+                        {t(locale, "eventNotes")}
+                      </Link>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={`${t(locale, "createMeetingNotesFor")} ${event.title}`}
+                        disabled={pending}
+                        onClick={() =>
+                          startTransition(async () => {
+                            const result = await createMeetingNoteAction(event.id);
 
-                          if ("ok" in result) {
-                            router.push(`/w/${result.slug}/${result.id}`);
-                            router.refresh();
-                          } else {
-                            toast.error(result.error);
-                          }
-                        })
-                      }
-                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted opacity-0 hover:bg-bg group-hover:opacity-100 focus:opacity-100"
-                    >
-                      <Sparkles className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </li>
-              ))}
+                            if ("ok" in result) {
+                              router.push(`/w/${result.slug}/${result.id}`);
+                              router.refresh();
+                            } else {
+                              toast.error(result.error);
+                            }
+                          })
+                        }
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted opacity-0 hover:bg-bg group-hover:opacity-100 focus:opacity-100"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ))
