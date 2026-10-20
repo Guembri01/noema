@@ -114,13 +114,22 @@ describe("collectFileUrls", () => {
 
 describe("fileKeyFromUrl", () => {
   test("maps a file route onto its storage key", () => {
-    expect(fileKeyFromUrl("/api/files/ws_1/abc.png")).toBe("ws_1/abc.png");
+    expect(fileKeyFromUrl("/api/files/ws_1/abc.png", "ws_1")).toBe("ws_1/abc.png");
   });
 
   test("rejects traversal, partial and foreign urls", () => {
-    expect(fileKeyFromUrl("/api/files/ws_1/../evil.png")).toBeNull();
-    expect(fileKeyFromUrl("/api/files/ws_1")).toBeNull();
-    expect(fileKeyFromUrl("https://example.com/pic.png")).toBeNull();
+    expect(fileKeyFromUrl("/api/files/ws_1/../evil.png", "ws_1")).toBeNull();
+    expect(fileKeyFromUrl("/api/files/ws_1", "ws_1")).toBeNull();
+    expect(fileKeyFromUrl("https://example.com/pic.png", "ws_1")).toBeNull();
+  });
+
+  test("rejects a key that belongs to another workspace (B38)", () => {
+    expect(fileKeyFromUrl("/api/files/ws_2/abc.png", "ws_1")).toBeNull();
+    expect(fileKeyFromUrl("/api/files/ws_1/abc.png", "ws_2")).toBeNull();
+  });
+
+  test("rejects every key when the expected workspace is unknown (fail closed)", () => {
+    expect(fileKeyFromUrl("/api/files/ws_1/abc.png", "")).toBeNull();
   });
 });
 

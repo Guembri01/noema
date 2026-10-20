@@ -474,13 +474,22 @@ async function collectStaleFileUrls(
  * Best-effort storage cleanup for purged pages: blobs are removed from the
  * driver and their Asset rows deleted, but a storage hiccup never fails the
  * purge itself (a leaked blob beats a failed delete).
+ *
+ * Only uploads that belong to `workspaceId` are touched: a page can reference
+ * an upload of another workspace (a leaked share link), and that blob is not
+ * ours to delete (B38) — neither the object nor its Asset row.
  */
-async function dropPurgedFiles(urls: string[]): Promise<void> {
+async function dropPurgedFiles(urls: string[], workspaceId: string): Promise<void> {
   if (urls.length === 0) return;
   try {
-    const keys = urls
-      .map(fileKeyFromUrl)
-      .filter((key): key is string => key !== null);
+    const ownedUrls: string[] = [];
+    const keys: string[] = [];
+    for (const url of urls) {
+      const key = fileKeyFromUrl(url, workspaceId);
+      if (!key) continue;
+      ownedUrls.push(url);
+      keys.push(key);
+    }
     if (keys.length > 0) {
       const driver = storageDriver();
       await Promise.all(
@@ -493,7 +502,7 @@ async function dropPurgedFiles(urls: string[]): Promise<void> {
         }),
       );
     }
-    await prisma.asset.deleteMany({ where: { url: { in: urls } } });
+    await prisma.asset.deleteMany({ where: { url: { in: ownedUrls } } });
   } catch (error) {
     console.warn("trash purge: upload cleanup failed", error);
   }
@@ -528,7 +537,7 @@ export async function emptyTrashAction(workspaceId: string): Promise<Result<{ de
   const result = await prisma.page.deleteMany({
     where: { id: { in: ids }, workspaceId },
   });
-  await dropPurgedFiles(staleUrls);
+  await dropPurgedFiles(staleUrls, workspaceId);
   revalidateWorkspace(workspaceId);
   return { ok: true, deleted: result.count };
 }
@@ -743,7 +752,7 @@ export async function deletePageAction(pageId: string, workspaceId: string): Pro
   await prisma.page.deleteMany({
     where: { id: { in: ids }, workspaceId: auth.page.workspaceId },
   });
-  await dropPurgedFiles(staleUrls);
+  await dropPurgedFiles(staleUrls, auth.page.workspaceId);
   await logActivity({
     workspaceId: auth.page.workspaceId,
     actorId: null,

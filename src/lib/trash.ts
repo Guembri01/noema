@@ -89,13 +89,24 @@ export function collectFileUrls(value: unknown): string[] {
 
 /**
  * Map a `/api/files/<workspace>/<name>` route onto its storage key, refusing
- * traversal and anything that is not a well-formed asset key.
+ * traversal, anything that is not a well-formed asset key, and every key that
+ * belongs to a *different* workspace.
+ *
+ * The workspace id is the key's first segment, so scoping it is a string
+ * comparison — but it is the comparison that matters (B38): without it a page
+ * that references another workspace's upload (a leaked share link, a copied
+ * URL) would pull that tenant's bytes into this workspace's export and delete
+ * them from storage on purge.
+ *
+ * The scope is a *required* argument on purpose: a caller that cannot name the
+ * workspace it is allowed to touch gets nothing.
  */
-export function fileKeyFromUrl(url: string): string | null {
+export function fileKeyFromUrl(url: string, workspaceId: string): string | null {
   const match = /^\/api\/files\/(.+)$/.exec(url);
   if (!match) return null;
   const key = match[1];
-  return isValidAssetKey(key) ? key : null;
+  if (!isValidAssetKey(key)) return null;
+  return key.split("/")[0] === workspaceId ? key : null;
 }
 
 /**

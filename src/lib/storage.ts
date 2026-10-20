@@ -173,8 +173,11 @@ export function localDriver(root = process.env.STORAGE_DIR ?? path.join(process.
     name: "local",
     async put(key, body) {
       const target = resolve(key);
-      await mkdir(path.dirname(target), { recursive: true });
-      await writeFile(target, body);
+      // Uploads are tenant data: the workspace directory and the file itself
+      // are created owner-only instead of the umask default (0755/0644), so
+      // no other user on the host can read another tenant's uploads (B38).
+      await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+      await writeFile(target, body, { mode: 0o600 });
     },
     async get(key) {
       try {
