@@ -449,6 +449,10 @@ list marks it as **No access**.
 
 ### Changed
 
+- The Linux desktop build no longer fails at the AppImage step because the
+  payload carried sharp's musl binary on a glibc runner. `desktop:prepare`
+  now keeps only the sharp variant for the machine being packaged, so
+  linuxdeploy can resolve every ELF dependency.
 - The app's own write path accepts only the app's own `/api/files/...` asset
   URLs for a FILES value. A FILES entry whose URL is not an app-owned asset
   path is therefore **removed** from the cell the next time a file is

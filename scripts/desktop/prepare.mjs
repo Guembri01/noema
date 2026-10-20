@@ -140,6 +140,48 @@ function buildStandalone() {
   }
 }
 
+/**
+ * The sharp platform tag this machine can actually load.
+ *
+ * Next's file tracing copies *every* optional `@img/sharp-*` package it sees
+ * into the standalone output, including the musl build of sharp on a glibc
+ * runner. A musl `.node` in the payload is not just dead weight: the AppImage
+ * bundler scans every ELF file and aborts when it cannot resolve
+ * `libc.musl-x86_64.so.1`, which is exactly how a plausible Linux build died
+ * at the linuxdeploy step. Prune the foreign variants before Tauri packs.
+ */
+export function sharpPlatformTag(os = platform(), cpu = arch(), musl = isMusl()) {
+  if (os === "win32" || os === "darwin") return `${os}-${cpu}`;
+  return musl ? `linuxmusl-${cpu}` : `linux-${cpu}`;
+}
+
+function isMusl() {
+  if (platform() !== "linux") return false;
+  const report = process.report?.getReport?.();
+  return !report?.header?.glibcVersionRuntime;
+}
+
+/** Keep the platform's sharp package, its libvips, and sharp's colour helper. */
+export function shouldKeepSharpPackage(entry, tag) {
+  if (entry === "colour") return true;
+  const prefix = entry.startsWith("sharp-libvips-") ? "sharp-libvips-" : "sharp-";
+  if (!entry.startsWith(prefix)) return true;
+  return entry.slice(prefix.length) === tag;
+}
+
+function pruneForeignSharpBinaries() {
+  const imgDir = join(standalone, "node_modules", "@img");
+  if (!existsSync(imgDir)) return;
+  const tag = sharpPlatformTag();
+  const removed = readdirSync(imgDir).filter((entry) => !shouldKeepSharpPackage(entry, tag));
+  for (const entry of removed) {
+    rmSync(join(imgDir, entry), { recursive: true, force: true });
+  }
+  if (removed.length) {
+    console.log(`· pruned foreign sharp binaries (${removed.join(", ")}) for ${tag}`);
+  }
+}
+
 /** Everything a working server needs. Checked before anything is staged. */
 export const REQUIRED_PAYLOAD = [
   ["server.js", "the Next standalone server entry"],
@@ -477,6 +519,7 @@ function main() {
   writeBootScript();
   stripDevelopmentEnv();
   stripRuntimeState();
+  pruneForeignSharpBinaries();
   // …and after the copies, everything the installer ships must be present.
   assertPayload();
   copyNodeRuntime();
