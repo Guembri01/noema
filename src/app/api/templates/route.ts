@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
+import { assertScopedParent } from "@/lib/page-parent";
 import {
   createBlockTemplateAction,
   createGalleryTemplateAction,
@@ -38,27 +39,36 @@ export async function POST(request: Request) {
   const workspaceId = String(body.workspaceId ?? "");
   const parentId = body.parentId ?? null;
 
+  // The parent must live in the caller's workspace — `Page.parentId` is a
+  // plain foreign key, so a foreign parent would link the new page into
+  // another tenant's tree (B08). The template actions repeat the check, so a
+  // direct action call is covered as well.
+  const parent = await assertScopedParent({ workspaceId, parentId });
+  if ("error" in parent) {
+    return NextResponse.json({ error: parent.error }, { status: 400 });
+  }
+
   let result: { ok: true; id: string; slug: string } | { error: string };
   switch (body.action) {
     case "quickstart":
       result = await createQuickStartAction({
         workspaceId,
         kind: body.kind === "database" ? "database" : "page",
-        parentId,
+        parentId: parent.parentId,
       });
       break;
     case "gallery":
       result = await createGalleryTemplateAction({
         workspaceId,
         templateId: String(body.templateId ?? ""),
-        parentId,
+        parentId: parent.parentId,
       });
       break;
     case "block":
       result = await createBlockTemplateAction({
         workspaceId,
         templateId: String(body.templateId ?? "") as TemplateId,
-        parentId,
+        parentId: parent.parentId,
       });
       break;
     default:

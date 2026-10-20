@@ -12,6 +12,7 @@ import {
   type WorkspaceAccess,
 } from "@/lib/permissions";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
+import { assertScopedParent } from "@/lib/page-parent";
 import { csvToMatrix } from "@/lib/serialize";
 import { coerceCsvValue, type CsvPropertyConfig } from "@/lib/csv-value-coercion";
 import type { ImportCounts } from "@/lib/importers";
@@ -466,6 +467,10 @@ export async function createRowAction(
     const row = await tx.page.create({
       data: {
         workspaceId: auth.page.workspaceId,
+        // The parent is the database page `authorizeDatabase` just checked and
+        // the row is written into that very page's workspace — parent and row
+        // share one workspace by construction, so no second lookup is needed
+        // (B08: `assertScopedParent` would be redundant here).
         parentId: databasePageId,
         title: rowTitle,
         createdById: auth.user.id,
@@ -779,6 +784,16 @@ export async function duplicateDatabaseAction(
   });
   if (!source) return { error: "Database not found." };
 
+  // The clone lands as a sibling of the source, so it keeps the source's own
+  // parent. The source row proves that the *database* lives in this
+  // workspace, not that its parent does — check that one link before the
+  // clone is written (B08).
+  const parent = await assertScopedParent({
+    workspaceId: auth.page.workspaceId,
+    parentId: source.parentId,
+  });
+  if ("error" in parent) return parent;
+
   const databaseTitle = `${source.title || "Untitled"} copy`.slice(0, 80);
 
   const [properties, views, rows, templates] = await Promise.all([
@@ -878,6 +893,9 @@ export async function duplicateDatabaseAction(
     return {
       id: row.id,
       workspaceId: auth.page.workspaceId,
+      // The parent is the clone's own database page, created in this same
+      // transaction with the same workspace id — inside the workspace by
+      // construction (B08: `assertScopedParent` would be redundant here).
       parentId: newPageId,
       title,
       icon: typeof row.icon === "string" ? row.icon : null,
@@ -925,7 +943,7 @@ export async function duplicateDatabaseAction(
 
   await prisma.$transaction(async (tx) => {
     const last = await tx.page.findFirst({
-      where: { parentId: source.parentId, deletedAt: null },
+      where: { parentId: parent.parentId, deletedAt: null },
       orderBy: { position: "desc" },
       select: { position: true },
     });
@@ -933,7 +951,9 @@ export async function duplicateDatabaseAction(
       data: {
         id: newPageId,
         workspaceId: auth.page.workspaceId,
-        parentId: source.parentId,
+        // The clone keeps the (validated) parent of the source database; the
+        // clone's own rows hang under the clone (same workspace).
+        parentId: parent.parentId,
         type: "DATABASE",
         title: databaseTitle,
         icon: source.icon,
@@ -1013,6 +1033,10 @@ export async function createRowFromTemplateAction(
   const row = await prisma.page.create({
     data: {
       workspaceId: auth.page.workspaceId,
+      // The parent is the database page `authorizeDatabase` just checked and
+      // the row is written into that very page's workspace — parent and row
+      // share one workspace by construction (B08: `assertScopedParent` would
+      // be redundant here).
       parentId: databasePageId,
       title: template.name,
       icon: template.icon,
@@ -1233,6 +1257,10 @@ export async function importCsvAction(
         const page = await tx.page.create({
           data: {
             workspaceId: auth.page.workspaceId,
+            // The parent is the database page `authorizeDatabase` just checked
+            // and the row is written into that very page's workspace — parent
+            // and row share one workspace by construction (B08:
+            // `assertScopedParent` would be redundant here).
             parentId: databasePageId,
             title: rowTitle,
             createdById: auth.user.id,

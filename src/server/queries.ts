@@ -333,6 +333,17 @@ export type RelationData = {
 };
 
 export async function getDatabase(databasePageId: string) {
+  // A database's rows are the pages that hang under it, and they belong to the
+  // database's own workspace. `Page.parentId` is a plain foreign key, so a row
+  // that was linked across workspaces (the unchecked `parentId` hole, B08)
+  // would otherwise show up in this view and in the database exports. The rows
+  // are therefore filtered by the database's workspace; an unknown database
+  // resolves to a blank workspace, which matches no row.
+  const database = await prisma.page.findUnique({
+    where: { id: databasePageId },
+    select: { workspaceId: true },
+  });
+  const workspaceId = database?.workspaceId ?? "";
   const [properties, views, rows, templateRows] = await Promise.all([
     prisma.property.findMany({
       where: { databasePageId },
@@ -343,7 +354,7 @@ export async function getDatabase(databasePageId: string) {
       orderBy: { position: "asc" },
     }),
     prisma.page.findMany({
-      where: { parentId: databasePageId, deletedAt: null },
+      where: { parentId: databasePageId, workspaceId, deletedAt: null },
       orderBy: { position: "asc" },
       include: {
         propertyValues: true,
@@ -401,6 +412,13 @@ export async function getDatabase(databasePageId: string) {
     relationProperties.map(async (property) => {
       const targetDatabaseId = (property.config as { targetDatabaseId: string })
         .targetDatabaseId;
+      // The related database's own workspace scopes its rows, for the same
+      // reason as the database's own rows (B08).
+      const targetDatabase = await prisma.page.findUnique({
+        where: { id: targetDatabaseId },
+        select: { workspaceId: true },
+      });
+      const targetWorkspaceId = targetDatabase?.workspaceId ?? "";
       const [targetProperties, targetRows] = await Promise.all([
         prisma.property.findMany({
           where: { databasePageId: targetDatabaseId },
@@ -408,7 +426,7 @@ export async function getDatabase(databasePageId: string) {
           select: { id: true, name: true, type: true },
         }),
         prisma.page.findMany({
-          where: { parentId: targetDatabaseId, deletedAt: null },
+          where: { parentId: targetDatabaseId, workspaceId: targetWorkspaceId, deletedAt: null },
           orderBy: { position: "asc" },
           include: { propertyValues: true },
         }),

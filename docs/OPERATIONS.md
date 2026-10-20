@@ -423,6 +423,36 @@ curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 # 9. restart the cron driver + `npm run collab` so they pick up new code/env
 ```
 
+### 8.1 The tenant boundary is enforced in the application, not in the schema
+
+`Page.parentId` is a plain self-foreign key. The schema carries **no**
+composite constraint on `(parentId, workspaceId)`, and none is planned — the
+rule *"a `parentId` always points inside the same workspace"* is enforced in
+the code, not by Postgres.
+
+What that means for an operator:
+
+- **The database will happily store a cross-workspace parent.** No
+  `prisma db push` and no `prisma migrate` changes that, and the hardening
+  spec for this rule deliberately proposes no constraint — the check is
+  application-side.
+- **Every write path has to opt in.** The single gate is `assertScopedParent()`
+  in [`src/lib/page-parent.ts`](../src/lib/page-parent.ts): it loads the parent
+  **tenant-scoped** (`{ id, workspaceId }`), so a foreign parent is never read
+  and the refusal never names it. **That file is the place to pull in when a
+  new write path stores a `Page.parentId`** — a path that skips the helper
+  re-opens the hole.
+- **What a refusal looks like:** the write is refused with `That parent page
+  does not exist in this workspace.` (HTTP 400 on the REST routes, an
+  `{error}` on the server actions). If a *legitimate* parent is refused, the
+  page it names is not in the workspace the write was scoped to — check the
+  ids, not the helper.
+- **Old rows are not repaired by the deploy.** Pages that were linked across
+  workspaces before the check existed stay in the database; the read side
+  (database view, CSV/JSON export) filters rows by the database's workspace, so
+  they no longer surface in the foreign workspace's views — but the rows
+  themselves are still there until someone moves or deletes them.
+
 ## 9. Incident quick reference
 
 | Symptom | First checks |
@@ -459,6 +489,7 @@ nothing was executed against live servers):
 | 7 | `/api/health` 200/503 shapes, 2 s ping, `no-store`, no auth/disclosure, compose healthcheck | `src/app/api/health/route.ts` · `docker-compose.yml` |
 | 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
 | 8 | single `20260113000000_init` migration vs push-evolved schema | `prisma/migrations/` · `docs/specs/engineering-hardening.md:149,367-373` |
+| 8.1 | tenant boundary enforced in the application (`assertScopedParent`), no `(parentId, workspaceId)` constraint, refusal message, legacy rows not repaired | `src/lib/page-parent.ts` · `prisma/schema.prisma` (`Page.parentId`) · `src/server/actions/import-pdf.ts` · `src/server/queries.ts` (`getDatabase`) |
 | all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
 
 **Not verified by execution (be explicit when relying on them):** the backup →

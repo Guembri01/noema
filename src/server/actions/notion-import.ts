@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
+import { assertScopedParent } from "@/lib/page-parent";
 import type { ImportCounts } from "@/lib/importers";
 import {
   mapNotionBlockType,
@@ -183,6 +184,14 @@ export async function importNotionPageAction(input: {
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import pages." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported tree into another
+  // tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+  });
+  if ("error" in parent) return parent;
 
   // R24: normalise the dialog toggles once. Absent/undefined means the
   // pre-existing behaviour (everything imported), so older callers such as the
@@ -280,7 +289,7 @@ export async function importNotionPageAction(input: {
       for (const item of fetched) {
         const parentId =
           item.parentBlockId === null
-            ? (input.parentId ?? null)
+            ? parent.parentId
             : (ids.get(item.parentBlockId) ?? null);
         const page = await tx.page.create({
           data: {

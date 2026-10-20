@@ -21,6 +21,7 @@ import { pageScopeFor } from "@/lib/guest-access";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { pageSearchText } from "@/lib/search";
 import { prosemirrorToText } from "@/lib/blocks";
+import { assertScopedParent } from "@/lib/page-parent";
 import { formatWordStats } from "@/lib/actions-menu";
 import { loadVersionAuthors } from "@/server/version-authors";
 
@@ -273,8 +274,17 @@ export async function duplicatePageAction(
     return { error: "You do not have permission to duplicate this page." };
   }
 
+  // The copy becomes a sibling of the source, so it keeps the source's own
+  // parent. The source row proves that the *source* lives in this workspace,
+  // not that its parent does — check that one link before it is written (B08).
+  const parent = await assertScopedParent({
+    workspaceId: source.workspaceId,
+    parentId: source.parentId,
+  });
+  if ("error" in parent) return parent;
+
   const last = await prisma.page.findFirst({
-    where: { workspaceId: source.workspaceId, parentId: source.parentId },
+    where: { workspaceId: source.workspaceId, parentId: parent.parentId },
     orderBy: { position: "desc" },
     select: { position: true },
   });
@@ -282,7 +292,7 @@ export async function duplicatePageAction(
   const created = await prisma.page.create({
     data: {
       workspaceId: source.workspaceId,
-      parentId: source.parentId,
+      parentId: parent.parentId,
       teamspaceId: source.teamspaceId,
       projectId: source.projectId,
       type: source.type,
