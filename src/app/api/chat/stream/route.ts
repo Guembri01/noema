@@ -53,8 +53,10 @@ function textStream(body: string): Response {
  * The chat action layer runs before the model. An explicit "create / update /
  * move / delete / archive a ticket" or "create a note" request never reaches the
  * model: it becomes a deterministic proposal the UI renders as a confirm
- * button. Body `{ threadId, confirm, proposalMessageId? }` applies a confirmed
- * proposal through the real server actions (the only path that changes data).
+ * button. Body `{ threadId, confirm, proposalMessageId }` applies a confirmed
+ * proposal through the real server actions (the only path that changes data):
+ * the confirmation is bound to the proposal `proposalMessageId` names, and the
+ * stored proposal is what gets applied.
  */
 export async function POST(request: Request) {
   const user = await getCurrentUser();
@@ -83,11 +85,22 @@ export async function POST(request: Request) {
   }
 
   // --- Confirmation: apply a previously proposed action ---------------------
+  // A confirmation names the proposal turn it confirms; the server applies the
+  // proposal that turn stored, so a confirmation that names nothing is refused
+  // (B17).
   if (payload.confirm && payload.threadId) {
+    const proposalMessageId =
+      typeof payload.proposalMessageId === "string" ? payload.proposalMessageId.trim() : "";
+    if (!proposalMessageId) {
+      return NextResponse.json(
+        { error: "That confirmation must name the proposal it applies." },
+        { status: 400 },
+      );
+    }
     const result = await executeChatActionAction({
       threadId: payload.threadId,
       action: payload.confirm,
-      proposalMessageId: payload.proposalMessageId ?? null,
+      proposalMessageId,
     });
     if ("error" in result) return NextResponse.json(result, { status: 400 });
     return NextResponse.json(result);

@@ -139,7 +139,9 @@ Other deliberate choices:
   install, where an update or an uninstall takes them. For the same
   reason `prepare.mjs` strips `uploads/`, `.data/` and `backups/` from the payload
   (Next copies them in on a machine where the app has been used) and fails the
-  build if they would still ship, the way it does for `.env`.
+  build if they would still ship, the way it does for `.env`. The uploads and the
+  session store are written owner-only (`0600` files in `0700` directories), so
+  another user on the machine cannot read them.
 - **The session secret is generated per install.** With no shipped `AUTH_SECRET`
   the wrapper writes a 32-byte secret to `<data dir>/auth-secret` (`0600`) on first
   launch and reuses it afterwards, so sessions survive a restart while one
@@ -228,6 +230,22 @@ reads and writes the store through Rust (`state::set_pref`), which the ACL does
 not gate. The preference store stays reachable for the shell's own page — as
 the audited app commands `get_pref`/`set_pref`.
 
+The **`default` capability** is the shell's own page — the first-run and
+diagnostics surface (`dist/index.html`), the only document that runs on the
+shell's origin — and it holds exactly what that page calls: the app's own
+command set (`default`) and the two `core:event` permissions its subscription
+to the sidecar's `sidecar://event` stream needs. Everything else is gone: the
+process plugin (the page never restarts or quits the app through it — the
+native menu does that in Rust), the opener, the dialog, the `os` and the
+file-system plugins (the page opens no URL, picks no file and reads no file)
+and the `core:` collectors — `core:default` expands to the image, menu, tray,
+path and resources plugins and to the window and app commands no document
+calls; the window title, the theme, the zoom and the decorations are the
+shell's own app commands (`set_window_title`, `set_theme`, `set_zoom`,
+`set_decorations`), which run in Rust, where the ACL does not gate them.
+Unused permissions are misleading — they read as "the app needs this" and
+become live the next time somebody wires them up.
+
 `scripts/desktop/capabilities.test.mjs` pins the split — across the capability
 **files** *and* the capabilities declared inline in `tauri.conf.json`
 (`CapabilityEntry::Inlined`), which the ACL assembles just like the files and
@@ -284,9 +302,10 @@ npm run desktop:dev            # beforeDevCommand starts `next dev --port 3200`
 npm run desktop:bundle         # NSIS .exe + .msi
 ```
 
-`cargo tauri` is the CLI (`cargo install tauri-cli --version ^2 --locked`), so no
-npm dependency has to change to build the app. A JS-driven team can use
-`@tauri-apps/cli` instead; the config is identical.
+`cargo tauri` is the CLI (`cargo install tauri-cli --version 2.12.3 --locked`,
+the exact version CI installs), so no npm dependency has to change to build
+the app. A JS-driven team can use `@tauri-apps/cli` instead; the config is
+identical.
 
 ### The one flag that splits the outputs
 
@@ -441,6 +460,7 @@ Why the other decisions are what they are:
 | Container `noema-postgres`, volume `noema-pgdata` | **never** the project's own `noema-db`: a desktop install must not adopt, restart or delete the developer's database |
 | Docker chooses the host port (`-p 127.0.0.1::5432`) | any fixed port can collide — the compose stack publishes 5433, the first candidate — and the install would fail with "port is already allocated" |
 | A **generated** password, stored in the data directory | a local database with `postgres/postgres` is a habit worth not having |
+| A **generated** password for the embedded engine, per launch and only in the environment | the engine takes any password, so the socket server checks it — otherwise every user on the machine could read the database over the loopback port |
 | The volume is never removed; a stopped container is started, a broken one recreated | the user's data outlives the app's lifecycle decisions |
 | `--restart unless-stopped` | the database comes back with the machine, without the app running |
 
@@ -659,13 +679,21 @@ is present, and otherwise falls back to a local URL (§5).
 **Two connection details that make it work** (both required):
 
 ```
-postgresql://postgres:postgres@127.0.0.1:<port>/postgres?pgbouncer=true&connection_limit=1
+postgresql://postgres:<password>@127.0.0.1:<port>/postgres?pgbouncer=true&connection_limit=1
 ```
 
 - `connection_limit=1` — PGlite is a single in-process engine;
 - `pgbouncer=true` — without it Prisma's *named prepared statements* collide on
   the long-lived engine and every query fails with
   `42P05: prepared statement "s0" already exists`.
+
+**The password is generated for every launch.** The engine itself runs in trust
+mode and would take any password, so the socket server asks for one before a
+client may reach the database: a client that cannot present it is refused
+(`Authentication failed against database server`). The password travels in the
+environment (`DATABASE_URL`) — never on a command line, which every user on the
+machine can read — and the data directory is created owner-only (`0700`, the
+cluster's files `0600`), like the session store next to it.
 
 **Remaining work for the embedded database:**
 

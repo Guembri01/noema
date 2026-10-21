@@ -65,6 +65,37 @@ describe("blocks", () => {
   });
 });
 
+/**
+ * B109 — the output side applies the same href allowlist the input side
+ * applies (`markdown.ts#safeHref`): a stored target the allowlist refuses is
+ * written as plain text, never as a link.
+ */
+describe("docToMarkdown link targets (B109)", () => {
+  const linkDoc = (href: string) => ({
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [{ type: "text", text: "click", marks: [{ type: "link", attrs: { href } }] }],
+      },
+    ],
+  });
+
+  it("writes a refused target as plain text, without the target", () => {
+    const md = docToMarkdown(linkDoc("javascript:alert(1)"));
+    expect(md).toBe("click");
+    expect(md).not.toContain("javascript:");
+  });
+
+  it("keeps the allowlisted targets", () => {
+    expect(docToMarkdown(linkDoc("https://example.com/a"))).toBe("[click](https://example.com/a)");
+    expect(docToMarkdown(linkDoc("mailto:a@b.co"))).toBe("[click](mailto:a@b.co)");
+    expect(docToMarkdown(linkDoc("tel:+1234"))).toBe("[click](tel:+1234)");
+    expect(docToMarkdown(linkDoc("/w/demo/page"))).toBe("[click](/w/demo/page)");
+    expect(docToMarkdown(linkDoc("#anker"))).toBe("[click](#anker)");
+  });
+});
+
 /* ---------------------------------------------------------------------------
    Block deletion snapshot / restore (B03: undo affordance for block delete)
    --------------------------------------------------------------------------- */

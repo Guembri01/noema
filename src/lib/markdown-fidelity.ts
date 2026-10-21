@@ -42,6 +42,7 @@
  */
 
 import { formatCaption } from "./code-block";
+import { safeHref } from "./markdown";
 import { DEFAULT_PULL_QUOTE_SIZE, isPullQuoteSize } from "./pull-quote";
 import type { RichNode } from "./blocks";
 
@@ -204,8 +205,12 @@ function renderText(raw: string, marks: RichNode["marks"], gfm: boolean): string
   if (gfm && (has("strike") || has("del"))) out = `~~${out}~~`;
   if (has("highlight") || has("mark")) out = `==${out}==`;
   if (has("underline")) out = `<u>${out}</u>`;
+  // B109: the output side applies the same allowlist the input side applies
+  // (`safeHref`) — a target the allowlist refuses is written as plain text,
+  // never as a link.
   const link = marks.find((mark) => mark.type === "link");
-  if (typeof link?.attrs?.href === "string") out = `[${out}](${link.attrs.href})`;
+  const href = typeof link?.attrs?.href === "string" ? safeHref(link.attrs.href) : null;
+  if (href) out = `[${out}](${href})`;
   return out;
 }
 
@@ -233,9 +238,11 @@ function imageMarkdown(node: RichNode, ctx: Ctx): string {
 }
 
 function linkMarkdown(node: RichNode): string {
-  const url = asString(node.attrs?.url);
-  const title = node.attrs?.title == null ? url : asString(node.attrs.title);
-  return `[${escapeInline(title || url)}](${url})`;
+  const raw = asString(node.attrs?.url);
+  const title = node.attrs?.title == null ? raw : asString(node.attrs.title);
+  const href = safeHref(raw);
+  if (!href) return escapeInline(title || "");
+  return `[${escapeInline(title || href)}](${href})`;
 }
 
 function pageEmbedMarkdown(node: RichNode): string {
@@ -558,10 +565,23 @@ export function fidelityReport(doc: unknown): FidelityReport {
       if (LOSSY_MARKS.has(mark.type)) {
         addLost(mark.type, `the “${mark.type}” mark has no Markdown form`);
       }
+      // B109: a link whose target the allowlist refuses cannot be written as a
+      // link — the text survives, the link does not.
+      if (mark.type === "link") {
+        const href = mark.attrs?.href;
+        if (typeof href === "string" && !safeHref(href)) {
+          addLost("link", "the link target is not allowlisted; the text is written without a link");
+        }
+      }
     }
 
     if (type === "mention") {
       addLost("mention", "only the @label survives; the linked target id is dropped");
+    } else if (type === "bookmark" || type === "embed") {
+      const url = node.attrs?.url;
+      if (typeof url === "string" && !safeHref(url)) {
+        addLost(type, "the target is not allowlisted; the title is written without a link");
+      }
     } else if (type === "pageEmbed") {
       approximated.add("page embeds become a title link to a /w/… placeholder");
     } else if (type === "callout") {

@@ -42,6 +42,14 @@ const embedDoc = (url: string) => ({
   content: [{ type: "embed", attrs: { url } }],
 });
 
+const imageDoc = (src: string) => ({
+  type: "doc",
+  content: [{ type: "image", attrs: { src, alt: "a picture" } }],
+});
+
+const srcsOf = (html: string): string[] =>
+  [...html.matchAll(/<img[^>]+src="([^"]*)"/g)].map((match) => match[1]);
+
 describe("DocRenderer href scheme gate (H2)", () => {
   it("renders allowlisted and relative link marks untouched", () => {
     expect(hrefsOf(render(linkDoc("https://example.com/x")))).toEqual(["https://example.com/x"]);
@@ -94,5 +102,68 @@ describe("DocRenderer href scheme gate (H2)", () => {
     const html = render(embedDoc("javascript:alert(1)"));
     expect(hrefsOf(html)).toEqual(["#"]);
     expect(html).not.toMatch(/href="[^"]*javascript/i);
+  });
+});
+
+/**
+ * B69 - the read path never points a browser at a third party.
+ *
+ * The renderer used to emit the stored `src` verbatim, so opening a shared
+ * page made the VISITOR's browser fetch the picture from the host it lives on
+ * - handing that host the visitor's IP address and the `Referer` of the share
+ * page.
+ *
+ * Every external picture now points at the server's own proxy route, so the
+ * third party is contacted by the server, not by the visitor.
+ */
+describe("DocRenderer external images (B69)", () => {
+  it("never renders a direct third-party image src", () => {
+    const html = render(imageDoc("https://images.example.com/a.png"));
+    expect(html).not.toMatch(/<img[^>]+src="https?:/);
+    // React preloads an <img> it renders: the preload link must not name the
+    // third party either.
+    expect(html).not.toMatch(/<link[^>]*as="image"[^>]*href="https?:/);
+    // The rendered document does not carry the third-party URL at all.
+    expect(html).not.toContain("https://images.example.com");
+    expect(srcsOf(html)).toEqual([
+      "/api/external-image?url=https%3A%2F%2Fimages.example.com%2Fa.png",
+    ]);
+  });
+
+  it("leaves an upload, a data URL and a blob URL alone", () => {
+    expect(srcsOf(render(imageDoc("/api/files/ws-1/a.png")))).toEqual(["/api/files/ws-1/a.png"]);
+    expect(srcsOf(render(imageDoc("data:image/png;base64,AAAA")))).toEqual([
+      "data:image/png;base64,AAAA",
+    ]);
+    expect(srcsOf(render(imageDoc("blob:http://localhost/abc")))).toEqual([
+      "blob:http://localhost/abc",
+    ]);
+  });
+
+  it("drops a picture reference that cannot be served at all", () => {
+    expect(srcsOf(render(imageDoc("javascript:alert(1)")))).toEqual([]);
+  });
+
+  it("proxies the favicon and the og:image of a bookmark card", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "bookmark",
+          attrs: {
+            url: "https://example.com/x",
+            host: "example.com",
+            title: "Card",
+            icon: "https://images.example.com/favicon.ico",
+            image: "https://images.example.com/og.png",
+          },
+        },
+      ],
+    });
+    expect(html).not.toMatch(/<img[^>]+src="https?:/);
+    expect(srcsOf(html)).toEqual([
+      "/api/external-image?url=https%3A%2F%2Fimages.example.com%2Ffavicon.ico",
+      "/api/external-image?url=https%3A%2F%2Fimages.example.com%2Fog.png",
+    ]);
   });
 });

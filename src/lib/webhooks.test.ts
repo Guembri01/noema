@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * B56 — webhook durability: signed payload v2 (R24.13), backoff schedule
@@ -12,6 +12,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 
 const mocks = vi.hoisted(() => ({
   webhookFindMany: vi.fn(),
+  webhookUpdate: vi.fn(),
   deliveryCreate: vi.fn(),
   deliveryUpdate: vi.fn(),
   fetch: vi.fn(),
@@ -23,7 +24,7 @@ const dns = vi.hoisted(() => ({ lookup: vi.fn() }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    webhook: { findMany: mocks.webhookFindMany },
+    webhook: { findMany: mocks.webhookFindMany, update: mocks.webhookUpdate },
     webhookDelivery: { create: mocks.deliveryCreate, update: mocks.deliveryUpdate },
   },
 }));
@@ -48,6 +49,7 @@ import {
   deliverWithRetry,
   deliveryDueTimes,
   dispatchWebhooks,
+  encryptWebhookSecret,
   signWebhookV2,
   verifyWebhookSignature,
 } from "./webhooks";
@@ -66,8 +68,21 @@ const HOOK = { id: "hook_1", url: "https://receiver.test/hook", secret: SECRET }
 
 const http = (status: number) => ({ ok: status >= 200 && status < 300, status });
 
+const ORIGINAL_AUTH_SECRET = process.env.AUTH_SECRET;
+
+beforeAll(() => {
+  // B63 — sealing a secret derives the envelope key from AUTH_SECRET.
+  process.env.AUTH_SECRET = "webhook-delivery-test-key-0123456789ab";
+});
+
+afterAll(() => {
+  if (ORIGINAL_AUTH_SECRET === undefined) delete process.env.AUTH_SECRET;
+  else process.env.AUTH_SECRET = ORIGINAL_AUTH_SECRET;
+});
+
 beforeEach(() => {
   mocks.webhookFindMany.mockReset().mockResolvedValue([{ ...HOOK, events: [] }]);
+  mocks.webhookUpdate.mockReset().mockResolvedValue({ id: HOOK.id });
   mocks.deliveryCreate.mockReset().mockImplementation(async (args: { data: { id?: string } }) => ({
     id: "del_1",
     ...args.data,
@@ -374,6 +389,63 @@ describe("one row per logical delivery (R24.10–R24.12)", () => {
       where: { id: "del_1" },
       data: { attempts: 2, ok: true, responseStatus: 200, error: null },
     });
+  });
+});
+
+/**
+ * B63 — a hook that was created before the signing secrets were sealed (R28.17)
+ * still holds its secret in cleartext. The secret is the shared key of the
+ * webhook, so a database dump of such a row yields it. The delivery path seals
+ * the row as it reads it, so the plaintext leaves the database without an
+ * operator step.
+ */
+describe("the legacy plaintext row is sealed at rest (B63)", () => {
+  it("seals the secret of a hook that still holds it in cleartext", async () => {
+    await deliverWithRetry(HOOK, "page.created", BODY, {
+      deliveryId: "del_1",
+      sleep: async () => {},
+    });
+
+    expect(mocks.webhookUpdate).toHaveBeenCalledTimes(1);
+    const write = mocks.webhookUpdate.mock.calls[0][0] as {
+      where: { id: string };
+      data: { secret: string };
+    };
+    expect(write.where).toEqual({ id: HOOK.id });
+    expect(write.data.secret).toMatch(/^v2:/);
+    expect(write.data.secret).not.toContain(SECRET);
+  });
+
+  it("never touches a row that already holds an envelope", async () => {
+    await deliverWithRetry(
+      { ...HOOK, secret: encryptWebhookSecret(SECRET) },
+      "page.created",
+      BODY,
+      { deliveryId: "del_1", sleep: async () => {} },
+    );
+
+    expect(mocks.webhookUpdate).not.toHaveBeenCalled();
+  });
+
+  it("still signs the delivery with the same secret after sealing it", async () => {
+    await deliverWithRetry(HOOK, "page.created", BODY, {
+      deliveryId: "del_1",
+      sleep: async () => {},
+    });
+
+    const init = mocks.fetch.mock.calls[0][1] as {
+      body: string;
+      headers: Record<string, string>;
+    };
+    expect(
+      verifyWebhookSignature({
+        secret: SECRET,
+        body: init.body,
+        signature: init.headers["x-noema-signature"],
+        timestamp: init.headers["x-noema-timestamp"],
+        now: Date.now(),
+      }),
+    ).toBe(true);
   });
 });
 

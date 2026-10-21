@@ -1,7 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+const itPosix = process.platform === "win32" ? it.skip : it;
 import {
   describeDevice,
   isSessionRevoked,
@@ -186,6 +188,38 @@ describe("session registry — last-active touch", () => {
       lastActiveAt: string;
     }>;
     expect(raw.find((r) => r.sid === record.sid)?.lastActiveAt).toBe(old);
+  });
+});
+
+describe("session registry — the store is owner-only (B67)", () => {
+  // The store names the devices that are signed in. The desktop app puts it
+  // next to the database, in the user's data directory; with the umask's
+  // defaults (0755/0644) every user on the machine could read it.
+  const storeIn = (sub: string) => {
+    process.env.SESSION_STORE_PATH = join(dir, sub, "sessions.json");
+    return process.env.SESSION_STORE_PATH;
+  };
+
+  itPosix("writes the store as a 0600 file inside a 0700 directory", () => {
+    const file = storeIn("data");
+    registerSession({ userId: "user-a", device: "Chrome on Windows" });
+
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(statSync(dirname(file)).mode & 0o777).toBe(0o700);
+  });
+
+  itPosix("hardens a store that an older version created with the umask's modes", () => {
+    const file = storeIn("legacy");
+    // An install from before the modes were set: the directory is 0755 and the
+    // file in it 0644.
+    mkdirSync(dirname(file), { recursive: true });
+    chmodSync(dirname(file), 0o755);
+    writeFileSync(file, "[]", { mode: 0o644 });
+
+    registerSession({ userId: "user-a", device: "Chrome on Windows" });
+
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(statSync(dirname(file)).mode & 0o777).toBe(0o700);
   });
 });
 

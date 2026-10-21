@@ -102,6 +102,7 @@ plaintext is shown once at registration (§10).
 | tickets, calendar, invites, chat, chat/stream, templates, link-preview, upload, files, export/*, import/notion, ai* | Cookie session (`getCurrentUser`) | `src/lib/auth.ts` |
 | `/api/cron/templates` | `x-cron-secret` | route file |
 | `/api/auth/sso/start`, `/api/auth/sso/callback` | Public (state/nonce cookies) | route files |
+| `/api/external-image` | Public (host allowlist + SSRF guard) | route file |
 | `/oauth/token` | OAuth `client_id` + `client_secret` (form) | route file |
 | `/oauth/authorize/complete` | Cookie session | route file |
 | `/s/[token]/unlock` | Share password (form) | route file |
@@ -235,6 +236,7 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000, { userId }): NextRespo
 | `chat-stream` | 20/min | `POST /api/chat/stream` |
 | `templates` | 30/min | `POST /api/templates` |
 | `preview` | 60/min | `GET /api/link-preview` |
+| `external-image-<host>` | 120/min | `GET /api/external-image` (one bucket per host) |
 | `upload` | 60/min | `POST /api/upload` |
 | `ai` / `ai-skills` / `transcribe` | 30 / 30 / 10 per min | `POST /api/ai*` |
 | `notion-import` | 30/min | `POST /api/import/notion` |
@@ -327,6 +329,43 @@ renderer both check the stored URL against the same allowlist before it becomes
 a link. A stored `javascript:`, `data:` or protocol-relative URL therefore
 never becomes a live link, whichever client wrote it — it is rendered as a card
 without a target.
+
+### `GET /api/external-image?url=` — server-side proxy for an external picture
+
+Source: [`src/app/api/external-image/route.ts`](../src/app/api/external-image/route.ts) ·
+**public** (no session) · rate scope `external-image-<host>` (120/min per host)
+
+- The read-only renderer points every picture that lives on another host at
+  this route, so the visitor's browser asks THIS server for the bytes and the
+  host that hosts the picture never sees the visitor's IP address (or the
+  `Referer` of the share page). The public share pages (`/s/<token>`) also
+  answer with `Referrer-Policy: no-referrer` and a CSP without `https:` in
+  `img-src`/`media-src`.
+- **Not an open relay.** Only the hosts on the allowlist are fetched:
+  `EXTERNAL_IMAGE_ALLOWLIST` (comma/space separated hostnames) plus the
+  default list — the image CDN the app already trusts for cover photos
+  (`images.unsplash.com`, `plus.unsplash.com`). Every other host is refused
+  **by name**, before any DNS lookup or network access.
+- SSRF guard (the shared one, `src/lib/feed-guard.ts`): `http(s)` only; the
+  target is resolved through DNS and every answer must be public
+  (loopback/RFC1918/link-local — the cloud metadata address — and every other
+  reserved range are refused); the request is made to the address that was
+  validated, so there is no DNS-rebinding window. A **redirect is never
+  followed** — the `Location` target is not requested.
+- Only a known image type is served (5 MB cap, 8 s timeout including DNS). An
+  SVG has to pass the same safety check an uploaded one does (no script, no
+  event handler, no external reference). The response carries `nosniff` and
+  `Content-Security-Policy: default-src 'none'; sandbox`.
+- **200** — the image bytes, with the upstream's image content type and
+  `Cache-Control: public, max-age=86400, s-maxage=86400`.
+
+**400** `{"error":"Invalid url"}` (not an `http(s)` URL — `data:`, `file:`,
+`javascript:`, or a missing parameter) · **403** `{"error":"Host not allowed"}`
+(not on the allowlist) · **403** `{"error":"Blocked host"}` (a private,
+loopback or cloud-metadata host, or a host whose DNS answers point into
+private space) · **415** `{"error":"Not an image"}` / `{"error":"Unsafe image"}`
+· **413** `{"error":"Image too large"}` · **502** `{"error":"Redirect refused"}`
+/ `{"error":"Fetch failed"}` · **429** over the rate limit.
 
 ### `POST /api/upload` — file upload (multipart)
 
@@ -560,8 +599,11 @@ same Bearer authentication.
 
 JSON-RPC 2.0 over HTTP: `initialize`, `tools/list`, `tools/call`,
 `resources/list`, `resources/read`. Read-first and fail-closed — the caller's
-token must carry the scope of every tool it calls, and a write call needs
-`?allowWrite=true` plus an edit-capable role.
+token must carry the scope of every tool it calls **and of every resource it
+reads**: a page needs `read:pages`, a page's comments `read:comments`, a
+database and its rows `read:databases`. A missing scope answers **-32003**
+`Insufficient scope.` on both paths — before the database is touched. A write
+call needs `?allowWrite=true` plus an edit-capable role.
 
 - **200** the JSON-RPC result (or the JSON-RPC `error` object) · **400**
   `Invalid JSON body.` / `Invalid request.` · **401** `Unauthorized` ·
@@ -1277,7 +1319,7 @@ answers **503**.
 
 ---
 
-## Appendix A — endpoint index (39 endpoints / 31 route files)
+## Appendix A — endpoint index (40 endpoints / 32 route files)
 
 | # | Method | Path | Auth | Rate scope | File |
 |---|---|---|---|---|---|
@@ -1320,6 +1362,7 @@ answers **503**.
 | 37 | GET | `/api/cron/jobs` | `x-cron-secret` | `cron` | `src/app/api/cron/jobs/route.ts` |
 | 38 | POST | `/api/cron/jobs` | `x-cron-secret` | `cron` | `src/app/api/cron/jobs/route.ts` |
 | 39 | POST | `/api/webhooks/inbound` | signature | `inbound-webhook` | `src/app/api/webhooks/inbound/route.ts` |
+| 40 | GET | `/api/external-image` | public | `external-image-<host>` | `src/app/api/external-image/route.ts` |
 
 ## Appendix B — domains with **no** REST surface
 

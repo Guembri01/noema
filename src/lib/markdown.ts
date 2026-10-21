@@ -971,8 +971,12 @@ function applyBlockMarks(value: string, marks: readonly BlockMark[] | undefined)
   if (has("italic") || has("em")) out = `*${out}*`;
   if (has("strike") || has("del")) out = `~~${out}~~`;
   if (has("highlight") || has("mark")) out = `==${out}==`;
+  // B109: the output side applies the same allowlist the input side applies
+  // (`safeHref`) — a target the allowlist refuses is written as plain text,
+  // never as a link.
   const link = marks.find((mark) => mark.type === "link");
-  if (typeof link?.attrs?.href === "string") out = `[${out}](${link.attrs.href})`;
+  const href = typeof link?.attrs?.href === "string" ? safeHref(link.attrs.href) : null;
+  if (href) out = `[${out}](${href})`;
   return out;
 }
 
@@ -1018,8 +1022,10 @@ function inlineToMarkdown(nodes: readonly RichBlock[] | undefined): string {
         break;
       case "bookmark":
       case "embed": {
-        const url = String(node.attrs?.url ?? "");
-        out += `[${String(node.attrs?.title ?? url)}](${url})`;
+        const title = String(node.attrs?.title ?? "");
+        const href = safeHref(String(node.attrs?.url ?? ""));
+        if (href) out += `[${title || href}](${href})`;
+        else if (title) out += title;
         break;
       }
       case "pageEmbed":
@@ -1139,8 +1145,10 @@ function blockToMarkdown(block: RichBlock): string {
       return imageMarkdown(block);
     case "bookmark":
     case "embed": {
-      const url = String(block.attrs?.url ?? "");
-      return `[${String(block.attrs?.title ?? url)}](${url})`;
+      const title = String(block.attrs?.title ?? "");
+      const href = safeHref(String(block.attrs?.url ?? ""));
+      if (href) return `[${title || href}](${href})`;
+      return title;
     }
     case "pageEmbed":
       return `/w/…/${String(block.attrs?.pageId ?? "")} — ${String(block.attrs?.title ?? "")}`;

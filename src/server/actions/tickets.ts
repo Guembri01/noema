@@ -58,6 +58,40 @@ async function authorizeTicket(ticketId: string) {
   return { ok: true as const, user, ticket };
 }
 
+/**
+ * The project a ticket is connected to must live in the ticket's workspace:
+ * by id alone a ticket could be pointed at another workspace's project, and
+ * the tracker would then show that project's name.
+ */
+async function projectInWorkspace(projectId: string, workspaceId: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { workspaceId: true },
+  });
+  return project?.workspaceId === workspaceId;
+}
+
+/**
+ * The ticket a new ticket is nested under must live in the same workspace: a
+ * parent is a ticket of that workspace, not an id from anywhere.
+ */
+async function ticketInWorkspace(ticketId: string, workspaceId: string) {
+  const ticket = await prisma.ticket.findUnique({
+    where: { id: ticketId },
+    select: { workspaceId: true },
+  });
+  return ticket?.workspaceId === workspaceId;
+}
+
+/**
+ * A ticket may only be assigned to somebody of its own workspace: the
+ * assignee picker offers exactly the workspace's members, and the assignment
+ * notice only ever reaches members (`notifyTicketAssigned`).
+ */
+async function assigneeInWorkspace(assigneeId: string, workspaceId: string) {
+  return (await getWorkspaceAccess(assigneeId, workspaceId)) !== null;
+}
+
 async function logActivity(
   ticketId: string,
   actorId: string,
@@ -254,6 +288,29 @@ export async function createTicketAction(input: {
     }
   }
 
+  // The rows a new ticket points at must live in its workspace: a project, an
+  // assignee, a parent and the labels are all workspace rows. By id alone a
+  // ticket could be created against another workspace's rows, and the tracker
+  // would then show that project's name and that person's name and e-mail.
+  if (projectId && !(await projectInWorkspace(projectId, input.workspaceId))) {
+    return { error: "That project is not in this workspace." };
+  }
+  if (input.assigneeId && !(await assigneeInWorkspace(input.assigneeId, input.workspaceId))) {
+    return { error: "That user is not in this workspace." };
+  }
+  if (input.parentId && !(await ticketInWorkspace(input.parentId, input.workspaceId))) {
+    return { error: "That parent ticket is not in this workspace." };
+  }
+  if (input.labelIds && input.labelIds.length > 0) {
+    const labels = await prisma.label.findMany({
+      where: { id: { in: input.labelIds }, workspaceId: input.workspaceId },
+      select: { id: true },
+    });
+    if (labels.length !== new Set(input.labelIds).size) {
+      return { error: "That label is not in this workspace." };
+    }
+  }
+
   // Reserve the next number atomically so keys never collide.
   const bumped = await prisma.workspace.update({
     where: { id: input.workspaceId },
@@ -403,6 +460,9 @@ export async function updateTicketAction(input: {
     changes.dueDate = input.dueDate;
   }
   if (input.projectId !== undefined) {
+    if (input.projectId && !(await projectInWorkspace(input.projectId, auth.ticket.workspaceId))) {
+      return { error: "That project is not in this workspace." };
+    }
     data.project = input.projectId ? { connect: { id: input.projectId } } : { disconnect: true };
     changes.projectId = input.projectId;
   }
@@ -432,6 +492,12 @@ export async function updateTicketAction(input: {
     }
   }
   if (input.assigneeId !== undefined) {
+    if (
+      input.assigneeId &&
+      !(await assigneeInWorkspace(input.assigneeId, auth.ticket.workspaceId))
+    ) {
+      return { error: "That user is not in this workspace." };
+    }
     data.assignee = input.assigneeId ? { connect: { id: input.assigneeId } } : { disconnect: true };
     changes.assigneeId = input.assigneeId;
   }
@@ -532,7 +598,7 @@ export async function getTicketActivityAction(
     return { error: "You do not have permission to read tickets." };
   }
 
-  const detail = await getTicketDetail(ticketId);
+  const detail = await getTicketDetail(ticketId, ticket.workspaceId);
   const activity: TicketActivityRow[] = (detail?.activity ?? []).map((entry) => ({
     id: entry.id,
     kind: entry.kind,
@@ -719,6 +785,27 @@ export async function bulkUpdateTicketsAction(input: {
   }
 
   const data: Prisma.TicketUncheckedUpdateManyInput = {};
+  // The rows the bulk write points at must live in the tickets' workspace, like
+  // every other ticket write.
+  if (input.assigneeId !== undefined && input.assigneeId !== null) {
+    if (!(await assigneeInWorkspace(input.assigneeId, first.workspaceId))) {
+      return { error: "That user is not in this workspace." };
+    }
+  }
+  if (input.projectId !== undefined && input.projectId !== null) {
+    if (!(await projectInWorkspace(input.projectId, first.workspaceId))) {
+      return { error: "That project is not in this workspace." };
+    }
+  }
+  // The selection is caller-controlled: keep only the rows of the workspace the
+  // first ticket belongs to. The scalar update and the relation writes below
+  // must not be handed a foreign id, even when the caller mixes one in.
+  const scoped = await prisma.ticket.findMany({
+    where: { id: { in: input.ticketIds }, workspaceId: first.workspaceId },
+    select: { id: true },
+  });
+  const ticketIds = scoped.map((row) => row.id);
+  if (ticketIds.length === 0) return { ok: true, updated: 0 };
   if (input.status && STATUS_IDS.includes(input.status)) {
     data.status = input.status;
     data.completedAt = isClosed(input.status) ? new Date() : null;
@@ -760,7 +847,7 @@ export async function bulkUpdateTicketsAction(input: {
   if (input.assigneeId !== undefined && input.assigneeId !== null) {
     const changing = await prisma.ticket.findMany({
       where: {
-        id: { in: input.ticketIds },
+        id: { in: ticketIds },
         workspaceId: first.workspaceId,
         OR: [{ assigneeId: null }, { assigneeId: { not: input.assigneeId } }],
       },
@@ -772,25 +859,25 @@ export async function bulkUpdateTicketsAction(input: {
   let updated = 0;
   if (hasScalar) {
     const result = await prisma.ticket.updateMany({
-      where: { id: { in: input.ticketIds }, workspaceId: first.workspaceId },
+      where: { id: { in: ticketIds }, workspaceId: first.workspaceId },
       data,
     });
     updated = result.count;
   }
   if (addLabelIds.length > 0) {
     await prisma.ticketLabel.createMany({
-      data: input.ticketIds.flatMap((ticketId) =>
+      data: ticketIds.flatMap((ticketId) =>
         addLabelIds.map((labelId) => ({ ticketId, labelId })),
       ),
       skipDuplicates: true,
     });
-    updated = Math.max(updated, input.ticketIds.length);
+    updated = Math.max(updated, ticketIds.length);
   }
   if (removeLabelIds.length > 0) {
     await prisma.ticketLabel.deleteMany({
-      where: { ticketId: { in: input.ticketIds }, labelId: { in: removeLabelIds } },
+      where: { ticketId: { in: ticketIds }, labelId: { in: removeLabelIds } },
     });
-    updated = Math.max(updated, input.ticketIds.length);
+    updated = Math.max(updated, ticketIds.length);
   }
 
   const detail = {
@@ -798,7 +885,7 @@ export async function bulkUpdateTicketsAction(input: {
     ...(addLabelIds.length > 0 ? { labelsAdded: addLabelIds } : {}),
     ...(removeLabelIds.length > 0 ? { labelsRemoved: removeLabelIds } : {}),
   };
-  for (const ticketId of input.ticketIds) {
+  for (const ticketId of ticketIds) {
     await logActivity(ticketId, user.id, "bulk_updated", detail);
   }
   revalidatePath("/w", "layout");
@@ -831,12 +918,19 @@ export async function bulkArchiveTicketsAction(input: {
     return { error: "You do not have permission to edit tickets." };
   }
 
+  const scoped = await prisma.ticket.findMany({
+    where: { id: { in: input.ticketIds }, workspaceId: first.workspaceId },
+    select: { id: true },
+  });
+  const ticketIds = scoped.map((row) => row.id);
+  if (ticketIds.length === 0) return { ok: true, updated: 0 };
+
   const archived = input.archived ?? true;
   const result = await prisma.ticket.updateMany({
-    where: { id: { in: input.ticketIds }, workspaceId: first.workspaceId },
+    where: { id: { in: ticketIds }, workspaceId: first.workspaceId },
     data: { archived },
   });
-  for (const ticketId of input.ticketIds) {
+  for (const ticketId of ticketIds) {
     await logActivity(ticketId, user.id, archived ? "archived" : "restored");
   }
   revalidatePath("/w", "layout");
@@ -880,8 +974,14 @@ export async function moveTicketAction(input: {
   if (input.beforeId) {
     const before = await prisma.ticket.findUnique({
       where: { id: input.beforeId },
-      select: { position: true },
+      select: { position: true, workspaceId: true },
     });
+    // The ticket the board places this one before must live in the same
+    // workspace — otherwise the position of another workspace's ticket would
+    // steer this board.
+    if (before && before.workspaceId !== auth.ticket.workspaceId) {
+      return { error: "That ticket is not in this workspace." };
+    }
     if (before) position = before.position - 1;
   } else {
     const last = await prisma.ticket.findFirst({

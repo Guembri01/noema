@@ -95,54 +95,83 @@ client addresses can never reset an exhausted per-user budget.
 ### 2.1 Run a backup
 
 ```bash
-npm run backup                 # → backups/noema-<timestamp>.sql + sibling .manifest.json
+npm run backup                 # → backups/noema-<timestamp>.sql.enc + sibling .manifest.json
 npm run backup -- --keep 7     # retention: keep the newest 7 (default: 5)
 npm run backup -- --dry-run    # print the plan (dumper, target, retained/prunable) and exit — touches nothing
 ```
 
 `npm run backup` = `node --env-file=.env scripts/backup.mjs` (`package.json`).
+
+**The dump is sealed, and the script fails closed.** A `pg_dump` carries every
+password hash, 2FA seed, OAuth client secret and provider key of the
+installation in cleartext, so the dump is written **encrypted** (AES-256-GCM,
+passphrase from `BACKUP_ENCRYPTION_KEY`, at least 16 characters — see
+`.env.example`) and with **mode 0600** inside a **0700** directory. Without a
+passphrase the script exits 1 and writes **nothing** — there is no unencrypted
+fallback:
+
+```bash
+npm run backup
+# BACKUP_ENCRYPTION_KEY is not set — refusing to write an unencrypted dump …
+# → exit 1, no file in ./backups
+```
+
 The script:
 
 1. reads **the local `DATABASE_URL`** — per its own header comment, *“Nothing
    here touches the remote database: it is the local DATABASE_URL”*. A remote
    DB must be backed up with its own tooling/URL.
-2. picks a `pg_dump`: prefers `docker exec noema-db pg_dump -U <user>
+2. **checks the passphrase first** — `BACKUP_ENCRYPTION_KEY` unset or shorter
+   than 16 characters ⇒ exit 1, no dump written (fail closed).
+3. picks a `pg_dump`: prefers `docker exec noema-db pg_dump -U <user>
    --no-owner --no-privileges -d <db>`, falls back to `pg_dump` on `PATH`
    (with `PGPASSWORD`). If neither exists it exits 1 with
    *“Start the database container (`docker compose up -d`) or install
    postgresql-client.”*
-3. **verifies the dump before keeping it** — refuses a file < 1 KiB, refuses a
-   dump missing any of `User`, `Workspace`, `Page`, `Ticket`, `Activity`, and
-   prints the `COPY` block count. Any failure deletes the file and exits 1.
-4. writes a **sibling manifest** `backups/noema-<timestamp>.manifest.json` —
-   timestamp, per-table row counts parsed from the dump (+ `rowCountTotal`),
-   Prisma schema fingerprint, app version, `keep` — so a restore can be
-   checked against exactly what was captured.
-5. applies retention (pure logic in `scripts/backup-lib.mjs`): keeps the newest
+4. **verifies the dump before keeping it** — the plaintext never reaches the
+   disk: it is checked in memory (refuses a dump < 1 KiB, refuses a dump
+   missing any of `User`, `Workspace`, `Page`, `Ticket`, `Activity`, and prints
+   the `COPY` block count), then sealed. Only the sealed bytes are written
+   (mode 0600), and the file is opened again right after the write: it has to
+   decrypt back to the very dump that was verified, otherwise it is deleted and
+   the script exits 1.
+5. writes a **sibling manifest** `backups/noema-<timestamp>.manifest.json`
+   (mode 0600) — timestamp, per-table row counts parsed from the dump
+   (+ `rowCountTotal`), Prisma schema fingerprint, app version, `keep` and
+   `encryption` (`aes-256-gcm`) — so a restore can be checked against exactly
+   what was captured.
+6. applies retention (pure logic in `scripts/backup-lib.mjs`): keeps the newest
    `--keep N` dumps (default **5**) and **never prunes the newest one**; a
    pruned dump takes its manifest with it.
-6. prints the restore and restore-verification commands.
+7. prints the restore and restore-verification commands.
 
 Flags accepted: **`--keep N`** and **`--dry-run`** (read from
-`process.argv`); the retention/manifest/dry-run helpers are unit-tested in
-`scripts/backup-lib.test.mjs`.
+`process.argv`); the retention/manifest/dry-run/seal helpers are unit-tested
+in `scripts/backup-lib.test.mjs`, the whole path end-to-end (with a stub
+`pg_dump`) in `scripts/backup.test.mjs`.
 
-> The dump is **plain SQL text** (no `-F`/`--format` flag is passed), which is
-> why the script’s own restore hint is `psql < file.sql`.
+> The dump itself is **plain SQL text** (no `-F`/`--format` flag is passed) —
+> it is *sealed*, not compressed. That is why the restore goes through
+> `scripts/backup-restore.mjs` and not through `psql < file.sql`.
+>
+> Dumps written **before** the seal are plain `noema-<timestamp>.sql` files.
+> The retention still prunes them, but they are readable by every local user:
+> delete them once a sealed backup exists.
 
 ### 2.2 Restore drill
 
 ```bash
 # 1. Stop writers (app / dockerized app), keep the db container running.
 # 2. Restore — the command the script itself prints at the end of every run:
-psql "$DATABASE_URL" < backups/noema-<timestamp>.sql
+npm run backup:restore -- backups/noema-<timestamp>.sql.enc | psql "$DATABASE_URL"
 
 # Container-only hosts (no psql on PATH) — same dump, psql inside noema-db:
-docker exec -i noema-db psql -U noema -d noema < backups/noema-<timestamp>.sql
+npm run backup:restore -- backups/noema-<timestamp>.sql.enc \
+  | docker exec -i noema-db psql -U noema -d noema
 
 # 3. Verify against the manifest (the script's documented verification hook):
 createdb noema-restore-check
-psql -d noema-restore-check < backups/noema-<timestamp>.sql
+npm run backup:restore -- backups/noema-<timestamp>.sql.enc | psql -d noema-restore-check
 #    → compare restored table row counts against backups/<file>.manifest.json
 dropdb noema-restore-check
 
@@ -150,6 +179,14 @@ dropdb noema-restore-check
 npm run smoke               # authenticated route smoke (needs seeded demo user)
 curl -fsS http://127.0.0.1:3200/api/health   # expect {"ok":true,"db":"up"}
 ```
+
+`npm run backup:restore` = `node --env-file=.env scripts/backup-restore.mjs`
+(`package.json`). It needs the **same** `BACKUP_ENCRYPTION_KEY` the dump was
+sealed with and **refuses** a wrong one (*“The backup could not be opened: wrong
+BACKUP_ENCRYPTION_KEY or a tampered file.”*) instead of restoring garbage. It
+writes the plain SQL to **stdout** (pipe it into `psql`); with
+`--out <file>` it writes a file with mode 0600 — delete it once the restore
+succeeded.
 
 Steps 2–3 come from `backup.mjs`’s own header/exit output (the restore +
 row-count verification hook); the `docker exec -i` variant is the same psql
@@ -317,8 +354,8 @@ checks pass. `MOCK_SMTP_PORT` overrides the mock’s port (default 2525).
 npm run collab          # = node scripts/collab-server.mjs
 ```
 
-Optional overrides (defaults `PORT=1234`, `HOST=0.0.0.0`, read from
-`collab-server.mjs` just above the `SESSION_COOKIE` constant):
+Optional overrides (defaults `PORT=1234`, `HOST=127.0.0.1` — the host is
+resolved by `resolveHost` in `scripts/collab-server.mjs`):
 
 ```powershell
 $env:PORT="9000"; $env:HOST="127.0.0.1"; npm run collab   # PowerShell
@@ -337,7 +374,8 @@ $env:PORT="9000"; $env:HOST="127.0.0.1"; npm run collab   # PowerShell
   (`.env.example:12`), then (re)start the app server.
 - Optional `APP_ORIGINS` (comma-separated allow-list, normalized like
   `next.config.ts`) — when set, the relay enforces the upgrade `Origin`
-  against it (see 5.2); when unset the relay is permissive (repo default).
+  against it (see 5.2); when unset the relay accepts **only the loopback
+  origin** (repo default, see 5.2 and 5.4).
 
 ### 5.2 Join authorization (B53) + M1.5 hardening (B75)
 
@@ -359,7 +397,8 @@ The relay authorizes **before** the room exists — fail closed everywhere:
 | Check | Behaviour | On failure |
 | --- | --- | --- |
 | Origin (checked **before** the session check) | if `APP_ORIGINS` is set, the upgrade `Origin` must be on the list — a missing Origin fails closed too | close **4400** `bad-origin` |
-| Origin unset (repo default) | **permissive by design** — `SameSite=lax` already stops cross-site cookie attachment and every join still needs a valid JWT; failing closed would break CLI/test clients | — |
+| Origin unset (repo default) | **fail closed (B64)**: only the **loopback** origin (`localhost`, `127.0.0.1`, `[::1]`) connects; a foreign origin is refused. A **missing** Origin header is accepted (only a native client — the CLI smoke, the desktop sidecar — sends none, and it still has to pass the session check); an **empty** Origin header is refused | close **4400** `bad-origin` |
+| Message size (B64) | one WebSocket message is capped at **4 MiB** (`MAX_PAYLOAD_BYTES`) — the app's own budget for a page's content in one request; `ws` would otherwise take 100 MiB | close **1009** (payload too big) |
 | Connection rate (R9.6) | max **5 concurrent connections per verified user** | overflow close **4429** `rate-limited` |
 | Message rate (R9.6) | max **30 messages per connection per 10 s** sliding window | 31st close **4429** `rate-limited` |
 | Presence identity (R9.16) | the `user: {id,name,color,avatarUrl}` field of **every** inbound awareness update is replaced server-side with the DB-resolved identity (colour = stable hash of the user id) — client claims are never relayed | — |
@@ -370,7 +409,8 @@ created for a rejected join.
 
 **Still open (script header, “Known gaps”):** no mid-session lock/revocation
 re-evaluation (R9.4 — join-time only), no byte-rate cap (512 KiB/s half of
-R9.6), handshake *churn* bounded only by the concurrency cap, and the residual
+R9.6 — the 4 MiB per-*message* cap of B64 does not replace it), handshake
+*churn* bounded only by the concurrency cap, and the residual
 timing side channel from B53. Also: the membership/guest logic is *ported* into
 the script — a change to `src/lib/permissions.ts` / `guest-access.ts` must be
 mirrored here until the planned internal authz endpoint lands (drift fails
@@ -379,12 +419,49 @@ closed for grants, but can over-deny).
 ### 5.3 Tests / health
 
 ```bash
-npx vitest run scripts/collab-server.test.mjs   # 38 it() cases: join auth + B75 rate-limit/origin/presence
+npx vitest run scripts/collab-server.test.mjs   # 53 it() cases: join auth + B75 rate-limit/origin/presence + B64 network posture
 ```
 
 `scripts/check-collab.mjs` (unauthenticated two-client smoke) legitimately gets
-4401 — it needs a real session cookie — and, if `APP_ORIGINS` is set, a valid
-`Origin`; it is **not** a gate.
+4401 — it needs a real session cookie — and, if `APP_ORIGINS` is set, a listed
+`Origin` (otherwise 4400); it is **not** a gate.
+
+### 5.4 Networked deployment (B64)
+
+The relay is a **separate process** (`npm run collab`), started by the
+operator — the app container and the compose stack never start it (there is
+no `collab` service in `docker-compose.yml`, no `collab-server` command in the
+`Dockerfile` and no workflow that runs it). Two settings decide whether it is
+reachable from the network:
+
+| Setting | Default | Networked deployment |
+| --- | --- | --- |
+| `HOST` | `127.0.0.1` (loopback only) | set it **explicitly** to `0.0.0.0` (or the container/proxy address) — the relay then listens on every interface and is only protected by the origin policy and the session check |
+| `APP_ORIGINS` | unset → only the **loopback** origin is accepted | **required**: list every origin the browser may use (`https://noema.example.com`, …). A foreign origin is refused with 4400 **before** the session check |
+| `maxPayload` | 4 MiB per message (`MAX_PAYLOAD_BYTES`, not configurable) | — |
+
+```bash
+# A relay that other machines may reach:
+HOST=0.0.0.0 APP_ORIGINS="noema.example.com" npm run collab
+```
+
+Notes:
+
+- `HOST=0.0.0.0` is **never** the default — an unset, empty or blank `HOST`
+  falls back to `127.0.0.1` (an empty `HOST` would make Node bind to *every*
+  interface).
+- The origin rule is **fail closed in both configurations**. With
+  `APP_ORIGINS` unset, only `http://localhost:<port>`, `http://127.0.0.1:<port>`
+  and `http://[::1]:<port>` connect. Browsing the app through a LAN address
+  (`http://192.168.1.10:3200`) therefore needs `APP_ORIGINS` — that is the
+  documented operating rule for a networked installation.
+- A **missing** `Origin` header is accepted (only a native client sends none —
+  the CLI smoke above, the desktop sidecar; it still has to pass the session
+  check), an **empty** one is refused.
+- Behind a **reverse proxy** the relay stays a plain WebSocket server: it
+  terminates nothing itself. `HOST=0.0.0.0` (or the proxy's address) plus
+  `APP_ORIGINS` with the public origin is the whole configuration — the proxy
+  must forward the WebSocket upgrade and the `Origin` header unchanged.
 
 ## 6. Docker profile ops (`docker-compose.yml`)
 
@@ -593,8 +670,8 @@ write is released all the same. The holes that are known
 | Cron never materializes | 503 = `CRON_SECRET` unset in the *app’s* env; 401 = header/value mismatch; `journalctl -u noema-templates.service`; rate limit is 12/min |
 | Invites never arrive | settings “Email & invitations” → status shows `environment SMTP` / `not configured`; run `npm run check:mail`; delivery log error text (10 s connect / 20 s socket timeouts) |
 | Collaborative editing refuses everything (4401) | `AUTH_SECRET` missing/short in the relay’s env; wrong `NEXT_PUBLIC_COLLAB_URL`; 4403 = page scope/permission, not a secret problem |
-| Backup exits 1 | the script says why: no `pg_dump`, dump < 1 KiB, or missing core tables — it deletes the bad file rather than keeping it. `npm run backup -- --dry-run` shows what a run would do |
-| Collaborative socket closed 4400 | `APP_ORIGINS` is set and the client’s `Origin` isn’t on the list (checked pre-auth) — add the origin or unset `APP_ORIGINS` |
+| Backup exits 1 | the script says why: no `BACKUP_ENCRYPTION_KEY` (then **nothing** is written), no `pg_dump`, dump < 1 KiB, or missing core tables — a dump that fails the checks is never kept. `npm run backup -- --dry-run` shows what a run would do |
+| Collaborative socket closed 4400 | the client’s `Origin` is not accepted (checked pre-auth): with `APP_ORIGINS` set it must be on the list (— add the origin), without it only the loopback origin is accepted (— see §5.4) |
 | Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
 | `EADDRINUSE` / weird build output | dev and prod share `.next` and the ports — exactly one writer at a time |
 
@@ -605,17 +682,18 @@ nothing was executed against live servers):
 
 | Section | Command / fact | Source of truth |
 | --- | --- | --- |
-| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL” | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 23 tests) |
-| 2.2 | `psql "$DATABASE_URL" < backups/<file>.sql` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) |
+| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL”, the seal (AES-256-GCM, `BACKUP_ENCRYPTION_KEY`, fail closed) and the 0600/0700 modes | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 37 tests · `backup.test.mjs`, 8 tests) |
+| 2.2 | `npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) · `scripts/backup-restore.mjs` |
 | 3 | `POST /api/cron/templates`, `x-cron-secret`, 503/401, `12/60_000` limit, `{due,created,skipped,failed}`, fail-closed order | `src/app/api/cron/templates/route.ts` |
 | 3.1 | `CRON_SECRET` key + secret generator one-liner | `.env.example:8,50` |
 | 3.4 | `node --env-file=.env scripts/check-share-cron.mjs [baseUrl]` (no npm alias) | `scripts/check-share-cron.mjs:2` · absent from `package.json` |
 | 4.1 | SMTP env names/defaults, precedence, fail-soft, `EmailDelivery`, TLS self-signed switch | `src/lib/mailer.ts` · `src/server/actions/email.ts` · `.env.example:35-44` |
 | 4.2 | “Email & invitations” / “Verify & send test” labels, `testEmailAction` → `verifyMail` | `src/components/email-settings.tsx` · `src/lib/i18n.ts` (`emailHeading`, `verifySendTest`, `smtpVerified`, `recentEmail`) |
 | 4.3 | `npm run check:mail`, mock on 2525, `MOCK_SMTP_PORT`, assertions, cleanup | `package.json` · `scripts/check-mail.mjs` |
-| 5.1 | `npm run collab`, `PORT`/`HOST`, `loadEnvFile`, `AUTH_SECRET` warn, `DATABASE_URL`, `NEXT_PUBLIC_COLLAB_URL` | `package.json` · `scripts/collab-server.mjs` (PORT/HOST, `ensureEnv`, `start()`) · `.env.example:11-12` |
-| 5.2 | 4401/4403 table, read-only drop, no oracle; B75: 4400 Origin (`APP_ORIGINS`), 4429 rate limits (5 conns / 30 msg per 10 s), presence identity binding, current known-gaps list | `scripts/collab-server.mjs` header contract (B53) |
-| 5.3 | collab test count (38 `it()` lines), `check-collab.mjs` → 4401 not a gate | `scripts/collab-server.test.mjs` |
+| 5.1 | `npm run collab`, `PORT`/`HOST` (default `127.0.0.1`), `loadEnvFile`, `AUTH_SECRET` warn, `DATABASE_URL`, `NEXT_PUBLIC_COLLAB_URL` | `package.json` · `scripts/collab-server.mjs` (PORT/HOST, `resolveHost`, `ensureEnv`, `start()`) · `.env.example:11-12` |
+| 5.2 | 4401/4403 table, read-only drop, no oracle; B75: 4400 Origin (`APP_ORIGINS`), 4429 rate limits (5 conns / 30 msg per 10 s), presence identity binding, current known-gaps list; B64: fail-closed origin rule (loopback only without `APP_ORIGINS`), 4 MiB message cap (1009) | `scripts/collab-server.mjs` header contract (B53/B64) |
+| 5.3 | collab test count (53 `it()` lines), `check-collab.mjs` → 4401 not a gate | `scripts/collab-server.test.mjs` |
+| 5.4 | default bind `127.0.0.1` (`resolveHost`, empty/blank `HOST` included), `HOST=0.0.0.0` as the explicit opt-in, `APP_ORIGINS` as the operating rule for a networked deployment, 4 MiB `maxPayload` (1009) | `scripts/collab-server.mjs` (`resolveHost`, `DEFAULT_HOST`, `MAX_PAYLOAD_BYTES`, `isOriginAllowed`) · `scripts/collab-server.test.mjs` |
 | 6 | `--profile app`, service names/ports/env/healthchecks, volume behaviour | `docker-compose.yml` |
 | 7 | `/api/health` 200/503 shapes, 2 s ping, `no-store`, no auth/disclosure, compose healthcheck | `src/app/api/health/route.ts` · `docker-compose.yml` |
 | 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
@@ -632,8 +710,7 @@ guide did not rebuild).
 **Observed staleness (not fixed here):** `docs/specs/templates.md` refers to a
 `check:share-cron` npm script that does **not** exist in `package.json` — the
 script must be run directly (§3.4); the collab relay’s “residual risk” list
-predates B75 (§5.2); and
-`scripts/backup.mjs:1` says “compressed” while the dump is plain SQL (§2.1).
+predates B75 (§5.2).
 
 **Note on concurrent work:** `scripts/backup.mjs` (B92) and
 `scripts/collab-server.mjs` (B75) both changed *while this guide was being
@@ -962,9 +1039,9 @@ accepted *in addition to* `CRON_SECRET` there, and nowhere else.
 | Invites never arrive | settings “Email & invitations” → status shows `environment SMTP` / `not configured`; run `npm run check:mail`; delivery log error text (10 s connect / 20 s socket timeouts) |
 | Invitation link refused with “This invitation can no longer be redeemed.” | The role the invitation carries is not one its sender may hand out *now* — an admin invitation an admin minted before the grant rule, or a sender who has since been demoted or removed. Nothing to clean up: the workspace owner sends a new invitation (an admin invitation the owner minted still redeems). |
 | Collaborative editing refuses everything (4401) | `AUTH_SECRET` missing/short in the relay’s env; wrong `NEXT_PUBLIC_COLLAB_URL`; 4403 = page scope/permission, not a secret problem |
-| Backup exits 1 | the script says why: no `pg_dump`, dump < 1 KiB, or missing core tables — it deletes the bad file rather than keeping it. `npm run backup -- --dry-run` shows what a run would do |
+| Backup exits 1 | the script says why: no `BACKUP_ENCRYPTION_KEY` (then **nothing** is written), no `pg_dump`, dump < 1 KiB, or missing core tables — a dump that fails the checks is never kept. `npm run backup -- --dry-run` shows what a run would do |
 | Two-factor codes are rejected after the upgrade | the seed is stored sealed (B05): a `v1:` envelope that does not open means a **different `AUTH_SECRET`** than the one the seed was sealed with, or a tampered row. `npm run backfill:2fa` lists those rows as `UNREADABLE`; the account owner re-enrols, or the operator restores the matching `AUTH_SECRET` |
-| Collaborative socket closed 4400 | `APP_ORIGINS` is set and the client’s `Origin` isn’t on the list (checked pre-auth) — add the origin or unset `APP_ORIGINS` |
+| Collaborative socket closed 4400 | the client’s `Origin` is not accepted (checked pre-auth): with `APP_ORIGINS` set it must be on the list (— add the origin), without it only the loopback origin is accepted (— see §5.4) |
 | Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
 | Sign-in answers "Too many attempts" / "This account is temporarily locked" | a budget is spent (30/min per client address, 10/min per account, 5 2FA guesses / 15 min) or the account is locked (5 consecutive failures); wait for the quoted time — an operator can release the lock with `UPDATE "User" SET "failedLoginCount" = 0, "lockedUntil" = NULL WHERE email = '…'` |
 | Everyone hits the rate limit at once (429) | no `TRUSTED_PROXY_HOPS` → all clients of a scope share the `scope:local` budget; declare the proxy hops (see §1.1) |
@@ -981,17 +1058,18 @@ nothing was executed against live servers):
 | Section | Command / fact | Source of truth |
 | --- | --- | --- |
 | 1.1 | `TRUSTED_PROXY_HOPS`, the hop arithmetic (last / Nth-from-last), the `X-Real-IP` fallback for a chain shorter than N and the `scope:local` fallback, the rejected hop counts above 16, the `ADMIN_IP_ALLOWLIST` fail-closed gate, the Edge-runtime build-time freeze | `src/lib/tenant-guard.ts` (`parseTrustedProxyHops`, `resolveClientIp`) · `src/lib/rate-limit.ts` (`clientKey`, `userKey`) · `src/lib/api-guard.ts` (`rateLimit`) · `src/middleware.ts` (`ipGate`) · `.env.example` |
-| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL” | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 23 tests) |
-| 2.2 | `psql "$DATABASE_URL" < backups/<file>.sql` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) |
+| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL”, the seal (AES-256-GCM, `BACKUP_ENCRYPTION_KEY`, fail closed) and the 0600/0700 modes | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 37 tests · `backup.test.mjs`, 8 tests) |
+| 2.2 | `npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) · `scripts/backup-restore.mjs` |
 | 3 | `POST /api/cron/templates`, `x-cron-secret`, 503/401, `12/60_000` limit, `{due,created,skipped,failed}`, fail-closed order | `src/app/api/cron/templates/route.ts` |
 | 3.1 | `CRON_SECRET` key + secret generator one-liner | `.env.example:8,50` |
 | 3.4 | `node --env-file=.env scripts/check-share-cron.mjs [baseUrl]` (no npm alias) | `scripts/check-share-cron.mjs:2` · absent from `package.json` |
 | 4.1 | SMTP env names/defaults, precedence, fail-soft, `EmailDelivery`, TLS self-signed switch | `src/lib/mailer.ts` · `src/server/actions/email.ts` · `.env.example:35-44` |
 | 4.2 | “Email & invitations” / “Verify & send test” labels, `testEmailAction` → `verifyMail` | `src/components/email-settings.tsx` · `src/lib/i18n.ts` (`emailHeading`, `verifySendTest`, `smtpVerified`, `recentEmail`) |
 | 4.3 | `npm run check:mail`, mock on 2525, `MOCK_SMTP_PORT`, assertions, cleanup | `package.json` · `scripts/check-mail.mjs` |
-| 5.1 | `npm run collab`, `PORT`/`HOST`, `loadEnvFile`, `AUTH_SECRET` warn, `DATABASE_URL`, `NEXT_PUBLIC_COLLAB_URL` | `package.json` · `scripts/collab-server.mjs` (PORT/HOST, `ensureEnv`, `start()`) · `.env.example:11-12` |
-| 5.2 | 4401/4403 table, read-only drop, no oracle; B75: 4400 Origin (`APP_ORIGINS`), 4429 rate limits (5 conns / 30 msg per 10 s), presence identity binding, current known-gaps list | `scripts/collab-server.mjs` header contract (B53) |
-| 5.3 | collab test count (38 `it()` lines), `check-collab.mjs` → 4401 not a gate | `scripts/collab-server.test.mjs` |
+| 5.1 | `npm run collab`, `PORT`/`HOST` (default `127.0.0.1`), `loadEnvFile`, `AUTH_SECRET` warn, `DATABASE_URL`, `NEXT_PUBLIC_COLLAB_URL` | `package.json` · `scripts/collab-server.mjs` (PORT/HOST, `resolveHost`, `ensureEnv`, `start()`) · `.env.example:11-12` |
+| 5.2 | 4401/4403 table, read-only drop, no oracle; B75: 4400 Origin (`APP_ORIGINS`), 4429 rate limits (5 conns / 30 msg per 10 s), presence identity binding, current known-gaps list; B64: fail-closed origin rule (loopback only without `APP_ORIGINS`), 4 MiB message cap (1009) | `scripts/collab-server.mjs` header contract (B53/B64) |
+| 5.3 | collab test count (53 `it()` lines), `check-collab.mjs` → 4401 not a gate | `scripts/collab-server.test.mjs` |
+| 5.4 | default bind `127.0.0.1` (`resolveHost`, empty/blank `HOST` included), `HOST=0.0.0.0` as the explicit opt-in, `APP_ORIGINS` as the operating rule for a networked deployment, 4 MiB `maxPayload` (1009) | `scripts/collab-server.mjs` (`resolveHost`, `DEFAULT_HOST`, `MAX_PAYLOAD_BYTES`, `isOriginAllowed`) · `scripts/collab-server.test.mjs` |
 | 6 | `--profile app`, service names/ports/env/healthchecks, volume behaviour | `docker-compose.yml` |
 | 7 | `/api/health` 200/503 shapes, 2 s ping, `no-store`, no auth/disclosure, compose healthcheck | `src/app/api/health/route.ts` · `docker-compose.yml` |
 | 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
@@ -1025,8 +1103,7 @@ batch boundary (250), and an unknown option (`--dryrun`) was refused with exit
 **Observed staleness (not fixed here):** `docs/specs/templates.md` refers to a
 `check:share-cron` npm script that does **not** exist in `package.json` — the
 script must be run directly (§3.4); the collab relay’s “residual risk” list
-predates B75 (§5.2); and
-`scripts/backup.mjs:1` says “compressed” while the dump is plain SQL (§2.1).
+predates B75 (§5.2).
 
 **Note on concurrent work:** `scripts/backup.mjs` (B92) and
 `scripts/collab-server.mjs` (B75) both changed *while this guide was being
@@ -1090,8 +1167,9 @@ neither its clock nor its identity is a project decision.
 The scope has to be the whole commit: the merge commit GitHub synthesises for
 a pull request is dated when GitHub rebuilt the ref, and it carries the
 *human's* address in its author field — an exemption that only covered the
-field holding the bot address left that commit failing the gate, and the gate
-is a required check, so every pull request was red.
+field holding the bot address left that commit failing the gate, and the CI
+runs the gate, so every pull request was red. Whether a red run blocks a merge
+is the repository's branch-protection setting, not a property of the gate.
 
 The converse does not hold: a commit whose *author* is a bot but whose
 committer is a human was not created by GitHub, so it is checked like any
@@ -1101,9 +1179,17 @@ not a bot, and the policy applies to it like to any other human.
 
 ### 11.3 Making a commit
 
-The versioned hook `.githooks/pre-commit` (enable once with
-`git config core.hooksPath .githooks`) refuses a commit that would be stamped
-with the current wall clock. Declare an in-window timestamp instead:
+The versioned hook `.githooks/pre-commit` refuses a commit that would be stamped
+with the current wall clock, and it runs the secret gate too. It is
+**optional**: `core.hooksPath` is a local Git setting, so the repository cannot
+switch it on for you — enable it once per clone with
+`git config core.hooksPath .githooks` — and `git commit --no-verify` skips it
+altogether. The check that is enforced is the CI step:
+`.github/workflows/ci.yml` runs the secret gate and the authoring-window gate
+on every push and every pull request, and neither step is allowed to fail
+silently.
+
+Declare an in-window timestamp instead:
 
 ```sh
 GIT_AUTHOR_DATE="2026-10-17T19:00:00+02:00" \

@@ -1,6 +1,7 @@
 import { prisma } from "./db";
 import { prosemirrorToText, type RichNode } from "./blocks";
 import { searchPagesForPrompt } from "@/server/queries";
+import { randomToken } from "@/lib/random";
 
 /**
  * Chat "tools": before the assistant answers, a *complete* snapshot of the
@@ -34,7 +35,103 @@ export type ChatIntel = {
   references: ChatReference[];
   /** Human-readable tool activity for the UI ("Searched notes", …). */
   activity: string[];
+  /** The frame around `context` — the system prompt names its tags. */
+  frame: ChatSnapshotFrame;
 };
+
+/* -------------------------------------------------------------------------- *
+ * The frame
+ *
+ * The chat hands the model the whole workspace, and every value in it was
+ * written by a workspace member: a title, a row title, a property value, a
+ * member name, a comment, a message. A block header is therefore forgeable —
+ * a title with a newline in it ends its line and continues in its own voice.
+ *
+ * Two things close that gap:
+ *
+ *  - every interpolated value is folded onto ONE line, so a newline in the
+ *    content cannot open a line of its own;
+ *  - the snapshot is framed by two tags that carry an id minted per request,
+ *    and the system prompt names those tags and says that what is between
+ *    them is data to quote, never instructions.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * The name of the tag that frames the workspace snapshot.
+ *
+ * The id inside the tag is what makes the frame honest: a fixed tag is one
+ * the content could simply write.
+ */
+export const CHAT_SNAPSHOT_TAG = "workspace-snapshot";
+
+/** The two tags that frame the workspace snapshot of one request. */
+export type ChatSnapshotFrame = {
+  /** The opening tag, e.g. `<workspace-snapshot id="…">`. */
+  open: string;
+  /** The closing tag, e.g. `</workspace-snapshot id="…">`. */
+  close: string;
+};
+
+/**
+ * Mint the frame of one request.
+ *
+ * The id is a fresh random token (16 bytes of entropy, base64url) per request:
+ * the workspace content cannot know it, so it cannot write the closing tag and
+ * continue in its own voice.
+ */
+export function chatSnapshotFrame(): ChatSnapshotFrame {
+  const id = randomToken(16);
+  return {
+    open: `<${CHAT_SNAPSHOT_TAG} id="${id}">`,
+    close: `</${CHAT_SNAPSHOT_TAG} id="${id}">`,
+  };
+}
+
+/**
+ * Frame the workspace snapshot for the model.
+ *
+ * The frame goes around the **fitted** context: `fitBlocks` trims by character
+ * count, so a frame that was part of the fitted text would lose its closing
+ * tag. What the model sees is always a whole block.
+ *
+ * A string that could pass for the frame's own tag is removed from the
+ * content: the id is what makes the frame unclosable, but a fake tag inside
+ * the data would still read like structure.
+ */
+export function frameChatSnapshot(context: string, frame: ChatSnapshotFrame): string {
+  const body = typeof context === "string" ? context : "";
+  const cleaned = body
+    .replace(new RegExp(`</?${CHAT_SNAPSHOT_TAG}(\\s[^>]*)?>`, "gi"), "")
+    .replace(new RegExp(`</?${CHAT_SNAPSHOT_TAG}`, "gi"), "");
+  return `${frame.open}\n${cleaned}\n${frame.close}`;
+}
+
+/**
+ * Fold a workspace value onto one line.
+ *
+ * Everything a block shows was written by a workspace member. A newline in
+ * such a value ends the line it belongs to and lets the rest of the value
+ * pose as a line of its own — a forged block header, an order in the model's
+ * own voice. Folding keeps the words and drops the line breaks.
+ */
+export function foldToLine(value: string): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
+/**
+ * Keep the line structure of a body excerpt while making it impossible for a
+ * line of content to pass for a block header: every line is indented, so it
+ * cannot start at column 0 with `CURRENT PAGE —`, `WORKSPACE OVERVIEW —`, and
+ * so on. Titles and single values still use {@link foldToLine}.
+ */
+export function indentBlock(value: string): string {
+  return typeof value === "string"
+    ? value
+        .split(/\r?\n/)
+        .map((line) => `  ${line}`)
+        .join("\n")
+    : "";
+}
 
 const INTENT_RULES: { id: ChatIntent; label: string; test: RegExp }[] = [
   {
@@ -299,29 +396,31 @@ export async function resolveCurrentPage(
 export function currentPageBlock(page: CurrentPageContext): string {
   const lines = [
     "CURRENT PAGE — the user has this open on screen right now",
-    `- Title: "${page.title}"`,
+    `- Title: "${foldToLine(page.title)}"`,
     page.type === "DATABASE"
       ? `- Type: database${page.rowCount === null ? "" : ` (${page.rowCount} row${page.rowCount === 1 ? "" : "s"})`}`
       : "- Type: note (a document)",
-    `- Path: ${page.path.join(" / ")}`,
+    `- Path: ${page.path.map((title) => foldToLine(title)).join(" / ")}`,
     `- Last edited: ${page.updatedAt.toISOString().slice(0, 10)}`,
   ];
   if (page.properties.length > 0) {
-    lines.push(`- Properties: ${page.properties.join(", ")}`);
+    lines.push(`- Properties: ${page.properties.map((property) => foldToLine(property)).join(", ")}`);
   }
   if (page.children.length > 0) {
     const label = page.type === "DATABASE" ? "Rows" : "Sub-pages";
     lines.push(
       `- ${label} (${page.children.length} shown): ${page.children
-        .map((child) => `"${child.title}"`)
+        .map((child) => `"${foldToLine(child.title)}"`)
         .join(", ")}`,
     );
   }
   if (page.openTasks.length > 0) {
-    lines.push(`- Open tasks in this page: ${page.openTasks.map((task) => `"${task}"`).join(", ")}`);
+    lines.push(
+      `- Open tasks in this page: ${page.openTasks.map((task) => `"${foldToLine(task)}"`).join(", ")}`,
+    );
   }
   if (page.excerpt) {
-    lines.push("", "Content of the current page:", page.excerpt);
+    lines.push("", "Content of the current page:", indentBlock(page.excerpt));
   } else if (page.type === "DATABASE") {
     lines.push("", "This page is a database: its properties and rows are listed above.");
   }
@@ -381,7 +480,7 @@ async function workspaceOverview(workspaceId: string): Promise<string | null> {
     .sort((a, b) => (a.dueDate?.getTime() ?? Infinity) - (b.dueDate?.getTime() ?? Infinity))[0];
 
   const lines = [
-    `WORKSPACE OVERVIEW — "${workspace.name}"`,
+    `WORKSPACE OVERVIEW — "${foldToLine(workspace.name)}"`,
     `- Notes: ${pageCount} · Databases: ${databaseCount} · Labels: ${labelCount} · Comments: ${commentCount} · Chat threads: ${chatThreadCount}`,
     tickets.length === 0
       ? "- Tickets: none yet"
@@ -394,12 +493,12 @@ async function workspaceOverview(workspaceId: string): Promise<string | null> {
       ? "- Projects: none yet"
       : `- Projects: ${projects.length}${milestones.length ? ` · ${milestones.filter((m) => m.status === "done").length}/${milestones.length} milestones done` : ""}`,
     nextMilestone
-      ? `- Next milestone: ${nextMilestone.name} (${nextMilestone.project})${nextMilestone.dueDate ? ` due ${nextMilestone.dueDate.toISOString().slice(0, 10)}` : " with no due date"}`
+      ? `- Next milestone: ${foldToLine(nextMilestone.name)} (${foldToLine(nextMilestone.project)})${nextMilestone.dueDate ? ` due ${nextMilestone.dueDate.toISOString().slice(0, 10)}` : " with no due date"}`
       : projects.length > 0
         ? "- Milestones: none recorded (or all done)"
         : null,
     recentPages.length > 0
-      ? `- Recently edited notes: ${recentPages.map((p) => `"${p.title || "Untitled"}"`).join(", ")}`
+      ? `- Recently edited notes: ${recentPages.map((p) => `"${foldToLine(p.title || "Untitled")}"`).join(", ")}`
       : "- Notes: the workspace has no notes yet",
   ].filter(Boolean);
   return lines.join("\n");
@@ -439,7 +538,7 @@ function indexPath(
     seen.add(cursor);
     const row = byId.get(cursor);
     if (!row) break;
-    titles.unshift(row.title || "Untitled");
+    titles.unshift(foldToLine(row.title || "Untitled"));
     cursor = row.parentId;
   }
   return titles.join(" / ");
@@ -475,7 +574,7 @@ async function pageIndexBlock(
   const byId = new Map(rows.map((page) => [page.id, page]));
   const lines = rows.map(
     (page) =>
-      `- "${page.title || "Untitled"}" · ${pageTypeLabel(page.type)} · ${indexPath(byId, page.id)} · edited ${page.updatedAt
+      `- "${foldToLine(page.title || "Untitled")}" · ${pageTypeLabel(page.type)} · ${indexPath(byId, page.id)} · edited ${page.updatedAt
         .toISOString()
         .slice(0, 10)}`,
   );
@@ -587,10 +686,10 @@ async function databasesBlock(
     const databaseRows = rowsByParent.get(database.id) ?? [];
     const total = database._count?.children ?? databaseRows.length;
     lines.push(
-      `- "${database.title || "Untitled"}" — ${total} row${total === 1 ? "" : "s"}${
+      `- "${foldToLine(database.title || "Untitled")}" — ${total} row${total === 1 ? "" : "s"}${
         database.properties?.length
           ? ` · properties: ${database.properties
-              .map((property) => `${property.name} (${property.type})`)
+              .map((property) => foldToLine(`${property.name} (${property.type})`))
               .join(", ")}`
           : ""
       }`,
@@ -599,11 +698,13 @@ async function databasesBlock(
     for (const row of shown) {
       const values = (row.propertyValues ?? [])
         .map((entry) =>
-          entry.property?.name ? `${entry.property.name}: ${formatPropertyValue(entry.value)}` : null,
+          entry.property?.name
+            ? `${foldToLine(entry.property.name)}: ${foldToLine(formatPropertyValue(entry.value))}`
+            : null,
         )
         .filter((entry): entry is string => Boolean(entry))
         .join(" · ");
-      lines.push(`  - "${row.title || "Untitled"}"${values ? ` · ${values}` : ""}`);
+      lines.push(`  - "${foldToLine(row.title || "Untitled")}"${values ? ` · ${values}` : ""}`);
     }
     if (total > shown.length) {
       lines.push(
@@ -650,11 +751,11 @@ async function ticketsBlock(workspaceId: string): Promise<string | null> {
     .slice(0, 15)
     .map(
       (ticket) =>
-        `- ${ticket.key} [${ticket.status}, ${ticket.priority}]${ticket.assignee ? ` @${ticket.assignee.name}` : ""}${
+        `- ${ticket.key} [${ticket.status}, ${ticket.priority}]${ticket.assignee ? ` @${foldToLine(ticket.assignee.name)}` : ""}${
           ticket.estimate !== null && ticket.estimate !== undefined ? ` · ${ticket.estimate} ${ticket.estimateUnit ?? unit}` : ""
         }${ticket.dueDate ? ` · due ${ticket.dueDate.toISOString().slice(0, 10)}` : ""}${
-          ticket.labels?.length ? ` · ${ticket.labels.map((entry) => entry.label.name).join("/")}` : ""
-        } — ${ticket.title}`,
+          ticket.labels?.length ? ` · ${ticket.labels.map((entry) => foldToLine(entry.label.name)).join("/")}` : ""
+        } — ${foldToLine(ticket.title)}`,
     )
     .join("\n")}`;
 }
@@ -687,10 +788,10 @@ async function projectsBlock(workspaceId: string): Promise<string | null> {
       const done = milestones.filter((milestone) => milestone.status === "done").length;
       const next = milestones.find((milestone) => milestone.status !== "done");
       return [
-        `- ${project.name} (${project.status})`,
+        `- ${foldToLine(project.name)} (${project.status})`,
         project.dueDate ? `due ${project.dueDate.toISOString().slice(0, 10)}` : null,
         `${done}/${milestones.length} milestones`,
-        next ? `next: ${next.name}${next.dueDate ? ` (${next.dueDate.toISOString().slice(0, 10)})` : ""}` : null,
+        next ? `next: ${foldToLine(next.name)}${next.dueDate ? ` (${next.dueDate.toISOString().slice(0, 10)})` : ""}` : null,
         `${project._count?.pages ?? 0} notes`,
       ]
         .filter(Boolean)
@@ -718,16 +819,17 @@ async function membersBlock(workspaceId: string): Promise<string[] | null> {
   if (!workspace || !workspace.owner) return null;
 
   const members = workspace.members.map(
-    (member) => `${member.user.name} (${member.user.email}, ${member.role.toLowerCase()})`,
+    (member) =>
+      `${foldToLine(member.user.name)} (${foldToLine(member.user.email)}, ${member.role.toLowerCase()})`,
   );
   const blocks = [
-    `Workspace members (${members.length + 1}): ${workspace.owner.name} (${workspace.owner.email}, owner)` +
+    `Workspace members (${members.length + 1}): ${foldToLine(workspace.owner.name)} (${foldToLine(workspace.owner.email)}, owner)` +
       (members.length > 0 ? `, ${members.join(", ")}` : ""),
   ];
   if (workspace.invites.length > 0) {
     blocks.push(
       `Pending invitations: ${workspace.invites
-        .map((invite) => `${invite.email} (${invite.role.toLowerCase()})`)
+        .map((invite) => `${foldToLine(invite.email)} (${invite.role.toLowerCase()})`)
         .join(", ")}`,
     );
   }
@@ -757,10 +859,10 @@ async function labelsBlock(workspaceId: string): Promise<string | null> {
     `LABELS & DISCUSSIONS — ${labels.length} label${labels.length === 1 ? "" : "s"}, ${threads.length} discussion${threads.length === 1 ? "" : "s"}`,
   ];
   if (labels.length > 0) {
-    lines.push(`- Labels: ${labels.map((label) => label.name).join(", ")}`);
+    lines.push(`- Labels: ${labels.map((label) => foldToLine(label.name)).join(", ")}`);
   }
   if (threads.length > 0) {
-    lines.push(`- Discussions: ${threads.map((thread) => `"${thread.title}"`).join(", ")}`);
+    lines.push(`- Discussions: ${threads.map((thread) => `"${foldToLine(thread.title)}"`).join(", ")}`);
   }
   return lines.join("\n");
 }
@@ -796,11 +898,11 @@ async function recentMessages(workspaceId: string, take: number): Promise<string
   const rows = [
     ...comments.map((c) => ({
       at: c.createdAt,
-      text: `[comment on "${c.page.title || "Untitled"}" by ${c.author.name}] ${c.body}`,
+      text: `[comment on "${foldToLine(c.page.title || "Untitled")}" by ${foldToLine(c.author.name)}] ${foldToLine(c.body)}`,
     })),
     ...chats.map((m) => ({
       at: m.createdAt,
-      text: `[${m.role} in chat "${m.thread.title}"] ${m.body}`,
+      text: `[${m.role} in chat "${foldToLine(m.thread.title)}"] ${foldToLine(m.body)}`,
     })),
   ]
     .sort((a, b) => b.at.getTime() - a.at.getTime())
@@ -823,7 +925,7 @@ function matchingNotesBlock(
   matches: { id: string; title: string; snippet: string }[],
 ): string {
   return `Matching notes:\n${matches
-    .map((page) => `- "${page.title}" (id ${page.id}): ${page.snippet}`)
+    .map((page) => `- "${foldToLine(page.title)}" (id ${page.id}): ${foldToLine(page.snippet)}`)
     .join("\n")}`;
 }
 
@@ -908,8 +1010,8 @@ export async function gatherChatIntel(input: {
     const pinned = await resolveCurrentPage(workspaceId, input.pageId);
     if (pinned) {
       blocks.push(
-        `PINNED NOTE — this conversation is pinned to a different page\n- Title: "${pinned.title}"\n- Path: ${pinned.path.join(" / ")}\n${
-          pinned.excerpt ? `Content:\n${pinned.excerpt.slice(0, 3000)}` : ""
+        `PINNED NOTE — this conversation is pinned to a different page\n- Title: "${foldToLine(pinned.title)}"\n- Path: ${pinned.path.map((title) => foldToLine(title)).join(" / ")}\n${
+          pinned.excerpt ? `Content:\n${indentBlock(pinned.excerpt).slice(0, 3000)}` : ""
         }`,
       );
       addReferences([{ id: pinned.id, title: pinned.title, icon: pinned.icon }]);
@@ -969,11 +1071,20 @@ export async function gatherChatIntel(input: {
 
   addReferences(indexReferences);
 
+  // The frame is minted per request and put around the **fitted** context: the
+  // trimmer cuts by character count, so a frame that was part of the fitted
+  // text would lose its closing tag. The frame is paid for out of the budget,
+  // so the context the model receives still honours it.
+  const frame = chatSnapshotFrame();
+  const overhead = frame.open.length + frame.close.length + 2;
+  const fitted = fitBlocks(blocks, Math.max(0, resolveContextBudget() - overhead));
+
   return {
     intents,
-    context: fitBlocks(blocks, resolveContextBudget()),
+    context: frameChatSnapshot(fitted, frame),
     references: references.slice(0, REFERENCE_LIMIT),
     activity: [...new Set(activity)],
+    frame,
   };
 }
 

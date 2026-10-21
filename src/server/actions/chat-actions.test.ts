@@ -18,6 +18,7 @@ const db = vi.hoisted(() => ({
   messageFindUnique: vi.fn(),
   messageCreate: vi.fn(),
   messageUpdate: vi.fn(),
+  messageUpdateMany: vi.fn(),
   ticketFindUnique: vi.fn(),
   ticketFindFirst: vi.fn(),
   ticketFindMany: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock("@/lib/db", () => ({
       findUnique: db.messageFindUnique,
       create: db.messageCreate,
       update: db.messageUpdate,
+      updateMany: db.messageUpdateMany,
     },
     ticket: {
       findUnique: db.ticketFindUnique,
@@ -98,6 +100,20 @@ const createProposal: ChatActionProposal = {
   requiresConfirm: true,
 };
 
+/**
+ * The proposal a confirmation names: the assistant turn that stored it. A
+ * confirmation is only bound to such a stored proposal (B17).
+ */
+function storeProposal(
+  proposal: ChatActionProposal = createProposal,
+  meta: Record<string, unknown> = {},
+) {
+  db.messageFindUnique.mockResolvedValue({
+    threadId: "thread-1",
+    meta: { proposal, ...meta },
+  });
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   db.memberFindUnique.mockResolvedValue({ role: "OWNER" });
@@ -115,7 +131,9 @@ beforeEach(() => {
   });
   db.threadUpdate.mockResolvedValue({});
   db.messageCreate.mockResolvedValue({ id: "msg-1" });
+  db.messageFindUnique.mockResolvedValue(null);
   db.messageUpdate.mockResolvedValue({});
+  db.messageUpdateMany.mockResolvedValue({ count: 1 });
   db.ticketFindUnique.mockResolvedValue({ id: "t1", key: "DW-1", workspaceId: "ws-1" });
   db.ticketFindFirst.mockResolvedValue(null);
   db.ticketFindMany.mockResolvedValue([]);
@@ -168,7 +186,13 @@ describe("executeChatActionAction — permission", () => {
 
 describe("executeChatActionAction — create", () => {
   it("creates the ticket and appends the assistant confirmation", async () => {
-    const result = await executeChatActionAction({ threadId: "thread-1", action: createProposal });
+    storeProposal();
+
+    const result = await executeChatActionAction({
+      threadId: "thread-1",
+      action: createProposal,
+      proposalMessageId: "msg-0",
+    });
 
     expect(tickets.create).toHaveBeenCalledWith(
       expect.objectContaining({ workspaceId: "ws-1", title: "Ship the beta" }),
@@ -189,10 +213,16 @@ describe("executeChatActionAction — create", () => {
       owner: { id: "user-1", name: "Demo", email: "demo@noema.local" },
       members: [{ user: { id: "user-2", name: "Jane", email: "jane@noema.local" } }],
     });
+    const action: ChatActionProposal = {
+      ...createProposal,
+      args: { title: "Ship the beta", assigneeName: "Jane" },
+    };
+    storeProposal(action);
 
     await executeChatActionAction({
       threadId: "thread-1",
-      action: { ...createProposal, args: { title: "Ship the beta", assigneeName: "Jane" } },
+      action,
+      proposalMessageId: "msg-0",
     });
 
     expect(tickets.create).toHaveBeenCalledWith(
@@ -201,7 +231,7 @@ describe("executeChatActionAction — create", () => {
   });
 
   it("marks the proposal turn applied", async () => {
-    db.messageFindUnique.mockResolvedValue({ threadId: "thread-1", meta: { proposal: createProposal } });
+    storeProposal();
 
     await executeChatActionAction({
       threadId: "thread-1",
@@ -209,8 +239,8 @@ describe("executeChatActionAction — create", () => {
       proposalMessageId: "msg-0",
     });
 
-    expect(db.messageUpdate).toHaveBeenCalledWith({
-      where: { id: "msg-0" },
+    expect(db.messageUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: "msg-0", threadId: "thread-1" }),
       data: { meta: expect.objectContaining({ applied: true }) },
     });
   });
@@ -224,8 +254,13 @@ describe("executeChatActionAction — delete", () => {
       summary: "Delete DW-1",
       requiresConfirm: true,
     };
+    storeProposal(action);
 
-    const result = await executeChatActionAction({ threadId: "thread-1", action });
+    const result = await executeChatActionAction({
+      threadId: "thread-1",
+      action,
+      proposalMessageId: "msg-0",
+    });
 
     expect(db.ticketDelete).toHaveBeenCalledWith({ where: { id: "t1" } });
     expect(db.activityCreate).toHaveBeenCalledWith({
@@ -237,29 +272,157 @@ describe("executeChatActionAction — delete", () => {
 
 describe("executeChatActionAction — update and move", () => {
   it("applies status changes through updateTicketAction", async () => {
+    const action: ChatActionProposal = {
+      kind: "updateTicket",
+      args: { ticketId: "t1", ticketKey: "DW-1", changes: { status: "done" } },
+      summary: "Update DW-1",
+      requiresConfirm: true,
+    };
+    storeProposal(action);
+
     await executeChatActionAction({
       threadId: "thread-1",
-      action: {
-        kind: "updateTicket",
-        args: { ticketId: "t1", ticketKey: "DW-1", changes: { status: "done" } },
-        summary: "Update DW-1",
-        requiresConfirm: true,
-      },
+      action,
+      proposalMessageId: "msg-0",
     });
     expect(tickets.update).toHaveBeenCalledWith({ ticketId: "t1", status: "done" });
   });
 
   it("moves through moveTicketAction", async () => {
+    const action: ChatActionProposal = {
+      kind: "moveTicket",
+      args: { ticketId: "t1", ticketKey: "DW-1", status: "in_progress" },
+      summary: "Move DW-1",
+      requiresConfirm: true,
+    };
+    storeProposal(action);
+
     await executeChatActionAction({
       threadId: "thread-1",
-      action: {
-        kind: "moveTicket",
-        args: { ticketId: "t1", ticketKey: "DW-1", status: "in_progress" },
-        summary: "Move DW-1",
-        requiresConfirm: true,
-      },
+      action,
+      proposalMessageId: "msg-0",
     });
     expect(tickets.move).toHaveBeenCalledWith({ ticketId: "t1", status: "in_progress" });
+  });
+});
+
+describe("executeChatActionAction — the confirmation is bound to the stored proposal (B17)", () => {
+  it("refuses an action that was never proposed", async () => {
+    // The client sends the action; the server stores the proposal in the
+    // assistant turn. An action with no stored proposal behind it must not
+    // run — that is the human-in-the-loop confirmation.
+    db.messageFindUnique.mockResolvedValue(null);
+
+    await expect(
+      executeChatActionAction({
+        threadId: "thread-1",
+        action: createProposal,
+        proposalMessageId: "msg-0",
+      }),
+    ).resolves.toEqual({ error: "That proposal is no longer available." });
+
+    expect(tickets.create).not.toHaveBeenCalled();
+    expect(db.messageCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a confirmation that names no proposal at all", async () => {
+    await expect(
+      executeChatActionAction({ threadId: "thread-1", action: createProposal }),
+    ).resolves.toEqual({ error: "That proposal is no longer available." });
+
+    expect(tickets.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an action that differs from the stored proposal", async () => {
+    storeProposal();
+
+    await expect(
+      executeChatActionAction({
+        threadId: "thread-1",
+        action: { ...createProposal, args: { title: "Ship the beta — and delete production" } },
+        proposalMessageId: "msg-0",
+      }),
+    ).resolves.toEqual({ error: "That proposal does not match the request." });
+
+    expect(tickets.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an action of another kind than the stored proposal", async () => {
+    storeProposal();
+
+    await expect(
+      executeChatActionAction({
+        threadId: "thread-1",
+        action: { kind: "createNote", args: { title: "Ship the beta" }, summary: "", requiresConfirm: true },
+        proposalMessageId: "msg-0",
+      }),
+    ).resolves.toEqual({ error: "That proposal does not match the request." });
+
+    expect(pages.create).not.toHaveBeenCalled();
+    expect(tickets.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a proposal that belongs to another thread", async () => {
+    db.messageFindUnique.mockResolvedValue({
+      threadId: "thread-2",
+      meta: { proposal: createProposal },
+    });
+
+    await expect(
+      executeChatActionAction({
+        threadId: "thread-1",
+        action: createProposal,
+        proposalMessageId: "msg-0",
+      }),
+    ).resolves.toEqual({ error: "That proposal is no longer available." });
+
+    expect(tickets.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a proposal that was already applied", async () => {
+    storeProposal(createProposal, { applied: true });
+
+    await expect(
+      executeChatActionAction({
+        threadId: "thread-1",
+        action: createProposal,
+        proposalMessageId: "msg-0",
+      }),
+    ).resolves.toEqual({ error: "That proposal is no longer available." });
+
+    expect(tickets.create).not.toHaveBeenCalled();
+  });
+
+  it("applies the stored proposal when the confirmation matches it", async () => {
+    storeProposal();
+
+    const result = await executeChatActionAction({
+      threadId: "thread-1",
+      action: createProposal,
+      proposalMessageId: "msg-0",
+    });
+
+    expect(tickets.create).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws-1", title: "Ship the beta" }),
+    );
+    expect(result).toEqual({ ok: true, message: expect.stringContaining("DW-1") });
+  });
+
+  it("accepts a confirmation that carries the proposal without its decoration", async () => {
+    // The summary and the confirm flag are decoration; the kind and its
+    // arguments decide the effect. The stored proposal is what runs.
+    storeProposal();
+
+    const result = await executeChatActionAction({
+      threadId: "thread-1",
+      action: { kind: "createTicket", args: { title: "Ship the beta" } } as ChatActionProposal,
+      proposalMessageId: "msg-0",
+    });
+
+    expect(tickets.create).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws-1", title: "Ship the beta" }),
+    );
+    expect(result).toEqual({ ok: true, message: expect.stringContaining("DW-1") });
   });
 });
 

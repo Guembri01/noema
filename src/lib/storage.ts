@@ -11,7 +11,7 @@
  */
 
 import { createHash, createHmac } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type StoredObject = { body: Uint8Array; contentType: string };
@@ -162,11 +162,39 @@ function signingKey(secret: string, dateStamp: string, region: string): Buffer {
 // Drivers
 // ---------------------------------------------------------------------------
 
+/**
+ * Set a mode, but never let it stop an upload.
+ *
+ * A filesystem without Unix permissions (a FAT stick, a network mount) answers
+ * `EPERM`, and a directory that belongs to somebody else cannot be changed at
+ * all. Neither is a reason to refuse an upload — the mode is best effort, and
+ * where the filesystem supports permissions the file is owner-only.
+ */
+async function restrict(path: string, mode: number): Promise<void> {
+  try {
+    await chmod(path, mode);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`[noema] could not set the mode of ${path}: ${reason}`);
+  }
+}
+
 /** Filesystem driver — the default for self-hosted installs. */
 export function localDriver(root = process.env.STORAGE_DIR ?? path.join(process.cwd(), "uploads")): StorageDriver {
+  // The check is a **path boundary**, not a prefix: a root `/data/uploads`
+  // also "contains" `/data/uploads-evil`, and a prefix comparison lets that
+  // sibling through. `path.relative` answers the question the root really
+  // asks — is the target **inside** it?
+  const base = path.resolve(root);
   const resolve = (key: string) => {
-    const target = path.join(root, key);
-    if (!target.startsWith(root)) throw new Error("Refusing to escape the storage root");
+    const target = path.resolve(base, key);
+    const relative = path.relative(base, target);
+    // `..` at the front means "above the root", an absolute path means
+    // "somewhere else entirely", and an empty relative means "the root
+    // itself" — none of them is a file **under** the root.
+    if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error("Refusing to escape the storage root");
+    }
     return target;
   };
   return {
@@ -177,7 +205,12 @@ export function localDriver(root = process.env.STORAGE_DIR ?? path.join(process.
       // are created owner-only instead of the umask default (0755/0644), so
       // no other user on the host can read another tenant's uploads (B38).
       await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+      // A directory that already exists keeps the mode it was created with, and
+      // so does a file that is overwritten — both would stay readable for
+      // everyone else, so the modes are enforced on every write.
+      await restrict(path.dirname(target), 0o700);
       await writeFile(target, body, { mode: 0o600 });
+      await restrict(target, 0o600);
     },
     async get(key) {
       try {

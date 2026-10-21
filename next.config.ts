@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { SECURITY_HEADERS } from "./src/lib/security-headers";
+import { SECURITY_HEADERS, SHARE_SECURITY_HEADERS } from "./src/lib/security-headers";
 // Next.js only accepts a Server Action POST when the request's `Origin` matches
 // the `Host` header (CSRF protection), so this machine's own addresses have to be
 // listed explicitly — otherwise browsing at `http://<lan-ip>:3200` (or `127.0.0.1`
@@ -15,7 +15,7 @@ import { SECURITY_HEADERS } from "./src/lib/security-headers";
 // interfaces the build machine happened to have (see docs/DESKTOP.md).
 import { allowedOrigins } from "./scripts/desktop/allowed-origins.cjs";
 
-export { SECURITY_HEADERS };
+export { SECURITY_HEADERS, SHARE_SECURITY_HEADERS };
 
 const root = dirname(fileURLToPath(import.meta.url));
 
@@ -61,6 +61,14 @@ const nextConfig: NextConfig = {
   // build time from the one place that owns it — `package.json`, which is also
   // what `tauri.conf.json` and `/api/health` report.
   env: { NEXT_PUBLIC_APP_VERSION: packageVersion },
+  // B78: the response must not name the framework. Next.js sends
+  // `X-Powered-By: Next.js` on every HTML response unless this switch is off,
+  // and the default is on (`poweredByHeader: true` in Next's own default
+  // config, next/dist/server/config-shared.js). The header map below cannot
+  // cover it: `headers()` only *adds* headers, while the framework sets this
+  // one itself when it sends the HTML (next/dist/server/send-payload.js) — so
+  // the switch has to live here.
+  poweredByHeader: false,
   // Pin the tracing root so an unrelated lockfile above this project does not
   // change how the standalone output is assembled.
   outputFileTracingRoot: root,
@@ -88,11 +96,20 @@ const nextConfig: NextConfig = {
   // misses the map above. B98: on document paths src/middleware.ts
   // supersedes the CSP with the per-response nonce variant; api/, _next/
   // and favicon keep serving exactly this static policy.
+  // B69: the public share pages (`/s/<token>`) carry the share token in their
+  // URL, so they answer with `Referrer-Policy: no-referrer` instead of the
+  // site-wide `strict-origin-when-cross-origin`. The entry comes AFTER the
+  // catch-all, and Next applies the matching entries in order, so it is the
+  // one that decides the `Referrer-Policy` on a share page.
   async headers() {
     return [
       {
         source: "/:path*",
         headers: Object.entries(SECURITY_HEADERS).map(([key, value]) => ({ key, value })),
+      },
+      {
+        source: "/s/:path*",
+        headers: Object.entries(SHARE_SECURITY_HEADERS).map(([key, value]) => ({ key, value })),
       },
     ];
   },

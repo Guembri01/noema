@@ -5,15 +5,28 @@
 // Red-first: this file was written BEFORE scripts/backup-lib.mjs existed — the
 // first run failed on the missing module (the red tail is recorded in the PR). The pure helpers live in backup-lib.mjs so they are unit-testable
 // without touching pg_dump, docker or the backups/ directory.
+//
+// B62 — the seal: a dump is written encrypted (AES-256-GCM, passphrase from
+// BACKUP_ENCRYPTION_KEY) and with mode 0600; without a passphrase nothing is
+// written at all. The pure helpers below carry that policy.
 import { describe, expect, it } from "vitest";
 import {
+  BACKUP_CIPHER,
+  BACKUP_DIR_MODE,
+  BACKUP_FILE_MODE,
+  BACKUP_MAGIC,
+  BackupDecryptError,
   DEFAULT_KEEP,
+  MIN_BACKUP_PASSPHRASE_LENGTH,
   buildManifest,
+  decryptBackup,
+  encryptBackup,
   formatDryRunPlan,
   isBackupDump,
   manifestNameFor,
   parseRowCounts,
   planRetention,
+  resolveBackupPassphrase,
   schemaFingerprint,
 } from "./backup-lib.mjs";
 
@@ -111,25 +124,31 @@ describe("schemaFingerprint", () => {
 describe("buildManifest", () => {
   const input = {
     timestamp: "2026-10-15T07:45:30.123Z",
-    file: "noema-2026-10-15T07-45-30.sql",
+    file: "noema-2026-10-15T07-45-30.sql.enc",
     sizeBytes: 232591,
     rowCounts: { User: 3, Workspace: 2, Page: 1 },
     schemaVersion: "a1b2c3d4e5f6",
     appVersion: "0.1.0",
     keep: 5,
+    encryption: BACKUP_CIPHER,
   };
 
   it("records timestamp, file, size, row counts and schema/app version", () => {
     expect(buildManifest(input)).toEqual({
       timestamp: "2026-10-15T07:45:30.123Z",
-      file: "noema-2026-10-15T07-45-30.sql",
+      file: "noema-2026-10-15T07-45-30.sql.enc",
       sizeBytes: 232591,
       schemaVersion: "a1b2c3d4e5f6",
       appVersion: "0.1.0",
       keep: 5,
+      encryption: BACKUP_CIPHER,
       rowCounts: { User: 3, Workspace: 2, Page: 1 },
       rowCountTotal: 6,
     });
+  });
+
+  it("names the seal the dump was written under", () => {
+    expect(buildManifest(input).encryption).toBe("aes-256-gcm");
   });
 
   it("sums rowCountTotal across every table", () => {
@@ -150,16 +169,25 @@ describe("buildManifest", () => {
  * ------------------------------------------------------------------ */
 
 describe("isBackupDump / manifestNameFor", () => {
-  it("recognises only noema-*.sql dumps", () => {
+  it("recognises noema-*.sql dumps and their sealed .sql.enc form", () => {
     expect(isBackupDump(dump(STAMPS[0]))).toBe(true);
+    expect(isBackupDump(`${dump(STAMPS[0])}.enc`)).toBe(true);
     expect(isBackupDump("noema-2026-10-15.manifest.json")).toBe(false);
     expect(isBackupDump("README.md")).toBe(false);
     expect(isBackupDump("other.sql")).toBe(false);
+    expect(isBackupDump("other.sql.enc")).toBe(false);
   });
 
   it("maps a dump to its manifest file", () => {
     expect(manifestNameFor(dump(STAMPS[0]))).toBe("noema-2026-10-13T21-09-10.manifest.json");
     expect(manifestNameFor("noema-x.sql")).toBe("noema-x.manifest.json");
+  });
+
+  it("gives a sealed dump the manifest name of its plain form", () => {
+    expect(manifestNameFor("noema-x.sql.enc")).toBe("noema-x.manifest.json");
+    expect(manifestNameFor(`${dump(STAMPS[0])}.enc`)).toBe(
+      "noema-2026-10-13T21-09-10.manifest.json",
+    );
   });
 });
 
@@ -222,10 +250,11 @@ describe("formatDryRunPlan", () => {
     host: "localhost",
     port: "5432",
     dumper: { kind: "docker", container: "noema-db" },
-    target: "C:/app/backups/noema-2026-10-15T07-45-30.sql",
+    target: "C:/app/backups/noema-2026-10-15T07-45-30.sql.enc",
     keep: plan.keep,
     retained: plan.retained,
     prunable: plan.prunable,
+    encryption: { ok: true },
   });
 
   it("declares that nothing is touched", () => {
@@ -237,7 +266,7 @@ describe("formatDryRunPlan", () => {
     expect(text).toContain('database "noema"');
     expect(text).toContain("localhost:5432");
     expect(text).toContain("noema-db");
-    expect(text).toContain("backups/noema-2026-10-15T07-45-30.sql");
+    expect(text).toContain("backups/noema-2026-10-15T07-45-30.sql.enc");
   });
 
   it("shows the retention preview: what would be removed and what would be kept", () => {
@@ -255,6 +284,12 @@ describe("formatDryRunPlan", () => {
     expect(text).toContain("restore");
   });
 
+  it("shows the seal and the restore command that opens it", () => {
+    expect(text).toContain("aes-256-gcm");
+    expect(text).toContain("BACKUP_ENCRYPTION_KEY");
+    expect(text).toContain("node scripts/backup-restore.mjs");
+  });
+
   it("reports a missing pg_dump as a would-fail condition", () => {
     const failing = formatDryRunPlan({
       root: "C:/app",
@@ -262,12 +297,107 @@ describe("formatDryRunPlan", () => {
       host: "localhost",
       port: "5432",
       dumper: null,
-      target: "C:/app/backups/noema-x.sql",
+      target: "C:/app/backups/noema-x.sql.enc",
       keep: 5,
       retained: [],
       prunable: [],
+      encryption: { ok: true },
     });
     expect(failing).toContain("no pg_dump");
     expect(failing).toContain("would FAIL");
+  });
+
+  it("reports a missing passphrase as a would-fail condition", () => {
+    const failing = formatDryRunPlan({
+      root: "C:/app",
+      database: "noema",
+      host: "localhost",
+      port: "5432",
+      dumper: { kind: "path" },
+      target: "C:/app/backups/noema-x.sql.enc",
+      keep: 5,
+      retained: [],
+      prunable: [],
+      encryption: { ok: false, reason: "BACKUP_ENCRYPTION_KEY is not set." },
+    });
+    expect(failing).toContain("would FAIL");
+    expect(failing).toContain("BACKUP_ENCRYPTION_KEY is not set.");
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * B62 — the seal: passphrase policy, encryption, decryption
+ * ------------------------------------------------------------------ */
+
+/** A passphrase for the tests only — never a real key, never a credential. */
+const SEAL_KEY = "noema-b62-test-seal-key-0001";
+
+describe("resolveBackupPassphrase", () => {
+  it("refuses to work without a passphrase (fail closed)", () => {
+    const result = resolveBackupPassphrase({});
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("BACKUP_ENCRYPTION_KEY");
+  });
+
+  it("refuses a blank passphrase", () => {
+    expect(resolveBackupPassphrase({ BACKUP_ENCRYPTION_KEY: "   " }).ok).toBe(false);
+  });
+
+  it("refuses a passphrase that is too short", () => {
+    const result = resolveBackupPassphrase({ BACKUP_ENCRYPTION_KEY: "short" });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain(String(MIN_BACKUP_PASSPHRASE_LENGTH));
+  });
+
+  it("accepts a passphrase of at least the minimum length", () => {
+    const result = resolveBackupPassphrase({ BACKUP_ENCRYPTION_KEY: SEAL_KEY });
+    expect(result.ok).toBe(true);
+    expect(result.passphrase).toBe(SEAL_KEY);
+  });
+});
+
+describe("encryptBackup / decryptBackup", () => {
+  const dump = Buffer.from('-- dump\nCOPY public."User" (id) FROM stdin;\nu1\n\\.\n');
+
+  it("opens a sealed dump back to the exact plaintext", () => {
+    const sealed = encryptBackup(dump, SEAL_KEY);
+    expect(decryptBackup(sealed, SEAL_KEY).equals(dump)).toBe(true);
+  });
+
+  it("keeps the plaintext out of the sealed file", () => {
+    const sealed = encryptBackup(dump, SEAL_KEY);
+    expect(sealed.includes(Buffer.from("u1"))).toBe(false);
+    expect(sealed.subarray(0, BACKUP_MAGIC.length).toString("ascii")).toBe(BACKUP_MAGIC);
+  });
+
+  it("seals every dump under its own key (fresh salt and IV)", () => {
+    const first = encryptBackup(dump, SEAL_KEY);
+    const second = encryptBackup(dump, SEAL_KEY);
+    expect(first.equals(second)).toBe(false);
+  });
+
+  it("refuses a wrong passphrase instead of restoring garbage", () => {
+    const sealed = encryptBackup(dump, SEAL_KEY);
+    expect(() => decryptBackup(sealed, "noema-b62-other-passphrase-02")).toThrowError(
+      BackupDecryptError,
+    );
+    try {
+      decryptBackup(sealed, "noema-b62-other-passphrase-02");
+    } catch (error) {
+      expect(error.code).toBe("auth-failed");
+    }
+  });
+
+  it("refuses a tampered payload", () => {
+    const sealed = encryptBackup(dump, SEAL_KEY);
+    const tampered = Buffer.from(sealed);
+    tampered[tampered.length - 1] ^= 0xff;
+    expect(() => decryptBackup(tampered, SEAL_KEY)).toThrowError(/tampered/);
+  });
+
+  it("refuses a file that is not a Noema backup", () => {
+    expect(() => decryptBackup(Buffer.from("-- a plain, unencrypted dump\n"), SEAL_KEY)).toThrowError(
+      BackupDecryptError,
+    );
   });
 });

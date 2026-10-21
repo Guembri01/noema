@@ -8,6 +8,8 @@
 
 import type { Node as PMNode } from "@tiptap/pm/model";
 
+import { safeHref } from "./markdown";
+
 export type Mark = { type: string; attrs?: Record<string, unknown> };
 
 export type RichNode = {
@@ -84,8 +86,11 @@ export function docToMarkdown(doc: unknown): string {
         if (marks.includes("italic")) value = `*${value}*`;
         if (marks.includes("strike")) value = `~~${value}~~`;
         const link = n.marks?.find((m) => m.type === "link");
-        const href = link?.attrs?.href;
-        if (typeof href === "string") value = `[${value}](${href})`;
+        // B109: the output side applies the same allowlist the input side
+        // applies (`safeHref`) — a target the allowlist refuses is written as
+        // plain text, never as a link.
+        const href = typeof link?.attrs?.href === "string" ? safeHref(link.attrs.href) : null;
+        if (href) value = `[${value}](${href})`;
         return value;
       })
       .join("");
@@ -124,8 +129,10 @@ export function docToMarkdown(doc: unknown): string {
     } else if (type === "image") {
       lines.push(`![${String(node.attrs?.alt ?? "")}](${String(node.attrs?.src ?? "")})`);
     } else if (type === "bookmark" || type === "embed") {
-      const url = String(node.attrs?.url ?? "");
-      lines.push(`[${String(node.attrs?.title ?? url)}](${url})`);
+      const title = String(node.attrs?.title ?? "");
+      const href = safeHref(String(node.attrs?.url ?? ""));
+      if (href) lines.push(`[${title || href}](${href})`);
+      else if (title) lines.push(title);
     } else if (type === "pageEmbed") {
       lines.push(`/w/…/${String(node.attrs?.pageId ?? "")} — ${String(node.attrs?.title ?? "")}`);
     } else if (type === "blockMath") {

@@ -17,8 +17,8 @@
 // synthetic merge commit (`refs/pull/N/merge`, which a pull-request checkout
 // makes `HEAD`) carries the *human's* address in its author field while its
 // clock and its committer are GitHub's — an exemption that only covered the
-// field holding the bot address left that commit failing the gate, and the
-// gate is a required check, so every pull request was red.
+// field holding the bot address left that commit failing the gate, and the CI
+// runs the gate, so every pull request was red.
 //
 // The gate is exercised end to end in a throwaway repository: each case writes
 // one commit with a crafted identity and date, then runs the script against it.
@@ -147,7 +147,7 @@ describe("the authoring-window gate (B85)", () => {
     // author field carries the *human's* address, while the clock and the
     // committer are GitHub's. The exemption is anchored on the committer and
     // covers the whole commit — with a per-field exemption this commit fails
-    // the gate, and the gate is a required check, so every pull request that
+    // the gate, and the CI runs the gate, so every pull request that
     // carries such a merge commit is red.
     const result = gateFor({
       author: human("Florian Reisinger", "reisi007@gmail.com"),

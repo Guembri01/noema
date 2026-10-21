@@ -643,7 +643,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Rate limiting | Throttle API/site traffic. | ✅ | Planned; middleware. The sign-in, sign-up and 2FA actions carry their own budgets and a temporary account lockout. |
 | Pagination | Bounded list responses. | ✅ | The tracker paginates server-side (100/page, no full-workspace scans); export and AI-context queries stay bounded by explicit `take` limits. |
 | Multi-tenancy | Isolate workspaces. | 🟡 | Workspace scoping modeled. |
-| Backups | Scheduled data backups. | ✅ | `npm run backup` dumps the database (via the `noema-db` container or a local `pg_dump`), **verifies every core table is present**, prunes to the last 5 and prints the restore command. |
+| Backups | Scheduled data backups. | ✅ | `npm run backup` dumps the database (via the `noema-db` container or a local `pg_dump`), **seals it with AES-256-GCM** under `BACKUP_ENCRYPTION_KEY` (mode `0600`, fail closed without a passphrase), **verifies every core table is present**, prunes to the last 5 and prints the restore command. |
 | Restore from backup | Recover data. | 🟡 | Planned. |
 | Schema migrations | Versioned DB changes. | ✅ | Prisma migrations. Spec: docs/specs/engineering-hardening.md. |
 | Observability | Logs, metrics, traces. | 🟡 | Planned; OpenTelemetry. |

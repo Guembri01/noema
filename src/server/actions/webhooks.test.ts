@@ -29,6 +29,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("node:dns/promises", () => ({ lookup: dns.lookup }));
 
 import { createWebhookAction } from "./webhooks";
+import { decryptWebhookSecret } from "@/lib/webhooks";
 
 const ORIGINAL_AUTH_SECRET = process.env.AUTH_SECRET;
 
@@ -174,5 +175,33 @@ describe("createWebhookAction - SSRF guard (B11, operator opt-in)", () => {
       expect(failureOf(result), url).not.toBe("");
     }
     expect(db.webhookCreate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * B63 — the signing secret is sealed at rest.
+ *
+ * The secret is the shared key of the webhook: whoever holds it can sign a
+ * delivery, and a receiver that trusts the signature acts on it. A row that
+ * holds the plaintext therefore hands the key to every database dump (and to
+ * every backup of it). The row must hold the envelope — the plaintext exists
+ * only in the moment the hook is created.
+ */
+describe("createWebhookAction - the signing secret is sealed at rest (B63)", () => {
+  it("stores the envelope, never the plaintext", async () => {
+    const secret = "whsec-write-path-fixture";
+    const result = await createWebhookAction({
+      workspaceId: "ws-1",
+      url: "https://receiver.test/hook",
+      events: ["page.created"],
+      secret,
+    });
+
+    expect(result).toEqual({ ok: true });
+    const stored = db.webhookCreate.mock.calls[0][0].data as { secret: string };
+    expect(stored.secret).toMatch(/^v2:/);
+    expect(stored.secret).not.toContain(secret);
+    // …and it is still the same secret: the delivery path opens it again.
+    expect(decryptWebhookSecret(stored.secret)).toBe(secret);
   });
 });

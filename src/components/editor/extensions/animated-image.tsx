@@ -225,7 +225,7 @@ export function AnimatedImageView({ node, deleteNode, locale }: NodeViewProps & 
             href={fileHref}
             download={alt || fileNameOf(src)}
             target="_blank"
-            rel="noreferrer"
+            rel="noreferrer noopener"
           >
             <FileIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span className="truncate">{alt || fileNameOf(src)}</span>

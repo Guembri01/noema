@@ -1,7 +1,11 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+// Windows has no POSIX mode bits; the desktop target relies on the per-user
+// %APPDATA% ACL there. The mode assertions are meaningful on Linux/macOS only.
+const itPosix = process.platform === "win32" ? it.skip : it;
 import {
   contentTypeFor,
   isValidAssetKey,
@@ -111,10 +115,36 @@ describe("localDriver", () => {
     expect(await driver.get("../escape.txt")).toBeNull();
   });
 
-  it("stores uploads owner-only: a 0600 file inside a 0700 directory (B38)", async () => {
-    await driver.put("ws1/secret.png", new Uint8Array([1]), "image/png");
+  it("refuses a sibling whose name begins with the root's name", async () => {
+    // The prefix comparison said "inside the root" for every path that
+    // *begins* with the root's name — the sibling `noema-storage-xyz` of the
+    // root `noema-storage-abc` is outside it, and its file is writable
+    // through this driver.
+    const sibling = `${root}-evil`;
+    const key = `../${path.basename(sibling)}/secret.txt`;
+    await expect(driver.put(key, new Uint8Array([7]), "text/plain")).rejects.toThrow();
+    expect(await driver.get(key)).toBeNull();
+    // Nothing was written next to the root.
+    await expect(readFile(path.join(sibling, "secret.txt"))).rejects.toThrow();
+  });
 
-    const file = await stat(path.join(root, "ws1", "secret.png"));
+  it("refuses an absolute path and the root itself", async () => {
+    await expect(driver.put("/etc/passwd", new Uint8Array([1]), "text/plain")).rejects.toThrow();
+    await expect(driver.put(".", new Uint8Array([1]), "text/plain")).rejects.toThrow();
+  });
+
+  itPosix("hardens uploads that an older version left readable (B67)", async () => {
+    // An install from before the modes were set: the workspace directory is
+    // 0755 and the file in it 0644 — the umask's defaults.
+    await mkdir(path.join(root, "ws1"), { recursive: true });
+    await chmod(path.join(root, "ws1"), 0o755);
+    await writeFile(path.join(root, "ws1", "old.png"), "old");
+    await chmod(path.join(root, "ws1", "old.png"), 0o644);
+
+    // Writing the same key again must not leave the old modes in place.
+    await driver.put("ws1/old.png", new Uint8Array([2]), "image/png");
+
+    const file = await stat(path.join(root, "ws1", "old.png"));
     expect(file.mode & 0o777).toBe(0o600);
     const dir = await stat(path.join(root, "ws1"));
     expect(dir.mode & 0o777).toBe(0o700);

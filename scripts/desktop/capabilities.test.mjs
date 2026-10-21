@@ -77,8 +77,8 @@ const SHELL_PAGE_ONLY = [
 
 /**
  * The only `core:` permissions a remote origin may hold — exactly what
- * `listenShell` (`window.__TAURI__.event.listen`) needs to subscribe to the
- * shell's menu events, plus the unlisten that subscription returns.
+ * `listenShell` (the event plugin of `@tauri-apps/api`) needs to subscribe to
+ * the shell's menu events, plus the unlisten that subscription returns.
  *
  * An allow-list, not a deny-list. `core:default` expands to the image plugin
  * (`plugin:image|from_path` is a bare `std::fs::read` with no scope check), to
@@ -395,7 +395,7 @@ describe("desktop capabilities (B46)", () => {
 
   it("lets the served app listen for the shell's menu events", () => {
     const remote = readCapability("desktop-remote.json");
-    // `listenShell` (`window.__TAURI__.event.listen`) needs
+    // `listenShell` (the event plugin of `@tauri-apps/api`) needs
     // `core:event:allow-listen`, and the unlisten it returns needs
     // `core:event:allow-unlisten`; without them the native menu goes dead
     // inside the app.
@@ -453,5 +453,255 @@ describe("desktop capabilities (B48)", () => {
     );
     expect(permissionSet).toContain("allow-get-pref");
     expect(permissionSet).toContain("allow-set-pref");
+  });
+});
+
+/**
+ * B59 — the local capability grants what the app never uses.
+ *
+ * `capabilities/default.json` is the capability of the shell's **own** page
+ * (`src-tauri/dist/index.html`) — local only, so the trust model is sound, but
+ * it granted a dozen permissions that no document in this repository ever
+ * calls: the process plugin (`allow-restart`, `allow-exit`), the opener, the
+ * dialog, the os and the fs plugins, and the `core:` collectors — `core:default`
+ * expands to the image, menu, tray, path and resources plugins
+ * (`plugin:image|from_path` is a bare `std::fs::read` with no scope check) and
+ * to the window and app commands nothing calls.
+ *
+ * Unused permissions are misleading: they read as "the app needs this", and
+ * they become live the next time somebody wires them up.
+ *
+ * The page's whole JavaScript surface is the app's own commands (`invoke`) and
+ * the subscription to the sidecar's `sidecar://event` stream (`listen`). So the
+ * capability grants the app's own command set and the two event permissions —
+ * and nothing else. These tests pin that, so putting a permission back fails
+ * here.
+ */
+
+/** The shell's own page: the only document that runs on the shell's origin. */
+const shellPagePath = join(root, "src-tauri", "dist", "index.html");
+
+/**
+ * The `core:` permissions the shell's own page needs.
+ *
+ * The event subscription (`listen`) subscribes to the sidecar's
+ * `sidecar://event` stream; the unlisten that it hands back is what removes
+ * it. Nothing else: the page never emits, and no document calls the window,
+ * app, path, image, menu, tray or resources commands.
+ */
+const ALLOWED_LOCAL_CORE = ["core:event:allow-listen", "core:event:allow-unlisten"];
+
+/** The Tauri namespaces a shipped document may touch at all. */
+const ALLOWED_LOCAL_NAMESPACES = ["core", "event"];
+
+/**
+ * Plugin namespaces the `default` capability must not hold. Each of them is
+ * reachable from JavaScript only through its own commands, and the shell's own
+ * page calls none of them — the shell does all of that in Rust, where the ACL
+ * does not gate it.
+ */
+const FORBIDDEN_LOCAL_PREFIXES = [
+  "dialog:",
+  "fs:",
+  "log:",
+  "opener:",
+  "os:",
+  "process:",
+  "shell:",
+  "store:",
+  "window-state:",
+];
+
+/**
+ * The calls the shell's own page makes.
+ *
+ * Two kinds, and they are governed by two different permissions:
+ *
+ *   · the **app's own commands** (`set_database_url`, `desktop_info`, …) —
+ *     they live in the app's permission set (`default`), which the capability
+ *     grants as a whole,
+ *   · the **plugin commands** of Tauri (`plugin:event|listen`) — they are
+ *     governed by the plugin's own permission (`core:event:allow-listen`),
+ *     not by the app's command set.
+ *
+ * The distinction matters: a page that reaches the bridge through the
+ * internals of the shell (`__TAURI_INTERNALS__`) calls the plugin the same
+ * way it calls the app, so the raw `invoke("…")` alone does not tell the two
+ * apart.
+ */
+function shellPageCalls() {
+  const source = readFileSync(shellPagePath, "utf8");
+  const app = new Set();
+  const plugins = new Set();
+  for (const match of source.matchAll(/invoke\(\s*"([^"]+)"/g)) {
+    if (match[1].startsWith("plugin:")) plugins.add(match[1]);
+    else app.add(match[1]);
+  }
+  return { app: [...app].sort(), plugins: [...plugins].sort() };
+}
+
+/**
+ * The permission that governs a plugin command.
+ *
+ * The name of the plugin command names the plugin and the command
+ * (`plugin:event|listen`); the permission is the plugin's namespace in the
+ * `core:` scheme with the `allow-` prefix.
+ */
+function pluginPermission(command) {
+  const [, plugin, name] = /^plugin:([^|]+)\|([^|]+)$/.exec(command) ?? [];
+  if (!plugin || !name) return null;
+  return `core:${plugin}:allow-${name}`;
+}
+
+/**
+ * The app's own permission set (`src-tauri/permissions/default.toml`) — the
+ * commands the ACL can gate for the shell's own page.
+ */
+function appPermissionSet() {
+  const source = readFileSync(
+    join(root, "src-tauri", "permissions", "default.toml"),
+    "utf8",
+  );
+  const section = source.split(/^\[default\]$/m)[1] ?? "";
+  const array = section.match(/permissions\s*=\s*\[([^\]]*)\]/)?.[1] ?? "";
+  return [...array.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+}
+
+/**
+ * Every `window.__TAURI__.<namespace>` any shipped document touches — the
+ * measurement that says which plugins the app can possibly use.
+ */
+function tauriNamespaces() {
+  const found = new Set();
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(path);
+        continue;
+      }
+      if (!SCRIPT_FILE.test(entry.name) && entry.name !== "index.html") continue;
+      // A test exercises the helper, it does not ship.
+      if (TEST_FILE.test(entry.name)) continue;
+      for (const match of readFileSync(path, "utf8").matchAll(
+        /__TAURI__\s*\??\.\s*(\w+)/g,
+      )) {
+        found.add(match[1]);
+      }
+    }
+  };
+  walk(join(root, "src"));
+  walk(join(root, "src-tauri", "dist"));
+  return [...found].sort();
+}
+
+describe("desktop capabilities (B59)", () => {
+  it("grants the shell's own page exactly what it calls", () => {
+    const local = readCapability("default.json");
+    // Set equality, not a subset: a permission that is *missing* breaks the
+    // page (the "Save & restart" button, the sidecar's event stream), and one
+    // that is *extra* is the hole this list exists to close.
+    expect(permissionIds(local).sort()).toEqual(["default", ...ALLOWED_LOCAL_CORE].sort());
+  });
+
+  it("calls no plugin namespace from any document", () => {
+    // The measurement behind the removals: the app's whole JavaScript surface
+    // is the app's own commands and the event subscription. No document
+    // touches the opener, dialog, os, fs or process plugin — so no capability
+    // needs to grant them. The allow-list, not an equality: a document that
+    // reaches the bridge through the official package instead of the global
+    // touches no namespace at all, and that is fine too.
+    expect(
+      tauriNamespaces().filter((namespace) => !ALLOWED_LOCAL_NAMESPACES.includes(namespace)),
+      "a shipped document touches a Tauri namespace beyond `core` and `event` — the capability has to grant it, and the allow-list above has to name it",
+    ).toEqual([]);
+  });
+
+  it("keeps every command the page calls inside the app's permission set", () => {
+    // The page's buttons must survive the reduction: the capability grants the
+    // app's command *set*, so every command the page calls has to be in it.
+    const { app } = shellPageCalls();
+    expect(app.length).toBeGreaterThan(0);
+    const set = appPermissionSet();
+    for (const command of app) {
+      expect(
+        set,
+        `the shell's own page calls "${command}", which the app's permission set does not grant`,
+      ).toContain(allowId(command));
+    }
+  });
+
+  it("keeps every plugin command the page calls inside the granted plugin permissions", () => {
+    // A page that reaches the bridge through the internals of the shell calls
+    // the plugin the same way it calls the app — `invoke("plugin:event|listen")`
+    // is not an app command, and the app's permission set does not (and must
+    // not) grant it. The permission that governs it is the plugin's own.
+    const { plugins } = shellPageCalls();
+    const granted = permissionIds(readCapability("default.json"));
+    for (const command of plugins) {
+      const permission = pluginPermission(command);
+      expect(permission, `"${command}" is not a plugin command this gate understands`).not.toBeNull();
+      expect(
+        granted,
+        `the shell's own page calls "${command}", which the "default" capability does not grant`,
+      ).toContain(permission);
+    }
+
+    // The subscription is the reason the event permission is there at all: a
+    // grant without a call is exactly what this finding is about.
+    const source = readFileSync(shellPagePath, "utf8");
+    expect(
+      source,
+      "the shell's own page does not subscribe to the event stream any more",
+    ).toMatch(/\blisten\s*\(/);
+    expect(granted).toContain("core:event:allow-listen");
+  });
+
+  it("keeps the window's title, theme, zoom and decorations on the shell's own commands", () => {
+    // `core:default` is a collector, and the app *does* use the window title,
+    // the theme, the minimize and the drag — but through the shell's own app
+    // commands (`set_window_title`, `set_theme`, `set_zoom`,
+    // `set_decorations`), which run in Rust, where the ACL does not gate
+    // them. So no `core:window:allow-*` permission is needed for any of it.
+    const commands = readFileSync(join(root, "src-tauri", "src", "commands.rs"), "utf8");
+    const set = appPermissionSet();
+    for (const command of [
+      "set_window_title",
+      "set_theme",
+      "set_zoom",
+      "set_decorations",
+    ]) {
+      expect(commands, `the shell has no "${command}" command`).toContain(
+        `pub fn ${command}`,
+      );
+      expect(set, `the app's permission set does not grant "${command}"`).toContain(
+        allowId(command),
+      );
+    }
+  });
+
+  it("grants the `default` capability no plugin permission", () => {
+    for (const id of permissionIds(readCapability("default.json"))) {
+      for (const prefix of FORBIDDEN_LOCAL_PREFIXES) {
+        expect(
+          id.startsWith(prefix),
+          `the "default" capability grants "${id}" — no document in the app calls it`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("grants the process plugin to no origin at all", () => {
+    // The red path of B59: `process:allow-restart` and `process:allow-exit`
+    // let a document restart or quit the app. Nothing in the app calls them,
+    // so no capability may hold them.
+    for (const capability of allCapabilities()) {
+      for (const id of permissionIds(capability)) {
+        expect(
+          id.startsWith("process:"),
+          `capability "${capability.identifier}" grants "${id}" — a document could restart or quit the app`,
+        ).toBe(false);
+      }
+    }
   });
 });

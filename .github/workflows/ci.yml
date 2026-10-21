@@ -3,8 +3,10 @@
 # gate. Deliberately NO e2e: Playwright needs a real postgres (prisma db push +
 # seed) and the suite runs serially (workers: 1, shared demo workspace) — see the
 # commented follow-up at the bottom of this file.
-# The same secret gate ships as a plain git hook: .githooks/pre-commit
-# (versioned via `git config core.hooksPath .githooks`).
+# The secret gate also ships as an optional local git hook: .githooks/pre-commit
+# (enable it with `git config core.hooksPath .githooks` — a local setting a
+# repository cannot version, and `git commit --no-verify` skips it). The step
+# below is the check.
 name: CI
 
 on:
@@ -23,16 +25,29 @@ jobs:
     name: check:fast + static gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The authoring-window gate walks the whole history of the ref
           # under review, so a shallow checkout would make it vacuous.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
+
+      # A *new* advisory in the dependency tree must fail the build. The
+      # advisories that are already known — and that cannot be fixed today —
+      # are listed in scripts/npm-audit-baseline.mjs with the reason; a plain
+      # `npm audit --audit-level=high` would fail on those as well, and the
+      # step would be dead after the first week. The gate compares the report
+      # with that list: a known advisory passes, every other one fails.
+      #
+      # It runs before the install: the audit reads the lockfile, not
+      # node_modules, so a violation fails the job in seconds instead of
+      # after the whole dependency tree is on disk.
+      - name: Dependency audit
+        run: npm run check:audit
 
       - name: Install dependencies
         run: npm ci
@@ -57,6 +72,16 @@ jobs:
       - name: Parent scope
         run: node scripts/check-parent-scope.mjs && node scripts/check-parent-scope.test.mjs
 
+      # A link that opens a new tab hands the opened document a `window.opener`
+      # unless its `rel` says `noopener`; `noreferrer` cuts the opener and the
+      # `Referer` header. The tree writes `rel="noreferrer noopener"` — this
+      # gate is what keeps it that way, and it also reads the conditional
+      # `target`s a grep for `target="_blank"` never sees. Pure source scan: no
+      # build, no database, no dependencies. Its own regression test runs with
+      # it, so the shapes it has to report stay reported.
+      - name: Target blank links
+        run: node scripts/check-target-blank-links.mjs && node scripts/check-target-blank-links.test.mjs
+
       # = tsc --noEmit && eslint --quiet . && vitest run --changed --passWithNoTests
       # Note: in CI the checkout is clean, so `vitest --changed` sees no diff and
       # may run 0 tests; tsc + eslint still gate every push. Switching this line
@@ -72,6 +97,14 @@ jobs:
       - name: Secret gate
         run: node scripts/check-secrets.mjs
 
+      # Every image the repository pulls has to be pinned by digest. A tag is a
+      # name, not a version: the registry decides which bits the build gets, so
+      # the same commit can produce an image nobody reviewed. The gate is a
+      # pure file scan — no registry, no network — and its own regression test
+      # runs with it, so the shapes that once slipped through stay reported.
+      - name: Image pins
+        run: node scripts/check-image-pins.mjs && node scripts/check-image-pins.test.mjs
+
       # Every commit — author *and* committer date — must land inside a Noema
       # authoring window (Wed–Sat evenings, Europe/Paris). See
       # src/lib/dates-policy.ts for the rule and the tests that pin its edges.
@@ -84,6 +117,13 @@ jobs:
       - name: Authoring windows
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-commit-dates.mjs
 
+      # The pre-commit hook is a convenience of the clone, not a check:
+      # `core.hooksPath` is a local setting and `--no-verify` skips it. The two
+      # steps above are the check. This one keeps the documentation saying so,
+      # and keeps the two steps from quietly losing their teeth.
+      - name: Hook gate
+        run: node scripts/check-hook-gate.mjs
+
       # The remaining static gates. All are offline and take seconds; they are
       # required locally, so a pull request that fails one fails here too.
       - name: Design tokens
@@ -95,8 +135,28 @@ jobs:
       - name: Server boundaries
         run: node scripts/check-use-server.mjs
 
+      # The response must not name the framework. Next.js sends
+      # `X-Powered-By: Next.js` on every HTML response while `poweredByHeader`
+      # is on (it is on by default), and the security-header map cannot cover
+      # it: `headers()` only adds headers, the server sets this one itself.
+      # The gate reads `next.config.ts` and fails when the switch is missing
+      # or not `false`; its own regression test runs with it.
+      - name: Framework disclosure
+        run: node scripts/check-powered-by.mjs && node scripts/check-powered-by.test.mjs
+
       - name: Client bundle
         run: node scripts/check-client-bundle.mjs
+
+      # The compose smoke test of the site workflow can only succeed if the
+      # workflow, the compose file and the image agree: the stack must be
+      # started with the profile that gates the app service, the probe must
+      # ask for the port the compose file publishes, and the image must apply
+      # the migrations before the probe. The compose job itself only runs on a
+      # push to `main` — this gate is what keeps a pull request from breaking
+      # the container path unseen. It is a pure file scan: no Docker, no
+      # database.
+      - name: Compose smoke
+        run: node scripts/check-compose-smoke.mjs
 
       # The feature sheet (docs/Noema-features.pdf) is derived from the README's
       # feature tables and the screenshot report. This asserts every feature row
@@ -107,7 +167,9 @@ jobs:
 
       # ----- Follow-up (CI v2, NOT enabled): e2e with a postgres service -------
       # Uncomment as a SEPARATE job when the suite is CI-stable; keep `check` as
-      # the required status check and start the e2e job as allow-failure:
+      # the status check and start the e2e job as allow-failure — whether a red
+      # run of `check` blocks a merge is the repository's protection setting
+      # (branch protection / ruleset), not a property of this workflow:
       #
       #   e2e:
       #     runs-on: ubuntu-latest
@@ -128,8 +190,8 @@ jobs:
       #     env:
       #       DATABASE_URL: postgresql://noema:noema@127.0.0.1:5432/noema
       #     steps:
-      #       - uses: actions/checkout@v4
-      #       - uses: actions/setup-node@v4
+      #       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      #       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       #         with: { node-version: 24, cache: npm }
       #       - run: npm ci
       #       - run: npx prisma db push
@@ -139,3 +201,47 @@ jobs:
       #         env:
       #           E2E_BASE_URL: http://localhost:3000   # + next build/start or dev
       # -------------------------------------------------------------------------
+
+  rust-advisories:
+    # The Rust half of the tree has its own advisory database (RustSec), and
+    # `cargo audit` is not part of the Rust toolchain — it is installed here.
+    #
+    # The two advisories that are ignored below are the ones the tree carries
+    # today. Both are the same issue (CVE-2026-111943): a distrusted emSign
+    # intermediate whose private key is public.
+    #   · RUSTSEC-2026-0381 — webpki-roots; the tree carries 1.0.9, the fix
+    #     is 1.0.10.
+    #   · RUSTSEC-2026-0382 — rustls-webpki; the tree carries 0.103.15, the
+    #     fix is 0.103.16.
+    # Moving them is a `cargo update` of the Tauri dependency tree, which this
+    # pull request does not make — until it does, the two are ignored with
+    # their reason, and every other advisory fails this job.
+    name: rust advisories
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The token must not outlive the checkout: the steps below install
+          # and build code, and a read-scoped token in .git/config is a token
+          # the code under review can read.
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri
+
+      - name: Install cargo-audit
+        # An exact version, not a range: the audit is a gate, and a gate that
+        # changes its own tool without a commit cannot be reviewed.
+        run: cargo install cargo-audit --version "0.22.2" --locked
+
+      - name: Rust advisory audit
+        working-directory: src-tauri
+        run: |
+          cargo audit \
+            --ignore RUSTSEC-2026-0381 \
+            --ignore RUSTSEC-2026-0382

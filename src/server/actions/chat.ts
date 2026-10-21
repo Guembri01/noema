@@ -16,6 +16,7 @@ import {
   proposalBody,
   proposalLabel,
   resolveTicketRef,
+  sameProposal,
   statusLabel,
   type ChatActionPlan,
   type ChatActionProposal,
@@ -537,11 +538,42 @@ async function resolveLabelIds(workspaceId: string, names: string[]): Promise<st
 }
 
 /**
+ * The proposal a confirmation names: the assistant turn that stored it.
+ *
+ * A confirmation is bound to a proposal of *this* thread that is still pending.
+ * One that was never stored, belongs to another thread or was already applied
+ * cannot be confirmed — without that binding any caller could have the chat
+ * apply an action nobody ever proposed (B17).
+ */
+async function loadPendingProposal(
+  threadId: string,
+  proposalMessageId: string,
+): Promise<{ proposal: ChatActionProposal; meta: Record<string, unknown> } | null> {
+  const message = await prisma.chatMessage.findUnique({
+    where: { id: proposalMessageId },
+    select: { threadId: true, meta: true },
+  });
+  if (!message || message.threadId !== threadId) return null;
+  const meta =
+    message.meta && typeof message.meta === "object" && !Array.isArray(message.meta)
+      ? (message.meta as Record<string, unknown>)
+      : null;
+  if (!meta || meta.applied === true) return null;
+  const proposal = meta.proposal;
+  if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) return null;
+  return { proposal: proposal as ChatActionProposal, meta };
+}
+
+/**
  * Apply a confirmed chat action. This is the ONLY path that changes data from
  * the chat: it re-checks workspace permission, resolves names to ids, and
  * delegates to the existing ticket/page server actions (so the same guards and
  * the same activity trail apply). The assistant's confirmation is appended to
  * the thread and the proposal turn is marked applied.
+ *
+ * The confirmation is bound to the stored proposal: the caller names the
+ * proposal turn it confirms, and only the proposal that turn stored is applied
+ * (B17).
  */
 export async function executeChatActionAction(input: {
   threadId: string;
@@ -559,8 +591,34 @@ export async function executeChatActionAction(input: {
     return { error: "You do not have permission to change this workspace." };
   }
   const workspaceId = thread.workspaceId;
-  const { action } = input;
-  if (!action || !action.kind) return { error: "That action is no longer valid." };
+  const { action: requested } = input;
+  if (!requested || !requested.kind) return { error: "That action is no longer valid." };
+
+  // The stored proposal is the one that may be applied — never the copy the
+  // caller sent.
+  const proposalMessageId =
+    typeof input.proposalMessageId === "string" ? input.proposalMessageId.trim() : "";
+  const stored = proposalMessageId
+    ? await loadPendingProposal(thread.id, proposalMessageId)
+    : null;
+  if (!stored) return { error: "That proposal is no longer available." };
+  if (!sameProposal(stored.proposal, requested)) {
+    return { error: "That proposal does not match the request." };
+  }
+  // Claim the proposal before acting. The check in `loadPendingProposal` is a
+  // read, so two confirmations that arrive together could both pass it; the
+  // conditional update makes exactly one of them the winner. The flag is put
+  // back if the action itself fails.
+  const claim = await prisma.chatMessage.updateMany({
+    where: {
+      id: proposalMessageId,
+      threadId: thread.id,
+      NOT: { meta: { path: ["applied"], equals: true } },
+    },
+    data: { meta: { ...stored.meta, applied: true } as Prisma.InputJsonValue },
+  });
+  if (claim.count !== 1) return { error: "That proposal is no longer available." };
+  const action = stored.proposal;
 
   let message: string;
   let activity: string;
@@ -699,6 +757,14 @@ export async function executeChatActionAction(input: {
         return { error: "That action is not supported." };
     }
   } catch (error) {
+    // The action did not run, so the proposal is still pending. Put the flag
+    // back; the next confirmation can try again.
+    await prisma.chatMessage
+      .update({
+        where: { id: proposalMessageId },
+        data: { meta: stored.meta as Prisma.InputJsonValue },
+      })
+      .catch(() => undefined);
     return { error: error instanceof Error ? error.message : "The action could not be applied." };
   }
 
@@ -712,23 +778,8 @@ export async function executeChatActionAction(input: {
     },
   });
 
-  // Hide the confirm button: the proposal turn is now applied.
-  if (input.proposalMessageId) {
-    const proposalMessage = await prisma.chatMessage.findUnique({
-      where: { id: input.proposalMessageId },
-      select: { threadId: true, meta: true },
-    });
-    if (proposalMessage && proposalMessage.threadId === thread.id) {
-      const meta =
-        proposalMessage.meta && typeof proposalMessage.meta === "object" && !Array.isArray(proposalMessage.meta)
-          ? (proposalMessage.meta as Record<string, unknown>)
-          : {};
-      await prisma.chatMessage.update({
-        where: { id: input.proposalMessageId },
-        data: { meta: { ...meta, applied: true } },
-      });
-    }
-  }
+  // The proposal turn is already marked applied by the claim above; the
+  // confirm button stays hidden from here on.
 
   revalidatePath("/w", "layout");
   return { ok: true, message };

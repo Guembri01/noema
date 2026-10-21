@@ -235,7 +235,7 @@ Storage & backups
 | **No SDK** | The S3 driver signs requests with **Signature V4** (`signS3Request`, unit-tested for determinism, key encoding and presigned GETs) over `fetch` |
 | **Authorised reads** | Files are never public: `/api/files/<workspace>/<name>` re-checks the session, the workspace membership and the caller's role (a guest is refused with `403`), validates the key (no traversal) and streams from whichever driver holds the bytes |
 | **Uploads** | Type allow-list + 10 MB cap + `Asset` row; `npm run check:storage` asserts the byte-for-byte round trip, the content type, the 404 for a missing key, the traversal refusal, the anonymous refusal and the 415 for a bad type |
-| **Backups** | `npm run backup` writes `backups/noema-<timestamp>.sql` (via the database container or a local `pg_dump`), refuses to keep a suspiciously small file, verifies the core tables are in the dump, keeps the newest 5 and prints the restore command 
+| **Backups** | `npm run backup` writes `backups/noema-<timestamp>.sql.enc` (via the database container or a local `pg_dump`), **sealed with AES-256-GCM** under `BACKUP_ENCRYPTION_KEY` and with mode `0600` (the script fails closed — without a passphrase it writes no dump at all), refuses to keep a suspiciously small file, verifies the core tables are in the dump, keeps the newest 5 and prints the restore command (`npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"`)
 
 Cycles (sprints)
 
@@ -504,6 +504,7 @@ password: password123
 | `npm run check:chat-stream` | Proves answers stream in chunks, arrive before completion, and persist exactly once |
 | `npm run check:coherence` | **Fails on drift**: orphan actions, native dialogs, unexpected injection sinks, growing action-call drift, shrinking i18n coverage |
 | `npm run check:workflow-permissions` | No workflow grants a publishing scope (`packages: write`, `id-token: write`) outside a job that no pull-request event can reach, every such job spells out its `permissions:`, and no pull-request checkout keeps its token on disk |
+| `npm run check:powered-by` | The Next config switches the framework's own `X-Powered-By` header off, so no response names the framework |
 | `npm run audit` | Static coherence inventory (same rules as `check:coherence`) → `docs/_audit-raw.json` |
 | `npm run check:matrix` | Recount the parity status summary (read-only; add `-- --write` to update the doc) |
 | `node --env-file=.env scripts/check-notion.mjs` | Notion API importer check (uses a local mock Notion server) |

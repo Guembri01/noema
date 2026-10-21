@@ -4,7 +4,9 @@ import {
   parseCoverPosition,
   type CoverPosition,
 } from "@/lib/cover-position";
+import { externalImageSrc } from "@/lib/external-image";
 import { GRADIENTS, coverCss, type GradientId } from "@/lib/page-cover";
+import { NONE_PAGE_ICON, parsePageIcon, type PageIcon } from "@/lib/page-icon";
 
 /**
  * The public share-page model.
@@ -31,6 +33,31 @@ import { GRADIENTS, coverCss, type GradientId } from "@/lib/page-cover";
 export const PROSE_MEASURE = "max-w-[720px]";
 /** Reading measure for a page containing databases — wide enough for tables. */
 export const WIDE_MEASURE = "max-w-[1100px]";
+
+/**
+ * Whether a request path belongs to the public share surface (`/s/<token>`).
+ *
+ * The share link carries the token IN ITS URL, so this surface gets its own
+ * policy: no `Referer` at all (nothing identifies the share link when the
+ * page talks to another host) and no third-party media in the CSP.
+ */
+export function isSharePath(pathname: string): boolean {
+  return pathname === "/s" || pathname.startsWith("/s/");
+}
+
+/**
+ * The page icon for the public share surface.
+ *
+ * B69: an image icon is a picture like any other - it is fetched through the
+ * server's proxy, so the host that hosts it never sees the visitor. An emoji
+ * icon is left alone, and an icon that cannot be served at all reads as none.
+ */
+export function shareIcon(raw: unknown): PageIcon {
+  const icon = parsePageIcon(raw);
+  if (icon.kind !== "image") return icon;
+  const value = externalImageSrc(icon.value);
+  return value === "" ? NONE_PAGE_ICON : { kind: "image", value };
+}
 
 /** The wrapper width for a page, widened when it embeds a database. */
 export function readingMeasure(hasDatabase: boolean): string {
@@ -129,10 +156,28 @@ function splitStoredCover(raw: string): { css: string; position: CoverPosition }
 }
 
 /**
+ * An absolute `http(s)` href for a cover image, or `null` for anything else.
+ * The WHATWG URL parser percent-encodes the characters that would break out
+ * of a CSS `url("…")` value, so the result is safe to interpolate.
+ */
+function absoluteHttpHref(raw: string): string | null {
+  try {
+    const url = new URL(raw.trim());
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Decode a persisted cover into a safe banner, or `null` for an absent or
  * unrecognised value. Gradients match the catalog by CSS value; an image URL is
- * re-validated through `coverCss`, so a hostile string never becomes a banner.
- * The stored position is threaded into `background-position`.
+ * re-validated through the URL parser, so a hostile string never becomes a
+ * banner. The stored position is threaded into `background-position`.
+ *
+ * B69: an image cover is a picture like any other. On this public surface it
+ * is fetched by the SERVER (the proxy route), so the host that hosts the cover
+ * never sees the visitor's IP address.
  */
 export function coverBannerStyle(raw: string | null | undefined): CoverBanner | null {
   if (typeof raw !== "string" || raw.trim() === "") return null;
@@ -145,12 +190,14 @@ export function coverBannerStyle(raw: string | null | undefined): CoverBanner | 
     };
   }
   // Accept both a bare URL and the `url("…")` form the cover encoder writes,
-  // then re-validate the URL through `coverCss` so nothing unsafe paints.
+  // then re-validate the URL through the URL parser so nothing unsafe paints.
   const wrapped = css.match(/^url\(\s*"([^"]*)"\s*\)$/);
-  const backgroundImage = coverCss({ type: "image", url: wrapped ? wrapped[1] : css });
-  if (backgroundImage === "") return null;
+  const href = absoluteHttpHref(wrapped ? wrapped[1] : css);
+  if (href === null) return null;
+  const src = externalImageSrc(href);
+  if (src === "") return null;
   return {
-    backgroundImage,
+    backgroundImage: `url("${src}")`,
     backgroundPosition: formatObjectPosition(position),
   };
 }
