@@ -9,6 +9,7 @@ import {
 } from "@/lib/body-limit";
 import { prisma } from "@/lib/db";
 import { resolveAiConfig, chatCompleteStream, providerAttribution, providerClass } from "@/lib/ai-provider";
+import { conversationSessionId } from "@/lib/ai-session";
 import { buildChatRequest } from "@/lib/chat-runtime";
 import { effectiveChatModel } from "@/lib/chat-model";
 import { linkifyReferences } from "@/lib/chat-context";
@@ -162,7 +163,13 @@ export async function POST(request: Request) {
   // The conversation's model, when one was chosen. Only the model *id* can
   // come from the request: provider, endpoint and key stay the ones resolved
   // for this workspace, so a crafted body cannot aim the call at another host.
-  const requestConfig = { ...config, model: effectiveChatModel(config.model, payload.model) };
+  // The session is the discussion's own id — the provider can cache and route
+  // per conversation (OpenCode Go asks for exactly this).
+  const requestConfig = {
+    ...config,
+    model: effectiveChatModel(config.model, payload.model),
+    sessionId: conversationSessionId(thread.id),
+  };
 
   const chatRequest = await buildChatRequest({
     workspaceId: thread.workspaceId,
