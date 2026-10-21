@@ -124,6 +124,14 @@ feed in production.
 No credential belongs in the tree. `npm run check:secrets` fails the build on
 any key-shaped value in a tracked file, and on any tracked `.env`. `.env` is
 git-ignored; `.env.example` documents every variable with placeholder values.
+The test files are scanned like every other file: a live key pasted into a
+fixture is published like any other file. The fake values the fixtures need
+are named one by one in `scripts/check-secrets.mjs`, so a real key is never
+released by them.
+
+`npm run check:secrets:history` (CI runs it on every push) walks the history
+as well: a credential that was committed and later removed is still public —
+the commit is the publication, not the current tree.
 
 If you ever commit a real credential, treat it as public the moment it lands:
 remove it, then **rotate it at the provider**. Rewriting git history does not

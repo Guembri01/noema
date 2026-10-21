@@ -72,6 +72,7 @@
     "check:compose": "node scripts/check-compose-exposure.mjs",
     "check:hsts": "tsx scripts/check-hsts.mjs",
     "check:access-rule": "node scripts/check-access-rule.mjs",
+    "check:secrets:history": "node scripts/check-secrets.mjs --history",
     "check:workflow-permissions": "node scripts/check-workflow-permissions.mjs",
     "check:image-pins": "node scripts/check-image-pins.mjs",
     "check:action-pins": "node scripts/check-action-pins.mjs",
