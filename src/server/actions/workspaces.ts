@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { requireUser, verifyPassword } from "@/lib/auth";
 import { workspaceSchema } from "@/lib/validation";
 import { uniqueWorkspaceSlug } from "@/server/unique";
 import { welcomeDoc } from "@/lib/welcome";
@@ -157,6 +157,12 @@ export async function deleteWorkspaceAction(
     return { error: "The name you typed does not match this workspace." };
   }
   await prisma.workspace.delete({ where: { id: workspaceId } });
+  // The notification rows of the deleted workspace go with it: they carry the
+  // workspace id and, for a ticket assignment, the title — the inbox of the
+  // workspaces the members stay in would go on naming them.
+  await prisma.notification?.deleteMany({
+    where: { payload: { path: ["workspaceId"], equals: workspaceId } },
+  });
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -250,7 +256,7 @@ export async function removeMemberAction(
 
   const target = await prisma.workspaceMember.findFirst({
     where: { workspaceId, userId },
-    select: { id: true, role: true },
+    select: { id: true, role: true, user: { select: { email: true } } },
   });
   if (!target) return { error: "That person is not a member of this workspace." };
   if (access.role === "ADMIN" && target.role === "ADMIN") {
@@ -260,6 +266,28 @@ export async function removeMemberAction(
   await prisma.workspaceMember.delete({ where: { id: target.id } });
   await logActivity({ workspaceId, actorId: user.id, action: "member.removed", targetType: "member", targetId: userId });
   await prisma.pagePermission.deleteMany({ where: { userId, page: { workspaceId } } });
+  // A removed member keeps nothing: the follow/favorite rows go with the
+  // permission rows, so the bell cannot go on reporting the pages of a
+  // workspace the person no longer belongs to (the notice carries the title).
+  await prisma.pageFollow?.deleteMany({ where: { userId, page: { workspaceId } } });
+  await prisma.favorite?.deleteMany({ where: { userId, page: { workspaceId } } });
+  // The teamspace memberships are authorisation rows as well: a stale one puts
+  // the pages of the teamspace back into the scope of a re-invited guest.
+  await prisma.teamspaceMember?.deleteMany({ where: { userId, teamspace: { workspaceId } } });
+  await prisma.projectMember?.deleteMany({ where: { userId, project: { workspaceId } } });
+  // A pending invitation is a way back in: revoke the workspace and teamspace
+  // invitations addressed to the removed member, so an old link cannot
+  // re-admit them without a new grant.
+  await prisma.invite?.deleteMany({ where: { workspaceId, email: target.user.email } });
+  await prisma.teamspaceInvite?.deleteMany({
+    where: { email: target.user.email, teamspace: { workspaceId } },
+  });
+  // A removed member keeps nothing of that workspace: the notification rows
+  // carry the workspace id in their payload, so the inbox can go on naming the
+  // pages and tickets of a workspace the person no longer belongs to.
+  await prisma.notification?.deleteMany({
+    where: { userId, payload: { path: ["workspaceId"], equals: workspaceId } },
+  });
   revalidatePath("/w", "layout");
   return { ok: true };
 }
@@ -286,6 +314,27 @@ export async function leaveWorkspaceAction(workspaceId: string): Promise<Workspa
   await prisma.workspaceMember.delete({ where: { id: membership.id } });
   await logActivity({ workspaceId, actorId: user.id, action: "member.left", targetType: "member", targetId: user.id });
   await prisma.pagePermission.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
+  // Leaving takes the subscriptions with it: a follow row that outlived the
+  // membership would keep reporting the pages of a workspace the person has
+  // left (the notice carries the title).
+  await prisma.pageFollow?.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
+  await prisma.favorite?.deleteMany({ where: { userId: user.id, page: { workspaceId } } });
+  // The teamspace memberships are authorisation rows as well: a stale one puts
+  // the pages of the teamspace back into the scope of a re-invited guest.
+  await prisma.teamspaceMember?.deleteMany({ where: { userId: user.id, teamspace: { workspaceId } } });
+  await prisma.projectMember?.deleteMany({ where: { userId: user.id, project: { workspaceId } } });
+  // A pending invitation must not re-admit somebody who has left.
+  await prisma.invite?.deleteMany({ where: { workspaceId, email: user.email } });
+  await prisma.teamspaceInvite?.deleteMany({
+    where: { email: user.email, teamspace: { workspaceId } },
+  });
+  // The notification rows go with the membership, exactly like the permission
+  // rows above: they carry the workspace id in their payload, so the inbox of
+  // the workspaces the person stays in would go on naming the pages and
+  // tickets of the workspace they left.
+  await prisma.notification?.deleteMany({
+    where: { userId: user.id, payload: { path: ["workspaceId"], equals: workspaceId } },
+  });
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -503,7 +552,7 @@ export async function removeProjectRoleAction(
   const decision = removeMember(context.withActor, userId);
   if (!decision.ok) return { error: decision.error };
 
-  await prisma.projectMember.deleteMany({ where: { projectId, userId } });
+  await prisma.projectMember?.deleteMany({ where: { projectId, userId } });
   await logActivity({
     workspaceId: context.project.workspaceId,
     actorId: user.id,
@@ -592,12 +641,48 @@ export async function startOwnershipTransferAction(input: {
 }
 
 /**
+ * B14 — compare a candidate password with the stored hash of the account that
+ * acts.
+ *
+ * The candidate travels from the client; the verdict does not: it is the
+ * server's own comparison against `User.passwordHash`, so a client can no
+ * longer assert that a password was confirmed. A stored value that is not a
+ * bcrypt hash — an SSO account's `sso:<token>`, for instance — can never match
+ * a password, and `bcrypt.compare` throws on some of those values; such an
+ * account therefore fails closed.
+ */
+async function verifyAccountPassword(
+  userId: string,
+  candidate: string | undefined,
+): Promise<boolean> {
+  const account = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { passwordHash: true },
+  });
+  const stored = account?.passwordHash;
+  if (!stored) return false;
+  try {
+    return await verifyPassword(candidate ?? "", stored);
+  } catch {
+    // A hash bcrypt cannot work with (unknown variant, illegal cost) can
+    // never match a password — the comparison fails closed.
+    return false;
+  }
+}
+
+/**
  * Accept a pending transfer as its recipient. On success the recipient becomes
  * OWNER and the previous owner is demoted to ADMIN, in one transaction.
+ *
+ * B14 — the password step is the server's own. The client sends the candidate
+ * password; the server compares it with the stored hash of the account that
+ * acts (the recipient, never the sender) and hands only the *result* to the
+ * engine. The old `passwordOk` option is gone: a client that claims the
+ * password was confirmed is ignored.
  */
 export async function acceptOwnershipTransferAction(
   transferId: string,
-  options: { passwordOk?: boolean } = {},
+  options: { password?: string } = {},
 ): Promise<WorkspaceResult> {
   const user = await requireUser();
   const request = transferRequests.get(transferId);
@@ -620,10 +705,17 @@ export async function acceptOwnershipTransferAction(
   });
   if (!target) return { error: "That person is no longer a member of this workspace." };
 
+  // The verdict belongs to the server: the candidate is compared with the
+  // acting account's own hash. A non-recipient is never asked for a password.
+  const passwordOk =
+    request.requirePassword === true && user.id === request.toUserId
+      ? await verifyAccountPassword(user.id, options.password)
+      : undefined;
+
   const accepted = acceptTransfer(request, {
     byUserId: user.id,
     now,
-    passwordOk: options.passwordOk,
+    passwordOk,
     memberRole: target.role,
   });
   if (!accepted.ok) return { error: accepted.error };

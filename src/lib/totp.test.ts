@@ -6,6 +6,7 @@ import {
   otpauthUrl,
   totp,
   verifyTotp,
+  verifyTotpCounter,
 } from "@/lib/totp";
 
 // RFC 6238 appendix B: secret "12345678901234567890" (ASCII).
@@ -45,6 +46,37 @@ describe("verifyTotp", () => {
     const previous = totp(RFC_SECRET, 29_000); // counter 0, vs counter 1 at 59s
     expect(verifyTotp(RFC_SECRET, previous, 59_000, 1)).toBe(true);
     expect(verifyTotp(RFC_SECRET, previous, 59_000, 0)).toBe(false);
+  });
+
+  it("refuses anything that is not a TOTP code", () => {
+    // The code space is digits only, so a recovery code could never be
+    // entered: there is no recovery path in the sign-in.
+    expect(verifyTotp(RFC_SECRET, "1234-5678", 59_000)).toBe(false);
+    expect(verifyTotp(RFC_SECRET, "ABCD-EFGH", 59_000)).toBe(false);
+    expect(verifyTotp(RFC_SECRET, "12345", 59_000)).toBe(false);
+  });
+});
+
+describe("verifyTotpCounter", () => {
+  it("answers with the time step the accepted code belongs to", () => {
+    // 59 s is step 1, 29 s is step 0 (30 s steps).
+    expect(verifyTotpCounter(RFC_SECRET, totp(RFC_SECRET, 59_000), 59_000)).toBe(1);
+    expect(verifyTotpCounter(RFC_SECRET, totp(RFC_SECRET, 29_000), 59_000, 1)).toBe(0);
+  });
+
+  it("answers with null when the code does not match", () => {
+    expect(verifyTotpCounter(RFC_SECRET, "000000", 59_000, 0)).toBeNull();
+    expect(verifyTotpCounter(RFC_SECRET, "not-a-code", 59_000)).toBeNull();
+  });
+
+  it("agrees with `verifyTotp` on whether a code matches", () => {
+    const code = totp(RFC_SECRET, 59_000);
+    expect(verifyTotpCounter(RFC_SECRET, code, 59_000) !== null).toBe(
+      verifyTotp(RFC_SECRET, code, 59_000),
+    );
+    expect(verifyTotpCounter(RFC_SECRET, "000000", 59_000) !== null).toBe(
+      verifyTotp(RFC_SECRET, "000000", 59_000),
+    );
   });
 });
 

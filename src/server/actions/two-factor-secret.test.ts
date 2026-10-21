@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /**
  * B05 — the 2FA seed is sealed at rest.
@@ -16,6 +19,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const db = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
   userUpdate: vi.fn(),
+  // B25: the setup gates spend the two-factor time step they accepted.
+  userUpdateMany: vi.fn(),
   workspaceMemberFindFirst: vi.fn(),
   workspaceFindFirst: vi.fn(),
 }));
@@ -26,11 +31,14 @@ const auth = vi.hoisted(() => ({
   createSession: vi.fn(),
   destroySession: vi.fn(),
   hashPassword: vi.fn(),
+  // B39: disabling 2FA ends the other sessions of the account, so the action
+  // asks for the sid of the calling device.
+  getSessionId: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    user: { findUnique: db.userFindUnique, update: db.userUpdate },
+    user: { findUnique: db.userFindUnique, update: db.userUpdate, updateMany: db.userUpdateMany },
     workspaceMember: { findFirst: db.workspaceMemberFindFirst },
     workspace: { findFirst: db.workspaceFindFirst },
   },
@@ -61,6 +69,9 @@ const SEED = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
 const STORED_HASH = hashSync("hunter2!", 4);
 
 const USER = { id: "user-1", name: "Ada", email: "ada@example.test" };
+
+/** The tmp store the session registry writes to (see the beforeEach below). */
+let dir: string;
 
 function loginForm(email: string, password: string, code?: string): FormData {
   const form = new FormData();
@@ -93,14 +104,24 @@ beforeEach(async () => {
   };
   rateLimit.resetAuthLimits?.();
   process.env.AUTH_SECRET = "b05-two-factor-test-secret-0123456789";
+  // B39: disabling 2FA revokes the other sessions of the account, so the
+  // action writes to the session registry — point it at a tmp file, never at
+  // the app's `.data/sessions.json`.
+  dir = mkdtempSync(join(tmpdir(), "b05-two-factor-"));
+  process.env.SESSION_STORE_PATH = join(dir, "sessions.json");
   auth.requireUser.mockResolvedValue(USER);
   auth.verifyPassword.mockResolvedValue(true);
+  auth.getSessionId.mockResolvedValue(null);
   db.userUpdate.mockResolvedValue({ id: USER.id });
+  // B25: the two-factor step a code spends is free in every test.
+  db.userUpdateMany.mockResolvedValue({ count: 1 });
   db.workspaceMemberFindFirst.mockResolvedValue(null);
   db.workspaceFindFirst.mockResolvedValue(null);
 });
 
 afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+  delete process.env.SESSION_STORE_PATH;
   vi.restoreAllMocks();
 });
 

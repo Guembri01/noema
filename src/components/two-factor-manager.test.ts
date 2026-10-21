@@ -5,9 +5,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 /**
  * Two-factor manager — node tests.
  *
- * Two halves: the pure mappings (the setup step machine, code completeness and
- * the recovery-code derivation) and a `renderToStaticMarkup` pass over each
- * step of the flow plus the pieces it is built from. No DOM.
+ * Two halves: the pure mappings (the setup step machine and code
+ * completeness) and a `renderToStaticMarkup` pass over each step of the flow
+ * plus the pieces it is built from. No DOM.
+ *
+ * The flow issues **no recovery codes**: the server checks a TOTP code and
+ * nothing else, so the dialog says so instead of offering a list of codes it
+ * could not accept.
  */
 
 vi.mock("@/server/actions/two-factor", () => ({
@@ -27,16 +31,15 @@ vi.mock("sonner", () => ({
 
 import {
   CopyButton,
-  RECOVERY_CODE_COUNT,
-  RecoveryCodesCard,
+  NoRecoveryCodesNotice,
   SecretBlock,
   StepIndicator,
   TWO_FACTOR_CODE_LENGTH,
+  TWO_FACTOR_SETUP_LABELS,
   TWO_FACTOR_STEPS,
   TwoFactorSetup,
   isCodeComplete,
   nextSetupStep,
-  recoveryCodes,
   sanitizeCode,
   setupStepIndex,
   stepVisualState,
@@ -127,27 +130,6 @@ describe("code completeness", () => {
     expect(isCodeComplete("12345a")).toBe(false);
     expect(isCodeComplete("")).toBe(false);
     expect(TWO_FACTOR_CODE_LENGTH).toBe(6);
-  });
-});
-
-describe("recovery codes", () => {
-  it("derives the requested number of well-formed codes", () => {
-    const codes = recoveryCodes(SECRET);
-    expect(codes).toHaveLength(RECOVERY_CODE_COUNT);
-    for (const code of codes) {
-      expect(code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
-    }
-  });
-
-  it("is deterministic for a given secret and unique within a batch", () => {
-    expect(recoveryCodes(SECRET)).toEqual(recoveryCodes(SECRET));
-    expect(new Set(recoveryCodes(SECRET)).size).toBe(RECOVERY_CODE_COUNT);
-    expect(recoveryCodes(SECRET, 3)).toHaveLength(3);
-  });
-
-  it("never uses an ambiguous character", () => {
-    const codes = recoveryCodes(SECRET).join("");
-    expect(codes).not.toMatch(/[01OIL]/);
   });
 });
 
@@ -280,38 +262,32 @@ describe("renderToStaticMarkup — each step of the flow", () => {
     expect(html).toContain('aria-current="step"');
   });
 
-  it("done: shows the recovery codes card", () => {
-    const codes = ["AAAA-BBBB", "CCCC-DDDD", "EEEE-FFFF"];
-    const html = render(
-      setupProps({ step: "done", recoveryCodeList: codes }),
-    );
+  it("done: states that no recovery codes are issued", () => {
+    const html = render(setupProps({ step: "done" }));
     expect(html).toContain('data-testid="two-factor-done"');
-    expect(html).toContain('data-testid="recovery-codes"');
-    for (const code of codes) expect(html).toContain(code);
-    // Copy buttons carry the checkmark contract.
-    expect((html.match(/aria-label="Copy"/g) ?? []).length).toBe(codes.length);
+    expect(html).toContain("No recovery codes are issued");
+    // The dialog must not offer a code list the server would refuse:
+    // `verifyTotp` accepts digits only, so there is nothing to save.
+    expect(html).not.toContain('data-testid="recovery-codes"');
+    expect(html).not.toContain("Save these somewhere safe");
   });
 });
 
-describe("RecoveryCodesCard", () => {
-  it("renders every code with its own copy button", () => {
+describe("NoRecoveryCodesNotice", () => {
+  it("names the operator reset instead of a list of codes", () => {
     const html = renderToStaticMarkup(
-      h(RecoveryCodesCard, {
-        codes: ["AAAA-BBBB", "CCCC-DDDD"],
-        copied: "CCCC-DDDD",
-        onCopy: () => {},
-        title: "Recovery codes",
-        hint: "Save these.",
-        copyLabel: "Copy",
-        copiedLabel: "Copied",
-        downloadLabel: "Download",
-        onDownload: () => {},
+      h(NoRecoveryCodesNotice, {
+        title: TWO_FACTOR_SETUP_LABELS.noRecoveryTitle,
+        body: TWO_FACTOR_SETUP_LABELS.noRecoveryBody,
       }),
     );
-    expect(html).toContain("AAAA-BBBB");
-    expect(html).toContain("CCCC-DDDD");
-    // Exactly one code is in the copied state.
-    expect((html.match(/data-copied="true"/g) ?? []).length).toBe(1);
-    expect(html).toContain("Download");
+    expect(html).toContain('data-testid="no-recovery-codes"');
+    expect(html).toContain(TWO_FACTOR_SETUP_LABELS.noRecoveryTitle);
+    expect(html).toContain("No recovery codes are issued");
+    expect(html).toContain("until an operator resets the account");
+    // Nothing to copy, nothing to download, no promise of a later use.
+    expect(html).not.toContain('data-testid="recovery-codes"');
+    expect(html).not.toContain("Download");
+    expect(html).not.toContain("each can be used once");
   });
 });

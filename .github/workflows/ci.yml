@@ -81,6 +81,12 @@ jobs:
       # it, so the shapes it has to report stay reported.
       - name: Target blank links
         run: node scripts/check-target-blank-links.mjs && node scripts/check-target-blank-links.test.mjs
+      # The CSP check has to run in this workflow, in a step that cannot be
+      # skipped. A pure source scan — no build, no database, no browser — so
+      # it runs with the parent-scope gate above: a violation then fails the
+      # job in a second instead of after the whole test suite.
+      - name: CSP gate
+        run: node scripts/check-csp-gate.mjs
 
       # = tsc --noEmit && eslint --quiet . && vitest run --changed --passWithNoTests
       # Note: in CI the checkout is clean, so `vitest --changed` sees no diff and
@@ -91,6 +97,14 @@ jobs:
 
       - name: Coherence gate
         run: node scripts/check-coherence.mjs
+
+      # An exported access helper that no production path calls is a second,
+      # competing access rule: it drifts from the real one and misleads every
+      # reader who trusts the name (B41 — the access-inheritance engine was
+      # such a helper). The gate is a pure source scan — no build, no database.
+      # Its own regression test runs with it.
+      - name: Access rule
+        run: node scripts/check-access-rule.mjs && node scripts/check-access-rule.test.mjs
 
       # The repository is published as-is, so a committed credential is public the
       # moment it lands. Value-shaped patterns — see the script for the reasoning.
@@ -104,6 +118,14 @@ jobs:
       # runs with it, so the shapes that once slipped through stay reported.
       - name: Image pins
         run: node scripts/check-image-pins.mjs && node scripts/check-image-pins.test.mjs
+      # The compose stack must not publish its database on every interface of
+      # the machine, and it must not carry a fixed database password: the
+      # password comes from `.env`, and Compose refuses to start without it.
+      # The gate reads the compose file and the `.env` template; its own
+      # regression test runs with it, so the shapes the gate closes stay
+      # closed.
+      - name: Compose exposure
+        run: node scripts/check-compose-exposure.mjs && node scripts/check-compose-exposure.test.mjs
 
       # Every commit — author *and* committer date — must land inside a Noema
       # authoring window (Wed–Sat evenings, Europe/Paris). See
@@ -143,6 +165,14 @@ jobs:
       # or not `false`; its own regression test runs with it.
       - name: Framework disclosure
         run: node scripts/check-powered-by.mjs && node scripts/check-powered-by.test.mjs
+      # The HSTS header follows the environment (`HSTS_MAX_AGE`), so the gate
+      # evaluates the real configuration instead of reading a source: the
+      # default must send one year, `HSTS_MAX_AGE=0` must send no header at
+      # all, a declared max-age must send exactly that one, and a value that
+      # cannot be parsed must send none (fail closed). The configuration is
+      # TypeScript, hence `tsx`.
+      - name: HSTS header
+        run: npm run check:hsts
 
       - name: Client bundle
         run: node scripts/check-client-bundle.mjs
@@ -245,3 +275,79 @@ jobs:
           cargo audit \
             --ignore RUSTSEC-2026-0381 \
             --ignore RUSTSEC-2026-0382
+  # The CSP gate (B82): `scripts/check-csp.mjs` asserts against a *running
+  # production server* that every inline script is nonced or hash-pinned. It
+  # ran in no workflow at all, so a CSP regression was only ever noticed by
+  # hand.
+  #
+  # This job gives the check what it needs: a database (it signs in with the
+  # seeded demo user), a production build, a running server and a browser.
+  #
+  # It is a separate job on purpose — the `check` job above stays the fast
+  # required status check, and a build plus a browser do not belong in it.
+  #
+  # Nothing in it may be skipped: no `continue-on-error`, no `|| true`, no
+  # `if:` on the step or on the job. `scripts/check-csp-gate.mjs` checks that
+  # mechanically, so the gate cannot rot into a green no-op.
+  csp:
+    name: CSP gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine3.24@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_USER: noema
+          POSTGRES_PASSWORD: noema
+          POSTGRES_DB: noema
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U noema" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://noema:noema@127.0.0.1:5432/noema?schema=public
+      AUTH_SECRET: ci-only-secret-not-used-in-production-000000
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The token must not outlive the checkout: the next step installs
+          # dependencies and runs the repository's own code, and `.git/config`
+          # is a file that code can read.
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # The schema and the demo user the check signs in with: `db:seed` creates
+      # `demo@noema.local` / `password123` and the `demo-workspace` the check
+      # loads after the login.
+      - run: npx prisma db push --skip-generate
+      - run: npm run db:seed
+      # The browser the check drives: the bundled Playwright Chromium, not the
+      # Edge the local run uses — a CI runner has no Edge.
+      - run: npx playwright install --with-deps chromium
+      # A production build: `next dev` serves a deliberately laxer policy, so a
+      # script the production CSP blocks is invisible in dev.
+      - run: npm run build
+      - name: Start the production server
+        run: |
+          nohup npm run start -- --port 3210 > /tmp/noema-csp-server.log 2>&1 &
+      - name: Wait for the server
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3210/api/health > /dev/null; then
+              echo "ready after ${attempt} attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::the app never became ready"
+          cat /tmp/noema-csp-server.log
+          exit 1
+      - name: CSP check
+        run: npm run check:csp -- --base http://127.0.0.1:3210 --browser chromium
+      # The server log — the first thing to look at when the check fails.
+      - name: Server log
+        if: always()
+        run: tail -n 200 /tmp/noema-csp-server.log || true

@@ -95,6 +95,9 @@ model User {
   // B05: a sealed `v1:` envelope (AES-256-GCM), never the raw base32 seed.
   twoFactorSecret  String?
   twoFactorEnabled Boolean @default(false)
+  /// The highest two-factor time step this account has spent (B25). A code is
+  /// valid once: a replayed code is refused.
+  twoFactorCounter Int?
   /// Consecutive failed sign-ins (B03). Reset by a successful sign-in.
   failedLoginCount Int      @default(0)
   /// While set and in the future, the account refuses sign-ins (B03).
@@ -482,6 +485,10 @@ model ApiToken {
   tokenHash  String    @unique
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
+  // B29: the deadline the token dies at. `null` = the token never expires —
+  // nothing in the app mints such a token, the column only stays nullable so
+  // the migration can add it without a default.
+  expiresAt  DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -926,6 +933,10 @@ model Webhook {
   url         String
   events      String[] @default([])
   secret      String?
+  // B18: the action rules of an inbound endpoint. The list belongs to the
+  // endpoint, never to the caller: the inbound route plans the actions of
+  // THIS row, so a request cannot choose what the endpoint does.
+  rules       Json     @default("[]")
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
 

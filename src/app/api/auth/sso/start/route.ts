@@ -6,6 +6,12 @@ import {
   type AuthEnv,
   type AuthStrategy,
 } from "@/lib/auth-strategies";
+import {
+  cookieName,
+  secureCookies,
+  SSO_NONCE_COOKIE,
+  SSO_STATE_COOKIE,
+} from "@/lib/cookie-security";
 
 export const runtime = "nodejs";
 
@@ -77,15 +83,21 @@ export async function GET(request: Request) {
   });
 
   const response = NextResponse.redirect(redirectUrl);
-  response.cookies.set("sso_state", state, {
+  // B31: the hand-off cookies are credentials — the state binds the callback
+  // to this sign-in, the nonce binds the id_token to it. They therefore carry
+  // `Secure` in production (and the `__Host-` prefix that goes with it), so
+  // they travel neither in cleartext nor out of a sibling subdomain's reach.
+  response.cookies.set(cookieName(SSO_STATE_COOKIE), state, {
     httpOnly: true,
     sameSite: "lax",
+    secure: secureCookies(),
     path: "/",
     maxAge: 600,
   });
-  response.cookies.set("sso_nonce", nonce, {
+  response.cookies.set(cookieName(SSO_NONCE_COOKIE), nonce, {
     httpOnly: true,
     sameSite: "lax",
+    secure: secureCookies(),
     path: "/",
     maxAge: 600,
   });

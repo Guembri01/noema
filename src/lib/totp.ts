@@ -71,7 +71,38 @@ export function totp(
   return hotp(base32Decode(secretBase32), counter, digits);
 }
 
-/** Verify a code within ±window steps, using a constant-time comparison. */
+/**
+ * The time step a code belongs to, or `null` when the code does not match.
+ *
+ * B25: "the code is valid" is not enough for a caller that has to stop a
+ * replay — it has to know WHICH step was accepted, because that step is the
+ * state the next use is compared against. Same window, same constant-time
+ * comparison as {@link verifyTotp}; only the answer differs.
+ */
+export function verifyTotpCounter(
+  secretBase32: string,
+  code: string,
+  timeMs: number = Date.now(),
+  window = 1,
+  stepSeconds = 30,
+): number | null {
+  const candidate = code.replace(/\s+/g, "");
+  if (!/^\d{6,8}$/.test(candidate)) return null;
+  const counter = Math.floor(timeMs / 1000 / stepSeconds);
+  for (let offset = -window; offset <= window; offset += 1) {
+    const expected = hotp(base32Decode(secretBase32), counter + offset, candidate.length);
+    const a = Buffer.from(expected);
+    const b = Buffer.from(candidate);
+    if (a.length === b.length && timingSafeEqual(a, b)) return counter + offset;
+  }
+  return null;
+}
+
+/**
+ * Verify a code within ±window steps, using a constant-time comparison.
+ *
+ * The boolean answer; {@link verifyTotpCounter} returns the accepted step.
+ */
 export function verifyTotp(
   secretBase32: string,
   code: string,
@@ -79,16 +110,7 @@ export function verifyTotp(
   window = 1,
   stepSeconds = 30,
 ): boolean {
-  const candidate = code.replace(/\s+/g, "");
-  if (!/^\d{6,8}$/.test(candidate)) return false;
-  const counter = Math.floor(timeMs / 1000 / stepSeconds);
-  for (let offset = -window; offset <= window; offset += 1) {
-    const expected = hotp(base32Decode(secretBase32), counter + offset, candidate.length);
-    const a = Buffer.from(expected);
-    const b = Buffer.from(candidate);
-    if (a.length === b.length && timingSafeEqual(a, b)) return true;
-  }
-  return false;
+  return verifyTotpCounter(secretBase32, code, timeMs, window, stepSeconds) !== null;
 }
 
 /** otpauth:// URI for authenticator apps (rendered as text/QR by the client). */

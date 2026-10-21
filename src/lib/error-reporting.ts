@@ -17,10 +17,12 @@
  *   blank message falls back to the resolved name, and both message and stack
  *   are truncated so one runaway error cannot blow up a payload.
  * - `redactSecrets` scrubs credentials before anything leaves the process. It
- *   is key-based (a deliberately over-broad substring match, plus caller
+ *   is key-based (the repository's shared secret-key list,
+ *   `src/lib/redaction.ts`, matched by substring on purpose — plus caller
  *   `redactKeys`) AND value-based (Bearer/Basic/JWT/`sk-`/`ghp_`/`xox`/`AKIA`
- *   shapes and credential query params), cycle-safe and depth-capped, and never
- *   mutates its input.
+ *   shapes and credential query params — the shared list in
+ *   `value-scrubbing.ts`), cycle-safe and depth-capped, and never mutates its
+ *   input.
  * - `dedupeKey` groups repeats: it ignores stack traces and collapses volatile
  *   ids (UUIDs, long hex runs, 3+ digit runs) so the same bug maps to one key.
  * - `sampleRate` is a pure comparison, clamped to `[0, 1]`; the draw is passed
@@ -33,11 +35,14 @@
  * module is the additive, unit-pinned core.
  */
 
+import { isSecretKey } from "./redaction";
+import { REDACTED, scrubSecretValues } from "./value-scrubbing";
+
 /** Shape `parseDatabaseJson`-style version tag, stamped on every report. */
 export const REPORT_SCHEMA_VERSION = 1;
 
 /** Marker that replaces a value whose key is secret-shaped. */
-export const REDACTED = "[redacted]";
+export { REDACTED };
 
 /** Marker for a back-reference that would otherwise recurse forever. */
 export const CIRCULAR = "[circular]";
@@ -91,41 +96,6 @@ export interface ErrorReport {
   readonly context: unknown;
 }
 
-/**
- * Keys whose value never leaves the process. Matched by substring on purpose:
- * over-redacting a field called `tokenCount` is preferable to leaking a real
- * `token`, and the rule is trivial to reason about. Mirrors the intent of
- * `SECRET_KEY_PATTERN` in `json-export.ts`.
- */
-const SECRET_KEY_PATTERN =
-  /(password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|authorization|cookie|credential|session[_-]?id)/i;
-
-/**
- * Credential-shaped substrings removed from string VALUES. Ordered so that
- * scheme redactions run before the opaque-key rules; each replacement is
- * idempotent (it cannot re-match itself).
- */
-const STRING_SCRUBBERS: readonly { readonly pattern: RegExp; readonly replace: string }[] = [
-  // `Authorization: Bearer <token>` / `Basic <base64>`.
-  { pattern: /(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, replace: `$1${REDACTED}` },
-  { pattern: /(\bBasic\s+)[A-Za-z0-9+/=]{8,}/gi, replace: `$1${REDACTED}` },
-  // A JWT: three base64url segments, the first starting with `eyJ`.
-  {
-    pattern: /\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
-    replace: REDACTED,
-  },
-  // Common vendor key shapes.
-  { pattern: /\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{8,}/gi, replace: REDACTED },
-  { pattern: /\bgh[pousr]_[A-Za-z0-9]{16,}/g, replace: REDACTED },
-  { pattern: /\bgithub_pat_[A-Za-z0-9_]{16,}/g, replace: REDACTED },
-  { pattern: /\bxox[abpor]-[A-Za-z0-9-]{8,}/gi, replace: REDACTED },
-  { pattern: /\bAKIA[0-9A-Z]{16}\b/g, replace: REDACTED },
-  // Credential-bearing query parameters, preserving the parameter name.
-  {
-    pattern: /([?&](?:token|access_token|api_key|apikey|password|secret)=)[^&\s]+/gi,
-    replace: `$1${REDACTED}`,
-  },
-];
 
 /** Volatile fragments collapsed by `dedupeKey` so one bug is one group. */
 const UUID_PATTERN =
@@ -212,17 +182,8 @@ export function normalizeError(value: unknown): NormalizedError {
   };
 }
 
-function isSecretKey(key: string, extra: ReadonlySet<string>): boolean {
-  return SECRET_KEY_PATTERN.test(key) || extra.has(key.toLowerCase());
-}
-
-/** Remove credential-shaped substrings from a bare string value. */
-function scrubString(value: string): string {
-  let out = value;
-  for (const { pattern, replace } of STRING_SCRUBBERS) {
-    out = out.replace(pattern, replace);
-  }
-  return out;
+function isRedactedKey(key: string, extra: ReadonlySet<string>): boolean {
+  return isSecretKey(key) || extra.has(key.toLowerCase());
 }
 
 interface WalkContext {
@@ -232,7 +193,7 @@ interface WalkContext {
 }
 
 function walk(value: unknown, depth: number, context: WalkContext): unknown {
-  if (typeof value === "string") return scrubString(value);
+  if (typeof value === "string") return scrubSecretValues(value);
   if (value === null || typeof value !== "object") return value;
   if (context.seen.has(value)) return CIRCULAR;
   if (depth > context.maxDepth) return TRUNCATED;
@@ -244,7 +205,7 @@ function walk(value: unknown, depth: number, context: WalkContext): unknown {
   } else {
     const out: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
-      out[key] = isSecretKey(key, context.redactKeys)
+      out[key] = isRedactedKey(key, context.redactKeys)
         ? REDACTED
         : walk(entry, depth + 1, context);
     }

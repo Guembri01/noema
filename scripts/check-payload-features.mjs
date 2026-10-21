@@ -31,7 +31,6 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CONTAINER = "noema-db";
 const USER = "noema";
 const DATABASE = "noema_verify";
-const DATABASE_URL = `postgresql://${USER}:${USER}@localhost:5433/${DATABASE}?schema=public`;
 const BASE = "http://127.0.0.1:3300";
 const REUSE = process.argv.includes("--reuse");
 
@@ -83,9 +82,37 @@ const psql = (database, sql) =>
 function prismaCli(args, env = {}) {
   return spawnSync(process.execPath, [join("node_modules", "prisma", "build", "index.js"), ...args], {
     cwd: root,
-    env: { ...process.env, DATABASE_URL, ...env },
+    env: { ...process.env, DATABASE_URL: databaseUrl(), ...env },
     encoding: "utf8",
   });
+}
+
+/**
+ * The value of a variable in the `.env` file, unquoted.
+ */
+function envValue(name) {
+  const envFile = join(root, ".env");
+  if (!existsSync(envFile)) return "";
+  return ((readFileSync(envFile, "utf8").match(new RegExp(`^${name}=(.*)$`, "m")) || [])[1] || "")
+    .trim()
+    .replace(/^"|"$/g, "");
+}
+
+/**
+ * The URL of the verification database.
+ *
+ * B09: the compose stack no longer starts its database with a fixed password
+ * — the `db` service reads POSTGRES_PASSWORD from `.env` — so the check has
+ * to read it from the same file the operator wrote. Without it the container
+ * would be started with a password that cannot authenticate.
+ */
+function databaseUrl() {
+  const password = envValue("POSTGRES_PASSWORD");
+  if (!password) {
+    console.error("POSTGRES_PASSWORD is missing from .env — the compose stack needs it to start its database.");
+    process.exit(1);
+  }
+  return `postgresql://${USER}:${encodeURIComponent(password)}@localhost:5433/${DATABASE}?schema=public`;
 }
 
 function authSecret() {
@@ -153,7 +180,7 @@ async function main() {
       NODE_ENV: "production",
       NOEMA_RUNTIME: "desktop",
       NOEMA_DATA_DIR: dataDir,
-      DATABASE_URL,
+      DATABASE_URL: databaseUrl(),
       AUTH_SECRET: secret,
       NEXT_TELEMETRY_DISABLED: "1",
     },
@@ -202,8 +229,8 @@ async function main() {
       env: {
         ...process.env,
         ...CHECK_ENV,
-        DATABASE_URL,
-        NOEMA_DATABASE_URL: DATABASE_URL,
+        DATABASE_URL: databaseUrl(),
+        NOEMA_DATABASE_URL: databaseUrl(),
         AUTH_SECRET: secret,
         CRON_SECRET: process.env.CRON_SECRET ?? "verify",
       },

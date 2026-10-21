@@ -4,7 +4,10 @@
 // `read:pages`, `POST /api/v1/pages` needs `write:pages`
 // (`src/lib/api-token-scope.ts` — the catalogue the app knows). The script
 // proves both halves of that contract: a token *with* the grant is served,
-// a token *without* a grant is refused with `403 insufficient_scope`.
+// a token *without* a grant is refused with `403 insufficient_scope`. It also
+// proves the deadline of a token (B29): a token whose `expiresAt` lies in the
+// past is refused with `401` — like an unknown token, and without touching its
+// `lastUsedAt`.
 //
 // Usage: node --env-file=.env scripts/check-api.mjs [baseUrl]
 import { PrismaClient } from "@prisma/client";
@@ -115,6 +118,23 @@ check(
   refusedReadBody.required === "read:pages",
 );
 
+/* ---- an expired token is refused like an unknown one ---- */
+const expired = `noema_${randomBytes(16).toString("hex")}`;
+await prisma.apiToken.create({
+  data: {
+    userId: user.id,
+    name: "check-token-expired",
+    tokenHash: createHash("sha256").update(expired).digest("hex"),
+    scopes: ["read:pages", "write:pages"],
+    // The deadline is in the past: the token is authentic, but it is dead.
+    expiresAt: new Date(Date.now() - 1000),
+  },
+});
+const expiredAuth = { authorization: `Bearer ${expired}` };
+
+const expiredCall = await fetch(`${base}/api/v1/workspaces`, { headers: expiredAuth });
+check(`api expired token → ${expiredCall.status} (expect 401)`, expiredCall.status === 401);
+
 /* ---- public share link ---- */
 const token = randomBytes(12).toString("hex");
 await prisma.shareLink.create({
@@ -140,6 +160,7 @@ check(
 /* ---- cleanup ---- */
 await prisma.apiToken.deleteMany({ where: { name: "check-token" } });
 await prisma.apiToken.deleteMany({ where: { name: "check-token-without-scope" } });
+await prisma.apiToken.deleteMany({ where: { name: "check-token-expired" } });
 await prisma.shareLink.deleteMany({ where: { token } });
 if (created.status === 201) {
   const body = await created.json();

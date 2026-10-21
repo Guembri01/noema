@@ -8,10 +8,19 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: noema
-      POSTGRES_PASSWORD: noema
+      # The password is never written down here. It comes from `.env`
+      # (POSTGRES_PASSWORD), and the `:?` form makes Compose REFUSE to start
+      # when it is missing — so a database with a publicly known password can
+      # never come up, not even by accident.
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - copy .env.example to .env and set it}"
       POSTGRES_DB: noema
     ports:
-      - "5433:5432"
+      # Bound to the loopback interface on purpose. A published port without a
+      # host part binds EVERY interface of the machine, so anyone who can
+      # reach the host can talk to the database - and the database holds every
+      # workspace's content, password hashes and token hashes. Keep it on
+      # 127.0.0.1 (see SECURITY.md).
+      - "127.0.0.1:5433:5432"
     volumes:
       - noema-db-data:/var/lib/postgresql/data
     healthcheck:
@@ -44,6 +53,11 @@ services:
         # Edge middleware reads this at build time. Set it in .env to the
         # number of trusted reverse proxies (1 for a single nginx/Caddy).
         TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-}
+        # The HSTS header is sent by default (one year) and the header list is
+        # written into the build. Set HSTS_MAX_AGE to the max-age in seconds
+        # (31536000 = one year) or to 0 to send no HSTS header at all.
+        HSTS_MAX_AGE: ${HSTS_MAX_AGE:-}
+        HSTS_INCLUDE_SUBDOMAINS: ${HSTS_INCLUDE_SUBDOMAINS:-}
     container_name: noema-app
     restart: unless-stopped
     # The image already handles SIGTERM; init reaps any child the Prisma CLI
@@ -53,8 +67,10 @@ services:
     env_file: .env
     environment:
       # In-network DB host: the .env DATABASE_URL points at localhost:5433 on
-      # the host, which is unreachable from inside the container.
-      DATABASE_URL: postgresql://noema:noema@db:5432/noema?schema=public
+      # the host, which is unreachable from inside the container. The password
+      # is the one from .env — the same value the db service got, so the two
+      # can never drift apart.
+      DATABASE_URL: "postgresql://noema:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - copy .env.example to .env and set it}@db:5432/noema?schema=public"
       PORT: "3000"
       HOSTNAME: "0.0.0.0"
       # Public origin(s) the browser uses. The boot wrapper recomputes the

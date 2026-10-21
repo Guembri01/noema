@@ -10,7 +10,7 @@
 
 | Process | Command | Port | Notes |
 | --- | --- | --- | --- |
-| Database | `docker compose up -d` | `localhost:5433` → 5432 | container `noema-db`, volume `noema-db-data` |
+| Database | `docker compose up -d` | `127.0.0.1:5433` → 5432 | container `noema-db`, volume `noema-db-data`; needs `POSTGRES_PASSWORD` in `.env` |
 | App (dev) | `npm run dev` | 3000 (dev loop: 3201) | `next dev --turbopack` |
 | App (prod) | `npm run build` then `npm start -- --port 3200` | 3200 (default `npm start`: 3000) | **dev and prod share `.next` — never run both at once** |
 | Collab relay | `npm run collab` | 1234 (`PORT`/`HOST` env) | optional; clients need `NEXT_PUBLIC_COLLAB_URL` |
@@ -89,6 +89,43 @@ client addresses can never reset an exhausted per-user budget.
 > has to be set for the **build** (`npm run build` / `docker compose build`),
 > not only for the start. A value that is only present in the runtime
 > environment is invisible to the middleware.
+
+### 1.2 HTTPS and HSTS (`HSTS_MAX_AGE`)
+
+Without `Strict-Transport-Security` the **first** request of a session can be
+downgraded to plain HTTP, and the session cookie travels with it. So the app
+**sends the header by default** — `Strict-Transport-Security: max-age=31536000`
+(one year) on every response. A deployment that is served over plain HTTP loses
+nothing: a browser MUST ignore an STS header that arrives over plain HTTP
+(RFC 6797 §7.2), so the desktop app on `http://127.0.0.1:<port>` and an
+HTTP-only self-host are unaffected.
+
+| `HSTS_MAX_AGE` | Meaning | Header sent |
+|---|---|---|
+| unset / empty | the default | `Strict-Transport-Security: max-age=31536000` (one year) |
+| `0` | **the way out** for an installation that is deliberately served over plain HTTP | **none** |
+| `31536000` | one year | `Strict-Transport-Security: max-age=31536000` |
+| `1` … `63072000` | the value in seconds; anything above the two-year cap a browser honours is **refused**, not clamped | `Strict-Transport-Security: max-age=<value>` |
+| anything else (`abc`, `-1`, `1.5`, `007`) | refused (fail closed) | **none** — no header, never a broken policy |
+
+`HSTS_INCLUDE_SUBDOMAINS=1` adds `; includeSubDomains`. It is off by default:
+the directive binds **every** subdomain of the host to HTTPS, which breaks a
+sibling that is still HTTP-only.
+
+```bash
+# an installation that is deliberately served over plain HTTP:
+HSTS_MAX_AGE=0
+```
+
+> **Build time:** the header list is written into the build — Next reads
+> `headers()` from `routes-manifest.json`
+> (`next/dist/server/lib/router-utils/filesystem.js`), so `HSTS_MAX_AGE` has to
+> be present for the **build** (`npm run build`, `docker build`), not only for
+> the start. The container image takes it as a build arg (see
+> [DOCKER.md § HTTPS and HSTS](./DOCKER.md#https-and-hsts)). `npm run
+> check:hsts` checks the wiring — it evaluates the real configuration and
+> fails when the default sends no header, when `HSTS_MAX_AGE=0` still sends
+> one, or when a refused value sends one.
 
 ## 2. Backup drill
 
@@ -476,9 +513,15 @@ docker compose --profile app down           # stops app+db, KEEPS the noema-db-d
 docker compose down -v                      # ⚠ DESTRUCTIVE: deletes the noema-db-data volume
 ```
 
+**An existing volume keeps its old password.** The Postgres image honours
+`POSTGRES_PASSWORD` only when it initialises the volume, so a development
+volume that was created before the password became mandatory no longer
+matches the `.env`. Either set the old password in `.env` for that volume,
+or start with a fresh one: `docker compose down -v && docker compose up -d`.
+
 Facts from the compose file:
 
-- **`db`**: `postgres:16-alpine`, `noema-db`, `5433:5432`, restart
+- **`db`**: `postgres:16-alpine`, `noema-db`, `127.0.0.1:5433:5432` (the loopback only — a published port without a host part binds every interface), the password from `POSTGRES_PASSWORD` in `.env` (the stack refuses to start without it), restart
   `unless-stopped`, healthcheck `pg_isready -U noema -d noema` every 5 s.
 - **`app`** (`profiles: ["app"]`): builds `noema-app:local` from the repo
   `Dockerfile`, `env_file: .env` (secrets at run time, never baked into the
@@ -542,10 +585,12 @@ docker compose ps            # docker health column (app healthcheck = /api/heal
 | `npm install` | `postinstall` runs `prisma generate` — the client is regenerated on install |
 
 **The honest note (documented gap, `docs/specs/engineering-hardening.md` §2.5):**
-the repo has **four** migrations (`20260113000000_init` →
+the repo has **seven** migrations (`20260113000000_init` →
 `20260114000000_complete_schema` → `20260114000001_search_index` →
-`20261019000000_oauth_secret_hashes`), and on a **fresh** database that chain
-reproduces today's schema exactly — `npx prisma migrate diff --from-url … --to-schema-datamodel prisma/schema.prisma`
+`20260115000000_auth_lockout` → `20261019000000_oauth_secret_hashes` →
+`20261019000000_user_email_verified` → `20261021000000_api_token_expiry`), and on
+a **fresh** database that chain reproduces today's schema exactly —
+`npx prisma migrate diff --from-url … --to-schema-datamodel prisma/schema.prisma`
 reports no difference. But the live schema has been evolved with
 **`prisma db push`** in the dev loop, and such a database carries no
 migration history: `npx prisma migrate deploy` refuses it with `P3005` until
@@ -1025,6 +1070,44 @@ accepted *in addition to* `CRON_SECRET` there, and nowhere else.
 - Rotation of `CRON_SECRET` changes the rate-limit key of the action surface
   (it is hashed into the key) — the new secret starts with a fresh budget.
 
+### 8.7 API tokens die on their own — the expiry migration (B29)
+
+`prisma/migrations/20261021000000_api_token_expiry/` adds the column
+`ApiToken.expiresAt` and gives every existing row a deadline:
+
+```sql
+ALTER TABLE "ApiToken" ADD COLUMN "expiresAt" TIMESTAMP(3);
+UPDATE "ApiToken" SET "expiresAt" = "createdAt" + INTERVAL '90 days';
+```
+
+The deadline is read in the same query that verifies the token
+(`authenticateApiRequest`, `src/lib/api-auth.ts`), so a token past its
+deadline is refused with `401 {"error":"Unauthorized"}` — exactly like an
+unknown token, and without touching its `lastUsedAt`. A token the app mints
+gets the default lifetime of 90 days (`API_TOKEN_LIFETIME_MS`); the OAuth flow
+mints its access tokens with the same deadline (`expires_in` in the token
+response).
+
+**What the backfill means for the tokens that already exist.** Their deadline
+is counted from their creation, so a token that is older than 90 days stops
+working at once. That is the point of the change — a credential that leaked
+months ago must not outlive its deadline — but it is a visible break for a
+deployment whose integrations are older than that: the client gets `401` and
+has to mint a new token in **Workspace settings → API tokens**.
+
+**The order is one-directional:** the old build keeps working on the migrated
+database (an added column is invisible to it), but the new build needs the
+column to exist — its resolver reads it, and a missing column is a query
+error, not a fallback. So apply the migration *before* the new build starts
+serving.
+
+**`npm run db:push` does the column but not the backfill.** The column is
+nullable, so the push succeeds (no *"Added the required column"* refusal) —
+but every existing row keeps `expiresAt = NULL`, and a row without a deadline
+never expires. On a push-built database either run the `UPDATE` above by hand
+or deploy the migration (`npx prisma migrate deploy`, after baselining the
+migrations the database never saw — §8.4 has the commands).
+
 ## 9. Incident quick reference
 
 | Symptom | First checks |
@@ -1041,6 +1124,8 @@ accepted *in addition to* `CRON_SECRET` there, and nowhere else.
 | Collaborative editing refuses everything (4401) | `AUTH_SECRET` missing/short in the relay’s env; wrong `NEXT_PUBLIC_COLLAB_URL`; 4403 = page scope/permission, not a secret problem |
 | Backup exits 1 | the script says why: no `BACKUP_ENCRYPTION_KEY` (then **nothing** is written), no `pg_dump`, dump < 1 KiB, or missing core tables — a dump that fails the checks is never kept. `npm run backup -- --dry-run` shows what a run would do |
 | Two-factor codes are rejected after the upgrade | the seed is stored sealed (B05): a `v1:` envelope that does not open means a **different `AUTH_SECRET`** than the one the seed was sealed with, or a tampered row. `npm run backfill:2fa` lists those rows as `UNREADABLE`; the account owner re-enrols, or the operator restores the matching `AUTH_SECRET` |
+| A two-factor code that was already used is refused | a code may be used **once** (B25): the sign-in spends the time step it accepted (`User.twoFactorCounter`), so a second use of the same code — also inside the ±1 step window — opens no second session. The next code of the authenticator app (the next 30 s) works again |
+| A user lost their authenticator and cannot sign in | there are **no recovery codes** — the sign-in checks a six- to eight-digit TOTP code and nothing else, so a lost device locks the account until someone resets it. Reset it deliberately, after a database backup: `UPDATE "User" SET "twoFactorEnabled" = false, "twoFactorSecret" = NULL WHERE email = '…'` — the user then re-enrols under **Settings → Two-factor authentication** |
 | Collaborative socket closed 4400 | the client’s `Origin` is not accepted (checked pre-auth): with `APP_ORIGINS` set it must be on the list (— add the origin), without it only the loopback origin is accepted (— see §5.4) |
 | Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
 | Sign-in answers "Too many attempts" / "This account is temporarily locked" | a budget is spent (30/min per client address, 10/min per account, 5 2FA guesses / 15 min) or the account is locked (5 consecutive failures); wait for the quoted time — an operator can release the lock with `UPDATE "User" SET "failedLoginCount" = 0, "lockedUntil" = NULL WHERE email = '…'` |
@@ -1058,6 +1143,7 @@ nothing was executed against live servers):
 | Section | Command / fact | Source of truth |
 | --- | --- | --- |
 | 1.1 | `TRUSTED_PROXY_HOPS`, the hop arithmetic (last / Nth-from-last), the `X-Real-IP` fallback for a chain shorter than N and the `scope:local` fallback, the rejected hop counts above 16, the `ADMIN_IP_ALLOWLIST` fail-closed gate, the Edge-runtime build-time freeze | `src/lib/tenant-guard.ts` (`parseTrustedProxyHops`, `resolveClientIp`) · `src/lib/rate-limit.ts` (`clientKey`, `userKey`) · `src/lib/api-guard.ts` (`rateLimit`) · `src/middleware.ts` (`ipGate`) · `.env.example` |
+| 1.2 | `HSTS_MAX_AGE` / `HSTS_INCLUDE_SUBDOMAINS`, the default (one year), the way out (`0`), the refused values, the build-time freeze of the header list | `src/lib/security-headers.ts` (`parseHstsMaxAge`, `hstsHeader`) · `next.config.ts` (`headers()`) · `scripts/check-hsts.mjs` · `.env.example` |
 | 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL”, the seal (AES-256-GCM, `BACKUP_ENCRYPTION_KEY`, fail closed) and the 0600/0700 modes | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 37 tests · `backup.test.mjs`, 8 tests) |
 | 2.2 | `npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) · `scripts/backup-restore.mjs` |
 | 3 | `POST /api/cron/templates`, `x-cron-secret`, 503/401, `12/60_000` limit, `{due,created,skipped,failed}`, fail-closed order | `src/app/api/cron/templates/route.ts` |
@@ -1078,9 +1164,11 @@ nothing was executed against live servers):
 | 8.2 | `npm run backfill:2fa`, `--dry-run`, `--confirm-key`, `--help`, idempotence (`v1:`/`v2:` rows skipped), fail-closed (unsealable rows left untouched, exit 1), the key proof (no envelope opens ⇒ nothing is written, exit 1; `--confirm-key` overrides it) | `package.json` · `scripts/backfill-2fa-secrets.mjs` · `scripts/backfill-2fa-secrets-lib.mjs` (+ `scripts/backfill-2fa-secrets-lib.test.mjs`) |
 | 8.5 | scope grant enforced on `/api/v1/*`, no migration for existing tokens, scope check before workspace check | `src/app/api/v1/*/route.ts` · `src/lib/api-token-scope.ts` · `src/server/actions/api-tokens.ts` |
 | 8.6 | ops-gate order (503 → 429 → 401), constant-time comparison, per-route secret/limit table, action-surface budget | `src/lib/ops-guard.ts` · `src/app/api/ready/route.ts` · `src/app/api/cron/*/route.ts` · `src/app/api/metrics/route.ts` · `src/server/actions/automations.ts` |
+| 8.7 | the deadline on the token row (`expiresAt`), the 90-day default lifetime, the refusal of a token past its deadline, the backfill `createdAt + 90 days`, the upgrade order (the migration before the new build) | `src/lib/api-auth.ts` (`API_TOKEN_LIFETIME_MS`, `authenticateApiRequest`) · `src/server/actions/api-tokens.ts` · `prisma/migrations/20261021000000_api_token_expiry/migration.sql` · `prisma/schema.prisma` |
 | 9 | `413 Request body too large.`, the per-route byte budgets, the `Content-Length` fast path vs. the counted body, hard-coded (not configurable) | `src/lib/body-limit.ts` · `docs/api-reference.md` §3 · the route modules (the limit sits next to what it protects) |
 | 9 | the content limits of the importers (10 MB PDF, 4 MB per archive entry, 32 MB unpacked, 5 000 archive entries) | `src/server/actions/import-formats.ts` · `src/server/actions/import.ts` · `src/lib/zip-archive.ts` |
 | 9 | the archive formats the importer refuses and the message each one gets (ZIP64, split, password-protected, unsupported compression method, damaged) | `src/lib/zip-archive.ts` · `src/server/actions/import.ts` (`zipArchiveError` / `zipEntryError`) |
+| 9 | the lost-authenticator lockout: no recovery codes exist (the sign-in checks a six- to eight-digit TOTP code and nothing else), so a lost device blocks the account until the operator reset runs | `src/lib/totp.ts` (`verifyTotp` — `^\d{6,8}$`) · `src/server/actions/auth.ts` (the 2FA gate) · `prisma/schema.prisma` (`User.twoFactorEnabled` / `User.twoFactorSecret` — there is no `RecoveryCode` model) |
 | all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
 
 **Not verified by execution (be explicit when relying on them):** the backup →
@@ -1099,6 +1187,14 @@ nothing** (the pre-flight stopped it), `--dry-run` wrote nothing, a second run
 sealed nothing (idempotent), 304 rows were sealed in one run across the
 batch boundary (250), and an unknown option (`--dryrun`) was refused with exit
 1. The app server was not involved: the script needs the database only.
+
+**Verified by execution (§8.7):** the token-expiry migration was applied with
+`prisma migrate deploy` to an empty database (the app's own embedded engine),
+and the backfill was measured on a row that existed before it:
+`createdAt 2026-01-01` → `expiresAt 2026-04-01` — exactly the 90 days of the
+default lifetime, and already in the past, so a token older than the lifetime
+is dead at once. The drift gate (`npm run check:schema`) reports zero drift
+between the migrations and the schema.
 
 **Observed staleness (not fixed here):** `docs/specs/templates.md` refers to a
 `check:share-cron` npm script that does **not** exist in `package.json` — the

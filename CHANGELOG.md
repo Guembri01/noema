@@ -207,6 +207,135 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   rewrite, never instructions. The framing happens after the token budget is
   applied, so the budget can never cut the closing tag off, and the text
   inside the frame is the same text the budget left.
+- The compose stack no longer publishes its database on every interface of the
+  machine, and it no longer starts it with a password that is written down in
+  the file. The port is bound to the loopback, and the password is read from
+  `.env` with a mandatory interpolation — so Compose refuses to start when the
+  value is missing. `.env.example` ships the password empty, and a gate
+  (`scripts/check-compose-exposure.mjs`) fails when a database is published
+  without a loopback address or carries a fixed password.
+- An uploaded SVG is no longer served as a document of the app's own origin.
+  The upload endpoint accepts `image/svg+xml` and the asset route handed the
+  bytes back with that content type and without a `Content-Disposition`, so a
+  member who opened the asset URL got an active document in the app's origin.
+  An SVG is now delivered as a download (`Content-Disposition: attachment`);
+  the raster images stay inline, they are what the editor renders in an
+  `<img>`. The SVG safety check reads the scheme the way a browser reads it
+  as well: it tested the raw source, so a scheme that hid behind a line break
+  (`java\nscript:`) passed the gate, while a browser strips the control
+  characters out of a URL before it parses the scheme. The blocklist is now
+  tested against the source without its control characters too — the same
+  normalisation `safeHref` applies to a link target.
+- The app now sends `Strict-Transport-Security` (HSTS) — **by default**. Without
+  the header the first request of a session can be downgraded to plain HTTP,
+  and the session cookie travels with it. Every response carries
+  `Strict-Transport-Security: max-age=31536000` (one year): a deployment that
+  is served over HTTPS pins HTTPS, and a deployment that is not loses
+  nothing, because a browser ignores an STS header that arrives over plain
+  HTTP (RFC 6797 §7.2). `HSTS_MAX_AGE` sets the max-age in seconds (up to the
+  two-year cap a browser honours), and **`HSTS_MAX_AGE=0` is the documented way
+  out**: no header at all, for an installation that is deliberately served over
+  plain HTTP. `HSTS_INCLUDE_SUBDOMAINS=1` adds `; includeSubDomains` — off by
+  default, because it binds every subdomain of the host to HTTPS. A value that
+  is not a plain integer, or that is beyond the cap, is refused: no header,
+  never a broken policy. The header list is written into the build, so the
+  variable has to be present for the **build** (`npm run build`,
+  `docker build --build-arg HSTS_MAX_AGE=…`), not only for the start.
+  `npm run check:hsts` checks the wiring — it evaluates the real configuration
+  and fails when the default sends no header, when `HSTS_MAX_AGE=0` still
+  sends one, or when a refused value sends one.
+
+- The invitation e-mail no longer interpolates its values unescaped, and its
+  link origin no longer comes from the request. `emailTemplate` wrote the CTA
+  URL into the `href` attribute and the footer into the text of the mail
+  without escaping them, while the origin of that URL was taken from the
+  `Host`/`X-Forwarded-Host` header of the request that asked for the
+  invitation. A caller that sent such a header therefore decided which host
+  the link in the mail pointed at, and the payload of the header could close
+  the attribute and open a tag of its own — in a mail a third party reads. The
+  template now escapes every value it interpolates (the CTA URL in attribute
+  context, the CTA label and the footer in text context), and the origin comes
+  from the configuration only (`APP_URL`, then `NEXT_PUBLIC_APP_URL`).
+  **This is a breaking change for a deployment that does not set `APP_URL`:**
+  its invitation links now point at the local development origin instead of
+  the request host.
+- A stored property pattern can no longer freeze the editor that applies it.
+  The cell validation compiled the pattern a property carries without a
+  backtracking guard, so a workspace admin could store `(a|aa)+` on a TEXT
+  property and every cell of that column was matched against it — on every
+  render, without a cache. Measured, `(a|aa)+$` against 28 `a`s took 25 to
+  36 ms per cell and `(a+)+$` against 24 `a`s took 334 to 505 ms per cell; a
+  column of a hundred cells paid that on every repaint. The guard the formula
+  engine uses now stands in front of a stored pattern as well: a quantified
+  group whose body holds an alternation (`(a|aa)+`) or an inner quantifier
+  (`(a+)+`) is refused. A refused pattern is not applied at all — like a
+  pattern that does not compile — so the constraint is skipped instead of
+  rejecting every value or freezing the tab.
+- The three secret-redaction lists of the codebase are one list now. The
+  observability logger, the error reporter and the env-secret diagnostics each
+  carried their own set of secret-shaped field names, and the three had
+  drifted: `apiKey`, `privateKey` and `accessKey` were masked by the error
+  reporter but printed by the logger, while `dbUrl` was masked by nobody — one
+  field could therefore be masked on one path and printed on another.
+  `src/lib/redaction.ts` owns the names now; it is the union of the three
+  former lists, so nothing that was masked before is unmasked now. Each
+  consumer keeps what is genuinely its own: the logger and the error reporter
+  over-redact by substring, the diagnostics match whole names (an `author` is
+  not a secret), and only the error reporter scrubs credential-shaped *values*
+  as well. Trace and span ids come from the platform CSPRNG
+  (`src/lib/random.ts`) instead of `Math.random` — they are correlation ids,
+  not credentials, but they were guessable and could collide.
+
+- An API token now dies on its own. The `ApiToken` row had no deadline: a
+  token that leaked — into a CI log, a screenshot, the laptop of a former
+  employee — kept working on `/api/v1/*` until somebody happened to delete it
+  by hand, and nothing in the row said how long the credential was meant to
+  live. The row carries `expiresAt` now. The bearer resolver reads the
+  deadline in the same query that verifies the token and refuses a token past
+  it with the same `401 {"error":"Unauthorized"}` an unknown token gets — the
+  answer does not tell the caller that the token once existed, and the
+  refused token's `lastUsedAt` is not touched. A minted token gets the
+  default lifetime of **90 days** (`API_TOKEN_LIFETIME_MS`), the OAuth flow
+  mints its access tokens with the same deadline (`expires_in` in the token
+  response), and the token list shows the deadline as a badge. The migration
+  (`prisma/migrations/20261021000000_api_token_expiry/`) gives every existing
+  token the same lifetime, counted from its creation — a token that is older
+  than 90 days stops working at once. **This is a breaking change** for a
+  deployment whose API tokens are older than that: the client gets `401` and
+  has to mint a new token in the workspace settings.
+- The theme hand-off no longer builds a redirect target that could leave the
+  origin. The desktop shell hands its stored theme over as a query parameter
+  (`?theme=dark`), and the middleware turned the request path into a redirect
+  (`new URL(path, origin)`) without a same-origin check — the only redirect
+  sink in the tree without one. A path that starts with two separators
+  (`//evil.com`) is protocol-relative: the URL parser reads it as another
+  host, so the redirect would have left the site. Next normalises repeated
+  slashes in the request path before the middleware runs, so the path could
+  not be reached over HTTP — the guarantee rested on a property of the
+  framework instead of on this repository. The hand-off now refuses such a
+  path (a backslash counts as a separator here, too) and keeps serving the
+  request as it is.
+- The data-subject erasure now removes the follow, favorite and notification
+  rows of the subject. The erasure loaded the kinds `user`, `page`, `comment`,
+  `reaction`, `version` and `shareLink` — the three link rows were missing —
+  and the user is pseudonymised rather than deleted, so the account kept
+  following the pages and kept receiving the `page.updated` notifications
+  with the **page title** in the payload. The three kinds are now entities of
+  the existing engine: the export (Art. 15) lists them, a legal hold keeps
+  them, and the plan deletes the whole row.
+- The notification rows of a removed member no longer outlive the membership.
+  The `notification` rows were never deleted anywhere in the tree, and
+  `getNotifications(userId)` filters by `userId` alone while the inbox loads
+  every workspace — so a person who was removed from a workspace (or who left
+  it) kept their notification rows, and the inbox of the workspaces they stayed
+  in went on naming the pages and tickets of the workspace they were removed
+  from: the payload carries the workspace id and, for a ticket assignment, the
+  **title** (`You were assigned “Payroll restructure”`). The unread badge
+  counted the same rows and the digest mail read them without a workspace
+  filter. Removing a member, leaving a workspace and deleting a workspace now
+  delete the notification rows of that workspace with them, so the inbox, the
+  badge and the digest can no longer name a workspace the person has no access
+  to any more.
 - `AUTH_SECRET` is now checked by one rule everywhere it is used: the session
   HMAC, the envelope key for stored provider keys and 2FA seeds, the
   share-unlock cookie, the `/api/ready` diagnosis and the collaboration relay.
@@ -600,6 +729,19 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   environment is the key the app uses: it probes the sealed AI-provider keys
   and the sealed SMTP password for that (the same `AUTH_SECRET` seals them),
   and an operator who has verified the key by hand can pass `--confirm-key`.
+- A two-factor code may now be used only once. The verification was a pure
+  function and the accepted time step was never persisted, so a code that had
+  been observed (a phishing screen, a screenshot, a shoulder surfer) stayed
+  valid for the whole ±1 step window — up to 90 seconds — and every replay of
+  it opened a fresh session. The account now holds the step it spent
+  (`User.twoFactorCounter`, added by the migration
+  `20261021000000_two_factor_counter`); the step is spent by a conditional
+  update (`UPDATE … WHERE twoFactorCounter < step`), so two racing uses of one
+  code cannot both win — the second one matches no row and is refused. The
+  sign-in, the enrolment and the de-enrolment all spend the step they accept.
+  **This changes what a user sees:** signing out and signing back in inside the
+  same 30-second step now needs the next code of the authenticator app, and so
+  does turning two-factor off right after turning it on.
 - A single sign-on no longer links a local account whose e-mail address was
   never verified: an attacker who pre-registers the address of a victim can
   no longer reach that account through the identity provider. Newly registered
@@ -850,11 +992,46 @@ list marks it as **No access**.
   `npm run check:target-blank` (`scripts/check-target-blank-links.mjs`, with
   the regression test CI runs) scans the tree for the links that open a new
   browsing context and fails when one of them does not carry both tokens.
+- The ownership transfer's password step is verified by the server now.
+  `acceptOwnershipTransferAction` took a `passwordOk: boolean` from the client
+  and handed it straight to the transfer engine, which took it for the
+  confirmation — so whoever held the recipient's session could take the
+  workspace over without ever knowing a password. The action now takes the
+  candidate password and compares it with the stored hash of the account that
+  accepts (`verifyPassword` against `User.passwordHash`); only that result
+  reaches the engine, so a client can no longer assert that a password was
+  confirmed. The comparison is the recipient's own — the sender's account is
+  never read — and an account whose stored value is not a bcrypt hash (an SSO
+  account) fails closed.
+- The JSON export of a database now redacts the repository's shared list of
+  secret-shaped field names. The export carried its own list, which was a
+  strict subset of the shared one: thirteen names — `passwd`, `passcode`,
+  `cookie`, `setCookie`, `sessionId`, `dbUrl`, `databaseUrl`,
+  `connectionString`, `dsn`, `auth`, `pass`, `pwd`, `signature` — passed
+  through the export verbatim, while the same names were masked on other
+  paths. The names now come from the shared list (`src/lib/redaction.ts`),
+  matched on the normalised key, so a spelling like `API KEY` is masked as
+  well.
 
 
 
 ### Changed
 
+- The access-inheritance engine is gone. `src/lib/access-inheritance.ts` — and
+  the `db.ts` / `tenant-guard.ts` wrappers around it — resolved a page's
+  effective access (a role baseline, grants inherited along the page tree,
+  link shares), but **no production path ever called it**: not the page route,
+  not a server action, not an API route. Its rule was also stricter than the
+  product's — there a `MEMBER` holds no implicit baseline, while the product
+  grants every member read access to every page — so wiring it in would have
+  denied every member every page. The engine was removed instead, and the rule
+  it claimed to be is now stated where it lives: the workspace role
+  (`src/lib/permissions.ts`), the guest scope (`src/lib/guest-access.ts`) and
+  the page's own `PagePermission` row, which is an **edit lock on that page**,
+  not a read restriction. There is no permission inheritance: a
+  `PagePermission` row never reaches a child page. `scripts/check-access-rule.mjs`
+  fails when an exported access helper has no production caller, so a second,
+  unreachable rule cannot come back unnoticed.
 - The Linux desktop build no longer fails at the AppImage step because the
   payload carried sharp's musl binary on a glibc runner. `desktop:prepare`
   now keeps only the sharp variant for the machine being packaged, so
@@ -932,6 +1109,19 @@ list marks it as **No access**.
   loopback range explicitly with `NOEMA_ALLOW_LOOPBACK_TARGETS=1`, and that
   opt-in covers the loopback range only — RFC1918, link-local, cloud metadata
   and `.internal`/`.local` names stay refused.
+- An outbound webhook is no longer sent unsigned when its signing secret
+  cannot be read. The signing secret of a hook is sealed at rest, so the
+  delivery path has to open it before it can sign the payload. When the
+  envelope did not open — the `AUTH_SECRET` was rotated out from under the
+  row, or the ciphertext is corrupt — the delivery went out WITHOUT the
+  `x-noema-signature` header and was booked as a success on a 2xx: a receiver
+  that only asks whether the header is present accepted a manipulated payload
+  that way, and the operator saw a green delivery log for a request the
+  receiver never accepted. Such a delivery is now refused before it leaves
+  the server and recorded as failed, so the hook has to be re-created with a
+  secret the current key can open. A hook whose secret is stored in cleartext
+  from before the sealing keeps delivering signed requests — that transition
+  window is unchanged — and so does a hook that never had a secret at all.
 
 ## [1.4.1] — 2026-10-17
 

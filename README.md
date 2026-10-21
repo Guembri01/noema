@@ -391,11 +391,11 @@ Requirements: **Node.js 24** (the toolchain is typed against Node 24 —
 `@types/node ^24`), **npm**, **Docker**.
 
 ```bash
-# 1. Database — Postgres 16 in the `noema-db` container, mapped to localhost:5433
-docker compose up -d
+# 1. Environment — required keys: POSTGRES_PASSWORD, DATABASE_URL (already points at :5433), AUTH_SECRET
+cp .env.example .env        # then set POSTGRES_PASSWORD and a real AUTH_SECRET (see .env.example for the generators)
 
-# 2. Environment — required keys: DATABASE_URL (already points at :5433), AUTH_SECRET
-cp .env.example .env        # then set a real AUTH_SECRET (see .env.example for the generator)
+# 2. Database — Postgres 16 in the `noema-db` container, mapped to 127.0.0.1:5433
+docker compose up -d        # refuses to start without POSTGRES_PASSWORD
 
 # 3. Install dependencies (postinstall runs `prisma generate`)
 npm install
@@ -421,6 +421,7 @@ npm run dev                 # http://localhost:3000 (Next.js default port)
 | Notion importer (optional) | `NOTION_API_BASE` | defaults to `https://api.notion.com/v1`; checks point it at a local mock (`http://localhost:4322/v1`) |
 | Misc (optional) | `APP_URL`, `APP_ORIGINS`, `CRON_SECRET`, `NEXT_PUBLIC_COLLAB_URL` | canonical email links, Server-Action origin allow-list, cron guard, realtime collab |
 | Reverse proxy (optional) | `TRUSTED_PROXY_HOPS` | how many reverse-proxy hops may set `X-Forwarded-For` / `X-Real-IP` (1 for a single nginx/Caddy). Unset = the forwarding headers are ignored; see [OPERATIONS §1.1](./docs/OPERATIONS.md#11-reverse-proxy-in-front-of-the-app-trusted_proxy_hops) |
+| HTTPS (optional) | `HSTS_MAX_AGE`, `HSTS_INCLUDE_SUBDOMAINS` | the `Strict-Transport-Security` header is sent by default (`max-age=31536000`, one year). `HSTS_MAX_AGE` sets the max-age in seconds, `0` = no header. The value is read when the app is **built**; see [OPERATIONS §1.2](./docs/OPERATIONS.md#12-https-and-hsts-hsts_max_age) |
 
 **Production:** `npm run build` then `npm start`. Note that dev and prod share
 the same `.next` directory — never run them at the same time.

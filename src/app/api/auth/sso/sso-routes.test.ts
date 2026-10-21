@@ -113,6 +113,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   for (const key of ENV_KEYS) {
     const value = savedEnv.get(key);
     if (value === undefined) delete process.env[key];
@@ -162,6 +163,44 @@ describe("GET /api/auth/sso/start", () => {
     const response = await ssoStart(new Request(START_URL));
     expect(response.status).toBe(404);
   });
+
+  // B31: the state and the nonce are credentials — they bind the callback and
+  // the id_token to this sign-in. They therefore carry `Secure` in production,
+  // and the `__Host-` prefix that goes with it: a browser then binds them to
+  // the exact host that set them, and a sibling subdomain cannot plant a
+  // cookie of that name.
+  it("marks the hand-off cookies secure and host-bound in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+
+    const response = await ssoStart(new Request(START_URL));
+    const cookies = setCookies(response);
+
+    expect(cookies.some((cookie) => cookie.startsWith("__Host-sso_state="))).toBe(
+      true,
+    );
+    expect(cookies.some((cookie) => cookie.startsWith("__Host-sso_nonce="))).toBe(
+      true,
+    );
+    for (const cookie of cookies) {
+      expect(cookie).toContain("Secure");
+      expect(cookie).toContain("Path=/");
+      expect(cookie).not.toContain("Domain=");
+    }
+  });
+
+  it("keeps the plain names and no Secure flag outside production", async () => {
+    // A development server runs on plain HTTP: a `Secure` cookie would never
+    // be sent back, and a `__Host-` cookie without `Secure` is dropped
+    // outright — the sign-in would break locally.
+    vi.stubEnv("NODE_ENV", "development");
+
+    const response = await ssoStart(new Request(START_URL));
+    const cookies = setCookies(response);
+
+    expect(cookies.some((cookie) => cookie.startsWith("sso_state="))).toBe(true);
+    expect(cookies.some((cookie) => cookie.startsWith("sso_nonce="))).toBe(true);
+    for (const cookie of cookies) expect(cookie).not.toContain("Secure");
+  });
 });
 
 describe("GET /api/auth/sso/callback", () => {
@@ -193,6 +232,36 @@ describe("GET /api/auth/sso/callback", () => {
     expect(prismaMock.user.create).not.toHaveBeenCalled();
     expect(jar.has("sso_state")).toBe(false);
     expect(jar.has("sso_nonce")).toBe(false);
+  });
+
+  // B31: the reader has to use the same name as the writer, otherwise the
+  // sign-in would break the moment the cookies carry the `__Host-` prefix.
+  it("accepts the host-bound hand-off cookies in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    jar.set("__Host-sso_state", "state-1");
+    jar.set("__Host-sso_nonce", "nonce-1");
+    joseMock.jwtVerify.mockResolvedValue({
+      payload: {
+        sub: "sso-user-1",
+        email: "sso-user@noema.local",
+        name: "SSO User",
+        nonce: "nonce-1",
+        email_verified: true,
+      },
+    });
+    prismaMock.user.findMany.mockResolvedValue([
+      { id: "user-1", email: "sso-user@noema.local", emailVerified: true },
+    ]);
+
+    const response = await ssoCallback(
+      new Request(`${CALLBACK_URL}?code=code-1&state=state-1`),
+    );
+
+    expect(response.headers.get("location")).toBe("http://localhost:3000/app");
+    expect(authMock.createSession).toHaveBeenCalledWith("user-1");
+    // The hand-off cookies are cleared under the very same name.
+    expect(jar.has("__Host-sso_state")).toBe(false);
+    expect(jar.has("__Host-sso_nonce")).toBe(false);
   });
 
   it("reads the verification flag of the candidate account", async () => {
@@ -352,6 +421,56 @@ describe("GET /api/auth/sso/callback", () => {
       "http://localhost:3000/login?error=sso",
     );
     expect(authMock.createSession).not.toHaveBeenCalled();
+  });
+
+  it("refuses an id_token that carries no nonce claim", async () => {
+    // B26: the `nonce` binds the id_token to this request. A token without the
+    // claim must not be accepted — the check may not fail open.
+    joseMock.jwtVerify.mockResolvedValue({
+      payload: {
+        sub: "sso-user-7",
+        email: "no-nonce@noema.local",
+        name: "No Nonce",
+        email_verified: true,
+      },
+    });
+
+    const response = await ssoCallback(
+      new Request(`${CALLBACK_URL}?code=code-1&state=state-1`),
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?error=sso",
+    );
+    expect(authMock.createSession).not.toHaveBeenCalled();
+    expect(prismaMock.user.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the hand-off nonce cookie is gone", async () => {
+    // Without the remembered nonce there is nothing to bind the id_token to —
+    // the sign-in may not be accepted unbound.
+    jar.delete("sso_nonce");
+    joseMock.jwtVerify.mockResolvedValue({
+      payload: {
+        sub: "sso-user-8",
+        email: "no-cookie@noema.local",
+        name: "No Cookie",
+        nonce: "nonce-1",
+        email_verified: true,
+      },
+    });
+
+    const response = await ssoCallback(
+      new Request(`${CALLBACK_URL}?code=code-1&state=state-1`),
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?error=sso",
+    );
+    expect(authMock.createSession).not.toHaveBeenCalled();
+    expect(prismaMock.user.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.user.create).not.toHaveBeenCalled();
   });
 
   it("fails closed when the identity carries no email", async () => {

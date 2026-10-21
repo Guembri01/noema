@@ -44,6 +44,14 @@ cookie routes and a session cookie is not accepted by `/api/v1/*`).
 - Storage: only the SHA-256 hash (`tokenHash`, unique column) is persisted;
   comparison is timing-safe, and `lastUsedAt` is bumped on every call.
   Missing/malformed header or unknown token → `401 {"error":"Unauthorized"}`.
+- **Every token carries a deadline** (`expiresAt`, read in the same query that
+  verifies the token). A token past its deadline is refused exactly like an
+  unknown one — `401 {"error":"Unauthorized"}`, no hint that it once existed —
+  and its `lastUsedAt` is not touched. A token minted by the app gets the
+  default lifetime of **90 days** (`API_TOKEN_LIFETIME_MS`); a row without a
+  deadline (`expiresAt` is null) never expires, but nothing in the app mints
+  one. The deadline is also in the token list of the settings UI, as a badge
+  (how long it still lives; **Expired** once it is past).
 - The resolver returns the **granted scopes** next to the user id, read from
   the same query that verifies the token. Every `/api/v1/*` route enforces
   them (§6) with `hasScope()` from
@@ -64,13 +72,16 @@ cookie routes and a session cookie is not accepted by `/api/v1/*`).
    the one place where a token row is written): mints `noema_${randomToken(24)}`,
    stores `hashApiToken(token)` with a label (≤60 chars, default `"API token"`)
    **and the granted scopes** (`expandScopes(scopes)` — the picked list plus
-   everything it implies, so `write:pages` also grants `read:pages`), and
-   returns the **plaintext exactly once** (`{ token }`) — it is never
-   retrievable again. The scope picker sends the picked scopes along; a list
-   with an unknown or malformed entry is rejected as a whole
-   (`{ error: "Invalid scopes." }`).
+   everything it implies, so `write:pages` also grants `read:pages`), writes the
+   **deadline** (`expiresAt`, 90 days from now) and returns the **plaintext
+   exactly once** (`{ token }`) — it is never retrievable again. The scope
+   picker sends the picked scopes along; a list with an unknown or malformed
+   entry is rejected as a whole (`{ error: "Invalid scopes." }`).
 3. "Revoke" calls `revokeApiTokenAction(id)` → deletes the row scoped to the
-   current user (`{ ok: true }` or `{ error: "Token not found." }`).
+   current user (`{ ok: true }` or `{ error: "Token not found." }`). A deleted
+   row cannot authenticate, so the token is dead at once; the revoke leaves no
+   audit trail of its own — the deadline is what bounds a token that is
+   *not* revoked.
 
 A token created without a single picked scope carries an **empty grant**: it is
 refused with `403 insufficient_scope` by every `/api/v1/*` route and has to be
@@ -78,9 +89,9 @@ re-created with the scopes it needs. The token list marks such a row as
 **No access**.
 
 Tokens are also minted by the OAuth flow (§10) — same `ApiToken` table, named
-`OAuth: <app name>`. The OAuth **client secret** follows the same rule as the
-token itself: only its SHA-256 digest is persisted (`clientSecretHash`), the
-plaintext is shown once at registration (§10).
+`OAuth: <app name>`, with the same 90-day deadline. The OAuth **client secret**
+follows the same rule as the token itself: only its SHA-256 digest is persisted
+(`clientSecretHash`), the plaintext is shown once at registration (§10).
 
 ### 1.3 Cron secret (`/api/cron/templates`)
 
@@ -135,7 +146,9 @@ Begins the OIDC login. Requires `SSO_ISSUER` + `SSO_CLIENT_ID`
 
 Query: `?code=…&state=…`. Verifies `state` against the cookie, exchanges the
 code at the provider's `token_endpoint` (client-secret post), verifies the
-`id_token` via JWKS (`issuer` + `audience`), checks `nonce`, then:
+`id_token` via JWKS (`issuer` + `audience`), checks `nonce` (a token without the
+claim, or with a claim that differs from the `sso_nonce` cookie, is refused),
+then:
 
 - looks the user up by lowercased email, reading `emailVerified` — an account
   may only be linked when it proved its own address (SSO-created users get
@@ -148,7 +161,7 @@ code at the provider's `token_endpoint` (client-secret post), verifies the
 | Case | Response |
 |---|---|
 | Env not configured | `404 {"error":"SSO is not configured."}` |
-| Missing/mismatched `state`/`code`, discovery failure, token exchange failure, bad id_token, nonce mismatch, no email in token | `307` → `/login?error=sso` (redirect, no JSON body) |
+| Missing/mismatched `state`/`code`, discovery failure, token exchange failure, bad id_token, missing/mismatched `nonce`, no email in token | `307` → `/login?error=sso` (redirect, no JSON body) |
 | The address belongs to an account that never verified it | `307` → `/login?error=sso_email_taken` (redirect, no JSON body) |
 | OK | `307` → `/app` |
 
@@ -402,6 +415,10 @@ cookie session · **no rate limit**
   (`^[A-Za-z0-9_-]+$` / `^[A-Za-z0-9._-]+$`, no `..`, plus
   `isValidAssetKey`).
 - **200** raw bytes with `content-type` and `cache-control: private, max-age=3600`.
+  An SVG (`image/svg+xml`) is an active document, so it is delivered as a
+  download — `content-disposition: attachment; filename="<name>"` — and never
+  as a document of the app's origin. The raster images stay inline; they are
+  what the editor renders in an `<img>`.
 - Reserved for full members: a `GUEST` is refused with `403` before the
   storage driver is asked, so the refusal carries no bytes, no asset
   `content-type`, no `etag` and no `cache-control`; a missing asset is
@@ -764,6 +781,9 @@ into Noema.
   rules apply as at creation time, opt-in included: with
   `NOEMA_ALLOW_LOOPBACK_TARGETS=1` a loopback target is delivered to, without
   it the delivery is refused before the target is contacted.
+  A delivery whose signing secret cannot be opened — the `AUTH_SECRET` was
+  rotated out from under the row, or the ciphertext is corrupt — is refused as
+  well: it is never sent unsigned, and its row records the failure.
 
 Delivery request your endpoint receives:
 
@@ -795,6 +815,11 @@ The endpoint an *automation* calls back into. The provider is named in the
 query string (`?provider=…`) or in the `x-webhook-provider` header; the raw
 body is read as text because the signature is verified over the exact bytes
 that were sent.
+
+The rule list the endpoint plans its actions from belongs to the endpoint: it
+is read from the `Webhook` row (`rules`), never from the request — a
+`?rules=` query parameter or an `x-noema-rules` header in the request is
+ignored.
 
 - **200** `{"ok":true}` · **400** `endpoint is required` · **401**
   (signature mismatch) · **404** `Unknown endpoint` · **409**
@@ -854,7 +879,8 @@ Form body: `grant_type=authorization_code`, `code`, `client_id`,
 **200**
 ```json
 { "access_token": "noema_<24 chars>", "token_type": "Bearer",
-  "scope": "read:pages write:pages read:databases write:databases …" }
+  "scope": "read:pages write:pages read:databases write:databases …",
+  "expires_in": 7776000 }
 ```
 | Error | Body |
 |---|---|
@@ -878,6 +904,13 @@ by the API. The OAuth flow negotiates no scopes yet (the consent screen offers
 no picker), so the list is fixed: every read and write scope of the catalogue
 ([`src/lib/api-token-scope.ts`](../src/lib/api-token-scope.ts)), without
 `admin:workspace`.
+
+The minted token carries the **same deadline** as a token the settings UI
+mints: `expires_in` (RFC 6749 §5.1) is the lifetime in seconds — 90 days — and
+the row's `expiresAt` is that instant. A token past its deadline is refused
+with `401 {"error":"Unauthorized"}` like an unknown one. There is no refresh
+token in the flow, so a third-party app re-runs the authorization once its
+access token has expired.
 
 **How the exchange is verified.** The client secret is compared against the
 stored digest in constant time — the digest is looked up by `clientId`, the

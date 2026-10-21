@@ -736,3 +736,136 @@ describe("B11 - SSRF guard on the delivery path (operator opt-in)", () => {
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * B21 — a delivery that cannot be signed is never sent.
+ *
+ * The signing secret is sealed at rest (R28.17). When the envelope cannot be
+ * opened — the `AUTH_SECRET` was rotated, or the ciphertext is corrupt —
+ * `decryptWebhookSecret` answers `null`, and `signatureHeaders` then wrote
+ * NO `x-noema-signature` header at all: the payload went out unsigned and was
+ * booked as a success on a 2xx. A receiver that only asks whether the header
+ * is present accepted a manipulated payload that way.
+ *
+ * The delivery is refused instead: nothing is sent, and the delivery row
+ * records the failure.
+ */
+describe("B21 - an unsigned delivery is never sent", () => {
+  const ORIGINAL_AUTH_SECRET = process.env.AUTH_SECRET;
+
+  beforeAll(() => {
+    // The envelope key is derived from AUTH_SECRET, so the test needs one.
+    process.env.AUTH_SECRET = "webhook-b21-secret-key-0123456789ab";
+  });
+
+  afterAll(() => {
+    if (ORIGINAL_AUTH_SECRET === undefined) delete process.env.AUTH_SECRET;
+    else process.env.AUTH_SECRET = ORIGINAL_AUTH_SECRET;
+  });
+
+  it("refuses the delivery and books it as failed when the secret cannot be decrypted", async () => {
+    // Seal a secret under the current AUTH_SECRET …
+    const sealed = encryptWebhookSecret("whsec_b21_rotated");
+    // … then rotate the key: the envelope can no longer be opened.
+    process.env.AUTH_SECRET = "webhook-b21-secret-key-0123456789cd";
+
+    await deliverWithRetry(
+      { ...HOOK, secret: sealed },
+      "page.created",
+      BODY,
+      { deliveryId: "del_1", sleep: async () => {} },
+    );
+
+    // Nothing went out: an unsigned payload is never sent.
+    expect(mocks.fetch).not.toHaveBeenCalled();
+
+    // The delivery is booked as failed, with the reason.
+    expect(mocks.deliveryUpdate).toHaveBeenCalledTimes(1);
+    const recorded = mocks.deliveryUpdate.mock.calls[0][0] as {
+      data: { attempts: number; ok: boolean; responseStatus: number | null; error: string };
+    };
+    expect(recorded.data).toMatchObject({ attempts: 1, ok: false, responseStatus: null });
+    expect(recorded.data.error).toBeTruthy();
+    expect(recorded.data.error).not.toMatch(/whsec/); // no secret material in the log
+  });
+
+  it("still signs and delivers when the secret opens", async () => {
+    process.env.AUTH_SECRET = "webhook-b21-secret-key-0123456789ab";
+    const sealed = encryptWebhookSecret("whsec_b21_ok");
+
+    await deliverWithRetry(
+      { ...HOOK, secret: sealed },
+      "page.created",
+      BODY,
+      { deliveryId: "del_1", sleep: async () => {} },
+    );
+
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    const init = mocks.fetch.mock.calls[0][1] as {
+      body: string;
+      headers: Record<string, string>;
+    };
+    expect(init.headers["x-noema-signature"]).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
+    expect(
+      verifyWebhookSignature({
+        secret: "whsec_b21_ok",
+        body: init.body,
+        signature: init.headers["x-noema-signature"],
+        timestamp: init.headers["x-noema-timestamp"],
+        now: Date.now(),
+      }),
+    ).toBe(true);
+    expect(mocks.deliveryUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.deliveryUpdate.mock.calls[0][0]).toMatchObject({
+      data: { attempts: 1, ok: true, responseStatus: 200 },
+    });
+  });
+
+  // The two neighbours of the fixed case keep their documented behaviour: the
+  // legacy plaintext secret (the M28.3 transition window) is still SIGNED, and
+  // a hook with no secret at all keeps the unsigned wire format.
+  it("still signs the delivery with a legacy plaintext secret", async () => {
+    process.env.AUTH_SECRET = "webhook-b21-secret-key-0123456789ab";
+
+    await deliverWithRetry(
+      { ...HOOK, secret: "legacy-plaintext-secret" },
+      "page.created",
+      BODY,
+      { deliveryId: "del_1", sleep: async () => {} },
+    );
+
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    const init = mocks.fetch.mock.calls[0][1] as {
+      body: string;
+      headers: Record<string, string>;
+    };
+    expect(init.headers["x-noema-signature"]).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
+    expect(
+      verifyWebhookSignature({
+        secret: "legacy-plaintext-secret",
+        body: init.body,
+        signature: init.headers["x-noema-signature"],
+        timestamp: init.headers["x-noema-timestamp"],
+        now: Date.now(),
+      }),
+    ).toBe(true);
+  });
+
+  it("still delivers a hook that never had a secret, unsigned", async () => {
+    process.env.AUTH_SECRET = "webhook-b21-secret-key-0123456789ab";
+
+    await deliverWithRetry(
+      { ...HOOK, secret: null },
+      "page.created",
+      BODY,
+      { deliveryId: "del_1", sleep: async () => {} },
+    );
+
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    const init = mocks.fetch.mock.calls[0][1] as { headers: Record<string, string> };
+    expect(init.headers["x-noema-signature"]).toBeUndefined();
+    expect(mocks.deliveryUpdate.mock.calls[0][0]).toMatchObject({
+      data: { attempts: 1, ok: true, responseStatus: 200 },
+    });
+  });
+});

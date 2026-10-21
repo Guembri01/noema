@@ -20,9 +20,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *   shared pages, because the sidebar has to draw the breadcrumb chain down to
  *   a shared child. It stays the scope of every page type but `DATABASE`.
  * - the **read** scope (`guestReadablePageIds`) contains the shared pages and
- *   their whole subtree, never an ancestor — the inheritance rule of
- *   `src/lib/access-inheritance.ts` ("a `PagePermission` on the page itself or
- *   on any ancestor applies" ⇒ the grant covers the page's subtree).
+ *   their whole subtree, never an ancestor — the guest rule of
+ *   `src/lib/guest-access.ts` (a grant covers the page's subtree).
  *
  * A database page follows the read scope: a guest who was given a single *row*
  * of a database must not open the database above it, a guest who was given a

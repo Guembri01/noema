@@ -19,6 +19,7 @@ const OTHER_URL = "https://example.test/not-slack";
 const db = vi.hoisted(() => ({
   pageFindUnique: vi.fn(),
   pageFollowFindMany: vi.fn(),
+  workspaceMemberFindMany: vi.fn(),
   userFindMany: vi.fn(),
   notificationFindMany: vi.fn(),
   notificationCreateMany: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     page: { findUnique: db.pageFindUnique },
     pageFollow: { findMany: db.pageFollowFindMany },
+    workspaceMember: { findMany: db.workspaceMemberFindMany },
     user: { findMany: db.userFindMany },
     notification: {
       findMany: db.notificationFindMany,
@@ -85,6 +87,7 @@ beforeEach(() => {
     deletedAt: null,
   });
   db.pageFollowFindMany.mockResolvedValue([{ userId: "f1" }]);
+  db.workspaceMemberFindMany.mockResolvedValue([{ userId: "f1" }]);
   db.userFindMany.mockResolvedValue([{ id: "f1", notificationPrefs: null }]);
   db.notificationFindMany.mockResolvedValue([]);
   db.notificationCreateMany.mockResolvedValue({ count: 1 });

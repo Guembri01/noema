@@ -1,3 +1,5 @@
+import { secureCookies } from "./cookie-security";
+
 /**
  * Handing the desktop shell's stored theme to the served app.
  *
@@ -35,11 +37,20 @@ export type ThemeName = (typeof THEME_NAMES)[number];
 /** A year: the value is refreshed on every launch anyway. */
 export const THEME_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
-/** The cookie attributes used by the middleware (kept here so they have one home). */
+/**
+ * The cookie attributes used by the middleware (kept here so they have one home).
+ *
+ * B31: the cookie carries `Secure` in production, like every other cookie of
+ * the app. It is *not* `__Host-`-prefixed: the value is one of three theme
+ * names, checked against a closed set, so a cookie a sibling domain planted
+ * could only pick a theme — never unlock anything. The prefix is for the
+ * cookies that carry a credential.
+ */
 export const THEME_COOKIE_OPTIONS = {
   path: "/",
   sameSite: "lax",
   httpOnly: true,
+  secure: secureCookies(),
   maxAge: THEME_COOKIE_MAX_AGE,
 } as const;
 
@@ -67,16 +78,41 @@ export interface ThemeHandoff {
 }
 
 /**
+ * Whether a path may carry the hand-off without leaving the origin.
+ *
+ * A path that *starts* with two separators is protocol-relative: the browser —
+ * and `new URL(location, origin)`, which the middleware uses to build the
+ * redirect — reads `//evil.com` as the **host** `evil.com`, so the redirect
+ * would leave the site. A backslash counts as a separator in a special
+ * scheme, so `/\evil.com` is the same attack in another spelling.
+ *
+ * Deliberately not `isSafeReturnTo` (`lib/auth-strategies.ts`): that one
+ * percent-decodes the value, and its `decodeURIComponent` throws on a bare
+ * `%` — a query such as `?q=100%` would be dropped instead of handed over.
+ */
+function isSameOriginPath(pathname: string): boolean {
+  return !/^[/\\]{2}/.test(pathname);
+}
+
+/**
  * Decide whether a document request is carrying the shell's theme.
  *
  * Returns the theme to remember and the URL to redirect to (the same path, with
  * only the theme parameter removed — other parameters are preserved). `null`
  * means "nothing to do", which is every request on the hosted site and every
- * request after the first in the desktop app.
+ * request after the first in the desktop app — and every request whose path
+ * would carry the redirect to another origin.
  */
 export function themeHandoff(pathname: string, search: string): ThemeHandoff | null {
   const theme = normalizeTheme(new URLSearchParams(search).get(THEME_QUERY_PARAM));
   if (!theme) return null;
+
+  // The redirect target is the path we were handed, so refuse it when it would
+  // leave the origin (B118). Next normalises repeated slashes in the request
+  // path before the middleware runs, so this cannot be reached over HTTP
+  // today — the check keeps the guarantee in this repository instead of
+  // leaving it to a property of the framework.
+  if (!isSameOriginPath(pathname)) return null;
 
   const params = new URLSearchParams(search);
   params.delete(THEME_QUERY_PARAM);

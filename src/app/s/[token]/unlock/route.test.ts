@@ -297,4 +297,30 @@ describe("the share unlock cookie (B01)", () => {
     >;
     expect(options.secure).toBe(true);
   });
+
+  // B31: in production the cookie carries the `__Host-` prefix, which binds it
+  // to the exact host that set it — a sibling subdomain cannot plant a cookie
+  // of that name. Outside production the plain name is used: a browser drops a
+  // `__Host-` cookie that does not carry `Secure`.
+  it("binds the cookie to the host in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+
+    await post({ password: PASSWORD });
+
+    const [name] = cookieStore.set.mock.calls[0] as [string, string];
+    expect(name).toBe(`__Host-share_${TOKEN}`);
+  });
+
+  it("keeps the plain name outside production", async () => {
+    const res = await post({ password: PASSWORD });
+
+    expect(res.status).toBe(303);
+    const [name, , options] = cookieStore.set.mock.calls[0] as [
+      string,
+      string,
+      Record<string, unknown>,
+    ];
+    expect(name).toBe(`share_${TOKEN}`);
+    expect(options.secure).toBe(false);
+  });
 });

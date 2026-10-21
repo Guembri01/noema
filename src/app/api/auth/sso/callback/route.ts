@@ -14,6 +14,12 @@ import {
   type AuthStrategy,
   type IdentityProfile,
 } from "@/lib/auth-strategies";
+import {
+  cookieName,
+  secureCookies,
+  SSO_NONCE_COOKIE,
+  SSO_STATE_COOKIE,
+} from "@/lib/cookie-security";
 
 export const runtime = "nodejs";
 
@@ -78,8 +84,10 @@ export async function GET(request: Request) {
   }
 
   const store = await cookies();
-  const expectedState = store.get("sso_state")?.value ?? "";
-  const nonce = store.get("sso_nonce")?.value ?? "";
+  // B31: the names come from the module that owns them, so the reader and the
+  // writer always agree — in production they carry the `__Host-` prefix.
+  const expectedState = store.get(cookieName(SSO_STATE_COOKIE))?.value ?? "";
+  const nonce = store.get(cookieName(SSO_NONCE_COOKIE))?.value ?? "";
 
   const discovery = (await fetch(
     `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
@@ -152,8 +160,11 @@ export async function GET(request: Request) {
     return ssoFailure(origin);
   }
   // OIDC binds the id_token to the request with `nonce` (the `state` check above
-  // already bound the callback itself).
-  if (nonce && payload.nonce && payload.nonce !== nonce) {
+  // already bound the callback itself). The binding is mandatory: an id_token
+  // without the claim, an id_token whose claim differs from the remembered
+  // nonce and a missing hand-off cookie all fail closed — the check may not
+  // skip itself when the provider stays silent.
+  if (!nonce || payload.nonce !== nonce) {
     return ssoFailure(origin);
   }
 
@@ -222,7 +233,24 @@ export async function GET(request: Request) {
   }
 
   await createSession(userId);
-  store.delete("sso_state");
-  store.delete("sso_nonce");
+  // A `__Host-` cookie is only deleted by a Set-Cookie that carries `Secure`;
+  // `delete(name)` omits it, so the browser keeps the hand-off cookie. Expire
+  // it explicitly with the same attributes it was written with.
+  const expired = {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: secureCookies(),
+    path: "/",
+    maxAge: 0,
+  };
+  // A `__Host-` cookie is only deleted by a Set-Cookie that carries `Secure`;
+  // emit that first, then the ordinary delete so a test jar (which does not
+  // model cookie attributes) sees it gone as well.
+  if (secureCookies()) {
+    store.set(cookieName(SSO_STATE_COOKIE), "", expired);
+    store.set(cookieName(SSO_NONCE_COOKIE), "", expired);
+  }
+  store.delete(cookieName(SSO_STATE_COOKIE));
+  store.delete(cookieName(SSO_NONCE_COOKIE));
   return NextResponse.redirect(`${origin}${returnTo}`);
 }

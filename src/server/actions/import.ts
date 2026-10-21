@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { markdownToDoc } from "@/lib/serialize";
+import { sanitizeDocHrefs } from "@/lib/validation";
 import { assertScopedParent } from "@/lib/page-parent";
 import { cardDescriptionBlocks, parseTrelloBoard, pathToTitles, type ImportCounts } from "@/lib/importers";
 import type { CreatePropertyDescriptor } from "@/lib/csv-mapping";
@@ -163,6 +164,10 @@ export async function importDocxAction(formData: FormData): Promise<ImportResult
   if (!result) return { error: "That file is not a readable .docx document." };
 
   const title = file.name.replace(/\.docx$/i, "").slice(0, 200) || "Imported document";
+  // B110: the imported document meets the same href allowlist the save path
+  // applies (`parsePageContent`), so a link target cannot land in the page
+  // unchecked.
+  const doc = sanitizeDocHrefs(markdownToDoc(result.value));
 
   let pageId = "";
   try {
@@ -180,7 +185,7 @@ export async function importDocxAction(formData: FormData): Promise<ImportResult
           icon: "📄",
           createdById: user.id,
           position: (last?.position ?? 0) + 1000,
-          content: markdownToDoc(result.value) as unknown as Prisma.InputJsonValue,
+          content: doc as unknown as Prisma.InputJsonValue,
         },
         select: { id: true },
       });
@@ -300,6 +305,9 @@ export async function importTrelloAction(input: {
       for (const list of board.lists) {
         for (const card of list.cards) {
           const blocks = cardDescriptionBlocks(card.description);
+          // B110: the imported document meets the same href allowlist the save
+          // path applies (`parsePageContent`).
+          const content = sanitizeDocHrefs({ type: "doc", content: blocks });
           const row = await tx.page.create({
             data: {
               workspaceId: input.workspaceId,
@@ -311,9 +319,7 @@ export async function importTrelloAction(input: {
               createdById: user.id,
               position,
               icon: "🗂️",
-              ...(blocks.length > 0
-                ? { content: { type: "doc", content: blocks } as Prisma.InputJsonValue }
-                : {}),
+              ...(blocks.length > 0 ? { content: content as Prisma.InputJsonValue } : {}),
             },
             select: { id: true },
           });
@@ -534,7 +540,9 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
     }
     plan.push({
       titles,
-      content: markdownToDoc(new TextDecoder().decode(read.bytes)),
+      // B110: the imported document meets the same href allowlist the save
+      // path applies (`parsePageContent`).
+      content: sanitizeDocHrefs(markdownToDoc(new TextDecoder().decode(read.bytes))),
     });
   }
   if (plan.length === 0) return { error: "Nothing to import." };
@@ -623,6 +631,10 @@ export async function importMarkdownAction(input: {
   const title =
     input.filename.replace(/\.[^.]+$/, "").trim().slice(0, 200) || "Imported page";
 
+  // B110: the imported document meets the same href allowlist the save path
+  // applies (`parsePageContent`).
+  const doc = sanitizeDocHrefs(markdownToDoc(input.markdown));
+
   const last = await prisma.page.findFirst({
     where: { workspaceId: input.workspaceId, parentId: parent.parentId },
     orderBy: { position: "desc" },
@@ -637,7 +649,7 @@ export async function importMarkdownAction(input: {
       icon: "📥",
       createdById: user.id,
       position: (last?.position ?? 0) + 1000,
-      content: markdownToDoc(input.markdown) as unknown as Prisma.InputJsonValue,
+      content: doc as unknown as Prisma.InputJsonValue,
     },
     select: { id: true },
   });

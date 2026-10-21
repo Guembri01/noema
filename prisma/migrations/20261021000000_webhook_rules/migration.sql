@@ -1,0 +1,16 @@
+-- B18: the action rules of an inbound endpoint belong to the endpoint.
+--
+-- The inbound route (`POST /api/webhooks/inbound`) read the rule list from the
+-- request -- the `?rules=` query parameter or the `x-noema-rules` header --
+-- and planned the actions of THAT list, so the caller decided which actions
+-- the endpoint would run. The list is a column of the endpoint's row now: the
+-- route plans the actions of the row the request was authenticated against,
+-- and a rule list in the request is ignored.
+--
+-- The column holds the JSON shape the planner understands: an array of
+-- `{ id, enabled?, kinds?, conditions?, actions }` entries. Existing rows get
+-- the empty list, which plans no action -- the fail-closed state of an
+-- endpoint whose rules were never configured.
+--
+-- `jsonb` is the type Prisma maps `Json` to.
+ALTER TABLE "Webhook" ADD COLUMN "rules" JSONB NOT NULL DEFAULT '[]';

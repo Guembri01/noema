@@ -58,6 +58,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   if (hadAuthSecret && originalAuthSecret !== undefined) {
     process.env.AUTH_SECRET = originalAuthSecret;
   } else {
@@ -891,6 +892,16 @@ describe("redactObject — deep, non-mutating redaction", () => {
     expect(redacted.databaseUrl).not.toContain("supersecretpw");
   });
 
+  it("masks a dbUrl as a connection string (B35)", () => {
+    // `dbUrl` matched none of the three redaction lists; it is a connection
+    // string, so it is masked like one.
+    const dsn =
+      "postgresql://noema:supersecretpw@localhost:5433/noema?schema=public";
+    const redacted = redactObject({ dbUrl: dsn });
+    expect(redacted.dbUrl).toBe(maskConnString(dsn));
+    expect(redacted.dbUrl).not.toContain("supersecretpw");
+  });
+
   it("leaves benign keys and non-string leaves intact", () => {
     const input = { host: "localhost", port: 5432, secure: true, tags: ["a", "b"] };
     expect(redactObject(input)).toEqual(input);
@@ -1115,6 +1126,16 @@ describe("maskConnString", () => {
     expect(masked).toContain("schema=public");
   });
 
+  it("masks a password that contains a raw @ (the parser splits at the last @)", () => {
+    const masked = maskConnString(
+      "postgresql://noema:p@ssw0rd@127.0.0.1:5432/noema?schema=public",
+    );
+    expect(masked).not.toContain("ssw0rd");
+    expect(masked).toBe(
+      "postgresql://noema:***@127.0.0.1:5432/noema?schema=public",
+    );
+  });
+
   it("leaves a credential-free connection string unchanged", () => {
     const plain = "postgresql://localhost:5432/noema?schema=public";
     expect(maskConnString(plain)).toBe(plain);
@@ -1231,6 +1252,14 @@ describe("the share unlock cookie (B01)", () => {
 
   it("names the cookie after the share token", () => {
     expect(shareUnlockCookieName(TOKEN)).toBe(`share_${TOKEN}`);
+  });
+
+  // B31: in production the cookie carries `Secure`, and a `__Host-` cookie is
+  // only accepted together with it — the prefix binds the cookie to the exact
+  // host that set it.
+  it("binds the cookie name to the host in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    expect(shareUnlockCookieName(TOKEN)).toBe(`__Host-share_${TOKEN}`);
   });
 
   // The constant-time comparison is not observable at runtime: a plain `===`

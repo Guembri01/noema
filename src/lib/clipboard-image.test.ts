@@ -128,6 +128,43 @@ describe("isSvgSafe", () => {
     expect(isSvgSafe('<!DOCTYPE svg [<!ENTITY x "y">]><svg/>')).toBe(false);
   });
 
+  // B112 — the scheme has to be read the way a browser reads it. A browser
+  // removes the control characters from a URL *before* it parses the scheme
+  // (`java\nscript:` is `javascript:` for it, the same normalisation
+  // `safeHref` does in `markdown.ts`), so the blocklist has to see the source
+  // without them — otherwise a scheme split by a line break walks past the gate.
+  it("rejects a scheme that hides behind a control character (B112)", () => {
+    // The url() form: no href/src attribute, so the reference check cannot see
+    // it either — the scheme pattern was the only gate and it read the raw
+    // string.
+    expect(isSvgSafe('<svg><rect fill="url(java\nscript:alert(1))"/></svg>')).toBe(false);
+    expect(isSvgSafe('<svg><rect fill="url(java\tscript:alert(1))"/></svg>')).toBe(false);
+    // The SMIL form: `<animate attributeName="href">` sets the link target of
+    // the element it animates.
+    expect(
+      isSvgSafe('<svg><animate attributeName="href" values="java\nscript:alert(1)"/></svg>'),
+    ).toBe(false);
+  });
+
+  // The counterpart: stripping the control characters must not swallow the
+  // whitespace the markup patterns anchor on — `<svg\nonload="…">` is an
+  // event handler in an XML document, and the raw source is what sees it.
+  it("still rejects an event handler a line break hides behind (B112)", () => {
+    expect(isSvgSafe('<svg\nonload="alert(1)"></svg>')).toBe(false);
+    expect(isSvgSafe('<svg><rect\nonmouseover="alert(1)"/></svg>')).toBe(false);
+  });
+
+  it("keeps the legitimate paths open (B112)", () => {
+    expect(
+      isSvgSafe(
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1" fill="#f00"/></svg>',
+      ),
+    ).toBe(true);
+    expect(
+      inspectClipboardItem({ mimeType: "image/png", data: "data:image/png;base64,QUJD" }, {}),
+    ).toEqual({ accept: true, mimeType: "image/png", size: 3 });
+  });
+
   it("treats empty or non-string input as unsafe", () => {
     expect(isSvgSafe("")).toBe(false);
     expect(isSvgSafe("   ")).toBe(false);

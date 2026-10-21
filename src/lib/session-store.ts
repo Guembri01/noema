@@ -30,6 +30,14 @@ import { dirname, join } from "node:path";
  * cap, so a session cannot be kept alive forever. All new time-dependent
  * logic takes an injected `now` (ms since epoch) for determinism; the
  * wall-clock defaults exist only for the legacy no-argument call shapes.
+ *
+ * B39 — the same policy (`{ idleTimeoutMs, maxLifetimeMs }`) also drives the
+ * deadline `validateSession` enforces, so the request path can ask "is this
+ * session still alive?" with the very policy that `touchSession` slides on
+ * activity: a session that saw no activity for `idleTimeoutMs` is dead, even
+ * when its stored `expiresAt` is still in the future (a row written before
+ * sliding expiry existed has none), and no session outlives
+ * `createdAt + maxLifetimeMs`.
  */
 
 export type SessionRecord = {
@@ -139,10 +147,45 @@ function effectiveExpiryMs(record: SessionRecord): number {
   return Number.isFinite(created) ? created + SESSION_TTL_MS : Number.NEGATIVE_INFINITY;
 }
 
+/**
+ * The deadline of a record under a session policy: the stored `expiresAt`
+ * (or the legacy fixed window), clipped to the idle window measured from the
+ * last activity and to the absolute cap measured from the creation.
+ *
+ * Without a policy only the stored deadline counts — the legacy behaviour.
+ * With one, an idle session dies even when its stored deadline is still in
+ * the future, and a session never outlives `createdAt + maxLifetimeMs`.
+ * An unparseable `lastActiveAt` / `createdAt` fails closed (-Infinity).
+ */
+function deadlineMs(record: SessionRecord, options: TouchOptions): number {
+  let deadline = effectiveExpiryMs(record);
+  if (options.idleTimeoutMs !== undefined) {
+    const last = Date.parse(record.lastActiveAt);
+    deadline = Math.min(
+      deadline,
+      Number.isFinite(last) ? last + options.idleTimeoutMs : Number.NEGATIVE_INFINITY,
+    );
+  }
+  if (options.maxLifetimeMs !== undefined) {
+    const created = Date.parse(record.createdAt);
+    deadline = Math.min(
+      deadline,
+      Number.isFinite(created) ? created + options.maxLifetimeMs : Number.NEGATIVE_INFINITY,
+    );
+  }
+  return deadline;
+}
+
 /** Drop records that outlived their session deadline (or revocation retention). */
 function prune(records: SessionRecord[], nowMs: number): SessionRecord[] {
   return records.filter((record) => {
-    if (effectiveExpiryMs(record) <= nowMs) return false;
+    // Keep an idle-expired record until its absolute lifetime is over. Dropping
+    // it at the idle deadline would make `findSession` return null, and the
+    // request path treats an unknown sid as a legacy (fail-open) session - so
+    // the next write would resurrect an idle-expired JWT.
+    const created = Date.parse(record.createdAt);
+    const absolute = Number.isFinite(created) ? created + SESSION_TTL_MS : Number.NEGATIVE_INFINITY;
+    if (absolute <= nowMs) return false;
     if (record.revokedAt && nowMs - Date.parse(record.revokedAt) > REVOKED_RETENTION_MS) {
       return false;
     }
@@ -175,7 +218,13 @@ export function findSession(sid: string): SessionRecord | null {
   return readAll().find((record) => record.sid === sid) ?? null;
 }
 
-/** Revocation check for the request path. Unknown sid → false (fail open). */
+/**
+ * Revocation flag of a session. Unknown sid → false (fail open).
+ *
+ * B39: the request path asks `validateSession` instead — it also knows the
+ * deadline, so a revoked-but-unexpired *and* an expired-but-unrevoked
+ * session are both rejected.
+ */
 export function isSessionRevoked(sid: string): boolean {
   const record = findSession(sid);
   return record !== null && record.revokedAt !== null;
@@ -186,13 +235,22 @@ export function isSessionRevoked(sid: string): boolean {
  * hard failure: the record must exist, be unrevoked, and be unexpired at the
  * injected `now`. Fail CLOSED on every one of those — a revoked-but-unexpired
  * token is rejected even though the record (and the JWT) is still "live".
- * (The auth hot path keeps the fail-open `isSessionRevoked` probe instead: a
- * broken registry must not mass sign-out every device.)
+ * (A caller that cannot tolerate that may probe `isSessionRevoked` instead,
+ * which fails OPEN for an unknown sid.)
+ *
+ * B39: with a policy (`idleTimeoutMs` / `maxLifetimeMs`) the session must
+ * also be inside its idle window and its absolute lifetime — the deadline
+ * `touchSession` slides on activity. Without a policy only the stored
+ * deadline counts.
  */
-export function validateSession(sid: string, now: number): SessionRecord | null {
+export function validateSession(
+  sid: string,
+  now: number,
+  options: TouchOptions = {},
+): SessionRecord | null {
   const record = findSession(sid);
   if (!record || record.revokedAt) return null;
-  if (effectiveExpiryMs(record) <= now) return null;
+  if (deadlineMs(record, options) <= now) return null;
   return record;
 }
 
@@ -204,7 +262,12 @@ export type TouchResult =
   | { status: "expired" };
 
 export type TouchOptions = {
-  /** Idle window granted from `now` on a touch. Default: SESSION_TTL_MS. */
+  /**
+   * Idle window granted from `now` on a touch. Default: SESSION_TTL_MS.
+   *
+   * B39: the same window is the *idle timeout* of the session — the deadline
+   * `validateSession` enforces, measured from the last activity.
+   */
   idleTimeoutMs?: number;
   /**
    * Absolute lifetime measured from createdAt: the deadline is clipped to
@@ -221,6 +284,11 @@ export type TouchOptions = {
  * min(now + idleTimeoutMs, createdAt + maxLifetimeMs). Fail closed: revoked,
  * expired, and unknown sessions are never touched, so activity can't
  * resurrect them. Without `now` the legacy wall-clock behavior applies.
+ *
+ * B39: the "expired" verdict is taken under the same policy
+ * (`idleTimeoutMs` / `maxLifetimeMs`) that the write slides, so a session
+ * that saw no activity for `idleTimeoutMs` is reported as expired even when
+ * its stored deadline is still in the future.
  */
 export function touchSession(
   sid: string,
@@ -231,7 +299,7 @@ export function touchSession(
   const record = findSession(sid);
   if (!record) return { status: "not-found" };
   if (record.revokedAt) return { status: "revoked" };
-  if (effectiveExpiryMs(record) <= at) return { status: "expired" };
+  if (deadlineMs(record, options) <= at) return { status: "expired" };
   if (at - Date.parse(record.lastActiveAt) < TOUCH_INTERVAL_MS) return { status: "throttled" };
   const idle = options.idleTimeoutMs ?? SESSION_TTL_MS;
   const cap = options.maxLifetimeMs ?? SESSION_TTL_MS;

@@ -56,6 +56,41 @@ const badPattern: TestProperty = {
   type: "TEXT",
   config: { pattern: "([unclosed" },
 };
+/** A quantified group with an alternation: the classic exponential blow-up. */
+const riskyPattern: TestProperty = {
+  id: "risky",
+  name: "Risky",
+  type: "TEXT",
+  config: { pattern: "(a|aa)+$" },
+};
+/** A quantified group with an inner quantifier: the second blow-up. */
+const nestedPattern: TestProperty = {
+  id: "nested",
+  name: "Nested",
+  type: "TEXT",
+  config: { pattern: "(a+)+$" },
+};
+/** An alternation that is not quantified: ordinary and harmless. */
+const petPattern: TestProperty = {
+  id: "pet",
+  name: "Pet",
+  type: "TEXT",
+  config: { pattern: "^(cat|dog)$" },
+};
+/** A quantified group whose body holds a class, not an alternation. */
+const classPattern: TestProperty = {
+  id: "class",
+  name: "Class",
+  type: "TEXT",
+  config: { pattern: "^([a|b])+$" },
+};
+/** Quantified groups that a literal pins apart: linear and harmless. */
+const pinnedPattern: TestProperty = {
+  id: "pinned",
+  name: "Pinned",
+  type: "TEXT",
+  config: { pattern: "^(\\d+)-(\\d+)$" },
+};
 const status: TestProperty = {
   id: "status",
   name: "Status",
@@ -250,6 +285,43 @@ describe("validateCell — pattern", () => {
   it("ignores an invalid pattern instead of throwing", () => {
     expect(() => validateCell(badPattern, "anything")).not.toThrow();
     expect(validateCell(badPattern, "anything").ok).toBe(true);
+  });
+
+  it("ignores a pattern whose backtracking can explode", () => {
+    // An alternation inside a quantified group has no inner quantifier, so a
+    // quantifier-only guard would let it through — and it is the exponential
+    // case. The pattern is not applied at all, so the value is accepted.
+    expect(validateCell(riskyPattern, "aaaa!").ok).toBe(true);
+    expect(validateCell(riskyPattern, "anything").ok).toBe(true);
+  });
+
+  it("ignores a pattern with a nested quantifier", () => {
+    expect(validateCell(nestedPattern, "aaaa!").ok).toBe(true);
+  });
+
+  it("does not run a risky pattern on a long value", () => {
+    // The pattern is refused before the regex engine ever sees the text, so
+    // the value is checked in milliseconds instead of freezing the editor.
+    const started = Date.now();
+    const result = validateCell(riskyPattern, `${"a".repeat(30)}!`);
+    const elapsed = Date.now() - started;
+    expect(result.ok).toBe(true);
+    expect(elapsed).toBeLessThan(100);
+  });
+
+  it("still applies an alternation that is not quantified", () => {
+    expect(validateCell(petPattern, "cat").ok).toBe(true);
+    expect(codes(validateCell(petPattern, "bird"))).toEqual(["PATTERN"]);
+  });
+
+  it("still applies a quantified group that a literal pins apart", () => {
+    expect(validateCell(pinnedPattern, "12-34").ok).toBe(true);
+    expect(codes(validateCell(pinnedPattern, "12-34x"))).toEqual(["PATTERN"]);
+  });
+
+  it("still applies a quantified group whose body is a character class", () => {
+    expect(validateCell(classPattern, "a").ok).toBe(true);
+    expect(codes(validateCell(classPattern, "c"))).toEqual(["PATTERN"]);
   });
 });
 

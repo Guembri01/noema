@@ -1,15 +1,10 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
-import type { SharePermission } from "@prisma/client";
 import { middleware } from "../middleware";
 import { PartialWriteError, type WriteResult } from "./atomic-writes";
 import { WorkspaceScopeError } from "./tenant-scope";
 import { TenancyError } from "./tenancy";
-import type { PageGrant } from "./access-inheritance";
 import {
-  AccessDeniedError,
-  accessAllows,
-  assertPageAccess,
   assertRowScoped,
   assertRowsScoped,
   assertWorkspaceMatch,
@@ -22,7 +17,6 @@ import {
   parseIpAllowlist,
   parseTrustedProxyHops,
   planScopedWrites,
-  resolveAccess,
   runAtomicWrites,
   scopeByWorkspace,
   scopedWhere,
@@ -36,9 +30,13 @@ import {
  *
  *  - `tenancy.ts` (scope enforcement),
  *  - `atomic-writes.ts` + `tenant-scope.ts` (retry + partial-write audit),
- *  - `access-inheritance.ts` (inheritance resolution),
  *  - `ip-allowlist.ts` (allowlist decisions),
  *  - and `src/middleware.ts`, which enforces the allowlist on private surfaces.
+ *
+ * The page-access rule is **not** proven here: it is the workspace role
+ * (`src/lib/permissions.ts`) plus the guest scope (`src/lib/guest-access.ts`).
+ * The inheritance engine that used to sit behind this seam was removed (B41) —
+ * no production path ever called it.
  *
  * No DB, no network, no real clock: every side effect is injected, so the
  * fail-closed rules are proven deterministically.
@@ -245,68 +243,6 @@ describe("runAtomicWrites — planning, retry and partial-write audit", () => {
         async () => [],
       ),
     ).rejects.toThrow();
-  });
-});
-
-/* ------------------------------------------------------------------ *
- * Inheritance resolution (access-inheritance.ts)
- * ------------------------------------------------------------------ */
-
-const PAGE = { id: "leaf" };
-const ANCESTRY = ["mid", "root"];
-
-describe("access resolution (inheritance via the guard)", () => {
-  it("resolves a grant inherited from an ancestor for a member", () => {
-    expect(
-      resolveAccess({
-        user: { id: "u1", role: "MEMBER" },
-        page: PAGE,
-        ancestry: ANCESTRY,
-        grants: [{ pageId: "mid", userId: "u1", level: "COMMENT" }],
-      }),
-    ).toBe("COMMENT");
-  });
-
-  it("gives an admin the FULL role baseline with no grants", () => {
-    expect(resolveAccess({ user: { id: "u1", role: "ADMIN" }, page: PAGE, ancestry: ANCESTRY })).toBe(
-      "FULL",
-    );
-  });
-
-  it("fails closed with no grant, no inheritance and no link", () => {
-    expect(
-      resolveAccess({ user: { id: "u1", role: "MEMBER" }, page: PAGE, ancestry: ANCESTRY }),
-    ).toBeNull();
-    expect(resolveAccess({ user: null, page: PAGE, ancestry: ANCESTRY })).toBeNull();
-  });
-
-  it("accessAllows ranks levels and denies null/forged values", () => {
-    expect(accessAllows("EDIT", "READ")).toBe(true);
-    expect(accessAllows("READ", "EDIT")).toBe(false);
-    expect(accessAllows(null, "READ")).toBe(false);
-    expect(accessAllows("OWN" as unknown as SharePermission, "READ")).toBe(false);
-  });
-
-  it("assertPageAccess returns the level or throws AccessDeniedError", () => {
-    const grants: PageGrant[] = [{ pageId: "leaf", userId: "u1", level: "EDIT" }];
-    expect(
-      assertPageAccess(
-        { user: { id: "u1", role: "MEMBER" }, page: PAGE, ancestry: ANCESTRY, grants },
-        "COMMENT",
-      ),
-    ).toBe("EDIT");
-
-    try {
-      assertPageAccess(
-        { user: { id: "u1", role: "MEMBER" }, page: PAGE, ancestry: ANCESTRY, grants },
-        "FULL",
-      );
-      expect.unreachable("expected AccessDeniedError");
-    } catch (error) {
-      expect(error).toBeInstanceOf(AccessDeniedError);
-      expect((error as AccessDeniedError).status).toBe(403);
-      expect((error as AccessDeniedError).required).toBe("FULL");
-    }
   });
 });
 

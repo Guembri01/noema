@@ -24,6 +24,8 @@
  * independent.
  */
 
+import { randomBase36 } from "@/lib/random";
+
 /** Allocates one fresh id per call. */
 export type IdFactory = () => string;
 
@@ -196,13 +198,15 @@ const ARRAY_REF_FIELDS = ["pageIds", "targetIds", "refIds"] as const;
 let defaultCounter = 0;
 
 /**
- * Default id factory: fresh, collision-resistant ids. Randomised so two moves
- * in the same process never share an id, and prefixed so generated output is
- * recognisable. Callers that need determinism pass their own `IdFactory`.
+ * Default id factory: fresh, collision-resistant ids. The random part comes
+ * from the CSPRNG (`@/lib/random`), so the ids that end up in a URL cannot be
+ * guessed from a weak PRNG; the counter keeps them unique inside the process
+ * and the prefix keeps generated output recognisable. Callers that need
+ * determinism pass their own `IdFactory`.
  */
 export function defaultIdFactory(): string {
   defaultCounter += 1;
-  const random = Math.random().toString(36).slice(2, 10);
+  const random = randomBase36(8);
   return `move_${defaultCounter.toString(36)}_${random}`;
 }
 

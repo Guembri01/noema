@@ -10,6 +10,7 @@
  *
  * Security: `crypto.getRandomValues` is a CSPRNG, and `randomInt` rejects
  * out-of-range draws (modulo bias would make short codes slightly guessable).
+ * `randomBase36` does the same for the base36 alphabet.
  */
 
 /** The platform CSPRNG. Throws a clear error rather than silently weakening. */
@@ -55,6 +56,37 @@ export function randomInt(maxExclusive: number): number {
   return draw % maxExclusive;
 }
 
+const BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz";
+
+/**
+ * 252 = 36 × 7 — the largest multiple of the alphabet that fits in a byte.
+ * The bytes 0…251 cover every character exactly seven times, so `byte % 36` is
+ * uniform; the four bytes above are rejected instead of biasing the alphabet.
+ */
+const BASE36_LIMIT = 252;
+
+/**
+ * A random lowercase base36 string of exactly `length` characters.
+ *
+ * The characters come from the CSPRNG (`crypto.getRandomValues`) and carry
+ * `length * log2(36)` ≈ 5.17 bits each. The alphabet is the one
+ * `Number.prototype.toString(36)` produces, so ids built from it keep the
+ * shape their readers already expect.
+ */
+export function randomBase36(length: number): string {
+  if (!Number.isInteger(length) || length < 0) {
+    throw new RangeError(`randomBase36: length must be a non-negative integer, got ${length}`);
+  }
+  let out = "";
+  while (out.length < length) {
+    for (const byte of randomBytes(length - out.length)) {
+      if (byte >= BASE36_LIMIT) continue; // rejected, not folded in
+      out += BASE36[byte % BASE36.length];
+    }
+  }
+  return out;
+}
+
 const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /** RFC 4648 §5 base64url (no padding) — the encoding `Buffer.toString("base64url")` gives. */
@@ -76,4 +108,16 @@ export function toBase64Url(bytes: Uint8Array): string {
 /** A URL-safe secret token (`bytes` bytes of entropy, base64url encoded). */
 export function randomToken(bytes = 24): string {
   return toBase64Url(randomBytes(bytes));
+}
+
+/**
+ * Lower-case hex, two characters per byte — the encoding
+ * `Buffer.toString("hex")` gives, without needing `Buffer`.
+ */
+export function toHex(bytes: Uint8Array): string {
+  let out = "";
+  for (let index = 0; index < bytes.length; index += 1) {
+    out += bytes[index].toString(16).padStart(2, "0");
+  }
+  return out;
 }

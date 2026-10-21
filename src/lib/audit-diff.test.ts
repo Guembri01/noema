@@ -28,7 +28,12 @@ import {
  *  - change detection runs on the RAW values; only the *displayed* before/after
  *    are masked, so two distinct secrets still read as `changed`;
  *  - sensitive fields (`password`, `apiKey`, `access_token`, …) are masked by
- *    default and `redactKeys` extends that set;
+ *    default and `redactKeys` extends that set; the mask hides the value
+ *    completely — no character of a secret stays readable;
+ *  - the secret names are the repository's shared list, so a name masked
+ *    elsewhere (`passphrase`, `sessionId`, `dbUrl`, `auth`, `dsn`, …) is
+ *    masked here as well; the mask shows no character of
+ *    the value;
  *  - inputs are never mutated and the helpers never throw.
  */
 
@@ -168,14 +173,69 @@ describe("isSensitiveKey / redactValue", () => {
     expect(isSensitiveKey("title")).toBe(false);
   });
 
+  it("recognises every name of the shared secret list", () => {
+    const shared = [
+      "password",
+      "passwd",
+      "passphrase",
+      "passcode",
+      "secret",
+      "token",
+      "apikey",
+      "accesskey",
+      "privatekey",
+      "authorization",
+      "cookie",
+      "credential",
+      "sessionId",
+      "dbUrl",
+      "databaseUrl",
+      "connectionString",
+      "auth",
+      "pass",
+      "pwd",
+      "dsn",
+      "setCookie",
+      "credentials",
+      "signature",
+      "accessToken",
+      "refreshToken",
+      "sessionToken",
+      "clientSecret",
+    ];
+    for (const name of shared) {
+      expect(isSensitiveKey(name)).toBe(true);
+    }
+  });
+
+  it("recognises the two names the shared list does not carry", () => {
+    expect(isSensitiveKey("salt")).toBe(true);
+    expect(isSensitiveKey("bearer")).toBe(true);
+  });
+
+  it("does not let a whole name swallow a longer field name", () => {
+    expect(isSensitiveKey("bypass")).toBe(false);
+    expect(isSensitiveKey("pwdReset")).toBe(false);
+    expect(isSensitiveKey("user.author")).toBe(false);
+  });
+
   it("returns non-sensitive values unchanged", () => {
     expect(redactValue("name", "ada")).toBe("ada");
     expect(redactValue("count", 0)).toBe(0);
   });
 
-  it("masks sensitive strings while keeping a shape hint", () => {
-    expect(redactValue("password", "hunter2secret")).toBe("hunt\u2026et");
+  it("masks sensitive strings completely", () => {
+    expect(redactValue("password", "hunter2secret")).toBe(mask);
     expect(redactValue("token", "abc")).toBe(mask);
+  });
+
+  it("keeps no character of the secret readable", () => {
+    const secret = "hunter2secret";
+    const masked = redactValue("password", secret) as string;
+    expect(masked).toBe(mask);
+    for (const character of new Set(secret)) {
+      expect(masked).not.toContain(character);
+    }
   });
 
   it("masks non-string sensitive values outright", () => {
@@ -187,29 +247,29 @@ describe("isSensitiveKey / redactValue", () => {
 describe("diffObjects — redaction", () => {
   it("masks a changed secret but still reports it as changed", () => {
     expect(diffObjects({ password: "old-secret-value" }, { password: "new-secret-value" })).toEqual([
-      { field: "password", op: "changed", before: "old-\u2026ue", after: "new-\u2026ue" },
+      { field: "password", op: "changed", before: mask, after: mask },
     ]);
   });
 
   it("detects two different secrets even when their masks look identical", () => {
     expect(diffObjects({ secret: "secretAAAA01" }, { secret: "secretBBBB01" })).toEqual([
-      { field: "secret", op: "changed", before: "secr\u202601", after: "secr\u202601" },
+      { field: "secret", op: "changed", before: mask, after: mask },
     ]);
   });
 
   it("masks added and removed secrets", () => {
     expect(diffObjects({}, { token: "abcdefghijkl" })).toEqual([
-      { field: "token", op: "added", after: "abcd\u2026kl" },
+      { field: "token", op: "added", after: mask },
     ]);
     expect(diffObjects({ token: "abcdefghijkl" }, {})).toEqual([
-      { field: "token", op: "removed", before: "abcd\u2026kl" },
+      { field: "token", op: "removed", before: mask },
     ]);
   });
 
   it("honours the redactKeys extension", () => {
     expect(
       diffObjects({ ssn: "123-45-6789" }, { ssn: "987-65-4321" }, { redactKeys: ["ssn"] }),
-    ).toEqual([{ field: "ssn", op: "changed", before: "123-\u202689", after: "987-\u202621" }]);
+    ).toEqual([{ field: "ssn", op: "changed", before: mask, after: mask }]);
   });
 
   it("leaves ordinary fields unmasked", () => {
@@ -226,7 +286,19 @@ describe("diffObjects — redaction", () => {
         { maxDepth: 2 },
       ),
     ).toEqual([
-      { field: "user.password", op: "changed", before: "supe\u2026t1", after: "supe\u2026t2" },
+      { field: "user.password", op: "changed", before: mask, after: mask },
+    ]);
+  });
+
+  it("redacts a nested whole-name secret even behind a dotted path", () => {
+    expect(
+      diffObjects(
+        { user: { auth: "topsecretvalue" } },
+        { user: { auth: "topsecretvalue2" } },
+        { maxDepth: 2 },
+      ),
+    ).toEqual([
+      { field: "user.auth", op: "changed", before: mask, after: mask },
     ]);
   });
 });

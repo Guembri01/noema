@@ -876,6 +876,11 @@ async function main() {
       scopes: [...DEMO_TOKEN_SCOPES],
       tokenHash: "seeded-demo-token-hash-not-a-real-secret",
       lastUsedAt: daysAgo(1),
+      // B29: the demo token carries a deadline too — 90 days, the default
+      // lifetime of `API_TOKEN_LIFETIME_MS` (`src/lib/api-auth.ts`). The seed
+      // spells it out instead of importing it: that module pulls in a second
+      // Prisma client.
+      expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
     },
   });
 

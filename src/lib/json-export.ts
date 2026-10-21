@@ -14,9 +14,10 @@
  * - every nested object's keys are sorted alphabetically;
  * - rows are ordered by `position` (stable for ties and for rows without a
  *   position, so a snapshot without positions keeps its input order);
- * - secret-shaped fields (`token`, `password`, `apiKey`, …) and internal
- *   fields (`_foo`, `__typename`) are replaced with `REDACTED` at every depth,
- *   so an export never leaks provider keys or editor bookkeeping;
+ * - secret-shaped fields (`token`, `password`, `apiKey`, … — the shared list
+ *   of `src/lib/redaction.ts`) and internal fields (`_foo`, `__typename`) are
+ *   replaced with `REDACTED` at every depth, so an export never leaks provider
+ *   keys or editor bookkeeping;
  * - `exportedAt` is injected by the caller (no hidden clock), so the same input
  *   byte-for-byte produces the same document.
  *
@@ -24,9 +25,12 @@
  * `{ ok, value | error }`; `isSupportedSchemaVersion` is the one predicate the
  * version check is built on. Round-trip is pinned in json-export.test.ts.
  *
- * Wiring `?format=json` in `src/app/api/export/database/[pageId]/route.ts` so
- * the CSV default stays untouched is a follow-up — this module is pure.
+ * The route `src/app/api/export/database/[pageId]/route.ts` serves
+ * `?format=json` from this builder and keeps the CSV default untouched; this
+ * module itself is pure.
  */
+
+import { isSecretKey } from "./redaction";
 
 /** Schema version written by default and understood by `parseDatabaseJson`. */
 export const DATABASE_JSON_SCHEMA_VERSION = 1;
@@ -73,19 +77,11 @@ export type DatabaseJsonParseResult =
   | { ok: true; value: DatabaseJsonValue }
   | { ok: false; error: string };
 
-/**
- * Keys whose value is never exported. Intentionally broad and matched by
- * substring: over-redacting a field named `tokenCount` is preferable to leaking
- * a real `token`, and the rule is trivial to reason about.
- */
-const SECRET_KEY_PATTERN =
-  /(password|passphrase|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|authorization|credential)/i;
-
 /** Internal bookkeeping (editor/driver fields) that does not belong in an export. */
 const INTERNAL_KEY_PATTERN = /^_/;
 
 function isRedactedKey(key: string): boolean {
-  return SECRET_KEY_PATTERN.test(key) || INTERNAL_KEY_PATTERN.test(key);
+  return isSecretKey(key) || INTERNAL_KEY_PATTERN.test(key);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

@@ -69,6 +69,10 @@ The central decision is **"everything is a page."**
 
 - Passwords: bcrypt, cost 12 (`src/lib/auth.ts`).
 - Sessions: HS256 JWT (`jose`) in an httpOnly, SameSite=Lax cookie, 30-day expiry.
+- The session registry (`src/lib/session-store.ts`) is the authority on whether
+  a session is still alive: the request path rejects a revoked session and one
+  that saw no activity for the idle window (12 h), and activity slides the
+  deadline — never past the 30-day ceiling.
 - `requireUser()` redirects unauthenticated users; every server action then
   re-derives authorization — the JWT only carries the user id.
 - The sign-in, the sign-up and the 2FA check are server actions, so they never
@@ -77,6 +81,11 @@ The central decision is **"everything is a page."**
   the submitted e-mail address) and one for the 2FA guesses. Five consecutive
   failures lock the account for a while; the counter and the lock live on the
   user row (`User.failedLoginCount`, `User.lockedUntil`).
+- Two-factor authentication is **TOTP only** (`src/lib/totp.ts`): the sign-in
+  checks a six- to eight-digit code and nothing else. There are **no recovery
+  codes** — none are issued, none are stored and none would be accepted, so the
+  settings dialog does not offer any (a lost authenticator locks the account
+  until an operator resets it, see `docs/OPERATIONS.md` §9).
 
 ## Authorization
 
@@ -88,6 +97,26 @@ membership). Policy helpers:
 - `canDeleteWorkspace(role)` — OWNER only.
 
 This is intentionally centralized so a future public API can reuse it.
+
+**Page access has no inheritance.** The rule for a page is:
+
+- **read** — workspace membership. Every member reads every page of the
+  workspace; a `GUEST` reads only the pages inside their scope
+  (`src/lib/guest-access.ts`: the pages shared with them, the pages they
+  created and the pages of their teamspaces, plus those pages' subtree — never
+  an ancestor).
+- **edit** — the same membership plus the page's own `PagePermission` row,
+  which the page route reads as an edit lock (`editable`): a member whose row
+  is `READ` or `COMMENT` may open the page but not change it.
+
+A `PagePermission` row never reaches a child page: there is **no** page-tree
+inheritance in the product. An inheritance engine that implemented such a rule
+once sat behind `src/lib/tenant-guard.ts`; no production path ever called it
+and its role baseline was stricter than the product's (a `MEMBER` held no
+implicit baseline there, while the product grants every member read access to
+every page), so it was removed (B41). `scripts/check-access-rule.mjs` fails
+when an exported access helper has no production caller, so a second,
+unreachable rule cannot come back unnoticed.
 
 A second, separate guard covers the page *tree*: `assertScopedParent()`
 ([`src/lib/page-parent.ts`](../src/lib/page-parent.ts)) loads a parent

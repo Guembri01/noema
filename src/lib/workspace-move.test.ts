@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   checkAccess,
   collisionReport,
+  defaultIdFactory,
   planWorkspaceMove,
   remapRefs,
   summarizeMove,
@@ -156,6 +157,28 @@ function moveInput(overrides: Partial<WorkspaceMoveInput> = {}): WorkspaceMoveIn
 function validPlan(): WorkspaceMovePlan {
   return planWorkspaceMove(moveInput());
 }
+
+describe("defaultIdFactory", () => {
+  it("keeps the `move_<counter>_<random>` shape the page ids have always had", () => {
+    expect(defaultIdFactory()).toMatch(/^move_[0-9a-z]+_[0-9a-z]{8}$/);
+  });
+
+  it("never hands out the same id twice", () => {
+    const ids = new Set(Array.from({ length: 500 }, () => defaultIdFactory()));
+    expect(ids.size).toBe(500);
+  });
+
+  it("draws the random part from the CSPRNG, never from Math.random", () => {
+    // The id ends up in a URL, so a weak PRNG would make the page enumerable.
+    const spy = vi.spyOn(Math, "random");
+    try {
+      defaultIdFactory();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
 
 describe("planWorkspaceMove", () => {
   it("assigns fresh ids and an id map covering only the moved subtree", () => {

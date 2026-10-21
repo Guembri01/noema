@@ -1,6 +1,5 @@
 "use server";
 
-import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import type { WorkspaceRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
@@ -21,6 +20,9 @@ import { toEngineRole } from "@/lib/workspace-role-map";
 export type EmailResult<T = unknown> = ({ ok: true } & T) | { error: string };
 
 const INVITE_TTL_DAYS = 14;
+
+/** The origin a link falls back to when no `APP_URL` is configured. */
+const DEFAULT_ORIGIN = "http://localhost:3200";
 
 /**
  * The roles a workspace invitation may carry.
@@ -56,16 +58,27 @@ async function authorizeAdmin(workspaceId: string): Promise<AdminAuth> {
   return { ok: true, user, access };
 }
 
-/** Absolute base URL for links inside emails (APP_URL wins, then the request). */
+/**
+ * Absolute base URL for links inside emails.
+ *
+ * The origin comes from the deployment configuration only (`APP_URL`, then
+ * `NEXT_PUBLIC_APP_URL`). A request header (`Host`, `X-Forwarded-Host`) is
+ * chosen by whoever sends the request, so trusting it would let the sender
+ * decide which host an invitation link points at — and the link lands in a
+ * mail a third party reads. A deployment that serves the public internet
+ * sets `APP_URL`; without one the local development origin is used.
+ */
 export async function appOrigin(): Promise<string> {
-  const configured = process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL;
-  if (configured) return configured.replace(/\/+$/, "");
-  const store = await headers();
-  const host = store.get("x-forwarded-host") ?? store.get("host") ?? "localhost:3200";
-  const proto =
-    store.get("x-forwarded-proto") ??
-    (/^(localhost|127\.|10\.|192\.168\.)/.test(host) ? "http" : "https");
-  return `${proto}://${host}`;
+  const configured =
+    process.env.APP_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim() || "";
+  // The compose stack already declares the browser origin in `APP_ORIGINS`;
+  // use its first entry rather than falling straight back to the development
+  // port, which would put `localhost:3200` in a real invitation mail.
+  const fromOrigins =
+    process.env.APP_ORIGINS?.split(",")
+      .map((origin) => origin.trim())
+      .find(Boolean) ?? "";
+  return (configured || fromOrigins || DEFAULT_ORIGIN).replace(/\/+$/, "");
 }
 
 // ---------------------------------------------------------------------------
