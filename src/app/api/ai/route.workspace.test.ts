@@ -77,7 +77,10 @@ const ask = (body: unknown) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  process.env.AUTH_SECRET = "test-secret";
+  // `encryptSecret()` now goes through the 32-character AUTH_SECRET rule; a
+  // short fixture would throw before the route ever sees the request.
+  process.env.AUTH_SECRET =
+    "9f2c4e6a8b0d1f3a5c7e9b1d3f5a7c9e9f2c4e6a8b0d1f3a5c7e9b1d3f5a7c9e";
   process.env.AI_API_KEY = "env-key";
   process.env.AI_BASE_URL = "https://env.example/v1";
   process.env.AI_MODEL = "env-model";
