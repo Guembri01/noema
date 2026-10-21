@@ -66,12 +66,13 @@ export default async function PageRoute({
   }
 
   /**
+  /**
    * Guests may only open pages that were shared with them (or their own).
    *
    * Two scopes exist (`lib/guest-access.ts`):
    * - the **display** scope (`pageScopeFor`) also contains the *ancestors* of
    *   the shared pages, because the sidebar has to draw the breadcrumb chain
-   *   down to a shared child. It stays the scope of every other page type —
+   *   down to a shared child. It stays the scope of every other page type -
    *   this change does not widen what a guest may open.
    * - the **read** scope (`guestReadablePageIds`) contains the shared pages
    *   and their whole subtree, never an ancestor. That is the canonical
@@ -82,6 +83,10 @@ export default async function PageRoute({
    * row of a database must not open the database above it (that was the
    * finding), and a guest who was given a parent page may open the database
    * below it.
+   *
+   * The same read scope decides which relation *targets* of the database may
+   * be resolved: a target outside it delivers no rows, no cell values and no
+   * schema. Only a guest has a scope; every other role sees the workspace.
    */
   const isDatabase = page.type === "DATABASE";
   const guestReadScope =
@@ -110,7 +115,7 @@ export default async function PageRoute({
   );
 
   const [database, breadcrumbTrail, following, databases, userWorkspaces, members, pagePermissions, teamspaces, versionLabels] = await Promise.all([
-    page.type === "DATABASE" ? getDatabase(page.id) : Promise.resolve(null),
+    page.type === "DATABASE" ? getDatabase(page.id, guestReadScope) : Promise.resolve(null),
     getAncestorTrail(workspace.id, page.id),
     prisma.pageFollow.findUnique({
       where: { userId_pageId: { userId: user.id, pageId: page.id } },
