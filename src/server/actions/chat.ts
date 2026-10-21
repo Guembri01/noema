@@ -9,6 +9,7 @@ import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { linkifyReferences } from "@/lib/chat-context";
 import { buildChatRequest } from "@/lib/chat-runtime";
 import { chatComplete, resolveAiConfig } from "@/lib/ai-provider";
+import { conversationSessionId } from "@/lib/ai-session";
 import { effectiveChatModel } from "@/lib/chat-model";
 import { assertScopedParent } from "@/lib/page-parent";
 import {
@@ -236,7 +237,9 @@ async function replyAsAssistant(
       user: request.user,
       temperature: 0.3,
     },
-    { ...config, model: chosenModel },
+    // The session is the discussion's own id, so the provider can route and
+    // cache per conversation.
+    { ...config, model: chosenModel, sessionId: conversationSessionId(threadId) },
   );
   if (!result.ok) return false;
   const answer = linkifyReferences(result.text.trim(), request.intel.references);

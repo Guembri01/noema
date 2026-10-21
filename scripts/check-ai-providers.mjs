@@ -37,12 +37,44 @@ if (providers.length === 0) {
   process.exit(1);
 }
 
+/**
+ * OpenCode Go, when it is the configured provider.
+ *
+ * Go publishes its catalogue under a path of its own — the chat endpoint's
+ * path answers 404 — and it asks every client to identify itself and to name
+ * the session it belongs to.
+ */
+const isOpenCodeGo = (baseUrl) => {
+  try {
+    return new URL(baseUrl).hostname === "opencode.ai";
+  } catch {
+    return false;
+  }
+};
+
+/** The URL the provider publishes its catalogue under. */
+const catalogueUrl = (baseUrl) =>
+  isOpenCodeGo(baseUrl)
+    ? "https://opencode.ai/inference/go/v1/models"
+    : `${baseUrl.replace(/\/$/, "")}/models`;
+
+/** The headers the provider expects from this client. */
+const providerHeaders = (provider) => ({
+  authorization: `Bearer ${provider.key}`,
+  ...(isOpenCodeGo(provider.baseUrl)
+    ? {
+        "user-agent": "noema-check-ai-providers/1.0",
+        "x-opencode-session": "noema:deployment:check-ai-providers",
+      }
+    : {}),
+});
+
 for (const provider of providers) {
   let modelsOk = false;
   let modelCount = 0;
   try {
-    const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/models`, {
-      headers: { authorization: `Bearer ${provider.key}` },
+    const response = await fetch(catalogueUrl(provider.baseUrl), {
+      headers: providerHeaders(provider),
       signal: AbortSignal.timeout(20_000),
     });
     const body = await response.json().catch(() => null);
@@ -59,7 +91,10 @@ for (const provider of providers) {
     const started = Date.now();
     const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${provider.key}` },
+      headers: {
+        ...providerHeaders(provider),
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
         model: provider.model,
         messages: [

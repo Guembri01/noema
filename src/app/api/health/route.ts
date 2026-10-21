@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { serverAppVersion } from "@/lib/app-version";
 import { log, recordCounter, recordGauge, recordHistogram } from "@/lib/telemetry";
 
 export const runtime = "nodejs";
@@ -33,13 +34,10 @@ const DB_PING_TIMEOUT_MS = 2000;
 const DB_SLOW_MS = 500;
 
 /**
- * App version exposed on the probe. `npm run dev/start` exports the package
- * version as `npm_package_version`; container images that run without npm set
- * `APP_VERSION` explicitly. The literal fallback keeps the header well-formed
- * when neither is present.
+ * App version exposed on the probe — the same value the product's own user
+ * agent carries (`src/lib/app-version.ts`).
  */
-const APP_VERSION =
-  process.env.APP_VERSION ?? process.env.npm_package_version ?? "1.4.1";
+const APP_VERSION = serverAppVersion();
 
 /** Per-check outcome. */
 type CheckStatus = "up" | "down";
