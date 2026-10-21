@@ -85,7 +85,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Video block | Embed or upload video. | ✅ | Drops insert a download link the browser plays; provider embeds (YouTube/Vimeo) ship through the embed block instead. No `<video>` node in `src/` today — spec docs/specs/editor-deep.md R84.7 (T84.6, editor slot); honest partial. |
 | Audio block | Embed or upload audio. | ✅ | Drops insert a download link; no `<audio>` player and no waveform yet — spec docs/specs/editor-deep.md R84.7/R84.9 (T84.6); honest partial. |
 | File block | Attach an arbitrary file for download. | ✅ | Upload/download works; non-image uploads insert a download link, so preview types stay limited (no dedicated file node yet). |
-| Bookmark block | Rich link preview card. | ✅ | `/api/link-preview` returns OpenGraph metadata incl. `og:image` (SSRF-guarded, `safeImageUrl`), the card renders the thumbnail, and the read-only doc renderer now draws the full card (favicon, title, description, host, image); e2e at media-parity.spec.ts bookmark test. |
+| Bookmark block | Rich link preview card. | ✅ | `/api/link-preview` returns OpenGraph metadata incl. `og:image` (SSRF-guarded: the host is DNS-resolved, every redirect hop and the card's asset URLs are re-validated by the shared `safeFetchGuarded` guard), the card renders the thumbnail, and the read-only doc renderer now draws the full card (favicon, title, description, host, image); e2e at media-parity.spec.ts bookmark test. |
 | Embed block | Generic iframe embed by URL. | ✅ | Config half shipped (B20): `EMBED_HOST_ALLOWLIST` + `isEmbedHostAllowed()` is the single gate over `detectEmbed()` (spec R84.15), provider meta drives iframe title/aspect/`allow`, and CSP `frame-src` mirrors the outputs. Still provider-only — no arbitrary-URL iframe and no `sandbox` attribute; UI half R84.13-R84.15 stays open. |
 | PDF preview block | Inline PDF viewer. | ✅ | Planned; needs a viewer component. |
 | Map block | Embedded map for an address. | ✅ | Planned; provider-agnostic embed. |
@@ -373,7 +373,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Notification preferences | Control what triggers alerts. | ✅ | Planned. B82 spec `docs/specs/notifications.md`: `NotificationPreference` rows resolved page → workspace → user default, gate enforced inside the dispatcher itself (`none` cannot be bypassed, `always`-class exceptions documented) — R82.15-R82.20. |
 | Lock editing | Freeze a page while editing. | ✅ | Planned; permission-linked. |
 | Activity trail (audit log) | Who changed what, workspace-wide. | ✅ | The `Activity` model is written by workspace, member, page, share and comment mutations and rendered in Settings → Activity with human labels. B79 audit: comment coverage stops at creation — resolve/edit/delete log nothing (`comment.resolved` union member has zero writers), `row.edited` writes directly outside the `ActivityAction` union (`database.ts:206-215`), and `ACTIVITY_KEYS` (`settings/page.tsx:41-54`) is missing entries for several union members. R79.6. |
-| Guests | Limited external collaborators. | ✅ | A `GUEST` is scoped to the pages shared with them: the sidebar tree, search results and **the page route itself** all filter through `guestVisiblePageIds` (explicit `PagePermission`, their teamspaces, their own pages, plus ancestors so the tree still renders). Guests cannot edit, invite or upload. Proven by an e2e that signs in as a guest: the shared page opens, the private one is a 404 and never appears in search. |
+| Guests | Limited external collaborators. | ✅ | A `GUEST` is scoped to the pages shared with them: the sidebar tree, search results and **the page route itself** all filter through the guest scope (`guestScope` in `src/lib/guest-access.ts`: explicit `PagePermission`, their teamspaces, their own pages, plus ancestors so the tree still renders). The workspace shell's workspace-wide datasets — the chat log, the calendar subscriptions and their events, the projects, the open-ticket count — are not shared page by page, so a guest receives none of them: `getWorkspaceShellDatasets` (`src/server/workspace-shell.ts`) hands a guest empty sets and never runs the queries behind them. The teamspace names are scoped instead of withheld: a guest sees the teamspaces their own pages live in (the sidebar draws a branch under that name and would drop a shared page otherwise) and not the workspace's other teamspaces — in the shell and in the page route alike. The private calendar feed URL (`icsUrl`) never leaves the server. The sidebar offers a guest no action the server refuses (no new discussion, no calendar subscription). Guests cannot edit, invite or upload. Proven by an e2e that signs in as a guest: the shared page opens, the private one is a 404 and never appears in search. |
 | Coarse edit locks | Prevent simultaneous structural edits. | 🟡 | Planned fallback before full CRDT. |
 
 ## 8. Sharing & permissions
@@ -640,7 +640,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Audit log | Record sensitive actions. | ✅ | Planned. |
 | Soft delete | Mark-deleted rather than purge. | ✅ | `deletedAt` columns used. |
 | Trash retention | Auto-purge after a window. | ✅ | Planned; scheduled job. |
-| Rate limiting | Throttle API/site traffic. | ✅ | Planned; middleware. |
+| Rate limiting | Throttle API/site traffic. | ✅ | Planned; middleware. The sign-in, sign-up and 2FA actions carry their own budgets and a temporary account lockout. |
 | Pagination | Bounded list responses. | ✅ | The tracker paginates server-side (100/page, no full-workspace scans); export and AI-context queries stay bounded by explicit `take` limits. |
 | Multi-tenancy | Isolate workspaces. | 🟡 | Workspace scoping modeled. |
 | Backups | Scheduled data backups. | ✅ | `npm run backup` dumps the database (via the `noema-db` container or a local `pg_dump`), **verifies every core table is present**, prunes to the last 5 and prints the restore command. |
@@ -652,7 +652,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Session management | Expire and revoke sessions. | 🟡 | Sessions stored; revocation partial. Spec: docs/specs/engineering-hardening.md. |
 | Password hashing | Secure credential storage. | ✅ | Strong hashing used. |
 | Two-factor auth (2FA) | TOTP second factor. | ✅ | Planned. |
-| SSO / SAML | Enterprise single sign-on. | ✅ | OIDC authorization-code + JWKS verification; JIT provisioning (`SSO_*` env). Spec for the SAML half: docs/specs/saml-sso.md. |
+| SSO / SAML | Enterprise single sign-on. | ✅ | OIDC authorization-code + JWKS verification; JIT provisioning (`SSO_*` env). A provider sign-in links an existing account only when that account proved its address (`User.emailVerified`) — an unverified local account is refused with `?error=sso_email_taken`. Spec for the SAML half: docs/specs/saml-sso.md. |
 | OIDC support | OpenID Connect providers. | ✅ | Planned. |
 | Encryption at rest | Encrypt stored data. | ✅ | Planned; DB/disk encryption. |
 | Encryption in transit | TLS everywhere. | ✅ | Planned; reverse-proxy TLS. |

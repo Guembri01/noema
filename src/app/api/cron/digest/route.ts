@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { rateLimit } from "@/lib/api-guard";
+import { guardOpsSecret } from "@/lib/ops-guard";
 import {
   MAIL_NOT_CONFIGURED,
   emailTemplate,
@@ -33,7 +34,8 @@ import type { DigestCadence } from "@/lib/notification-prefs";
  * Guard: the same fail-closed `CRON_SECRET` + `x-cron-secret` handshake and
  * `rateLimit(…, "cron", 12, 60_000)` the other cron routes use
  * (`api/cron/templates/route.ts`, `api/cron/versions/route.ts`); 503 when the
- * secret is unset, 401 on a mismatch.
+ * secret is unset, 429 over the limit (the limit runs *before* the comparison),
+ * 401 on a mismatch.
  *
  * "One email per digest window": each user's digest window is derived from
  * `nextDigestAt` (08:00 local, daily or on the coming Monday), and a "sent"
@@ -154,21 +156,13 @@ async function firstWorkspaceId(userId: string): Promise<string | null> {
 async function runCron(request: Request) {
   // Fail closed: a digest fans sensitive notification text out over SMTP, so an
   // unconfigured secret is a deployment error rather than an open endpoint.
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    return NextResponse.json(
-      {
-        error:
-          "CRON_SECRET is not configured. Set CRON_SECRET in the environment and send it as the x-cron-secret header.",
-      },
-      { status: 503 },
-    );
-  }
-  if (request.headers.get("x-cron-secret") !== secret) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const limited = rateLimit(request, "cron", 12, 60_000);
-  if (limited) return limited;
+  // The shared gate throttles BEFORE the comparison and compares the secret
+  // in constant time.
+  const gate = guardOpsSecret(request, {
+    secret: process.env.CRON_SECRET,
+    limit: () => rateLimit(request, "cron", 12, 60_000),
+  });
+  if (!gate.ok) return gate.response;
 
   const now = new Date();
 

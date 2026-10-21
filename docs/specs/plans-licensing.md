@@ -48,7 +48,7 @@ inventing per-feature ad-hoc checks.
 | Action matrix | `src/lib/permissions.ts:44-58` (`WorkspaceAction` union), `:60-68` (`ACTION_GRANTS`), `:81-89` (`canPerformWorkspaceAction`: unknown action denies even the owner) | **The pattern this spec copies for feature gates** (R26.4). |
 | Call sites | `src/server/actions/workspaces.ts:87` (`manageSettings`), `:119` (`deleteWorkspace`), `:143` + `:184` (`manageMembers`), `:247` (`transferOwnership`) | Server-side, not just hidden UI. |
 | Page/share grants | `prisma/schema.prisma:481` `PagePermission`, `:67` `enum SharePermission`, `:510` `TeamspaceMember` (role `@default(MEMBER)`) | Shipped, ungated. |
-| Guest scoping | `src/lib/guest-access.ts:1-13` (doc comment), `guestVisiblePageIds` consumed by sidebar/search/page route; matrix `docs/FEATURE_MATRIX.md:376` | Shipped, ungated, e2e-proven. |
+| Guest scoping | `src/lib/guest-access.ts:1-11` (doc comment), `guestScope`/`guestVisiblePageIds` consumed by sidebar/search/page route; matrix `docs/FEATURE_MATRIX.md:376` | Shipped, ungated, e2e-proven. |
 
 **Members/guests limits: none exist.** `sendWorkspaceInviteAction`
 (`src/server/actions/email.ts:236-251`) validates the role whitelist

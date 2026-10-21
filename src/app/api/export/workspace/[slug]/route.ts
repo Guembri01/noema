@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { prisma } from "@/lib/db";
 import { getWorkspaceBySlug } from "@/server/queries";
 import {
@@ -31,15 +32,18 @@ const safeName = (value: string) =>
  * the uploaded attachments of every exported page (MISSING_FEATURES §12).
  * `?includeSubpages=false` exports top-level pages only; unknown `?format`
  * → 400 (R23.16); 5 exports/min (R23.22).
+ *
+ * A workspace archive is a full-text copy of the whole workspace, so it is
+ * reserved for full members: a `GUEST` is an external collaborator with access
+ * to a few shared pages and gets a 403 (R23.21).
  */
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
-  const limited = rateLimit(request, "export-workspace", 5, 60_000);
-  if (limited) return limited;
-
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "export-workspace", 5, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { slug } = await params;
@@ -47,6 +51,14 @@ export async function GET(
   if (!workspace) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Guests may not export a workspace at all (R23.21).
+  if (!canEditContent(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  // Belt and braces: the page scope is applied to the exported pages as well,
+  // so a role that is not a known workspace role yields an empty archive
+  // instead of the whole workspace.
+  const visiblePageIds = await pageScopeFor(user.id, workspace.id, access.role);
 
   const searchParams = new URL(request.url).searchParams;
   const parsedFormat = parseExportFormat(
@@ -63,7 +75,11 @@ export async function GET(
   const includeSubpages = parseIncludeSubpages(searchParams.get("includeSubpages"));
 
   const pages = await prisma.page.findMany({
-    where: { workspaceId: workspace.id, deletedAt: null },
+    where: {
+      workspaceId: workspace.id,
+      deletedAt: null,
+      ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+    },
     orderBy: { position: "asc" },
     select: { id: true, parentId: true, title: true, type: true, content: true, coverUrl: true },
   });
@@ -105,7 +121,10 @@ export async function GET(
           orderBy: { position: "asc" },
         }),
         prisma.page.findMany({
-          where: { parentId: page.id, deletedAt: null },
+          // A database's rows belong to the database's own workspace: a row
+          // that was linked across workspaces (the unchecked `parentId` hole,
+          // B08) must not leak into the export.
+          where: { parentId: page.id, workspaceId: workspace.id, deletedAt: null },
           orderBy: { position: "asc" },
           include: { propertyValues: true },
         }),
@@ -139,6 +158,9 @@ export async function GET(
 
   // Attachments: bundle every upload referenced by an exported page's content
   // or cover, best-effort — a missing blob skips that file, never the export.
+  // Only uploads of *this* workspace are bundled: a page may reference an
+  // upload of another workspace (a leaked share link), and those bytes are not
+  // ours to hand out (B38).
   const attachmentUrls = new Set<string>();
   for (const page of exported) {
     for (const url of collectFileUrls({ content: page.content, coverUrl: page.coverUrl })) {
@@ -147,7 +169,7 @@ export async function GET(
   }
   const driver = storageDriver();
   for (const url of attachmentUrls) {
-    const key = fileKeyFromUrl(url);
+    const key = fileKeyFromUrl(url, workspace.id);
     const zipPath = attachmentZipPath(url);
     if (!key || !zipPath) continue;
     const stored = await driver.get(key).catch(() => null);

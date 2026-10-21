@@ -6,6 +6,12 @@ import {
   type JobPayload,
 } from "@/lib/job-queue";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
+import { guardOpsSecret } from "@/lib/ops-guard";
 
 export const runtime = "nodejs";
 
@@ -69,21 +75,14 @@ function asPayload(value: unknown): JobPayload | undefined {
  * optional `?limit=` caps this tick.
  */
 export async function GET(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    return NextResponse.json(
-      {
-        error:
-          "CRON_SECRET is not configured. Set CRON_SECRET in the environment and send it as the x-cron-secret header.",
-      },
-      { status: 503 },
-    );
-  }
-  if (request.headers.get("x-cron-secret") !== secret) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const limited = rateLimit(request, "cron", 12, 60_000);
-  if (limited) return limited;
+  // The shared gate: fail closed without a secret, throttle before the
+  // comparison (a wrong secret is bounded, not an unbounded guessing oracle),
+  // and compare the secret in constant time.
+  const gate = guardOpsSecret(request, {
+    secret: process.env.CRON_SECRET,
+    limit: () => rateLimit(request, "cron", 12, 60_000),
+  });
+  if (!gate.ok) return gate.response;
 
   const rawLimit = Number(new URL(request.url).searchParams.get("limit"));
   const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : undefined;
@@ -106,27 +105,18 @@ export async function GET(request: Request) {
 
 /** Enqueue a job for a later drain. */
 export async function POST(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    return NextResponse.json(
-      {
-        error:
-          "CRON_SECRET is not configured. Set CRON_SECRET in the environment and send it as the x-cron-secret header.",
-      },
-      { status: 503 },
-    );
-  }
-  if (request.headers.get("x-cron-secret") !== secret) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const limited = rateLimit(request, "cron", 12, 60_000);
-  if (limited) return limited;
+  // The shared gate (same order as GET above): throttle, then compare.
+  const gate = guardOpsSecret(request, {
+    secret: process.env.CRON_SECRET,
+    limit: () => rateLimit(request, "cron", 12, 60_000),
+  });
+  if (!gate.ok) return gate.response;
 
   let body: unknown;
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    body = await readJsonBody<unknown>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     return NextResponse.json({ error: "Body must be a JSON object." }, { status: 400 });

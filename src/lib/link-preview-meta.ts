@@ -1,5 +1,3 @@
-import { isHttpUrl, isPrivateHost } from "@/lib/embeds";
-
 /**
  * F6 — link preview metadata extraction.
  *
@@ -10,8 +8,11 @@ import { isHttpUrl, isPrivateHost } from "@/lib/embeds";
  * `baseUrl` and decodes HTML entities. It is deliberately total: a hostile or
  * truncated page can hand this module any bytes and it will never throw.
  *
- * The SSRF host gate is reused from `embeds.ts` (`feed-guard.ts` already imports
- * it the same way) so `isPreviewable()` can never drift from the route guard.
+ * This module is bundled into the client, so it hosts no host gate: the SSRF
+ * gate for the preview path is the shared, DNS-aware guard in
+ * `src/lib/feed-guard.ts` (`safeFetchGuarded`), which the route runs before
+ * and after every request. A literal-host check here would only ever be a
+ * weaker second copy of it (audit B10).
  */
 
 /** The preview-card shape consumed by the bookmark block / doc renderer. */
@@ -151,22 +152,6 @@ export function resolveUrl(base: string | undefined, href: string): string | nul
       : null;
   } catch {
     return null;
-  }
-}
-
-/**
- * Should the preview pipeline attempt this URL at all? Accepts absolute
- * `http(s)` URLs whose host is not loopback/private (reusing the audited
- * `isPrivateHost` SSRF gate); rejects scheme-less strings and every other
- * scheme. Total: never throws.
- */
-export function isPreviewable(value: string): boolean {
-  const trimmed = typeof value === "string" ? value.trim() : "";
-  if (!isHttpUrl(trimmed)) return false;
-  try {
-    return !isPrivateHost(new URL(trimmed).hostname);
-  } catch {
-    return false;
   }
 }
 

@@ -11,6 +11,15 @@ as a non-root user, carries a healthcheck, and runs `prisma migrate deploy` on
 start-up. It is published by [`.github/workflows/site.yml`](../.github/workflows/site.yml)
 on every push to `main` and on every `v*` tag.
 
+That workflow has two image jobs, and the split is a security boundary. The
+`image` job is the pull-request path: it builds the pull request's own image
+for `linux/amd64`, loads it, scans it and smoke-tests it, with `contents: read`
+and no other scope. The `publish` job is the only one that may push to GHCR and
+the only one that may mint the OIDC token cosign signs with; its gate names the
+events that may publish (`push` and `workflow_dispatch`), so no pull-request
+event — not even `pull_request_target` — can reach it. The gate
+`npm run check:workflow-permissions` keeps that shape.
+
 ## Pull and run
 
 The fastest path is the compose file in the repository root: it starts
@@ -61,6 +70,7 @@ is empty until you sign up.
 | `DATABASE_URL` | yes | — | PostgreSQL connection string. |
 | `AUTH_SECRET` | recommended | generated into `/data` | Session-cookie signing key. Set it explicitly on a server so a container rebuild does not sign everyone out. |
 | `APP_ORIGINS` | behind a proxy | — | Comma-separated `host:port` values the browser uses. The boot wrapper folds these into the Server Action origin allowlist at **run** time. |
+| `TRUSTED_PROXY_HOPS` | behind a proxy | `0` | Number of trusted reverse-proxy hops. `0` ignores `X-Forwarded-For`/`X-Real-IP`. The Edge middleware reads it at **build** time, so pass it as a build arg as well. |
 | `PORT` | no | `3000` | Listen port. |
 | `HOSTNAME` | no | `0.0.0.0` | Listen address. |
 | `NOEMA_SKIP_MIGRATE` | no | — | Set to `1` to skip `prisma migrate deploy` (use with an external migration job). |
@@ -94,6 +104,21 @@ APP_ORIGINS="https://noema.example.com"
 Without it, a Server Action sent from the public hostname can be rejected as a
 cross-origin request and the UI silently stops saving. `localhost:3000`,
 `localhost:3200`, `127.0.0.1` and `[::1]` are always allowed.
+
+If the app sits behind a reverse proxy, also set `TRUSTED_PROXY_HOPS` to the
+number of proxies between the internet and the container (`1` for a single
+nginx/Caddy). The rate limits and the admin IP allowlist use it to pick the
+real client address; with `0` the forwarding headers are ignored and every
+client shares one `scope:local` bucket. Because the Edge middleware reads the
+value at **build** time, pass it both as a build arg and as a runtime variable:
+
+```bash
+docker build --build-arg TRUSTED_PROXY_HOPS=1 -t noema:local .
+docker run --rm -p 3000:3000 -e TRUSTED_PROXY_HOPS=1 ... noema:local
+```
+
+With compose, put `TRUSTED_PROXY_HOPS=1` in `.env`; the compose file passes it
+to the build and to the running container.
 
 ### Migrations
 

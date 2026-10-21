@@ -10,6 +10,17 @@ import {
   type ReadinessReport,
 } from "@/lib/self-hosting";
 import { clientKey, TokenBucketLimiter } from "@/lib/rate-limit";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
+import {
+  OPS_SECRET_HEADER,
+  OPS_SECRET_NOT_CONFIGURED,
+  READY_SECRET_HEADER,
+  guardOpsSecret,
+} from "@/lib/ops-guard";
 import { summarizeUserAgent } from "@/lib/user-agent";
 
 export const runtime = "nodejs";
@@ -35,6 +46,12 @@ export const dynamic = "force-dynamic";
  * only rate limit; the probe identity is reported via `user-agent.ts` so an
  * operator can see which monitor is asking.
  *
+ * The gate order is fixed by the shared helper (`@/lib/ops-guard`): 503
+ * (not configured) → 429 (over the limit) → 401 (wrong secret). The limit
+ * runs *before* the secret comparison, so a wrong secret is throttled instead
+ * of being an unbounded guessing oracle, and the comparison itself is
+ * constant time.
+ *
  * GET  → readiness (env + Postgres) + health + manifest.
  * POST → `{ envFile: string }` graded by `validateEnvFile`.
  */
@@ -54,12 +71,39 @@ function opsSecret(): string | undefined {
   return secret && secret.trim() !== "" ? secret : undefined;
 }
 
-/** Constant-time-ish header match; both sides are ops secrets, never user data. */
-function isAuthorized(request: Request, secret: string): boolean {
-  return (
-    request.headers.get("x-cron-secret") === secret ||
-    request.headers.get("x-ready-secret") === secret
+/** The burst-smoothing bucket: a 429 response when the probe is over budget. */
+function rateLimited(request: Request): NextResponse | null {
+  const limited = READY_LIMITER.hit(clientKey(request, "ready"), Date.now());
+  if (limited.allowed) return null;
+  return NextResponse.json(
+    { error: "Rate limit exceeded" },
+    {
+      status: 429,
+      headers: {
+        "retry-after": String(Math.max(1, Math.ceil(limited.retryAfterMs / 1000))),
+      },
+    },
   );
+}
+
+/**
+ * The shared ops gate: fail closed without a secret, then throttle, then
+ * compare the header in constant time.
+ *
+ * The order matters: the rate limit runs BEFORE the comparison, so a wrong
+ * secret is throttled instead of being an unbounded guessing oracle. The
+ * comparison itself never short-circuits on the first differing byte (a
+ * `===` on the shared secret would leak where a guess differs) — the shared
+ * helper in `@/lib/ops-guard` owns that.
+ */
+function guard(request: Request): NextResponse | null {
+  const gate = guardOpsSecret(request, {
+    secret: opsSecret(),
+    limit: () => rateLimited(request),
+    notConfigured: OPS_SECRET_NOT_CONFIGURED,
+    headerNames: [OPS_SECRET_HEADER, READY_SECRET_HEADER],
+  });
+  return gate.ok ? null : gate.response;
 }
 
 /** Trivial DB ping; reports up/down, never throws, never leaks the reason. */
@@ -76,36 +120,6 @@ async function probeDb(): Promise<boolean> {
   } finally {
     clearTimeout(timer);
   }
-}
-
-/** Gate + rate limit; a NextResponse to return early, or `null` to continue. */
-function guard(request: Request): NextResponse | null {
-  const secret = opsSecret();
-  if (!secret) {
-    return NextResponse.json(
-      {
-        error:
-          "Ops secret is not configured. Set CRON_SECRET (or READY_SECRET) in the environment and send it as the x-cron-secret header.",
-      },
-      { status: 503 },
-    );
-  }
-  if (!isAuthorized(request, secret)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const limited = READY_LIMITER.hit(clientKey(request, "ready"), Date.now());
-  if (!limited.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded" },
-      {
-        status: 429,
-        headers: {
-          "retry-after": String(Math.max(1, Math.ceil(limited.retryAfterMs / 1000))),
-        },
-      },
-    );
-  }
-  return null;
 }
 
 /** How many findings the env-file report carries, by kind. */
@@ -155,9 +169,9 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   let body: unknown;
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Expected a JSON body." }, { status: 400 });
+    body = await readJsonBody<unknown>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Expected a JSON body.");
   }
   const envFile =
     typeof body === "object" && body !== null

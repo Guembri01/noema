@@ -863,7 +863,10 @@ export async function gatherChatIntel(input: {
     membersBlock(workspaceId),
     recentMessages(workspaceId, take),
     labelsBlock(workspaceId),
-    searchPagesForPrompt(workspaceId, input.question, take),
+    // The chat is member-only: both entry points (`postChatMessageAction` and
+    // `POST /api/chat/stream`) require `canEditContent`, which denies GUEST, so
+    // the whole workspace is the caller's scope here.
+    searchPagesForPrompt(workspaceId, input.question, null, take),
   ]);
 
   const blocks: string[] = [];

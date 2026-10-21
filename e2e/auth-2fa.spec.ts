@@ -2,6 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { createHmac } from "node:crypto";
+import { envMode, loadEnvFiles } from "../src/lib/env-files";
+import { decryptSecret } from "../src/lib/secrets";
 
 /**
  * B95 — 2FA enrollment & hardened login flows (OWN file; no shared spec edits).
@@ -99,6 +101,51 @@ function totp(
 
 /** RFC 6238 test secret (ASCII "12345678901234567890"), pre-encoded. */
 const RFC_SECRET_B32 = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+
+/**
+ * Load the repo env files when the environment does not already provide them,
+ * so `AUTH_SECRET` — the key the server derived the envelope with — is the
+ * same value here.
+ *
+ * The files are loaded the way Next.js resolves them: `.env.<NODE_ENV>.local`
+ * > `.env.local` > `.env.<NODE_ENV>` > `.env`, and the FIRST file that sets a
+ * variable wins. `src/lib/env-files.ts` owns that order — the files are
+ * loaded in DESCENDING priority, because a loader that never overrides an
+ * already-set variable lets the first file it loads win. (The other way round
+ * `.env`, the lowest-priority file, would win, and the fixture would seal
+ * with a different key than the server.)
+ *
+ * The server this suite talks to runs in production mode
+ * (`npm run build && npm start`), so the production files are the ones that
+ * matter: the shared helper picks them unless `NODE_ENV` says `development`
+ * (Playwright sets `NODE_ENV=test`, and the server it talks to is still the
+ * production one).
+ * A missing file is not an error (the environment may inject it).
+ */
+function ensureEnv(): void {
+  loadEnvFiles(process.cwd(), envMode(), (reason) => {
+    console.error(`env file: ${reason}`);
+  });
+}
+ensureEnv();
+
+/**
+ * Open the stored TOTP seed (B05).
+ *
+ * The column holds an AES-256-GCM envelope (`v1:<iv>:<tag>:<payload>`), not the
+ * raw base32 seed — a database dump must not yield a usable 2FA seed. A row
+ * written before the fix holds the raw seed; it is returned as-is so the
+ * fixture can still be used during the transition window.
+ *
+ * Returns `null` when the envelope cannot be opened (wrong or missing
+ * `AUTH_SECRET`, tampered ciphertext) — the caller must fail loudly rather
+ * than compute a code from garbage.
+ */
+function openTotpSecret(stored: string | null): string | null {
+  if (!stored) return null;
+  if (!stored.startsWith("v1:")) return stored; // legacy plaintext row
+  return decryptSecret(stored);
+}
 
 /**
  * A code that is guaranteed OUTSIDE the server's ±1 step verify window
@@ -313,9 +360,12 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
     await expect(tf.getByRole("button", { name: "Enable two-factor" })).toHaveCount(0);
 
     // The DB record the login gate will consult: secret + enabled flag.
+    // B05: the stored seed is an envelope, not the raw base32 seed.
     const row = await dedicatedUser();
     expect(row?.twoFactorEnabled).toBe(true);
-    expect(row?.twoFactorSecret).toBe(secret);
+    expect(row?.twoFactorSecret).not.toBe(secret);
+    expect(row?.twoFactorSecret).toMatch(/^v1:/);
+    expect(openTotpSecret(row?.twoFactorSecret ?? null)).toBe(secret);
 
     // Red-first probe: B95_RED_PROBE=1 inverts the persisted-state assertion —
     // it MUST fail here, proving this test really observes the enable action.
@@ -343,7 +393,15 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
       await page.getByRole("button", { name: "Sign in" }).click();
       const gateInput = page.getByLabel("Two-factor code");
       await expect(gateInput).toBeVisible({ timeout: UI_TIMEOUT });
-      await gateInput.fill(totp(boot.twoFactorSecret));
+      // B05: the column holds the sealed envelope — open it before computing
+      // a code, otherwise the TOTP would be derived from the ciphertext.
+      const bootSecret = openTotpSecret(boot.twoFactorSecret);
+      if (!bootSecret) {
+        throw new Error(
+          "fixture: the stored 2FA seed could not be opened (missing AUTH_SECRET?)",
+        );
+      }
+      await gateInput.fill(totp(bootSecret));
       await page.getByRole("button", { name: "Sign in" }).click();
       await page.waitForURL(/\/w\//, { timeout: UI_TIMEOUT });
     } else {
@@ -353,9 +411,15 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
 
     const enrolled = await dedicatedUser();
     expect(enrolled?.twoFactorEnabled).toBe(true);
-    const secret = enrolled?.twoFactorSecret;
+    // B05: the column holds the sealed envelope — the seed has to be opened
+    // before a code can be computed from it.
+    const secret = openTotpSecret(enrolled?.twoFactorSecret ?? null);
     expect(secret).toBeTruthy();
-    if (!secret) throw new Error("fixture: 2FA secret missing");
+    if (!secret) {
+      throw new Error(
+        "fixture: 2FA secret missing or unreadable (missing AUTH_SECRET?)",
+      );
+    }
 
     // Logout through the real sidebar control.
     await gotoSettings(page);
@@ -374,8 +438,10 @@ test.describe("B95 — 2FA enrollment & hardened login", () => {
     ).toBeVisible({ timeout: UI_TIMEOUT });
     await codeInput.fill(staleTotp(secret));
     await page.getByRole("button", { name: "Sign in" }).click();
+    // B24 — a wrong code answers with the same text as a wrong password, so
+    // the reply never confirms that the password was right.
     await expect(page.getByRole("alert").first()).toHaveText(
-      "Invalid two-factor code.",
+      "Incorrect email or password.",
       { timeout: UI_TIMEOUT },
     );
     await expect(codeInput).toBeVisible(); // still standing at the gate

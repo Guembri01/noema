@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   canGuestAccess,
   canInviteGuest,
@@ -7,11 +7,13 @@ import {
   expireGrants,
   guestEditablePageIds,
   guestLimitsForPlan,
+  guestReadablePageIds,
   isGrantActive,
   isGrantExpired,
   isGrantRevoked,
   isVisibleToGuest,
   normalizeGuestEmail,
+  pageScopeFor,
   revokeGrant,
   toGuestSession,
   visiblePageIdsForGuest,
@@ -23,6 +25,23 @@ import {
   type GuestPage,
   type GuestRole,
 } from "./guest-access";
+
+/**
+ * Only the database edge is mocked — the scope itself is computed by the real
+ * helpers (`visiblePageIdsForGuest`), so the inheritance rule has exactly one
+ * implementation.
+ */
+const db = vi.hoisted(() => ({
+  pageFindMany: vi.fn(),
+  teamspaceMemberFindMany: vi.fn(),
+}));
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    page: { findMany: db.pageFindMany },
+    teamspaceMember: { findMany: db.teamspaceMemberFindMany },
+  },
+}));
 
 const pages = [
   { id: "root", parentId: null },
@@ -57,6 +76,28 @@ describe("isVisibleToGuest", () => {
     const visible = withAncestors(["leaf"], pages);
     expect(isVisibleToGuest("leaf", visible)).toBe(true);
     expect(isVisibleToGuest("other", visible)).toBe(false);
+  });
+});
+
+/**
+ * B02 — the scope every API and export route resolves before it queries.
+ *
+ * `null` means "the whole workspace", so the unknown-role case must never
+ * produce it: a role that is not a known workspace role gets an *empty* scope
+ * (fail closed) instead of the whole workspace.
+ */
+describe("pageScopeFor", () => {
+  it("gives a full member the whole workspace", async () => {
+    await expect(pageScopeFor("u1", "ws1", "OWNER")).resolves.toBeNull();
+    await expect(pageScopeFor("u1", "ws1", "ADMIN")).resolves.toBeNull();
+    await expect(pageScopeFor("u1", "ws1", "MEMBER")).resolves.toBeNull();
+  });
+
+  it("fails closed for an unknown role — never the whole workspace", async () => {
+    const scope = await pageScopeFor("u1", "ws1", "SUPERUSER");
+
+    expect(scope).not.toBeNull();
+    expect((scope as Set<string>).size).toBe(0);
   });
 });
 
@@ -166,6 +207,55 @@ describe("guestEditablePageIds", () => {
     expect([...guestEditablePageIds(editable, "g2")]).toEqual([]);
     expect(guestEditablePageIds(editable, "").size).toBe(0);
     expect(guestEditablePageIds([], "g1").size).toBe(0);
+  });
+});
+
+/**
+ * The query-backed **read** scope (`guestReadablePageIds`). It differs from the
+ * display scope (`pageScopeFor`): a grant covers the page itself and its
+ * subtree, never its ancestors.
+ */
+describe("guestReadablePageIds", () => {
+  /**
+   *   root          (shared with the guest)      → readable, with its child
+   *   └── child
+   *   private       (no grant)                   → hidden
+   *   mine          (created by the guest)        → readable
+   *   team          (guest's teamspace)          → readable, with its child
+   *   └── under-team
+   */
+  const PAGE_ROWS = [
+    { id: "root", parentId: null, teamspaceId: null, createdById: "owner", permissions: [{ level: "READ" }] },
+    { id: "child", parentId: "root", teamspaceId: null, createdById: "owner", permissions: [] },
+    { id: "private", parentId: null, teamspaceId: null, createdById: "owner", permissions: [] },
+    { id: "mine", parentId: null, teamspaceId: null, createdById: "guest", permissions: [] },
+    { id: "team", parentId: null, teamspaceId: "ts-1", createdById: "owner", permissions: [] },
+    { id: "under-team", parentId: "team", teamspaceId: null, createdById: "owner", permissions: [] },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    db.pageFindMany.mockResolvedValue(PAGE_ROWS);
+    db.teamspaceMemberFindMany.mockResolvedValue([{ teamspaceId: "ts-1" }]);
+  });
+
+  it("grants a shared page and its subtree, but never an ancestor", async () => {
+    const readable = await guestReadablePageIds("guest", "ws-1");
+    expect(readable.has("root")).toBe(true);
+    expect(readable.has("child")).toBe(true);
+    expect(readable.has("private")).toBe(false);
+  });
+
+  it("grants the guest's own pages and the pages of their teamspaces", async () => {
+    const readable = await guestReadablePageIds("guest", "ws-1");
+    expect(readable.has("mine")).toBe(true);
+    expect(readable.has("team")).toBe(true);
+    expect(readable.has("under-team")).toBe(true);
+  });
+
+  it("fails closed for a blank guest id", async () => {
+    const readable = await guestReadablePageIds("", "ws-1");
+    expect(readable.size).toBe(0);
   });
 });
 

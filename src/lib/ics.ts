@@ -4,8 +4,13 @@
  * Only the parts needed to surface upcoming events are implemented: line
  * unfolding, VEVENT extraction, DATE/DATE-TIME values, and text unescaping.
  * Recurrence rules are intentionally not expanded (the app keeps the feed's
- * first occurrence), which keeps this dependency-free and predictable.
+ * first occurrence), which keeps this predictable and free of any parsing
+ * library. The one import is the shared href allowlist (`sanitizeHref`): a
+ * feed is third-party input, so a `javascript:` URL is dropped before it can
+ * be stored.
  */
+
+import { sanitizeHref } from "@/lib/validation";
 
 export type IcsEvent = {
   uid: string;
@@ -125,7 +130,11 @@ export function parseIcsEvents(input: string): IcsEvent[] {
         current.location = unescapeText(parsed.value).slice(0, 300) || null;
         break;
       case "URL":
-        current.url = parsed.value.trim() || null;
+        // A calendar feed is third-party input, and this value ends up in an
+        // anchor `href` in the meetings sidebar. Only an allowlisted scheme
+        // (`http|https|mailto|tel`) may be stored — a `javascript:` URL is
+        // dropped here, before it ever reaches the database.
+        current.url = sanitizeHref(parsed.value.trim());
         break;
       case "DTSTART": {
         const parsedDate = parseIcsDate(parsed.value, parsed.params);

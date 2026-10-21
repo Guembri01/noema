@@ -6,9 +6,17 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { markdownToDoc } from "@/lib/serialize";
+import { assertScopedParent } from "@/lib/page-parent";
 import { cardDescriptionBlocks, parseTrelloBoard, pathToTitles, type ImportCounts } from "@/lib/importers";
 import type { CreatePropertyDescriptor } from "@/lib/csv-mapping";
 import { fileNameExt, isAllowedType, mimeForExt } from "@/lib/file-type";
+import {
+  readZipDirectory,
+  readZipEntry,
+  type ZipArchiveRejection,
+  type ZipEntry,
+  type ZipEntryFailure,
+} from "@/lib/zip-archive";
 import {
   mapNotionBlockType,
   mapNotionPropertyType,
@@ -131,6 +139,11 @@ export async function importDocxAction(formData: FormData): Promise<ImportResult
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported page into another
+  // tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({ workspaceId, parentId });
+  if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
     select: { slug: true },
@@ -162,7 +175,7 @@ export async function importDocxAction(formData: FormData): Promise<ImportResult
       const page = await tx.page.create({
         data: {
           workspaceId,
-          parentId,
+          parentId: parent.parentId,
           title,
           icon: "📄",
           createdById: user.id,
@@ -197,6 +210,14 @@ export async function importTrelloAction(input: {
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported page into another
+  // tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+  });
+  if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({
     where: { id: input.workspaceId },
     select: { slug: true },
@@ -213,7 +234,7 @@ export async function importTrelloAction(input: {
   if ("error" in board) return board;
 
   const last = await prisma.page.findFirst({
-    where: { workspaceId: input.workspaceId, parentId: input.parentId ?? null },
+    where: { workspaceId: input.workspaceId, parentId: parent.parentId },
     orderBy: { position: "desc" },
     select: { position: true },
   });
@@ -227,7 +248,7 @@ export async function importTrelloAction(input: {
       const database = await tx.page.create({
         data: {
           workspaceId: input.workspaceId,
-          parentId: input.parentId ?? null,
+          parentId: parent.parentId,
           type: "DATABASE",
           title: board.name,
           icon: "📋",
@@ -318,6 +339,117 @@ export async function importTrelloAction(input: {
   };
 }
 
+/**
+ * B22 — the budget for a Markdown archive.
+ *
+ * A zip bomb is the same class of problem as the PDF inflate bomb: a small
+ * archive that expands into a huge amount of work. The budget therefore
+ * counts the entries and caps their *unpacked* size.
+ *
+ * The numbers are deliberately generous for a real export (a Notion export of
+ * a few thousand pages) and far below what a bomb needs. They are checked
+ * against what the archive *declares* (cheap, before anything is decompressed)
+ * and — because a declared size is only a claim — the same caps are enforced
+ * again on the bytes that are actually produced.
+ */
+const MAX_ZIP_ENTRIES = 5_000;
+const MAX_ZIP_ENTRY_BYTES = 4 * 1024 * 1024;
+const MAX_ZIP_TOTAL_BYTES = 32 * 1024 * 1024;
+/** How much bigger the unpacked archive may be than the packed one. */
+const MAX_ZIP_COMPRESSION_RATIO = 200;
+
+/** The Markdown files of an archive — the only entries that are imported. */
+const isMarkdownEntry = (entry: ZipEntry) =>
+  !entry.dir && /\.(md|markdown)$/i.test(entry.name);
+
+/**
+ * The message for an archive this importer refuses to read.
+ *
+ * The reasons are told apart, so the user learns *what* was refused: a ZIP64
+ * or a split archive is a valid archive — it is simply a format this importer
+ * does not read. "That file is not a readable .zip archive." would claim the
+ * opposite, and a user with a ZIP64 export would have no idea what to do.
+ */
+function zipArchiveError(reason: ZipArchiveRejection): string {
+  switch (reason) {
+    case "split":
+      return "That archive is split across several files, which this importer cannot read.";
+    case "zip64":
+      return "That archive uses the ZIP64 format, which this importer cannot read.";
+    case "encrypted":
+      return "That archive is password-protected, which this importer cannot read.";
+    case "damaged":
+      return "That .zip archive is damaged or incomplete.";
+    default:
+      return "That file is not a readable .zip archive.";
+  }
+}
+
+/**
+ * The message for an entry that could not be read.
+ *
+ * Like {@link zipArchiveError}, the reasons are told apart: an entry that is
+ * too large is a different problem than a damaged one, and the user can act
+ * on only one of them.
+ */
+function zipEntryError(reason: ZipEntryFailure): string {
+  switch (reason) {
+    case "too-large":
+      return `That archive is too large to import (max ${MAX_ZIP_ENTRY_BYTES / 1024 / 1024} MB per file).`;
+    case "unsupported-method":
+      return "That archive uses a compression method this importer cannot read.";
+    default:
+      return "That .zip archive is damaged or incomplete.";
+  }
+}
+
+/**
+ * Check an archive against the budget before a single entry is decompressed.
+ *
+ * The sizes here are the ones the archive declares, so they are a hint, not a
+ * guarantee: the hard cap is the inflate limit in {@link readZipEntry}, and
+ * the running total of unpacked bytes is checked again while the archive is
+ * read.
+ */
+function zipArchiveBudget(
+  entries: readonly ZipEntry[],
+): { ok: true } | { ok: false; error: string } {
+  if (entries.length > MAX_ZIP_ENTRIES) {
+    return {
+      ok: false,
+      error: `That archive has too many files (max ${MAX_ZIP_ENTRIES}).`,
+    };
+  }
+
+  let total = 0;
+  let compressed = 0;
+  for (const entry of entries) {
+    if (!isMarkdownEntry(entry)) continue;
+    if (entry.uncompressedSize > MAX_ZIP_ENTRY_BYTES) {
+      return {
+        ok: false,
+        error: `That archive is too large to import (max ${MAX_ZIP_ENTRY_BYTES / 1024 / 1024} MB per file).`,
+      };
+    }
+    total += entry.uncompressedSize;
+    compressed += entry.compressedSize;
+  }
+
+  if (total > MAX_ZIP_TOTAL_BYTES) {
+    return {
+      ok: false,
+      error: `That archive is too large to import (max ${MAX_ZIP_TOTAL_BYTES / 1024 / 1024} MB unpacked).`,
+    };
+  }
+  if (compressed > 0 && total / compressed > MAX_ZIP_COMPRESSION_RATIO) {
+    return {
+      ok: false,
+      error: "That archive expands too much to import (compression bomb).",
+    };
+  }
+  return { ok: true };
+}
+
 /** Import a Markdown archive (e.g. a Notion/pages export) as nested pages. */
 export async function importZipAction(formData: FormData): Promise<ImportResult> {
   const user = await requireUser();
@@ -334,6 +466,11 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported tree into another
+  // tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({ workspaceId, parentId });
+  if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
     select: { slug: true },
@@ -348,13 +485,17 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
     readTypeHints(formData, "propertyTypes"),
   );
 
-  const { default: JSZip } = await import("jszip");
-  const zip = await JSZip.loadAsync(await file.arrayBuffer()).catch(() => null);
-  if (!zip) return { error: "That file is not a readable .zip archive." };
+  // B22: the archive is read with a budget. The directory is parsed first,
+  // the budget is checked against it, and every entry is then inflated with
+  // a hard output cap — a zip bomb cannot expand past the budget.
+  const buffer = new Uint8Array(await file.arrayBuffer());
+  const archive = readZipDirectory(buffer);
+  if (!archive.ok) return { error: zipArchiveError(archive.reason) };
 
-  const entries = Object.values(zip.files).filter(
-    (entry) => !entry.dir && /\.(md|markdown)$/i.test(entry.name),
-  );
+  const budget = zipArchiveBudget(archive.entries);
+  if (!budget.ok) return { error: budget.error };
+
+  const entries = archive.entries.filter(isMarkdownEntry);
   if (entries.length === 0) {
     return { error: "No Markdown files found in the archive." };
   }
@@ -371,10 +512,27 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
   // R23.6: read/parse every entry first (no DB writes), then create the
   // whole tree inside one transaction so a failure mid-archive rolls back.
   const plan: { titles: string[]; content: ReturnType<typeof markdownToDoc> }[] = [];
+  let unpacked = 0;
   for (const entry of entries) {
     const titles = pathToTitles(entry.name);
     if (titles.length === 0) continue;
-    plan.push({ titles, content: markdownToDoc(await entry.async("text")) });
+    const read = readZipEntry(buffer, entry, MAX_ZIP_ENTRY_BYTES);
+    if (!read.ok) {
+      return { error: zipEntryError(read.reason) };
+    }
+    // The declared sizes are only a claim: the unpacked bytes are counted as
+    // they arrive, so an archive that under-declares its entries still runs
+    // into the total budget.
+    unpacked += read.bytes.byteLength;
+    if (unpacked > MAX_ZIP_TOTAL_BYTES) {
+      return {
+        error: `That archive is too large to import (max ${MAX_ZIP_TOTAL_BYTES / 1024 / 1024} MB unpacked).`,
+      };
+    }
+    plan.push({
+      titles,
+      content: markdownToDoc(new TextDecoder().decode(read.bytes)),
+    });
   }
   if (plan.length === 0) return { error: "Nothing to import." };
 
@@ -386,7 +544,7 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
     await prisma.$transaction(async (tx) => {
       for (const item of plan) {
         const { titles, content } = item;
-        let parent = parentId;
+        let parentPageId = parent.parentId;
         let prefix = "";
         for (let i = 0; i < titles.length; i += 1) {
           prefix = prefix ? `${prefix}/${titles[i]}` : titles[i];
@@ -396,11 +554,11 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
             const page = await tx.page.create({
               data: {
                 workspaceId,
-                parentId: parent,
+                parentId: parentPageId,
                 title: titles[i],
                 icon: isLeaf ? "📄" : "📁",
                 createdById: user.id,
-                position: nextPosition(parent),
+                position: nextPosition(parentPageId),
                 ...(isLeaf ? { content: content as unknown as Prisma.InputJsonValue } : {}),
               },
               select: { id: true },
@@ -413,7 +571,7 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
               lastId = pageId;
             }
           }
-          parent = pageId;
+          parentPageId = pageId;
         }
       }
       if (created === 0) throw new Error("Nothing to import.");
@@ -444,6 +602,14 @@ export async function importMarkdownAction(input: {
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import pages." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported page into another
+  // tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+  });
+  if ("error" in parent) return parent;
 
   const workspace = await prisma.workspace.findUnique({
     where: { id: input.workspaceId },
@@ -455,7 +621,7 @@ export async function importMarkdownAction(input: {
     input.filename.replace(/\.[^.]+$/, "").trim().slice(0, 200) || "Imported page";
 
   const last = await prisma.page.findFirst({
-    where: { workspaceId: input.workspaceId, parentId: input.parentId ?? null },
+    where: { workspaceId: input.workspaceId, parentId: parent.parentId },
     orderBy: { position: "desc" },
     select: { position: true },
   });
@@ -463,7 +629,7 @@ export async function importMarkdownAction(input: {
   const page = await prisma.page.create({
     data: {
       workspaceId: input.workspaceId,
-      parentId: input.parentId ?? null,
+      parentId: parent.parentId,
       title,
       icon: "📥",
       createdById: user.id,
@@ -501,6 +667,14 @@ export async function importCsvDatabaseAction(input: {
   if (!access || !canEditContent(access.role)) {
     return { error: "You do not have permission to import." };
   }
+  // The parent must live in the same workspace — `Page.parentId` is a plain
+  // foreign key, so a foreign parent would link the imported database into
+  // another tenant's tree (B08). Refused before anything is written.
+  const parent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+  });
+  if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({
     where: { id: input.workspaceId },
     select: { slug: true },
@@ -511,7 +685,7 @@ export async function importCsvDatabaseAction(input: {
   if (plan.length === 0) return { error: "Nothing to import." };
 
   const last = await prisma.page.findFirst({
-    where: { workspaceId: input.workspaceId, parentId: input.parentId ?? null },
+    where: { workspaceId: input.workspaceId, parentId: parent.parentId },
     orderBy: { position: "desc" },
     select: { position: true },
   });
@@ -522,7 +696,7 @@ export async function importCsvDatabaseAction(input: {
       const database = await tx.page.create({
         data: {
           workspaceId: input.workspaceId,
-          parentId: input.parentId ?? null,
+          parentId: parent.parentId,
           type: "DATABASE",
           title: input.title.trim().slice(0, 200) || "Imported CSV",
           icon: "📥",

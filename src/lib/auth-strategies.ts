@@ -621,6 +621,11 @@ export type TimeInput = number | string | Date;
 export type ExistingUser = {
   id: string;
   email: string;
+  /**
+   * Whether the account ever proved the address (`User.emailVerified`).
+   * A missing flag is an unproven address — the account is treated as
+   * unverified, never as verified.
+   */
   emailVerified?: boolean;
   /** Provider subjects already bound to this account. */
   externalIds?: readonly string[];
@@ -634,7 +639,11 @@ export type LinkOrCreateInput = {
   strategy: AuthStrategy;
   /** Injected clock. */
   now: TimeInput;
-  /** Whether the provider asserts the email is verified; defaults per kind. */
+  /**
+   * Whether the provider asserts the email is verified; defaults per kind.
+   * Only the **create** branch reads it: a vouch may mark a new account as
+   * verified, but it never authorizes a link onto an existing account.
+   */
   emailVerified?: boolean;
 };
 
@@ -678,10 +687,15 @@ function asMillis(input: TimeInput, label = "now"): number {
 }
 
 /**
- * Whether a provider of `kind` is trusted to assert the user's email address.
- * OIDC and SAML are signed assertion flows and a magic link is only delivered
- * to the mailbox itself, so all three vouch for the email; a local password
- * registration and a raw passkey are not email proofs.
+ * Whether a provider of `kind` vouches for the user's email address: it
+ * asserts the address itself (a signed OIDC/SAML assertion, a magic link
+ * delivered to the mailbox itself). A local password registration and a raw
+ * passkey are no email proof.
+ *
+ * The vouch is a statement about the **new** account only: it may mark an
+ * account created through the provider as verified (`User.emailVerified`), so
+ * a later provider sign-in finds a proven address and may link it. It never
+ * links an *existing* account on its own — see {@link linkOrCreate}.
  */
 export function trustsProviderEmail(kind: AuthKind): boolean {
   return kind === "oidc" || kind === "saml" || kind === "magic-link";
@@ -697,11 +711,15 @@ const emailKey = (email: string): string => email.trim().toLowerCase();
  *  1. a matching external id links, even across an email change (the provider
  *     subject is the durable key) — but only if the trusted email does not
  *     point at a different account, which is a hard conflict;
- *  2. otherwise a matching email links when it is already verified or the
- *     provider vouches for it; an unverified local account plus an untrusted
- *     provider is a conflict (never auto-link, which would be account
- *     takeover);
+ *  2. otherwise a matching email links **only when the account itself proved
+ *     the address** (`emailVerified`); an unverified local account is a
+ *     conflict, never an auto-link, no matter how trustworthy the provider
+ *     is: the address may have been registered by somebody else before the
+ *     real owner showed up (account pre-hijacking), and linking would hand
+ *     the account — and everything it owns — to that somebody;
  *  3. otherwise the identity is new and gets created — an email is required.
+ *     The provider's vouch marks the new account as verified, which is what
+ *     lets a *later* provider sign-in link it.
  *
  * Pure: the inputs are never mutated and `now` is stamped onto the decision.
  */
@@ -709,7 +727,8 @@ export function linkOrCreate(input: LinkOrCreateInput): LinkDecision {
   const at = new Date(asMillis(input.now)).toISOString();
   const email = emailKey(input.identity.email);
   const externalId = input.identity.externalId.trim();
-  const trusted = input.emailVerified ?? trustsProviderEmail(input.strategy.kind);
+  /** The provider vouches for the address — a statement about a *new* account. */
+  const vouches = input.emailVerified ?? trustsProviderEmail(input.strategy.kind);
 
   const byExternal = externalId
     ? input.existingUsers.filter((user) =>
@@ -723,7 +742,7 @@ export function linkOrCreate(input: LinkOrCreateInput): LinkDecision {
   const externalUser = byExternal[0];
   if (externalUser) {
     const conflictingEmail = byEmail.find((user) => user.id !== externalUser.id);
-    if (conflictingEmail && trusted) {
+    if (conflictingEmail && vouches) {
       return {
         action: "conflict",
         reason: "external_id_conflict",
@@ -736,7 +755,10 @@ export function linkOrCreate(input: LinkOrCreateInput): LinkDecision {
 
   const emailUser = byEmail[0];
   if (emailUser) {
-    if (emailUser.emailVerified || trusted) {
+    // Only the account's own proof authorizes the link. A vouching provider
+    // is not enough: it vouches for the address it was given, not for the
+    // identity that registered that address first.
+    if (emailUser.emailVerified === true) {
       return { action: "link", userId: emailUser.id, reason: "email_match", at };
     }
     return {
@@ -750,7 +772,7 @@ export function linkOrCreate(input: LinkOrCreateInput): LinkDecision {
   if (!email) {
     return { action: "conflict", reason: "missing_email", at };
   }
-  return { action: "create", reason: "new_identity", emailVerified: trusted, at };
+  return { action: "create", reason: "new_identity", emailVerified: vouches, at };
 }
 
 // ---------------------------------------------------------------------------
@@ -861,4 +883,21 @@ export function enabledStrategies(env: AuthEnv = {}): StrategyDefinition[] {
     if (allowList && !allowList.has(strategy.id)) return false;
     return isStrategyAvailable(strategy, env);
   });
+}
+
+/**
+ * Whether the password strategy is enabled for a given environment.
+ *
+ * The local password sign-in and sign-up are gated by the same registry as
+ * every other strategy: `AUTH_PASSWORD` set to a falsy value (`disabled`,
+ * `off`, `no`, `0`, `false`) turns it off, and an `AUTH_STRATEGIES` allow-list
+ * that does not contain `password` excludes it. Fails closed — an unexpected
+ * error while reading the registry leaves the strategy disabled.
+ */
+export function passwordStrategyEnabled(env: AuthEnv = {}): boolean {
+  try {
+    return enabledStrategies(env).some((strategy) => strategy.kind === "password");
+  } catch {
+    return false;
+  }
 }

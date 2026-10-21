@@ -3,6 +3,7 @@
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
+import { guestReadablePageIds } from "@/lib/guest-access";
 import { getDatabase } from "@/server/queries";
 
 export type LinkedDatabaseData = {
@@ -14,32 +15,69 @@ export type LinkedDatabaseData = {
   rows: { id: string; title: string; icon: string | null; values: Record<string, unknown> }[];
 };
 
-/** Workspace databases available to link. */
+/**
+ * Workspace databases available to link.
+ *
+ * A guest only sees the databases inside their **read** scope (the pages shared
+ * with them plus their subtree, ancestors excluded — see `guest-access.ts`).
+ * Every other role keeps the whole workspace, exactly as before.
+ */
 export async function listDatabasesAction(
   workspaceId: string,
 ): Promise<{ id: string; title: string; icon: string | null }[]> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) return [];
+  // A guest may only link a database they may read: workspace membership
+  // alone says nothing about which pages were shared with them.
+  const readable =
+    access.role === "GUEST" ? await guestReadablePageIds(user.id, workspaceId) : null;
   return prisma.page.findMany({
-    where: { workspaceId, type: "DATABASE", deletedAt: null },
+    where: {
+      workspaceId,
+      type: "DATABASE",
+      deletedAt: null,
+      ...(readable ? { id: { in: [...readable] } } : {}),
+    },
     orderBy: { position: "asc" },
     select: { id: true, title: true, icon: true },
   });
 }
 
-/** Read a linked database's schema + rows for an embedded (read-only) view. */
+/**
+ * Read a linked database's schema + rows for an embedded (read-only) view.
+ *
+ * The scope check comes before the row query: a guest whose read scope does not
+ * contain the database gets the same `Database not found.` as a guest asking
+ * for an id that does not exist — a refusal must not confirm that the database
+ * exists (no existence oracle), and an out-of-scope call must not read a
+ * single row.
+ */
 export async function getLinkedDatabaseAction(
   databasePageId: string,
 ): Promise<LinkedDatabaseData | { error: string }> {
   const user = await requireUser();
+  // The page's metadata is read first because the read scope is
+  // workspace-scoped — the workspace can only be resolved from the page
+  // itself. This select never touches the rows; the row query below runs
+  // only after the scope check passed.
   const page = await prisma.page.findUnique({
     where: { id: databasePageId },
     select: { workspaceId: true, type: true, title: true, icon: true },
   });
   if (!page || page.type !== "DATABASE") return { error: "Database not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
-  if (!access) return { error: "You do not have access to that database." };
+  // No membership at all is the same answer as "not in your scope": a refusal
+  // must not confirm that the database exists (no existence oracle).
+  if (!access) return { error: "Database not found." };
+
+  // A guest may read a database only inside their read scope: the pages shared
+  // with them plus their subtree — a shared row does not grant the database
+  // above it, a shared parent page does grant the database below it.
+  if (access.role === "GUEST") {
+    const readable = await guestReadablePageIds(user.id, page.workspaceId);
+    if (!readable.has(databasePageId)) return { error: "Database not found." };
+  }
 
   const database = await getDatabase(databasePageId);
   return {

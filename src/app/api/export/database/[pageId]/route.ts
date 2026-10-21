@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { prisma } from "@/lib/db";
 import { DATABASE_EXPORT_FORMATS, parseExportFormat } from "@/lib/export-format";
 import { matrixToCsv } from "@/lib/serialize";
@@ -15,15 +16,17 @@ export const runtime = "nodejs";
  * (`?format=json`, the full `{ schemaVersion, name, properties, rows, views }`
  * snapshot from `json-export.ts`).
  * Unknown `?format` → 400 (R23.16); 30 exports/min (R23.22).
+ *
+ * An export is a full-text copy, so it is reserved for full members: a `GUEST`
+ * gets a 403. A database outside the caller's scope is a 404, never a leak.
  */
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ pageId: string }> },
 ) {
-  const limited = rateLimit(request, "export-database", 30, 60_000);
-  if (limited) return limited;
-
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "export-database", 30, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { pageId } = await params;
@@ -37,6 +40,15 @@ export async function GET(
 
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Guests may not export (R23.21) — an export is a full-text copy.
+  if (!canEditContent(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  // Belt and braces: a database outside the caller's scope is a 404.
+  const visiblePageIds = await pageScopeFor(user.id, page.workspaceId, access.role);
+  if (visiblePageIds && !visiblePageIds.has(pageId)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   const parsedFormat = parseExportFormat(
     new URL(request.url).searchParams.get("format"),
@@ -60,7 +72,10 @@ export async function GET(
       orderBy: { position: "asc" },
     }),
     prisma.page.findMany({
-      where: { parentId: page.id, deletedAt: null },
+      // A database's rows belong to the database's own workspace: a row that
+      // was linked across workspaces (the unchecked `parentId` hole, B08) must
+      // not leak into the export.
+      where: { parentId: page.id, workspaceId: page.workspaceId, deletedAt: null },
       orderBy: { position: "asc" },
       include: { propertyValues: true },
     }),

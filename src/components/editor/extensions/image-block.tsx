@@ -15,6 +15,7 @@ import {
   type Size,
 } from "@/lib/image-dimensions";
 import { t } from "@/lib/i18n";
+import { sanitizeHref } from "@/lib/validation";
 
 /**
  * Notion-style image block.
@@ -198,7 +199,11 @@ const ALIGNS = [
   { value: "right", labelKey: "imageAlignRight", icon: AlignRight },
 ] as const;
 
-function ImageView({
+/**
+ * The node view of the media block. Exported so the rendered markup (the
+ * media "file" link in particular) can be asserted without a DOM.
+ */
+export function ImageView({
   node,
   updateAttributes,
   editor,
@@ -223,6 +228,10 @@ function ImageView({
   const align = alignOf(attrs.align);
   const width = dragWidth ?? (typeof attrs.width === "number" ? attrs.width : null);
   const kind = mediaKindOf(String(attrs.src ?? ""), attrs.mediaType);
+  // A stored `src` is user-controlled and the media "file" block renders it
+  // as an anchor href, so it must pass the shared href allowlist first. A
+  // `javascript:` URL is dropped instead of becoming a clickable link.
+  const fileHref = kind === "file" ? sanitizeHref(attrs.src) : null;
 
   /** The decoded picture size, or a zero box while it has not loaded. */
   const intrinsicSize = (): Size => {
@@ -337,11 +346,11 @@ function ImageView({
             title={attrs.title ?? undefined}
           />
         )}
-        {kind === "file" && (
+        {kind === "file" && fileHref !== null && (
           <a
             className="noema-media-file inline-flex max-w-full items-center gap-2 rounded-md border border-[var(--border)] px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--hover)]"
             data-testid="media-file"
-            href={attrs.src}
+            href={fileHref}
             download={attrs.alt ?? attrs.title ?? undefined}
             target="_blank"
             rel="noreferrer"

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { deflateSync } from "node:zlib";
 
 /**
  * B71 — import integrity M1 (spec `docs/specs/import-export.md` §4/§10):
@@ -14,6 +15,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *    counted in the result instead of being dropped silently.
  *  - D23.4  `ImportResult`/`NotionImportResult` carry counts
  *    `{ imported, skippedColumns, skippedCells, failed }`.
+ *
+ * B22 — the resource limits of the importers:
+ *
+ *  - the PDF payload is measured on its *encoded* length before it is decoded,
+ *    and a payload exactly at the limit still goes through;
+ *  - a zlib bomb inside a PDF is refused instead of being expanded;
+ *  - the archive import has an entry and an unpacked-size budget, and the
+ *    budget holds even when the archive under-declares its sizes.
  *
  * Auth/permissions/db are mocked the B19 way; only the Notion network edge
  * is stubbed (`global.fetch`), mammoth is stubbed, and JSZip is real.
@@ -162,6 +171,7 @@ vi.mock("mammoth", () => ({
 import { importDocxAction, importTrelloAction, importZipAction } from "./import";
 import { importNotionPageAction } from "./notion-import";
 import { importCsvAction } from "./database";
+import { importPdfAction } from "./import-formats";
 
 const ZERO_COUNTS = { skippedColumns: 0, skippedCells: 0, failed: 0 };
 
@@ -390,5 +400,196 @@ describe("CSV honesty (D23.1)", () => {
       counts: { imported: 2, skippedColumns: 1, skippedCells: 2, failed: 0 },
     });
     expect(mock.txCount()).toBeGreaterThan(0);
+  });
+});
+
+/* ------------------------------------------------------------------ B22 --- */
+
+/** The decoded size the PDF importer accepts (10 MiB). */
+const MAX_PDF_BYTES = 10 * 1024 * 1024;
+/**
+ * The number of base64 characters that carries {@link MAX_PDF_BYTES}: base64
+ * encodes three bytes as four characters and pads the last group, so the
+ * encoded length of `n` bytes is `4 * ceil(n / 3)`.
+ */
+const MAX_BASE64_CHARS = Math.ceil(MAX_PDF_BYTES / 3) * 4;
+
+/** A zip archive with the given files, as raw bytes. */
+async function zipBytes(files: Record<string, string>): Promise<Uint8Array<ArrayBuffer>> {
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  for (const [name, content] of Object.entries(files)) zip.file(name, content);
+  return new Uint8Array(await zip.generateAsync({ type: "uint8array" }));
+}
+
+/**
+ * Rewrite the uncompressed size in the central directory of an archive, so it
+ * *claims* to be small while it really is not — the shape a zip bomb takes to
+ * slip past a size check.
+ */
+function underDeclare(bytes: Uint8Array<ArrayBuffer>, declaredSize: number): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(bytes);
+  const view = new DataView(out.buffer);
+  for (let offset = 0; offset + 46 <= out.length; offset += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) continue;
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    view.setUint32(offset + 24, declaredSize, true);
+    offset += 46 + nameLength + extraLength + commentLength - 1;
+  }
+  return out;
+}
+
+function zipForm(bytes: Uint8Array<ArrayBuffer>): FormData {
+  const form = new FormData();
+  form.append("workspaceId", "ws-1");
+  form.append("file", new File([bytes], "archive.zip", { type: "application/zip" }));
+  return form;
+}
+
+/**
+ * Rewrite a field of the end-of-central-directory record of an archive, so
+ * the archive announces a format this importer does not read.
+ */
+function patchEocd(
+  bytes: Uint8Array<ArrayBuffer>,
+  patch: (view: DataView, offset: number) => void,
+): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(bytes);
+  const view = new DataView(out.buffer);
+  for (let offset = out.length - 22; offset >= 0; offset -= 1) {
+    if (view.getUint32(offset, true) !== 0x06054b50) continue;
+    patch(view, offset);
+    return out;
+  }
+  return out;
+}
+
+describe("B22 — the PDF payload is measured before it is decoded", () => {
+  it("accepts a payload that is exactly at the limit", async () => {
+    const data = Buffer.alloc(MAX_PDF_BYTES).toString("base64");
+    // 10 MiB encode to 4 * ceil(10 MiB / 3) characters — the limit is exactly
+    // that, so the payload must not be refused.
+    expect(data.length).toBe(MAX_BASE64_CHARS);
+
+    const result = await importPdfAction({ workspaceId: "ws-1", data });
+
+    // It got past the size check and failed later, on the content itself.
+    expect(result).toEqual({ error: "That file is not a PDF document." });
+  });
+
+  it("refuses a payload that is over the limit", async () => {
+    // Base64 grows in groups of three bytes, so the smallest payload that
+    // crosses the character limit is three bytes more than the maximum.
+    const data = Buffer.alloc(MAX_PDF_BYTES + 3).toString("base64");
+    expect(data.length).toBeGreaterThan(MAX_BASE64_CHARS);
+
+    const result = await importPdfAction({ workspaceId: "ws-1", data });
+
+    expect(result).toEqual({ error: "That PDF is too large to import (max 10 MB)." });
+  });
+
+  it("refuses a payload that decodes to more than the limit", async () => {
+    // One byte more than the maximum: the encoded length still fits (base64
+    // pads the last group), so the decoded size has to be checked as well.
+    const data = Buffer.alloc(MAX_PDF_BYTES + 1).toString("base64");
+    expect(data.length).toBe(MAX_BASE64_CHARS);
+
+    const result = await importPdfAction({ workspaceId: "ws-1", data });
+
+    expect(result).toEqual({ error: "That PDF is too large to import (max 10 MB)." });
+  });
+
+  it("refuses a PDF whose stream expands past the document budget", async () => {
+    // A zlib bomb: 12 MiB of filler behind a few kilobytes of compressed data.
+    const filler = `BT (bomb) Tj ET ${" ".repeat(12 * 1024 * 1024)}`;
+    const deflated = deflateSync(Buffer.from(filler, "latin1"));
+    const pdf = Buffer.concat([
+      Buffer.from("%PDF-1.4\nstream\n", "latin1"),
+      deflated,
+      Buffer.from("\nendstream\n", "latin1"),
+    ]);
+
+    const result = await importPdfAction({
+      workspaceId: "ws-1",
+      data: pdf.toString("base64"),
+    });
+
+    // Without the inflate cap the stream would have expanded to 12 MiB and the
+    // document would have been imported.
+    expect(result).toEqual({ error: "That PDF is too large to import (max 10 MB)." });
+    expect(mock.state.pages).toHaveLength(0);
+  });
+});
+
+describe("B22 — the archive import has a budget", () => {
+  it("refuses an archive with too many entries", async () => {
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 5001; index += 1) files[`page-${index}.md`] = "# x";
+    const bytes = await zipBytes(files);
+
+    const result = await importZipAction(zipForm(bytes));
+
+    expect(result).toEqual({ error: expect.stringContaining("too many files") });
+    expect(mock.state.pages).toHaveLength(0);
+  });
+
+  it("refuses an archive whose entry is larger than the budget", async () => {
+    const bytes = await zipBytes({ "big.md": "x".repeat(5 * 1024 * 1024) });
+
+    const result = await importZipAction(zipForm(bytes));
+
+    expect(result).toEqual({ error: expect.stringContaining("too large") });
+    expect(mock.state.pages).toHaveLength(0);
+  });
+
+  it("refuses an archive that under-declares the size of its entry", async () => {
+    // The archive claims 16 bytes; the entry really holds 5 MiB.
+    const bytes = underDeclare(await zipBytes({ "big.md": "x".repeat(5 * 1024 * 1024) }), 16);
+
+    const result = await importZipAction(zipForm(bytes));
+
+    expect(result).toEqual({ error: expect.stringContaining("too large") });
+    expect(mock.state.pages).toHaveLength(0);
+  });
+
+  it("still imports an archive that fits into the budget", async () => {
+    const bytes = await zipBytes({ "alpha.md": "# Alpha", "beta.md": "# Beta" });
+
+    const result = await importZipAction(zipForm(bytes));
+
+    expect(result).toMatchObject({ ok: true, counts: { imported: 2 } });
+    expect(mock.state.pages).toHaveLength(2);
+  });
+
+  it("imports a self-extracting archive — the stub in front of it is accounted for", async () => {
+    // A self-extracting archive carries a stub (an executable) in front of the
+    // archive; the offsets inside stay relative to the start of the archive.
+    const stub = new TextEncoder().encode("#!/bin/sh\necho self-extracting\n");
+    const archive = await zipBytes({ "alpha.md": "# Alpha" });
+    const bytes = new Uint8Array(stub.length + archive.length);
+    bytes.set(stub, 0);
+    bytes.set(archive, stub.length);
+
+    const result = await importZipAction(zipForm(bytes));
+
+    expect(result).toMatchObject({ ok: true, counts: { imported: 1 } });
+    expect(mock.state.pages).toHaveLength(1);
+  });
+
+  it("names the archive format it refuses instead of claiming the file is not an archive", async () => {
+    // A ZIP64 archive is a valid archive; the importer simply does not read
+    // that format, and the user is told so.
+    const bytes = patchEocd(await zipBytes({ "alpha.md": "# Alpha" }), (view, offset) => {
+      // The entry count does not fit into 16 bits — that is the ZIP64 marker.
+      view.setUint16(offset + 8, 0xffff, true);
+      view.setUint16(offset + 10, 0xffff, true);
+    });
+
+    const result = await importZipAction(zipForm(bytes));
+
+    expect(result).toEqual({ error: expect.stringContaining("ZIP64") });
+    expect(mock.state.pages).toHaveLength(0);
   });
 });

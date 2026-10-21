@@ -5,6 +5,7 @@ import { Prisma, type WorkspaceRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { pageSearchText } from "@/lib/search";
 import {
@@ -211,7 +212,14 @@ export async function createPageSnapshotAction(
   return { ok: true, id: row.id, contentHash: snapshot.contentHash, deduped: false };
 }
 
-/** Recent snapshots for a page, consecutive equal hashes collapsed to their newest. */
+/**
+ * Recent snapshots for a page, consecutive equal hashes collapsed to their newest.
+ *
+ * The page scope applies here: a snapshot carries the *previous* document of a
+ * page, so a page outside the caller's scope is refused exactly like the
+ * single-page read (`getPageContentAction` answers "Page not found." for it).
+ * Membership alone is not enough — a guest is a workspace member.
+ */
 export async function listPageSnapshotsAction(
   pageId: string,
   options: { limit?: number } = {},
@@ -222,11 +230,15 @@ export async function listPageSnapshotsAction(
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { workspaceId: true },
+    select: { id: true, workspaceId: true, deletedAt: true },
   });
-  if (!page) return { error: "Page not found." };
+  if (!page || page.deletedAt) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return { error: "You do not have access to this page." };
+  const visiblePageIds = await pageScopeFor(user.id, page.workspaceId, access.role);
+  if (visiblePageIds && !visiblePageIds.has(page.id)) {
+    return { error: "Page not found." };
+  }
 
   const limit =
     typeof options.limit === "number" && Number.isFinite(options.limit) && options.limit > 0
@@ -242,7 +254,13 @@ export async function listPageSnapshotsAction(
   return { ok: true, snapshots: dedupeSnapshots(rows.map(snapshotFromRow)) };
 }
 
-/** The read-only restore plan: what writing `snapshotId` back would change. */
+/**
+ * The read-only restore plan: what writing `snapshotId` back would change.
+ *
+ * The plan names the page and diffs its blocks, so it carries the page scope
+ * too: a snapshot of a page outside the caller's scope is refused with
+ * "Page not found." — the same answer the snapshot list gives.
+ */
 export async function planPageSnapshotRestoreAction(
   snapshotId: string,
 ): Promise<
@@ -263,7 +281,7 @@ export async function planPageSnapshotRestoreAction(
     where: { id: snapshotId },
     select: {
       ...SNAPSHOT_SELECT,
-      page: { select: { workspaceId: true, content: true } },
+      page: { select: { workspaceId: true, content: true, deletedAt: true } },
     },
   });
   if (!row) return { error: "Snapshot not found." };
@@ -271,6 +289,11 @@ export async function planPageSnapshotRestoreAction(
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, row.page.workspaceId);
   if (!access) return { error: "You do not have access to this page." };
+  if (row.page.deletedAt) return { error: "Page not found." };
+  const visiblePageIds = await pageScopeFor(user.id, row.page.workspaceId, access.role);
+  if (visiblePageIds && !visiblePageIds.has(row.pageId)) {
+    return { error: "Page not found." };
+  }
 
   const snapshot = snapshotFromRow(row);
   const patch = restoreFromSnapshot(snapshot, {

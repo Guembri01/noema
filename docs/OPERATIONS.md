@@ -23,6 +23,72 @@ Required env: `DATABASE_URL` (must match the docker mapping `localhost:5433`,
 user/db `noema`) and `AUTH_SECRET` (≥ 16 chars — shorter is rejected by the
 collab relay). Full key inventory: `.env.example`.
 
+### 1.1 Reverse proxy in front of the app (`TRUSTED_PROXY_HOPS`)
+
+The app does **not** trust `X-Forwarded-For` / `X-Real-IP` on its own: those
+headers are written by the client, so a client could name any address it
+likes and get a fresh rate-limit budget (or slip past the IP allowlist) with
+every request. How many proxy hops in front of the app may set them is
+declared with one variable:
+
+| `TRUSTED_PROXY_HOPS` | Meaning | Client IP used |
+|---|---|---|
+| unset / `0` / not a positive integer | no trusted proxy — the forwarding headers are **ignored** | unknown → every caller of a scope shares the `scope:local` bucket |
+| `1` | one reverse proxy (the usual nginx/Caddy in front of the container) | the **last** `X-Forwarded-For` hop — the address the proxy saw |
+| `N` | N proxies | the **Nth-from-last** hop — the **N-th hop from the end**, i.e. the **real client** (every trusted proxy appends the address of its peer, so the last N entries of the chain are the ones the proxies appended). A chain shorter than N cannot be attributed that way → the `X-Real-IP` fallback (the proxy sets it) → and only if that is missing too, `scope:local` |
+
+Set it to the number of proxies between the internet and the app:
+
+```bash
+# docker compose app behind one nginx:
+TRUSTED_PROXY_HOPS=1
+```
+
+Only a value up to **16** is a valid declaration. Anything above that is a
+configuration error (a typo) and is **rejected** — the app then trusts no
+forwarding header at all. It is not silently clamped: clamping would declare
+a trust boundary nobody wrote.
+
+The proxy **must overwrite** the headers — it appends its own peer address to
+`X-Forwarded-For` and sets `X-Real-IP`:
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Real-IP       $remote_addr;
+```
+
+**What happens without the variable** (the safe direction, but it bites):
+
+- **All clients of a scope share one budget.** In the shipped
+  `docker-compose` setup — no reverse proxy — the 120/min budget of
+  `/api/v1/*` is a budget for *all* users together, not per user. Signed-in
+  callers are additionally limited per user id (that budget cannot be
+  spoofed), so the shared budget is the first thing to bite on a busy
+  instance.
+- **The admin/private surfaces answer 403 for everybody.** Without a declared
+  proxy the client IP is unknown, and the allowlist fails closed — including
+  the legitimate admin address. Only the gated surfaces are affected
+  (`/w/<slug>/settings`, `/w/<slug>/audit`, `/admin/*`); the rest of the app
+  keeps working. Declare the proxy (or unset the allowlist).
+
+**The memory bound of the limiter** (both stores, named so it is not a
+surprise): the client-IP budgets and the per-user budgets live in **two
+separate** in-memory stores, each capped at **10 000 live buckets**. When a
+store holds more than 10 000 live keys inside one window, the **coldest live
+bucket is sacrificed** and **that caller's window starts over**. For the
+client-IP store that needs 10 000 distinct client addresses in one window
+(and without a declared proxy it cannot happen at all — every caller shares
+`scope:local`). For the per-user store it needs 10 000 *distinct
+authenticated users* with a live budget in the same window — a real
+installation, not a flood. Because the stores are separate, a flood of forged
+client addresses can never reset an exhausted per-user budget.
+
+> **Edge runtime:** `src/middleware.ts` runs in the Edge runtime, where
+> `process.env` is frozen at **build** time. `TRUSTED_PROXY_HOPS` therefore
+> has to be set for the **build** (`npm run build` / `docker compose build`),
+> not only for the start. A value that is only present in the runtime
+> environment is invisible to the middleware.
+
 ## 2. Backup drill
 
 ### 2.1 Run a backup
@@ -109,6 +175,10 @@ Contract (verified in the route):
 A `failed[]` entry is a poison template: its schedule is *not* advanced, so the
 next tick retries it; other templates still run (each is its own try/catch +
 transaction).
+
+The gate order (the rate limit runs **before** the secret comparison, so a
+wrong secret is throttled instead of being an unlimited guessing oracle) and
+the per-route secret/limit table live in §8.6.
 
 ### 3.1 Provision the secret
 
@@ -393,16 +463,20 @@ docker compose ps            # docker health column (app healthcheck = /api/heal
 | `npm install` | `postinstall` runs `prisma generate` — the client is regenerated on install |
 
 **The honest note (documented gap, `docs/specs/engineering-hardening.md` §2.5):**
-the repo has **one** migration (`prisma/migrations/20260113000000_init/`), but
-the live schema has been evolved with **`prisma db push`** in the dev loop.
-So `prisma migrate deploy` alone does **not** reproduce the current schema —
-`npx prisma migrate status` will show drift until the baseline migration
-(reconciling today’s schema, tracked as R28.25) lands. Until then:
+the repo has **four** migrations (`20260113000000_init` →
+`20260114000000_complete_schema` → `20260114000001_search_index` →
+`20261019000000_oauth_secret_hashes`), and on a **fresh** database that chain
+reproduces today's schema exactly — `npx prisma migrate diff --from-url … --to-schema-datamodel prisma/schema.prisma`
+reports no difference. But the live schema has been evolved with
+**`prisma db push`** in the dev loop, and such a database carries no
+migration history: `npx prisma migrate deploy` refuses it with `P3005` until
+the existing migrations are baselined (§8.1 has the commands). Until that:
 
 - **Dev / this loop:** `npm run db:push` (Tier HEAVY: build serialization,
   stop `:3200`, restart after, restart dev `:3201`).
-- **Production:** prefer `npx prisma migrate deploy` *once the baseline exists*;
-  check first with `npx prisma migrate status`, and diff with
+- **Production:** prefer `npx prisma migrate deploy` (the chain reproduces the
+  schema — see the note above); check first with `npx prisma migrate status`,
+  and diff with
   `npx prisma migrate diff`. If you must use `db push` in production, review
   the change for data loss first — `prisma db push` only proceeds through
   destructive changes with `--accept-data-loss` (see
@@ -416,6 +490,7 @@ npm run backup                       # 1. fresh, verified dump FIRST
 npm ci                              # 3. deps + `prisma generate` (postinstall)
 npm run db:push                     # 4a. schema, dev path — OR —
 npx prisma migrate deploy           # 4b. schema, prod path (see note above)
+npm run backfill:2fa                # 4c. optional: seal the TOTP seeds that are still cleartext (§8.1)
 npm run db:seed                     # 5. only if seed data is missing
 npm run build                       # 6. prod build (stop `next dev` first — shared .next!)
 npm start -- --port 3200            # 7. serve
@@ -423,19 +498,335 @@ curl -fsS http://127.0.0.1:3200/api/health   # 8. expect {"ok":true,"db":"up"}
 # 9. restart the cron driver + `npm run collab` so they pick up new code/env
 ```
 
+### 8.1 The tenant boundary is enforced in the application, not in the schema
+
+`Page.parentId` is a plain self-foreign key. The schema carries **no**
+composite constraint on `(parentId, workspaceId)`, and none is planned — the
+rule *"a `parentId` always points inside the same workspace"* is enforced in
+the code, not by Postgres.
+
+What that means for an operator:
+
+- **The database will happily store a cross-workspace parent.** No
+  `prisma db push` and no `prisma migrate` changes that, and the hardening
+  spec for this rule deliberately proposes no constraint — the check is
+  application-side.
+- **Every write path has to opt in.** The single gate is `assertScopedParent()`
+  in [`src/lib/page-parent.ts`](../src/lib/page-parent.ts): it loads the parent
+  **tenant-scoped** (`{ id, workspaceId }`), so a foreign parent is never read
+  and the refusal never names it. **That file is the place to pull in when a
+  new write path stores a `Page.parentId`** — a path that skips the helper
+  re-opens the hole.
+- **What a refusal looks like:** the write is refused with `That parent page
+  does not exist in this workspace.` (HTTP 400 on the REST routes, an
+  `{error}` on the server actions). If a *legitimate* parent is refused, the
+  page it names is not in the workspace the write was scoped to — check the
+  ids, not the helper.
+- **Old rows are not repaired by the deploy.** Pages that were linked across
+  workspaces before the check existed stay in the database; the read side
+  (database view, CSV/JSON export) filters rows by the database's workspace, so
+  they no longer surface in the foreign workspace's views — but the rows
+  themselves are still there until someone moves or deletes them.
+
+### 8.2 Seal the stored two-factor seeds (B05)
+
+Since B05 the column `User.twoFactorSecret` holds an AES-256-GCM envelope
+(`v1:<iv>:<tag>:<payload>`, key derived from `AUTH_SECRET`) instead of the raw
+base32 seed — a database dump no longer yields a usable 2FA seed. Rows written
+before that change still hold the raw seed. They are re-sealed on the next
+successful sign-in or re-enrolment, but an account that has not signed in since
+the upgrade keeps its cleartext seed; this one-off pass closes that window.
+
+```bash
+npm run backfill:2fa                 # seal every cleartext seed
+npm run backfill:2fa -- --dry-run    # report only, write nothing
+npm run backfill:2fa -- --confirm-key  # seal without key evidence (operator verified the key)
+npm run backfill:2fa -- --help       # the usage text
+```
+
+What it needs and what it does:
+
+| | |
+| --- | --- |
+| Needs | the **database** (not the app server) and the app's `AUTH_SECRET` — the very key the envelope key is derived from. `AUTH_SECRET` is read from the **environment of the process** and never from a file (see below) |
+| Mode | the other variables (above all `DATABASE_URL`) are read from the env files in the order Next.js resolves them: `.env.<mode>.local` > `.env.local` > `.env.<mode>` > `.env`, the first file that sets a variable wins. The **mode** is `production` unless `NODE_ENV` is `development` — the same rule Next.js applies to `next build` / `next start`, so the script reads the files of the running app |
+| Reads | every `User` row with a non-null `twoFactorSecret`, in batches of 250. The plan of a batch is applied and **dropped** before the next batch is read, so the memory use does not depend on the number of accounts — of the rows that need a human the run keeps the **first 100** of each kind and only **counts** the rest |
+| Writes | only the rows that hold a **cleartext** seed: each is re-sealed, then the new envelope is opened again and compared with the original seed before it is written |
+| Skips | rows that already carry an envelope (`v1:` **or** `v2:`) — the run is **idempotent**, run it as often as you like. A `v2:` envelope belongs to the keyring and is never touched |
+| Never | deletes a row, overwrites a seed it could not re-seal, or treats one account differently from another |
+
+**The key has to be proven before a row is written.** Sealing a cleartext row
+with a key the app does not use leaves that account unable to open its own
+seed — for good, because there is no recovery-code login. So the run writes
+**nothing** until it can prove that the `AUTH_SECRET` of this environment is
+the key the app uses:
+
+| Evidence | Meaning |
+| --- | --- |
+| a sealed row in `User.twoFactorSecret` opens | the key is the app's key |
+| a value in `AiProviderConfig.apiKeyEncrypted` opens | the key is the app's key — the same `AUTH_SECRET` seals the provider keys |
+| a value in `EmailConfig.passwordEncrypted` opens | the key is the app's key — the same `AUTH_SECRET` seals the SMTP password |
+
+Those three columns are all the evidence there is: a deployment whose two
+factor table holds nothing but legacy cleartext rows (a fresh rollout, or a
+secret rotated before the rollout) cannot prove anything about the key on its
+own. If none of them opens, the run prints what it checked, writes nothing
+and exits 1. `--confirm-key` is the way out for an operator who has verified
+the key by hand (out of band, against the running app) — it is the only way to
+seal without evidence, and it is recorded in the output.
+
+`AUTH_SECRET` is deliberately **not** read from an env file. Next.js loads four
+of them (`.env.<NODE_ENV>.local`, `.env.local`, `.env.<NODE_ENV>`, `.env`) and
+the first one that sets the variable wins — a deployment that keeps a
+different secret in `.env.production` than in `.env` is exactly how a backfill
+seals rows with a key the app cannot open. Export the app's `AUTH_SECRET`
+(`export AUTH_SECRET=…`) before running the script; `DATABASE_URL` may still
+come from a file.
+
+The script loads those files **in the order Next.js resolves them** — the
+highest priority first (`.env.<NODE_ENV>.local` > `.env.local` >
+`.env.<NODE_ENV>` > `.env`), because a loader that never overrides an
+already-set variable lets the *first* file it loads win. It therefore reads
+the same `DATABASE_URL` as the app. The order lives in one place
+(`src/lib/env-files.ts`), which the 2FA e2e fixture uses as well — the two
+cannot drift apart.
+
+Exit code and failure modes:
+
+| Case | What happens |
+| --- | --- |
+| `AUTH_SECRET` missing from the environment | the script stops **before** touching a single row and exits 1 |
+| `AUTH_SECRET` only in an env file | the script stops **before** touching a single row and exits 1 — it never takes the key from a file |
+| Database unreachable | the script prints the reason and exits 1 — no row is touched |
+| No envelope in the database opens with the `AUTH_SECRET` of this environment | **pre-flight**: the run prints the columns it checked, writes nothing and exits 1 — sealing the cleartext rows with a key the app does not use would leave those accounts unable to open their own seed. Run the script with the app's `AUTH_SECRET`, or with `--confirm-key` if you have verified the key by hand |
+| A row cannot be re-sealed (sealing error, or an envelope that does not open back to the same seed) | the row stays **exactly as it is** — never deleted, never overwritten — is listed in the report, and the run exits 1 |
+| A row holds a `v1:` envelope that does not open (rotated `AUTH_SECRET`, tampered row) | the row is left untouched and reported as `UNREADABLE`; the account owner has to re-enrol two-factor authentication, or the operator has to restore the matching `AUTH_SECRET` |
+| An unknown option (`--dryrun` instead of `--dry-run`) | the script refuses the option and exits 1 — a typo must never fall through to a writing run |
+
+The report lists the rows that need a human — at most **100** of each kind
+(`UNREADABLE`, `FAILED`) — and then the **total**: a table with a problem on
+every row produces a report with a hundred lines and a count, not one line per
+account. Nothing is lost by that: the rows stay in the database exactly as
+they are, and the run exits 1.
+
+A dry run ends with `Nothing was written (dry run).` — never with the line
+that says the migration is done.
+
+**One key, three secrets.** The envelope key is derived from `AUTH_SECRET`
+alone, so the TOTP seed, the AI provider keys and the SMTP password share it:
+whoever learns the key opens all three at once. Rotating `AUTH_SECRET`
+therefore breaks every envelope in the database at the same time — re-seal the
+seeds with this script and re-enter the provider keys and the SMTP password.
+
+**If `AUTH_SECRET` is rotated or lost.** There is no automatic re-key: the
+backfill seals *cleartext* legacy seeds, it does not open a `v1:` envelope with
+an old key and re-seal it with a new one. Treat the secret as a backup-critical
+item, not as a value to rotate on a schedule while the app is running.
+
+1. **Stop the app.** Rotating the key invalidates every session cookie (users
+   sign in again) and makes every existing envelope unreadable.
+2. **If the old value still exists** (secret manager, backup, sealed env file),
+   restore it first and start the app. Do not "fix" the data with a new key.
+   Rotate only in a maintenance window with a tested, out-of-band re-encryption
+   procedure: decrypt the 2FA seeds, AI provider keys and SMTP password with
+   the old key, write them back under the new one, and keep the old key until
+   the verification pass has opened every row.
+3. **If the old value is gone for good**, generate a new secret and start the
+   app. Sessions are already invalid. Every account with a 2FA seed is now
+   `UNREADABLE` and cannot sign in — reset those accounts deliberately, after a
+   database backup:
+
+   ```sql
+   UPDATE "User"
+      SET "twoFactorSecret" = NULL,
+          "twoFactorEnabled" = false
+    WHERE "twoFactorSecret" IS NOT NULL;
+   ```
+
+   The owners then re-enrol 2FA on their next sign-in. Re-enter the AI provider
+   keys (**Settings → AI**) and the SMTP password (**Settings → Email**); the
+   old ciphertext is unrecoverable.
+4. **Back up the new value** before restarting production. `AUTH_SECRET` is
+   deliberately not read from an env file by the backfill (see above), so keep
+   the running process's value and the offline backup identical.
+
+The script is `scripts/backfill-2fa-secrets.mjs`; the decisions (the key
+proof, the per-row plan, the state of the run and the report) live in
+`scripts/backfill-2fa-secrets-lib.mjs` and are unit-tested by
+`scripts/backfill-2fa-secrets-lib.test.mjs`.
+
+### 8.3 The SSO link guard migration (B07)
+
+It **adds** the column `User.emailVerified` and backfills it for the accounts
+the SSO callback created (`passwordHash LIKE 'sso:%'`); every other account
+keeps the default `false` — an address nobody proved. The upgrade order is
+one-directional: the **old build keeps working** on the migrated database (an
+added column is invisible to it), but the **new build needs the column to
+exist** — its SSO callback reads it, and a missing column is a query error,
+not a fallback. So apply the migration *before* the new build starts serving.
+`npm run db:push` does the same thing without the migration history.
+
+
+### 8.4 Schema before app — the OAuth secret migration (breaking, both ways)
+
+`prisma/migrations/20261019000000_oauth_secret_hashes/` replaces the OAuth
+client secret and the authorization code with their SHA-256 digests:
+
+| Before | After |
+| --- | --- |
+| `OAuthApp.clientSecret` (plaintext) | `OAuthApp.clientSecretHash` (digest, `NOT NULL`) |
+| `OAuthCode.code` (plaintext) | `OAuthCode.codeHash` (digest, `NOT NULL`, unique) |
+
+The migration adds the digest column, backfills it
+(`encode(sha256(convert_to(x,'UTF8')),'hex')` — byte for byte the digest
+`node:crypto` computes), sets it `NOT NULL` and drops the plaintext column.
+The backfill is lossless: an app registered before the migration keeps
+working with the same secret, because the token endpoint compares the digest
+of the presented secret.
+
+**The order of the two steps is not optional — the change breaks in both
+directions:**
+
+- the **new** build queries `clientSecretHash` / `codeHash`; against an
+  unmigrated database it fails with `column "clientSecretHash" does not exist`;
+- the **old** build queries `clientSecret` / `code`; against a migrated
+  database it fails with `column "clientSecret" does not exist`.
+
+So the migration and the restart of the app belong together (steps 4 and 7 of
+the sequence above). Keep the window between them as short as possible: while
+it lasts, `POST /oauth/token` answers 500 and no OAuth app can exchange a
+code. A rollback is **not** `prisma migrate resolve` — the plaintext column
+is gone, so going back to the old build means restoring the dump from step 1.
+
+**`npm run db:push` cannot do this change.** `prisma db push` does not
+backfill: it refuses outright with *"Added the required column
+`clientSecretHash` to the `OAuthApp` table without a default value. There are
+N rows in this table, it is not possible to execute this step."* — and
+`--accept-data-loss` does not help, only `--force-reset` (which wipes the
+database) does. On the dev loop either use `npx prisma migrate deploy`, or
+delete **both** tables that carry a cleartext value first —
+`DELETE FROM "OAuthCode"; DELETE FROM "OAuthApp";` (the codes are short-lived
+and the apps are re-registered in the settings UI; they hold nothing else) —
+and then push. Deleting only the apps is not enough: the push stops at
+`OAuthCode` with the same refusal.
+
+**A database that was built with `prisma db push`** has no migration history,
+so `prisma migrate deploy` refuses it with `P3005 — The database schema is not
+empty`. Baseline the existing migrations first, then deploy — only the OAuth
+migration is left to apply:
+
+```bash
+for m in 20260113000000_init 20260114000000_complete_schema 20260114000001_search_index; do
+  npx prisma migrate resolve --applied "$m"
+done
+npx prisma migrate deploy      # now applies only 20261019000000_oauth_secret_hashes
+npx prisma migrate status      # expect: Database schema is up to date!
+```
+
+### 8.5 API token scopes — existing tokens keep their grant
+
+The REST API (`/api/v1/*`) enforces the scope grant of the bearer token: a
+token without `read:pages` (respectively `write:pages`) is refused with
+`403 {"error":"insufficient_scope","required":"read:pages"}`.
+
+**There is deliberately no migration for this.** A token that was created
+without a scope keeps its **empty** grant — a fail-closed system must not hand
+out permissions silently during an upgrade. Such a token has to be re-created
+in the workspace settings (**API tokens** card) with the scopes it needs; until
+then every `/api/v1/*` route refuses it. The token list marks a scope-less
+token as **No access**.
+
+OAuth-minted tokens are unaffected: `/oauth/token` stores an explicit scope
+list with every token it mints, and returns that list in the response.
+
+Note the order of the checks: the scope check runs **before** the workspace
+check, so a token without the scope gets `403 insufficient_scope` and learns
+nothing about the workspace it was aimed at.
+
+### 8.6 Ops gates: the shared secret, the rate limit, the order
+
+The cron routes and the readiness probe run the **same gate** —
+`@/lib/ops-guard` (`src/lib/ops-guard.ts`) — so they cannot drift apart. The
+metrics route and the cron server actions use the same constant-time comparison
+and the same fail-closed rule; metrics has one documented ordering exception
+(below). The gate owns three properties:
+
+| Property | What it means | Where |
+| --- | --- | --- |
+| **Fail closed** | No configured secret ⇒ the gate is **closed** (`503`), never open. An empty/absent presented value is never a match. | `guardOpsSecret` |
+| **Constant-time comparison** | The presented secret is compared byte by byte without an early exit, so the response time does not reveal *where* a guess differs. The comparison is case sensitive; both sides are trimmed before it. | `safeSecretEqual` → `constantTimeEqual` (`src/lib/secrets.ts`) |
+| **Throttle first** | The rate limit runs **before** the comparison, so a wrong secret is answered `429` once the budget is spent — the guessing is bounded instead of unlimited. (`/api/metrics` resolves the caller first so its budget can be keyed by user; its comparison is constant time and a wrong secret still reaches the limiter.) | `guardOpsSecret` |
+
+**Order of the answers** (this is the contract):
+
+1. no secret configured → `503 {"error":"…is not configured…"}` (fail closed);
+2. over the rate limit → `429` (with a `retry-after` header) — **also for a
+   correct secret**: the limit covers legitimate calls too;
+3. wrong/missing secret → `401 {"error":"Unauthorized"}`;
+4. otherwise the request runs.
+
+**Exception — `/api/metrics`:** the route resolves the admin identity first so
+the 120/60 s budget can be keyed on the user (an IP-rotating caller must not
+dodge it), then applies the limit. The secret comparison is constant time and a
+wrong secret still consumes the limiter; the only difference is that a wrong
+guess is answered `401` until that per-user/IP budget is spent, then `429`.
+
+**Which environment variable guards which route:**
+
+| Route | Secret | Header | Limit |
+| --- | --- | --- | --- |
+| `POST /api/cron/templates` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET /api/cron/versions` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET`/`POST /api/cron/jobs` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `POST /api/cron/tickets` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET`/`POST /api/cron/digest` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET /api/cron/backups` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
+| `GET`/`POST /api/ready` | `CRON_SECRET` **or** `READY_SECRET` | `x-cron-secret` **or** `x-ready-secret` | token bucket: burst 30, 1/s |
+| `GET /api/metrics` | `CRON_SECRET` (besides the session-based workspace-admin path) | `x-cron-secret` | 120 / 60 s |
+| `listDueAutomationsForCronAction`, `commitRecurringRunAction` (server actions — HTTP endpoints too) | `CRON_SECRET` | the action's `secret` argument | 120 / 60 s, deployment-wide |
+
+`READY_SECRET` is an **alternative name for the readiness probe only** — it is
+accepted *in addition to* `CRON_SECRET` there, and nowhere else.
+
+**Operational notes:**
+
+- A `429` on a cron tick means the budget is spent — the tick itself is
+  throttled like any other call, so a scheduler that fires faster than the
+  limit sees `429`, not `401`.
+- The cron actions (`src/server/actions/automations.ts`) are exported from a
+  `"use server"` file and are therefore reachable over HTTP as well. Their
+  rate-limit key is derived from the **configured** secret, never from the
+  presented one — a key built from the guess would be a fresh bucket per
+  attempt and the limit would be bypassable. The budget is deployment-wide
+  (the action has no request of its own) and therefore more generous than the
+  routes' 12/min.
+- Rotation of `CRON_SECRET` changes the rate-limit key of the action surface
+  (it is hashed into the key) — the new secret starts with a fresh budget.
+
 ## 9. Incident quick reference
 
 | Symptom | First checks |
 | --- | --- |
 | `/api/health` → 503 `db: down` | `docker compose ps` (db healthy?), `DATABASE_URL` reachable, `pg_isready` healthcheck logs |
 | `/api/health` refused / no answer | app process alive? port correct (3000 vs 3200 vs compose app)? `docker compose logs app` |
-| Cron never materializes | 503 = `CRON_SECRET` unset in the *app’s* env; 401 = header/value mismatch; `journalctl -u noema-templates.service`; rate limit is 12/min |
+| A client gets `413 {"error":"Request body too large."}` | the request body is over the route's own byte budget (`docs/api-reference.md` §3). The budgets are **hard-coded** in the route modules — there is no environment variable for them and no way to raise them at runtime; a client that legitimately needs more has to split the request (the upload route, for instance, accepts one file per request) |
+| An import fails with `That PDF is too large to import (max 10 MB)` / `That archive is too large to import` | the document itself is over the importer's budget (`src/server/actions/import-formats.ts`, `src/server/actions/import.ts`). These are content limits, not body limits — the request was accepted, the *document* was refused |
+| An import fails with `That archive uses the ZIP64 format, which this importer cannot read.` / `That archive is split across several files…` / `That archive is password-protected…` | the file *is* a valid archive, but a format the Markdown importer does not read (`src/lib/zip-archive.ts`): **ZIP64** (the sizes do not fit into 32 bits), a **split** archive (it spans several disks — only the first part was uploaded) or a **password-protected** entry. Re-create the archive as a plain (non-ZIP64) zip, or import the Markdown files one by one |
+| An import fails with `That .zip archive is damaged or incomplete.` / `That archive uses a compression method this importer cannot read.` | the archive's central directory or one of its entries could not be read — the file is truncated, not a zip at all, or compressed with a method other than *store*/*deflate*. Only *store* and *deflate* are read |
+| Cron never materializes | 503 = `CRON_SECRET` unset in the *app's* env; 401 = header/value mismatch; `journalctl -u noema-templates.service`; rate limit is 12/min |
 | Invites never arrive | settings “Email & invitations” → status shows `environment SMTP` / `not configured`; run `npm run check:mail`; delivery log error text (10 s connect / 20 s socket timeouts) |
+| Invitation link refused with “This invitation can no longer be redeemed.” | The role the invitation carries is not one its sender may hand out *now* — an admin invitation an admin minted before the grant rule, or a sender who has since been demoted or removed. Nothing to clean up: the workspace owner sends a new invitation (an admin invitation the owner minted still redeems). |
 | Collaborative editing refuses everything (4401) | `AUTH_SECRET` missing/short in the relay’s env; wrong `NEXT_PUBLIC_COLLAB_URL`; 4403 = page scope/permission, not a secret problem |
 | Backup exits 1 | the script says why: no `pg_dump`, dump < 1 KiB, or missing core tables — it deletes the bad file rather than keeping it. `npm run backup -- --dry-run` shows what a run would do |
+| Two-factor codes are rejected after the upgrade | the seed is stored sealed (B05): a `v1:` envelope that does not open means a **different `AUTH_SECRET`** than the one the seed was sealed with, or a tampered row. `npm run backfill:2fa` lists those rows as `UNREADABLE`; the account owner re-enrols, or the operator restores the matching `AUTH_SECRET` |
 | Collaborative socket closed 4400 | `APP_ORIGINS` is set and the client’s `Origin` isn’t on the list (checked pre-auth) — add the origin or unset `APP_ORIGINS` |
 | Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
+| Sign-in answers "Too many attempts" / "This account is temporarily locked" | a budget is spent (30/min per client address, 10/min per account, 5 2FA guesses / 15 min) or the account is locked (5 consecutive failures); wait for the quoted time — an operator can release the lock with `UPDATE "User" SET "failedLoginCount" = 0, "lockedUntil" = NULL WHERE email = '…'` |
+| Everyone hits the rate limit at once (429) | no `TRUSTED_PROXY_HOPS` → all clients of a scope share the `scope:local` budget; declare the proxy hops (see §1.1) |
+| Admin surface answers 403 for everybody | `ADMIN_IP_ALLOWLIST` is set but `TRUSTED_PROXY_HOPS` is not → the allowlist fails closed; declare the proxy hops (see §1.1) |
+| A single caller suddenly gets a fresh allowance | a bucket store was full (> 10 000 live keys): the coldest live bucket is sacrificed and that caller's window starts over (see §1.1) |
 | `EADDRINUSE` / weird build output | dev and prod share `.next` and the ports — exactly one writer at a time |
+| `/api/v1/*` answers `403 insufficient_scope` | the token's grant does not cover the call (`read:pages` / `write:pages`); a token created without a scope has an empty grant and has to be re-created — see §8.5 |
 
 ## 10. Verification appendix
 
@@ -444,6 +835,7 @@ nothing was executed against live servers):
 
 | Section | Command / fact | Source of truth |
 | --- | --- | --- |
+| 1.1 | `TRUSTED_PROXY_HOPS`, the hop arithmetic (last / Nth-from-last), the `X-Real-IP` fallback for a chain shorter than N and the `scope:local` fallback, the rejected hop counts above 16, the `ADMIN_IP_ALLOWLIST` fail-closed gate, the Edge-runtime build-time freeze | `src/lib/tenant-guard.ts` (`parseTrustedProxyHops`, `resolveClientIp`) · `src/lib/rate-limit.ts` (`clientKey`, `userKey`) · `src/lib/api-guard.ts` (`rateLimit`) · `src/middleware.ts` (`ipGate`) · `.env.example` |
 | 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL” | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 23 tests) |
 | 2.2 | `psql "$DATABASE_URL" < backups/<file>.sql` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) |
 | 3 | `POST /api/cron/templates`, `x-cron-secret`, 503/401, `12/60_000` limit, `{due,created,skipped,failed}`, fail-closed order | `src/app/api/cron/templates/route.ts` |
@@ -459,6 +851,13 @@ nothing was executed against live servers):
 | 7 | `/api/health` 200/503 shapes, 2 s ping, `no-store`, no auth/disclosure, compose healthcheck | `src/app/api/health/route.ts` · `docker-compose.yml` |
 | 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
 | 8 | single `20260113000000_init` migration vs push-evolved schema | `prisma/migrations/` · `docs/specs/engineering-hardening.md:149,367-373` |
+| 8.1 | tenant boundary enforced in the application (`assertScopedParent`), no `(parentId, workspaceId)` constraint, refusal message, legacy rows not repaired | `src/lib/page-parent.ts` · `prisma/schema.prisma` (`Page.parentId`) · `src/server/actions/import-pdf.ts` · `src/server/queries.ts` (`getDatabase`) |
+| 8.2 | `npm run backfill:2fa`, `--dry-run`, `--confirm-key`, `--help`, idempotence (`v1:`/`v2:` rows skipped), fail-closed (unsealable rows left untouched, exit 1), the key proof (no envelope opens ⇒ nothing is written, exit 1; `--confirm-key` overrides it) | `package.json` · `scripts/backfill-2fa-secrets.mjs` · `scripts/backfill-2fa-secrets-lib.mjs` (+ `scripts/backfill-2fa-secrets-lib.test.mjs`) |
+| 8.5 | scope grant enforced on `/api/v1/*`, no migration for existing tokens, scope check before workspace check | `src/app/api/v1/*/route.ts` · `src/lib/api-token-scope.ts` · `src/server/actions/api-tokens.ts` |
+| 8.6 | ops-gate order (503 → 429 → 401), constant-time comparison, per-route secret/limit table, action-surface budget | `src/lib/ops-guard.ts` · `src/app/api/ready/route.ts` · `src/app/api/cron/*/route.ts` · `src/app/api/metrics/route.ts` · `src/server/actions/automations.ts` |
+| 9 | `413 Request body too large.`, the per-route byte budgets, the `Content-Length` fast path vs. the counted body, hard-coded (not configurable) | `src/lib/body-limit.ts` · `docs/api-reference.md` §3 · the route modules (the limit sits next to what it protects) |
+| 9 | the content limits of the importers (10 MB PDF, 4 MB per archive entry, 32 MB unpacked, 5 000 archive entries) | `src/server/actions/import-formats.ts` · `src/server/actions/import.ts` · `src/lib/zip-archive.ts` |
+| 9 | the archive formats the importer refuses and the message each one gets (ZIP64, split, password-protected, unsupported compression method, damaged) | `src/lib/zip-archive.ts` · `src/server/actions/import.ts` (`zipArchiveError` / `zipEntryError`) |
 | all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
 
 **Not verified by execution (be explicit when relying on them):** the backup →
@@ -466,6 +865,17 @@ restore drill (§2.2), the systemd/crontab drivers (§3.2/3.3 — standard tooli
 not repo code), and `docker compose --profile app up --build` end-to-end (the
 build itself was proven by B74: real build + run on 3202 + health probe; this
 guide did not rebuild).
+
+**Verified by execution (§8.1):** the two-factor backfill was run against a
+throwaway Postgres 16 container that carried the app's `User` table (the other
+tables are not touched by the script). A cleartext seed was re-sealed — the
+envelope was opened back to the very same seed before it was written — an
+already-sealed row was skipped, a tampered envelope was reported as
+`UNREADABLE` and left untouched, a run with a **rotated `AUTH_SECRET` touched
+nothing** (the pre-flight stopped it), `--dry-run` wrote nothing, a second run
+sealed nothing (idempotent), 304 rows were sealed in one run across the
+batch boundary (250), and an unknown option (`--dryrun`) was refused with exit
+1. The app server was not involved: the script needs the database only.
 
 **Observed staleness (not fixed here):** `docs/specs/templates.md` refers to a
 `check:share-cron` npm script that does **not** exist in `package.json` — the

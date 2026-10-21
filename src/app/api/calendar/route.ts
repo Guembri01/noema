@@ -2,8 +2,14 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { prisma } from "@/lib/db";
 import { buildCalendar, type CalendarEventInput } from "@/lib/ics";
+import { sanitizeHref } from "@/lib/validation";
 import {
   applyPull,
   applyPush,
@@ -34,6 +40,13 @@ type UpcomingEvent = Awaited<ReturnType<typeof getUpcomingEvents>>[number];
  * Map a stored calendar event onto the RFC 5545 export shape. All-day rows use
  * a bare `YYYY-MM-DD` (UTC calendar date) so the builder emits `VALUE=DATE`;
  * timed rows keep the full ISO 8601 instant and are rendered as UTC.
+ *
+ * The stored `url` is re-validated here with the same `sanitizeHref` allowlist
+ * the parser applies on import (`src/lib/ics.ts`). A row written before the
+ * parser was fixed — or a value that reached the database by any other way —
+ * would otherwise leave the server again as `URL:javascript:…`, and a CRLF in
+ * it would inject ICS properties into the exported document. What the export
+ * emits is therefore exactly what the parser would have stored.
  */
 function toCalendarEvent(event: UpcomingEvent): CalendarEventInput {
   const iso = (value: Date): string =>
@@ -45,8 +58,18 @@ function toCalendarEvent(event: UpcomingEvent): CalendarEventInput {
     allDay: event.allDay,
     summary: event.title,
     location: event.location ?? undefined,
-    url: event.url ?? undefined,
+    url: sanitizeHref(event.url) ?? undefined,
   };
+}
+
+/**
+ * The stored `url` of an event, re-validated against the same allowlist the
+ * parser applies on import (`src/lib/ics.ts`). A row stored before the parser
+ * was fixed can hold a `javascript:` URL; that value must not leave the server
+ * — neither as an ICS property nor as an API field.
+ */
+function withSafeUrl(event: UpcomingEvent): UpcomingEvent {
+  return { ...event, url: sanitizeHref(event.url) };
 }
 
 /* ---------------------------------------------------------------------- */
@@ -171,12 +194,14 @@ async function handleSync(body: {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  // Calendar events are not page-scoped, so a `GUEST` — an external
+  // collaborator with access to a few shared pages — may not read them at all.
+  if (!canEditContent(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const direction = parseDirection(body.direction);
   const apply = body.apply === true;
-  if (apply && !canEditContent(access.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
 
   const rows = await prisma.calendarEvent.findMany({
     where: { workspaceId },
@@ -224,17 +249,24 @@ async function handleSync(body: {
  * Pass `?format=ics` to instead download the workspace's dated rows as an
  * `text/calendar` (RFC 5545) document. The feed *import* path is unaffected;
  * export reuses the same auth, rate limit and workspace-access checks.
+ *
+ * Calendar events are not page-scoped, so a `GUEST` gets a 403.
  */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "calendar-read", 120, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "calendar-read", 120, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const params = new URL(request.url).searchParams;
   const workspaceId = params.get("workspaceId") ?? "";
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  // Calendar events are not page-scoped, so a `GUEST` — an external
+  // collaborator with access to a few shared pages — may not read them at all.
+  if (!canEditContent(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   if (params.get("format") === "ics") {
     const events = await getUpcomingEvents(workspaceId);
@@ -255,7 +287,7 @@ export async function GET(request: Request) {
     getCalendarFeeds(workspaceId),
     getUpcomingEvents(workspaceId),
   ]);
-  return NextResponse.json({ feeds, events });
+  return NextResponse.json({ feeds, events: events.map(withSafeUrl) });
 }
 
 /**
@@ -272,9 +304,9 @@ export async function GET(request: Request) {
  * With `apply: true` the pull operations are persisted locally.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "calendar-write", 30, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "calendar-write", 30, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let body: {
@@ -291,9 +323,9 @@ export async function POST(request: Request) {
     apply?: boolean;
   };
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    body = await readJsonBody<typeof body>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
 
   if (body.action === "sync") {

@@ -32,6 +32,12 @@ The central decision is **"everything is a page."**
 - `Page` — a document, a folder, a database, or a database row.
   - `type = PAGE | DATABASE`
   - `parentId` builds the tree; `position` orders siblings (float, insert-between friendly)
+  - **Tenant invariant:** a `parentId` always points inside the *same*
+    workspace. `Page.parentId` is a plain self-foreign key — the schema has no
+    composite `(parentId, workspaceId)` constraint — so the rule is enforced
+    in the application, by `assertScopedParent()`
+    ([`src/lib/page-parent.ts`](../src/lib/page-parent.ts)), the single gate
+    every write path passes a parent through.
   - `content` holds the ProseMirror/TipTap JSON block document
   - `deletedAt` implements soft delete (Trash)
 - `PageVersion` — immutable snapshots written before content overwrites (history).
@@ -56,7 +62,7 @@ The central decision is **"everything is a page."**
 | DATE | `{ start: ISO, end?: ISO, includeTime?: boolean }` |
 | CHECKBOX | `{ checked: boolean }` |
 | PEOPLE | `{ names: string[] }` (user-id linkage is a roadmap item) |
-| FILES | `{ files: { name, url, mimeType? }[] }` |
+| FILES | `{ files: { name, url, mimeType? }[] }` — `url` is an app-owned `/api/files/...` path; every stored URL is scheme-checked before it is rendered as a link |
 | RELATION | `{ pageIds: string[] }` |
 
 ## Authentication
@@ -65,6 +71,12 @@ The central decision is **"everything is a page."**
 - Sessions: HS256 JWT (`jose`) in an httpOnly, SameSite=Lax cookie, 30-day expiry.
 - `requireUser()` redirects unauthenticated users; every server action then
   re-derives authorization — the JWT only carries the user id.
+- The sign-in, the sign-up and the 2FA check are server actions, so they never
+  reach the route-handler rate limit and carry their own budgets
+  (`src/lib/rate-limit.ts`): one per client address, one per account (keyed on
+  the submitted e-mail address) and one for the 2FA guesses. Five consecutive
+  failures lock the account for a while; the counter and the lock live on the
+  user row (`User.failedLoginCount`, `User.lockedUntil`).
 
 ## Authorization
 
@@ -76,6 +88,16 @@ membership). Policy helpers:
 - `canDeleteWorkspace(role)` — OWNER only.
 
 This is intentionally centralized so a future public API can reuse it.
+
+A second, separate guard covers the page *tree*: `assertScopedParent()`
+([`src/lib/page-parent.ts`](../src/lib/page-parent.ts)) loads a parent
+**tenant-scoped** (`{ id, workspaceId }`) and refuses a parent that lives in
+another workspace — the foreign page is never read and the error never names
+it. A page therefore never hangs under a page of a different workspace, which
+keeps it out of the foreign workspace's database view and CSV/JSON export, and
+keeps Postgres' `onDelete: Cascade` from deleting it together with a foreign
+parent. Every write path that stores a `Page.parentId` goes through that
+helper; the read side filters a database's rows by the database's workspace.
 
 ## Editor
 

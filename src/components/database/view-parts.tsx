@@ -33,6 +33,7 @@ import {
 } from "@/lib/relation-picker";
 import { formatGeo, normalizeGeo, parseGeo } from "@/lib/geo";
 import { isValidEmail } from "@/lib/email-validation";
+import { sanitizeFileUrl, sanitizeHref } from "@/lib/validation";
 import { isValidPhone, normalizePhone } from "@/lib/phone-format";
 import { classifyLink } from "@/lib/link-check";
 import {
@@ -850,6 +851,34 @@ export function nextVerificationCell(
   return toggleCell(value, { userId, now: options.now });
 }
 
+/**
+ * The FILES value a new attachment produces: the app-owned entries the cell
+ * already holds, plus the freshly uploaded asset.
+ *
+ * Only the app's own `/api/files/...` paths are carried over — an entry with
+ * any other URL is dropped, so the write path never sees it and a stale
+ * entry can never block the attach.
+ */
+export function composeFilesValue(
+  stored: unknown,
+  asset: { name: string; url: string; mimeType?: string },
+): { files: { name: string; url: string; mimeType?: string }[] } {
+  const entries = Array.isArray(stored)
+    ? (stored as { name: string; url: string; mimeType?: string }[])
+    : [];
+  return {
+    files: [
+      ...entries.filter(
+        (entry) =>
+          entry &&
+          typeof entry.name === "string" &&
+          sanitizeFileUrl(entry.url) !== null,
+      ),
+      asset,
+    ],
+  };
+}
+
 export function Cell({
   property,
   value,
@@ -1075,16 +1104,7 @@ export function Cell({
   const attachFile = (file: File) => {
     if (!workspaceId) return;
     uploadFile(file, workspaceId)
-      .then((asset) =>
-        onChange({
-          files: [
-            ...(((v.files as { name: string; url: string; mimeType?: string }[]) ?? []).filter(
-              (entry) => entry && typeof entry.name === "string",
-            ) as { name: string; url: string; mimeType?: string }[]),
-            { name: asset.name, url: asset.url, mimeType: asset.mimeType },
-          ],
-        }),
-      )
+      .then((asset) => onChange(composeFilesValue(v.files, asset)))
       .catch((error: unknown) =>
         toast.error(error instanceof Error ? error.message : t(locale, "somethingWentWrong")),
       );
@@ -2044,10 +2064,18 @@ export function Cell({
         readOnly(formatCell(value, property) || "—")
       );
     case "FILES": {
-      const files = (((v.files as { name: string; url: string; mimeType?: string }[]) ??
-        []) as { name: string; url: string; mimeType?: string }[]).filter(
-        (entry) => entry && typeof entry.name === "string",
-      );
+      const stored = Array.isArray(v.files)
+        ? (v.files as { name: string; url: string; mimeType?: string }[])
+        : [];
+      // A stored file URL is user-controlled: it must pass the shared href
+      // allowlist before it may reach an anchor. A `javascript:` URL is
+      // dropped instead of rendered as a clickable link.
+      const files = stored
+        .filter((entry) => entry && typeof entry.name === "string")
+        .flatMap((entry) => {
+          const href = sanitizeHref(entry.url);
+          return href === null ? [] : [{ name: entry.name, href }];
+        });
       return (
         <div
           className="flex min-w-0 flex-wrap items-center gap-1"
@@ -2056,8 +2084,8 @@ export function Cell({
         >
           {files.map((entry, index) => (
             <a
-              key={`${entry.url}-${index}`}
-              href={entry.url}
+              key={`${entry.href}-${index}`}
+              href={entry.href}
               target="_blank"
               rel="noreferrer"
               title={entry.name}

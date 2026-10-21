@@ -116,6 +116,9 @@ export const PERSONAL_DATA_FIELDS: PersonalDataRegistry = {
     theme: retained(),
     passwordHash: deleted(false),
     notificationPrefs: deleted(),
+    // The TOTP seed is stored SEALED since B05 (a `v1:` envelope, never the
+    // raw base32 seed), and it is not exportable: it never leaves the system.
+    // Erasure deletes the column, which is the only way to remove it.
     twoFactorSecret: deleted(false),
     twoFactorEnabled: retained(),
     createdAt: retained(),

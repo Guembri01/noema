@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { AI_SKILLS, aiSkill, type AiSkillId } from "@/lib/ai-skills";
 import {
   SKILL_CATALOG,
@@ -23,10 +28,12 @@ import { isLocale } from "@/lib/i18n";
 import {
   AI_NOT_CONFIGURED,
   chatComplete,
-  resolveAiConfig,
+  resolveAiConfigForUser,
   type AiRuntimeConfig,
   type ChatResult,
 } from "@/lib/ai-provider";
+import { aiSkillRequestSchema } from "@/lib/validation";
+import { redactSecrets } from "@/lib/error-reporting";
 
 export const runtime = "nodejs";
 
@@ -51,7 +58,7 @@ const SIMPLIFY_AUDIENCES: readonly SimplifyAudience[] = ["general", "beginner", 
 type SkillBody = {
   skillId?: string;
   text?: string;
-  workspaceId?: string;
+  workspaceId?: string | null;
   /** Optional per-request knobs for the writing skills. */
   targetLocale?: string;
   tone?: string;
@@ -235,18 +242,22 @@ export async function GET() {
  * Body: { skillId, text, workspaceId?, targetLocale?, tone?, style?, audience?, maxWords? }
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "ai-skills", 30, 60_000);
-  if (limited) return limited;
-
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "ai-skills", 30, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  let body: SkillBody;
+  let raw: unknown;
   try {
-    body = (await request.json()) as SkillBody;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    raw = await readJsonBody(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
+  const parsed = aiSkillRequestSchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+  const body: SkillBody = parsed.data;
 
   const skill = resolveSkill(body.skillId);
   if (!skill) return NextResponse.json({ error: "Unknown skill." }, { status: 400 });
@@ -254,7 +265,10 @@ export async function POST(request: Request) {
   const text = (body.text ?? "").trim().slice(0, MAX_TEXT_CHARS);
   if (!text) return NextResponse.json({ error: "text is required." }, { status: 400 });
 
-  const config = await resolveAiConfig(body.workspaceId);
+  // The provider (endpoint + API key) belongs to the workspace it is stored
+  // for, so it is only used when the caller has access to the workspace it
+  // names; otherwise the environment defaults apply (audit B13).
+  const config = await resolveAiConfigForUser(user.id, body.workspaceId);
   if (!config) {
     return NextResponse.json({ error: AI_NOT_CONFIGURED }, { status: 503 });
   }
@@ -271,7 +285,13 @@ export async function POST(request: Request) {
           config,
         );
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+    // The provider already reduced its failure to a class (status + code); the
+    // message is scrubbed once more so no credential-shaped string can leave
+    // the server.
+    const detail = redactSecrets(result.error);
+    const error =
+      typeof detail === "string" && detail !== "" ? detail : "AI request failed";
+    return NextResponse.json({ error }, { status: result.status });
   }
 
   return NextResponse.json({

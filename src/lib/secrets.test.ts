@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_MAX_KEY_AGE_SECONDS,
@@ -7,24 +8,29 @@ import {
   SecretDecryptError,
   constantTimeEqual,
   createKeyring,
+  createShareUnlockToken,
   decrypt,
   decryptSecret,
   deriveLegacyKey,
   describeSecretStatus,
   encrypt,
   encryptSecret,
+  encryptTwoFactorSecret,
   generateSecret,
   hashToken,
   maskConnString,
   maskSecret,
   missingSecrets,
   needsRotation,
+  openTwoFactorSecret,
   parseEnvSecret,
   randomToken,
   redact,
   redactObject,
   reencrypt,
   rotateKeyring,
+  shareUnlockCookieName,
+  verifyShareUnlockToken,
 } from "@/lib/secrets";
 import type { Keyring, SecretDecryptErrorCode } from "@/lib/secrets";
 
@@ -244,6 +250,97 @@ describe("secrets envelope — empty / missing AUTH_SECRET", () => {
     const envelope = encryptSecret("");
     expect(envelope).toMatch(/^v1:[^:]+:[^:]+:$/);
     expect(decryptSecret(envelope)).toBeNull();
+  });
+});
+
+/**
+ * B05 — the 2FA seed is sealed at rest (`encryptTwoFactorSecret` /
+ * `openTwoFactorSecret`).
+ *
+ * The seed is a bearer credential: whoever holds it can mint valid codes. The
+ * stored value must therefore be an envelope, never the raw base32 seed, while
+ * rows written before the fix (a raw seed) keep working.
+ */
+describe("two-factor secret — sealed at rest", () => {
+  const SEED = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+
+  it("seals a seed into an envelope that never contains the raw seed", () => {
+    const sealed = encryptTwoFactorSecret(SEED);
+    expect(sealed).toMatch(/^v1:[^:]+:[^:]+:[^:]+$/);
+    expect(sealed).not.toContain(SEED);
+  });
+
+  it("opens a sealed seed back to the raw seed", () => {
+    expect(openTwoFactorSecret(encryptTwoFactorSecret(SEED))).toEqual({
+      kind: "sealed",
+      secret: SEED,
+    });
+  });
+
+  it("uses a fresh IV per seal (the same seed seals to different envelopes)", () => {
+    const first = encryptTwoFactorSecret(SEED);
+    const second = encryptTwoFactorSecret(SEED);
+    expect(first).not.toBe(second);
+    expect(openTwoFactorSecret(first).secret).toBe(SEED);
+    expect(openTwoFactorSecret(second).secret).toBe(SEED);
+  });
+
+  it("treats a pre-B05 cleartext seed as legacy instead of locking the user out", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(openTwoFactorSecret(SEED)).toEqual({
+      kind: "legacy",
+      secret: SEED,
+    });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("fails closed on a corrupt envelope (no seed, no code can match)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sealed = encryptTwoFactorSecret(SEED);
+    const parts = sealed.split(":");
+    parts[3] = Buffer.from("tampered").toString("base64");
+    expect(openTwoFactorSecret(parts.join(":"))).toEqual({
+      kind: "unreadable",
+      secret: null,
+    });
+    warn.mockRestore();
+  });
+
+  it("fails closed on an envelope sealed with another AUTH_SECRET", () => {
+    const sealed = encryptTwoFactorSecret(SEED);
+    process.env.AUTH_SECRET = SECRET_B;
+    expect(openTwoFactorSecret(sealed)).toEqual({
+      kind: "unreadable",
+      secret: null,
+    });
+  });
+
+  it("fails closed on a missing value", () => {
+    expect(openTwoFactorSecret(null)).toEqual({
+      kind: "unreadable",
+      secret: null,
+    });
+    expect(openTwoFactorSecret(undefined)).toEqual({
+      kind: "unreadable",
+      secret: null,
+    });
+    expect(openTwoFactorSecret("")).toEqual({
+      kind: "unreadable",
+      secret: null,
+    });
+  });
+
+  it("fails closed (and never throws) when AUTH_SECRET is missing", () => {
+    const sealed = encryptTwoFactorSecret(SEED);
+    delete process.env.AUTH_SECRET;
+    // The key cannot be derived, so the envelope cannot be opened — the seed
+    // stays unreachable instead of leaking through an exception.
+    expect(() => openTwoFactorSecret(sealed)).not.toThrow();
+    expect(openTwoFactorSecret(sealed)).toEqual({
+      kind: "unreadable",
+      secret: null,
+    });
   });
 });
 
@@ -1056,5 +1153,99 @@ describe("maskConnString", () => {
     for (const input of inputs) {
       expect(typeof maskConnString(input)).toBe("string");
     }
+  });
+});
+
+describe("the share unlock cookie (B01)", () => {
+  const TOKEN = "share-token-abc";
+  const NOW = 1_800_000_000;
+
+  it("mints a value that verifies for its own share token", () => {
+    const value = createShareUnlockToken(TOKEN, { now: NOW });
+    expect(value).not.toBe("1");
+    expect(verifyShareUnlockToken(TOKEN, value, { now: NOW })).toBe(true);
+  });
+
+  it("refuses the old constant cookie value", () => {
+    expect(verifyShareUnlockToken(TOKEN, "1", { now: NOW })).toBe(false);
+  });
+
+  it("refuses a value minted for a different share token", () => {
+    const value = createShareUnlockToken("other-token", { now: NOW });
+    expect(verifyShareUnlockToken(TOKEN, value, { now: NOW })).toBe(false);
+  });
+
+  it("refuses an expired value — the boundary instant counts as expired", () => {
+    const value = createShareUnlockToken(TOKEN, { expiresAt: NOW, now: NOW });
+    expect(verifyShareUnlockToken(TOKEN, value, { now: NOW })).toBe(false);
+    expect(verifyShareUnlockToken(TOKEN, value, { now: NOW - 1 })).toBe(true);
+  });
+
+  it("refuses a tampered signature and a tampered expiry", () => {
+    const value = createShareUnlockToken(TOKEN, { now: NOW });
+    const [, expiry, signature] = value.split(":");
+
+    const forgedSignature = `${expiry}:${signature.slice(0, -1)}${
+      signature.endsWith("A") ? "B" : "A"
+    }`;
+    expect(verifyShareUnlockToken(TOKEN, forgedSignature, { now: NOW })).toBe(
+      false,
+    );
+
+    const forgedExpiry = `${expiry + 1}:${signature}`;
+    expect(verifyShareUnlockToken(TOKEN, forgedExpiry, { now: NOW })).toBe(false);
+  });
+
+  it("refuses malformed, empty and absent values", () => {
+    for (const value of [
+      "",
+      "   ",
+      "v1",
+      "v1:123",
+      "v1:123:abc:def",
+      "v2:1800000000:abc",
+      "v1:not-a-number:abc",
+      "v1:-1:abc",
+      "v1:1800000000:",
+    ]) {
+      expect(verifyShareUnlockToken(TOKEN, value, { now: NOW })).toBe(false);
+    }
+    expect(verifyShareUnlockToken(TOKEN, null, { now: NOW })).toBe(false);
+    expect(verifyShareUnlockToken(TOKEN, undefined, { now: NOW })).toBe(false);
+  });
+
+  it("refuses everything when the server secret is missing", () => {
+    const value = createShareUnlockToken(TOKEN, { now: NOW });
+    delete process.env.AUTH_SECRET;
+    expect(verifyShareUnlockToken(TOKEN, value, { now: NOW })).toBe(false);
+    expect(() => createShareUnlockToken(TOKEN, { now: NOW })).toThrow(
+      /AUTH_SECRET/,
+    );
+  });
+
+  it("does not accept a value signed with a different secret", () => {
+    const value = createShareUnlockToken(TOKEN, { now: NOW });
+    process.env.AUTH_SECRET = "b85-a-completely-different-secret";
+    expect(verifyShareUnlockToken(TOKEN, value, { now: NOW })).toBe(false);
+  });
+
+  it("names the cookie after the share token", () => {
+    expect(shareUnlockCookieName(TOKEN)).toBe(`share_${TOKEN}`);
+  });
+
+  // The constant-time comparison is not observable at runtime: a plain `===`
+  // returns the same result, so every behavioural test above stays green on a
+  // regression to a short-circuiting comparison. The property is therefore
+  // pinned at the source level.
+  it("compares the signature in constant time", () => {
+    const source = readFileSync(
+      new URL("./secrets.ts", import.meta.url),
+      "utf8",
+    );
+    const start = source.indexOf("export function verifyShareUnlockToken");
+    expect(start).toBeGreaterThan(-1);
+    const body = source.slice(start, source.indexOf("\n}", start));
+    expect(body).toContain("timingSafeEqual");
+    expect(body).not.toMatch(/given\s*===|===\s*want|want\s*===/);
   });
 });

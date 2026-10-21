@@ -4,6 +4,7 @@ import { getWorkspaceAccess } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { randomToken } from "@/lib/slug";
 import { rateLimit } from "@/lib/api-guard";
+import { bodyReadError, readFormDataBody } from "@/lib/body-limit";
 import { storageDriver } from "@/lib/storage";
 import { extForMime, fileNameExt, isAllowedType, mimeForExt } from "@/lib/file-type";
 import { isComplete, planChunks, validateChunkPlan } from "@/lib/upload-chunk";
@@ -11,6 +12,16 @@ import { isComplete, planChunks, validateChunkPlan } from "@/lib/upload-chunk";
 export const runtime = "nodejs";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+
+/**
+ * B22 — the budget for one upload request.
+ *
+ * `request.formData()` buffers the whole multipart body, so the budget has to
+ * sit above the file limit ({@link MAX_BYTES}) plus the multipart envelope.
+ * The file limit itself is still enforced per file below — this one bounds
+ * what the route reads at all.
+ */
+const MAX_BODY_BYTES = 12 * 1024 * 1024;
 
 /** Upper bound on a declared `totalParts` — guards the plan allocation. */
 const MAX_PARTS = 10_000;
@@ -70,18 +81,18 @@ function parsePartIndexes(
  *   the plan and exactly which parts are still needed.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "upload", 60, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "upload", 60, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   let form: FormData;
   try {
-    form = await request.formData();
-  } catch {
-    return NextResponse.json({ error: "Expected multipart form data" }, { status: 400 });
+    form = await readFormDataBody(request, MAX_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Expected multipart form data");
   }
 
   const workspaceId = String(form.get("workspaceId") ?? "");

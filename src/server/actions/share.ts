@@ -142,8 +142,100 @@ export async function createShareLinkAction(
   return { url: `/s/${link.token}` };
 }
 
-/** Verify a share password and return the share row when valid. */
-export async function verifySharePassword(
+/* ------------------------------------------------------------------ *
+ * Share-unlock attempt accounting.
+ *
+ * `POST /s/<token>/unlock` is public, so a share password can be
+ * guessed. The route's rate limiter keys on a forwarding header an
+ * attacker can spoof, while the share token is not guessable - so the
+ * counter below is keyed by the token alone and is the real brake on a
+ * brute force. The state is in-process (like the automation store in
+ * `src/server/actions/automations.ts`); a multi-instance deployment
+ * needs a shared store.
+ * ------------------------------------------------------------------ */
+
+/** Failed password attempts tolerated per share link. */
+const UNLOCK_MAX_FAILURES = 10;
+/** How long a share link stays locked once the failure budget is spent. */
+const UNLOCK_LOCK_MS = 15 * 60_000;
+/** Silence after which the failure budget is restored (a typo is not a siege). */
+const UNLOCK_QUIET_MS = 60 * 60_000;
+/** Soft cap: above this many tracked links, stale entries are swept. */
+const UNLOCK_SWEEP_AT = 1_000;
+/** Hard cap on tracked links (a flood of random tokens must not grow memory). */
+const UNLOCK_MAX_TRACKED = 10_000;
+
+type UnlockAttempts = {
+  /** Failed attempts inside the current budget window. */
+  failures: number;
+  /** Epoch ms until which the link is locked. */
+  lockedUntil: number;
+  /** Epoch ms of the last recorded failure. */
+  lastFailureAt: number;
+};
+
+const unlockAttempts = new Map<string, UnlockAttempts>();
+
+/** Milliseconds the link stays locked for; 0 when it is not locked. */
+function unlockLockRemaining(token: string, now: number): number {
+  const entry = unlockAttempts.get(token);
+  if (!entry) return 0;
+  return entry.lockedUntil > now ? entry.lockedUntil - now : 0;
+}
+
+/** Count a failed attempt and lock the link when the budget is spent. */
+function recordUnlockFailure(token: string, now: number): void {
+  const previous = unlockAttempts.get(token);
+  // A long silence restores the budget: a mistyped password must not
+  // accumulate into a lockout over the days.
+  const entry: UnlockAttempts =
+    previous && now - previous.lastFailureAt <= UNLOCK_QUIET_MS
+      ? {
+          failures: previous.failures,
+          lockedUntil: previous.lockedUntil,
+          lastFailureAt: now,
+        }
+      : { failures: 0, lockedUntil: 0, lastFailureAt: now };
+  entry.failures += 1;
+  entry.lastFailureAt = now;
+  if (entry.failures >= UNLOCK_MAX_FAILURES) {
+    entry.lockedUntil = now + UNLOCK_LOCK_MS;
+  }
+  unlockAttempts.set(token, entry);
+  sweepUnlockAttempts(now);
+}
+
+/**
+ * Drop stale entries and keep the store bounded.
+ *
+ * The cap bounds the **number** of entries, not the length of a key: the key
+ * is the raw share token, so a caller controls how much a single entry costs
+ * (the token is a random 12-byte name, but the endpoint accepts whatever
+ * reaches it). The eviction drops the oldest entry, which may be a link that
+ * is currently locked — a flood of random tokens can therefore release one
+ * lock. That is the price of a bound, and it is the same trade-off the
+ * limiter's own store makes.
+ */
+function sweepUnlockAttempts(now: number): void {
+  if (unlockAttempts.size >= UNLOCK_SWEEP_AT) {
+    for (const [key, entry] of unlockAttempts) {
+      if (
+        entry.lockedUntil <= now &&
+        now - entry.lastFailureAt > UNLOCK_QUIET_MS
+      ) {
+        unlockAttempts.delete(key);
+      }
+    }
+  }
+  while (unlockAttempts.size > UNLOCK_MAX_TRACKED) {
+    const oldest = unlockAttempts.keys().next();
+    if (oldest.done === true) break;
+    unlockAttempts.delete(oldest.value);
+  }
+}
+
+/** Compare a password against the share link's stored hash. */
+async function compareSharePassword(
   token: string,
   password: string,
 ): Promise<boolean> {
@@ -153,6 +245,34 @@ export async function verifySharePassword(
   });
   if (!link?.passwordHash) return false;
   return verifyPassword(password, link.passwordHash);
+}
+
+/** Outcome of one share-unlock attempt. */
+export type ShareUnlockResult =
+  | { status: "unlocked" }
+  | { status: "wrong-password" }
+  | { status: "locked"; retryAfterMs: number };
+
+/**
+ * Try to unlock a password-protected share link.
+ *
+ * Fails closed: while a link is locked no password is compared at all, so
+ * the lock window cannot be used to keep guessing. Every failed attempt is
+ * counted per share token - an attacker cannot reset the budget by
+ * spoofing `x-forwarded-for` - and a successful unlock clears the count.
+ */
+export async function attemptShareUnlock(
+  token: string,
+  password: string,
+): Promise<ShareUnlockResult> {
+  const lockedFor = unlockLockRemaining(token, Date.now());
+  if (lockedFor > 0) return { status: "locked", retryAfterMs: lockedFor };
+  if (!(await compareSharePassword(token, password))) {
+    recordUnlockFailure(token, Date.now());
+    return { status: "wrong-password" };
+  }
+  unlockAttempts.delete(token);
+  return { status: "unlocked" };
 }
 
 /** Remove every public link for a page. */

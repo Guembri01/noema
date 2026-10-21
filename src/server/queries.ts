@@ -94,8 +94,12 @@ export async function getWorkspaceBySlug(slug: string) {
 /** Live (non-trashed) pages in a workspace, ordered for tree rendering. */
 export async function getPageTree(
   workspaceId: string,
-  /** Guest scoping: only these page ids (plus ancestors) are returned. */
-  visiblePageIds: Set<string> | null = null,
+  /**
+   * Guest scoping: only these page ids (plus ancestors) are returned; `null`
+   * returns the whole workspace. Required — like `getPagesPage` — so a caller
+   * can never forget the filter and silently widen the tree.
+   */
+  visiblePageIds: Set<string> | null,
 ): Promise<PageTreeNode[]> {
   return prisma.page.findMany({
     where: {
@@ -132,13 +136,23 @@ export type ApiPageRow = {
  * `(position, createdAt, id)`. The opaque cursor carries `position` as its key
  * and a `createdAt|id` composite tiebreaker, so pages that share a position
  * (`Page.position` defaults to `0`) never overlap or get skipped between calls.
+ *
+ * `visiblePageIds` is the guest scope (see `pageScopeFor`): `null` returns the
+ * whole workspace, a set returns only those pages. It is a required argument
+ * so a caller can never forget the filter and silently widen the listing.
  */
 export async function getPagesPage(
   workspaceId: string,
+  /** Guest scoping: only these page ids are returned; `null` = the whole workspace. */
+  visiblePageIds: Set<string> | null,
   options: { limit?: number; cursor?: string | null } = {},
 ): Promise<PaginateResult<ApiPageRow>> {
   const rows = await prisma.page.findMany({
-    where: { workspaceId, deletedAt: null },
+    where: {
+      workspaceId,
+      deletedAt: null,
+      ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+    },
     orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
@@ -174,17 +188,40 @@ export async function getPagesPage(
   };
 }
 
-export async function getTeamspaces(workspaceId: string) {
-  return prisma.teamspace.findMany({
-    where: { workspaceId },
+/** A teamspace as the clients see it. */
+export type TeamspaceView = { id: string; name: string; icon: string | null };
+
+/**
+ * The teamspaces of a workspace, scoped for the viewer.
+ *
+ * `visibleTeamspaceIds` is the viewer's teamspace scope (see `viewerScopeFor`
+ * in `@/lib/guest-access`): `null` returns every teamspace of the workspace, a
+ * set returns only the teamspaces it names. The scope is a **required**
+ * argument, so a caller can never forget it and silently widen the listing.
+ *
+ * The filter is applied twice on purpose: the query narrows the rows the
+ * database hands over, and the filter below drops everything outside the scope
+ * even if the query layer returned more. A guest's payload must never carry
+ * the name of a teamspace they have no business seeing.
+ */
+export async function getTeamspaces(
+  workspaceId: string,
+  visibleTeamspaceIds: Set<string> | null,
+): Promise<TeamspaceView[]> {
+  const rows = await prisma.teamspace.findMany({
+    where: {
+      workspaceId,
+      ...(visibleTeamspaceIds ? { id: { in: [...visibleTeamspaceIds] } } : {}),
+    },
     orderBy: { createdAt: "asc" },
     select: {
       id: true,
       name: true,
       icon: true,
-      members: { select: { userId: true } },
     },
   });
+  if (!visibleTeamspaceIds) return rows;
+  return rows.filter((row) => visibleTeamspaceIds.has(row.id));
 }
 
 /** Only pages whose own parent chain reaches the workspace root. */
@@ -196,17 +233,49 @@ export function childrenOf(tree: PageTreeNode[], parentId: string): PageTreeNode
   return tree.filter((p) => p.parentId === parentId);
 }
 
-export async function getTrash(workspaceId: string) {
+/**
+ * The workspace trash: the pages that were archived, with restore and
+ * permanent delete.
+ *
+ * `visiblePageIds` is the guest scope (see `pageScopeFor`): `null` returns the
+ * whole trash, a set returns only the trashed pages the caller may see. It is
+ * a required argument — like `getPageTree` — so a caller can never forget the
+ * filter and list a title the guest was never given.
+ */
+export async function getTrash(
+  workspaceId: string,
+  visiblePageIds: Set<string> | null,
+) {
   return prisma.page.findMany({
-    where: { workspaceId, deletedAt: { not: null } },
+    where: {
+      workspaceId,
+      deletedAt: { not: null },
+      ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+    },
     orderBy: [{ deletedAt: "desc" }, { id: "asc" }],
     select: { id: true, title: true, icon: true, deletedAt: true, parentId: true },
   });
 }
 
-export async function getFavorites(userId: string, workspaceId: string) {
+export async function getFavorites(
+  userId: string,
+  workspaceId: string,
+  /**
+   * Guest scoping: only these page ids are returned. `null` = every page of
+   * the workspace. The scope is a **required** argument, so a caller can never
+   * forget the filter and silently widen the listing.
+   */
+  visiblePageIds: Set<string> | null,
+) {
   return prisma.favorite.findMany({
-    where: { userId, page: { workspaceId, deletedAt: null } },
+    where: {
+      userId,
+      page: {
+        workspaceId,
+        deletedAt: null,
+        ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+      },
+    },
     orderBy: { id: "asc" },
     select: {
       page: { select: { id: true, title: true, icon: true, type: true } },
@@ -264,6 +333,17 @@ export type RelationData = {
 };
 
 export async function getDatabase(databasePageId: string) {
+  // A database's rows are the pages that hang under it, and they belong to the
+  // database's own workspace. `Page.parentId` is a plain foreign key, so a row
+  // that was linked across workspaces (the unchecked `parentId` hole, B08)
+  // would otherwise show up in this view and in the database exports. The rows
+  // are therefore filtered by the database's workspace; an unknown database
+  // resolves to a blank workspace, which matches no row.
+  const database = await prisma.page.findUnique({
+    where: { id: databasePageId },
+    select: { workspaceId: true },
+  });
+  const workspaceId = database?.workspaceId ?? "";
   const [properties, views, rows, templateRows] = await Promise.all([
     prisma.property.findMany({
       where: { databasePageId },
@@ -274,7 +354,7 @@ export async function getDatabase(databasePageId: string) {
       orderBy: { position: "asc" },
     }),
     prisma.page.findMany({
-      where: { parentId: databasePageId, deletedAt: null },
+      where: { parentId: databasePageId, workspaceId, deletedAt: null },
       orderBy: { position: "asc" },
       include: {
         propertyValues: true,
@@ -332,14 +412,36 @@ export async function getDatabase(databasePageId: string) {
     relationProperties.map(async (property) => {
       const targetDatabaseId = (property.config as { targetDatabaseId: string })
         .targetDatabaseId;
+      // B98 — the target of a relation must be a database of the *same*
+      // workspace as the database being read. Filtering the target's rows by
+      // the target's own workspace would be tautological (a foreign target's
+      // rows all carry the foreign workspace id and would pass), so the two
+      // workspaces are compared explicitly. A relation that points outside the
+      // workspace — from an old revision, an import or a direct database edit —
+      // yields no options, no cell values and no schema.
+      const target = await prisma.page.findFirst({
+        where: { id: targetDatabaseId, type: "DATABASE", deletedAt: null },
+        select: { id: true, workspaceId: true },
+      });
+      if (!target || target.workspaceId !== workspaceId) {
+        relationData[property.id] = { options: [], valuesByRow: {}, properties: [] };
+        return;
+      }
       const [targetProperties, targetRows] = await Promise.all([
         prisma.property.findMany({
-          where: { databasePageId: targetDatabaseId },
+          where: {
+            databasePageId: targetDatabaseId,
+            databasePage: { workspaceId: target.workspaceId },
+          },
           orderBy: { position: "asc" },
           select: { id: true, name: true, type: true },
         }),
         prisma.page.findMany({
-          where: { parentId: targetDatabaseId, deletedAt: null },
+          where: {
+            parentId: targetDatabaseId,
+            workspaceId: target.workspaceId,
+            deletedAt: null,
+          },
           orderBy: { position: "asc" },
           include: { propertyValues: true },
         }),
@@ -681,6 +783,12 @@ async function substringHits(
  * content-derived teaser. It defaults off: the teaser payload is only wanted by
  * the search page, while the palette/API/cursor walks would otherwise read the
  * JSON of every hit.
+ *
+ * `visiblePageIds` narrows the result to the pages the caller may open; `null`
+ * means "the whole workspace". It applies to a blank query as well: the
+ * branch that lists the most recent pages is a window on the *visible* set,
+ * not on the workspace — otherwise a guest could enumerate the titles of the
+ * pages they may not open.
  */
 export async function searchPages(
     workspaceId: string,
@@ -703,8 +811,15 @@ export async function searchPages(
   } as const;
 
   if (!q) {
+    // A blank query still lists pages (the UI shows the most recent ones), so
+    // the window is drawn from the caller's visible set: an unscoped caller
+    // must not be able to enumerate the pages they may not open.
     const pages = await prisma.page.findMany({
-      where: { workspaceId, deletedAt: null },
+      where: {
+        workspaceId,
+        deletedAt: null,
+        ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+      },
       orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
       take,
       skip: offset,
@@ -941,6 +1056,14 @@ export async function getChatThread(threadId: string) {
 // Calendar (ICS subscriptions)
 // ---------------------------------------------------------------------------
 
+/**
+ * The workspace's subscribed calendars, as a client sees them.
+ *
+ * The feed URL itself (`icsUrl`) is deliberately *not* selected: it is the
+ * private address of a personal calendar and often carries a secret token in
+ * its path, so it never leaves the server — the server reads the feed itself
+ * (`refreshCalendarFeedsAction`).
+ */
 export async function getCalendarFeeds(workspaceId: string) {
   return prisma.calendarFeed.findMany({
     where: { workspaceId },
@@ -948,7 +1071,6 @@ export async function getCalendarFeeds(workspaceId: string) {
     select: {
       id: true,
       name: true,
-      icsUrl: true,
       color: true,
       _count: { select: { events: true } },
     },
@@ -1071,16 +1193,28 @@ export async function getProjectDetail(workspaceId: string, projectId: string) {
 /**
  * Ranked page retrieval for AI grounding: prompt → terms → scored pages.
  * Returns a small, relevant set (default 5) with excerpts.
+ *
+ * `visiblePageIds` is the guest scope, exactly like in {@link searchPages}:
+ * `null` means the whole workspace (a member), a set means "only these pages"
+ * (a guest). The filter is applied *in the query*, so the 500-row window is
+ * taken from the visible pages and a guest's result set is never truncated by
+ * pages they may not open. An empty set matches nothing.
  */
 export async function searchPagesForPrompt(
   workspaceId: string,
   prompt: string,
+  /** Guest scoping: only these page ids are searched; `null` = whole workspace. */
+  visiblePageIds: Set<string> | null,
   take = 5,
 ) {
   const terms = promptTerms(prompt);
   if (terms.length === 0) return [];
   const pages = await prisma.page.findMany({
-    where: { workspaceId, deletedAt: null },
+    where: {
+      workspaceId,
+      deletedAt: null,
+      ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+    },
     orderBy: { updatedAt: "desc" },
     take: 500,
     select: { id: true, title: true, icon: true, type: true, content: true },

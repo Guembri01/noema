@@ -25,6 +25,9 @@ export default async function ProjectPage({
   if (!workspace) notFound();
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) notFound();
+  // A project carries the workspace's tickets: not page-scoped, so a `GUEST` is
+  // refused here exactly like on `GET /api/tickets`.
+  if (!canEditContent(access.role)) notFound();
   const locale = user.locale ?? "en";
 
   const project = await getProjectDetail(workspace.id, projectId);

@@ -10,7 +10,7 @@
 # implicitly. `capabilities/default.json` (the shell's own first-run and
 # diagnostics page, `dist/index.html`) therefore asks for `default` and keeps its
 # behaviour. The served web app is a remote origin and gets a deliberately
-# smaller set — see `capabilities/desktop-everything.json`.
+# smaller set of its own — see `capabilities/desktop-remote.json`.
 [default]
 permissions = [
   "allow-check-update",

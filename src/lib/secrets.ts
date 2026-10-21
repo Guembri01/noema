@@ -1,4 +1,11 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 
 /**
  * Envelope encryption for stored provider keys (AES-256-GCM).
@@ -40,6 +47,58 @@ export function decryptSecret(envelope: string | null | undefined): string | nul
   } catch {
     return null;
   }
+}
+
+/* ------------------------------------------------------------------------- *
+ * B05 — the 2FA seed is sealed at rest.
+ *
+ * A TOTP seed is a bearer credential: whoever holds it can mint valid codes
+ * for the account, so a database dump must not hand it out. The seed is
+ * therefore stored in the same AES-256-GCM envelope used for provider keys.
+ * ------------------------------------------------------------------------- */
+
+/** Version prefix of an envelope written by `encryptSecret`. */
+const ENVELOPE_PREFIX = "v1:";
+
+/**
+ * How a stored TOTP seed resolved.
+ *
+ * - `sealed` — an envelope that opened successfully.
+ * - `legacy` — a pre-B05 PLAINTEXT seed (base32, no envelope prefix). It is
+ *   returned as-is so an account that enrolled before B05 is not locked out;
+ *   the caller re-seals it on the next successful write.
+ * - `unreadable` — an envelope that could not be opened (tampered ciphertext
+ *   or a rotated `AUTH_SECRET`). Fail-closed: no code can ever match it.
+ */
+export type StoredTwoFactorSecret =
+  | { readonly kind: "sealed"; readonly secret: string }
+  | { readonly kind: "legacy"; readonly secret: string }
+  | { readonly kind: "unreadable"; readonly secret: null };
+
+/** Seal a TOTP seed for storage (B05). */
+export function encryptTwoFactorSecret(secret: string): string {
+  return encryptSecret(secret);
+}
+
+/**
+ * Open a stored TOTP seed (B05). Never throws.
+ *
+ * A base32 seed can never look like an envelope — the alphabet has no `:` and
+ * no lowercase letters — so the `v1:` prefix is an unambiguous marker.
+ */
+export function openTwoFactorSecret(
+  stored: string | null | undefined,
+): StoredTwoFactorSecret {
+  if (!stored) return { kind: "unreadable", secret: null };
+  if (!stored.startsWith(ENVELOPE_PREFIX)) {
+    console.warn(
+      "[2fa] the stored TOTP seed is not sealed; it is re-sealed on the next successful write.",
+    );
+    return { kind: "legacy", secret: stored };
+  }
+  const opened = decryptSecret(stored);
+  if (opened === null) return { kind: "unreadable", secret: null };
+  return { kind: "sealed", secret: opened };
 }
 
 /**
@@ -720,4 +779,134 @@ function maskConnStringFallback(url: string): string {
     /([?&](?:password|pwd|sslpassword)=)([^&\s]*)/gi,
     `$1${REDACTED_PLACEHOLDER}`,
   );
+}
+
+/* ------------------------------------------------------------------------- *
+ * Share-link unlock cookie (B01).
+ *
+ * A password-protected share link used to keep its unlock state in a cookie
+ * whose value was the constant `"1"` — the server only checked that the
+ * cookie was *present*, so any client could send `Cookie: share_<token>=1`
+ * and read a protected page. The value is now an HMAC over the share token
+ * and an expiry, keyed by AUTH_SECRET: only the server can mint it, it is
+ * bound to one share token, and it dies with its expiry.
+ *
+ * Verification fails closed. A missing, malformed, expired or forged value
+ * simply means "not unlocked" — never an exception, never a fallback to the
+ * old constant.
+ * ------------------------------------------------------------------------- */
+
+/** Cookie-value scheme version. */
+const SHARE_UNLOCK_VERSION = "v1";
+
+/** Default lifetime of a share unlock cookie: 7 days. */
+export const SHARE_UNLOCK_TTL_SECONDS = 60 * 60 * 24 * 7;
+
+/** The cookie that carries the unlock state of one share link. */
+export function shareUnlockCookieName(token: string): string {
+  return `share_${token}`;
+}
+
+/**
+ * The HMAC key for share unlock cookies: AUTH_SECRET, domain-separated so it
+ * can never collide with another use of the same secret. A missing or too
+ * short secret is fatal — a cookie that cannot be verified must never be
+ * trusted.
+ */
+function shareUnlockKey(): Buffer {
+  const secret = process.env.AUTH_SECRET ?? "";
+  if (secret.length < MIN_SECRET_LENGTH) {
+    throw new Error(
+      "AUTH_SECRET is missing or too short. Set a strong value in .env (see .env.example).",
+    );
+  }
+  return createHash("sha256").update(`noema:share-unlock:v1:${secret}`).digest();
+}
+
+/**
+ * The signed message: scheme, token and expiry. The token is length-prefixed
+ * so that no two (token, expiry) pairs can produce the same message — a token
+ * containing ":" can never be re-split into a different token.
+ */
+function shareUnlockMessage(token: string, expiresAt: number): string {
+  return `${SHARE_UNLOCK_VERSION}:${Buffer.byteLength(token, "utf8")}:${token}:${expiresAt}`;
+}
+
+/** The base64url HMAC-SHA256 over {@link shareUnlockMessage}. */
+function signShareUnlock(token: string, expiresAt: number): string {
+  return createHmac("sha256", shareUnlockKey())
+    .update(shareUnlockMessage(token, expiresAt), "utf8")
+    .digest("base64url");
+}
+
+export interface ShareUnlockOptions {
+  /** Unix seconds the unlock expires at; defaults to `now + SHARE_UNLOCK_TTL_SECONDS`. */
+  readonly expiresAt?: number;
+  /** Unix seconds "now"; defaults to the current clock. */
+  readonly now?: number;
+}
+
+/**
+ * Mint the cookie value that proves a share link was unlocked.
+ *
+ * The value is `v1:<expiry>:<hmac>` — only the server can produce the
+ * signature, and it covers both the share token and the expiry, so a cookie
+ * minted for one link never unlocks another and stops working when it
+ * expires.
+ *
+ * Throws when `AUTH_SECRET` is missing or too short: without it no cookie
+ * could be verified, and handing out one would be a lie.
+ */
+export function createShareUnlockToken(
+  token: string,
+  options: ShareUnlockOptions = {},
+): string {
+  const now = options.now ?? nowSeconds();
+  const expiresAt = options.expiresAt ?? now + SHARE_UNLOCK_TTL_SECONDS;
+  if (!Number.isSafeInteger(expiresAt)) {
+    throw new RangeError(
+      `Share unlock expiry must be an integer number of seconds (got ${expiresAt}).`,
+    );
+  }
+  return `${SHARE_UNLOCK_VERSION}:${expiresAt}:${signShareUnlock(token, expiresAt)}`;
+}
+
+/**
+ * Whether `value` is a live unlock for `token`.
+ *
+ * Fails closed on every path: a missing, empty, malformed, wrong-version,
+ * expired or forged value is `false`, and so is a missing `AUTH_SECRET`
+ * (nothing can be verified, so nothing is unlocked). The signature comparison
+ * is constant time.
+ */
+export function verifyShareUnlockToken(
+  token: string,
+  value: string | null | undefined,
+  options: ShareUnlockOptions = {},
+): boolean {
+  if (typeof value !== "string" || value.length === 0) return false;
+  const parts = value.split(":");
+  if (parts.length !== 3) return false;
+  const [version, rawExpiry, signature] = parts;
+  if (version !== SHARE_UNLOCK_VERSION) return false;
+  if (!/^[0-9]{1,15}$/.test(rawExpiry)) return false;
+  const expiresAt = Number(rawExpiry);
+  // Canonical form only: one expiry, one spelling.
+  if (!Number.isSafeInteger(expiresAt) || String(expiresAt) !== rawExpiry) {
+    return false;
+  }
+  // The boundary instant counts as expired.
+  const now = options.now ?? nowSeconds();
+  if (expiresAt <= now) return false;
+  let expected: string;
+  try {
+    expected = signShareUnlock(token, expiresAt);
+  } catch {
+    // No usable AUTH_SECRET: nothing can be verified, so nothing is unlocked.
+    return false;
+  }
+  const given = Buffer.from(signature, "utf8");
+  const want = Buffer.from(expected, "utf8");
+  if (given.length !== want.length) return false;
+  return timingSafeEqual(given, want);
 }

@@ -79,14 +79,26 @@ enum SharePermission {
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
+  // B07: whether the address was proven. A local signup never proves it
+  // (false); an account created by a trusted provider (SSO) inherits the
+  // provider's proof (true). A provider sign-in may link an existing
+  // account only when that account proved its own address — a vouching
+  // provider is not enough, because an unverified account may have been
+  // pre-registered by someone else (account pre-hijacking).
+  emailVerified Boolean @default(false)
   passwordHash String
   name         String
   avatarUrl    String?
   locale       String   @default("en")
   theme        String   @default("system")
   notificationPrefs Json?
+  // B05: a sealed `v1:` envelope (AES-256-GCM), never the raw base32 seed.
   twoFactorSecret  String?
   twoFactorEnabled Boolean @default(false)
+  /// Consecutive failed sign-ins (B03). Reset by a successful sign-in.
+  failedLoginCount Int      @default(0)
+  /// While set and in the future, the account refuses sign-ins (B03).
+  lockedUntil      DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -875,24 +887,29 @@ model CalendarEvent {
   @@index([workspaceId, start])
 }
 
+/// A registered third-party application. The client secret is kept as a
+/// SHA-256 digest only — the plaintext is shown once, at creation, and never
+/// stored.
 model OAuthApp {
-  id           String   @id @default(cuid())
-  userId       String
-  name         String
-  clientId     String   @unique
-  clientSecret String
-  redirectUris String[] @default([])
-  requiresPkce Boolean  @default(false)
-  createdAt    DateTime @default(now())
+  id               String   @id @default(cuid())
+  userId           String
+  name             String
+  clientId         String   @unique
+  clientSecretHash String
+  redirectUris     String[] @default([])
+  requiresPkce     Boolean  @default(false)
+  createdAt        DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
 
+/// A single-use authorization code. The code itself is kept as a SHA-256
+/// digest; the plaintext only travels to the client that asked for it.
 model OAuthCode {
   id          String   @id @default(cuid())
-  code        String   @unique
+  codeHash    String   @unique
   clientId    String
   userId      String
   redirectUri String
@@ -901,8 +918,6 @@ model OAuthCode {
   expiresAt   DateTime
   used        Boolean  @default(false)
   createdAt   DateTime @default(now())
-
-  @@index([code])
 }
 
 model Webhook {

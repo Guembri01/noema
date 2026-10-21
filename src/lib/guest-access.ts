@@ -8,6 +8,13 @@
  *
  * The pure helpers here are unit-tested; `guestVisiblePageIds` is the query the
  * sidebar, search and the page route all use, so the rule cannot drift.
+ *
+ * Two scopes live here and they must not be confused: `guestVisiblePageIds`
+ * (via `pageScopeFor`) is the **display** scope — it also contains the
+ * ancestors of the shared pages, so the sidebar can draw the breadcrumb chain.
+ * `guestReadablePageIds` is the **read** scope — the shared pages and their
+ * subtree, ancestors excluded. An access decision on *content* (a database and
+ * its rows) uses the read scope.
  */
 
 import { randomUUID } from "node:crypto";
@@ -43,16 +50,46 @@ export function isVisibleToGuest(pageId: string, visibleIds: Set<string>): boole
 }
 
 /**
- * Every page a guest may read in this workspace: explicit permissions, pages in
- * their teamspaces, and their own pages — plus the ancestors of all of those.
+ * A viewer's scope in one workspace: the pages they may open and the
+ * teamspaces whose names they may see.
+ *
+ * Everybody but a guest sees the whole workspace; the callers represent that
+ * as `null` instead of a scope (see `viewerScopeFor`).
  */
-export async function guestVisiblePageIds(
-  userId: string,
-  workspaceId: string,
-): Promise<Set<string>> {
+export type ViewerScope = {
+  /** The page ids the viewer may see. */
+  pageIds: Set<string>;
+  /** The ids of the teamspaces whose names the viewer may see. */
+  teamspaceIds: Set<string>;
+};
+
+/**
+ * A guest's scope: the pages they may read and the teamspaces those pages
+ * live in.
+ *
+ * The page scope is built from three sources — the explicit `PagePermission`
+ * rows, the pages the guest created and the pages of the teamspaces they
+ * belong to — plus the ancestors of all of those (`withAncestors`).
+ *
+ * The teamspace scope follows from that page scope: the teamspaces the guest
+ * is a member of, plus the teamspaces the *visible* pages live in. The second
+ * half is what a page that was shared with the guest contributes: the shared
+ * page carries its own teamspace, and the teamspace root it hangs under is an
+ * ancestor of it (so it is part of the page scope as well). Both are needed to
+ * render the branch the guest may see — the sidebar draws a page under the
+ * section of its teamspace and drops a root whose teamspace is not listed.
+ *
+ * The workspace's other teamspaces are in neither set, so their names never
+ * travel to a guest.
+ */
+export async function guestScope(userId: string, workspaceId: string): Promise<ViewerScope> {
   const [permissions, memberships, created, pages] = await Promise.all([
     prisma.pagePermission.findMany({
-      where: { userId, page: { workspaceId } },
+      // A trashed page is not visible, not even to the guest it was shared
+      // with: the page route and the read API answer 404 for it, so the scope
+      // must not keep its id (otherwise the scope would disagree with every
+      // door that renders it).
+      where: { userId, page: { workspaceId, deletedAt: null } },
       select: { pageId: true },
     }),
     prisma.teamspaceMember.findMany({
@@ -77,20 +114,141 @@ export async function guestVisiblePageIds(
   for (const page of pages) {
     if (page.teamspaceId && teamspaceIds.has(page.teamspaceId)) direct.add(page.id);
   }
-  return withAncestors(direct, pages);
+  const pageIds = withAncestors(direct, pages);
+
+  // Every teamspace a visible page lives in joins the guest's own teamspaces:
+  // that is the teamspace of a page that was shared with them and the
+  // teamspace of the root it hangs under (that root is an ancestor of the
+  // shared page, so it is part of the page scope as well).
+  for (const page of pages) {
+    if (page.teamspaceId && pageIds.has(page.id)) teamspaceIds.add(page.teamspaceId);
+  }
+
+  return { pageIds, teamspaceIds };
 }
 
 /**
+ * Every page a guest may read in this workspace: explicit permissions, pages in
+ * their teamspaces, and their own pages — plus the ancestors of all of those.
+ */
+export async function guestVisiblePageIds(
+  userId: string,
+  workspaceId: string,
+): Promise<Set<string>> {
+  const scope = await guestScope(userId, workspaceId);
+  return scope.pageIds;
+}
+
+/**
+ * The scope of a viewer: `null` when the viewer sees the whole workspace (every
+ * role but `GUEST`), the guest scope otherwise.
+ *
+ * Callers hand `scope.pageIds` to the page queries (`getPageTree`,
+ * `getFavorites`, `searchPages`) and `scope.teamspaceIds` to the teamspace
+ * query, so both follow the same rule and cannot drift apart.
+ */
+export async function viewerScopeFor(
+  userId: string,
+  workspaceId: string,
+  role: string,
+): Promise<ViewerScope | null> {
+  if (role !== "GUEST") return null;
+  return guestScope(userId, workspaceId);
+}
+
+/** The roles that may see the whole workspace. */
+const FULL_ACCESS_ROLES = new Set(["OWNER", "ADMIN", "MEMBER"]);
+
+/**
  * The id filter to apply to a query, or `null` when the viewer sees everything.
- * Callers pass the result to `getPageTree`/`searchPages`.
+ * Callers pass the result to `getPageTree`/`searchPages`/`getPagesPage`.
+ *
+ * Fails closed: a `GUEST` gets exactly the pages shared with them, a full
+ * member gets `null` (the whole workspace) and a role that is not a known
+ * workspace role gets an **empty** set — never the whole workspace. A forged
+ * or corrupted role must never widen the view.
  */
 export async function pageScopeFor(
   userId: string,
   workspaceId: string,
   role: string,
 ): Promise<Set<string> | null> {
-  if (role !== "GUEST") return null;
-  return guestVisiblePageIds(userId, workspaceId);
+  const scope = await viewerScopeFor(userId, workspaceId, role);
+  if (scope) return scope.pageIds;
+  if (FULL_ACCESS_ROLES.has(role)) return null;
+  // Fail closed: a forged or corrupted role must never widen the view.
+  return new Set<string>();
+}
+
+/**
+ * Every page a guest may **read** in this workspace.
+ *
+ * This is the *read* scope, not the *display* scope:
+ *
+ * - `pageScopeFor` (→ `guestVisiblePageIds`) is the **display** scope: besides
+ *   the shared pages it also contains their **ancestors**, because the sidebar
+ *   has to render the breadcrumb chain down to a shared child. Reaching an
+ *   ancestor to draw the tree is not the same as being allowed to read it.
+ * - `guestReadablePageIds` is the **read** scope: the shared pages, the pages
+ *   the guest created, the pages in their teamspaces and every **descendant**
+ *   of those — the canonical inheritance rule of `access-inheritance.ts`
+ *   ("a `PagePermission` on the page itself or on any ancestor applies" ⇒ the
+ *   grant covers the page's subtree), never an ancestor. A guest who was given
+ *   a single row of a database therefore does **not** get the database, while a
+ *   guest who was given the database gets its rows.
+ *
+ * The inheritance is not re-implemented here: the pages are handed to the pure
+ * helper `visiblePageIdsForGuest`, so the rule has exactly one implementation.
+ * The set fails closed — an unknown guest or an empty workspace yields an empty
+ * set.
+ */
+export async function guestReadablePageIds(
+  userId: string,
+  workspaceId: string,
+): Promise<Set<string>> {
+  const [pages, memberships] = await Promise.all([
+    prisma.page.findMany({
+      where: { workspaceId, deletedAt: null },
+      select: {
+        id: true,
+        parentId: true,
+        teamspaceId: true,
+        createdById: true,
+        // Only this guest's grants matter — the level tells read from edit.
+        permissions: { where: { userId }, select: { level: true } },
+      },
+    }),
+    prisma.teamspaceMember.findMany({
+      where: { userId, teamspace: { workspaceId } },
+      select: { teamspaceId: true },
+    }),
+  ]);
+
+  const teamspaceIds = new Set(memberships.map((member) => member.teamspaceId));
+  const guestPages: GuestPage[] = pages.map((page) => {
+    // Prisma returns an array for the selected relation; defaulting keeps a
+    // partial row (a test double or a future narrower select) fail-closed
+    // instead of throwing and taking the whole route down.
+    const permissions = page.permissions ?? [];
+    // Every level grants reading (COMMENT implies READ).
+    const granted = permissions.length > 0;
+    const editable = permissions.some(
+      (permission) => permission.level === "EDIT" || permission.level === "FULL",
+    );
+    // Own pages and pages of the guest's teamspaces are readable roots — the
+    // display scope counts them too — and their subtree belongs to the guest
+    // as well.
+    const own = page.createdById === userId;
+    const inTeamspace = page.teamspaceId !== null && teamspaceIds.has(page.teamspaceId);
+    return {
+      id: page.id,
+      parentId: page.parentId,
+      sharedWithGuestIds: granted || own || inTeamspace ? [userId] : [],
+      editableGuestIds: editable ? [userId] : [],
+    };
+  });
+
+  return visiblePageIdsForGuest(guestPages, userId);
 }
 
 /* -------------------------------------------------------------------------- *

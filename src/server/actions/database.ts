@@ -11,7 +11,9 @@ import {
   canEditContent,
   type WorkspaceAccess,
 } from "@/lib/permissions";
+import { guestReadablePageIds } from "@/lib/guest-access";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
+import { assertScopedParent } from "@/lib/page-parent";
 import { csvToMatrix } from "@/lib/serialize";
 import { coerceCsvValue, type CsvPropertyConfig } from "@/lib/csv-value-coercion";
 import type { ImportCounts } from "@/lib/importers";
@@ -27,6 +29,7 @@ import { dispatchWebhooks } from "@/lib/webhooks";
 import { nextRunFor } from "@/lib/recurrence";
 import { ORDER_STEP } from "@/lib/row-order";
 import { formatUniqueId, nextNumbers, type UniqueIdConfig } from "@/lib/unique-id";
+import { fileUrlsAreAppOwned } from "@/lib/validation";
 
 type Result<T = unknown> = ({ ok: true } & T) | { error: string };
 
@@ -56,6 +59,14 @@ type DatabaseAuth =
  *   RELATION                        -> { pageIds: string[] }
  */
 
+/**
+ * The roles that may read every page of a workspace. Everybody else — a
+ * `GUEST`, and a role that is not a known workspace role at all — is scoped,
+ * so the scope check in `authorizeDatabase` can never be skipped by a forged
+ * role.
+ */
+const FULL_ACCESS_ROLES: ReadonlySet<string> = new Set(["OWNER", "ADMIN", "MEMBER"]);
+
 async function authorizeDatabase(
   databasePageId: string,
 ): Promise<DatabaseAuth> {
@@ -67,7 +78,125 @@ async function authorizeDatabase(
   if (!page || page.type !== "DATABASE") return { error: "Database not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return { error: "No access to this database." };
+  /**
+   * A guest may read a database only inside their **read** scope: the pages
+   * shared with them plus their whole subtree.
+   *
+   * The read scope is not the display scope (`pageScopeFor` /
+   * `guestVisiblePageIds`): the display scope also carries the *ancestors* of
+   * the shared pages, because the sidebar has to draw the breadcrumb chain
+   * down to a shared child. The inheritance rule is the canonical one of
+   * `src/lib/access-inheritance.ts` — a grant covers the page itself and its
+   * descendants, never its ancestors — so a guest who was given a single row
+   * of a database does not get the database above it, while a guest who was
+   * given a parent page does get the database below it.
+   *
+   * The refusal is `Database not found.`, the same answer as for an id that
+   * does not exist: a refusal must not confirm that the database exists (no
+   * existence oracle). The check stands in front of the content query of every
+   * action, so an out-of-scope database is never read.
+   */
+  if (access.role === "GUEST") {
+    const readable = await guestReadablePageIds(user.id, page.workspaceId);
+    if (!readable.has(databasePageId)) return { error: "Database not found." };
+  } else if (!FULL_ACCESS_ROLES.has(access.role)) {
+    // A role that is not a known workspace role gets no pages at all — it must
+    // never widen the view (fail closed).
+    return { error: "Database not found." };
+  }
   return { page, access, user };
+}
+
+/**
+ * The relation target named by an untrusted property config — and the config
+ * as it has to be stored.
+ *
+ * `target` —
+ * `undefined`: the config names no target at all (`targetDatabaseId` absent,
+ *   `null` or blank: the relation is empty and nothing has to be resolved);
+ * `null`: the config names a target that is not a database id (a number, an
+ *   object, …); it can never be resolved, so it is refused like a missing one;
+ * otherwise the trimmed id of the target.
+ *
+ * `config` — the config with its `targetDatabaseId` normalized: the **trimmed**
+ * id (a blank id becomes `null`, an id that is not an id becomes `null` too).
+ *
+ * This is the one place the id is normalized. The target that is checked and
+ * the target that is stored are the same string, so a configuration can never
+ * be checked against one id and stored with another — the read path resolves
+ * exactly the id the write path checked.
+ */
+function relationTargetOf(config: unknown): {
+  target: string | null | undefined;
+  config: unknown;
+} {
+  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+    return { target: undefined, config };
+  }
+  const record = config as Record<string, unknown>;
+  const raw = record.targetDatabaseId;
+  if (raw === undefined || raw === null) return { target: undefined, config };
+  if (typeof raw !== "string") {
+    // Not a database id — it can never be resolved.
+    return { target: null, config: { ...record, targetDatabaseId: null } };
+  }
+  const id = raw.trim();
+  if (id === "") {
+    // A blank id names no target.
+    return { target: undefined, config: { ...record, targetDatabaseId: null } };
+  }
+  return { target: id, config: { ...record, targetDatabaseId: id } };
+}
+
+/**
+ * B98 — a relation property may only point at a database of the *same*
+ * workspace. `Property.config` is untrusted stored JSON, so a
+ * `config.targetDatabaseId` is resolved before it is written: the target must
+ * be a live (`deletedAt: null`) database of the property's own workspace. A
+ * target that is missing, deleted, not a database or belongs to another
+ * workspace is answered with the module's own "Database not found." — the same
+ * answer for a foreign and for a missing target, so the response is no
+ * existence oracle.
+ */
+async function relationTargetAllowed(
+  targetDatabaseId: string,
+  workspaceId: string,
+): Promise<boolean> {
+  const target = await prisma.page.findFirst({
+    where: {
+      id: targetDatabaseId,
+      workspaceId,
+      type: "DATABASE",
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  return target !== null;
+}
+
+/**
+ * B98 — the relation target a **copied** property may carry.
+ *
+ * A copy lives in the workspace of its source, so a target of that workspace
+ * stays valid and is carried over. A target that does not pass the check — a
+ * foreign database, a deleted one, a missing one, an id that is not an id — is
+ * **cleared**: the copy must not carry a relation that the write side would
+ * refuse.
+ *
+ * Cleared means `targetDatabaseId: null`, the module's own wording for "a
+ * relation without a target" (`createPropertyAction` writes exactly that) and
+ * the value the spec gives the field (`relations-rollups.md` R21.1): the key
+ * stays in the config, the relation is empty and can be pointed at a target of
+ * this workspace again.
+ */
+async function relationConfigForWorkspace(
+  config: unknown,
+  workspaceId: string,
+): Promise<unknown> {
+  const { target, config: normalized } = relationTargetOf(config);
+  if (target === undefined || target === null) return normalized;
+  if (await relationTargetAllowed(target, workspaceId)) return normalized;
+  return { ...(normalized as Record<string, unknown>), targetDatabaseId: null };
 }
 
 /**
@@ -276,12 +405,22 @@ export async function updatePropertyAction(
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
+  // B98 — the relation target must be a database of this workspace. The id is
+  // normalized once (in `relationTargetOf`), so the id that is checked here is
+  // the id that is stored below.
+  const { target, config: relationConfig } = relationTargetOf(patch.config);
+  if (target !== undefined) {
+    const allowed =
+      target !== null && (await relationTargetAllowed(target, auth.page.workspaceId));
+    if (!allowed) return { error: "Database not found." };
+  }
+
   await prisma.property.update({
     where: { id: propertyId },
     data: {
       ...(patch.name !== undefined ? { name: patch.name.slice(0, 80) } : {}),
       ...(patch.config !== undefined
-        ? { config: patch.config as Prisma.InputJsonValue }
+        ? { config: relationConfig as Prisma.InputJsonValue }
         : {}),
     },
   });
@@ -401,6 +540,16 @@ export async function reorderRowsAction(
   return { ok: true };
 }
 
+/**
+ * Write one cell of a row.
+ *
+ * A FILES value may only point at the app's own uploaded assets, so every
+ * stored file URL must be an app-owned `/api/files/...` path. A value that
+ * carries any other URL (a `javascript:` one, an absolute `http(s)://` one,
+ * a traversal attempt) is refused here, so a hostile URL never reaches the
+ * table. Values without a `files` array are not FILES values and are left
+ * untouched.
+ */
 export async function setPropertyValueAction(
   rowPageId: string,
   propertyId: string,
@@ -413,7 +562,25 @@ export async function setPropertyValueAction(
   if (!row) return { error: "Row not found." };
   const auth = await authorizeDatabase(row.parentId ?? "");
   if ("error" in auth) return auth;
+  // B96: the row has to belong into the same workspace as the database it
+  // hangs under. A row that was linked across the boundary before the
+  // workspace check existed keeps a foreign `workspaceId`; the read side
+  // filters such a row out of every view, so it must not be written either —
+  // otherwise a member of the database's workspace writes a cell value into
+  // another workspace's row and the activity entry is filed under that
+  // foreign workspace.
+  //
+  // The check runs *before* the role check so the answer for such a row is
+  // character-for-character the answer for a row that does not exist
+  // ("Row not found."): the caller must not learn that the row is there —
+  // neither as a member nor as a guest.
+  if (row.workspaceId !== auth.page.workspaceId) {
+    return { error: "Row not found." };
+  }
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!fileUrlsAreAppOwned(value)) {
+    return { error: "That file link is not allowed." };
+  }
 
   await prisma.propertyValue.upsert({
     where: { propertyId_pageId: { propertyId, pageId: rowPageId } },
@@ -466,6 +633,10 @@ export async function createRowAction(
     const row = await tx.page.create({
       data: {
         workspaceId: auth.page.workspaceId,
+        // The parent is the database page `authorizeDatabase` just checked and
+        // the row is written into that very page's workspace — parent and row
+        // share one workspace by construction, so no second lookup is needed
+        // (B08: `assertScopedParent` would be redundant here).
         parentId: databasePageId,
         title: rowTitle,
         createdById: auth.user.id,
@@ -545,6 +716,14 @@ export async function deleteRowAction(rowId: string): Promise<Result> {
   if (!row?.parentId) return { error: "Row not found." };
   const auth = await authorizeDatabase(row.parentId);
   if ("error" in auth) return auth;
+  // B96: same scope rule as `setPropertyValueAction` — a legacy row whose
+  // `workspaceId` differs from the workspace of its database is filtered out
+  // of every read path, so it must not be soft-deleted either. The answer is
+  // the same as for a row that does not exist (no existence oracle), and it
+  // comes before the role check so it is the same for every caller.
+  if (row.workspaceId !== auth.page.workspaceId) {
+    return { error: "Row not found." };
+  }
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
   // Soft delete: the row leaves every view (queries filter `deletedAt`) but
   // stays restorable from the database's "Deleted rows" panel and the
@@ -760,6 +939,12 @@ function copiedIdMap(
  * preserved verbatim, and `validateCopy` is the safety net before anything is
  * written.
  *
+ * B98 — one exception: a **relation target** is only carried over when it still
+ * passes the target check (`relationConfigForWorkspace`). The copy lives in the
+ * workspace of its source, so a target of that workspace is kept; a target of
+ * another workspace (or a deleted or missing one) is cleared instead of copied,
+ * so a copy never stores a relation that the write side would refuse.
+ *
  * The new page, its properties, views, rows, their cell values and its templates
  * commit or roll back as one transaction; row bodies (`content`) and template
  * bodies, recurrence and schedule are carried over too.
@@ -778,6 +963,16 @@ export async function duplicateDatabaseAction(
     select: { parentId: true, title: true, icon: true },
   });
   if (!source) return { error: "Database not found." };
+
+  // The clone lands as a sibling of the source, so it keeps the source's own
+  // parent. The source row proves that the *database* lives in this
+  // workspace, not that its parent does — check that one link before the
+  // clone is written (B08).
+  const parent = await assertScopedParent({
+    workspaceId: auth.page.workspaceId,
+    parentId: source.parentId,
+  });
+  if ("error" in parent) return parent;
 
   const databaseTitle = `${source.title || "Untitled"} copy`.slice(0, 80);
 
@@ -846,9 +1041,15 @@ export async function duplicateDatabaseAction(
   const asJson = (value: unknown): Prisma.InputJsonValue | undefined =>
     value == null ? undefined : (value as Prisma.InputJsonValue);
 
-  const propertyRows: Prisma.PropertyCreateManyInput[] = copy.properties.map(
-    (property) => {
-      const config = asJson(property.config);
+  const propertyRows: Prisma.PropertyCreateManyInput[] = await Promise.all(
+    copy.properties.map(async (property) => {
+      // B98 — the copy may only carry a relation target that passes the same
+      // check as a written one. The copy lives in the workspace of its
+      // source, so a target of that workspace stays valid; a foreign (or
+      // deleted, or missing) target is cleared instead of copied over.
+      const config = asJson(
+        await relationConfigForWorkspace(property.config, auth.page.workspaceId),
+      );
       return {
         id: property.id,
         databasePageId: newPageId,
@@ -857,7 +1058,7 @@ export async function duplicateDatabaseAction(
         position: typeof property.position === "number" ? property.position : 0,
         ...(config !== undefined ? { config } : {}),
       };
-    },
+    }),
   );
 
   const viewRows: Prisma.DatabaseViewCreateManyInput[] = copy.views.map((view) => {
@@ -878,6 +1079,9 @@ export async function duplicateDatabaseAction(
     return {
       id: row.id,
       workspaceId: auth.page.workspaceId,
+      // The parent is the clone's own database page, created in this same
+      // transaction with the same workspace id — inside the workspace by
+      // construction (B08: `assertScopedParent` would be redundant here).
       parentId: newPageId,
       title,
       icon: typeof row.icon === "string" ? row.icon : null,
@@ -925,7 +1129,7 @@ export async function duplicateDatabaseAction(
 
   await prisma.$transaction(async (tx) => {
     const last = await tx.page.findFirst({
-      where: { parentId: source.parentId, deletedAt: null },
+      where: { parentId: parent.parentId, deletedAt: null },
       orderBy: { position: "desc" },
       select: { position: true },
     });
@@ -933,7 +1137,9 @@ export async function duplicateDatabaseAction(
       data: {
         id: newPageId,
         workspaceId: auth.page.workspaceId,
-        parentId: source.parentId,
+        // The clone keeps the (validated) parent of the source database; the
+        // clone's own rows hang under the clone (same workspace).
+        parentId: parent.parentId,
         type: "DATABASE",
         title: databaseTitle,
         icon: source.icon,
@@ -965,8 +1171,18 @@ export async function saveRowAsTemplateAction(
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
+  // The row is bound to the **authorized database**: it must be filed under
+  // it (`parentId`) and live in the same workspace. A row of another
+  // workspace (or of another database of this workspace) is not copied — its
+  // body and cell values would end up in the caller's own template. The
+  // answer is the same as for an unknown id, so the error is no oracle for
+  // the existence of a foreign row.
   const row = await prisma.page.findUnique({
-    where: { id: rowId },
+    where: {
+      id: rowId,
+      parentId: databasePageId,
+      workspaceId: auth.page.workspaceId,
+    },
     select: { icon: true, content: true, propertyValues: true },
   });
   if (!row) return { error: "Row not found." };
@@ -999,11 +1215,23 @@ export async function createRowFromTemplateAction(
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
 
+  // The template is bound to the **authorized database** — the same way a
+  // template of another workspace is resolved through its database in
+  // `home-templates.ts`. A template of a foreign database is not
+  // materialized, and the answer is the same as for an unknown id.
   const template = await prisma.template.findUnique({
     where: { id: templateId },
-    select: { content: true, config: true, name: true, icon: true },
+    select: {
+      databasePageId: true,
+      content: true,
+      config: true,
+      name: true,
+      icon: true,
+    },
   });
-  if (!template) return { error: "Template not found." };
+  if (!template || template.databasePageId !== databasePageId) {
+    return { error: "Template not found." };
+  }
 
   const last = await prisma.page.findFirst({
     where: { parentId: databasePageId },
@@ -1013,6 +1241,10 @@ export async function createRowFromTemplateAction(
   const row = await prisma.page.create({
     data: {
       workspaceId: auth.page.workspaceId,
+      // The parent is the database page `authorizeDatabase` just checked and
+      // the row is written into that very page's workspace — parent and row
+      // share one workspace by construction (B08: `assertScopedParent` would
+      // be redundant here).
       parentId: databasePageId,
       title: template.name,
       icon: template.icon,
@@ -1233,6 +1465,10 @@ export async function importCsvAction(
         const page = await tx.page.create({
           data: {
             workspaceId: auth.page.workspaceId,
+            // The parent is the database page `authorizeDatabase` just checked
+            // and the row is written into that very page's workspace — parent
+            // and row share one workspace by construction (B08:
+            // `assertScopedParent` would be redundant here).
             parentId: databasePageId,
             title: rowTitle,
             createdById: auth.user.id,

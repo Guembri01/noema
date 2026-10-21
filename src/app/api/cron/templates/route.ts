@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { nextRunFor, type TemplateRecurrence } from "@/lib/recurrence";
 import { rateLimit } from "@/lib/api-guard";
+import { guardOpsSecret } from "@/lib/ops-guard";
 
 export const runtime = "nodejs";
 
@@ -66,21 +67,14 @@ function anchorOf(config: unknown, scheduled: Date): Date {
 export async function POST(request: Request) {
   // Fail closed: materializing recurring templates mutates the workspace, so an
   // unconfigured secret is a deployment error rather than an open endpoint.
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    return NextResponse.json(
-      {
-        error:
-          "CRON_SECRET is not configured. Set CRON_SECRET in the environment and send it as the x-cron-secret header.",
-      },
-      { status: 503 },
-    );
-  }
-  if (request.headers.get("x-cron-secret") !== secret) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const limited = rateLimit(request, "cron", 12, 60_000);
-  if (limited) return limited;
+  // The shared gate runs the rate limit BEFORE the secret comparison (so a
+  // wrong secret is throttled instead of being an unbounded guessing oracle)
+  // and compares the secret in constant time.
+  const gate = guardOpsSecret(request, {
+    secret: process.env.CRON_SECRET,
+    limit: () => rateLimit(request, "cron", 12, 60_000),
+  });
+  if (!gate.ok) return gate.response;
 
   const now = new Date();
   const due = await prisma.template.findMany({
@@ -167,6 +161,10 @@ export async function POST(request: Request) {
         const row = await tx.page.create({
           data: {
             workspaceId: database.workspaceId,
+            // The parent is the database page this row is materialized into —
+            // `database` is that very page, so parent and row share one
+            // workspace by construction (B08: `assertScopedParent` would be
+            // redundant here).
             parentId: template.databasePageId,
             title: template.name,
             icon: template.icon,

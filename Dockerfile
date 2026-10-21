@@ -49,11 +49,17 @@ COPY . .
 # Standalone output is opt-in (next.config.ts). The site build still defaults
 # to `next start`; only the container/desktop payloads switch this on.
 ENV NOEMA_STANDALONE=1
+# The Edge middleware reads this at build time (see src/middleware.ts), so a
+# runtime-only env var cannot reach it. Pass `--build-arg TRUSTED_PROXY_HOPS=N`
+# when the image sits behind N trusted reverse proxies; 0/empty ignores
+# X-Forwarded-For entirely.
+ARG TRUSTED_PROXY_HOPS=""
 # `prisma generate` needs DATABASE_URL for schema env resolution, and
 # `next build` prerenders server modules that read AUTH_SECRET at module scope.
 # Both values are fake; .env is dockerignored.
 RUN DATABASE_URL="postgresql://noema:build-dummy@127.0.0.1:5432/noema?schema=public" \
     AUTH_SECRET="b74-build-time-dummy-secret-not-a-real-key" \
+    TRUSTED_PROXY_HOPS="$TRUSTED_PROXY_HOPS" \
     npm run build
 # Reuse the desktop packager to copy .next/static + public/ + Prisma CLI +
 # migrations into .next/standalone, write start.cjs, strip any .env/runtime
@@ -67,6 +73,8 @@ FROM base AS runner
 ARG VERSION=0.0.0-dev
 ARG REVISION=unknown
 ARG BUILD_DATE=1970-01-01T00:00:00Z
+# Kept in the runner for the Node-side guards; the Edge copy was baked above.
+ARG TRUSTED_PROXY_HOPS=""
 LABEL org.opencontainers.image.title="Noema" \
       org.opencontainers.image.description="Open-source, self-hosted workspace for notes, docs and databases." \
       org.opencontainers.image.url="https://github.com/Guembri01/noema" \
@@ -85,7 +93,8 @@ ENV NODE_ENV=production \
     STORAGE_DIR=/data/uploads \
     SESSION_STORE_PATH=/data/sessions.json \
     BACKUP_DIR=/data/backups \
-    HOME=/data
+    HOME=/data \
+    TRUSTED_PROXY_HOPS=$TRUSTED_PROXY_HOPS
 
 # The package manager is build-only. Deleting it here removes its bundled
 # dependency tree — and the vulnerability surface that comes with it — from the

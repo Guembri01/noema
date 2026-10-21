@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { getLabels, getTicketsCursorPage } from "@/server/queries";
 import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
 import {
@@ -101,17 +106,27 @@ function readSla(raw: unknown): TicketSlaInput | undefined {
   return sla;
 }
 
-/** List tickets (and their labels) for a workspace. */
+/**
+ * List tickets (and their labels) for a workspace.
+ *
+ * Tickets are not page-scoped, so a `GUEST` — an external collaborator with
+ * access to a few shared pages — may not list them at all: the workspace
+ * tickets are a full member's view (the server actions enforce the same rule,
+ * for the reads and the writes).
+ */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "tickets-read", 120, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "tickets-read", 120, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const searchParams = new URL(request.url).searchParams;
   const workspaceId = searchParams.get("workspaceId") ?? "";
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  if (!canEditContent(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const pageSize = searchParams.get("page_size");
   if (pageSize !== null && pageSize.trim() !== "" && !Number.isFinite(Number(pageSize))) {
@@ -148,18 +163,21 @@ export async function GET(request: Request) {
  * The same server actions back the UI. `create` and `update` also accept an
  * optional `sla` (`{ policy, kind?, workingHours? }`) that derives `dueDate`
  * server-side; omit it and the body/response behaviour is unchanged.
+ *
+ * Every action resolves the ticket's workspace itself and refuses a `GUEST`
+ * (tickets are not page-scoped), so the transport needs no extra role check.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "tickets-write", 60, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "tickets-write", 60, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let body: Record<string, unknown>;
   try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    body = await readJsonBody<Record<string, unknown>>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
 
   const str = (key: string) => (body[key] === undefined || body[key] === null ? undefined : String(body[key]));

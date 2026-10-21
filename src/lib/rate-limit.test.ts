@@ -1,17 +1,24 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_RATE_TIERS,
   RateLimiter,
   checkRateLimit,
+  checkUserRateLimit,
   clientKey,
   pruneExpired,
+  rateLimitBucketCount,
   resetRateLimits,
+  userKey,
+  userRateLimitBucketCount,
   type RateTier,
   type SlidingState,
 } from "@/lib/rate-limit";
 
 describe("rate limiter", () => {
   beforeEach(() => resetRateLimits());
+  afterEach(() => {
+    delete process.env.TRUSTED_PROXY_HOPS;
+  });
 
   it("allows up to the limit then blocks", () => {
     const now = 0;
@@ -34,11 +41,13 @@ describe("rate limiter", () => {
     expect(checkRateLimit("a", 1, 1000, 0).ok).toBe(false);
   });
 
-  it("derives a key from forwarding headers", () => {
+  it("derives a key from forwarding headers when a proxy is trusted", () => {
+    process.env.TRUSTED_PROXY_HOPS = "1";
     const request = new Request("http://x", {
       headers: { "x-forwarded-for": "1.2.3.4, 5.6.7.8" },
     });
-    expect(clientKey(request, "api")).toBe("api:1.2.3.4");
+    // One trusted hop → the hop the proxy appended is the client address.
+    expect(clientKey(request, "api")).toBe("api:5.6.7.8");
   });
 
   describe("window edges (injected clock)", () => {
@@ -101,9 +110,67 @@ describe("rate limiter", () => {
     const req = (headers: Record<string, string>) =>
       new Request("http://x", { headers });
 
-    it("falls back to x-real-ip when x-forwarded-for is absent", () => {
+    it("ignores x-forwarded-for when no trusted proxy is configured", () => {
+      expect(clientKey(req({ "x-forwarded-for": "1.2.3.4" }), "api")).toBe(
+        "api:local",
+      );
+    });
+
+    it("ignores x-real-ip when no trusted proxy is configured", () => {
+      expect(clientKey(req({ "x-real-ip": "9.9.9.9" }), "api")).toBe(
+        "api:local",
+      );
+    });
+
+    it("takes the last hop when exactly one proxy is trusted", () => {
+      process.env.TRUSTED_PROXY_HOPS = "1";
+      expect(
+        clientKey(req({ "x-forwarded-for": "1.2.3.4, 5.6.7.8" }), "api"),
+      ).toBe("api:5.6.7.8");
+      expect(clientKey(req({ "x-forwarded-for": "5.6.7.8" }), "api")).toBe(
+        "api:5.6.7.8",
+      );
+    });
+
+    it("takes the n-th-from-last hop when n proxies are trusted", () => {
+      process.env.TRUSTED_PROXY_HOPS = "2";
+      expect(
+        clientKey(req({ "x-forwarded-for": "1.2.3.4, 5.6.7.8, 9.9.9.9" }), "api"),
+      ).toBe("api:5.6.7.8");
+    });
+
+    it("fails closed when the chain is shorter than the trusted hop count", () => {
+      process.env.TRUSTED_PROXY_HOPS = "2";
+      expect(clientKey(req({ "x-forwarded-for": "5.6.7.8" }), "api")).toBe(
+        "api:local",
+      );
+    });
+
+    it("ignores a client-supplied prefix when a proxy is trusted", () => {
+      process.env.TRUSTED_PROXY_HOPS = "1";
+      // The proxy appends the peer address; everything before it is the
+      // client's own (spoofable) claim.
+      expect(
+        clientKey(req({ "x-forwarded-for": "9.9.9.9, 203.0.113.7" }), "api"),
+      ).toBe("api:203.0.113.7");
+    });
+
+    it("uses x-real-ip only when a trusted proxy is configured", () => {
+      process.env.TRUSTED_PROXY_HOPS = "1";
       expect(clientKey(req({ "x-real-ip": "9.9.9.9" }), "api")).toBe(
         "api:9.9.9.9",
+      );
+    });
+
+    it("falls back to the shared bucket when the address is not an ip literal", () => {
+      process.env.TRUSTED_PROXY_HOPS = "1";
+      // A value that is not an address cannot be attributed: it must not mint
+      // a bucket of its own.
+      expect(clientKey(req({ "x-forwarded-for": "not-an-ip" }), "api")).toBe(
+        "api:local",
+      );
+      expect(clientKey(req({ "x-real-ip": "also-not-an-ip" }), "api")).toBe(
+        "api:local",
       );
     });
 
@@ -111,37 +178,128 @@ describe("rate limiter", () => {
       expect(clientKey(req({}), "api")).toBe("api:local");
     });
 
-    it("prefers x-forwarded-for over x-real-ip", () => {
-      expect(
-        clientKey(
-          req({ "x-forwarded-for": "1.2.3.4", "x-real-ip": "9.9.9.9" }),
-          "api",
-        ),
-      ).toBe("api:1.2.3.4");
-    });
-
-    it("ignores an empty/whitespace x-forwarded-for and uses the fallback chain", () => {
-      expect(
-        clientKey(
-          req({ "x-forwarded-for": "  ", "x-real-ip": "9.9.9.9" }),
-          "api",
-        ),
-      ).toBe("api:9.9.9.9");
-      expect(clientKey(req({ "x-forwarded-for": "" }), "api")).toBe(
-        "api:local",
-      );
-    });
-
-    it("trims whitespace around the first hop only", () => {
-      expect(
-        clientKey(req({ "x-forwarded-for": "  1.2.3.4 ,5.6.7.8  " }), "api"),
-      ).toBe("api:1.2.3.4");
-    });
-
     it("qualifies keys by scope so scopes never share a bucket", () => {
       const request = req({ "x-forwarded-for": "1.2.3.4" });
       expect(clientKey(request, "chat")).not.toBe(clientKey(request, "upload"));
-      expect(clientKey(request, "chat")).toBe("chat:1.2.3.4");
+      expect(clientKey(request, "chat")).toBe("chat:local");
+    });
+  });
+
+  describe("spoofed forwarding headers (B12)", () => {
+    const req = (headers: Record<string, string>) =>
+      new Request("http://x", { headers });
+
+    it("does not let a spoofed x-forwarded-for buy a fresh bucket", () => {
+      const first = clientKey(req({ "x-forwarded-for": "1.1.1.1" }), "api");
+      const second = clientKey(req({ "x-forwarded-for": "2.2.2.2" }), "api");
+      expect(first).toBe(second);
+
+      expect(checkRateLimit(first, 1, 1000, 0).ok).toBe(true);
+      expect(rateLimitBucketCount()).toBe(1);
+      // A different (spoofed) address does not create a second bucket …
+      expect(checkRateLimit(second, 1, 1000, 0).ok).toBe(false);
+      expect(rateLimitBucketCount()).toBe(1);
+    });
+
+    it("keeps the bucket map bounded when every request claims a new ip", () => {
+      for (let i = 0; i < 10_050; i += 1) {
+        checkRateLimit(`k${i}`, 10, 60_000, 0);
+      }
+      expect(rateLimitBucketCount()).toBeLessThanOrEqual(10_000);
+    });
+
+    it("sweeps buckets whose window has closed", () => {
+      checkRateLimit("old", 1, 1000, 0);
+      expect(rateLimitBucketCount()).toBe(1);
+      // 120s later the TTL sweep drops the expired bucket …
+      checkRateLimit("fresh", 1, 1000, 120_000);
+      expect(rateLimitBucketCount()).toBe(1);
+      // … so the old key starts from a clean window again.
+      expect(checkRateLimit("old", 1, 1000, 120_000).ok).toBe(true);
+    });
+  });
+
+  /* ---------------------------------------------------------------- *
+   * B12 — the bucket store is bounded. What happens when the bound is
+   * reached: the TTL sweep drops the expired entries first, the LRU only
+   * evicts a live bucket when there is nothing expired left to free.
+   * ---------------------------------------------------------------- */
+
+  describe("bounded bucket store", () => {
+    it("drops the expired bucket instead of evicting a live one", () => {
+      // The oldest live bucket carries a distinctive count so a re-created
+      // bucket (count 1) is distinguishable from a surviving one.
+      checkRateLimit("live-0", 10, 60_000, 0);
+      checkRateLimit("live-0", 10, 60_000, 0);
+      for (let i = 1; i < 9_999; i += 1) {
+        checkRateLimit(`live-${i}`, 10, 60_000, 0);
+      }
+      // The store is full (10 000 entries) and the last one is expired.
+      checkRateLimit("stale", 10, 1_000, 0);
+      expect(rateLimitBucketCount()).toBe(10_000);
+
+      // One second later the sweep runs before the LRU is asked to make
+      // room: the expired bucket goes, the live one stays.
+      checkRateLimit("new", 10, 60_000, 2_000);
+      expect(rateLimitBucketCount()).toBe(10_000);
+      // "live-0" was not evicted: its count is still 2, so the call below
+      // makes it 3 and leaves 7 of the 10 requests.
+      expect(checkRateLimit("live-0", 10, 60_000, 2_000).remaining).toBe(7);
+    });
+
+    it("evicts the coldest live bucket when every bucket is still live", () => {
+      // The documented residual of the memory bound: with more than 10 000
+      // distinct keys live inside one window the LRU has to give up the
+      // coldest one, and that caller's window starts over. Same trade-off
+      // the sliding limiter makes at DEFAULT_MAX_KEYS.
+      for (let i = 0; i < 10_000; i += 1) {
+        checkRateLimit(`live-${i}`, 10, 60_000, 0);
+      }
+      checkRateLimit("new", 10, 60_000, 2_000);
+      expect(rateLimitBucketCount()).toBe(10_000);
+      // "live-0" was the coldest entry and is gone: the key starts from a
+      // fresh window (count 1 → 9 of the 10 requests left).
+      expect(checkRateLimit("live-0", 10, 60_000, 2_000).remaining).toBe(9);
+    });
+  });
+
+  /* ---------------------------------------------------------------- *
+   * B12 round 2 — the per-user budget has its own store, so the address
+   * flood cannot evict it (and cannot reset an exhausted user window).
+   * ---------------------------------------------------------------- */
+
+  describe("separate budget stores", () => {
+    it("keeps the per-user bucket when the address store is flooded", () => {
+      // The victim spends its per-user budget …
+      expect(checkUserRateLimit(userKey("s", "u1"), 1, 60_000, 0).ok).toBe(true);
+      expect(checkUserRateLimit(userKey("s", "u1"), 1, 60_000, 0).ok).toBe(false);
+
+      // … and the address store is flooded with 10 000 distinct keys, which
+      // is enough to evict its own oldest entries.
+      for (let i = 0; i < 10_000; i += 1) {
+        checkRateLimit(
+          `s:198.51.100.${Math.floor(i / 256)}.${i % 256}`,
+          10,
+          60_000,
+          0,
+        );
+      }
+      expect(rateLimitBucketCount()).toBe(10_000);
+
+      // The user store is untouched: the victim's bucket is still there …
+      expect(userRateLimitBucketCount()).toBe(1);
+      // … and the exhausted budget is still exhausted.
+      expect(checkUserRateLimit(userKey("s", "u1"), 1, 60_000, 0).ok).toBe(false);
+    });
+
+    it("gives the user store its own bound, independent of the address store", () => {
+      // Both stores are capped on their own: filling one does not consume
+      // the other's budget.
+      for (let i = 0; i < 10_000; i += 1) {
+        checkUserRateLimit(userKey("s", `u${i}`), 10, 60_000, 0);
+      }
+      expect(userRateLimitBucketCount()).toBe(10_000);
+      expect(rateLimitBucketCount()).toBe(0);
     });
   });
 

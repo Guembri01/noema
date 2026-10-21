@@ -162,9 +162,9 @@ Other deliberate choices:
 |---|---|
 | Server exposure | loopback only, no `0.0.0.0`; the port is this install's own (stable origin) or a free ephemeral one when it is taken |
 | Webview ↔ server | explicit `APP_ORIGINS` allow-list (the loopback origin) + CSP in `tauri.conf.json` |
-| Webview ↔ shell | only the commands in `src-tauri/src/commands.rs`; IPC granted to the loopback origin via a capability with `remote.urls` |
+| Webview ↔ shell | only the commands in `src-tauri/src/commands.rs`; the served app's IPC is granted to the loopback origin by `desktop-remote.json` (a capability with `remote.urls`) |
 | Secrets | a database password can live in the connection string; it is **redacted** before diagnostics leave the shell (unit-tested in `commands.rs`) |
-| Capabilities | `default.json` = least privilege for boot; `desktop-everything.json` = the broad set the product asked for (filesystem, dialogs, shell, opener). Drop it for a hardened build |
+| Capabilities | `default.json` = least privilege for boot; `desktop-everything.json` = the broad set the product asked for (dialogs, shell, opener) — **local only**, for the shell's own page; `desktop-remote.json` = the served app's narrow set (the five shell commands it calls + the two `core:event` permissions `listenShell` needs), **no** filesystem, shell, store, opener, dialog, `os` or `log` — and no `core:default` either. Drop `desktop-everything.json` for a hardened build |
 | Telemetry | off (`NEXT_TELEMETRY_DISABLED=1`) |
 | Updates | **deferred on purpose** — see §9 |
 
@@ -185,7 +185,29 @@ So a new shell command needs three things, not one:
    `commands::tests` keeps this list and the attributes in step;
 3. the permission listed in `src-tauri/permissions/default.toml` (the shell's
    own page: the whole surface) and/or in a capability — the served app's set
-   lives in `capabilities/desktop-everything.json`.
+   lives in `capabilities/desktop-remote.json`.
+
+The served app's capability is deliberately narrow, because a capability bound
+to a remote URL hands its permissions to *every* script that runs in that
+origin — an XSS in the app, or a page that grabbed the port first. It carries
+exactly two things: the five commands the app actually calls (`desktop_info`,
+`recent_logs`, `set_theme`, `backup_now`, `check_update` — `invokeShell` in
+`src/lib/runtime-mode.ts`) and `core:event:allow-listen` /
+`core:event:allow-unlisten`, which `listenShell` needs to subscribe to the
+shell's menu events. No filesystem, no shell, no store, no opener, no dialog,
+no `os`, no `log` — and deliberately **not** `core:default` either: that set
+expands to the image plugin (`plugin:image|from_path` is a bare
+`std::fs::read` with no scope check), to the menu and tray plugins (a forged
+menu-item id reaches the commands in `src-tauri/src/shell.rs`, which dispatches
+on the raw id) and to the path plugin (it resolves the user's home directory).
+The broad set stays with the shell's own page in
+`capabilities/desktop-everything.json`, which grants no remote URL.
+
+`scripts/desktop/capabilities.test.mjs` pins the split — across the capability
+**files** *and* the capabilities declared inline in `tauri.conf.json`
+(`CapabilityEntry::Inlined`), which the ACL assembles just like the files and
+which therefore have to obey the same rules. A split that only constrains the
+files could be undone by appending one object to the config.
 
 Declaring the app manifest is not free: it switches the ACL on for **local**
 origins as well, which until then reached every command implicitly. That is why
@@ -464,12 +486,16 @@ connection**, paste a `DATABASE_URL`, and press **Save & restart**. **Copy
 diagnostics** puts a redacted report (host, port, app version, recent log lines —
 password never included) on the clipboard.
 
-Two environment variables are honoured, which is how a portable install or a
+Three environment variables are honoured, which is how a portable install or a
 support session works without touching the UI:
 
 ```
 NOEMA_DATABASE_URL   the Postgres connection string
 NOEMA_DATA_DIR       where logs/ and backups/ live
+NOEMA_ALLOW_LOOPBACK_TARGETS  1 = allow an outbound webhook to point at the
+                                loopback range (127.0.0.0/8, ::1, localhost);
+                                unset = refused (the default). The opt-in
+                                opens the loopback range only — see SECURITY.md
 ```
 
 Uninstall: **Settings → Apps → Noema → Uninstall**, or the `uninstall.exe` in the
@@ -489,12 +515,20 @@ works as-is once the `noema` database exists (`docker exec noema-db createdb -U 
 ## 7. Release process
 
 1. Bump the version in **both** `package.json` and `src-tauri/tauri.conf.json`.
-2. `npm run desktop:bundle` (or the `desktop.yml` matrix, which does this on
-   Windows, macOS and Linux and uploads the artifacts to a draft release).
+2. `npm run desktop:bundle` (or push the `v*` tag, which runs the
+   `desktop.yml` matrix on Windows, macOS and Linux and uploads the artifacts
+   to a draft release).
 3. Ship the NSIS `.exe` (per-user install, no admin prompt) and/or the `.msi`.
 
 The app intentionally ships **unsigned** until certificates exist; §8 explains
 what that means for the user (SmartScreen) and what is already wired for signing.
+
+A tag push runs the workflow's `release` job: it is the only job that holds a
+write-scoped token (to open the draft release) and the signing secrets (the
+bundle is signed while it is built). Everything a pull request can reach runs
+with a read-only token and no secret at all, and no checkout keeps its
+credentials — a pull request must never be able to read a token or a signing
+key out of the tree it ships.
 
 ## 8. Testing
 
@@ -565,11 +599,14 @@ Two environment notes worth keeping:
   shipping none, so the menu item resolves to "up to date" and `docs/DESKTOP.md`
   §9 records the plan.
 - **Unsigned binaries.** Windows SmartScreen will warn until a code-signing
-  certificate is installed; `desktop.yml` already threads the signing secrets.
+  certificate is installed; the desktop workflow's `release` job (tag pushes
+  only) already threads the signing secrets.
 - **macOS**: closing the window hides the app; **File → Quit** (⌘Q) really quits.
   Native, but surprising for Windows users.
-- **`desktop-everything.json` is deliberately broad** (product decision). Narrow
-  it for an untrusted-user scenario.
+- **`desktop-everything.json` is deliberately broad** (product decision) and
+  **local only**: it applies to the shell's own page, never to the served web
+  app, which has its own narrow capability (`desktop-remote.json`). Narrow it
+  further for an untrusted-user scenario.
 - **Verified where**: `cargo build`, `cargo test`, the packaging steps and the
   installer run on a Windows machine with the MSVC toolchain (this repo's
   environment). macOS/Linux installers are produced by `desktop.yml` on native

@@ -1,11 +1,19 @@
 import { NextResponse } from "next/server";
 import { authenticateApiRequest } from "@/lib/api-auth";
+import { hasScope } from "@/lib/api-token-scope";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { prisma } from "@/lib/db";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_CONTENT_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
 import { buildBreadcrumb } from "@/lib/breadcrumb";
+import { assertScopedParent } from "@/lib/page-parent";
 import { withIdempotency } from "@/lib/idempotency";
 import { getPagesPage, getPageTree, type ApiPageRow } from "@/server/queries";
 
@@ -47,12 +55,24 @@ function nextPageLink(requestUrl: URL, nextCursor: string | null): string | null
  * {@link buildBreadcrumb} over the workspace's live pages (`getPageTree`).
  * The option is omitted by default, so the plain body and the `Link` header /
  * pagination behaviour are unchanged.
+ *
+ * A `GUEST` only ever sees the pages shared with them: the listing (and the
+ * breadcrumb tree) is filtered by the guest scope, exactly like the workspace
+ * UI. A full member keeps the whole workspace. The bearer token must also hold
+ * the `read:pages` scope; a token without it is refused with 403
+ * `insufficient_scope` before the workspace is even looked up.
  */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "v1");
-  if (limited) return limited;
   const auth = await authenticateApiRequest(request);
+  const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
+  if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!hasScope(auth.scopes, "read:pages")) {
+    return NextResponse.json(
+      { error: "insufficient_scope", required: "read:pages" },
+      { status: 403 },
+    );
+  }
 
   const url = new URL(request.url);
   const workspaceId = url.searchParams.get("workspaceId");
@@ -61,6 +81,9 @@ export async function GET(request: Request) {
   }
   const access = await getWorkspaceAccess(auth.userId, workspaceId);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Guests only see the pages that were shared with them — the same scope the
+  // workspace UI applies, so the API can never list a page they may not open.
+  const visiblePageIds = await pageScopeFor(auth.userId, workspaceId, access.role);
 
   const pageSize = url.searchParams.get("page_size");
   if (pageSize !== null && pageSize.trim() !== "" && !Number.isFinite(Number(pageSize))) {
@@ -74,13 +97,14 @@ export async function GET(request: Request) {
 
   const withBreadcrumbs = url.searchParams.get("include") === "breadcrumbs";
 
-  const page = await getPagesPage(workspaceId, { limit, cursor });
+  const page = await getPagesPage(workspaceId, visiblePageIds, { limit, cursor });
   let items: (ApiPageRow | ApiPageWithBreadcrumbs)[] = page.items;
   if (withBreadcrumbs) {
     // Ancestors can fall outside the current keyset slice, so resolve trails
     // against the whole (live) workspace tree, matching `buildBreadcrumb`'s
-    // fail-closed contract when an ancestor is missing/deleted.
-    const tree = await getPageTree(workspaceId);
+    // fail-closed contract when an ancestor is missing/deleted. The tree is
+    // guest-scoped too, so a trail can never name a page outside the scope.
+    const tree = await getPageTree(workspaceId, visiblePageIds);
     items = page.items.map((item) => ({
       ...item,
       breadcrumbs: buildBreadcrumb(tree, item.id).map((crumb) => ({
@@ -110,19 +134,29 @@ export async function GET(request: Request) {
  * and resends would otherwise get two pages. An `Idempotency-Key` header makes the
  * retry replay the first outcome instead of creating again (spec §20). Callers
  * that send no key are unaffected — the handler simply runs.
+ *
+ * The bearer token must hold the `write:pages` scope; a token without it is
+ * refused with 403 `insufficient_scope` before the request is admitted to the
+ * idempotency store, so a rejected call is never memoized.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "v1");
-  if (limited) return limited;
   const auth = await authenticateApiRequest(request);
+  const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
+  if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!hasScope(auth.scopes, "write:pages")) {
+    return NextResponse.json(
+      { error: "insufficient_scope", required: "write:pages" },
+      { status: 403 },
+    );
+  }
 
-  return withIdempotency(request, { userId: auth.userId }, async () => {
+  return withIdempotency(request, { userId: auth.userId, bodyBudget: MAX_CONTENT_BODY_BYTES }, async () => {
     let body: Record<string, unknown>;
     try {
-      body = (await request.json()) as Record<string, unknown>;
-    } catch {
-      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+      body = await readJsonBody<Record<string, unknown>>(request, MAX_CONTENT_BODY_BYTES);
+    } catch (error) {
+      return bodyReadError(error, "Invalid JSON body");
     }
 
     const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : "";
@@ -138,8 +172,16 @@ export async function POST(request: Request) {
     const type = body.type === "DATABASE" ? "DATABASE" : "PAGE";
     const title = typeof body.title === "string" ? body.title.slice(0, 500) : "Untitled";
 
+    // The parent must live in the caller's workspace — `Page.parentId` is a
+    // plain foreign key, so a foreign parent would link the page into another
+    // tenant's tree (B08). Refused before anything is written.
+    const parent = await assertScopedParent({ workspaceId, parentId });
+    if ("error" in parent) {
+      return NextResponse.json({ error: parent.error }, { status: 400 });
+    }
+
     const last = await prisma.page.findFirst({
-      where: { workspaceId, parentId },
+      where: { workspaceId, parentId: parent.parentId },
       orderBy: { position: "desc" },
       select: { position: true },
     });
@@ -147,7 +189,7 @@ export async function POST(request: Request) {
     const page = await prisma.page.create({
       data: {
         workspaceId,
-        parentId,
+        parentId: parent.parentId,
         type,
         title,
         createdById: auth.userId,

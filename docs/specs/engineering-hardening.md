@@ -71,7 +71,7 @@ Highest-risk ad-hoc multi-writes (writes → lines):
 | `createPageAction` (`pages.ts:46`) | 9 | `page.create@71`, `property.create@104,:113,:128,:136`, `databaseView.createMany@145`, `page.create@165`, `propertyValue.create@182,:189` |
 | `importTrelloAction` (`import.ts:70`) | 6 | `page.create@100,:153`, `property.create@113,:127`, `databaseView.createMany@136`, `propertyValue.createMany@168` |
 | `createGalleryTemplateAction` (`home-templates.ts:36`) | 5 | `page.create@55,:112`, `property.create@72`, `databaseView.createMany@108`, `propertyValue.createMany@137` |
-| `signupAction` (`auth.ts:19`) | 3 | `user.create@38`, `workspace.create@42`, `page.create@51` |
+| `signupAction` (`auth.ts:20`) | 3 | `user.create@39`, `workspace.create@43`, `page.create@52` |
 | `addCommentAction` (`comments.ts:14`) | 3 | `comment.create@43`, `notification.create@61`, `notification.createMany@85` |
 | `acceptWorkspaceInviteAction` (`email.ts:492`) | 3 | `workspaceMember.upsert@500`, `projectMember.upsert@507`, `invite.update@513` |
 | `acceptTeamspaceInviteAction` (`teamspace-invites.ts:230`) | 3 | `workspaceMember.upsert@239`, `teamspaceMember.upsert@246`, `teamspaceInvite.update@251` |
@@ -80,7 +80,7 @@ Highest-risk ad-hoc multi-writes (writes → lines):
 | `createRowAction` (`database.ts:223`) | 2 | `page.create@236`, `propertyValue.create@253` |
 
 Failure modes implied by the table: a failed `workspace.create` after
-`user.create` leaves an account nobody can log into (`auth.ts:38-49`); a failed
+`user.create` leaves an account nobody can log into (`auth.ts:39-50`); a failed
 `page.update` at `pages.ts:253` leaves a `PageVersion` snapshot claiming an
 edit that never landed; a failed `invite.update` after the membership upserts
 leaves an invite that can be accepted twice (`email.ts:367-380`). The whole
@@ -90,12 +90,12 @@ list of 32 is in §4.2 / the R28.11 regression guard.
 
 | Aspect | Evidence | State |
 | --- | --- | --- |
-| Session storage | **No `Session` model.** `prisma/schema.prisma` defines 45 models (`User:78` … `WebhookDelivery:909`) and none stores sessions. Sessions are a **stateless HS256 JWT** in the `noema_session` cookie: name + 30-day TTL (`src/lib/auth.ts:7-8`), issue (`createSession`, `:32-47`), verify (`getSessionUserId`, `:54-63`), delete (`destroySession`, `:49-52`) | Stateless |
+| Session storage | **No `Session` model.** `prisma/schema.prisma` defines 45 models (`User:78` … `WebhookDelivery:909`) and none stores sessions. Sessions are a **stateless HS256 JWT** in the `noema_session` cookie: name + 30-day TTL (`src/lib/auth.ts:14-15`), issue (`createSession`, `:47-76`), verify (`getSessionUserId`, `:98-119`), delete (`destroySession`, `:82-96`) | Stateless |
 | Matrix claim | Row 652 says *"Sessions stored; revocation partial"* — the audit correction is stronger: **nothing is stored, so nothing can be revoked server-side** except by rotating `AUTH_SECRET` (which invalidates *everything* and breaks envelopes, §2.4) | Gap |
-| Logout | `logoutAction` (`src/server/actions/auth.ts:111-114`) → `destroySession()` deletes **this device's cookie only**; the JWT stays valid until expiry (`:33-37`) | Per-device only |
+| Logout | `logoutAction` (`src/server/actions/auth.ts:141-144`) → `destroySession()` deletes **this device's cookie only**; the JWT stays valid until expiry (`src/lib/auth.ts:62-66`) | Per-device only |
 | Logout-all | No `logoutAll`, no session list, no `sessionVersion`-style counter anywhere (`logout|revoke` grep across `src/` hits only API tokens, invites and share links) | **Missing** |
-| Password change | No change-password flow exists at all (`passwordHash` written only at signup `auth.ts:39`, SSO JIT `src/app/api/auth/sso/callback/route.ts:85`, share-link passwords `share.ts:76`) — so the classic "revoke on credential change" hook has nothing to attach to yet | Missing |
-| 2FA | `two-factor.ts:16,57` stores/clears `twoFactorSecret`; disabling 2FA does **not** revoke existing sessions | Partial |
+| Password change | No change-password flow exists at all (`passwordHash` written only at signup `auth.ts:40`, SSO JIT `src/app/api/auth/sso/callback/route.ts:85`, share-link passwords `share.ts:76`) — so the classic "revoke on credential change" hook has nothing to attach to yet | Missing |
+| 2FA | `two-factor.ts:27,60,86` stores/clears `twoFactorSecret` (sealed since B05); disabling 2FA does **not** revoke existing sessions | Partial |
 | Contrast: API tokens *are* revocable | `revokeApiTokenAction` (`tokens.ts:23`) + `ApiToken.tokenHash` (`schema.prisma:459`) | Good pattern |
 | Test coverage | `src/lib/auth.test.ts:10-36` covers bcrypt helpers only; no JWT/session tests; no logout e2e (e2e greps return login-only flows) | Missing |
 
@@ -109,25 +109,46 @@ list of 32 is in §4.2 / the R28.11 regression guard.
   Fail-fast: `secretKey()` throws when `AUTH_SECRET` is missing/<16 chars
   (`src/lib/auth.ts:10-18`); the envelope key derivation throws the same way
   (`src/lib/secrets.ts:12-19`).
-- **Envelope encryption** (`src/lib/secrets.ts:1-59`): AES-256-GCM,
+- **Envelope encryption** (`src/lib/secrets.ts:1-43`): AES-256-GCM,
   `v1:iv:tag:payload` versioned format (`:21-27`), key =
   `sha256("noema:ai-provider:v1:" + AUTH_SECRET)` (`:12-19`), decrypt `:29-43`,
-  mask `:46-50`, `hashToken` `:53-55`, `randomToken` `:57-59`.
+  mask `:376-381`, `hashToken` `:383-385`, `randomToken` `:387-389`. The
+  two-factor seed joins them: `encryptTwoFactorSecret` `:72-74` /
+  `openTwoFactorSecret` `:82-95`.
+- **One key for every domain (B05 — a deliberate design property, not an
+  oversight):** the envelope key is derived from `AUTH_SECRET` alone, so the
+  TOTP seed, the AI provider keys and the SMTP password share **one** key.
+  An attacker who learns the key therefore opens **all three** at once — the
+  seed of every account, every provider key and the mail password. The
+  hardening plan asks for a per-domain derivation (R28.17, §2.4); giving the
+  2FA seed its own key is a migration of its own and is deliberately not part
+  of B05. Until then, `AUTH_SECRET` is the single secret that protects all
+  three, and it must be treated as such (rotation invalidates every envelope
+  at once).
 - **Enforced for the two biggest stored secrets**: AI provider key
   (`ai-settings.ts:122` encrypt → `ai-provider.ts:58` decrypt, mask at
   `ai-settings.ts:78`) and SMTP password (`email.ts:141` → `mailer.ts:52`,
-  `hasPassword` at `email.ts:96`).
+  `hasPassword` at `email.ts:96`) — and since B05 for the two-factor seed
+  (`two-factor.ts:20,53` seal, `:43,77` open).
 - **Tokens hashed at rest**: `Invite.token` stores `hashToken(...)`
   (`email.ts:285` issue, `:349` lookup), `TeamspaceInvite.tokenHash`
   (`teamspace-invites.ts:103,109,157`), `ApiToken.tokenHash`
   (`schema.prisma:459`).
+- **OAuth secrets hashed at rest**: `OAuthApp.clientSecretHash` and
+  `OAuthCode.codeHash` store the SHA-256 digest; the plaintext client secret
+  is shown once at creation (`oauth-apps.ts:35-47`), the plaintext
+  authorization code only travels in the redirect
+  (`oauth/authorize/complete/route.ts:39-52`). The token endpoint compares
+  the digest in constant time and looks the code up by its digest
+  (`oauth/token/route.ts:25-36`).
 
 **What is not:**
 
 | Secret | Where | State |
 | --- | --- | --- |
-| `User.twoFactorSecret` | `schema.prisma:86`, written raw `two-factor.ts:16` | Plaintext |
-| `OAuthApp.clientSecret` | `schema.prisma:872`, `randomToken(24)` written raw `oauth-apps.ts:33` (returned once, stored raw) | Plaintext |
+| `User.twoFactorSecret` | `schema.prisma:89`, written sealed `two-factor.ts:27,60` (`encryptTwoFactorSecret`), read through `openTwoFactorSecret` | **Envelope** (B05) — `v1:iv:tag:payload`, shared envelope key (one key for the seed, the provider keys and the SMTP password — §2.4); rows that are still plaintext are re-sealed on the next sign-in/re-enrolment or by `npm run backfill:2fa` |
+| `OAuthApp.clientSecretHash` | `schema.prisma:898`, written as a SHA-256 digest `oauth-apps.ts` (the plaintext is returned once at creation and never stored) | **Digest**, not an envelope: there is nothing to encrypt |
+| `OAuthCode.codeHash` | `schema.prisma:912`, the digest of the short-lived code | **Digest**, unique |
 | `Webhook.secret` | `schema.prisma:899` | Plaintext |
 | `ShareLink.token` | `schema.prisma:396`, raw `share.ts:101` (a DB dump exposes every share URL) | Plaintext (hashed like `Invite` would fix it) |
 | Vault integration | grep for `vault|KMS|sealed-secret` across code: **zero hits** (only matrix/docs prose, `docs/specs/saml-sso.md:274,360` — *"…an `AUTH_SECRET`-derived key … is better than nothing but not a vault"*) | Not started |
@@ -159,8 +180,9 @@ column name (`email.ts:285`), while `TeamspaceInvite`/`ApiToken` use honest
 - **D28.3** — Sessions cannot be revoked server-side; no logout-all; a leaked
   cookie is valid for 30 days regardless of what the operator does
   (§2.3).
-- **D28.4** — Four secret classes sit plaintext in Postgres while two use the
-  envelope; no vault seam, no rotation story (§2.4).
+- **D28.4** — Three secret classes sit plaintext in Postgres while three use
+  the envelope (the TOTP seed was sealed in B05); no vault seam, no rotation
+  story (§2.4).
 - **D28.5** — `docker compose up` starts a database and nothing else; no app
   image, no health endpoint, no reverse-proxy guidance, and the documented
   schema path for prod is `db push` (§2.5).
@@ -279,17 +301,17 @@ column name (`email.ts:285`), while `TeamspaceInvite`/`ApiToken` use honest
   *Acceptance:* e2e — contexts A and B logged in as the same user; A signs out
   everywhere ⇒ B's next navigation lands on `/login`.
 - **R28.14** — Per-device logout stays exactly as it is: `logoutAction`
-  (`auth.ts:111-114`) deletes this cookie, is idempotent for anonymous
+  (`auth.ts:141-144`) deletes this cookie, is idempotent for anonymous
   callers, and keeps the `/login` redirect.
   *Acceptance:* unit/e2e — calling logout twice throws neither error nor
   redirect loop; cookie absent afterwards.
 - **R28.15** — Cookie attributes unchanged and documented: `httpOnly`,
   `sameSite: "lax"`, `path: "/"`, `secure` in production, 30-day `maxAge`
-  (`auth.ts:40-46`); the self-host doc (R28.26) states that `secure` requires
-  TLS termination in production.
+  (`src/lib/auth.ts:69-75`); the self-host doc (R28.26) states that `secure`
+  requires TLS termination in production.
   *Acceptance:* unit — `createSession` options snapshot asserted flag-by-flag.
-- **R28.16** — Single issuer, tested: password login (`auth.ts:92`), signup
-  (`auth.ts:61`) and the SSO callback
+- **R28.16** — Single issuer, tested: password login (`auth.ts:122`), signup
+  (`auth.ts:62`) and the SSO callback
   (`src/app/api/auth/sso/callback/route.ts`) all go through `createSession`;
   `src/lib/auth.test.ts` (today bcrypt-only, `:10-36`) gains issue / verify /
   expiry / version-mismatch tests.
@@ -299,16 +321,32 @@ column name (`email.ts:285`), while `TeamspaceInvite`/`ApiToken` use honest
 ### 4.4 Secret handling — R28.17–R28.21
 
 - **R28.17** — Stored secrets get the envelope: `User.twoFactorSecret`
-  (`schema.prisma:86`), `OAuthApp.clientSecret` (`schema.prisma:872`,
-  raw at `oauth-apps.ts:33`) and `Webhook.secret` (`schema.prisma:899`) are
+  (`schema.prisma:89`), `OAuthApp.clientSecretHash` (`schema.prisma:898`,
+  a SHA-256 digest written at `oauth-apps.ts`) and `Webhook.secret` (`schema.prisma:899`) are
   written via `encryptSecret` (`src/lib/secrets.ts:21-27`) and read via
   `decryptSecret`. Key derivation becomes per-domain —
   `noema:<domain>:v1:<AUTH_SECRET>` generalizing the existing
   `noema:ai-provider:v1` salt (`secrets.ts:18`) — so rotating one domain's
-  scheme cannot disturb another.
-  *Acceptance:* unit — envelope round-trip for each of the three domains; a
+  scheme cannot disturb another. (`OAuthApp.clientSecret` is not part of it:
+  the OAuth client secret is a **digest** (`clientSecretHash`), so there is
+  nothing to encrypt.)
+  *Acceptance:* unit — envelope round-trip for each of the two domains; a
   pre-migration plaintext value is accepted with a warning during the M28.3
   window and rejected after it.
+  > **Status — `User.twoFactorSecret` landed (B05).** The TOTP seed is
+  > written with `encryptTwoFactorSecret` and read with `openTwoFactorSecret`
+  > (`src/lib/secrets.ts`): an envelope that cannot be opened (tampered
+  > ciphertext, rotated `AUTH_SECRET`) fails closed, and a pre-B05 plaintext
+  > seed still works but is re-sealed on the next successful write. The
+  > one-off backfill of the remaining plaintext rows is
+  > `npm run backfill:2fa` (a script, not a migration — see M28.3).
+  > `OAuthApp.clientSecret` and `Webhook.secret` are **still plaintext**.
+  > **Data protection (Art. 15/17):** the seed was never part of a subject
+  > access export — `PERSONAL_DATA_FIELDS.user.twoFactorSecret` is
+  > `exportable: false` (`src/lib/gdpr.ts:122`), so the export bundle never
+  > carried the seed and still does not. What the column holds changed: it
+  > is the `v1:iv:tag:payload` envelope, not the base32 seed, so the value
+  > the erasure plan deletes (`strategy: "delete"`) is a sealed envelope.
 - **R28.18** — Lookup tokens are hashed at rest: `ShareLink.token`
   (`schema.prisma:396`, raw at `share.ts:101`) stores `hashToken(raw)` exactly
   as `Invite.token` does (`email.ts:285,349`); column naming is normalized to
@@ -320,6 +358,9 @@ column name (`email.ts:285`), while `TeamspaceInvite`/`ApiToken` use honest
   are the rule (`ai-settings.ts:78` `maskSecret`, `email.ts:96` `hasPassword`,
   `share.ts:55` `hasPassword`); no action may return `*Encrypted`,
   `passwordHash`, `twoFactorSecret`, `clientSecret` or an unmasked token.
+  The one exception is the OAuth client secret: it is handed back **once**,
+  in the response of `createOAuthAppAction` — the app has to be able to
+  copy it, and only its digest is ever stored.
   *Acceptance:* unit — a response-shape scan over every exported action's
   declared return type/value fixture fails on a seeded violation.
 - **R28.20** — Process secrets stay env-only with fail-fast validation:
@@ -401,13 +442,23 @@ model User {
 // JSON document, R28.1). Existing columns whose *values* change meaning:
 //   Comment.blockId        schema.prisma:336  — now populated (R28.3)
 //   ShareLink.token        schema.prisma:396  — stores hashToken(raw) (R28.18)
-//   User.twoFactorSecret   schema.prisma:86   — becomes a v1 envelope (R28.17)
-//   OAuthApp.clientSecret  schema.prisma:872  — becomes a v1 envelope (R28.17)
+//   User.twoFactorSecret   schema.prisma:89   — a v1 envelope (R28.17, landed in B05)
+//   OAuthApp.clientSecretHash schema.prisma:898 — a SHA-256 digest; no envelope to add
 //   Webhook.secret         schema.prisma:899  — becomes a v1 envelope (R28.17)
 ```
 
 Prisma change = one column (`db push` locally, baseline migration for prod per
 R28.25). Everything else is behavior, not schema.
+
+**Later addition (B07, the security campaign):** the same `User` model also
+carries `emailVerified Boolean @default(false)` — whether the address was
+ever proven. A local sign-up writes `false` (a sign-up proves nothing about
+the address it registers), the SSO callback writes `true` for the account it
+creates (the address came out of a signed id_token), and a provider sign-in
+links an existing account only when **that account** proved its own address
+— a vouching provider alone does not authorize the link, because the address
+may have been pre-registered by somebody else (account pre-hijacking). Its
+migration is `20261019000000_user_email_verified`.
 
 ## 6. Behavior & edge spec
 
@@ -417,6 +468,7 @@ R28.25). Everything else is behavior, not schema.
 | `AUTH_SECRET` rotated | All sessions die (already true today) **and** envelopes become unreadable → documented two-step rotation (dual-key window) in R28.26; not silently swallowed |
 | Failure mid-`signupAction` | No user, no workspace, no welcome page — or all three (R28.6/R28.7) |
 | Failure mid-`updatePageAction` | Page unchanged **and** no `PageVersion` row (R28.8) |
+| Page created / moved with a `parentId` from another workspace | Refused with a typed error, **nothing written**; the foreign parent is never read, so the error never names it. The invariant: *a `parentId` always points inside the same workspace*. One helper — `assertScopedParent()` in `src/lib/page-parent.ts` — is the single gate every write path passes a parent through; the read side filters a database's rows by the database's workspace. Note: the check is **application-side** (no composite `(parentId, workspaceId)` constraint in the schema), so a new write path that bypasses the helper re-opens the hole (B08) |
 | Duplicate a block / paste a doc with ids | Copy gets fresh ids; collisions re-minted (R28.4) |
 | Legacy doc (no ids) opens | `ensureBlockIds` assigns on load, next save persists one version; comments fall back to quote anchors (R28.2/R28.5) |
 | DB down | `/api/health` → 503; compose marks `app` unhealthy; app process itself keeps its existing behavior (no new crash paths) (R28.24) |
@@ -473,10 +525,27 @@ Feasibility: items 1-11 and 7/10 are pure-lib and cheap in the FAST tier;
   forced re-login for everyone at upgrade time. Chosen deliberately (cheap,
   one-line operator note) over a dual-accept window that would keep D28.3 open.
 - **M28.3 — Encrypt-in-place.** One-time script wraps
-  `twoFactorSecret` / `OAuthApp.clientSecret` / `Webhook.secret` values into
+  `twoFactorSecret` / `Webhook.secret` values into
   `v1:` envelopes; readers accept plaintext **only** during the window and log
   a warning, then hard-fail (R28.17). Requires `AUTH_SECRET` present; idempotent
   (already-enveloped values are skipped by the `v1:` prefix check).
+  > **Status — the `twoFactorSecret` half landed (B05).** It is a **script**,
+  > not a migration: the envelope key is derived from an environment variable,
+  > and SQL cannot derive a key or produce an AES-GCM envelope. The script is
+  > `npm run backfill:2fa` (`scripts/backfill-2fa-secrets.mjs`, planner in
+  > `scripts/backfill-2fa-secrets-lib.mjs`): it needs the database (not the app
+  > server) and the app's `AUTH_SECRET`, it skips rows that already carry a
+  > `v1:` **or** a `v2:` envelope (idempotent), and a row it cannot re-seal is
+  > **never deleted and never overwritten** — it stays as it is and is reported.
+  > It walks the table in batches (bounded memory) and refuses to start when
+  > the `AUTH_SECRET` of the environment opens **none** of the envelopes
+  > already in the database: the pre-flight probes the two-factor table **and**
+  > the two other columns that the same `AUTH_SECRET` seals
+  > (`AiProviderConfig.apiKeyEncrypted`, `EmailConfig.passwordEncrypted`), and
+  > refuses only when **none of the three** opens — sealing the remaining
+  > cleartext rows with a key the app does not use would leave those accounts
+  > unable to open their own seed. The `OAuthApp.clientSecret` /
+  > `Webhook.secret` halves are still open.
 - **M28.4 — Hash share tokens.** In-place `token = hashToken(token)` — safe
   because the raw token lives in the user's URL, not derivable from the hash;
   existing `/s/<raw>` links keep working because lookup already hashes the

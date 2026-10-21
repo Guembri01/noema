@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
+import { assertScopedParent } from "@/lib/page-parent";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import {
   createBlockTemplateAction,
   createGalleryTemplateAction,
@@ -17,9 +23,9 @@ export const runtime = "nodejs";
  *   { action: "block",      workspaceId, templateId,               parentId? }
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "templates", 30, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "templates", 30, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let body: {
@@ -30,13 +36,22 @@ export async function POST(request: Request) {
     parentId?: string | null;
   };
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    body = await readJsonBody<typeof body>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
 
   const workspaceId = String(body.workspaceId ?? "");
   const parentId = body.parentId ?? null;
+
+  // The parent must live in the caller's workspace — `Page.parentId` is a
+  // plain foreign key, so a foreign parent would link the new page into
+  // another tenant's tree (B08). The template actions repeat the check, so a
+  // direct action call is covered as well.
+  const parent = await assertScopedParent({ workspaceId, parentId });
+  if ("error" in parent) {
+    return NextResponse.json({ error: parent.error }, { status: 400 });
+  }
 
   let result: { ok: true; id: string; slug: string } | { error: string };
   switch (body.action) {
@@ -44,21 +59,21 @@ export async function POST(request: Request) {
       result = await createQuickStartAction({
         workspaceId,
         kind: body.kind === "database" ? "database" : "page",
-        parentId,
+        parentId: parent.parentId,
       });
       break;
     case "gallery":
       result = await createGalleryTemplateAction({
         workspaceId,
         templateId: String(body.templateId ?? ""),
-        parentId,
+        parentId: parent.parentId,
       });
       break;
     case "block":
       result = await createBlockTemplateAction({
         workspaceId,
         templateId: String(body.templateId ?? "") as TemplateId,
-        parentId,
+        parentId: parent.parentId,
       });
       break;
     default:

@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { getChatThreadsWithMessages } from "@/server/queries";
 import {
   createChatThreadAction,
@@ -12,28 +17,39 @@ import {
 
 export const runtime = "nodejs";
 
-/** List the workspace's discussions with their recent messages. */
+/**
+ * List the workspace's discussions with their recent messages.
+ *
+ * Discussions are not page-scoped, so a `GUEST` — an external collaborator
+ * with access to a few shared pages — may not read them at all (the write path
+ * enforces the same rule in the server actions).
+ */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "chat-read", 120, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "chat-read", 120, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const workspaceId = new URL(request.url).searchParams.get("workspaceId") ?? "";
   const access = await getWorkspaceAccess(user.id, workspaceId);
   if (!access) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  if (!canEditContent(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   return NextResponse.json({ threads: await getChatThreadsWithMessages(workspaceId) });
 }
 
 /**
  * Discussion mutations. Body: { action: "create" | "post" | "rename" | "delete", … }
- * The same server actions back the sidebar UI.
+ * The same server actions back the sidebar UI; every action resolves the
+ * thread's workspace itself and refuses a `GUEST` (discussions are not
+ * page-scoped), so the transport needs no extra role check.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "chat-write", 60, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "chat-write", 60, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let body: {
@@ -44,9 +60,9 @@ export async function POST(request: Request) {
     body?: string;
   };
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    body = await readJsonBody<typeof body>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
 
   let result: { ok: true } & Record<string, unknown> | { error: string };

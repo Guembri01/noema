@@ -1,9 +1,18 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
+import { bodyReadError, readJsonBody } from "@/lib/body-limit";
 import { importPdfTextAction } from "@/server/actions/import-pdf";
 
 export const runtime = "nodejs";
+
+/**
+ * B22 — the budget for one import request. The body carries the extracted
+ * text layer, which the importer caps at 5 000 000 characters; the route
+ * budget sits above that so the action still reports its own, more precise
+ * error, and far below "whatever the client sends".
+ */
+const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
 /**
  * Import a PDF's extracted text layer through the `pdf-import` engine.
@@ -16,10 +25,9 @@ export const runtime = "nodejs";
  * Body: `{ workspaceId, parentId?, filename?, text }`.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "pdf-import", 30, 60_000);
-  if (limited) return limited;
-
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "pdf-import", 30, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let body: {
@@ -29,9 +37,9 @@ export async function POST(request: Request) {
     text?: string;
   };
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    body = await readJsonBody<typeof body>(request, MAX_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body.");
   }
 
   const result = await importPdfTextAction({

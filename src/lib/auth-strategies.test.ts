@@ -8,6 +8,7 @@ import {
   isSafeReturnTo,
   linkOrCreate,
   normalizeIdentity,
+  passwordStrategyEnabled,
   startLogin,
   validateCallback,
   validatePassword,
@@ -490,7 +491,10 @@ describe("linkOrCreate", () => {
     expect(decision).toMatchObject({ action: "link", userId: "u2", reason: "email_match" });
   });
 
-  it("links a trusted provider email onto an unverified local account", () => {
+  it("refuses to link a trusted provider email onto an unverified local account", () => {
+    // B07: the address may have been registered by somebody else before the
+    // real owner showed up. Linking would hand this identity — and everything
+    // it creates — to whoever registered the address, so it must conflict.
     const users: ExistingUser[] = [{ id: "u3", email: "grace@example.com", emailVerified: false }];
     const decision = linkOrCreate({
       existingUsers: users,
@@ -498,7 +502,27 @@ describe("linkOrCreate", () => {
       strategy: google,
       now: NOW,
     });
-    expect(decision).toMatchObject({ action: "link", userId: "u3", reason: "email_match" });
+    expect(decision).toEqual({
+      action: "conflict",
+      reason: "email_taken_unverified",
+      existingUserId: "u3",
+      at: NOW,
+    });
+  });
+
+  it("treats a missing verification flag as an unproven address", () => {
+    const users: ExistingUser[] = [{ id: "u9", email: "no-flag@example.com" }];
+    const decision = linkOrCreate({
+      existingUsers: users,
+      identity: { email: "no-flag@example.com", name: "N", externalId: "sub-9" },
+      strategy: google,
+      now: NOW,
+    });
+    expect(decision).toMatchObject({
+      action: "conflict",
+      reason: "email_taken_unverified",
+      existingUserId: "u9",
+    });
   });
 
   it("refuses to auto-link an untrusted email onto an unverified account", () => {
@@ -519,7 +543,18 @@ describe("linkOrCreate", () => {
     });
   });
 
-  it("honours an explicit emailVerified override", () => {
+  it("honours an explicit emailVerified override when the account is created", () => {
+    const decision = linkOrCreate({
+      existingUsers: [],
+      identity: { email: "p@example.com", name: "P", externalId: "p@example.com" },
+      strategy: password,
+      now: NOW,
+      emailVerified: true,
+    });
+    expect(decision).toMatchObject({ action: "create", emailVerified: true });
+  });
+
+  it("never lets a vouching provider link an unverified account", () => {
     const users: ExistingUser[] = [{ id: "u8", email: "p@example.com", emailVerified: false }];
     const decision = linkOrCreate({
       existingUsers: users,
@@ -528,7 +563,45 @@ describe("linkOrCreate", () => {
       now: NOW,
       emailVerified: true,
     });
-    expect(decision).toMatchObject({ action: "link", userId: "u8", reason: "email_match" });
+    expect(decision).toMatchObject({
+      action: "conflict",
+      reason: "email_taken_unverified",
+      existingUserId: "u8",
+    });
+  });
+
+  it("never lets a vouching provider link an unverified account — in any kind", () => {
+    // `linkOrCreate` is the shared decision of the OIDC, the magic-link and
+    // the SAML path, so the rule cannot depend on the kind: a provider vouch
+    // may mark a *new* account as verified, never authorize a link.
+    for (const id of ["google", "saml", "magic-link"]) {
+      const users: ExistingUser[] = [
+        { id: "u10", email: "any@example.com", emailVerified: false },
+      ];
+      const decision = linkOrCreate({
+        existingUsers: users,
+        identity: { email: "any@example.com", name: "A", externalId: "sub-10" },
+        strategy: getStrategy(id)!,
+        now: NOW,
+      });
+      expect(decision).toMatchObject({
+        action: "conflict",
+        reason: "email_taken_unverified",
+        existingUserId: "u10",
+      });
+    }
+  });
+
+  it("marks a new account verified for every kind that vouches", () => {
+    for (const id of ["google", "saml", "magic-link"]) {
+      const decision = linkOrCreate({
+        existingUsers: [],
+        identity: { email: "fresh@example.com", name: "F", externalId: "sub-11" },
+        strategy: getStrategy(id)!,
+        now: NOW,
+      });
+      expect(decision).toMatchObject({ action: "create", emailVerified: true });
+    }
   });
 
   it("flags a conflict when the external id and a trusted email disagree", () => {
@@ -650,5 +723,38 @@ describe("enabledStrategies", () => {
 
   it("treats a blank allow-list as no allow-list", () => {
     expect(enabledStrategies({ AUTH_STRATEGIES: "  " }).map((e) => e.id)).toEqual(["password"]);
+  });
+});
+
+describe("passwordStrategyEnabled", () => {
+  it("is enabled on an empty environment", () => {
+    expect(passwordStrategyEnabled({})).toBe(true);
+  });
+
+  it("is disabled by a falsy AUTH_PASSWORD value", () => {
+    for (const value of ["disabled", "off", "no", "0", "false", "DISABLED"]) {
+      expect(passwordStrategyEnabled({ AUTH_PASSWORD: value })).toBe(false);
+    }
+  });
+
+  it("stays enabled for a truthy AUTH_PASSWORD value", () => {
+    expect(passwordStrategyEnabled({ AUTH_PASSWORD: "enabled" })).toBe(true);
+    expect(passwordStrategyEnabled({ AUTH_PASSWORD: "true" })).toBe(true);
+  });
+
+  it("is disabled by an allow-list without password", () => {
+    expect(
+      passwordStrategyEnabled({ AUTH_STRATEGIES: "google,saml", AUTH_GOOGLE_CLIENT_ID: "gid" }),
+    ).toBe(false);
+  });
+
+  it("stays enabled for an allow-list that contains password", () => {
+    expect(passwordStrategyEnabled({ AUTH_STRATEGIES: "password,google" })).toBe(true);
+  });
+
+  it("is disabled when the allow-list excludes password and AUTH_PASSWORD is set", () => {
+    expect(
+      passwordStrategyEnabled({ AUTH_PASSWORD: "enabled", AUTH_STRATEGIES: "google" }),
+    ).toBe(false);
   });
 });

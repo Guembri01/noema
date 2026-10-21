@@ -82,7 +82,7 @@ This repository is a **working application plus a complete parity tracker**.
 | Workspaces | Create workspaces, memberships + roles (OWNER/ADMIN/MEMBER/GUEST), multi-workspace switcher |
 | Pages | Infinitely nested page tree, icons, favorites, soft-delete/trash, version snapshots |
 | Editor | TipTap block editor: headings, lists, to-do lists, quote, code, divider, **callout**, **toggle**, **columns**, **table**, **table of contents**, **inline + block equations (KaTeX)**, **breadcrumb**, **bookmark & embed** (YouTube/Vimeo/Loom/Spotify/Figma…), **synced view** (page transclusion), **@-mentions** (pages/people/dates), **file & image uploads** (paste, drag-drop or picker), rich inline formatting via a **selection bubble menu**, a keyboard-driven `/` slash menu, and **pointer drag-and-drop** reordering |
-| Link previews | `GET /api/link-preview` fetches OpenGraph metadata with an SSRF guard (http(s) only, no private/loopback hosts), size cap and timeout |
+| Link previews | `GET /api/link-preview` fetches OpenGraph metadata with an SSRF guard (http(s) only, DNS-resolved hosts and every redirect hop must be public), size cap and timeout |
 | Backlinks | **Linked references** — pages that @-mention the current page |
 | Databases | Full-page databases with typed properties, **Table / Board / List / Gallery / Calendar / Timeline / Chart** views, **AND/OR + nested filters, sorts, grouping, conditional colors** (saved per view), view tabs with an “add view” menu, per-property menus (rename/duplicate/delete/formula), inline cell editing, templates, CSV import/export, open-row-as-page |
 | Page chrome | Emoji icons, cover images (presets), breadcrumbs, page options menu (copy link, cover, export, move to workspace, lock, trash), favorites, **follow** |
@@ -95,7 +95,7 @@ This repository is a **working application plus a complete parity tracker**.
 | Import / Export | Export a page as **Markdown / JSON / HTML**, a database as **CSV**, the whole workspace as a **.zip**; import **Markdown** or **CSV** |
 | Sharing | **Share to web** — publish a page read-only at `/s/<token>` with optional **password + expiry**; unpublish; per-member share levels and **email invitations** (see [Permissions](#permissions-guests-teamspaces-page-shares)) |
 | Templates | **Template button** block + database templates with **recurrence** (daily/weekly/monthly) materialized by `POST /api/cron/templates` |
-| Public API | `GET/POST /api/v1/pages`, `GET /api/v1/pages/:id`, `GET /api/v1/search`, `GET /api/v1/workspaces` — authenticated with **Bearer API tokens** (hashed at rest, managed in workspace settings) |
+| Public API | `GET/POST /api/v1/pages`, `GET /api/v1/pages/:id`, `GET /api/v1/search`, `GET /api/v1/workspaces` — authenticated with **Bearer API tokens** (hashed at rest, managed in workspace settings); the token's **scope grant is enforced** (`read:pages` for the read routes, `write:pages` for creating pages) |
 | Workspace settings | Rename, member list, API tokens, workspace export |
 | Home & templates | A greeting home with **Empty page / Empty database** cards, a **workflow template gallery** (Task tracking, Projects, Skills, Document center, Brainstorm, Meeting notes) with mini previews, and “Other templates”; `POST /api/templates` |
 | Sidebar chrome | **Home / Chat / Meetings** tabs, **Projects**, **Library**, **Teamspaces**, **Private pages**, search, **Add**, **Customize**, a footer help menu, and a **right-click menu on every page** (open, open in new tab, discuss in chat, rename, favorite, copy link, move to teamspace/project, trash) |
@@ -233,7 +233,7 @@ Storage & backups
 | --- | --- |
 | **Storage driver** | `src/lib/storage.ts` defines one interface with two drivers: **local filesystem** (default, `STORAGE_DIR` or `./uploads`) and **S3-compatible** (AWS, MinIO, Cloudflare R2, Garage) — selected by setting `S3_BUCKET` (+ `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, optional `S3_PREFIX`) |
 | **No SDK** | The S3 driver signs requests with **Signature V4** (`signS3Request`, unit-tested for determinism, key encoding and presigned GETs) over `fetch` |
-| **Authorised reads** | Files are never public: `/api/files/<workspace>/<name>` re-checks the session and workspace membership, validates the key (no traversal) and streams from whichever driver holds the bytes |
+| **Authorised reads** | Files are never public: `/api/files/<workspace>/<name>` re-checks the session, the workspace membership and the caller's role (a guest is refused with `403`), validates the key (no traversal) and streams from whichever driver holds the bytes |
 | **Uploads** | Type allow-list + 10 MB cap + `Asset` row; `npm run check:storage` asserts the byte-for-byte round trip, the content type, the 404 for a missing key, the traversal refusal, the anonymous refusal and the 415 for a bad type |
 | **Backups** | `npm run backup` writes `backups/noema-<timestamp>.sql` (via the database container or a local `pg_dump`), refuses to keep a suspiciously small file, verifies the core tables are in the dump, keeps the newest 5 and prints the restore command 
 
@@ -355,7 +355,7 @@ guard leaves prices (`$5 and $6`) alone.
 | Capability | Detail |
 | --- | --- |
 | **SMTP** | Settings → **Email & invitations**: host/port/TLS/user/password (encrypted at rest), sender + reply-to, **Verify & send test**, and a delivery log. Env vars `SMTP_HOST`/`SMTP_FROM`… work as a fallback. |
-| **Client invitations** | Invite by email and pick the role: **Client (guest — view only)**, Member, or Admin. The invitation is a single-use, 14-day, **hashed** token; the email carries the accept link and the link is always shown so you can share it by hand when SMTP is not configured. `POST /api/invites`. |
+| **Client invitations** | Invite by email and pick the role: **Client (guest — view only)**, Member, or Admin. The role an invitation carries is a grant, so it follows the role matrix: an admin invites members and guests, and only the workspace owner can invite an Admin. The grant is checked twice — when the invitation is sent and again when it is redeemed, so an invitation whose role the sender may no longer hand out is refused. The invitation is a single-use, 14-day, **hashed** token; the email carries the accept link and the link is always shown so you can share it by hand when SMTP is not configured. `POST /api/invites`. |
 | **Projects & milestones** | `/w/<slug>/projects`: projects with status/start/due dates, **milestones** (planned → in progress → done), a **Gantt timeline** with a today marker, notes attached per project (*New note in project*), and **client invitations** — a view-only guest scoped to that one project. |
 | **Note discussions** | Right-click a note → *Discuss in chat* (or the page menu) opens a **discussion pinned to that note**; messages are answered by the AI grounded in that note plus the rest of the workspace. Type `/ask …` in any discussion to ask a question. |
 | **Equations** | Inline and block LaTeX with a **live KaTeX preview dialog** (⌘/Ctrl + slash menu → Equation, or the selection toolbar); click any equation to edit it. |
@@ -373,11 +373,13 @@ guard leaves prices (`$5 and $6`) alone.
 
 Pick a model from the curated list or press **Fetch models** to pull the provider's live `GET /models`, then **Test connection** before saving. Environment variables (`AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL`) stay as the fallback for workspaces without their own configuration.
 
+A workspace's own endpoint and key are used only for requests from members of that workspace. Anyone else gets the environment configuration, so a workspace id alone never spends another workspace's key or budget.
+
 ## Enterprise & AI
 
 | Capability | Detail |
 | --- | --- |
-| **SSO (OIDC)** | Set `SSO_ISSUER` / `SSO_CLIENT_ID` / `SSO_CLIENT_SECRET` (optionally `SSO_REDIRECT_URI`); a **Sign in with SSO** link appears on `/login`. `/api/auth/sso/start` redirects to the provider and `/api/auth/sso/callback` verifies the `id_token` (JWKS, issuer + audience + nonce) and provisions the user just-in-time. |
+| **SSO (OIDC)** | Set `SSO_ISSUER` / `SSO_CLIENT_ID` / `SSO_CLIENT_SECRET` (optionally `SSO_REDIRECT_URI`); a **Sign in with SSO** link appears on `/login`. `/api/auth/sso/start` redirects to the provider and `/api/auth/sso/callback` verifies the `id_token` (JWKS, issuer + audience + nonce) and provisions the user just-in-time. For an SSO-only deployment set `AUTH_PASSWORD=disabled` — the local email + password sign-in and sign-up then refuse every request. |
 | **Teamspaces** | Create teamspaces in **Workspace settings** with per-teamspace membership; root pages assigned to a teamspace (page menu → *Move to teamspace*) are grouped under it in the sidebar. |
 | **Transcription** | `POST /api/ai/transcribe` forwards audio to a speech-to-text provider (`AI_TRANSCRIBE_API_KEY`, optional `AI_TRANSCRIBE_BASE_URL` / `AI_TRANSCRIBE_MODEL`); the sidebar **Transcribe audio** action turns a recording into a page. |
 | **Comments** | Select text in a page → **Comment** in the selection toolbar or block menu anchors the quote to the composer; quotes render above each comment. |
@@ -414,9 +416,11 @@ npm run dev                 # http://localhost:3000 (Next.js default port)
 | Required | `DATABASE_URL`, `AUTH_SECRET` | `DATABASE_URL` must match the docker mapping (`localhost:5433`, user/db `noema`) |
 | AI (optional) | `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_TRANSCRIBE_*` | any OpenAI-compatible provider; see [AI configuration](#ai-configuration) |
 | SSO (optional) | `SSO_ISSUER`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`, `SSO_REDIRECT_URI` | enables *Sign in with SSO*; the local mock IdP used by `npm run check:sso` is pointed at with these |
+| Sign-in strategies (optional) | `AUTH_PASSWORD`, `AUTH_STRATEGIES` | `AUTH_PASSWORD=disabled` turns the local email + password sign-in and sign-up off (single-sign-on only); `AUTH_STRATEGIES` is a comma-separated allow-list (`password,google,saml`) and every strategy outside it is off |
 | SMTP (optional) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, … | invitation emails; without it the invite link is still shown in the UI |
 | Notion importer (optional) | `NOTION_API_BASE` | defaults to `https://api.notion.com/v1`; checks point it at a local mock (`http://localhost:4322/v1`) |
 | Misc (optional) | `APP_URL`, `APP_ORIGINS`, `CRON_SECRET`, `NEXT_PUBLIC_COLLAB_URL` | canonical email links, Server-Action origin allow-list, cron guard, realtime collab |
+| Reverse proxy (optional) | `TRUSTED_PROXY_HOPS` | how many reverse-proxy hops may set `X-Forwarded-For` / `X-Real-IP` (1 for a single nginx/Caddy). Unset = the forwarding headers are ignored; see [OPERATIONS §1.1](./docs/OPERATIONS.md#11-reverse-proxy-in-front-of-the-app-trusted_proxy_hops) |
 
 **Production:** `npm run build` then `npm start`. Note that dev and prod share
 the same `.next` directory — never run them at the same time.
@@ -495,10 +499,11 @@ password: password123
 | `npm run check:embedded-db` | Embedded-database robustness: a real PGlite engine, 24 handshakes aborted mid-flight, then two more Prisma clients — no Postgres, no Docker, no Tauri |
 | `npm run screenshots` | Regenerates the gallery in `docs/screenshots/` and `docs/GALLERY.md` from the seeded demo workspace (drives the installed Edge) |
 | `npm run features:pdf` | Builds `docs/Noema-features.pdf` — the feature sheet: every area as bullet points, illustrated with all 44 screenshots, derived from the README's feature tables and the screenshot report (drives the installed Edge) |
-| `npm run check:search` | Proves ranking, prefix matching, snippets, trashed-page exclusion, re-indexing and the public API path |
+| `npm run check:search` | Proves ranking, prefix matching, snippets, trashed-page exclusion, re-indexing and the public API path — with a bearer token that holds the `read:pages` grant the API enforces |
 | `npm run check:storage` | Storage round trip through the API: upload, byte-for-byte read, guards (auth, traversal, missing, bad type) |
 | `npm run check:chat-stream` | Proves answers stream in chunks, arrive before completion, and persist exactly once |
 | `npm run check:coherence` | **Fails on drift**: orphan actions, native dialogs, unexpected injection sinks, growing action-call drift, shrinking i18n coverage |
+| `npm run check:workflow-permissions` | No workflow grants a publishing scope (`packages: write`, `id-token: write`) outside a job that no pull-request event can reach, every such job spells out its `permissions:`, and no pull-request checkout keeps its token on disk |
 | `npm run audit` | Static coherence inventory (same rules as `check:coherence`) → `docs/_audit-raw.json` |
 | `npm run check:matrix` | Recount the parity status summary (read-only; add `-- --write` to update the doc) |
 | `node --env-file=.env scripts/check-notion.mjs` | Notion API importer check (uses a local mock Notion server) |
@@ -550,12 +555,21 @@ Found a vulnerability? Please **do not open a public issue** — follow
 
 - Passwords hashed with bcrypt (cost 12); sessions are HS256 JWTs in httpOnly cookies.
 - Every server action re-derives workspace access from the session; guests are read-only.
+- The sign-in, the sign-up and the 2FA check are rate-limited (per client
+  address and per account) and lock the account after five failed attempts.
 - Set a strong `AUTH_SECRET` and use `secure` cookies + HTTPS in production.
 - Share links are live: `/s/<token>` (optional password + expiry) and the
   single-use, hashed `/invite/<token>` invitation links — both re-check access
   on the server rather than trusting the URL.
 - No credential belongs in the tree: `npm run check:secrets` fails on any
   committed key-shaped value, and `.env` is git-ignored.
+- CI tokens are least-privilege: `npm run check:workflow-permissions` fails if a
+  workflow grants a publishing scope (`packages: write`, `id-token: write`)
+  outside a job that no pull-request event can reach — the gate is evaluated,
+  so `github.event_name != 'pull_request'` does not count, because a
+  `pull_request_target` event satisfies it — if a job a pull request can reach
+  does not spell out its `permissions:` block, or if a checkout such a job
+  runs keeps its token on disk.
 
 ## Where to read next
 

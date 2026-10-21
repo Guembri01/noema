@@ -17,6 +17,8 @@ import {
   type AutomationRule,
 } from "@/lib/automations";
 import { parseRule, type RecurrenceRule } from "@/lib/recurring-tickets";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { opsSecretLimitKey, safeSecretEqual } from "@/lib/ops-guard";
 
 /**
  * Automation rule store + dispatcher (docs/specs/automations.md §13/§20), and
@@ -86,13 +88,21 @@ function publicRule(rule: StoredAutomationRule): AutomationRule {
  * Automation rules (canonical ticket events → ButtonAction plans).
  * ------------------------------------------------------------------------- */
 
-/** Rules a workspace authored, in insertion order. */
+/**
+ * Rules a workspace authored, in insertion order.
+ *
+ * The rules are workspace management data: writing one asks for
+ * `canManageMembers` (`saveAutomationRuleAction`), so reading them asks the
+ * same question — a `GUEST` never receives the workspace's automations.
+ */
 export async function listAutomationRulesAction(
   workspaceId: string,
 ): Promise<AutomationResult<{ rules: AutomationRule[] }>> {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
-  if (!access) return { error: "You do not have access to this workspace." };
+  if (!access || !canManageMembers(access.role)) {
+    return { error: "You do not have permission to manage automations." };
+  }
   return {
     ok: true,
     rules: [...automationRules.values()]
@@ -255,7 +265,13 @@ export async function saveRecurringTicketAction(input: {
   return { ok: true, id };
 }
 
-/** The workspace's recurring ticket schedules. */
+/**
+ * The workspace's recurring ticket schedules.
+ *
+ * A schedule names a ticket title, so it is tracker data: writing one asks
+ * for `canEditContent` (`saveRecurringTicketAction`), so reading them asks
+ * the same question — a `GUEST` never receives the workspace's schedules.
+ */
 export async function listRecurringTicketsAction(workspaceId: string): Promise<
   AutomationResult<{
     tickets: {
@@ -270,7 +286,9 @@ export async function listRecurringTicketsAction(workspaceId: string): Promise<
 > {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
-  if (!access) return { error: "You do not have access to this workspace." };
+  if (!access || !canEditContent(access.role)) {
+    return { error: "You do not have permission to manage recurring tickets." };
+  }
   return {
     ok: true,
     tickets: [...recurringTickets.values()]
@@ -310,12 +328,49 @@ export async function deleteRecurringTicketAction(
  * accessors fail closed unless the caller presents the configured CRON_SECRET.
  * ------------------------------------------------------------------------- */
 
+/**
+ * The ops-gate budget for the cron action surface: 120 calls per 60 s.
+ *
+ * The budget is shared by the legitimate caller (the cron tick calls these
+ * actions in-process — once per tick plus once per materialized schedule) and
+ * by anyone who reaches the action over HTTP, because a server action
+ * exported from a `"use server"` file *is* an HTTP endpoint. It is therefore
+ * deliberately more generous than the routes' 12/60 s, while still turning
+ * "unlimited guessing" into a hard bound.
+ */
+const AUTOMATIONS_LIMIT = 120;
+const AUTOMATIONS_WINDOW_MS = 60_000;
+
+/**
+ * The ops gate for the cron action surface: rate limit first, then a
+ * constant-time comparison of the presented secret.
+ *
+ * The rate-limit key is built from the **configured** secret, never from the
+ * presented one: a key derived from the guess would hand the attacker a fresh
+ * bucket per attempt, and the limit would be bypassable by varying the guess.
+ * The action has no `Request` of its own, so no caller-derived key is
+ * available — the deployment-wide bucket is the honest choice here.
+ */
+function cronActionGate(presented: string): { ok: true } | { error: string } {
+  const expected = process.env.CRON_SECRET;
+  // Fail closed: without a configured secret there is nothing to compare.
+  if (!expected || expected.trim() === "") return { error: "Unauthorized" };
+  const limited = checkRateLimit(
+    opsSecretLimitKey("automations", expected),
+    AUTOMATIONS_LIMIT,
+    AUTOMATIONS_WINDOW_MS,
+  );
+  if (!limited.ok) return { error: "Rate limit exceeded." };
+  if (!safeSecretEqual(presented, expected)) return { error: "Unauthorized" };
+  return { ok: true };
+}
+
 /** The schedule rules + recurring tickets a cron tick must consider. */
 export async function listDueAutomationsForCronAction(secret: string): Promise<
   AutomationResult<{ scheduled: AutomationRule[]; recurring: StoredRecurringTicket[] }>
 > {
-  const expected = process.env.CRON_SECRET;
-  if (!expected || secret !== expected) return { error: "Unauthorized" };
+  const gate = cronActionGate(secret);
+  if ("error" in gate) return { error: gate.error };
   return {
     ok: true,
     scheduled: [...automationRules.values()]
@@ -332,8 +387,8 @@ export async function commitRecurringRunAction(input: {
   keys: string[];
   spawnedAt: string;
 }): Promise<AutomationResult> {
-  const expected = process.env.CRON_SECRET;
-  if (!expected || input.secret !== expected) return { error: "Unauthorized" };
+  const gate = cronActionGate(input.secret);
+  if ("error" in gate) return { error: gate.error };
   const record = recurringTickets.get(input.id);
   if (!record) return { error: "Recurring ticket not found." };
   const spawnedAt = new Date(input.spawnedAt).getTime();

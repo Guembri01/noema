@@ -20,6 +20,7 @@ vi.mock("next/navigation", () => ({
 import {
   ChatThreadSkeleton,
   ChatThreadsEmpty,
+  SidebarChat,
   THREAD_ROW_ACTIONS,
   relativeTime,
   threadLastAt,
@@ -110,5 +111,29 @@ describe("renderToStaticMarkup — empty state", () => {
     expect(html).toContain("No conversations yet.");
     expect(html).toContain("New discussion");
     expect(html).toContain("<button");
+  });
+
+  it("renders no action when the viewer may not start one", () => {
+    const html = renderToStaticMarkup(createElement(ChatThreadsEmpty, { locale: "en" }));
+    expect(html).toContain('data-testid="chat-threads-empty"');
+    expect(html).not.toContain("New discussion");
+    expect(html).not.toContain("<button");
+  });
+});
+
+describe("renderToStaticMarkup — the thread list of a guest", () => {
+  it("offers no door to a discussion the server would refuse", () => {
+    const html = renderToStaticMarkup(
+      createElement(SidebarChat, { threads: [], locale: "en", role: "GUEST" }),
+    );
+    expect(html).toContain('data-testid="chat-threads-empty"');
+    expect(html).not.toContain("New discussion");
+  });
+
+  it("offers the action to everybody else", () => {
+    const html = renderToStaticMarkup(
+      createElement(SidebarChat, { threads: [], locale: "en", role: "MEMBER" }),
+    );
+    expect(html).toContain("New discussion");
   });
 });

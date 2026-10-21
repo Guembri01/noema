@@ -17,9 +17,11 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { pageSearchText } from "@/lib/search";
 import { prosemirrorToText } from "@/lib/blocks";
+import { assertScopedParent } from "@/lib/page-parent";
 import { formatWordStats } from "@/lib/actions-menu";
 import { loadVersionAuthors } from "@/server/version-authors";
 
@@ -57,20 +59,31 @@ type ReadAccess =
   | {
       ok: true;
       user: Awaited<ReturnType<typeof requireUser>>;
-      page: { workspaceId: string; deletedAt: Date | null };
+      page: { id: string; workspaceId: string; deletedAt: Date | null };
+      /** The caller's page scope: `null` = the whole workspace. */
+      visiblePageIds: Set<string> | null;
     }
   | { error: string };
 
+/**
+ * Load a page for a read, honouring the guest page scope: a page outside the
+ * caller's scope is refused exactly like the page route (404 / "Page not
+ * found."), so the menu cannot describe a page the caller may not open.
+ */
 async function loadPageForRead(pageId: string): Promise<ReadAccess> {
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { workspaceId: true, deletedAt: true },
+    select: { id: true, workspaceId: true, deletedAt: true },
   });
   if (!page || page.deletedAt) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return { error: "No access." };
-  return { ok: true, user, page };
+  const visiblePageIds = await pageScopeFor(user.id, page.workspaceId, access.role);
+  if (visiblePageIds && !visiblePageIds.has(page.id)) {
+    return { error: "Page not found." };
+  }
+  return { ok: true, user, page, visiblePageIds };
 }
 
 /** Relative topbar label: last edited timestamp + author name. */
@@ -114,7 +127,7 @@ export async function getPageMenuDataAction(
 ): Promise<Result<PageMenuData>> {
   const loaded = await loadPageForRead(pageId);
   if ("error" in loaded) return loaded;
-  const { user, page } = loaded;
+  const { user, page, visiblePageIds } = loaded;
 
   const [detail, versions, webhooks, oauthApps, allPages] = await Promise.all([
     prisma.page.findUnique({
@@ -147,7 +160,13 @@ export async function getPageMenuDataAction(
       select: { id: true, name: true },
     }),
     prisma.page.findMany({
-      where: { workspaceId: page.workspaceId, deletedAt: null },
+      // The move targets are a page list, so they carry the guest scope: a
+      // guest never receives the title of a page they may not open.
+      where: {
+        workspaceId: page.workspaceId,
+        deletedAt: null,
+        ...(visiblePageIds ? { id: { in: [...visiblePageIds] } } : {}),
+      },
       select: { id: true, parentId: true, title: true, icon: true, type: true },
     }),
   ]);
@@ -255,8 +274,17 @@ export async function duplicatePageAction(
     return { error: "You do not have permission to duplicate this page." };
   }
 
+  // The copy becomes a sibling of the source, so it keeps the source's own
+  // parent. The source row proves that the *source* lives in this workspace,
+  // not that its parent does — check that one link before it is written (B08).
+  const parent = await assertScopedParent({
+    workspaceId: source.workspaceId,
+    parentId: source.parentId,
+  });
+  if ("error" in parent) return parent;
+
   const last = await prisma.page.findFirst({
-    where: { workspaceId: source.workspaceId, parentId: source.parentId },
+    where: { workspaceId: source.workspaceId, parentId: parent.parentId },
     orderBy: { position: "desc" },
     select: { position: true },
   });
@@ -264,7 +292,7 @@ export async function duplicatePageAction(
   const created = await prisma.page.create({
     data: {
       workspaceId: source.workspaceId,
-      parentId: source.parentId,
+      parentId: parent.parentId,
       teamspaceId: source.teamspaceId,
       projectId: source.projectId,
       type: source.type,

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { FileText } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { getPageTree, getWorkspaceBySlug } from "@/server/queries";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -21,8 +22,10 @@ export default async function LibraryPage({
   if (!workspace) notFound();
   const access = await getWorkspaceAccess(user.id, workspace.id);
   if (!access) notFound();
+  // Guests only see the pages that were shared with them.
+  const visiblePageIds = await pageScopeFor(user.id, workspace.id, access.role);
 
-  const tree = await getPageTree(workspace.id);
+  const tree = await getPageTree(workspace.id, visiblePageIds);
   const databases = tree.filter((node) => node.type === "DATABASE");
   const pages = tree.filter((node) => node.type === "PAGE");
   const titles = new Map(tree.map((node) => [node.id, node.title]));

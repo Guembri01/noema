@@ -12,6 +12,7 @@ import {
   refreshCalendarFeedsAction,
 } from "@/server/actions/calendar";
 import { t } from "@/lib/i18n";
+import { sanitizeHref } from "@/lib/validation";
 
 
 export type MeetingEventView = {
@@ -26,10 +27,15 @@ export type MeetingEventView = {
   feed: { name: string; color: string } | null;
 };
 
+/**
+ * A subscribed calendar as the sidebar shows it. The feed URL (`icsUrl`) is
+ * deliberately absent: it is the private address of a personal calendar and
+ * often carries a secret token in its path, so it stays on the server, which
+ * reads the feed itself.
+ */
 export type CalendarFeedView = {
   id: string;
   name: string;
-  icsUrl: string;
   color: string;
   _count: { events: number };
 };
@@ -59,16 +65,24 @@ export function SidebarMeetings({
   events,
   feeds,
   locale,
+  role,
 }: {
   workspaceId: string;
   slug: string;
   events: MeetingEventView[];
   feeds: CalendarFeedView[];
   locale: string;
+  /**
+   * The viewer's role in the workspace. A `GUEST` may not subscribe a
+   * calendar — the server refuses the action — so the sidebar offers no door
+   * to it.
+   */
+  role?: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [showForm, setShowForm] = useState(feeds.length === 0);
+  const canConnect = role !== "GUEST";
+  const [showForm, setShowForm] = useState(canConnect && feeds.length === 0);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
 
@@ -107,17 +121,19 @@ export function SidebarMeetings({
         <span className="text-xs font-medium uppercase tracking-wide text-muted">
           {t(locale, "upcomingEvents")}
         </span>
-        <button
-          type="button"
-          aria-label={t(locale, "connectACalendar")}
-          onClick={() => setShowForm((value) => !value)}
-          className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2"
-        >
-          <Link2 className="h-3.5 w-3.5" />
-        </button>
+        {canConnect ? (
+          <button
+            type="button"
+            aria-label={t(locale, "connectACalendar")}
+            onClick={() => setShowForm((value) => !value)}
+            className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2"
+          >
+            <Link2 className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
       </div>
 
-      {showForm && (
+      {showForm && canConnect && (
         <div className="space-y-1.5 rounded-lg border border-border p-2">
           <p className="text-xs text-muted">{t(locale, "pasteIcsHint")}</p>
           <input
@@ -159,58 +175,66 @@ export function SidebarMeetings({
               {day}
             </p>
             <ul className="space-y-0.5">
-              {items.map((event) => (
-                <li
-                  key={event.id}
-                  className="group flex items-start gap-2 rounded-md px-1 py-1 hover:bg-surface-2"
-                >
-                  <CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm">
-                      {event.url ? (
-                        <a href={event.url} target="_blank" rel="noreferrer" className="hover:underline">
-                          {event.title}
-                        </a>
-                      ) : (
-                        event.title
-                      )}
-                    </p>
-                    <p className="truncate text-2xs text-muted">
-                      {timeLabel(event, locale)}
-                      {event.feed ? ` · ${event.feed.name}` : ""}
-                    </p>
-                  </div>
-                  {event.notesPageId ? (
-                    <Link
-                      href={`/w/${slug}/${event.notesPageId}`}
-                      className="shrink-0 rounded px-1 text-2xs text-accent hover:underline"
-                    >
-                      {t(locale, "eventNotes")}
-                    </Link>
-                  ) : (
-                    <button
-                      type="button"
-                      aria-label={`${t(locale, "createMeetingNotesFor")} ${event.title}`}
-                      disabled={pending}
-                      onClick={() =>
-                        startTransition(async () => {
-                          const result = await createMeetingNoteAction(event.id);
+              {items.map((event) => {
+                // The event URL comes from a third-party calendar feed — and a
+                // row stored before the parser was fixed can still hold a
+                // hostile value. `sanitizeHref` is the last line of defence:
+                // only an allowlisted scheme (`http|https|mailto|tel`) may
+                // become an `href`.
+                const href = sanitizeHref(event.url);
+                return (
+                  <li
+                    key={event.id}
+                    className="group flex items-start gap-2 rounded-md px-1 py-1 hover:bg-surface-2"
+                  >
+                    <CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm">
+                        {href ? (
+                          <a href={href} target="_blank" rel="noreferrer" className="hover:underline">
+                            {event.title}
+                          </a>
+                        ) : (
+                          event.title
+                        )}
+                      </p>
+                      <p className="truncate text-2xs text-muted">
+                        {timeLabel(event, locale)}
+                        {event.feed ? ` · ${event.feed.name}` : ""}
+                      </p>
+                    </div>
+                    {event.notesPageId ? (
+                      <Link
+                        href={`/w/${slug}/${event.notesPageId}`}
+                        className="shrink-0 rounded px-1 text-2xs text-accent hover:underline"
+                      >
+                        {t(locale, "eventNotes")}
+                      </Link>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={`${t(locale, "createMeetingNotesFor")} ${event.title}`}
+                        disabled={pending}
+                        onClick={() =>
+                          startTransition(async () => {
+                            const result = await createMeetingNoteAction(event.id);
 
-                          if ("ok" in result) {
-                            router.push(`/w/${result.slug}/${result.id}`);
-                            router.refresh();
-                          } else {
-                            toast.error(result.error);
-                          }
-                        })
-                      }
-                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted opacity-0 hover:bg-bg group-hover:opacity-100 focus:opacity-100"
-                    >
-                      <Sparkles className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </li>
-              ))}
+                            if ("ok" in result) {
+                              router.push(`/w/${result.slug}/${result.id}`);
+                              router.refresh();
+                            } else {
+                              toast.error(result.error);
+                            }
+                          })
+                        }
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted opacity-0 hover:bg-bg group-hover:opacity-100 focus:opacity-100"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ))

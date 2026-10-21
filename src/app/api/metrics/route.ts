@@ -3,6 +3,7 @@ import { WorkspaceRole } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { rateLimit } from "@/lib/api-guard";
+import { safeSecretEqual } from "@/lib/ops-guard";
 import type { LogRecord, MetricsSnapshot as ObservabilitySnapshot } from "@/lib/observability";
 import {
   effectiveFlags,
@@ -31,9 +32,14 @@ const RECENT_LOG_LIMIT = 20;
  * GET /api/metrics — the read side of the observability trio.
  *
  * Gated fail-closed by either:
- * - a valid `x-cron-secret` header equal to `CRON_SECRET`, or
+ * - a valid `x-cron-secret` header matching `CRON_SECRET` (compared in
+ *   constant time), or
  * - an authenticated workspace OWNER/ADMIN (a platform-scoped "admin": any
  *   workspace they own or administer).
+ *
+ * The comparison is constant time. The rate limit is keyed by the resolved
+ * caller (the admin path) so a user cannot dodge it by rotating an IP, and a
+ * wrong cron secret still consumes that budget after the constant-time check.
  *
  * The payload is machine-readable and additive: the canonical `observability`
  * snapshot (`snapshot()`), per-series `percentiles()` over recorded
@@ -59,13 +65,10 @@ type MetricsPayload = {
  * "admin" is platform-scoped: a member who can administer *any* workspace
  * qualifies, as does a workspace they own.
  */
-async function isWorkspaceAdmin(): Promise<boolean> {
-  const user = await getCurrentUser();
-  if (!user) return false;
-
+async function isWorkspaceAdmin(userId: string): Promise<boolean> {
   const membership = await prisma.workspaceMember.findFirst({
     where: {
-      userId: user.id,
+      userId,
       role: { in: [WorkspaceRole.OWNER, WorkspaceRole.ADMIN] },
     },
     select: { id: true },
@@ -73,32 +76,57 @@ async function isWorkspaceAdmin(): Promise<boolean> {
   if (membership !== null) return true;
 
   const owned = await prisma.workspace.findFirst({
-    where: { ownerId: user.id },
+    where: { ownerId: userId },
     select: { id: true },
   });
   return owned !== null;
 }
 
+/**
+ * The caller's authorization path: how they got in, and — for the admin path
+ * — the user id the per-user rate-limit budget is keyed on. The cron path
+ * has no user id: it is a shared secret, not an identity.
+ */
+type Authorized = { via: "cron" | "admin"; userId: string | null };
+
 /** Resolve the caller's authorization path, or `null` when denied. */
-async function authorize(request: Request): Promise<"cron" | "admin" | null> {
+async function authorize(request: Request): Promise<Authorized | null> {
   const secret = process.env.CRON_SECRET;
-  const provided = request.headers.get("x-cron-secret");
-  if (typeof secret === "string" && secret !== "" && provided === secret) return "cron";
-  if (await isWorkspaceAdmin()) return "admin";
+  // The comparison is constant time: a `===` on the shared secret would leak
+  // where a guess differs, so the shared helper owns it. The per-user rate
+  // limit is applied after this resolution because the identity (admin path)
+  // is what keys the budget; a wrong secret still reaches that limiter, and it
+  // cannot learn anything from the constant-time comparison.
+  if (
+    typeof secret === "string" &&
+    secret !== "" &&
+    safeSecretEqual(request.headers.get("x-cron-secret"), secret)
+  ) {
+    return { via: "cron", userId: null };
+  }
+  const user = await getCurrentUser();
+  if (user && (await isWorkspaceAdmin(user.id))) {
+    return { via: "admin", userId: user.id };
+  }
   return null;
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
-  const limited = rateLimit(request, "metrics", 120, 60_000);
+  // The identity is resolved before the limit, so the per-user budget (the
+  // one a caller cannot dodge by rotating its client IP) can be applied.
+  const auth = await authorize(request);
+  const limited = rateLimit(request, "metrics", 120, 60_000, {
+    userId: auth?.userId ?? null,
+  });
   if (limited) return limited;
 
-  const via = await authorize(request);
-  if (via === null) {
+  if (auth === null) {
     return NextResponse.json(
       { error: "Unauthorized" },
       { status: 401, headers: { "cache-control": "no-store" } },
     );
   }
+  const via = auth.via;
 
   const traceId = newTraceId();
   const span = startSpan("metrics.collect", { traceId });

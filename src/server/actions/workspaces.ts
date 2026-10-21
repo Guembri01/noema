@@ -403,8 +403,11 @@ async function loadProjectRoleContext(projectId: string, actorId: string) {
 
 /**
  * The editable project role roster: every workspace member with their effective
- * project role, plus the project's own overrides. Gated on workspace access; the
- * editor may render read-only when `canManage` is false.
+ * project role, plus the project's own overrides. Gated on workspace access;
+ * the editor may render read-only when `canManage` is false.
+ *
+ * The roster carries every member's name, so it needs the member-directory
+ * permission: a `GUEST` never receives it.
  */
 export async function listProjectRolesAction(projectId: string): Promise<
   WorkspaceResult<{
@@ -418,6 +421,9 @@ export async function listProjectRolesAction(projectId: string): Promise<
   const user = await requireUser();
   const context = await loadProjectRoleContext(projectId, user.id);
   if (!context.ok) return { error: context.error };
+  if (!canPerformWorkspaceAction(context.access.role, "viewMemberDirectory")) {
+    return { error: "You do not have permission to view the member directory." };
+  }
 
   const workspaceMembers = await prisma.workspaceMember.findMany({
     where: { workspaceId: context.project.workspaceId },
@@ -679,6 +685,9 @@ export async function cancelOwnershipTransferAction(
 /**
  * The workspace's transfer history, with lazy expiry applied first so a lapsed
  * pending request reads as `expired` rather than silently blocking a new one.
+ *
+ * Starting a transfer is owner-only (`transferOwnership`), so the history is
+ * management data too: a `GUEST` never receives it.
  */
 export async function listOwnershipTransfersAction(workspaceId: string): Promise<
   WorkspaceResult<{
@@ -697,7 +706,9 @@ export async function listOwnershipTransfersAction(workspaceId: string): Promise
 > {
   const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, workspaceId);
-  if (!access) return { error: "You do not have access to this workspace." };
+  if (!access || !canPerformWorkspaceAction(access.role, "manageMembers")) {
+    return { error: "You do not have permission to view ownership transfers." };
+  }
 
   const now = Date.now();
   const rows = expireFor(workspaceId, now);

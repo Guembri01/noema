@@ -13,7 +13,9 @@ import {
   getWorkspaceAccess,
   type WorkspaceAccess,
 } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { parsePageContent } from "@/lib/validation";
+import { assertScopedParent } from "@/lib/page-parent";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { prosemirrorToText } from "@/lib/blocks";
 import { fileKeyFromUrl, purgeableError, staleFileUrls, subtreeClosure } from "@/lib/trash";
@@ -26,6 +28,8 @@ async function authorizePage(
 ): Promise<
   | { error: string }
   | {
+      /** The caller, so a caller-scoped check (the guest page scope) can run. */
+      userId: string;
       page: { id: string; workspaceId: string; parentId: string | null; deletedAt: Date | null };
       access: NonNullable<WorkspaceAccess>;
     }
@@ -38,7 +42,7 @@ async function authorizePage(
   if (!page) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return { error: "You do not have access to this page." };
-  return { page, access };
+  return { userId: user.id, page, access };
 }
 
 function revalidateWorkspace(workspaceId: string): void {
@@ -77,9 +81,19 @@ export async function createPageAction(input: {
   });
   if (!workspace) return { error: "Workspace not found." };
 
+  // The parent must live in the same workspace: `Page.parentId` is a plain
+  // foreign key, so nothing but this check keeps a page inside its tenant
+  // (B08). A foreign parent is refused before anything is written.
+  const parent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+  });
+  if ("error" in parent) return parent;
+  const parentId = parent.parentId;
+
   // Sibling ordering: place the new page after the current maximum.
   const last = await prisma.page.findFirst({
-    where: { workspaceId: input.workspaceId, parentId: input.parentId ?? null },
+    where: { workspaceId: input.workspaceId, parentId },
     orderBy: { position: "desc" },
     select: { position: true },
   });
@@ -87,7 +101,7 @@ export async function createPageAction(input: {
   const page = await prisma.page.create({
     data: {
       workspaceId: input.workspaceId,
-      parentId: input.parentId ?? null,
+      parentId,
       ...(input.projectId ? { projectId: input.projectId } : {}),
       type: input.type ?? "PAGE",
       title:
@@ -186,6 +200,10 @@ async function seedDatabaseStructure(databasePageId: string): Promise<void> {
     const page = await prisma.page.create({
       data: {
         workspaceId: owner.workspaceId,
+        // The parent is the database page `owner` was read from, and the row is
+        // written into that very page's workspace — parent and row share one
+        // workspace by construction (B08: `assertScopedParent` would be
+        // redundant here).
         parentId: databasePageId,
         title: row.name,
         createdById: owner.createdById,
@@ -374,6 +392,15 @@ export async function movePageAction(
   }
   if (parentId === pageId) return { error: "A page cannot be its own parent." };
 
+  // The new parent must live in the same workspace as the page: without this
+  // check a move would link the page into another tenant's tree (B08).
+  const parent = await assertScopedParent({
+    workspaceId: auth.page.workspaceId,
+    parentId,
+    pageId,
+  });
+  if ("error" in parent) return parent;
+
   // Guard against cycles: the new parent must not be a descendant.
   if (parentId) {
     let cursor: string | null = parentId;
@@ -381,9 +408,11 @@ export async function movePageAction(
       if (cursor === pageId) {
         return { error: "Cannot move a page into one of its own children." };
       }
+      // The walk stays inside the page's own workspace: an ancestor that is
+      // not in it ends the walk (the chain cannot be continued across tenants).
       const next: { parentId: string | null } | null =
-        await prisma.page.findUnique({
-          where: { id: cursor },
+        await prisma.page.findFirst({
+          where: { id: cursor, workspaceId: auth.page.workspaceId },
           select: { parentId: true },
         });
       cursor = next?.parentId ?? null;
@@ -445,13 +474,22 @@ async function collectStaleFileUrls(
  * Best-effort storage cleanup for purged pages: blobs are removed from the
  * driver and their Asset rows deleted, but a storage hiccup never fails the
  * purge itself (a leaked blob beats a failed delete).
+ *
+ * Only uploads that belong to `workspaceId` are touched: a page can reference
+ * an upload of another workspace (a leaked share link), and that blob is not
+ * ours to delete (B38) — neither the object nor its Asset row.
  */
-async function dropPurgedFiles(urls: string[]): Promise<void> {
+async function dropPurgedFiles(urls: string[], workspaceId: string): Promise<void> {
   if (urls.length === 0) return;
   try {
-    const keys = urls
-      .map(fileKeyFromUrl)
-      .filter((key): key is string => key !== null);
+    const ownedUrls: string[] = [];
+    const keys: string[] = [];
+    for (const url of urls) {
+      const key = fileKeyFromUrl(url, workspaceId);
+      if (!key) continue;
+      ownedUrls.push(url);
+      keys.push(key);
+    }
     if (keys.length > 0) {
       const driver = storageDriver();
       await Promise.all(
@@ -464,7 +502,7 @@ async function dropPurgedFiles(urls: string[]): Promise<void> {
         }),
       );
     }
-    await prisma.asset.deleteMany({ where: { url: { in: urls } } });
+    await prisma.asset.deleteMany({ where: { url: { in: ownedUrls } } });
   } catch (error) {
     console.warn("trash purge: upload cleanup failed", error);
   }
@@ -499,12 +537,19 @@ export async function emptyTrashAction(workspaceId: string): Promise<Result<{ de
   const result = await prisma.page.deleteMany({
     where: { id: { in: ids }, workspaceId },
   });
-  await dropPurgedFiles(staleUrls);
+  await dropPurgedFiles(staleUrls, workspaceId);
   revalidateWorkspace(workspaceId);
   return { ok: true, deleted: result.count };
 }
 
-/** Read a page's document for a read-only synced view. */
+/**
+ * Read a page's document for a read-only synced view.
+ *
+ * The page scope applies here too: a `GUEST` may only read the pages shared
+ * with them, so a page outside their scope is refused exactly like the
+ * single-page read over HTTP (`GET /api/v1/pages/[pageId]` answers 404, never
+ * a leak). Membership alone is not enough — a guest is a workspace member.
+ */
 export async function getPageContentAction(
   pageId: string,
 ): Promise<
@@ -513,6 +558,13 @@ export async function getPageContentAction(
 > {
   const auth = await authorizePage(pageId);
   if ("error" in auth) return auth;
+  // A trashed page is gone: the read API answers 404 for it, so this action
+  // must not hand its document out either.
+  if (auth.page.deletedAt) return { error: "Page not found." };
+  const visiblePageIds = await pageScopeFor(auth.userId, auth.page.workspaceId, auth.access.role);
+  if (visiblePageIds && !visiblePageIds.has(auth.page.id)) {
+    return { error: "Page not found." };
+  }
   const page = await prisma.page.findUnique({
     where: { id: pageId },
     select: { id: true, title: true, icon: true, content: true },
@@ -700,7 +752,7 @@ export async function deletePageAction(pageId: string, workspaceId: string): Pro
   await prisma.page.deleteMany({
     where: { id: { in: ids }, workspaceId: auth.page.workspaceId },
   });
-  await dropPurgedFiles(staleUrls);
+  await dropPurgedFiles(staleUrls, auth.page.workspaceId);
   await logActivity({
     workspaceId: auth.page.workspaceId,
     actorId: null,

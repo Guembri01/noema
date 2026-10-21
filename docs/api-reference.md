@@ -30,7 +30,8 @@ cookie routes and a session cookie is not accepted by `/api/v1/*`).
   `getCurrentUser`).
 - Routes call `getCurrentUser()`; missing/invalid cookie →
   `401 {"error":"Unauthorized"}`.
-- Obtained via credential login or the SSO flow (§2).
+- Obtained via credential login or the SSO flow (§2). The credential login is
+  rate-limited and locks the account after repeated failures (§3.1).
 - Because the cookie is `SameSite=Lax`, cross-site browser POSTs do not carry
   it; these endpoints take no CSRF token of their own.
 
@@ -43,6 +44,12 @@ cookie routes and a session cookie is not accepted by `/api/v1/*`).
 - Storage: only the SHA-256 hash (`tokenHash`, unique column) is persisted;
   comparison is timing-safe, and `lastUsedAt` is bumped on every call.
   Missing/malformed header or unknown token → `401 {"error":"Unauthorized"}`.
+- The resolver returns the **granted scopes** next to the user id, read from
+  the same query that verifies the token. Every `/api/v1/*` route enforces
+  them (§6) with `hasScope()` from
+  [`src/lib/api-token-scope.ts`](../src/lib/api-token-scope.ts): the read
+  routes need `read:pages`, `POST /api/v1/pages` needs `write:pages`. A token
+  without the required scope is refused with `403 insufficient_scope`.
 
 **Token creation flow (settings UI):**
 
@@ -50,16 +57,30 @@ cookie routes and a session cookie is not accepted by `/api/v1/*`).
    [`src/app/w/[slug]/settings/page.tsx`](../src/app/w/[slug]/settings/page.tsx)
    renders `ApiTokenManager`
    ([`src/components/api-token-manager.tsx`](../src/components/api-token-manager.tsx)).
-2. "Create token" calls the server action `createApiTokenAction(name)`
-   ([`src/server/actions/tokens.ts`](../src/server/actions/tokens.ts)):
-   mints `noema_${randomToken(24)}`, stores `hashApiToken(token)` with a label
-   (≤60 chars, default `"API token"`), and returns the **plaintext exactly
-   once** (`{ token }`) — it is never retrievable again.
+2. "Create token" calls the server action `createApiTokenAction(name, scopes)`
+   ([`src/server/actions/tokens.ts`](../src/server/actions/tokens.ts), which
+   delegates to
+   [`src/server/actions/api-tokens.ts`](../src/server/actions/api-tokens.ts) —
+   the one place where a token row is written): mints `noema_${randomToken(24)}`,
+   stores `hashApiToken(token)` with a label (≤60 chars, default `"API token"`)
+   **and the granted scopes** (`expandScopes(scopes)` — the picked list plus
+   everything it implies, so `write:pages` also grants `read:pages`), and
+   returns the **plaintext exactly once** (`{ token }`) — it is never
+   retrievable again. The scope picker sends the picked scopes along; a list
+   with an unknown or malformed entry is rejected as a whole
+   (`{ error: "Invalid scopes." }`).
 3. "Revoke" calls `revokeApiTokenAction(id)` → deletes the row scoped to the
    current user (`{ ok: true }` or `{ error: "Token not found." }`).
 
+A token created without a single picked scope carries an **empty grant**: it is
+refused with `403 insufficient_scope` by every `/api/v1/*` route and has to be
+re-created with the scopes it needs. The token list marks such a row as
+**No access**.
+
 Tokens are also minted by the OAuth flow (§10) — same `ApiToken` table, named
-`OAuth: <app name>`.
+`OAuth: <app name>`. The OAuth **client secret** follows the same rule as the
+token itself: only its SHA-256 digest is persisted (`clientSecretHash`), the
+plaintext is shown once at registration (§10).
 
 ### 1.3 Cron secret (`/api/cron/templates`)
 
@@ -110,8 +131,11 @@ Query: `?code=…&state=…`. Verifies `state` against the cookie, exchanges the
 code at the provider's `token_endpoint` (client-secret post), verifies the
 `id_token` via JWKS (`issuer` + `audience`), checks `nonce`, then:
 
-- upserts the user by lowercased email (SSO-created users get
-  `passwordHash: "sso:<random>"`),
+- looks the user up by lowercased email, reading `emailVerified` — an account
+  may only be linked when it proved its own address (SSO-created users get
+  `passwordHash: "sso:<random>"` and `emailVerified: true`),
+- creates the user when no account matches (just-in-time), with
+  `emailVerified: true` — the provider vouched for the address,
 - issues the `noema_session` cookie, deletes `sso_state`/`sso_nonce`,
 - redirects to `/app`.
 
@@ -119,7 +143,15 @@ code at the provider's `token_endpoint` (client-secret post), verifies the
 |---|---|
 | Env not configured | `404 {"error":"SSO is not configured."}` |
 | Missing/mismatched `state`/`code`, discovery failure, token exchange failure, bad id_token, nonce mismatch, no email in token | `307` → `/login?error=sso` (redirect, no JSON body) |
+| The address belongs to an account that never verified it | `307` → `/login?error=sso_email_taken` (redirect, no JSON body) |
 | OK | `307` → `/app` |
+
+The `sso_email_taken` case is the account pre-hijacking guard: the address
+may have been registered by somebody else before the real owner showed up, so
+the sign-in is refused instead of landing in that account. The login page
+(`src/app/login/page.tsx`) answers it with "An account with this email already
+exists. Sign in with your password instead. If you never created that account,
+ask your administrator for help."
 
 ---
 
@@ -129,16 +161,64 @@ Source: [`src/lib/api-guard.ts`](../src/lib/api-guard.ts) +
 [`src/lib/rate-limit.ts`](../src/lib/rate-limit.ts)
 
 ```ts
-rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
+rateLimit(request, scope, limit = 120, windowMs = 60_000, { userId }): NextResponse | null
 ```
 
-- Fixed-window, **in-memory** (`Map`), keyed `scope:firstXForwardedForHop` with
-  fallback to `x-real-ip` then the literal `local` (→ every loopback caller
-  shares one bucket when no proxy headers are set). Single-node only; the file
-  header says to swap in Redis for multi-instance.
+- Fixed-window, **in-memory**, in **two separate bounded LRU stores** — one for
+  the client-IP budgets, one for the per-user budgets. Each store holds at
+  most **10 000 buckets** and has a TTL sweep that drops the buckets whose
+  window has closed.
+- The client-IP bucket is keyed `scope:clientIp`. The client IP is read from
+  `X-Forwarded-For` / `X-Real-IP` **only** when the deployment declares how
+  many reverse-proxy hops to trust (`TRUSTED_PROXY_HOPS`); without that
+  declaration the forwarding headers are written by the client itself and are
+  ignored, so every caller of a scope shares the `scope:local` bucket. With
+  `TRUSTED_PROXY_HOPS=N` the **Nth-from-last** `X-Forwarded-For` hop is used —
+  the **N-th hop from the end**, i.e. the **real client** (every trusted proxy
+  appends the address of its peer, so the last N entries of the chain are the
+  ones the trusted proxies appended). A chain shorter than N hops cannot be
+  attributed that way: the `X-Real-IP` fallback is used instead (the proxy
+  that declared itself sets it), and only when that header is missing too
+  does the key fall back to `scope:local`. The address is canonicalized
+  (IPv4 dotted-decimal, IPv6 RFC 5952); a value that is not an IP literal
+  cannot be attributed and also falls back to `scope:local`.
+- **Two budgets** apply. The client-IP budget always does; for routes that
+  know their caller a **per-user** budget (`scope:user:<id>`) applies on top.
+  The user id comes from the session cookie or the API token and cannot be
+  spoofed — rotating the (spoofable) client IP does not buy a fresh
+  allowance. The per-user budget is checked **first**; it is the budget a
+  caller cannot dodge.
+- The two budgets live in **separate stores**, so the client-IP key space —
+  the part an unauthenticated caller controls — cannot evict the per-user
+  bucket. A flood of 10 000 forged client addresses therefore cannot reset
+  an exhausted per-user budget.
+- **The residual of the memory bound, named:** when a store holds more than
+  10 000 **live** keys inside one window, the **coldest live bucket is
+  sacrificed** and **that caller's window starts over** (same trade-off the
+  sliding-window limiter makes at its own 10 000-key cap). For the client-IP
+  store that needs 10 000 distinct client addresses in one window; with the
+  default configuration (`TRUSTED_PROXY_HOPS` unset) every caller of a scope
+  shares `scope:local`, so the key space cannot grow that way at all. For the
+  per-user store it needs 10 000 **distinct authenticated users** holding a
+  live budget in the same window — a real installation, not a flood.
+- An **anonymous** caller only gets the client-IP budget. Without a declared
+  proxy that is the shared `scope:local` bucket — a shared budget, but never a
+  bypassable one.
+- The caller is identified **before** the limit is charged: the per-user
+  budget is keyed on the user id, so the route resolves the session or the
+  API token first. The limiter therefore does not bound that lookup itself —
+  an anonymous flood on a wired route costs one session lookup per request
+  before the limit bites. The lookup is cheap for an unauthenticated caller
+  (a forged cookie fails the signature check before any database access), so
+  only authenticated callers make it expensive.
 - Over the limit → `429 {"error":"Rate limit exceeded"}` with a `retry-after`
   header (whole seconds, min 1). `null` means continue.
 - The limiter resets on process restart; `resetRateLimits()` exists for tests.
+- Single-node only; the file header says to swap in Redis for multi-instance.
+- Operational note: see [OPERATIONS §1.1](./OPERATIONS.md#11-reverse-proxy-in-front-of-the-app-trusted_proxy_hops)
+  — without `TRUSTED_PROXY_HOPS` all clients of a scope share one budget, and
+  a configured `ADMIN_IP_ALLOWLIST` makes the admin/private surfaces answer
+  403 for everybody until the proxy is declared.
 
 | Scope | Limit | Used by |
 |---|---|---|
@@ -153,13 +233,18 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
 | `upload` | 60/min | `POST /api/upload` |
 | `ai` / `ai-skills` / `transcribe` | 30 / 30 / 10 per min | `POST /api/ai*` |
 | `notion-import` | 30/min | `POST /api/import/notion` |
+| `pdf-import` | 30/min | `POST /api/import/pdf` |
+| `export-page` / `export-database` / `export-workspace` | 30 / 30 / 5 per min | `GET /api/export/*` |
+| `inbound-webhook` | 60/min | `POST /api/webhooks/inbound` |
+| `mcp` | 120/min | `GET` / `POST /api/mcp` |
+| `metrics` | 120/min | `GET /api/metrics` |
 | `oauth-token` | 30/min | `POST /oauth/token` |
 | `cron` | 12/min | `POST /api/cron/templates` (after the secret check) |
+| `share-unlock-<token>` | 5/min | `POST /s/[token]/unlock` (per share link) |
 
-**Not rate-limited:** `export/page`, `export/database`, `export/workspace`
-(the zip export is the heaviest unthrottled endpoint), `files/[...path]`,
-`auth/sso/start`, `auth/sso/callback`, `oauth/authorize/complete`,
-`s/[token]/unlock`.
+**Not rate-limited:** `files/[...path]`, `auth/sso/start`,
+`auth/sso/callback`, `oauth/authorize/complete`.
+
 
 ### Common status codes
 
@@ -167,9 +252,10 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000): NextResponse | null
 |---|---|
 | 400 | Malformed JSON (`Invalid JSON body`), missing required param, unknown `action`, or an `{ error }` returned by the backing server action |
 | 401 | `{"error":"Unauthorized"}` — no/invalid session or Bearer token, bad cron secret, bad OAuth client |
-| 403 | `{"error":"Forbidden"}` — no access to the target workspace/page, or role too low |
+| 403 | `{"error":"Forbidden"}` — no access to the target workspace/page, or role too low. On `/api/v1/*` a token without the required scope gets `{"error":"insufficient_scope","required":"read:pages"}` instead (§6) |
 | 404 | Target not found. **Quirk:** workspace-scoped cookie routes report *no access* as `404 {"error":"Workspace not found"}` (tickets/calendar/invites/chat) instead of 403 |
-| 413 / 415 | Upload size / MIME rejection |
+| 413 | Request body over the route's budget (`Request body too large`), or the upload size limit (`File too large (max 10 MB)`) |
+| 415 | Unsupported MIME type |
 | 429 | Rate limited (§3) |
 | 502 | Upstream failure (transcription provider, storage driver) |
 | 503 | Feature unconfigured (AI, transcription, cron secret) |
@@ -196,14 +282,19 @@ rate scope `templates` (30/min)
   any `{error}` from the backing action (no workspace permission, bad
   template id, …)
 - **401** unauthenticated · **429** rate limited
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
 
 ### `GET /api/link-preview?url=` — OpenGraph metadata for bookmark blocks
 
 Source: [`src/app/api/link-preview/route.ts`](../src/app/api/link-preview/route.ts) ·
 cookie session · rate scope `preview` (60/min)
 
-- SSRF guards: `http(s)` only, private/loopback hosts blocked, response capped
-  at 256 KB, 6 s timeout, custom `NoemaBot/1.0` UA.
+- SSRF guard: `http(s)` only; the target is resolved through DNS and every
+  answer must be public; redirects are followed manually and every hop is
+  re-validated, and the URL the response was finally read from is checked
+  again. The card's `image`/`icon` URLs pass the same gate — the victim's
+  browser fetches them. Response capped at 256 KB, 6 s timeout (the DNS
+  lookup included), custom `NoemaBot/1.0` UA.
 - **200**
 
 ```json
@@ -217,7 +308,9 @@ cookie session · rate scope `preview` (60/min)
 
 `null` fields are normal (fetch failure returns the same shape with everything
 but `url`/`host` null). **400** `{"error":"Invalid url"}` or
-`{"error":"Blocked host"}`.
+`{"error":"Blocked host"}` — the latter for a private/loopback/metadata host,
+a host whose DNS answers point into private space, a redirect hop into
+private space, and a host that does not resolve at all.
 
 A page document stores a bookmark block as
 `{ "type": "bookmark", "attrs": { "url": "…", … } }`, and `url` is rendered as
@@ -252,7 +345,7 @@ cookie session · rate scope `upload` (60/min)
 | 400 | `Expected multipart form data` / `Missing file or workspaceId` |
 | 401 | `Unauthorized` |
 | 403 | `Forbidden` — no workspace access **or role `GUEST`** |
-| 413 | `File too large (max 10 MB)` |
+| 413 | `File too large (max 10 MB)` — or `Request body too large.` when the request body itself is over the 12 MiB budget (§3) |
 | 415 | `Unsupported file type: <mime>` |
 | 502 | storage driver message |
 
@@ -265,8 +358,19 @@ cookie session · **no rate limit**
   (`^[A-Za-z0-9_-]+$` / `^[A-Za-z0-9._-]+$`, no `..`, plus
   `isValidAssetKey`).
 - **200** raw bytes with `content-type` and `cache-control: private, max-age=3600`.
+- Reserved for full members: a `GUEST` is refused with `403` before the
+  storage driver is asked, so the refusal carries no bytes, no asset
+  `content-type`, no `etag` and no `cache-control`; a missing asset is
+  refused the same way, so the route is not an existence oracle for a guest.
+  An asset cannot be scoped to a page (`Asset.pageId` is never populated), so
+  the route applies a role gate rather than a page scope. **Consequence: a
+  guest reads the text of a page shared with them, but none of its media —
+  every image block, the page cover, the page icon and every database
+  attachment answers `403` for a guest**, in the app and on the public share
+  page `/s/[token]`. This is deliberate and fail-closed until an asset can be
+  linked to a page.
 - **400** `Bad path` · **401** `Unauthorized` · **403** `Forbidden` (not a
-  workspace member) · **404** `Not found`.
+  workspace member **or role `GUEST`**) · **404** `Not found`.
 
 ---
 
@@ -283,6 +387,17 @@ endpoints are:
 `POST /api/v1/pages` accepts `"type": "DATABASE"` to *create* an empty
 database page (§6).
 
+A FILES cell stores `{ files: { name, url, mimeType? }[] }`, and `url` is an
+app-owned asset path (`/api/files/<workspaceId>/<name>`, as returned by
+`POST /api/upload`): the app's own write path (`setPropertyValueAction`)
+refuses any other URL. The MCP `update_property_value` tool stores the value
+it is given — it has no upload tool, so a client cannot produce an app-owned
+URL — and every stored URL passes the shared `http|https|mailto|tel` href
+allowlist before it is rendered as a link, so a stored `javascript:` URL never
+becomes an anchor, whichever client wrote it. A FILES entry that is not an
+app-owned asset path is dropped from the cell the next time a file is
+attached to it.
+
 ---
 
 ## 6. Public REST API — `/api/v1` (Bearer tokens)
@@ -292,13 +407,54 @@ All five routes: `rateLimit(request, "v1")` (120/min), then
 `getWorkspaceAccess()`. Source files under
 [`src/app/api/v1/`](../src/app/api/v1).
 
+#### The guest scope
+
+A workspace role is `OWNER`, `ADMIN`, `MEMBER` or `GUEST`. A `GUEST` is an
+external collaborator: they may only open the pages that were shared with
+them, the pages of their teamspaces and their own pages. The scope is resolved
+per request by `pageScopeFor()`
+([`src/lib/guest-access.ts`](../src/lib/guest-access.ts)) and applied to every
+read that returns pages — including the **empty**-`q` "recent pages" branch
+(B88/#111):
+
+- the scope lands in the query, **before** the limit — a window never shrinks
+  because a hidden page took a slot;
+- a page **outside** the scope answers **404**, like a page that does not
+  exist — the route never confirms that it does;
+- a full member (`OWNER`/`ADMIN`/`MEMBER`) keeps the whole workspace;
+- an unknown role yields an **empty** scope, never the whole workspace.
+
+The scope covers **pages only**. The datasets that are not page-scoped —
+tickets, discussions, calendar events — are **role-gated** instead: on those
+routes a `GUEST` gets a **403** (§11, §12, §14). The same rule holds behind
+the UI: the workspace pages that render those datasets (tickets, archived
+tickets, cycles, roadmap, projects) answer **404** for a `GUEST`, and the
+member directory needs the `viewMemberDirectory` permission, which a `GUEST`
+does not hold.
+
+**The scope grant is enforced (B04).** Every route checks the scopes the
+bearer token was granted *before* it looks at the request body or the
+workspace: the four read routes require `read:pages`, `POST /api/v1/pages`
+requires `write:pages`. A token without the required scope is refused with
+
+```json
+{ "error": "insufficient_scope", "required": "read:pages" }
+```
+
+and status **403**. The check runs before the workspace lookup, so a token
+without the scope gets `403 insufficient_scope` and learns nothing about the
+workspace (not even whether the workspace exists). The hierarchy is expanded
+first (`write:pages` implies `read:pages`, `admin:workspace` implies every
+scope); an unknown or empty grant fails closed.
+
 ### `GET /api/v1/workspaces` — list caller's workspaces
 [`route.ts`](../src/app/api/v1/workspaces/route.ts)
 
 ```json
 { "workspaces": [ { "id": "…", "name": "Acme", "slug": "acme", "icon": "🚀" } ] }
 ```
-Owned or member workspaces, ordered by `createdAt`. Errors: 401, 429.
+Owned or member workspaces, ordered by `createdAt`. Errors: **403**
+`insufficient_scope` (missing `read:pages`) · 401 · 429.
 
 ### `GET /api/v1/pages?workspaceId=…`
 [`route.ts`](../src/app/api/v1/pages/route.ts)
@@ -307,8 +463,10 @@ Owned or member workspaces, ordered by `createdAt`. Errors: 401, 429.
 { "pages": [ { "id": "…", "parentId": null, "title": "Roadmap",
                "icon": "🗺️", "type": "PAGE", "updatedAt": "…" } ] }
 ```
-Non-trashed pages, ordered by `position` then `createdAt`.
-Errors: **400** `workspaceId is required` · **403** `Forbidden` · 401 · 429.
+Non-trashed pages, ordered by `position` then `createdAt`. A `GUEST` only
+receives the pages in their scope (*The guest scope* above).
+Errors: **400** `workspaceId is required` · **403** `insufficient_scope`
+(missing `read:pages`) · **403** `Forbidden` · 401 · 429.
 
 ### `POST /api/v1/pages` — create a page
 [`route.ts`](../src/app/api/v1/pages/route.ts)
@@ -319,11 +477,18 @@ Errors: **400** `workspaceId is required` · **403** `Forbidden` · 401 · 429.
 - `workspaceId` required; `type` is `PAGE` (default) or `DATABASE`; `title`
   truncated to 500 chars, default `"Untitled"`; content starts as an empty
   ProseMirror doc; `position` = last sibling + 1000.
+- `parentId`, when given, must name a page **of the same workspace**. A parent
+  from another workspace (or one that does not exist) is refused with **400**
+  `That parent page does not exist in this workspace.` — the message never
+  names the foreign page, so it does not leak whether it exists.
 - Requires an **edit-capable role** (view/guest → 403).
 - Dispatches the outbound `page.created` webhook with `{"pageId","via":"api"}`.
 
 **201** `{"page":{"id":"…","title":"New doc","type":"PAGE"}}`
-Errors: 400 (`Invalid JSON body`, `workspaceId is required`) · 401 · 403 · 429.
+Errors: 400 (`Invalid JSON body`, `workspaceId is required`, `That parent page
+does not exist in this workspace.`) · 401 · **403** `insufficient_scope`
+(missing `write:pages`) · **403** `Forbidden` · **413** `Request body too
+large.` — the body is over the 4 MiB budget (§3) · 429.
 
 #### Retrying safely — `Idempotency-Key`
 
@@ -343,6 +508,12 @@ request stays rejected rather than becoming a surprise second attempt. A **5xx**
 and a **429** are deliberately *not* stored: a crash is not an outcome, and rate
 limiting belongs to the attempt, not to the mutation.
 
+The body is fingerprinted by a digest over the bytes that actually arrived plus
+their number — never by the `Content-Length` the client declared. A retry is
+therefore recognised even when it arrives with a different framing (chunked
+the first time, with a `Content-Length` the second time), and a key that is
+reused for a different body is still refused with **422**.
+
 Keys are scoped to the authenticated principal and the endpoint, so two clients
 may pick the same key without colliding. Storage is process-local (a bounded
 24 h FIFO map), which suits the single-process server and the standalone desktop
@@ -357,9 +528,11 @@ to this contract.
             "type":"PAGE", "content": { "type":"doc","content":[…] },
             "updatedAt":"…" } }
 ```
-`workspaceId`/`deletedAt` are stripped from the payload.
-Errors: **404** `Not found` (missing **or trashed**) · **403** `Forbidden`
-(no workspace access) · 401 · 429.
+`workspaceId`/`deletedAt` are stripped from the payload. A page outside the
+caller's guest scope answers **404**, like a page that does not exist.
+Errors: **404** `Not found` (missing, **trashed** or **outside the guest
+scope**) · **403** `insufficient_scope` (missing `read:pages`) · **403**
+`Forbidden` (no workspace access) · 401 · 429.
 
 ### `GET /api/v1/search?workspaceId=…&q=…`
 [`route.ts`](../src/app/api/v1/search/route.ts)
@@ -369,7 +542,29 @@ Errors: **404** `Not found` (missing **or trashed**) · **403** `Forbidden`
                  "snippet":"…matched excerpt…", "updatedAt":"…" } ] }
 ```
 `q` may be empty; title + body search via `searchPages()` in
-`src/server/queries.ts`. Errors: 400 (`workspaceId is required`) · 403 · 401 · 429.
+`src/server/queries.ts`. A `GUEST` only hits the pages in their scope — the
+ranked results and the **empty** `q` "recent pages" branch are both scoped
+(B88/#111). Errors: 400 (`workspaceId is required`) · **403**
+`insufficient_scope` (missing `read:pages`) · 403 · 401 · 429.
+
+### `POST /api/mcp` — MCP (Model Context Protocol) server
+
+Source: [`src/app/api/mcp/route.ts`](../src/app/api/mcp/route.ts) · Bearer
+token · rate scope `mcp` (120/min). It lives outside `/api/v1` but uses the
+same Bearer authentication.
+
+JSON-RPC 2.0 over HTTP: `initialize`, `tools/list`, `tools/call`,
+`resources/list`, `resources/read`. Read-first and fail-closed — the caller's
+token must carry the scope of every tool it calls, and a write call needs
+`?allowWrite=true` plus an edit-capable role.
+
+- **200** the JSON-RPC result (or the JSON-RPC `error` object) · **400**
+  `Invalid JSON body.` / `Invalid request.` · **401** `Unauthorized` ·
+  **413** `Request body too large.` — the body is over the 4 MiB budget (§3) ·
+  **429** rate limited
+
+`GET /api/mcp` returns the discovery descriptor (server info, protocol
+version, tools, resources) and reads no body.
 
 ---
 
@@ -384,6 +579,12 @@ HTTP-addressable.
 
 ## 8. Export / import
 
+An export is a **full-text copy** of the workspace, so it is reserved for full
+members: a `GUEST` — an external collaborator with access to a few shared pages
+— gets a **403** `Forbidden`, and that check comes **first**. The scope check
+behind it is belt and braces: a page outside the caller's scope would be a
+**404**, never a leak.
+
 ### `GET /api/export/page/[pageId]?format=md|json|html|pdf`
 Source: [`src/app/api/export/page/[pageId]/route.ts`](../src/app/api/export/page/[pageId]/route.ts) ·
 cookie session · no rate limit
@@ -397,7 +598,9 @@ cookie session · no rate limit
 
 All success responses carry
 `content-disposition: attachment; filename="<sanitized-title>.<ext>"`.
-Errors: **401** `Unauthorized` · **404** `Not found` · **403** `Forbidden`.
+Errors: **401** `Unauthorized` · **404** `Not found` (missing **or outside the
+caller's scope**) · **403** `Forbidden` (no workspace access **or role
+`GUEST`**).
 
 ### `GET /api/export/database/[pageId]` — CSV
 Source: [`route.ts`](../src/app/api/export/database/[pageId]/route.ts) ·
@@ -407,8 +610,9 @@ Header row = property names (position order), one line per non-trashed row;
 the primary property renders the row title, other cells via `formatCell`.
 **200** `text/csv; charset=utf-8` +
 `content-disposition: attachment; filename="<title>.csv"`.
-Errors: **404** `Not found` — page missing **or `type !== "DATABASE"`** ·
-401 · 403.
+Errors: **404** `Not found` — page missing, **or `type !== "DATABASE"`**, **or
+outside the caller's scope** · 401 · 403 `Forbidden` (no workspace access **or
+role `GUEST`**).
 
 ### `GET /api/export/workspace/[slug]` — bulk zip
 Source: [`route.ts`](../src/app/api/export/workspace/[slug]/route.ts) ·
@@ -417,9 +621,12 @@ cookie session · no rate limit
 Walks every non-trashed page: `type: "DATABASE"` → `<path>.csv`, otherwise
 `<path>.md` (path = title ancestry, deduplicated with ` (n)` suffixes,
 depth-guarded at 50), plus a `README.md`.
+The referenced uploads are bundled under `attachments/` — only uploads of the
+exported workspace; a reference to another workspace's upload is skipped.
 **200** `application/zip` +
 `content-disposition: attachment; filename="<workspace>.zip"`.
-Errors: **404** `Not found` (unknown slug) · 401 · 403.
+Errors: **404** `Not found` (unknown slug) · 401 · 403 `Forbidden` (no
+workspace access **or role `GUEST`**).
 
 ### `POST /api/import/notion` — import a Notion page tree
 Source: [`src/app/api/import/notion/route.ts`](../src/app/api/import/notion/route.ts) ·
@@ -429,17 +636,59 @@ cookie session · rate scope `notion-import` (30/min)
 { "workspaceId": "…", "parentId": null,
   "token": "ntn_…", "pageId": "…-…-…" }
 ```
-Delegates to `importNotionPageAction` (`src/server/actions/notion-import.ts`),
-which fetches from the Notion API server-side.
+
+`format` selects the importer: `notion` (the default, the payload above),
+`html` (`html`, `filename`) or `pdf` (`data` — a base64-encoded PDF, max
+10 MB). The Notion path delegates to `importNotionPageAction`
+(`src/server/actions/notion-import.ts`), which fetches from the Notion API
+server-side; the other two to the importers in
+`src/server/actions/import-formats.ts`.
 
 - **200** `{"ok":true,"id":"…","slug":"…","pages":12}`
+- **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
+- **413** `Request body too large.` — the body is over the 16 MiB budget (§3)
+
+### `POST /api/import/pdf` — import an extracted PDF text layer
+Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
+cookie session · rate scope `pdf-import` (30/min)
+
+Body: `{ workspaceId, parentId?, filename?, text }` — the text layer an
+extractor already produced. The structure-recovery pipeline
+(`src/lib/pdf-import.ts`) runs before the page is created. Companion to
+`POST /api/import/notion` with `format=pdf`, which extracts the text layer
+from a binary PDF itself.
+
+- **200** `{"ok":true,…}` · **400** `Invalid JSON body.` or any action
+  `{error}` · **401** · **429**
+- **413** `Request body too large.` — the body is over the 8 MiB budget (§3)
+
+### `POST /api/import/pdf` — import a PDF text layer
+Source: [`src/app/api/import/pdf/route.ts`](../src/app/api/import/pdf/route.ts) ·
+cookie session · rate scope `pdf-import` (30/min)
+
+```json
+{ "workspaceId": "…", "parentId": null, "filename": "notes.pdf", "text": "…" }
+```
+
+Delegates to `importPdfTextAction`
+([`src/server/actions/import-pdf.ts`](../src/server/actions/import-pdf.ts)),
+which runs the `pdf-import` engine over the extracted text layer and stores the
+recovered blocks as one page.
+
+- `parentId`, when given, must name a page **of the same workspace** — a
+  foreign parent is refused with **400** `That parent page does not exist in
+  this workspace.` and **nothing is written**.
+- **200** `{"ok":true,"id":"…","slug":"…","format":"pdf","title":"…","pages":1,…}`
 - **400** `Invalid JSON body.` or any action `{error}` · **401** · **429**
 
 ---
 
-## 9. Webhooks (outbound only)
+## 9. Webhooks (outbound only) and inbound endpoints
 
-**There is no inbound `/api/webhooks` endpoint** — Noema only *sends*.
+**Outbound**: Noema *sends* webhooks — there is no inbound endpoint for the
+providers Noema talks to. The one inbound route it does have is
+`POST /api/webhooks/inbound` (below), which lets an *automation* call back
+into Noema.
 
 - **Events** (`src/lib/webhooks.ts`): `page.created`, `page.updated`,
   `row.created`, `comment.created`. Empty event list = subscribe to all.
@@ -447,12 +696,27 @@ which fetches from the Notion API server-side.
   `createWebhookAction` / `deleteWebhookAction`
   ([`src/server/actions/webhooks.ts`](../src/server/actions/webhooks.ts)) from
   the workspace settings card; requires a member-managing role; URL must be
-  `http(s)`.
+  `http(s)` **and must point to a public host** — private, reserved and cloud
+  metadata addresses are refused, including host names that resolve into
+  private space (DNS rebinding). Every refusal answers the same message, so
+  the form cannot be used to probe the internal network.
+  **The production default refuses a loopback target** (`127.0.0.0/8`, `::1`,
+  `localhost`). An operator who really has a receiver on the same machine can
+  open the loopback range explicitly with `NOEMA_ALLOW_LOOPBACK_TARGETS=1`;
+  the opt-in covers the loopback range only — RFC1918, link-local, cloud
+  metadata and `.internal`/`.local` names stay refused.
 - **Dispatch** (`dispatchWebhooks(workspaceId, event, data)`): persists one
   `WebhookDelivery` outbox row per receiver *before* any network I/O, then
   fires asynchronously with 5 attempts (0 s / 2 s / 8 s / 30 s / 2 min) and a
   5 s timeout; every attempt updates that single row — one row per logical
   delivery (readable via `getWebhookDeliveries` in `src/server/queries.ts`).
+  The target is checked again before **every** attempt (the creation-time
+  check does not cover DNS rebinding, nor a hook whose URL changed since): a
+  refused target is never contacted, and its row records no status code, so
+  the delivery history is no status oracle for internal services. The same
+  rules apply as at creation time, opt-in included: with
+  `NOEMA_ALLOW_LOOPBACK_TARGETS=1` a loopback target is delivered to, without
+  it the delivery is refused before the target is contacted.
 
 Delivery request your endpoint receives:
 
@@ -476,6 +740,20 @@ is still accepted so pre-v2 receivers keep verifying. The only REST route that
 `POST /api/v1/pages` (§6); the other emitters are server actions
 (`src/server/actions/{pages,database,comments,page-menu}.ts`).
 
+### `POST /api/webhooks/inbound` — an inbound automation endpoint
+Source: [`src/app/api/webhooks/inbound/route.ts`](../src/app/api/webhooks/inbound/route.ts) ·
+rate scope `inbound-webhook` (60/min)
+
+The endpoint an *automation* calls back into. The provider is named in the
+query string (`?provider=…`) or in the `x-webhook-provider` header; the raw
+body is read as text because the signature is verified over the exact bytes
+that were sent.
+
+- **200** `{"ok":true}` · **400** `endpoint is required` · **401**
+  (signature mismatch) · **404** `Unknown endpoint` · **409**
+  `Endpoint disabled` · **429** rate limited
+- **413** `Request body too large.` — the body is over the 1 MiB budget (§3)
+
 ---
 
 ## 10. OAuth (third-party apps registered in settings)
@@ -486,7 +764,11 @@ Apps are registered in workspace settings → **OAuth apps**
 → `createOAuthAppAction`
 in [`src/server/actions/oauth-apps.ts`](../src/server/actions/oauth-apps.ts)):
 name + one or more redirect URIs; returns `clientId` (`noema_<12 chars>`) and
-`clientSecret` **once**.
+`clientSecret` **once**. The secret is stored **only as a SHA-256 digest**
+(`clientSecretHash`) — the plaintext is handed back in that one response and
+never written to the database, never retrievable again; the token endpoint
+compares the presented secret against the digest in constant time
+(`oauthSecretMatches` → `timingSafeEqual`, `src/lib/api-auth.ts`).
 
 Flow:
 
@@ -505,32 +787,61 @@ cookie session · no rate limit
 `redirect_uri`, `state`, `decision` (`allow` | anything else = deny).
 
 - Code: `randomToken(24)`, valid **5 minutes**, single-use (marked used at
-  exchange), bound to client + redirect URI.
+  exchange), bound to client + redirect URI. Only the digest of the code is
+  stored (`codeHash`); the plaintext travels in the redirect below and is
+  looked up by its digest at the token endpoint.
 - **303** → `<redirect_uri>?code=…&state=…` (allow) or
   `<redirect_uri>?error=access_denied&state=…` (deny).
 - **401** `Unauthorized` (no session) · **400** `Invalid request`
-  (unknown client or unregistered redirect URI).
+  (unknown client or unregistered redirect URI) · **413**
+  `Request body too large.` (over the 16 KiB budget, §3).
 
 ### `POST /oauth/token` — authorization_code → access token
 Source: [`src/app/oauth/token/route.ts`](../src/app/oauth/token/route.ts) ·
 rate scope `oauth-token` (30/min)
 
 Form body: `grant_type=authorization_code`, `code`, `client_id`,
-`client_secret`, `redirect_uri`.
+`client_secret`, `redirect_uri`, `code_verifier` (only when the app sent a
+`code_challenge`).
 
 **200**
 ```json
-{ "access_token": "noema_<24 chars>", "token_type": "Bearer", "scope": "read write" }
+{ "access_token": "noema_<24 chars>", "token_type": "Bearer",
+  "scope": "read:pages write:pages read:databases write:databases …" }
 ```
 | Error | Body |
 |---|---|
 | 400 | `{"error":"unsupported_grant_type"}` |
 | 401 | `{"error":"invalid_client"}` — unknown client or wrong secret |
 | 400 | `{"error":"invalid_grant"}` — code unknown / already used / wrong client / wrong redirect URI / expired |
+| 413 | `{"error":"Request body too large."}` — over the 16 KiB budget (§3) |
 | 429 | rate limited |
 
+The code is single-use. It is consumed with a conditional update
+(`UPDATE … WHERE used = false`) and the token is minted only when that update
+matched exactly one row, so two exchanges of the same code cannot both
+succeed: the loser is refused with `invalid_grant`. A refused exchange — a
+wrong client, a wrong redirect URI, a wrong PKCE verifier — never consumes
+the code, so it stays usable.
+
 The minted token is a regular API token named `OAuth: <app name>` and works on
-`/api/v1/*` (§6).
+`/api/v1/*` (§6) within its grant. The `scope` field lists the scopes the
+token was minted with — the same list is stored on the token row and enforced
+by the API. The OAuth flow negotiates no scopes yet (the consent screen offers
+no picker), so the list is fixed: every read and write scope of the catalogue
+([`src/lib/api-token-scope.ts`](../src/lib/api-token-scope.ts)), without
+`admin:workspace`.
+
+**How the exchange is verified.** The client secret is compared against the
+stored digest in constant time — the digest is looked up by `clientId`, the
+presented secret is hashed and the two digests are compared with
+`timingSafeEqual`; a wrong secret is refused before anything else happens.
+The authorization code is looked up by its **digest** (`codeHash`), so the
+database holds no redeemable code, and it is consumed with a conditional
+update (`UPDATE … WHERE used = false`): a token is minted only when that
+update matched exactly one row. Two exchanges of the same code that run in
+parallel therefore cannot both succeed — the loser gets
+`{"error":"invalid_grant"}` and no token (RFC 6749 §4.1.2).
 
 ---
 
@@ -562,14 +873,18 @@ Rate scope `tickets-read` (120/min).
 }
 ```
 - Non-archived unless `archived=true`; capped at 500 rows.
-- Errors: **401** `Unauthorized` · **404** `Workspace not found` (no access)
-  · **429**.
+- Tickets are **not page-scoped**, so the listing is a full-member view: a
+  `GUEST` gets a **403** `Forbidden` and no rows are read.
+- Errors: **401** `Unauthorized` · **403** `Forbidden` (no workspace access
+  **or role `GUEST`**) · **404** `Workspace not found` (no access) · **429**.
 
 ### `POST /api/tickets` — one dispatch endpoint, 13 actions
 Rate scope `tickets-write` (60/min). Body `{ "action": "…", … }`.
 Every action delegates to the same server action the UI uses. Success → **200**
 with the action's `{ok:true, …}` payload; action failure → **400**
 `{"error":"…"}`; unknown action → **400** `{"error":"Unknown action."}`.
+
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
 
 | `action` | Required fields | Optional fields | 200 payload |
 |---|---|---|---|
@@ -606,7 +921,7 @@ cookie session · backing actions `src/server/actions/calendar.ts`.
 
 ```json
 {
-  "feeds":  [ { "id":"…", "name":"Team", "icsUrl":"https://…/basic.ics",
+  "feeds":  [ { "id":"…", "name":"Team",
                 "color":"#3b82f6", "_count":{"events":24} } ],
   "events": [ { "id":"…", "title":"Sprint review",
                 "start":"2026-10-16T17:00:00.000Z", "end":"…",
@@ -615,7 +930,23 @@ cookie session · backing actions `src/server/actions/calendar.ts`.
                 "feed": { "name":"Team", "color":"#3b82f6" } } ]
 }
 ```
-Upcoming events: top 25. Errors: **401** · **404** `Workspace not found` · 429.
+Upcoming events: top 25. Calendar events are **not page-scoped**, so the
+listing is a full-member view: a `GUEST` gets a **403** `Forbidden` and no
+event is read. Errors: **401** · **403** `Forbidden` (no workspace access **or
+role `GUEST`**) · **404** `Workspace not found` · 429.
+
+The subscription's own URL (`icsUrl`) is not part of the response: it is the
+private address of a personal calendar and often carries a secret token in its
+path, so it stays on the server, which reads the feed itself. A feed is
+connected with `{"action":"connect", …}` and its events are listed here.
+
+`url` is the event's `URL:` property from the feed. Only an `http`, `https`,
+`mailto` or `tel` URL is imported and rendered — every other scheme, a
+`javascript:` URL for instance, is dropped and the field is `null` for it. A
+relative path (`/w/acme/page`) and a same-document target (`?q=1`, `#section`)
+are kept. The stored value is checked again on the way out: this response
+and the ICS export (`?format=ics`) leave out a URL that is not on the
+allowlist, so an event stored before the fix cannot leak one either.
 
 ### `POST /api/calendar` — scope `calendar-write` (30/min)
 
@@ -636,6 +967,8 @@ Upcoming events: top 25. Errors: **401** · **404** `Workspace not found` · 429
 Errors: 400 (`Invalid JSON body.` / `Unknown action.` / action `{error}`) ·
 401 · 429.
 
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
+
 ---
 
 ## 13. Invites & email
@@ -654,10 +987,11 @@ Returns the 25 most recent email deliveries:
                     "createdAt":"…" } ] }
 ```
 
-Permission quirk: the route only requires workspace membership, but
-`listEmailDeliveries` internally requires a member-managing role and returns
-`[]` otherwise (fail-closed, not an error). Errors: 401 · 404
-`Workspace not found` · 429.
+Permission: admin only — the route asks the role matrix (`inviteMember`, i.e.
+owner/admin) before it lists anything, so a member or a guest gets 403
+`Forbidden` and the deliveries are never read. `listEmailDeliveries` keeps its
+own member-managing check as the second line of defence. Errors: 401 · 403
+`Forbidden` · 404 `Workspace not found` · 429.
 
 ### `POST /api/invites` — scope `invites-write` (20/min)
 
@@ -669,11 +1003,24 @@ Permission quirk: the route only requires workspace membership, but
 - Workspace invite (default when `target` ≠ `"teamspace"`; role defaults to
   `MEMBER`) → **200** `{"ok":true,"link":"…","emailed":true,"warning":null}`
   (`warning` present when SMTP is unconfigured and the link must be shared
-  manually).
+  manually). The role an invitation carries is a grant and goes through the
+  same policy as a role change: an admin may invite `MEMBER`/`GUEST` only, and
+  only the workspace owner may invite an `ADMIN` (400 `Only the workspace
+  owner can invite an admin.` otherwise). A role outside `GUEST`/`MEMBER`/
+  `ADMIN` is refused with 400 `Unknown role.` — the body is forwarded
+  unchanged, so the route decides no role of its own.
+- The role is checked again when the invitation is redeemed (`/invite/<token>`):
+  it is granted against the role its sender holds at that moment, so an
+  `ADMIN` invitation an admin minted before that check existed is refused
+  (`This invitation can no longer be redeemed. Please ask the workspace owner
+  for a new invitation.`), as is one whose sender has since been demoted or
+  removed. An `ADMIN` invitation the owner minted still redeems; no
+  invitation row is rewritten.
 - Teamspace invite → **200**
   `{"ok":true,"invited":true,"added":false,"link":"…","email":"…","emailed":true}`.
 - Errors: 400 (`Invalid JSON body.` / action `{error}` such as unknown
-  workspace, invalid email, no permission) · 401 · 429.
+  workspace, invalid email, no permission, unknown role) · 401 · **413**
+  `Request body too large.` — the body is over the 256 KiB budget (§3) · 429.
 
 ---
 
@@ -689,8 +1036,10 @@ Source: [`src/app/api/chat/route.ts`](../src/app/api/chat/route.ts)
                                  "meta":null, "createdAt":"…",
                                  "user":{"name":"Ada","email":"ada@…"} } ] } ] }
 ```
-Latest 20 threads with their messages. Errors: 401 · 404
-`Workspace not found` · 429.
+Latest 20 threads with their messages. Discussions are **not page-scoped**, so
+the listing is a full-member view: a `GUEST` gets a **403** `Forbidden` and no
+thread is read. Errors: 401 · 403 `Forbidden` (no workspace access **or role
+`GUEST`**) · 404 `Workspace not found` · 429.
 
 ### `POST /api/chat` — scope `chat-write` (60/min)
 
@@ -710,6 +1059,8 @@ Latest 20 threads with their messages. Errors: 401 · 404
 Errors: 400 (`Invalid JSON body.` / `Unknown action.` / action `{error}`) ·
 401 · 429.
 
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
+
 ### `POST /api/chat/stream` — streamed grounded answer — scope `chat-stream` (20/min)
 Source: [`src/app/api/chat/stream/route.ts`](../src/app/api/chat/stream/route.ts)
 
@@ -722,12 +1073,20 @@ Source: [`src/app/api/chat/stream/route.ts`](../src/app/api/chat/stream/route.ts
 - **200** is a **plain-text stream** (`text/plain; charset=utf-8`,
   `cache-control: no-store`, `x-accel-buffering: no`) — UTF-8 chunks as the
   model emits them. Provider failures after headers are sent travel
-  **in-band** as `\n\n[stream-error] <detail>`.
+  **in-band** as `\n\n[stream-error] AI provider error (<upstatus>): <code>`
+  — the classified failure (upstream status plus a stable code), never the
+  provider's body. A transport failure travels **in-band** the same way, as
+  `\n\n[stream-error] Could not reach the provider.` — a class, never the
+  runtime's message (it can carry the request header, and the header carries
+  the key). The same class is persisted in the assistant row — unless the
+  stream already produced a partial answer, in which case the row holds that
+  partial answer alone.
 - Errors before streaming: **400** `Invalid JSON body` /
   `Write something first.` (empty or >4000 chars trimmed) · **401** ·
   **403** `You do not have permission to post here.` (read-only role) ·
   **404** `Discussion not found.` · **503** `AI is not configured for this
-  workspace.` · 429.
+  workspace.` · **413** `Request body too large.` — the body is over the
+  256 KiB budget (§3) · 429.
 
 ### `POST /api/ai` — OpenAI-compatible completion proxy — scope `ai` (30/min)
 Source: [`src/app/api/ai/route.ts`](../src/app/api/ai/route.ts)
@@ -736,17 +1095,36 @@ Source: [`src/app/api/ai/route.ts`](../src/app/api/ai/route.ts)
 { "mode": "ask" | "summarize" | "autofill",   // default "ask"
   "prompt": "…",      // ≤4000 chars, required for ask/autofill
   "context": "…",     // ≤8000 chars, required for summarize
-  "workspaceId": "…" } // optional: grounds "ask" with 5 workspace search hits
+  "maxTokens": 2000,  // optional, clamped to 64…8000
+  "workspaceId": "…" } // optional: a workspace id
 ```
 
 - Modes: `ask` (grounded Q&A), `summarize` (context → Markdown summary),
   `autofill` (single database cell value, temperature 0.1, ≤60 tokens).
+- The body is validated against a schema (`src/lib/validation.ts`): `mode` is
+  one of `ask` / `summarize` / `autofill`, `workspaceId` is a workspace id
+  (or absent / `null` for the environment configuration) and `maxTokens` an
+  integer. A body that does not fit is refused with **400**
+  `Invalid request body`; a body that fits but is longer than the caps above
+  is trimmed, not refused. The schema's own free-text bound sits far above
+  those caps (200 000 characters) on purpose: the route trims, so a long
+  editor selection must become an answer and not an error. The body is
+  buffered before the schema runs, so the bound is not a request-size limit.
+- `workspaceId` also selects the provider: the workspace's own endpoint and
+  API key are used **only** when the caller has access to that workspace.
+  Otherwise the environment configuration (`AI_API_KEY` / `AI_BASE_URL` /
+  `AI_MODEL`) applies, and the other workspace's provider is never read. The
+  same rule grounds "ask" in the workspace search (5 hits).
 - **200** `{"text":"…"}`
-- Errors: **400** `Invalid JSON body` / `prompt is required` /
-  `context is required to summarize` / `prompt is required to autofill` ·
-  **401** · **503** `AI is not configured. Add a provider in workspace
+- Errors: **400** `Invalid JSON body` / `Invalid request body` /
+  `prompt is required` / `context is required to summarize` /
+  `prompt is required to autofill` ·
+  **401** · **413** `Request body too large.` — the body is over the 256 KiB
+  budget (§3) · **503** `AI is not configured. Add a provider in workspace
   settings (AI) or set AI_API_KEY / AI_BASE_URL / AI_MODEL.` ·
-  provider failures returned as `{error}` with the upstream status · 429.
+  **502** `AI provider error (<upstatus>): <code>` (the classified failure,
+  never the provider's body) or `Could not reach the provider.` (a transport
+  failure — a class, never the runtime's message) · 429.
 
 ### `POST /api/ai/skills` — editor AI skills — scope `ai-skills` (30/min)
 Source: [`src/app/api/ai/skills/route.ts`](../src/app/api/ai/skills/route.ts)
@@ -761,8 +1139,20 @@ Skill ids: `improve`, `proofread`, `reformat`, `shorten`, `explain`,
 ```json
 { "skill": "improve", "replacesSelection": true, "text": "the sentence…" }
 ```
-Errors: 400 (`Invalid JSON body.` / `Unknown skill.` / `text is required.`,
-text capped at 8000) · 401 · 503 (AI unconfigured) · 429.
+- The body is validated against a schema (`src/lib/validation.ts`): a body
+  that does not fit is refused with **400** `Invalid request body.`. A
+  `workspaceId` is a workspace id, or absent / `null` for the environment
+  configuration.
+- `workspaceId` selects the provider under the same rule as `/api/ai`: the
+  workspace's own endpoint and API key are used only when the caller has
+  access to that workspace, the environment configuration applies otherwise.
+- Errors: 400 (`Invalid JSON body.` / `Invalid request body.` /
+  `Unknown skill.` / `text is required.`,
+  text capped at 8000) · 401 · **413** `Request body too large.` — the body is
+  over the 256 KiB budget (§3) · 503 (AI unconfigured) · **502** `AI provider
+  error (<upstatus>): <code>` (the classified failure, never the provider's
+  body) or `Could not reach the provider.` (a transport failure — a class,
+  never the runtime's message) · 429.
 
 ### `POST /api/ai/transcribe` — speech-to-text — scope `transcribe` (10/min)
 Source: [`src/app/api/ai/transcribe/route.ts`](../src/app/api/ai/transcribe/route.ts)
@@ -773,8 +1163,12 @@ Source: [`src/app/api/ai/transcribe/route.ts`](../src/app/api/ai/transcribe/rout
 `AI_TRANSCRIBE_API_KEY` / `OPENAI_API_KEY`.
 
 - **200** `{"text":"…"}` · **400** `file is required` · **401** ·
+  **413** `Request body too large.` — the body is over the 25 MiB budget (§3) ·
   **503** `Transcription is not configured. Set AI_TRANSCRIBE_API_KEY …` ·
-  **502** `Transcription failed (<upstatus>): …` or transport message · 429.
+  **502** `Transcription failed (<upstatus>): <code>` — the classified failure
+  (upstream status plus a stable code), never the provider's body — or
+  `Could not reach the provider.` for a transport failure, a class, never the
+  runtime's message · 429.
 
 ---
 
@@ -782,15 +1176,41 @@ Source: [`src/app/api/ai/transcribe/route.ts`](../src/app/api/ai/transcribe/rout
 
 ### `POST /s/[token]/unlock`
 Source: [`src/app/s/[token]/unlock/route.ts`](../src/app/s/[token]/unlock/route.ts) ·
-public · no rate limit
+public · rate scope `share-unlock-<token>` (5/min) · attempt brake per share link
 
-Form body: `password`. Delegates to `verifySharePassword(token, password)`
+Form body: `password`. Delegates to `attemptShareUnlock(token, password)`
 (`src/server/actions/share.ts`).
 
-- Success → sets cookie `share_<token>=1` (`httpOnly`, `lax`, 7 days) and
-  **303** → `/s/<token>`.
+- Success → sets cookie `share_<token>` (`httpOnly`, `lax`, `secure` in
+  production, 7 days) and **303** → `/s/<token>`. The cookie value is an
+  HMAC-SHA256 over the share token and an expiry, keyed by `AUTH_SECRET`; it is
+  verified server-side, so a forged value (including the old `1`) unlocks
+  nothing.
 - Wrong password → **303** → `/s/<token>?error=1`.
 - No JSON body in either direction.
+- **413** `Request body too large.` — the body is over the 16 KiB budget (§3).
+
+Two brakes guard the password: the rate limit's **scope** names the share
+link, the attempt counter is **keyed** by it.
+
+1. **Rate limit** — scope `share-unlock-<token>`, 5 requests per minute
+   (`src/lib/api-guard.ts`). The bucket key is `share-unlock-<token>:<ip>`,
+   so a caller that rotates its forwarded ip gets a fresh rate-limit budget.
+2. **Attempt counter** — `attemptShareUnlock` counts failed attempts per
+   share token, so rotating the forwarded ip does not reset the budget:
+   10 failed attempts lock the link for 15 minutes, the budget is restored
+   after 60 minutes of silence, and a successful unlock clears the count.
+   While a link is locked **no password is compared at all** (fail closed).
+
+| Case | Response |
+|---|---|
+| Over 5 requests/min for the link | **429** `{"error":"Rate limit exceeded"}` with `retry-after` (seconds) |
+| Link locked (10 failed attempts) | **429** `{"error":"Too many unlock attempts"}` with `retry-after` (seconds, until the lock expires) |
+| Wrong password | **303** → `/s/<token>?error=1` (no JSON body) |
+| Correct password | **303** → `/s/<token>`, cookie `share_<token>=<HMAC>` (`httpOnly`, `lax`, 7 days) |
+
+The rate limit and the attempt counter are in-process (like every other
+limiter in §3): a multi-instance deployment needs a shared store.
 
 ---
 
@@ -821,9 +1241,38 @@ rescheduled.
 | Wrong/missing header | `401 {"error":"Unauthorized"}` |
 | Over 12 calls/min | `429 {"error":"Rate limit exceeded"}` |
 
+### `POST /api/cron/jobs` — enqueue a background job
+Source: [`src/app/api/cron/jobs/route.ts`](../src/app/api/cron/jobs/route.ts) ·
+auth: `x-cron-secret` · rate scope `cron` (12/min)
+
+Body: `{ kind, payload?, maxAttempts?, delayMs? }` → **202**
+`{"job":…,"stats":…}`. An unregistered `kind` fails by design (a typo cannot
+silently succeed and drop work). `GET /api/cron/jobs` claims the due jobs,
+runs their handlers and completes or fails them — the queue
+(`src/lib/job-queue.ts`) applies its exponential backoff and dead-letters a
+job whose attempts are spent. The store under the queue is in-memory; a
+durable deployment swaps in a Prisma-backed adapter.
+
+- **400** `Body must be a JSON object.` / `"kind" is required.` · **401** ·
+  **429**
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
+
+### `GET`/`POST /api/ready` — readiness probe and `.env` check
+Source: [`src/app/api/ready/route.ts`](../src/app/api/ready/route.ts) ·
+auth: `x-cron-secret` (or `x-ready-secret`)
+
+`GET` grades the process env plus a live Postgres probe and returns the
+readiness report, the health payload and the deployment manifest (**200** when
+ready, **503** when not). `POST` takes `{"envFile": "DATABASE_URL=…"}` and
+grades an operator-supplied `.env` file (**200** when it is complete, **422**
+when it is not). The endpoint fails closed: without the shared ops secret it
+answers **503**.
+
+- **413** `Request body too large.` — the body is over the 256 KiB budget (§3)
+
 ---
 
-## Appendix A — endpoint index (31 endpoints / 26 route files)
+## Appendix A — endpoint index (39 endpoints / 31 route files)
 
 | # | Method | Path | Auth | Rate scope | File |
 |---|---|---|---|---|---|
@@ -844,20 +1293,28 @@ rescheduled.
 | 15 | GET | `/api/export/database/[pageId]` | cookie | — | `src/app/api/export/database/[pageId]/route.ts` |
 | 16 | GET | `/api/export/workspace/[slug]` | cookie | — | `src/app/api/export/workspace/[slug]/route.ts` |
 | 17 | POST | `/api/import/notion` | cookie | `notion-import` | `src/app/api/import/notion/route.ts` |
-| 18 | GET | `/api/tickets` | cookie | `tickets-read` | `src/app/api/tickets/route.ts` |
-| 19 | POST | `/api/tickets` | cookie | `tickets-write` | `src/app/api/tickets/route.ts` |
-| 20 | GET | `/api/calendar` | cookie | `calendar-read` | `src/app/api/calendar/route.ts` |
-| 21 | POST | `/api/calendar` | cookie | `calendar-write` | `src/app/api/calendar/route.ts` |
-| 22 | GET | `/api/invites` | cookie | `invites-read` | `src/app/api/invites/route.ts` |
-| 23 | POST | `/api/invites` | cookie | `invites-write` | `src/app/api/invites/route.ts` |
-| 24 | GET | `/api/chat` | cookie | `chat-read` | `src/app/api/chat/route.ts` |
-| 25 | POST | `/api/chat` | cookie | `chat-write` | `src/app/api/chat/route.ts` |
-| 26 | POST | `/api/chat/stream` | cookie | `chat-stream` | `src/app/api/chat/stream/route.ts` |
-| 27 | POST | `/api/ai` | cookie | `ai` | `src/app/api/ai/route.ts` |
-| 28 | POST | `/api/ai/skills` | cookie | `ai-skills` | `src/app/api/ai/skills/route.ts` |
-| 29 | POST | `/api/ai/transcribe` | cookie | `transcribe` | `src/app/api/ai/transcribe/route.ts` |
-| 30 | POST | `/api/cron/templates` | `x-cron-secret` | `cron` | `src/app/api/cron/templates/route.ts` |
-| 31 | POST | `/s/[token]/unlock` | share password | — | `src/app/s/[token]/unlock/route.ts` |
+| 18 | POST | `/api/import/pdf` | cookie | `pdf-import` | `src/app/api/import/pdf/route.ts` |
+| 19 | GET | `/api/tickets` | cookie | `tickets-read` | `src/app/api/tickets/route.ts` |
+| 20 | POST | `/api/tickets` | cookie | `tickets-write` | `src/app/api/tickets/route.ts` |
+| 21 | GET | `/api/calendar` | cookie | `calendar-read` | `src/app/api/calendar/route.ts` |
+| 22 | POST | `/api/calendar` | cookie | `calendar-write` | `src/app/api/calendar/route.ts` |
+| 23 | GET | `/api/invites` | cookie | `invites-read` | `src/app/api/invites/route.ts` |
+| 24 | POST | `/api/invites` | cookie | `invites-write` | `src/app/api/invites/route.ts` |
+| 25 | GET | `/api/chat` | cookie | `chat-read` | `src/app/api/chat/route.ts` |
+| 26 | POST | `/api/chat` | cookie | `chat-write` | `src/app/api/chat/route.ts` |
+| 27 | POST | `/api/chat/stream` | cookie | `chat-stream` | `src/app/api/chat/stream/route.ts` |
+| 28 | POST | `/api/ai` | cookie | `ai` | `src/app/api/ai/route.ts` |
+| 29 | POST | `/api/ai/skills` | cookie | `ai-skills` | `src/app/api/ai/skills/route.ts` |
+| 30 | POST | `/api/ai/transcribe` | cookie | `transcribe` | `src/app/api/ai/transcribe/route.ts` |
+| 31 | POST | `/api/cron/templates` | `x-cron-secret` | `cron` | `src/app/api/cron/templates/route.ts` |
+| 32 | POST | `/s/[token]/unlock` | share password | `share-unlock-<token>` | `src/app/s/[token]/unlock/route.ts` |
+| 33 | GET | `/api/mcp` | Bearer | `mcp` | `src/app/api/mcp/route.ts` |
+| 34 | POST | `/api/mcp` | Bearer | `mcp` | `src/app/api/mcp/route.ts` |
+| 35 | GET | `/api/ready` | `x-cron-secret` | — | `src/app/api/ready/route.ts` |
+| 36 | POST | `/api/ready` | `x-cron-secret` | — | `src/app/api/ready/route.ts` |
+| 37 | GET | `/api/cron/jobs` | `x-cron-secret` | `cron` | `src/app/api/cron/jobs/route.ts` |
+| 38 | POST | `/api/cron/jobs` | `x-cron-secret` | `cron` | `src/app/api/cron/jobs/route.ts` |
+| 39 | POST | `/api/webhooks/inbound` | signature | `inbound-webhook` | `src/app/api/webhooks/inbound/route.ts` |
 
 ## Appendix B — domains with **no** REST surface
 

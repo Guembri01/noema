@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { searchPagesForPrompt } from "@/server/queries";
 import { rateLimit } from "@/lib/api-guard";
-import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfig } from "@/lib/ai-provider";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
+import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfigForUser } from "@/lib/ai-provider";
+import { redactSecrets } from "@/lib/error-reporting";
 import { assembleContext, estimateTokens, type ContextDoc } from "@/lib/ai-context";
+import { aiRequestSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -41,30 +49,24 @@ function contextToDocs(context: string): ContextDoc[] {
  * with guidance when unconfigured so the "Ask AI" block degrades gracefully.
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "ai", 30, 60_000);
-  if (limited) return limited;
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "ai", 30, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  let body: {
-    prompt?: string;
-    context?: string;
-    mode?: string;
-    workspaceId?: string;
-    maxTokens?: number;
-  };
+  let raw: unknown;
   try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    raw = await readJsonBody(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body");
   }
+  const parsed = aiRequestSchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+  const body = parsed.data;
 
-  const mode =
-    body.mode === "summarize"
-      ? "summarize"
-      : body.mode === "autofill"
-        ? "autofill"
-        : "ask";
+  const mode = body.mode ?? "ask";
   const prompt = (body.prompt ?? "").trim().slice(0, 4000);
   let context = (body.context ?? "").slice(0, 8000);
 
@@ -82,7 +84,16 @@ export async function POST(request: Request) {
   if (mode === "ask" && body.workspaceId) {
     const access = await getWorkspaceAccess(user.id, body.workspaceId);
     if (access && prompt) {
-      const results = await searchPagesForPrompt(body.workspaceId, prompt, 5);
+      // Ground only in the pages the caller may open: a guest gets the pages
+      // shared with them, a member the whole workspace. An empty guest scope
+      // grounds in nothing rather than in everything.
+      const visiblePageIds = await pageScopeFor(user.id, body.workspaceId, access.role);
+      const results = await searchPagesForPrompt(
+        body.workspaceId,
+        prompt,
+        visiblePageIds,
+        5,
+      );
       const grounding = results
         .map((page) => `- ${page.title}: ${page.snippet}`.trim())
         .join("\n");
@@ -111,7 +122,10 @@ export async function POST(request: Request) {
     maxTokens: contextBudget,
   });
 
-  const config = await resolveAiConfig(body.workspaceId);
+  // The provider (endpoint + API key) belongs to the workspace it is stored
+  // for, so it is only used when the caller has access to the workspace it
+  // names; otherwise the environment defaults apply (audit B13).
+  const config = await resolveAiConfigForUser(user.id, body.workspaceId);
   if (!config) {
     return NextResponse.json({ error: AI_NOT_CONFIGURED }, { status: 503 });
   }
@@ -127,7 +141,13 @@ export async function POST(request: Request) {
     config,
   );
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+    // The provider already reduced its failure to a class (status + code); the
+    // message is scrubbed once more so no credential-shaped string can leave
+    // the server.
+    const detail = redactSecrets(result.error);
+    const error =
+      typeof detail === "string" && detail !== "" ? detail : "AI request failed";
+    return NextResponse.json({ error }, { status: result.status });
   }
   return NextResponse.json({ text: result.text });
 }

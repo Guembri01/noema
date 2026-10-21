@@ -64,13 +64,13 @@ navigation** — reusing the shipped FTS pipeline, with zero schema changes.
 | Mirror write paths | create `src/server/actions/pages.ts:73-83`, update `:271`, duplicate `page-menu.ts:264-280`, **restore** `page-versions.ts:70-72` (closes the old D8 bypass, red-proven by `page-versions.test.ts:90-96`) | Covered — **except** the creators listed in D78.6 |
 | Query engine | `src/server/queries.ts:243-342`: pass 1 exact `websearch_to_tsquery` + `ts_rank` + `ts_headline` (`:274-287`, `LIMIT take+1` `:286`, errors swallowed to `[]` `:287`), pass 2 prefix `term:*` **only if pass 1 empty** (`:291-312`, condition `:292`), pass 3 substring fallback for un-backfilled mirrors (`:315-328`) | Working; ranking = single-pass (G78.6) |
 | Snippets | `ts_headline` options `'StartSel=, StopSel=, MaxWords=18…'` (`queries.ts:277-278, 300-301`) — **empty** delimiters; fallback `makeSnippet` (`src/lib/search.ts:27-35`) cuts ±120 chars around the first match | Snippet text ships and renders (`search-results.tsx:69`, `quick-find.tsx:124-128`) but **no term highlighting** |
-| Guest scope | `src/lib/guest-access.ts:46-78` (`guestVisiblePageIds`), `:84-91` (`pageScopeFor` → `null` for non-GUEST `:89`); applied at `search/page.tsx:28` and `actions/search.ts:29` — but **post-LIMIT** at `queries.ts:330`, **absent** in the empty branch `:262-271` | Correct for the tested cases; three holes (D78.1–D78.3) |
+| Guest scope | `src/lib/guest-access.ts` (`guestScope` → page ids and teamspace ids; `viewerScopeFor`; `pageScopeFor` → `null` for a full member, an empty set for an unknown role); applied at `search/page.tsx`, `actions/search.ts`, `api/v1/search/route.ts` and the MCP read tools; the scope lands in SQL before the limit (`src/lib/fts.ts`) | Correct for the tested cases; the empty-query branch is scoped by B88 (#111) |
 | Search page | `src/app/w/[slug]/search/page.tsx:29-31` (empty `q` → no results at all), GET form `:38-47`, results list `src/components/search-results.tsx:58-78` (plain links — tab/Enter only) | Server-rendered, i18n'd (`t(locale, …)` `:55, :75, :88`) |
 | Pagination | `searchPagesPaged` (`queries.ts:349-366`, take clamped 1..100 `:355`, `take+1` peek `:358-361`), `loadMoreSearchAction` (`actions/search.ts:41-71`), "Load more" appends (`search-results.tsx:40-50`), e2e 60-page proof `e2e/noema.spec.ts:1175-1209` | Shipped ✅ — but **OFFSET**, while the component docstring claims "keyset" (`search-results.tsx:17-19`) → D78.4 |
 | Quick find | `src/components/quick-find.tsx`: 180 ms debounce (`:36-56`, `:52`), `cmdk` with `shouldFilter={false}` (`:78-81` — server results are final), one always-on create item (`:97-104`), pages group `:106-133`, 8 results max (`actions/search.ts:30`) | Works; no recents, no commands, no filters |
 | Entry points | ⌘K/Ctrl+K listener `src/components/workspace-shell.tsx:82-89`, palette mounted `:157`; sidebar button `sidebar.tsx:130`, footer menu item `sidebar/sidebar-footer.tsx:87`; matrix `:421` ✅ "Sidebar search opening quick find" | Two entry points, one component — the "single entry point" row `:462` is B43's merge |
 | Fuzzy matcher | `src/lib/fuzzy.ts:36` (`fuzzyMatch`), `:70-77` (`fuzzyFilter`); consumers = `src/lib/fuzzy.test.ts:2` only (repo grep `from "@/lib/fuzzy"` → test file alone) | Built, tested, **unwired** (B43) |
-| v1 API | `src/app/api/v1/search/route.ts`: rate limit `:11`, bearer auth `:13-14`, workspace access `:22-23`, then `searchPages(workspaceId, query)` **with no scope** `:25` | D78.3 |
+| v1 API | `src/app/api/v1/search/route.ts`: rate limit `:11`, bearer auth `:13-14`, workspace access `:22-23`, then `searchPagesPage(workspaceId, query, visiblePageIds, …)` — **with the guest scope** since B02 (#16) | D78.3 **closed**; the empty-`q` branch (D78.2) is still unscoped (#105) |
 | Second engine (AI) | `queries.ts:633-663` `searchPagesForPrompt`: loads up to 500 pages and scores in memory (`:640-654`), no guest scope | Divergent ranking + same scope question; chat-only today (`src/lib/chat-context.ts:121`) |
 | Domain checks | `scripts/check-search.mjs` — **9 checks**: index `:52`, ranking `:63-64`, bearer API `:85-94`, page render/snippet `:101-102`, prefix `:104-111`, trash exclusion `:113-120`, mirror freshness `:122-133`, exit code `:140`; `package.json:33` | Green (9/9) per matrix `:456` |
 | e2e | `e2e/search.spec.ts`: FTS by title `:166`, empty state `:189`, empty query `:200`, Ctrl+K palette flow `:212` (Enter `:176`, `Control+k` `:223`, option-count 1 `:230-231`), sidebar button `:256` (Escape `:287`); guest search scoping `e2e/noema.spec.ts:1142-1173` | B39's file — READ-only here; **no ArrowUp/Down assertion anywhere** |
@@ -100,28 +100,31 @@ navigation** — reusing the shipped FTS pipeline, with zero schema changes.
 | G78.4 | Palette = pages + one create item; fuzzy matcher unwired | `quick-find.tsx:97-133`; `fuzzy.ts` test-only consumer | `:462` |
 | G78.5 | Snippets have no highlighted terms | `StartSel=`/`StopSel=` empty (`queries.ts:278`) | `:463` |
 | G78.6 | Prefix pass cannot affect ranking; no typo tolerance | prefix only when pass 1 is empty (`queries.ts:292`); `searchTerms` drops 1-char terms and caps at 8 (`src/lib/search.ts:18-24`) | `:459`, `:464` |
-| G78.7 | Scope holes: post-LIMIT filter, unscoped empty branch, unscoped API | `queries.ts:330`, `:262-271`, `api/v1/search/route.ts:25` | `:456`, `:465` |
+| G78.7 | Scope holes: the post-LIMIT filter and the unscoped v1 API are **closed** (#16); the unscoped empty branch is **open** (B88 / #105) | `queries.ts:735-744`, `api/v1/search/route.ts:73` | `:456`, `:465` |
 | G78.8 | FTS-indexed content misses several creation paths | see D78.6 | `:458` |
 | G78.9 | OFFSET paging mislabeled "keyset"; duplicates/skips possible under writes | `search-results.tsx:17-19` vs `actions/search.ts:54-56` + `queries.ts:356-364` | `:465` |
 | G78.10 | Keyboard nav unproven: palette arrows unasserted, results list has none | `search.spec.ts` presses only Enter/`Control+k`/Escape (`:176`, `:223`, `:287`); results are plain links (`search-results.tsx:58-78`) | `:466` |
 
 **Defects this spec makes the implementation close first:**
 
-- **D78.1 — guest windows shrink.** Visibility is filtered *after*
-  `LIMIT take+1 OFFSET` (`queries.ts:330`), so a guest whose first 51 ranked
-  hits include 20 hidden pages sees ~31 results in a "50" window and the
-  Load-more maths (`queries.ts:361-364`) drifts. The guest e2e
-  (`noema.spec.ts:1142-1173`) only queries one-match strings, so it cannot
-  catch this.
+- **D78.1 — guest windows shrink. — Closed.** Visibility is filtered in
+  SQL, *before* the limit (`src/lib/fts.ts:170-173` for the ranked passes,
+  `queries.ts:632-641` and `:670-684` for the fallback tiers), so a guest's
+  window holds visible pages only and the Load-more maths cannot drift. The
+  original evidence (a post-`LIMIT` filter at `queries.ts:330`) no longer
+  matches the code.
 - **D78.2 — empty-query scope bypass.** `searchPages` with `q=""` returns
   workspace-wide recent pages with **no** `visiblePageIds` filter
-  (`queries.ts:262-271`). `loadMoreSearchAction` never validates `query`
-  (`actions/search.ts:41-56`), so a guest can call that server action with
-  `query: ""` and read titles/icons/types of private pages.
-- **D78.3 — v1 API ignores guest scope.** `api/v1/search/route.ts:25` calls
-  `searchPages(workspaceId, query)` with the default `visiblePageIds = null`
-  (`queries.ts:247`) while the page (`page.tsx:28`) and the palette
-  (`actions/search.ts:29`) both scope. A GUEST-role token over-reads.
+  (`queries.ts:735-744`). `loadMoreSearchAction` never validates `query`
+  (`actions/search.ts:49-83`), so a guest can call that server action with
+  `query: ""` and read titles/icons/types of private pages. **Open** — fixed
+  on the B88 branch (#105; that issue's body describes the MCP route).
+- **D78.3 — v1 API ignores guest scope. — Closed** by B02 (#16):
+  `api/v1/search/route.ts:73` now passes the resolved scope
+  (`pageScopeFor`) to `searchPagesPage`, like the page (`page.tsx:67`) and the
+  palette (`actions/search.ts:37`) do. A GUEST-role token no longer
+  over-reads the pages listing; the empty-`q` branch (D78.2) is the remaining
+  hole.
 - **D78.4 — "keyset" docstring on offset paging** (`search-results.tsx:17-19`).
   Harmless today, but the claim is false; windows shift when pages are
   created/edited mid-scroll.
@@ -175,11 +178,12 @@ navigation** — reusing the shipped FTS pipeline, with zero schema changes.
   assert 0 results / error), then green.
 - **R78.3** — `GET /api/v1/search` passes the caller's scope into
   `searchPages` (`pageScopeFor` for GUEST callers) exactly like the page and
-  palette (`route.ts:25` gains the same line as `page.tsx:28`). Acceptance:
+  palette (`route.ts:73` carries the same line as `page.tsx:67`). Acceptance:
   route-level test — GUEST token sees only its pages; member token unchanged;
   **cross-workspace isolation test**: no response array ever contains a
   `pageId` whose `workspaceId` differs from the requested one (asserted by
-  re-querying each returned id).
+  re-querying each returned id). — **Shipped** in B02 (#16); the empty-`q`
+  branch remains open under R78.1/R78.2 (#105).
 
 ### Filters & type (M2)
 
@@ -251,7 +255,7 @@ navigation** — reusing the shipped FTS pipeline, with zero schema changes.
 | Recents | `localStorage` `noema:recents:<userId>:<workspaceId>` | `{ kind: "search" \| "page", value/id, at }[]`, cap 10, oldest evicted; per-device (O78.3) |
 | Filter chips | derived from the URL | No separate state |
 | Ranking | SQL only | No cache; `ts_rank` computed per query |
-| Scope set | `pageScopeFor` per request (`guest-access.ts:84-91`) | `null` for members (no predicate cost), `Set` for guests — now pushed into SQL (Dec1) |
+| Scope set | `pageScopeFor` per request (`guest-access.ts:152-159`) | `null` for members (no predicate cost), `Set` for guests — now pushed into SQL (Dec1) |
 
 ## 6. Contracts
 
@@ -417,10 +421,10 @@ green (`package.json:33`).
 **Risks**
 
 1. **Guest scope list size pushed into SQL.** `guestVisiblePageIds` returns a
-   `Set` that can reach thousands of ids (`guest-access.ts:46-78`); an
+   `Set` that can reach thousands of ids (`guest-access.ts:123-127`); an
    `= ANY($1)` parameter has a practical array bound (~32 k) but the round-trip
    cost is real. Mitigation: keep the scope set for members `null`
-   (`pageScopeFor:89`) so only guests pay, and add a `check:search`-style timing
+   (`pageScopeFor:157`) so only guests pay, and add a `check:search`-style timing
    probe if a workspace grows past ~5 k visible pages.
 2. **Collision with two parallel work streams.** B39 owns `e2e/search.spec.ts` and
    B43 owns `quick-find.tsx`/keybinding in parallel.

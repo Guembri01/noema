@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { authenticateApiRequest } from "@/lib/api-auth";
+import { hasScope } from "@/lib/api-token-scope";
 import { getWorkspaceAccess } from "@/lib/permissions";
+import { pageScopeFor } from "@/lib/guest-access";
 import { searchPagesPage } from "@/server/queries";
 import { rateLimit } from "@/lib/api-guard";
 import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
@@ -35,12 +37,24 @@ function parseSearchType(raw: string | null): "PAGE" | "DATABASE" | null {
  * `PageType`; omitting it (or an unknown value) searches every type. The
  * engine keyset still drives the walk, so `has_more` / `next_cursor` are
  * unchanged and a scoped walk neither skips nor repeats a hit.
+ *
+ * A `GUEST` hits only the pages shared with them (the same scope the
+ * workspace UI applies); a full member keeps the whole workspace. The bearer
+ * token must also hold the `read:pages` scope; a token without it is refused
+ * with 403 `insufficient_scope` before the workspace is even looked up. The
+ * scope covers ranked search and the empty-`q` "recent pages" branch (#111).
  */
 export async function GET(request: Request) {
-  const limited = rateLimit(request, "v1");
-  if (limited) return limited;
   const auth = await authenticateApiRequest(request);
+  const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
+  if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!hasScope(auth.scopes, "read:pages")) {
+    return NextResponse.json(
+      { error: "insufficient_scope", required: "read:pages" },
+      { status: 403 },
+    );
+  }
 
   const url = new URL(request.url);
   const workspaceId = url.searchParams.get("workspaceId");
@@ -50,6 +64,10 @@ export async function GET(request: Request) {
   }
   const access = await getWorkspaceAccess(auth.userId, workspaceId);
   if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Guests only hit the pages shared with them — the same scope the
+  // workspace UI applies, so search can never surface a page they may not
+  // open. (The empty-`q` branch is still unscoped — #105.)
+  const visiblePageIds = await pageScopeFor(auth.userId, workspaceId, access.role);
 
   const pageSize = url.searchParams.get("page_size");
   if (pageSize !== null && pageSize.trim() !== "" && !Number.isFinite(Number(pageSize))) {
@@ -63,7 +81,7 @@ export async function GET(request: Request) {
 
   const type = parseSearchType(url.searchParams.get("type"));
 
-  const page = await searchPagesPage(workspaceId, query, null, { limit, cursor });
+  const page = await searchPagesPage(workspaceId, query, visiblePageIds, { limit, cursor });
   const scoped = type === null ? page.items : page.items.filter((result) => result.type === type);
   const items =
     url.searchParams.get("rank") === "bm25"

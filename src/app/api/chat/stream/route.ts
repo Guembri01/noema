@@ -2,8 +2,13 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { rateLimit } from "@/lib/api-guard";
+import {
+  bodyReadError,
+  MAX_JSON_BODY_BYTES,
+  readJsonBody,
+} from "@/lib/body-limit";
 import { prisma } from "@/lib/db";
-import { resolveAiConfig, chatCompleteStream } from "@/lib/ai-provider";
+import { resolveAiConfig, chatCompleteStream, providerAttribution, providerClass } from "@/lib/ai-provider";
 import { buildChatRequest } from "@/lib/chat-runtime";
 import { effectiveChatModel } from "@/lib/chat-model";
 import { linkifyReferences } from "@/lib/chat-context";
@@ -52,10 +57,9 @@ function textStream(body: string): Response {
  * proposal through the real server actions (the only path that changes data).
  */
 export async function POST(request: Request) {
-  const limited = rateLimit(request, "chat-stream", 20, 60_000);
-  if (limited) return limited;
-
   const user = await getCurrentUser();
+  const limited = rateLimit(request, "chat-stream", 20, 60_000, { userId: user?.id });
+  if (limited) return limited;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   let payload: {
@@ -73,9 +77,9 @@ export async function POST(request: Request) {
     model?: string | null;
   };
   try {
-    payload = (await request.json()) as typeof payload;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    payload = await readJsonBody<typeof payload>(request, MAX_JSON_BODY_BYTES);
+  } catch (error) {
+    return bodyReadError(error, "Invalid JSON body");
   }
 
   // --- Confirmation: apply a previously proposed action ---------------------
@@ -173,7 +177,11 @@ export async function POST(request: Request) {
           controller.enqueue(encoder.encode(delta));
         }
       } catch (error) {
-        const detail = error instanceof Error ? error.message : "AI request failed";
+        // The failure travels in-band *and* into the persisted assistant
+        // message, so both carry a class, never provider or runtime text: the
+        // runtime's transport message can carry the request header, and the
+        // header carries the workspace's key.
+        const detail = providerClass(error, providerAttribution(requestConfig));
         // The status is already 200, so the failure travels in-band and the client
         // surfaces it next to the partial answer.
         controller.enqueue(encoder.encode(`\n\n[stream-error] ${detail}`));

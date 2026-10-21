@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { randomToken } from "@/lib/slug";
+import { hashOAuthSecret } from "@/lib/api-auth";
 
 /** Register an OAuth app; the client secret is returned exactly once. */
 export async function createOAuthAppAction(
@@ -29,18 +30,21 @@ export async function createOAuthAppAction(
     return { error: "requiresPkce must be a boolean." };
   }
 
+  // Only the digest is stored: the plaintext is handed back once, here, and
+  // never persisted.
+  const clientSecret = randomToken(24);
   const app = await prisma.oAuthApp.create({
     data: {
       userId: user.id,
       name: label,
       clientId: `noema_${randomToken(12)}`,
-      clientSecret: randomToken(24),
+      clientSecretHash: hashOAuthSecret(clientSecret),
       redirectUris: uris,
       requiresPkce,
     },
   });
   revalidatePath("/w", "layout");
-  return { clientId: app.clientId, clientSecret: app.clientSecret };
+  return { clientId: app.clientId, clientSecret };
 }
 
 export async function deleteOAuthAppAction(

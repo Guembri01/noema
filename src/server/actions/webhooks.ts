@@ -5,6 +5,11 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canManageMembers } from "@/lib/permissions";
 import { WEBHOOK_EVENTS, encryptWebhookSecret } from "@/lib/webhooks";
+// B11 — SSRF guard: a hook may not point at an internal service. The same
+// gate the calendar feed path uses (`src/lib/feed-guard.ts`); it runs again
+// before every delivery attempt (`src/lib/webhooks.ts`), because a check at
+// creation time alone does not cover DNS rebinding.
+import { isBlockedOutboundTarget } from "@/lib/feed-guard";
 import {
   isWebhookEventType,
   matchesSubscription,
@@ -43,6 +48,21 @@ export async function createWebhookAction(input: {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     return { error: "Only http(s) webhook URLs are allowed." };
+  }
+  // B11 — the target must be a public host: no loopback, no RFC1918, no
+  // link-local/cloud-metadata and no name that resolves into private space.
+  // One uniform message for every refusal, so the form cannot be used to
+  // probe the internal network.
+  // `allowLoopbackWithOptIn` asks for the operator opt-in
+  // (`NOEMA_ALLOW_LOOPBACK_TARGETS=1`): only the loopback range can be
+  // opened that way, and only when the operator set the variable.
+  if (
+    await isBlockedOutboundTarget(url.toString(), {
+      allowLoopbackInDevelopment: true,
+      allowLoopbackWithOptIn: true,
+    })
+  ) {
+    return { error: "Webhook URLs must point to a public host." };
   }
 
   const events = input.events.filter((event) =>

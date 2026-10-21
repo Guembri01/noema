@@ -156,7 +156,11 @@ export default async function SettingsPage({
   // anyone without membership) never receive it — even in the RSC payload.
   const directory = canPerformWorkspaceAction(access.role, "viewMemberDirectory");
   const [members, tokens, webhooks, deliveries] = await Promise.all([
-    getWorkspaceMembers(workspace.id),
+    // The roster is only read when the caller may see it: a guest never
+    // receives a member name, not even in the RSC payload.
+    directory
+      ? getWorkspaceMembers(workspace.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof getWorkspaceMembers>>),
     prisma.apiToken.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
@@ -533,6 +537,7 @@ export default async function SettingsPage({
             createdAt: row.createdAt.toISOString(),
           }))}
           locale={locale}
+          currentUserRole={access.role}
         />
       )}
 

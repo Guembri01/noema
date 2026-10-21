@@ -40,6 +40,10 @@ path that ties the pieces together.
 
 ## 2. Current state audit (evidence)
 
+This section records the state of the code **when the spec was written**. Rows
+marked *Superseded* have changed since — they name what the implementation does
+today; the specification below is unchanged.
+
 ### 2.1 Route inventory (`src/app/api/**`, 23 route files)
 
 | Group | Files | Auth | Notes |
@@ -63,11 +67,11 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
 | Concern | Evidence | State |
 | --- | --- | --- |
 | Token hashing | `src/lib/api-auth.ts:5-7` | SHA-256 hex at rest; `apiTokenMatches` uses `timingSafeEqual` (`:9-13`). |
-| Verification | `src/lib/api-auth.ts:16-35` | Bearer parse → `prisma.apiToken.findUnique({ tokenHash })` → `lastUsedAt` update (`:30-32`). Returns `{ userId }` **only — no token id, no scopes**. |
-| Minting (manual) | `src/server/actions/tokens.ts:10-21` | `noema_${randomToken(24)}`, plaintext returned once; revoke at `:23-31`. |
-| Minting (OAuth) | `src/app/oauth/token/route.ts:41-48` | Creates an `ApiToken` named `OAuth: ${app.name}`; **scope hardcoded `"read write"`** (`:53`). |
-| Schema | `prisma/schema.prisma` `model ApiToken` | `id, userId, name, tokenHash @unique, createdAt, lastUsedAt` — **no scopes, no expiry, no per-token quota**. |
-| Rate limiting | `src/lib/rate-limit.ts:17-33, 36-43` | In-memory fixed window (documented single-node topology, `:1-5`); key = `scope:first-x-forwarded-for-hop`. Used as `"v1"` 120/min shared by all four v1 routes, `"oauth-token"` 30/min (`oauth/token/route.ts:11`), `"tickets-read"` 120 / `"tickets-write"` 60 (`api/tickets/route.ts:26,50`). |
+| Verification | `src/lib/api-auth.ts:16-35` | Bearer parse → `prisma.apiToken.findUnique({ tokenHash })` → `lastUsedAt` update (`:30-32`). *Superseded 2026-10-20 (B04, upstream #18):* the resolver returns the granted scopes as well (`{ userId, scopes }`) and every `/api/v1/*` route enforces them. |
+| Minting (manual) | `src/server/actions/api-tokens.ts:30-51` | `noema_${randomToken(24)}`, plaintext returned once; revoke at `:74-81`. `src/server/actions/tokens.ts` delegates to it. |
+| Minting (OAuth) | `src/app/oauth/token/route.ts:41-48` | Creates an `ApiToken` named `OAuth: ${app.name}`; *Superseded 2026-10-20 (B04, upstream #18):* the endpoint now mints the token with the catalogue's read and write scopes (without `admin:workspace`) and returns that list in the response's `scope` field. |
+| Schema | `prisma/schema.prisma` `model ApiToken` | `id, userId, name, tokenHash @unique, createdAt, lastUsedAt` — **no scopes, no expiry, no per-token quota**. *Superseded in part 2026-10-20 (B04, upstream #18):* the model has had a `scopes` column (`String[] @default([])`) for a while, but it was stored without being enforced; it is enforced on `/api/v1/*` now. There is still no expiry and no per-token quota. |
+| Rate limiting | `src/lib/rate-limit.ts` | In-memory fixed window in **two separate bounded LRU stores** (documented single-node topology), each capped at 10 000 live buckets; key = `scope:clientIp` — the client IP is read from the forwarding headers **only** when `TRUSTED_PROXY_HOPS` declares the trusted proxy hops, otherwise the key is `scope:local` and every caller of the scope shares it. A **second** budget `scope:user:<id>` is keyed on the session/API-token user id and cannot be spoofed; it lives in its own store, so a flood of forged client addresses cannot evict it or reset an exhausted user window. Used as `"v1"` 120/min shared by all four v1 routes, `"oauth-token"` 30/min, `"tickets-read"` 120 / `"tickets-write"` 60. |
 
 ### 2.3 Webhooks & delivery
 
@@ -91,10 +95,10 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
 | Aspect | Evidence | State |
 | --- | --- | --- |
 | Registration | `src/server/actions/oauth-apps.ts:9-39` | `clientId = noema_<rand>`, `clientSecret = randomToken(24)` shown once; redirect URIs URL-validated (`:19-26`). |
-| Schema | `model OAuthApp` / `model OAuthCode` | **`clientSecret` stored in plaintext**; code has `used` + `expiresAt`. |
+| Schema | `model OAuthApp` / `model OAuthCode` | **`clientSecretHash` (SHA-256 digest) and `codeHash`** — neither the secret nor the code is stored in plaintext; the code has `used` + `expiresAt`. |
 | Consent | `src/app/oauth/authorize/page.tsx:17-21, 41-65` | Validates client + redirect-URI membership; allow/deny form; **`scope` parameter never parsed**; no PKCE. |
 | Code issue | `oauth/authorize/complete/route.ts:31-40` | Single-use, 5-minute expiry, `state` echoed (`:27,43`). |
-| Exchange | `oauth/token/route.ts:23-54` | Secret compared plaintext (`:23-26`), code checks (`:28-39`), mints `ApiToken`, **`scope: "read write"` hardcoded (`:53`)**; no refresh token, no PKCE verifier. |
+| Exchange | `oauth/token/route.ts:23-54` | Secret compared against its digest, constant time (`oauthSecretMatches`); the code is looked up by its digest and consumed with a conditional update (`used = false`), so it can be exchanged exactly once; mints `ApiToken`, **`scope: "read write"` hardcoded (`:53`)**; no refresh token, no PKCE verifier. |
 | Management UI | `settings/page.tsx:125-136, 262` | `OAuthAppManager` lists apps; issued `OAuth:` tokens appear only as rows in the flat token list (`:155-159`). |
 
 ### 2.5 Pagination — what exists and what does not
@@ -114,10 +118,14 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
   `?page_size=100&start_cursor=…` and reads `has_more` / `next_cursor`
   (`src/server/actions/notion-import.ts:42-51`). Parity means speaking the
   same dialect outward.
-- **Consumers to keep green**: `scripts/check-api.mjs:34,40,50`,
-  `check-search.mjs:86`, `check-oauth.mjs:66`, `check-webhooks.mjs:43`,
+- **Consumers to keep green**: `scripts/check-api.mjs:51,57,67`,
+  `check-search.mjs:81`, `check-oauth.mjs:66`, `check-webhooks.mjs:47`,
   `check-routes.mjs:35` read `body.workspaces` / `body.pages` / `body.results`
-  — those keys must survive.
+  — those keys must survive. Since the grant is enforced on `/api/v1/*`, the
+  tokens these scripts mint have to carry it: `check-search.mjs` mints
+  `read:pages`, `check-webhooks.mjs` mints `write:pages`, `check-api.mjs`
+  mints `read:pages` + `write:pages` and proves the refusal with a second
+  token that has no grant and is answered with `403 insufficient_scope`.
 
 ### 2.6 Gap summary (defects this spec closes)
 
@@ -133,7 +141,9 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
 - **D24.6** — Event catalog duplicated in UI code; picker has no descriptions;
   "empty = all events" is invisible to the user (§2.3).
 - **D24.7** — OAuth scopes hardcoded; consent ignores `scope`; no PKCE;
-  `clientSecret` plaintext at rest (§2.4).
+  `clientSecret` plaintext at rest — **fixed**: the secret and the
+  authorization code are stored as SHA-256 digests (`clientSecretHash`,
+  `codeHash`) and the secret is compared in constant time (§2.4).
 - **D24.8** — No marketplace-style install path: four managers sit flat in
   settings with no catalog, no test step, no health state (§2.1, §2.4).
 
@@ -236,7 +246,10 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
   `scripts/check-webhooks.mjs` updated alongside.
   *Acceptance:* known-vector unit test (fixed secret/time/body → fixed hex);
   tampered body and stale timestamp both fail verification; the updated
-  `check-webhooks.mjs` passes against prod.
+  `check-webhooks.mjs` passes against prod — the payload gate starts the
+  shipped payload with `NOEMA_ALLOW_LOOPBACK_TARGETS=1`, so the loopback
+  receiver of the checker is allowed; without that opt-in the production
+  default refuses a loopback target.
 - **R24.14** — Signing-secret UX: creation **generates a server-side secret
   by default**, shown exactly once (same contract as `createApiTokenAction`,
   `tokens.ts:9-21`), with an option to paste a custom one; a **Rotate** action
@@ -310,7 +323,9 @@ returning 429 + `Retry-After`). Minting and verification live elsewhere:
 - **R24.24** — Client secret hashed at rest: `OAuthApp.clientSecret` is
   replaced by `clientSecretHash = SHA-256(secret)`, compared timing-safe at
   exchange (mirroring `apiTokenMatches`, `api-auth.ts:9-13`); one-time display
-  at creation (`oauth-apps.ts:38`) is unchanged.
+  at creation (`oauth-apps.ts:38`) is unchanged. — **implemented**: the
+  column is renamed, the secret and the authorization code are stored as
+  digests, and the token endpoint compares the digest in constant time.
   *Acceptance:* a seeded DB dump of `OAuthApp` contains no plaintext secret;
   the existing authorize → exchange happy path still succeeds.
 - **R24.25** — Granted-token management: settings groups tokens by source —
@@ -371,6 +386,7 @@ model OAuthApp {
 
 model OAuthCode {
   // existing: code, clientId, userId, redirectUri, expiresAt, used
+  codeHash            String    @unique  // replaces `code` (R24.24) — digest only
   codeChallenge       String?  // PKCE (R24.23)
   codeChallengeMethod String?  // "S256"
 }
@@ -458,7 +474,7 @@ verifier received (do not re-serialize JSON); reject if older than 300 s.
 | Secret rotated while deliveries are queued | Signature is computed at send time with the *current* secret (R24.14). |
 | Hook deactivated between claim and send | Scheduler re-checks `active` at claim time; claimed rows for inactive hooks are marked `failed` with `error = "hook disabled"` (R24.16). |
 | Receiver returns 3xx | `redirect: "manual"` → recorded as a failed attempt, no redirect following (R24.11). |
-| `X-Forwarded-For` spoofing | IP bucket trusts the first hop (`rate-limit.ts:37-39`) — documented as best-effort behind a trusted proxy; the token bucket (R24.6) is spoof-proof and becomes the primary control. |
+| `X-Forwarded-For` spoofing | The forwarding headers are **ignored** unless `TRUSTED_PROXY_HOPS` declares how many proxy hops to trust (`tenant-guard.ts:303-352`); with N hops the Nth-from-last hop is used, without a declaration every caller of a scope shares the `scope:local` bucket. The per-user budget (`scope:user:<id>`, keyed on the session/API-token id) is the control that cannot be spoofed at all — and it lives in its own store, so no flood of forged addresses can evict it or reset its window. |
 | In-memory limiter reset on deploy | Buckets clear on restart — accepted under the single-node topology (R24.9); noted in O24.1. |
 | Empty event selection | Means "all events" — now explicitly labeled (R24.19); existing hooks keep working unchanged. |
 | Consent downgrade mid-flow | Only the final checked scopes are minted (R24.20); re-authorization can widen them again. |

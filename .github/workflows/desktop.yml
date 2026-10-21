@@ -7,6 +7,16 @@
 #  · the payload is assembled *before* Tauri packs it — the Next standalone
 #    server, its static assets, the Prisma CLI and a Node runtime — because the
 #    installed app must not require Node, npm or a terminal.
+#
+# And one thing is split on purpose, for a security reason:
+#  · the token is read-only everywhere a pull request can reach, and the write
+#    scope plus the signing secrets live in the `release` job, which only a tag
+#    push runs. `npm ci` executes the repository's own `postinstall`, so a pull
+#    request must never be able to read a token or a signing key — neither out
+#    of `.git/config` (hence `persist-credentials: false` on every checkout)
+#    nor out of a step's environment. The signing secrets are needed *while the
+#    bundle is built*, which is why the release job builds the app itself
+#    instead of reusing the artifacts of the read-only build.
 name: desktop
 
 on:
@@ -27,7 +37,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -36,8 +46,14 @@ env:
 
 jobs:
   build:
+    # The branch / pull-request build: installers, uploaded as artifacts. It
+    # holds no secret and no write scope. On a tag push the `release` job
+    # below does the (signed) build instead, so the app is built once.
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -54,13 +70,17 @@ jobs:
             name: macos-arm64
             rust-target: aarch64-apple-darwin
             bundles: dmg,app
-          - os: macos-13
+          - os: macos-15-intel
             name: macos-x64
             rust-target: x86_64-apple-darwin
             bundles: dmg,app
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The token must not outlive the checkout: the next step installs
+          # dependencies, and `npm ci` runs the repository's own `postinstall`.
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -81,7 +101,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-tauri*
-          key: tauri-cli-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.toml') }}
+          key: tauri-cli-${{ runner.os }}-${{ matrix.rust-target }}-${{ hashFiles('src-tauri/Cargo.toml') }}
 
       - name: Install the Tauri CLI
         shell: bash
@@ -97,7 +117,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev patchelf pkg-config \
-            libssl-dev libsoup-3.0-dev
+            libssl-dev libsoup-3.0-dev libfuse2
 
       - name: Install dependencies
         run: npm ci
@@ -133,26 +153,18 @@ jobs:
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          # linuxdeploy ships as an AppImage; extract it instead of requiring FUSE.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        # No token and no tag: this job only builds. Creating the release — the
+        # one thing that needs `contents: write` — is the `release` job's.
         with:
           # The payload is already assembled, so skip the JS build hook.
-          args: --target ${{ matrix.rust-target }} --bundles ${{ matrix.bundles }}
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Noema {0}', github.ref_name) || '' }}
-          releaseDraft: true
-          prerelease: false
+          # --verbose is deliberate: Tauri otherwise hides linuxdeploy's stderr
+          # behind "failed to run linuxdeploy".
+          args: --target ${{ matrix.rust-target }} --bundles ${{ matrix.bundles }} --verbose
           includeUpdaterJson: false
 
       - name: Upload build artifacts (branch/PR runs)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
         with:
           name: noema-${{ matrix.name }}
@@ -165,6 +177,133 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  release:
+    # The release build: the one place that holds a write-scoped token (the
+    # draft release) and the Apple/Windows signing secrets (the bundle is
+    # signed while it is built). A tag push alone runs this job — a pull
+    # request can never reach it, whatever it puts in the tree.
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    name: release ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x64
+            rust-target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+          - os: ubuntu-22.04
+            name: linux-x64
+            rust-target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+          - os: macos-latest
+            name: macos-arm64
+            rust-target: aarch64-apple-darwin
+            bundles: dmg,app
+          - os: macos-15-intel
+            name: macos-x64
+            rust-target: x86_64-apple-darwin
+            bundles: dmg,app
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+          components: rustfmt, clippy
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cache the Tauri CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri*
+          key: tauri-cli-${{ runner.os }}-${{ matrix.rust-target }}-${{ hashFiles('src-tauri/Cargo.toml') }}
+
+      - name: Install the Tauri CLI
+        shell: bash
+        run: |
+          if ! command -v cargo-tauri >/dev/null 2>&1; then
+            cargo install tauri-cli --version "^2" --locked
+          fi
+          cargo tauri --version
+
+      - name: Linux native dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf pkg-config \
+            libssl-dev libsoup-3.0-dev libfuse2
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate icons (from the single 1024px source)
+        shell: bash
+        run: |
+          if [ ! -f assets/icon.png ]; then
+            echo "::error::assets/icon.png is missing — the icon set is generated from it."
+            exit 1
+          fi
+          npm run desktop:icons
+
+      - name: Preflight
+        run: node scripts/desktop/preflight.mjs
+        continue-on-error: true # informational in CI; the build below is the gate
+
+      - name: Package the payload (standalone server + Prisma CLI + Node runtime)
+        run: npm run desktop:prepare
+        env:
+          DATABASE_URL: postgresql://noema:dummy@127.0.0.1:5432/noema?schema=public
+
+      - name: Type-check Rust
+        working-directory: src-tauri
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
+
+      - name: Rust unit tests
+        working-directory: src-tauri
+        run: cargo test --all-features
+
+      - name: Build the app and open the draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # linuxdeploy ships as an AppImage; extract it instead of requiring FUSE.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        with:
+          # The payload is already assembled, so skip the JS build hook.
+          args: --target ${{ matrix.rust-target }} --bundles ${{ matrix.bundles }}
+          tagName: ${{ github.ref_name }}
+          releaseName: ${{ format('Noema {0}', github.ref_name) }}
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false
+
   payload-smoke:
     # The check that catches a *plausible* but broken installer: it boots the
     # packaged payload (bundled runtime + staged server + migrations) and fetches
@@ -176,6 +315,8 @@ jobs:
     # it. Booting the payload is the only thing that catches that.
     name: payload boots and serves
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:16-alpine
@@ -192,6 +333,8 @@ jobs:
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci

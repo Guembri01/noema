@@ -95,6 +95,46 @@ export function sanitizeHref(raw: unknown): string | null {
   return value;
 }
 
+/**
+ * The app's own asset path. A stored FILES value may only point at an
+ * uploaded workspace asset, so the write path keeps every stored file URL
+ * inside this prefix (`/api/files/<workspaceId>/<name>`).
+ */
+export const FILE_URL_PREFIX = "/api/files/";
+
+/**
+ * Validate a FILES entry URL on the write path.
+ *
+ * Only the app's own `/api/files/...` asset URLs are accepted: an absolute
+ * `http(s)://` URL, a `javascript:` URL, a protocol-relative URL or a
+ * traversal attempt is rejected. The URL is returned unchanged, or `null`
+ * when it is not an app-owned asset path.
+ */
+export function sanitizeFileUrl(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim();
+  if (!value.startsWith(FILE_URL_PREFIX)) return null;
+  // Control characters and a traversal segment never belong in an asset path.
+  if (/[\u0000-\u001f\u007f]/.test(value)) return null;
+  if (value.includes("..")) return null;
+  return value;
+}
+
+/**
+ * True when every file URL a FILES value carries points at the app's own
+ * uploaded asset. A value without a `files` array is not a FILES value and
+ * is accepted unchanged; a FILES value with any other URL is not.
+ */
+export function fileUrlsAreAppOwned(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return true;
+  const files = (value as { files?: unknown }).files;
+  if (!Array.isArray(files)) return true;
+  return files.every((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    return sanitizeFileUrl((entry as { url?: unknown }).url) !== null;
+  });
+}
+
 const HREF_ATTR_KEYS = ["href", "url"] as const;
 
 /**
@@ -150,6 +190,54 @@ export const commentSchema = z.object({
   parentId: z.string().cuid().nullable().optional(),
   blockId: z.string().max(200).optional(),
   quote: z.string().max(500).optional(),
+});
+
+/**
+ * Upper bound for a free-text field of an AI request body.
+ *
+ * The routes trim the text they use — a prompt to 4000 characters, a context
+ * and a skill text to 8000 — so this bound is only a guard against an absurd
+ * body. It sits far above those trimming limits on purpose: a long selection
+ * (the editor sends the raw text of what the user selected) must still be
+ * trimmed by the route, not refused with 400.
+ */
+const AI_TEXT_MAX_CHARS = 200_000;
+
+/**
+ * Request bodies of the AI proxy routes (`/api/ai`, `/api/ai/skills`).
+ *
+ * The routes used to cast `request.json()` straight into a TypeScript type,
+ * which let a client send anything — including the `workspaceId` of a
+ * workspace it does not belong to (audit B13). These schemas pin the shape:
+ * a body that does not match is refused with 400 before it reaches the
+ * provider. A missing or null `workspaceId` means "no workspace" — the
+ * environment configuration — as it did before the schemas.
+ */
+export const aiRequestSchema = z.object({
+  prompt: z.string().max(AI_TEXT_MAX_CHARS).optional(),
+  context: z.string().max(AI_TEXT_MAX_CHARS).optional(),
+  mode: z.enum(["ask", "summarize", "autofill"]).optional(),
+  // The id format is deliberately not enforced: the route asks the access
+  // check whether the caller may use that workspace, and a stricter schema
+  // would turn a foreign or malformed id into a 400 instead of the answer the
+  // access check gives.
+  workspaceId: z.string().min(1).nullish(),
+  maxTokens: z.number().int().optional(),
+});
+
+export const aiSkillRequestSchema = z.object({
+  skillId: z.string().max(64).optional(),
+  text: z.string().max(AI_TEXT_MAX_CHARS).optional(),
+  // The id format is deliberately not enforced: the route asks the access
+  // check whether the caller may use that workspace, and a stricter schema
+  // would turn a foreign or malformed id into a 400 instead of the answer the
+  // access check gives.
+  workspaceId: z.string().min(1).nullish(),
+  targetLocale: z.string().max(16).optional(),
+  tone: z.string().max(32).optional(),
+  style: z.string().max(32).optional(),
+  audience: z.string().max(32).optional(),
+  maxWords: z.number().int().optional(),
 });
 
 export type SignupInput = z.infer<typeof signupSchema>;
