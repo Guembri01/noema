@@ -724,6 +724,11 @@ export async function chatComplete(
  * the runtime's error — the caller must reduce it to a class before it reaches
  * a client (`providerClass`), because the runtime's message can carry the
  * request header, and the header carries the workspace's key.
+ *
+ * The token ceiling is enforced here as well: this is the transport the chat
+ * panel reaches for first, so a gate the single-shot transport alone carried
+ * would not hold on the ordinary path. The refusal is thrown as a class, so
+ * the stream's in-band failure carries the message.
  */
 export async function* chatCompleteStream(
   input: {
@@ -739,6 +744,22 @@ export async function* chatCompleteStream(
   if (input.context) messages.push({ role: "user", content: `Context:\n${input.context}` });
   if (input.user) messages.push({ role: "user", content: input.user });
 
+  // Cost control: the same pre-flight verdict the single-shot transport makes
+  // — `checkBudget` is inclusive, so a request landing exactly on the limit is
+  // still allowed. A refusal is thrown as a class, so the failure that travels
+  // in-band is the budget message and not a transport error.
+  const estimatedPromptTokens = promptTokens(input);
+  const budget = loadBudget(config);
+  if (budget) {
+    const verdict = checkBudget(budget, {
+      estimatedTokens: estimatedPromptTokens + (input.maxTokens ?? 0),
+      model: config.model,
+    });
+    if (!verdict.allowed) {
+      throw new ProviderClassError("budget_exceeded", AI_BUDGET_EXCEEDED);
+    }
+  }
+
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     headers: providerRequestHeaders(config, { json: true }),
@@ -747,6 +768,9 @@ export async function* chatCompleteStream(
       messages,
       temperature: input.temperature ?? 0.4,
       stream: true,
+      // A provider reports the usage of a streamed call in a final frame — but
+      // only when it is asked for it (docs/specs/ai-surface.md §6).
+      stream_options: { include_usage: true },
       ...(input.maxTokens ? { max_tokens: input.maxTokens } : {}),
     }),
     signal: AbortSignal.timeout(60_000),
@@ -766,24 +790,52 @@ export async function* chatCompleteStream(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const payload = trimmed.slice(5).trim();
-      if (payload === "[DONE]") return;
-      try {
-        const event = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] };
-        const delta = event.choices?.[0]?.delta?.content;
-        if (delta) yield delta;
-      } catch {
-        // Ignore keep-alive comments and partial frames.
+  let answer = "";
+  let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const payload = trimmed.slice(5).trim();
+        if (payload === "[DONE]") return;
+        try {
+          const event = JSON.parse(payload) as {
+            choices?: { delta?: { content?: string } }[];
+            usage?: { prompt_tokens?: number; completion_tokens?: number };
+          };
+          // The usage frame carries no delta — it is what the meter reads.
+          if (event.usage) usage = event.usage;
+          const delta = event.choices?.[0]?.delta?.content;
+          if (delta) {
+            answer += delta;
+            yield delta;
+          }
+        } catch {
+          // Ignore keep-alive comments and partial frames.
+        }
       }
+    }
+  } finally {
+    // Meter the call against the budget, the way the single-shot transport
+    // does. The provider usually reports the usage; when it does not, fall
+    // back to the same `chars / 4` estimate the pre-flight check used, so
+    // limits still hold under real traffic. The meter runs even when the
+    // stream was cut short: those tokens were billed as well.
+    if (budget) {
+      const recorded = recordUsage(budget, {
+        model: config.model,
+        inputTokens: usage?.prompt_tokens ?? estimatedPromptTokens,
+        outputTokens: usage?.completion_tokens ?? estimateTokens(answer),
+        surface: "chat",
+        period: budgetPeriod(),
+      });
+      usageLedger.set(budgetKey(config), recorded);
     }
   }
 }
