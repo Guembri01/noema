@@ -159,7 +159,13 @@ function decodeAttr(value: string): string {
 /** The sanitised iframe `src`, or `null` when the embed is not a frame. */
 function embedSrc(html: string | null): string | null {
   if (html === null) return null;
-  const match = /<iframe\b[^>]*\bsrc="([^"]+)"/i.exec(html);
+  // The stored value is untrusted: it can arrive from an older write path or
+  // from the MCP `append_blocks` tool, not only from the creation-time
+  // resolver. Re-run the same allowlist at render time, so an arbitrary host
+  // can never be framed in the app origin.
+  const safe = sanitizeEmbedHtml(html, { allowedHosts: OEMBED_ALLOWED_HOSTS });
+  if (safe === null) return null;
+  const match = /<iframe\b[^>]*\bsrc="([^"]+)"/i.exec(safe);
   return match ? decodeAttr(match[1]) : null;
 }
 

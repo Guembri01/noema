@@ -522,7 +522,10 @@ export function budgetPeriod(now: Date = new Date()): string {
 const usageLedger = new Map<string, BudgetRecord>();
 
 function budgetKey(config: AiRuntimeConfig): string {
-  return `${config.workspaceId ?? "env"}:${config.provider}:${config.model}`;
+  // The model id is client-chosen (`effectiveChatModel`), so it must not be
+  // part of the ceiling's identity: a caller could otherwise start a fresh
+  // ledger with every model id. The provider is the workspace's configuration.
+  return `${config.workspaceId ?? "env"}:${config.provider}`;
 }
 
 /** The current budget record for a config, or `null` when enforcement is off. */
@@ -530,11 +533,16 @@ function loadBudget(config: AiRuntimeConfig): BudgetRecord | null {
   const limitTokens = aiBudgetLimitTokens();
   if (limitTokens <= 0) return null;
   const key = budgetKey(config);
+  const period = budgetPeriod();
   const existing = usageLedger.get(key);
-  if (existing && existing.limitTokens === limitTokens) return existing;
+  // A record from an earlier month is not this month's usage: roll it over
+  // before the gate, so an exhausted October does not refuse November.
+  if (existing && existing.limitTokens === limitTokens && existing.period === period) {
+    return existing;
+  }
   return {
     workspaceId: config.workspaceId ?? "env",
-    period: budgetPeriod(),
+    period,
     limitTokens,
     usedInput: 0,
     usedOutput: 0,
@@ -548,6 +556,19 @@ export function resetAiBudgetLedger(): void {
 }
 
 /** Estimated prompt tokens for a chat request (spec `chars / 4` heuristic). */
+/** Whether a chat request may start under the current token ceiling. */
+export function aiRequestBudgetAllows(
+  config: AiRuntimeConfig,
+  input: { system: string; user?: string; context?: string; maxTokens?: number },
+): boolean {
+  const budget = loadBudget(config);
+  if (!budget) return true;
+  return checkBudget(budget, {
+    estimatedTokens: promptTokens(input) + (input.maxTokens ?? 0),
+    model: config.model,
+  }).allowed;
+}
+
 function promptTokens(input: { system: string; user?: string; context?: string }): number {
   const text = [input.system, input.context, input.user]
     .filter((part): part is string => typeof part === "string" && part.length > 0)
@@ -608,7 +629,11 @@ export async function resolveAiConfig(
   // The environment configuration is shared, but the *session* is not: a
   // workspace's requests still belong to that workspace.
   return workspaceId
-    ? { ...fallback, sessionId: workspaceSessionId(workspaceId) }
+    ? {
+        ...fallback,
+        workspaceId,
+        sessionId: workspaceSessionId(workspaceId),
+      }
     : fallback;
 }
 
@@ -739,6 +764,21 @@ export async function* chatCompleteStream(
   if (input.context) messages.push({ role: "user", content: `Context:\n${input.context}` });
   if (input.user) messages.push({ role: "user", content: input.user });
 
+  // The streaming transport is the ordinary chat path, so the ceiling has to
+  // hold here too. The caller checks this before it opens the stream (to answer
+  // 429); this is the transport's own fail-closed guard for other callers.
+  const estimatedPromptTokens = promptTokens(input);
+  const budget = loadBudget(config);
+  if (
+    budget &&
+    !checkBudget(budget, {
+      estimatedTokens: estimatedPromptTokens + (input.maxTokens ?? 0),
+      model: config.model,
+    }).allowed
+  ) {
+    throw new ProviderClassError("budget_exceeded", AI_BUDGET_EXCEEDED);
+  }
+
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     headers: providerRequestHeaders(config, { json: true }),
@@ -766,6 +806,18 @@ export async function* chatCompleteStream(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let outputText = "";
+  const record = () => {
+    if (!budget) return;
+    const recorded = recordUsage(budget, {
+      model: config.model,
+      inputTokens: estimatedPromptTokens,
+      outputTokens: estimateTokens(outputText),
+      surface: "chat",
+      period: budgetPeriod(),
+    });
+    usageLedger.set(budgetKey(config), recorded);
+  };
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -776,16 +828,23 @@ export async function* chatCompleteStream(
       const trimmed = line.trim();
       if (!trimmed.startsWith("data:")) continue;
       const payload = trimmed.slice(5).trim();
-      if (payload === "[DONE]") return;
+      if (payload === "[DONE]") {
+        record();
+        return;
+      }
       try {
         const event = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] };
         const delta = event.choices?.[0]?.delta?.content;
-        if (delta) yield delta;
+        if (delta) {
+          outputText += delta;
+          yield delta;
+        }
       } catch {
         // Ignore keep-alive comments and partial frames.
       }
     }
   }
+  record();
 }
 
 /** Fetch the provider's live model list (falls back to the catalog upstream). */

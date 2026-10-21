@@ -278,7 +278,7 @@ const HEX_COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
  * on the allowlist. A stored mark can therefore never push a second CSS
  * declaration (or a `url()`) into the exported `style` attribute.
  */
-function styleColor(raw: unknown): string | null {
+export function styleColor(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const value = raw.trim();
   if (!value) return null;

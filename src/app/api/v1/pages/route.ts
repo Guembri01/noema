@@ -63,6 +63,8 @@ function nextPageLink(requestUrl: URL, nextCursor: string | null): string | null
  * `insufficient_scope` before the workspace is even looked up.
  */
 export async function GET(request: Request) {
+  const pre = rateLimit(request, "v1-pre", 120, 60_000);
+  if (pre) return pre;
   const auth = await authenticateApiRequest(request);
   const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
   if (limited) return limited;
@@ -140,6 +142,8 @@ export async function GET(request: Request) {
  * idempotency store, so a rejected call is never memoized.
  */
 export async function POST(request: Request) {
+  const pre = rateLimit(request, "v1-pre", 120, 60_000);
+  if (pre) return pre;
   const auth = await authenticateApiRequest(request);
   const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
   if (limited) return limited;

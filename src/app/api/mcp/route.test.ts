@@ -342,6 +342,9 @@ describe("POST /api/mcp — resources/read needs the token's scope (B89)", () =>
     perms.getWorkspaceAccess.mockResolvedValue({ role: "GUEST" });
     db.pagePermissionFindMany.mockResolvedValue([{ pageId: PAGE_A }]);
     db.teamspaceMemberFindMany.mockResolvedValue([]);
+    db.pageFindMany.mockResolvedValue([
+      { id: PAGE_A, parentId: null, teamspaceId: null, createdById: "owner" },
+    ]);
 
     // The shared page is served…
     const shared = await rpc(await readResource(`notion://pages/${PAGE_A}`, ["read:pages"]));

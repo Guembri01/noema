@@ -30,6 +30,8 @@
  * server action can re-validate with the exact same rules.
  */
 
+import { MAX_REGEX_EVALUATION_MS, estimatedRegexSteps } from "./formula";
+
 /** Machine-readable reason a cell value was rejected. */
 export type CellErrorCode =
   /** A `required` property has an empty value. */
@@ -338,9 +340,16 @@ function hasRiskyQuantifiedGroup(pattern: string): boolean {
  * refuses it and the constraint is not applied, so a stored pattern can never
  * freeze the editor that evaluates it.
  */
-function safeRegex(pattern: string): RegExp | null {
+function safeRegex(pattern: string, text: string): RegExp | null {
   if (hasRiskyQuantifiedGroup(pattern)) return null;
   try {
+    // The formula engine's cost model covers the polynomial shapes the group
+    // scan misses (`a*a*a*…b`). A stored pattern is as untrusted as a formula,
+    // and this check runs before the regex is compiled.
+    const steps = estimatedRegexSteps(text, pattern);
+    if (!Number.isFinite(steps) || steps > MAX_REGEX_EVALUATION_MS * 1_000_000) {
+      return null;
+    }
     return new RegExp(pattern);
   } catch {
     return null;
@@ -387,7 +396,7 @@ function applyTypeConstraints(
       }
       const pattern = property.config.pattern;
       if (typeof pattern === "string" && pattern !== "") {
-        const regex = safeRegex(pattern);
+        const regex = safeRegex(pattern, text);
         if (regex && !regex.test(text)) {
           errors.push({
             code: "PATTERN",
