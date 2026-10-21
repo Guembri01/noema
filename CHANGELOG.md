@@ -142,6 +142,24 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   is now answered only from the pages that were shared with them — page titles
   and text no longer leak from the rest of the workspace through the model
   context — while a member still grounds in the whole workspace.
+- A relation property can no longer point at a database of another workspace,
+  and a relation that already points outside the workspace can no longer read
+  it. The write side resolves the target and refuses with
+  `Database not found.`; the read side compares the target's workspace with
+  the workspace of the database being read, so a legacy, imported or
+  hand-edited foreign target yields no options, no cell values and no schema.
+  `duplicateDatabaseAction` empties a copied target that does not pass.
+- A row that carries a different `workspaceId` than the database it hangs
+  under can no longer be written or deleted. `setPropertyValueAction` and
+  `deleteRowAction` check the row's own workspace before the role check and
+  answer `Row not found.` for such a legacy cross-workspace row, so the
+  answer is the same for every caller and the activity entry is no longer
+  filed under the foreign workspace.
+- Saving a row as a template and creating a row from a template are bound to
+  the database they were authorized against: the row must have the authorized
+  `parentId` and workspace, and the template must name the authorized
+  `databasePageId`. A foreign row or template answers `Row not found.` or
+  `Template not found.`, the same answer as an unknown id.
 - A linked database and the database actions now use the same guest read
   scope. `authorizeDatabase()` resolved the workspace membership and nothing
   else, and a `GUEST` is a member, so a guest could open a linked database and
