@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { rateLimit } from "@/lib/api-guard";
-import { isSvgSafe } from "@/lib/clipboard-image";
+import { isSvgSafe } from "@/lib/svg-safety";
 import { isAllowedExternalImageHost } from "@/lib/external-image";
 import { fetchPinnedTarget, resolveOutboundTarget } from "@/lib/feed-guard";
 

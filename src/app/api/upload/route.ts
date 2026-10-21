@@ -7,6 +7,7 @@ import { rateLimit } from "@/lib/api-guard";
 import { bodyReadError, readFormDataBody } from "@/lib/body-limit";
 import { storageDriver } from "@/lib/storage";
 import { extForMime, fileNameExt, isAllowedType, mimeForExt } from "@/lib/file-type";
+import { isSvgSafe } from "@/lib/svg-safety";
 import { isComplete, planChunks, validateChunkPlan } from "@/lib/upload-chunk";
 
 export const runtime = "nodejs";
@@ -165,7 +166,13 @@ export async function POST(request: Request) {
 
   // Validate against the shared allow-list. `File.type` is blank on many
   // systems, so fall back to the MIME implied by the file name's extension.
-  const mime = file.type || mimeForExt(fileNameExt(file.name));
+  // Strip parameters (`image/svg+xml; charset=utf-8`) before both the allow
+  // check and the SVG comparison: the matcher normalises them, but a raw
+  // comparison would let the parameterised form skip the SVG scanner.
+  const mime = (file.type || mimeForExt(fileNameExt(file.name)))
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
   if (!isAllowedType(mime, { allow: ALLOWED_TYPES })) {
     return NextResponse.json(
       { error: `Unsupported file type: ${file.type || "unknown"}` },
@@ -173,15 +180,41 @@ export async function POST(request: Request) {
     );
   }
 
+  const bytes = new Uint8Array(await file.arrayBuffer());
+
+  // An SVG is served inline from the app origin, so it runs the same safety
+  // rule the clipboard path applies (`@/lib/svg-safety` - one rule, one
+  // place). Fail closed: the bytes are checked *before* anything is stored,
+  // so a refused SVG never reaches the disk, the Asset table or a URL.
+  // The answer names the rule, not the place in the file that broke it, so
+  // two different unsafe SVGs get the same reply.
+  if (mime === "image/svg+xml") {
+    // A UTF-16/UTF-32 document is full of NUL bytes and `file.text()` would
+    // decode it as UTF-8 garbage; the markup scanner would then miss the
+    // script tags. Only a valid UTF-8 SVG without NULs is accepted.
+    let svgText: string;
+    try {
+      if (bytes.includes(0)) throw new Error("NUL byte");
+      svgText = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      return NextResponse.json(
+        { error: "File rejected by the image safety policy" },
+        { status: 415 },
+      );
+    }
+    if (!isSvgSafe(svgText)) {
+      return NextResponse.json(
+        { error: "File rejected by the image safety policy" },
+        { status: 415 },
+      );
+    }
+  }
+
   const extension = `.${extForMime(mime)}`;
   const storedName = `${randomToken(12)}${extension}`;
   const driver = storageDriver();
   try {
-    await driver.put(
-      `${workspaceId}/${storedName}`,
-      new Uint8Array(await file.arrayBuffer()),
-      mime,
-    );
+    await driver.put(`${workspaceId}/${storedName}`, bytes, mime);
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Storage failed" },

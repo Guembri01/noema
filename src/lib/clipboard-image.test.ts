@@ -4,7 +4,6 @@ import {
   describePastePlan,
   extractDataUrl,
   inspectClipboardItem,
-  isSvgSafe,
   planPaste,
   slugifyFilename,
 } from "@/lib/clipboard-image";
@@ -90,85 +89,6 @@ describe("extractDataUrl", () => {
   it("returns null for malformed or empty data urls", () => {
     expect(extractDataUrl('<img src="data:image/png;base64">')).toBeNull();
     expect(extractDataUrl('<img src="data:image/png;base64,@@@@">')).toBeNull();
-  });
-});
-
-describe("isSvgSafe", () => {
-  it("accepts a plain vector svg (xmlns is not an external reference)", () => {
-    expect(
-      isSvgSafe('<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1" fill="#f00"/></svg>'),
-    ).toBe(true);
-  });
-
-  it("accepts same-document fragment references", () => {
-    expect(
-      isSvgSafe('<svg><defs><linearGradient id="g"/></defs><rect fill="url(#g)"/><use xlink:href="#g"/></svg>'),
-    ).toBe(true);
-  });
-
-  it("rejects script tags in any case", () => {
-    expect(isSvgSafe("<svg><script>alert(1)</script></svg>")).toBe(false);
-    expect(isSvgSafe("<svg><SCRIPT>alert(1)</SCRIPT></svg>")).toBe(false);
-  });
-
-  it("rejects inline event handlers", () => {
-    expect(isSvgSafe('<svg onload="x()"></svg>')).toBe(false);
-    expect(isSvgSafe('<svg><rect onmouseover="x()"/></svg>')).toBe(false);
-  });
-
-  it("rejects external references (href/src/url)", () => {
-    expect(isSvgSafe('<svg><image href="https://evil.test/x.png"/></svg>')).toBe(false);
-    expect(isSvgSafe('<svg><use xlink:href="//evil.test/x.svg"/></svg>')).toBe(false);
-    expect(isSvgSafe('<svg><rect fill="url(https://evil.test/x)"/></svg>')).toBe(false);
-  });
-
-  it("rejects foreignObject, javascript: urls and entities", () => {
-    expect(isSvgSafe("<svg><foreignObject><p>x</p></foreignObject></svg>")).toBe(false);
-    expect(isSvgSafe('<svg><a href="javascript:alert(1)">x</a></svg>')).toBe(false);
-    expect(isSvgSafe('<!DOCTYPE svg [<!ENTITY x "y">]><svg/>')).toBe(false);
-  });
-
-  // B112 — the scheme has to be read the way a browser reads it. A browser
-  // removes the control characters from a URL *before* it parses the scheme
-  // (`java\nscript:` is `javascript:` for it, the same normalisation
-  // `safeHref` does in `markdown.ts`), so the blocklist has to see the source
-  // without them — otherwise a scheme split by a line break walks past the gate.
-  it("rejects a scheme that hides behind a control character (B112)", () => {
-    // The url() form: no href/src attribute, so the reference check cannot see
-    // it either — the scheme pattern was the only gate and it read the raw
-    // string.
-    expect(isSvgSafe('<svg><rect fill="url(java\nscript:alert(1))"/></svg>')).toBe(false);
-    expect(isSvgSafe('<svg><rect fill="url(java\tscript:alert(1))"/></svg>')).toBe(false);
-    // The SMIL form: `<animate attributeName="href">` sets the link target of
-    // the element it animates.
-    expect(
-      isSvgSafe('<svg><animate attributeName="href" values="java\nscript:alert(1)"/></svg>'),
-    ).toBe(false);
-  });
-
-  // The counterpart: stripping the control characters must not swallow the
-  // whitespace the markup patterns anchor on — `<svg\nonload="…">` is an
-  // event handler in an XML document, and the raw source is what sees it.
-  it("still rejects an event handler a line break hides behind (B112)", () => {
-    expect(isSvgSafe('<svg\nonload="alert(1)"></svg>')).toBe(false);
-    expect(isSvgSafe('<svg><rect\nonmouseover="alert(1)"/></svg>')).toBe(false);
-  });
-
-  it("keeps the legitimate paths open (B112)", () => {
-    expect(
-      isSvgSafe(
-        '<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1" fill="#f00"/></svg>',
-      ),
-    ).toBe(true);
-    expect(
-      inspectClipboardItem({ mimeType: "image/png", data: "data:image/png;base64,QUJD" }, {}),
-    ).toEqual({ accept: true, mimeType: "image/png", size: 3 });
-  });
-
-  it("treats empty or non-string input as unsafe", () => {
-    expect(isSvgSafe("")).toBe(false);
-    expect(isSvgSafe("   ")).toBe(false);
-    expect(isSvgSafe(null as unknown as string)).toBe(false);
   });
 });
 
