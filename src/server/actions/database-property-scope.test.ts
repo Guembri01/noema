@@ -76,6 +76,16 @@ const PAGES: FakePage[] = [
     propertyValues: [{ value: { text: "Body text" }, property: { name: "Notes" } }],
   },
   {
+    // A legacy row: it belongs to workspace A but still hangs under workspace
+    // B's database (`db-b`), from before the parent check existed.
+    id: "row-legacy",
+    workspaceId: WORKSPACE_A,
+    parentId: DATABASE_B,
+    type: "PAGE",
+    schemaLocked: false,
+    propertyValues: [],
+  },
+  {
     id: DATABASE_B,
     workspaceId: WORKSPACE_B,
     parentId: null,
@@ -151,6 +161,7 @@ const PROPERTIES: FakeProperty[] = [
 
 const h = vi.hoisted(() => ({
   pageFindUnique: vi.fn(),
+  pageFindFirst: vi.fn(),
   propertyFindFirst: vi.fn(),
   propertyFindUnique: vi.fn(),
   propertyValueUpsert: vi.fn(),
@@ -164,7 +175,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    page: { findUnique: h.pageFindUnique },
+    page: { findUnique: h.pageFindUnique, findFirst: h.pageFindFirst },
     property: { findFirst: h.propertyFindFirst, findUnique: h.propertyFindUnique },
     propertyValue: { upsert: h.propertyValueUpsert },
     activity: { create: h.activityCreate },
@@ -267,6 +278,25 @@ beforeEach(() => {
 
   // A column is only found when it belongs to the database the query names —
   // exactly the filter the real database applies.
+  // The parent lookup of `assertScopedParent`: the parent has to be a live
+  // page of the caller's workspace. `row-legacy` hangs under `db-b` (workspace
+  // B), so a lookup scoped to workspace A never finds it.
+  h.pageFindFirst.mockImplementation(
+    async (args: {
+      where: { id?: string; workspaceId?: string; deletedAt?: null };
+      select?: Record<string, boolean>;
+    }) => {
+      const where = args.where ?? {};
+      const page = PAGES.find(
+        (candidate) =>
+          (where.id === undefined || candidate.id === where.id) &&
+          (where.workspaceId === undefined ||
+            candidate.workspaceId === where.workspaceId),
+      );
+      return page ? { id: page.id } : null;
+    },
+  );
+
   h.propertyFindFirst.mockImplementation(
     async (args: {
       where: { id?: string; databasePageId?: string };
@@ -395,6 +425,26 @@ describe("runAiAutofillAction — target property scope (B99)", () => {
     expect(h.chatComplete).not.toHaveBeenCalled();
     expect(h.propertyValueUpsert).not.toHaveBeenCalled();
     expect(writtenPropertyIds()).not.toContain("prop-b");
+  });
+
+  it("refuses a legacy row that hangs under another workspace's database", async () => {
+    // `row-legacy` belongs to workspace A but its `parentId` is `db-b`
+    // (workspace B). The target `prop-b` lives in that foreign database; the
+    // parent check has to close the write before the target lookup can bind
+    // to it.
+    const result = await runAiAutofillAction({
+      workspaceId: WORKSPACE_A,
+      rowId: "row-legacy",
+      propertyId: "prop-ai",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: "That row does not belong to this workspace.",
+    });
+    expect(h.resolveAiConfig).not.toHaveBeenCalled();
+    expect(h.chatComplete).not.toHaveBeenCalled();
+    expect(h.propertyValueUpsert).not.toHaveBeenCalled();
   });
 
   it("does not write the generated value under a column of another database of the same workspace", async () => {

@@ -248,7 +248,37 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   attribute is no longer mistaken for the checked one). The shapes that *are*
   closed are pinned by the gate's own regression test
   (`scripts/check-parent-scope.test.mjs`), which holds every allow-list entry
-  to the one path it describes.
+  to the one path it describes. The gate and its suite normalise path
+  separators and line endings, so a Windows checkout makes the same decision
+  as the Linux CI job.
+- A cell value is bound to the database of its row. The property id came from
+  the client and was written into the table unchecked, so a member of workspace
+  A could file a value under a column of workspace B; the foreign value was
+  invisible in B but advanced B's `UNIQUE_ID` counter. The column is now
+  resolved by `id` and the row's `databasePageId`, and AI autofill checks the
+  row's parent against the caller's workspace first, so a legacy row that still
+  points at another tenant's database cannot be used to reach it either.
+- A workspace role that is not `OWNER`, `ADMIN`, `MEMBER` or `GUEST` now sees
+  nothing. `viewerScopeFor()` treated every non-guest role as a full member, so
+  a forged or stale role read the whole workspace; it now fails closed with an
+  empty scope.
+- A malformed or empty API-token digest can no longer throw a `500` or match
+  an empty buffer. `apiTokenMatches()` refuses a value that is not a non-empty
+  string before it calls `Buffer.from`.
+- The desktop shell no longer grants `tauri-plugin-store` to any webview.
+  `store|load` performs no scope check and takes an absolute path, so a script
+  in a granted origin could read or overwrite any JSON file; the shell reaches
+  the store through Rust, which the ACL does not gate. The unredacted database
+  connection string is therefore no longer reachable from the webview, and the
+  `database_url` command returns the redacted form.
+- The ops gate spends the rate-limit budget before it compares the shared
+  secret. `/api/metrics` was the remaining route that compared first, so a
+  wrong secret was answered `401` without a limit; it now follows the same
+  `safeSecretEqual` and budget order as the cron and readiness routes.
+- The AI failure log no longer writes a provider's key as context. The
+  attribution carries the key only to test it, and the provider, model and
+  workspace values are dropped from the log when any part of them echoes the
+  key; the transcription route logs only the class.
 - The workspace export and the trash purge now refuse storage keys that belong
   to another workspace. A page can reference an upload of a different
   workspace — a URL that leaked through a share link, a copied image — and the

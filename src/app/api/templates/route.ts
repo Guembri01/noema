@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
-import { assertScopedParent } from "@/lib/page-parent";
 import {
   bodyReadError,
   MAX_JSON_BODY_BYTES,
