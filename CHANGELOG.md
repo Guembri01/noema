@@ -11,6 +11,28 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
 
 ## [Unreleased]
 
+### Added
+
+- **OpenCode Go as an AI provider.** A Go subscription can now be connected
+  like any other provider — the endpoint is Go's OpenAI-compatible surface
+  (`https://opencode.ai/inference/go/openai/v1`), the picker offers the
+  models behind it, and **Fetch models** reads Go's own catalogue
+  (`https://opencode.ai/inference/go/v1/models` — a path of its own, not the
+  chat endpoint's path, which answers 404). The models Go serves over its
+  Anthropic, Google and Responses surfaces are not offered: they need a
+  transport Noema does not speak. The operator's check
+  (`npm run check:providers`) knows the same path.
+- **The provider client identifies itself.** Every provider request now
+  carries `user-agent: noema/<version>`. Before this the header was filled
+  in by the runtime, which named itself (`node`) — a provider's log could
+  not say which application was talking to it.
+- **A stable session id for OpenCode Go.** Requests to Go carry
+  `x-opencode-session`: the discussion's own id for a chat, the workspace's
+  id for the one-shot surfaces (Ask AI, skills, autofill), and the
+  deployment's id when no workspace is in play. Go asks its clients for
+  exactly this, so it can route and cache per conversation. The id names an
+  internal object, so it travels to Go only — no other provider receives it.
+
 ### Security
 
 - The dependency tree is audited in CI, and one advisory chain is gone. The
