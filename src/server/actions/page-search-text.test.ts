@@ -185,6 +185,9 @@ describe("database.ts create paths", () => {
       schemaLocked: false,
     });
     db.templateFindUnique.mockResolvedValue({
+      // The action binds the template to the authorized database (B97), so the
+      // mocked row has to name it.
+      databasePageId: "db-1",
       name: "Weekly review",
       icon: null,
       content: doc("body from the template"),

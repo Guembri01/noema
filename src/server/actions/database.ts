@@ -1171,8 +1171,18 @@ export async function saveRowAsTemplateAction(
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
+  // The row is bound to the **authorized database**: it must be filed under
+  // it (`parentId`) and live in the same workspace. A row of another
+  // workspace (or of another database of this workspace) is not copied — its
+  // body and cell values would end up in the caller's own template. The
+  // answer is the same as for an unknown id, so the error is no oracle for
+  // the existence of a foreign row.
   const row = await prisma.page.findUnique({
-    where: { id: rowId },
+    where: {
+      id: rowId,
+      parentId: databasePageId,
+      workspaceId: auth.page.workspaceId,
+    },
     select: { icon: true, content: true, propertyValues: true },
   });
   if (!row) return { error: "Row not found." };
@@ -1205,11 +1215,23 @@ export async function createRowFromTemplateAction(
   if ("error" in auth) return auth;
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
 
+  // The template is bound to the **authorized database** — the same way a
+  // template of another workspace is resolved through its database in
+  // `home-templates.ts`. A template of a foreign database is not
+  // materialized, and the answer is the same as for an unknown id.
   const template = await prisma.template.findUnique({
     where: { id: templateId },
-    select: { content: true, config: true, name: true, icon: true },
+    select: {
+      databasePageId: true,
+      content: true,
+      config: true,
+      name: true,
+      icon: true,
+    },
   });
-  if (!template) return { error: "Template not found." };
+  if (!template || template.databasePageId !== databasePageId) {
+    return { error: "Template not found." };
+  }
 
   const last = await prisma.page.findFirst({
     where: { parentId: databasePageId },
