@@ -26,6 +26,7 @@ import { Prisma, PrismaClient, type WorkspaceRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { createRelationPair, setRollupConfig } from "../src/lib/relation-pairs";
 import { pageSearchText } from "../src/lib/search";
+import { encryptWebhookSecret } from "../src/lib/webhooks";
 import { welcomeDoc } from "../src/lib/welcome";
 import { databaseIntros, pageSpecs } from "./demo-pages";
 import { databaseSpecs, relationPairs, rowLinks, type DbSpec } from "./demo-databases";
@@ -882,7 +883,11 @@ async function main() {
       workspaceId: workspace.id,
       url: "https://hooks.example.com/noema/demo",
       events: ["page.created", "page.updated", "ticket.created"],
-      secret: "demo-webhook-signing-secret",
+      // R28.17 — seal the demo signing secret exactly like production writes
+      // do: a raw literal here lives in the database unencrypted and every
+      // delivery logs the "stored in plaintext" warning. The key derives from
+      // AUTH_SECRET, which the seed reads from the same .env the app runs on.
+      secret: encryptWebhookSecret("demo-webhook-signing-secret"),
       active: true,
     },
     select: { id: true },
