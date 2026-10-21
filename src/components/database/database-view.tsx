@@ -19,12 +19,12 @@ import {
   Download,
   Ellipsis,
   History,
+  Inbox,
   LayoutTemplate,
   Lock,
   Plus,
   RotateCcw,
   Trash2,
-  Unlock,
   Upload,
   X } from "lucide-react";
 import {
@@ -110,6 +110,15 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Select } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Tag } from "@/components/ui/tag";
 import {
   OPTION_COLORS,
   type DBProperty,
@@ -141,7 +150,11 @@ import {
   GalleryView,
   CalendarView,
   FormView,
+  resolveTableRowHeight,
+  skeletonCount,
   type TableFooterCalculation,
+  type TableRowHeight,
+  type ViewKind,
 } from "./view-renderers";
 
 export {
@@ -288,13 +301,121 @@ function normalizeFooterCalculations(
   return entries.length > 0 ? entries : undefined;
 }
 
+/* ---------------------------------------------------------------------------
+   Design-system wiring maps (wave 2)
+
+   The container owns the "presentation + wiring" the design system asks for,
+   but every decision a reviewer would want to prove without a DOM is a pure
+   mapping here: view type → skeleton count, persisted `rowHeight` → the
+   renderer's mode, and a view config → the props `TableView` receives. The JSX
+   below only consumes these, so the markup and the mapping cannot disagree.
+   --------------------------------------------------------------------------- */
+
+/** View type → the renderer family `SKELETON_COUNTS` (`./view-renderers`) names. */
+export const VIEW_SKELETON_KIND: Record<string, ViewKind> = {
+  TABLE: "table",
+  BOARD: "boardCards",
+  LIST: "list",
+  GALLERY: "gallery",
+  CALENDAR: "calendar",
+  TIMELINE: "timeline",
+  CHART: "chart",
+  FORM: "form",
+};
+
+/** How many skeleton rows/cards a view draws while its rows load. */
+export function viewSkeletonCount(viewType: string): number {
+  return skeletonCount(VIEW_SKELETON_KIND[viewType] ?? "table");
+}
+
+/** View types whose renderer draws its own layout-matching loading skeleton. */
+export const LOADABLE_VIEW_TYPES: readonly string[] = [
+  "TABLE",
+  "LIST",
+  "BOARD",
+  "GALLERY",
+  "FORM",
+];
+
+/** Whether `viewType`'s renderer owns the loading state (vs. the container). */
+export function viewSupportsLoading(viewType: string): boolean {
+  return LOADABLE_VIEW_TYPES.includes(viewType);
+}
+
+/** Row-height choices, densest to roomiest, in menu order. */
+export const TABLE_ROW_HEIGHT_OPTIONS: readonly {
+  value: TableRowHeight;
+  label: string;
+}[] = [
+  { value: "short", label: "Short" },
+  { value: "medium", label: "Medium" },
+  { value: "tall", label: "Tall" },
+];
+
+/**
+ * The persisted table options a `TableView` receives: the row-height mode and
+ * the per-column footer spec, both read off the same view config so a reload
+ * restores exactly what the user saved. `footer` is `undefined` when the config
+ * has none, which keeps the renderer's own `aggregationPropertyId` fallback.
+ */
+export function tableViewWiring(config: unknown): {
+  rowHeight: TableRowHeight;
+  footer: TableFooterCalculation[] | undefined;
+} {
+  const raw = (config ?? {}) as { rowHeight?: unknown; footer?: unknown };
+  return {
+    rowHeight: resolveTableRowHeight(raw.rowHeight),
+    footer: normalizeFooterCalculations(raw.footer),
+  };
+}
+
+/**
+ * Display labels for the Prisma `PropertyType` codes, used by the right-hand
+ * peek's property-type chip. Unknown/new codes fall through as-is, so a newer
+ * schema never renders a blank chip.
+ */
+export const PROPERTY_TYPE_LABELS: Record<string, string> = {
+  TEXT: "Text",
+  NUMBER: "Number",
+  SELECT: "Select",
+  MULTI_SELECT: "Multi-select",
+  STATUS: "Status",
+  DATE: "Date",
+  CHECKBOX: "Checkbox",
+  URL: "URL",
+  EMAIL: "Email",
+  PHONE: "Phone",
+  PEOPLE: "People",
+  FILES: "Files",
+  FORMULA: "Formula",
+  RELATION: "Relation",
+  ROLLUP: "Rollup",
+  CREATED_TIME: "Created time",
+  CREATED_BY: "Created by",
+  LAST_EDITED_TIME: "Last edited time",
+  LAST_EDITED_BY: "Last edited by",
+  UNIQUE_ID: "Unique ID",
+  PLACE: "Place",
+  BUTTON: "Button",
+  AI_AUTOFILL: "AI autofill",
+};
+
+/** The display label for a property type (unknown codes pass through). */
+export function propertyTypeLabel(type: string): string {
+  return PROPERTY_TYPE_LABELS[type] ?? type;
+}
+
 /**
  * A view's parsed config plus the additive keys this component owns that the
  * general `ViewConfig` schema does not model — today the database `description`
  * (R89.21). Declared locally so a save can carry the extra key without widening
  * the engine's type.
  */
-type EditableViewConfig = ViewConfig & { description?: string };
+type EditableViewConfig = ViewConfig & {
+  description?: string;
+  /** TABLE: the persisted row-height mode (`short` / `medium` / `tall`). */
+  rowHeight?: TableRowHeight;
+};
 
 /**
  * The viewer's lock role as the *client* can know it. `DatabaseView` is not yet
@@ -659,6 +780,7 @@ export function DatabaseView({
   dependencyEdges = [],
   schemaLocked = false,
   lockedPropertyIds,
+  loading = false,
 }: {
   databasePageId: string;
   workspaceId: string;
@@ -678,6 +800,13 @@ export function DatabaseView({
   schemaLocked?: boolean;
   /** Property ids frozen by the per-property lock (R89.24 refinement). */
   lockedPropertyIds?: string[];
+  /**
+   * The caller is still fetching this database's rows/views: each view renders
+   * its own layout-matching skeleton (and the toolbar stays put, so nothing
+   * shifts when the data lands). Additive and defaulted, so an existing caller
+   * renders exactly as before.
+   */
+  loading?: boolean;
   /** UI language (matches the tracker and cycles). */
   locale: string;
 }) {
@@ -709,6 +838,14 @@ export function DatabaseView({
   if (peek) peekRowRef.current = peek;
   const shownPeek = peek ?? peekRowRef.current;
   const peekId = peek?.id ?? null;
+  /**
+   * Destructive-action gates: the property awaiting a `ConfirmDialog`, the row
+   * id awaiting one, and whether the schema-lock write is in flight (drives the
+   * toolbar `Switch`'s pending spinner).
+   */
+  const [propertyToDelete, setPropertyToDelete] = useState<DBProperty | null>(null);
+  const [rowToDelete, setRowToDelete] = useState<string | null>(null);
+  const [lockPending, setLockPending] = useState(false);
   const [deletedRows, setDeletedRows] = useState<
     { id: string; title: string; icon: string | null; deletedAt: string }[] | null
   >(null);
@@ -1060,17 +1197,16 @@ export function DatabaseView({
     (activeView?.config as { cardSize?: unknown } | null | undefined)?.cardSize,
   );
 
-  // GALLERY preview + TABLE footer: the persisted per-view choices the settings
+  // GALLERY preview + TABLE options: the persisted per-view choices the settings
   // popovers write. `previewPropertyId` is part of the parsed `viewConfig`, so it
-  // is read from there; `footer` is not in the general schema, so — like
-  // `laneBy`/`cardSize` above — it is read off the raw view config and
-  // normalised. An absent or unusable value resolves to `undefined`, so
-  // `GalleryView` keeps its automatic cover and `TableView` keeps its
-  // `aggregationPropertyId` fallback — exactly how both rendered before.
+  // is read from there; `footer` and the design-system `rowHeight` are not in the
+  // general schema, so — like `laneBy`/`cardSize` above — they are read off the
+  // raw view config through `tableViewWiring` and normalised. An absent or
+  // unusable value keeps `GalleryView`'s automatic cover, `TableView`'s
+  // `aggregationPropertyId` footer fallback and the default medium row height —
+  // exactly how both rendered before.
   const galleryPreviewPropertyId = viewConfig.previewPropertyId;
-  const tableFooter = normalizeFooterCalculations(
-    (activeView?.config as { footer?: unknown } | null | undefined)?.footer,
-  );
+  const { rowHeight, footer: tableFooter } = tableViewWiring(activeView?.config);
 
   // CHART + BOARD options: the parsed `viewConfig` carries `chartType` /
   // `chartAggregate`, but the id-shaped `aggregationPropertyId` (the BOARD column
@@ -1630,17 +1766,25 @@ export function DatabaseView({
     });
   };
 
-  // One dialog hosts the prompts we used to route through window.prompt, plus
-  // the destructive-property confirmation.
+  // One dialog hosts the text prompts we used to route through window.prompt
+  // (button/rollup config, formula, view rename). The destructive property and
+  // row deletions are ConfirmDialogs instead (see the render below).
   const [promptState, setPromptState] = useState<
     | { kind: "button"; property: DBProperty }
     | { kind: "formula"; property: DBProperty }
     | { kind: "renameView"; view: DBView }
-    | { kind: "deleteProperty"; property: DBProperty }
     | null
   >(null);
 
-  const removeRow = (rowId: string) =>
+  /**
+   * Ask for confirmation before a row is trashed: the actual delete runs only
+   * after the `ConfirmDialog` is confirmed, so a stray click can never lose a
+   * row. The prop `removeRow` the renderers call keeps its exact signature.
+   */
+  const removeRow = (rowId: string) => setRowToDelete(rowId);
+
+  /** The confirmed half of `removeRow`: trash the row and refresh. */
+  const confirmRemoveRow = (rowId: string) =>
     startTransition(async () => {
       const result = await deleteRowAction(rowId);
       if ("error" in result) {
@@ -1725,15 +1869,20 @@ export function DatabaseView({
       const previous = schemaLockedState;
       const next = !previous;
       setSchemaLockedState(next);
-      const result = await toggleSchemaLockAction(databasePageId, next);
-      if ("error" in result) {
-        setSchemaLockedState(previous);
-        toast.error(result.error);
-        return;
+      setLockPending(true);
+      try {
+        const result = await toggleSchemaLockAction(databasePageId, next);
+        if ("error" in result) {
+          setSchemaLockedState(previous);
+          toast.error(result.error);
+          return;
+        }
+        setSchemaLockedState(result.schemaLocked);
+        toast.success(describeLock({ locked: result.schemaLocked }));
+        router.refresh();
+      } finally {
+        setLockPending(false);
       }
-      setSchemaLockedState(result.schemaLocked);
-      toast.success(describeLock({ locked: result.schemaLocked }));
-      router.refresh();
     });
 
   /** Soft-deleted rows of this database, for the restore panel. */
@@ -1761,7 +1910,13 @@ export function DatabaseView({
     });
 
   if (!activeView) {
-    return <p className="text-sm text-muted">{t(locale, "dbNoViews")}</p>;
+    return (
+      <EmptyState
+        variant="compact"
+        icon={<Inbox className="h-4 w-4" />}
+        title={t(locale, "dbNoViews")}
+      />
+    );
   }
 
   return (
@@ -1787,14 +1942,16 @@ export function DatabaseView({
             {editable && view.id === activeView.id && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     type="button"
                     aria-label={t(locale, "dbViewMenu")}
                     title={t(locale, "dbViewMenu")}
-                    className="-mb-px flex items-center justify-center rounded px-1.5 py-1.5 text-muted hover:bg-surface-2 focus-ring u-colors"
+                    className="-mb-px"
                   >
                     <Ellipsis className="h-3.5 w-3.5" />
-                  </button>
+                  </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
                   <DropdownMenuItem
@@ -1828,13 +1985,15 @@ export function DatabaseView({
         {editable && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button
+              <Button
+                variant="ghost"
+                size="icon"
                 type="button"
                 aria-label={t(locale, "addViewAria")}
-                className="-mb-px ml-1 flex items-center justify-center rounded px-2 py-1.5 text-muted hover:bg-surface-2 focus-ring u-colors"
+                className="-mb-px ml-1"
               >
                 <Plus className="h-4 w-4" />
-              </button>
+              </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
               {VIEW_TYPES.map((v) => (
@@ -1846,8 +2005,9 @@ export function DatabaseView({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        <span className="ml-auto pr-1 text-xs text-muted">
-          {viewRows.length} {t(locale, "rowsUnit")}
+        <span className="ml-auto flex items-center gap-1.5 pr-1 text-xs text-muted">
+          <Badge tone="neutral" count={viewRows.length} />
+          {t(locale, "rowsUnit")}
         </span>
       </div>
 
@@ -1864,37 +2024,42 @@ export function DatabaseView({
           onLayoutChange={onLayoutChange}
         />
         <div className="flex flex-wrap items-center gap-1">
+          {/* TABLE row height (design-system §5 density): persisted per view so
+              the table reopens at the height the user chose. */}
+          {editable && activeView.type === "TABLE" && (
+            <Select
+              aria-label="Row height"
+              size="sm"
+              searchable={false}
+              value={rowHeight}
+              onChange={(value) =>
+                setViewConfig({ rowHeight: resolveTableRowHeight(value) })
+              }
+              options={TABLE_ROW_HEIGHT_OPTIONS.map((option) => ({
+                value: option.value,
+                label: option.label,
+              }))}
+              className="w-28"
+            />
+          )}
           {/* R89.30 — sub-items nesting toggle. A pure view preference, so it
               is offered to every viewer, not just editors. */}
-          <button
-            type="button"
-            aria-pressed={nestSubItems}
-            aria-label={t(locale, "subticketsHeading")}
-            title={t(locale, "breadcrumbHint")}
-            onClick={() => setNestSubItems((value) => !value)}
-            className={cn(
-              "focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
-              nestSubItems && "bg-surface-2 text-fg",
-            )}
-          >
-            <ChevronRight
-              className={cn(
-                "h-4 w-4 transition-transform",
-                nestSubItems && "rotate-90",
-              )}
-            />
-            {t(locale, "subticketsHeading")}
-          </button>
+          <Checkbox
+            size="sm"
+            checked={nestSubItems}
+            onCheckedChange={setNestSubItems}
+            label={t(locale, "subticketsHeading")}
+          />
           {/* R89.31 — how many rows this view has blocked. Only shown once the
               caller supplies dependency edges. */}
           {blockedRowCount > 0 && (
-            <span
-              className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted"
+            <Badge
+              tone="warning"
+              icon={<Ban className="h-3.5 w-3.5" />}
               title={t(locale, "relationBlockedBy")}
             >
-              <Ban className="h-4 w-4" />
               {blockedRowCount} {t(locale, "relationBlockedBy")}
-            </span>
+            </Badge>
           )}
           {/* R89.24 — database lock. An `editSchema` holder gets the interactive
               toggle wired to `toggleSchemaLockAction` (unlock stays reachable
@@ -1902,79 +2067,65 @@ export function DatabaseView({
               canonical read-only summary, which also covers the per-property
               lock (`describeLock` renders both). */}
           {lockControl.canToggle ? (
-            <button
-              type="button"
-              aria-pressed={schemaLockedState}
-              aria-label={describeLock(lockState)}
-              title={describeLock(lockState)}
-              onClick={toggleSchemaLock}
-              className={cn(
-                "focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
-                schemaLockedState && "bg-surface-2 text-fg",
-              )}
-            >
-              {schemaLockedState ? (
-                <Unlock className="h-4 w-4" />
-              ) : (
-                <Lock className="h-4 w-4" />
-              )}
-              {describeLock(lockState)}
-            </button>
+            <Switch
+              size="sm"
+              checked={schemaLockedState}
+              pending={lockPending}
+              onCheckedChange={toggleSchemaLock}
+              label={describeLock(lockState)}
+            />
           ) : (
             (schemaLockedState || (lockedPropertyIds?.length ?? 0) > 0) && (
-              <span
-                className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted"
+              <Badge
+                tone="neutral"
+                icon={<Lock className="h-3.5 w-3.5" />}
                 title={describeLock(lockState)}
-                aria-label={describeLock(lockState)}
               >
-                <Lock className="h-4 w-4" />
                 {describeLock(lockState)}
-              </span>
+              </Badge>
             )
           )}
           {editable && (
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="sm"
               onClick={addRow}
               aria-label={t(locale, "newRow")}
+              leftIcon={<Plus className="h-4 w-4" />}
               title={
                 defaultTemplate
                   ? `${t(locale, "newRow")} — ${defaultTemplate.name}`
                   : undefined
               }
-              className="focus-ring u-colors flex items-center gap-1 rounded bg-accent px-2.5 py-1 text-sm text-accent-fg hover:opacity-90"
             >
-              <Plus className="h-4 w-4" />
               {t(locale, "newRow")}
-            </button>
+            </Button>
           )}
           {editable && (
-            <button
-              type="button"
+            <Button
+              variant={deletedRows !== null ? "subtle" : "ghost"}
+              size="sm"
               aria-expanded={deletedRows !== null}
               onClick={() =>
                 deletedRows === null ? loadDeletedRows() : setDeletedRows(null)
               }
-              className={cn(
-                "focus-ring u-interactive flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
-                deletedRows !== null && "bg-surface-2 text-fg",
-              )}
+              leftIcon={<History className="h-4 w-4" />}
             >
-              <History className="h-4 w-4" />
               {t(locale, "dbDeletedRows")}
-            </button>
+            </Button>
           )}
           {editable && templates.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button
+                <Button
+                  variant="ghost"
+                  size="sm"
                   type="button"
                   aria-label={t(locale, "chooseTemplate")}
-                  className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
+                  leftIcon={<LayoutTemplate className="h-4 w-4" />}
                 >
-                  <LayoutTemplate className="h-4 w-4" />
                   {t(locale, "templates")}
-                </button>
+                </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
                 {templates.map((template) => (
@@ -2047,44 +2198,47 @@ export function DatabaseView({
             </DropdownMenu>
           )}
           {editable && (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-expanded={addingProperty}
               onClick={() => setAddingProperty((v) => !v)}
-              className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
+              leftIcon={<Plus className="h-4 w-4" />}
             >
-              <Plus className="h-4 w-4" />
               {t(locale, "newProperty")}
-            </button>
+            </Button>
           )}
           {editable && (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={duplicateDatabase}
               aria-label={t(locale, "duplicate")}
-              className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
+              leftIcon={<Copy className="h-4 w-4" />}
             >
-              <Copy className="h-4 w-4" />
               {t(locale, "duplicate")}
-            </button>
+            </Button>
           )}
-          <a
-            href={`/api/export/database/${databasePageId}`}
-            download
-            className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            leftIcon={<Download className="h-4 w-4" />}
           >
-            <Download className="h-4 w-4" />
-            {t(locale, "exportCsv")}
-          </a>
+            <a href={`/api/export/database/${databasePageId}`} download>
+              {t(locale, "exportCsv")}
+            </a>
+          </Button>
           {editable && (
             <>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => csvInputRef.current?.click()}
-                className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
+                leftIcon={<Upload className="h-4 w-4" />}
               >
-                <Upload className="h-4 w-4" />
                 {t(locale, "importCsv")}
-              </button>
+              </Button>
               <input
                 ref={csvInputRef}
                 type="file"
@@ -2127,7 +2281,7 @@ export function DatabaseView({
           maxLength={500}
           rows={2}
           onBlur={(event) => saveDescription(event.target.value)}
-          className="mb-3 w-full resize-y rounded-lg border border-transparent bg-transparent px-1 py-1 text-sm text-muted outline-none placeholder:text-muted hover:border-border focus:border-border focus:bg-surface"
+          className="focus-ring mb-3 w-full resize-y rounded-lg border border-transparent bg-transparent px-1 py-1 text-sm text-muted placeholder:text-muted hover:border-border focus:border-border focus:bg-surface"
         />
       ) : (
         viewDescription !== "" && (
@@ -2148,17 +2302,21 @@ export function DatabaseView({
             <p className="text-xs font-medium uppercase tracking-wide text-muted">
               {t(locale, "dbDeletedRows")}
             </p>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon"
               aria-label={t(locale, "close")}
               onClick={() => setDeletedRows(null)}
-              className="focus-ring u-colors rounded-sm text-muted hover:text-fg"
             >
               <X className="h-4 w-4" />
-            </button>
+            </Button>
           </div>
           {deletedRows.length === 0 ? (
-            <p className="text-sm text-muted">{t(locale, "dbNoDeletedRows")}</p>
+            <EmptyState
+              variant="compact"
+              icon={<Inbox className="h-4 w-4" />}
+              title={t(locale, "dbNoDeletedRows")}
+            />
           ) : (
             <ul className="divide-y divide-border">
               {deletedRows.map((row) => (
@@ -2173,13 +2331,14 @@ export function DatabaseView({
                     <span className="text-xs text-muted">
                       {stableTime(row.deletedAt)}
                     </span>
-                    <button
-                      type="button"
+                    <Button
+                      variant="subtle"
+                      size="xs"
                       onClick={() => restoreRow(row.id)}
-                      className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-xs text-accent hover:bg-surface-2"
+                      leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
                     >
-                      <RotateCcw className="h-3.5 w-3.5" /> {t(locale, "restore")}
-                    </button>
+                      {t(locale, "restore")}
+                    </Button>
                   </span>
                 </li>
               ))}
@@ -2189,7 +2348,16 @@ export function DatabaseView({
       )}
 
       <div onClickCapture={openRowPeekFromClick}>
-      {activeView.type === "BOARD" ? (
+      {loading && !viewSupportsLoading(activeView.type) ? (
+        /* Views whose renderer has no loading state of its own (calendar,
+           timeline, chart, or an unknown type) get a container skeleton sized
+           from the view so nothing shifts when the rows land. */
+        <Skeleton
+          variant="table"
+          rows={viewSkeletonCount(activeView.type)}
+          cols={Math.min(6, Math.max(2, properties.length))}
+        />
+      ) : activeView.type === "BOARD" ? (
         <BoardView
           locale={locale}
           workspaceSlug={workspaceSlug}
@@ -2213,6 +2381,8 @@ export function DatabaseView({
           wipLimits={boardWipLimits}
           visibleGroups={boardVisibleGroups}
           aggregationPropertyId={boardAggregationPropertyId}
+          loading={loading}
+          onAddRow={editable ? addRow : undefined}
         />
       ) : activeView.type === "LIST" ? (
         <ListView
@@ -2224,6 +2394,8 @@ export function DatabaseView({
           editable={editable}
           rowOrder={rowOrder}
           onReorderRows={onReorderRows}
+          loading={loading}
+          onAddRow={editable ? addRow : undefined}
         />
       ) : activeView.type === "GALLERY" ? (
         <GalleryView
@@ -2236,6 +2408,8 @@ export function DatabaseView({
           computedFor={computedFor}
           cardSize={galleryCardSize}
           previewPropertyId={galleryPreviewPropertyId}
+          loading={loading}
+          onAddRow={editable ? addRow : undefined}
         />
       ) : activeView.type === "CALENDAR" ? (
         <CalendarView
@@ -2270,6 +2444,7 @@ export function DatabaseView({
           // A read-only database shows the questions without a submit seam,
           // matching how every other view omits its editors when not editable.
           onSubmit={editable ? submitForm : undefined}
+          loading={loading}
         />
       ) : activeView.type === "TABLE" ? (
         <TableView
@@ -2310,7 +2485,7 @@ export function DatabaseView({
             if (!target) return;
             // A property delete removes every row's values for it: confirm
             // first so a stray click can never lose data.
-            setPromptState({ kind: "deleteProperty", property: target });
+            setPropertyToDelete(target);
           }}
           onReorderProperty={onReorderProperty}
           rowOrder={rowOrder}
@@ -2318,12 +2493,21 @@ export function DatabaseView({
           rowColorRules={rowColorRules}
           onRenameProperty={renameProperty}
           onDuplicateProperty={duplicateProperty}
+          rowHeight={rowHeight}
+          loading={loading}
+          onAddRow={editable ? addRow : undefined}
           footer={tableFooter}
         />
       ) : (
-        <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted">
-          {t(locale, "dbScaffoldA")} {activeView.name} {t(locale, "dbScaffoldB")}
-        </p>
+        <EmptyState
+          variant="compact"
+          icon={<Inbox className="h-4 w-4" />}
+          title={
+            <>
+              {t(locale, "dbScaffoldA")} {activeView.name} {t(locale, "dbScaffoldB")}
+            </>
+          }
+        />
       )}
       </div>
 
@@ -2486,18 +2670,14 @@ export function DatabaseView({
             ? t(locale, "formulaWord")
             : promptState?.kind === "renameView"
               ? t(locale, "rename")
-              : promptState?.kind === "deleteProperty"
-                ? `${t(locale, "deleteProperty")}: ${promptState.property.name}`
-                : t(locale, "configureButton")
+              : t(locale, "configureButton")
         }
         description={
           promptState?.kind === "formula"
             ? `Available: prop("Name"), + - * / %, if(), concat(), round(), min(), max(), length(), upper(), lower(), contains(), empty()`
             : promptState?.kind === "renameView"
               ? undefined
-              : promptState?.kind === "deleteProperty"
-                ? t(locale, "deletePropWarn")
-                : t(locale, "buttonPromptDesc")
+              : t(locale, "buttonPromptDesc")
         }
         fields={
           promptState?.kind === "formula"
@@ -2520,9 +2700,7 @@ export function DatabaseView({
                     defaultValue: promptState.view.name,
                   },
                 ]
-              : promptState?.kind === "deleteProperty"
-                ? []
-                : [
+              : [
                   {
                     name: "target",
                     label: t(locale, "targetPropertyLabel"),
@@ -2542,25 +2720,63 @@ export function DatabaseView({
             ? t(locale, "saveFormula")
             : promptState?.kind === "renameView"
               ? t(locale, "save")
-              : promptState?.kind === "deleteProperty"
-                ? t(locale, "deleteProperty")
-                : t(locale, "saveButton")
+              : t(locale, "saveButton")
         }
         onSubmit={(values) => {
           if (!promptState) return;
           if (promptState.kind === "formula") onEditFormula(promptState.property, values.expression);
           else if (promptState.kind === "renameView") renameView(promptState.view, values.name);
-          else if (promptState.kind === "deleteProperty") {
-            const target = promptState.property;
-            startTransition(async () => {
-              const result = await deletePropertyAction(target.id);
-              if ("error" in result) toast.error(result.error);
-              else toast.success(`${t(locale, "deletedPrefix")} “${target.name}”`);
-              router.refresh();
-            });
-          } else onConfigureButton(promptState.property, values.target, values.value);
+          else onConfigureButton(promptState.property, values.target, values.value);
         }}
         onClose={() => setPromptState(null)}
+      />
+
+      {/* Destructive actions are gated behind the design-system ConfirmDialog:
+          a property delete drops every row's values for it, and a row delete
+          trashes the row — neither should ever fire from a stray click. */}
+      <ConfirmDialog
+        open={propertyToDelete !== null}
+        onOpenChange={(next) => {
+          if (!next) setPropertyToDelete(null);
+        }}
+        tone="danger"
+        title={`${t(locale, "deleteProperty")}: ${propertyToDelete?.name ?? ""}`}
+        description={t(locale, "deletePropWarn")}
+        confirmLabel={t(locale, "deleteProperty")}
+        cancelLabel={t(locale, "cancel")}
+        onConfirm={() => {
+          const target = propertyToDelete;
+          if (!target) return;
+          setPropertyToDelete(null);
+          startTransition(async () => {
+            const result = await deletePropertyAction(target.id);
+            if ("error" in result) toast.error(result.error);
+            else toast.success(`${t(locale, "deletedPrefix")} “${target.name}”`);
+            router.refresh();
+          });
+        }}
+      />
+
+      <ConfirmDialog
+        open={rowToDelete !== null}
+        onOpenChange={(next) => {
+          if (!next) setRowToDelete(null);
+        }}
+        tone="danger"
+        title={t(locale, "deleteRow")}
+        description={
+          rowToDelete
+            ? rowsById.get(rowToDelete)?.title || t(locale, "untitled")
+            : undefined
+        }
+        confirmLabel={t(locale, "deleteRow")}
+        cancelLabel={t(locale, "cancel")}
+        onConfirm={() => {
+          const target = rowToDelete;
+          if (!target) return;
+          setRowToDelete(null);
+          confirmRemoveRow(target);
+        }}
       />
     </div>
   );
