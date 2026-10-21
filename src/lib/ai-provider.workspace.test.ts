@@ -50,7 +50,7 @@ const originalEnv = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 beforeEach(() => {
   vi.clearAllMocks();
-  process.env.AUTH_SECRET = "test-secret";
+  process.env.AUTH_SECRET = "test-secret-for-the-ai-workspace-suite";
   process.env.AI_API_KEY = "env-key";
   process.env.AI_BASE_URL = "https://env.example/v1";
   process.env.AI_MODEL = "env-model";

@@ -2,6 +2,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
+import { resolveAuthSecret } from "./auth-secret";
 import { prisma } from "./db";
 import {
   describeDevice,
@@ -14,14 +15,17 @@ import {
 const COOKIE_NAME = "noema_session";
 const SESSION_DAYS = 30;
 
+/**
+ * The HMAC key for the session cookie.
+ *
+ * B55: the rule that decides whether `AUTH_SECRET` is usable lives in
+ * `src/lib/auth-secret.ts` — the placeholder this repository ships in
+ * `.env.example` is public, so accepting it would give every instance the
+ * same, known signing key. A missing or unusable secret throws: a session
+ * that cannot be signed must never be handed out.
+ */
 function secretKey(): Uint8Array {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret || secret.length < 16) {
-    throw new Error(
-      "AUTH_SECRET is missing or too short. Set a strong value in .env (see .env.example).",
-    );
-  }
-  return new TextEncoder().encode(secret);
+  return new TextEncoder().encode(resolveAuthSecret());
 }
 
 export async function hashPassword(password: string): Promise<string> {

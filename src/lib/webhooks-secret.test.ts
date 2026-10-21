@@ -16,7 +16,7 @@ import { encryptSecret } from "@/lib/secrets";
 const ORIGINAL_AUTH_SECRET = process.env.AUTH_SECRET;
 
 beforeAll(() => {
-  process.env.AUTH_SECRET = "webhook-secret-test-key";
+  process.env.AUTH_SECRET = "webhook-secret-test-key-0123456789";
 });
 
 afterAll(() => {

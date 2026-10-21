@@ -133,6 +133,78 @@ export function parseCookieHeader(header) {
 }
 
 /**
+ * The AUTH_SECRET rule, mirrored from `src/lib/auth-secret.ts`.
+ *
+ * B55: this file runs under plain `node` (`npm run collab`) and therefore
+ * cannot import the TypeScript module the app uses. What matters here is that
+ * a session cookie is never accepted with a key everybody knows: the
+ * placeholder this repository ships in `.env.example` is public, and a short
+ * secret is not a key. `scripts/collab-server.test.mjs` reads the placeholder
+ * out of `.env.example`, so the two copies cannot drift apart silently.
+ */
+
+/** Fold a value to its comparison form: trimmed, lowercased, no separators. */
+function canonicalSecret(value) {
+  return String(value).trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Every placeholder this repository ships, mirrored from
+ * `SHIPPED_AUTH_SECRET_PLACEHOLDERS` in `src/lib/auth-secret.ts`.
+ *
+ * `scripts/collab-server.test.mjs` reads the TypeScript list and fails if these
+ * two drift apart. The `.env.example` value is the one an operator is most
+ * likely to copy, but it is not the only public example: the self-hosting
+ * documentation also ships a 32-character hex string, which would pass a
+ * length-only check.
+ */
+export const SHIPPED_AUTH_SECRET_PLACEHOLDERS = [
+  "replace-me-with-a-32-byte-hex-secret", // .env.example
+  "0123456789abcdef0123456789abcdef", // src/lib/self-hosting.ts (AUTH_SECRET example)
+  "sk-example-0000000000000000", // src/lib/self-hosting.ts (AI_API_KEY example)
+  "sso-client-secret-value", // src/lib/self-hosting.ts (SSO_CLIENT_SECRET example)
+  "smtp-password-value", // src/lib/self-hosting.ts (SMTP_PASSWORD example)
+  "cron-secret-value", // src/lib/self-hosting.ts (CRON_SECRET example)
+];
+
+/** Well-known weak values, mirrored from `WEAK_AUTH_SECRETS`. */
+export const WEAK_AUTH_SECRETS = [
+  "changeme",
+  "change-me",
+  "your-secret-here",
+  "example",
+  "secret",
+  "password",
+  "placeholder",
+  "replace-me",
+  "todo",
+  "tbd",
+  "xxx",
+];
+
+const CANONICAL_PLACEHOLDERS = new Set(
+  SHIPPED_AUTH_SECRET_PLACEHOLDERS.map(canonicalSecret),
+);
+const CANONICAL_WEAK = new Set(WEAK_AUTH_SECRETS.map(canonicalSecret));
+
+/** Minimum length of an AUTH_SECRET that may verify a session cookie. */
+const MIN_AUTH_SECRET_LENGTH = 32;
+
+/**
+ * Whether a candidate AUTH_SECRET may be used to verify a session cookie.
+ * A missing, too short, shipped-placeholder or well-known weak value is
+ * refused. The application rule refuses the same set; the test below keeps the
+ * two lists in step.
+ */
+export function isUsableAuthSecret(secret) {
+  if (typeof secret !== "string") return false;
+  const trimmed = secret.trim();
+  if (trimmed.length < MIN_AUTH_SECRET_LENGTH) return false;
+  const folded = canonicalSecret(trimmed);
+  return !CANONICAL_PLACEHOLDERS.has(folded) && !CANONICAL_WEAK.has(folded);
+}
+
+/**
  * Verify the `noema_session` HS256 JWT exactly the way the app does
  * (`src/lib/auth.ts:getSessionUserId`) and return the user id, or null.
  * Fail closed: no cookie, no/short `AUTH_SECRET`, bad signature, expired
@@ -142,9 +214,9 @@ export async function verifySessionCookie(cookieHeader) {
   const token = parseCookieHeader(cookieHeader)[SESSION_COOKIE];
   if (!token) return null;
   const secret = process.env.AUTH_SECRET;
-  if (!secret || secret.length < 16) return null;
+  if (!isUsableAuthSecret(secret)) return null;
   try {
-    const { payload } = await jwtVerify(token, new TextEncoder().encode(secret), {
+    const { payload } = await jwtVerify(token, new TextEncoder().encode(secret.trim()), {
       algorithms: ["HS256"],
     });
     return typeof payload.sub === "string" && payload.sub.length > 0 ? payload.sub : null;
@@ -736,9 +808,9 @@ export function createCollabServer({
  * ------------------------------------------------------------------ */
 
 function start() {
-  if (!process.env.AUTH_SECRET || process.env.AUTH_SECRET.length < 16) {
+  if (!isUsableAuthSecret(process.env.AUTH_SECRET)) {
     console.warn(
-      "AUTH_SECRET is missing or too short — every collaboration connection will be rejected (4401).",
+      "AUTH_SECRET is missing, too short or a known placeholder — every collaboration connection will be rejected (4401).",
     );
   }
   const { wss } = createCollabServer({ host: HOST, port: PORT });
