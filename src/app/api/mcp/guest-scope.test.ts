@@ -428,6 +428,19 @@ describe("MCP read tools — a guest only sees the pages shared with them", () =
     expect(rows.map((row) => row.id)).toEqual(["row-1"]);
   });
 
+  it("a shared row does not grant the database above it", async () => {
+    // The display scope contains the row's ancestors; the read scope must not.
+    db.pagePermissionFindMany.mockResolvedValue([{ pageId: "row-1" }]);
+    const res = await call({
+      method: "tools/call",
+      params: { name: "query_database_rows", arguments: { databaseId: "db-1" } },
+    });
+    const body = await rpc(res);
+    expect(body.result?.isError).toBe(true);
+    expect(payload(body)).toEqual({ error: "Database not found." });
+    expect(JSON.stringify(body)).not.toContain("Acme Corp");
+  });
+
   it("get_comments on a page outside the guest scope answers 'not found'", async () => {
     const res = await call({
       method: "tools/call",
