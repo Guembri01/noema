@@ -389,7 +389,37 @@ describe("validateCell — checkbox and unknown types", () => {
   });
 });
 
-describe("validateCell — never throws on odd input", () => {
+describe("validateCell - the stored pattern budget", () => {
+  const polynomial = {
+    id: "poly",
+    name: "Poly",
+    type: "TEXT",
+    config: { pattern: "a*a*a*a*a*a*a*a*b" },
+  };
+
+  it("ignores a polynomial pattern instead of freezing on it", () => {
+    // The group scan misses this shape; the formula step estimate must refuse
+    // it, so the constraint is skipped and the cell is accepted.
+    expect(validateCell(polynomial, { text: "a".repeat(30) }).ok).toBe(true);
+  });
+
+  it("still applies a safe pattern", () => {
+    expect(
+      validateCell(
+        { id: "safe", name: "Safe", type: "TEXT", config: { pattern: "^[a-z]+$" } },
+        { text: "abc" },
+      ).ok,
+    ).toBe(true);
+    expect(
+      validateCell(
+        { id: "safe", name: "Safe", type: "TEXT", config: { pattern: "^[a-z]+$" } },
+        { text: "ABC" },
+      ).ok,
+    ).toBe(false);
+  });
+});
+
+describe("validateCell - never throws on odd input", () => {
   it("is permissive for a null or undefined property", () => {
     expect(validateCell(null, "value")).toEqual({ ok: true });
     expect(validateCell(undefined, undefined)).toEqual({ ok: true });
