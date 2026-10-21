@@ -20,6 +20,8 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ pageId: string }> },
 ) {
+  const pre = rateLimit(request, "v1-pre", 120, 60_000);
+  if (pre) return pre;
   const auth = await authenticateApiRequest(request);
   const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
   if (limited) return limited;

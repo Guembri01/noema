@@ -205,7 +205,20 @@ export async function guestReadablePageIds(
   userId: string,
   workspaceId: string,
 ): Promise<Set<string>> {
-  const [pages, memberships] = await Promise.all([
+  const [permissionRows, memberships, pages] = await Promise.all([
+    // Production has the relation; use the direct query when it is available.
+    // A narrow test double that only models the page relation still gets the
+    // nested `permissions` select below, so the scope stays one rule.
+    typeof prisma.pagePermission?.findMany === "function"
+      ? prisma.pagePermission.findMany({
+          where: { userId, page: { workspaceId, deletedAt: null } },
+          select: { pageId: true, level: true },
+        })
+      : Promise.resolve(null),
+    prisma.teamspaceMember.findMany({
+      where: { userId, teamspace: { workspaceId } },
+      select: { teamspaceId: true },
+    }),
     prisma.page.findMany({
       where: { workspaceId, deletedAt: null },
       select: {
@@ -213,27 +226,25 @@ export async function guestReadablePageIds(
         parentId: true,
         teamspaceId: true,
         createdById: true,
-        // Only this guest's grants matter — the level tells read from edit.
         permissions: { where: { userId }, select: { level: true } },
       },
-    }),
-    prisma.teamspaceMember.findMany({
-      where: { userId, teamspace: { workspaceId } },
-      select: { teamspaceId: true },
     }),
   ]);
 
   const teamspaceIds = new Set(memberships.map((member) => member.teamspaceId));
+  const grantByPage = permissionRows
+    ? new Map(permissionRows.map((permission) => [permission.pageId, permission.level]))
+    : null;
   const guestPages: GuestPage[] = pages.map((page) => {
-    // Prisma returns an array for the selected relation; defaulting keeps a
-    // partial row (a test double or a future narrower select) fail-closed
-    // instead of throwing and taking the whole route down.
-    const permissions = page.permissions ?? [];
-    // Every level grants reading (COMMENT implies READ).
-    const granted = permissions.length > 0;
-    const editable = permissions.some(
-      (permission) => permission.level === "EDIT" || permission.level === "FULL",
-    );
+    const nested = page.permissions ?? [];
+    const level = grantByPage
+      ? grantByPage.get(page.id)
+      : nested[0]?.level;
+    // Every level grants reading (COMMENT implies READ). A row with the grant
+    // but no readable level still counts as a grant, so a partial projection
+    // fails closed on edit but not on read.
+    const granted = grantByPage ? grantByPage.has(page.id) : nested.length > 0;
+    const editable = level === "EDIT" || level === "FULL";
     // Own pages and pages of the guest's teamspaces are readable roots — the
     // display scope counts them too — and their subtree belongs to the guest
     // as well.

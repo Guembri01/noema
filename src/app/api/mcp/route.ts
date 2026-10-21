@@ -9,7 +9,7 @@ import {
 } from "@/lib/body-limit";
 import { intersectScopes } from "@/lib/api-token-scope";
 import { prisma } from "@/lib/db";
-import { pageScopeFor } from "@/lib/guest-access";
+import { guestReadablePageIds } from "@/lib/guest-access";
 import {
   RESOURCE_CATALOG,
   authCheck,
@@ -406,6 +406,8 @@ async function runResource(template: string, params: Record<string, string>, ctx
  * read-first catalog. Bearer-authenticated; unknown callers get a 401.
  */
 export async function GET(request: Request) {
+  const pre = rateLimit(request, "mcp-pre", 120, 60_000);
+  if (pre) return pre;
   const auth = await authenticateApiRequest(request);
   const limited = rateLimit(request, "mcp", 120, 60_000, { userId: auth?.userId });
   if (limited) return limited;
@@ -437,6 +439,8 @@ export async function GET(request: Request) {
  * outside that scope answers "not found", not "forbidden".
  */
 export async function POST(request: Request) {
+  const pre = rateLimit(request, "mcp-pre", 120, 60_000);
+  if (pre) return pre;
   const auth = await authenticateApiRequest(request);
   const limited = rateLimit(request, "mcp", 120, 60_000, { userId: auth?.userId });
   if (limited) return limited;
@@ -497,9 +501,13 @@ export async function POST(request: Request) {
     return rpcFail(id, -32001, "A workspace the caller can access is required.");
   }
   // Membership is not visibility: a guest is a member of the workspace, so the
-  // role decides which pages a read may return. The scope is resolved once per
-  // request and every read path below is narrowed by it.
-  const visiblePageIds = await pageScopeFor(auth.userId, workspaceId, access.role);
+  // role decides which pages a read may return. Use the READ scope, not the
+  // display scope: a shared row puts its database in the display scope (the
+  // breadcrumb), but it does not grant every row of that database.
+  const visiblePageIds =
+    access.role === "GUEST"
+      ? await guestReadablePageIds(auth.userId, workspaceId)
+      : null;
   const ctx: ExecContext = { workspaceId, userId: auth.userId, visiblePageIds };
   // The token says which tools may be called; the role says which of them the
   // caller may use. The role therefore caps the token — a token can never
