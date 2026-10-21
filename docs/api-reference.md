@@ -87,7 +87,12 @@ plaintext is shown once at registration (§10).
 - Header `x-cron-secret: <CRON_SECRET>` must match the env var. Fail-closed:
   if `CRON_SECRET` is unset the route answers
   `503 {"error":"CRON_SECRET is not configured. …"}`; mismatch →
-  `401 {"error":"Unauthorized"}` (checked **before** the rate limit).
+  `401 {"error":"Unauthorized"}` — but the **rate limit runs before the
+  comparison**, so a wrong secret is answered `429 {"error":"Rate limit
+  exceeded"}` once the 12/min budget is spent; `401` is the answer only while
+  the budget is free. The comparison itself is constant-time. The gate order
+  is documented in
+  [`OPERATIONS.md` §8.6](./OPERATIONS.md#86-ops-gates-the-shared-secret-the-rate-limit-the-order).
 
 ### 1.4 Auth matrix
 
@@ -239,7 +244,7 @@ rateLimit(request, scope, limit = 120, windowMs = 60_000, { userId }): NextRespo
 | `mcp` | 120/min | `GET` / `POST /api/mcp` |
 | `metrics` | 120/min | `GET /api/metrics` |
 | `oauth-token` | 30/min | `POST /oauth/token` |
-| `cron` | 12/min | `POST /api/cron/templates` (after the secret check) |
+| `cron` | 12/min | `POST /api/cron/templates` (before the secret check) |
 | `share-unlock-<token>` | 5/min | `POST /s/[token]/unlock` (per share link) |
 
 **Not rate-limited:** `files/[...path]`, `auth/sso/start`,

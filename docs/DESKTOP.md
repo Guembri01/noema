@@ -36,7 +36,7 @@ Only four things differ, and they are resolved in **one module**
 │  │ sidecar supervisor  (src-tauri/src/sidecar.rs)         │   │
 │  │  · keeps this install's port (free if taken)           │   │
 │  │  · spawns `noema-node` (bundled runtime) on start.cjs  │   │
-│  │  · polls /api/health until 200 (90 s budget)            │   │
+│  │  · polls /api/health until it carries our token        │   │
 │  │  · streams stdout/stderr → logs/noema.log + UI         │   │
 │  │  · restarts with backoff if it dies (500ms…10s)        │   │
 │  │  · stops it cleanly on quit                            │   │
@@ -111,6 +111,21 @@ Other deliberate choices:
   the database is unreachable) — and the supervisor distinguishes the two failures:
   "answered but unhealthy" sends the user to the database field on the bootstrap
   page, "never answered" is a real bug worth a report.
+- **The readiness handshake is authenticated.** The port is picked by binding
+  `127.0.0.1:0`, reading the port and closing the socket again, so another program
+  on the same machine can take the port before the server does — and it only has
+  to answer `200` to be believed. The window would then load *that* page, on an
+  origin the Tauri capability covers, with the app's IPC rights. So the shell
+  generates a random token per start (`NOEMA_SHELL_TOKEN`, 32 bytes from the
+  system CSPRNG), hands it to the server through the environment, and accepts a
+  server only when the health response echoes it in the `x-noema-shell-token`
+  header. The token never reaches the log or the frozen health body. It is a
+  response header, so the app's own origin (and any local process that queries
+  the running server) can read it; that is not the squatting attack, because a
+  program that grabs the port before the server starts never sees a response
+  from the server at all. The token is per start, and a restart issues a new one
+  before the shell trusts the port again, so a token read from a running server
+  cannot be replayed against the next start.
 - **The payload ships no `.env`.** Next's standalone output copies `.env` files
   into `.next/standalone` by itself, so `prepare.mjs` strips them — and fails the
   build if one would still ship. Without that step the installer carried the
@@ -163,8 +178,8 @@ Other deliberate choices:
 | Server exposure | loopback only, no `0.0.0.0`; the port is this install's own (stable origin) or a free ephemeral one when it is taken |
 | Webview ↔ server | explicit `APP_ORIGINS` allow-list (the loopback origin) + CSP in `tauri.conf.json` |
 | Webview ↔ shell | only the commands in `src-tauri/src/commands.rs`; the served app's IPC is granted to the loopback origin by `desktop-remote.json` (a capability with `remote.urls`) |
-| Secrets | a database password can live in the connection string; it is **redacted** before diagnostics leave the shell (unit-tested in `commands.rs`) |
-| Capabilities | `default.json` = least privilege for boot; `desktop-everything.json` = the broad set the product asked for (dialogs, shell, opener) — **local only**, for the shell's own page; `desktop-remote.json` = the served app's narrow set (the five shell commands it calls + the two `core:event` permissions `listenShell` needs), **no** filesystem, shell, store, opener, dialog, `os` or `log` — and no `core:default` either. Drop `desktop-everything.json` for a hardened build |
+| Secrets | a database password can live in the connection string; it is **redacted** before it leaves the shell at all — `database_url` hands out the redacted form, and `get_pref` refuses the key outright (unit-tested in `commands.rs`) |
+| Capabilities | `default.json` = least privilege for boot; `desktop-everything.json` = the broad set the product asked for (dialogs, shell, opener) — **local only**, for the shell's own page; `desktop-remote.json` = the served app's narrow set (the five shell commands it calls + the two `core:event` permissions `listenShell` needs), **no** filesystem, shell, store, opener, dialog, `os` or `log` — and no `core:default` either. The **store plugin is granted to nobody**: `tauri-plugin-store` does no scope check of its own (`store|load` takes any path), the shell reaches the store through Rust — which the ACL does not gate — and the store's `preferences.json` holds the unredacted connection string. Drop `desktop-everything.json` for a hardened build |
 | Telemetry | off (`NEXT_TELEMETRY_DISABLED=1`) |
 | Updates | **deferred on purpose** — see §9 |
 
@@ -202,6 +217,16 @@ menu-item id reaches the commands in `src-tauri/src/shell.rs`, which dispatches
 on the raw id) and to the path plugin (it resolves the user's home directory).
 The broad set stays with the shell's own page in
 `capabilities/desktop-everything.json`, which grants no remote URL.
+
+The **store plugin** is the one permission no origin holds at all — not the
+served app, not the shell's own page. `tauri-plugin-store` checks no scope of
+its own: `store|load` takes any path (an absolute one is used as it is), so
+`store:default` would be a read — and `store|save` a write — primitive over
+any JSON file on the machine. The store this app keeps holds the **unredacted**
+connection string, and nothing needs the plugin's JavaScript face: the shell
+reads and writes the store through Rust (`state::set_pref`), which the ACL does
+not gate. The preference store stays reachable for the shell's own page — as
+the audited app commands `get_pref`/`set_pref`.
 
 `scripts/desktop/capabilities.test.mjs` pins the split — across the capability
 **files** *and* the capabilities declared inline in `tauri.conf.json`
@@ -534,9 +559,10 @@ key out of the tree it ships.
 
 | Layer | What runs |
 |---|---|
-| Rust (shell) | `cargo test` — data-dir layout, loopback URL shape, resource path, env contract (incl. the database URL), restart backoff bounds, free-port behaviour and the preferred-port fallback, layout creation, log ring buffer, connection-string redaction |
+| Rust (shell) | `cargo test` — data-dir layout, loopback URL shape, resource path, env contract (incl. the database URL and the handshake token), restart backoff bounds, free-port behaviour and the preferred-port fallback, the readiness handshake (a response is ours only when it carries the token), layout creation, log ring buffer, connection-string redaction |
 | Rust (quality) | `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` |
 | Shared TS | the whole existing suite — the app version adds **no** forked logic |
+| Desktop wiring | `scripts/desktop/capabilities.test.mjs`, `scripts/desktop/fs-capability.test.mjs` and `scripts/desktop/shell-handshake.test.mjs` — the capability split and the handshake between the shell and the server (both sides must agree on the token's name and its header, and neither may drop the check) |
 | Runtime mode | `src/lib/runtime-mode.test.ts` (site vs desktop, the mode the server renders into the document, the Tauri fallback, API base, data dir, version, capabilities, SSR safety) and `src/app/a11y-layout.test.ts` (the attribute the layout renders for the site, `NOEMA_RUNTIME` and `NOEMA_STANDALONE`) |
 | Packaging | `desktop:preflight` on every run; `site.yml` asserts the site build never emits a standalone server |
 | Embedded database | `npm run check:embedded-db` — starts a real PGlite engine in a throwaway data directory, aborts 24 handshakes mid-flight, and proves the engine still serves a second and a third Prisma client. No Postgres, no Docker, no Tauri. Run in CI's `payload-smoke` job. |

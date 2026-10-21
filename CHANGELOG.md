@@ -209,7 +209,89 @@ in [`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md).
   It therefore no longer turns up in that workspace's database view or in its
   CSV/JSON export, and it is no longer swept along by the foreign workspace's
   cascade delete. The database and export views filter their rows by the
-  workspace as well.
+  workspace as well — and so do the "Deleted rows" panel, the database
+  duplicate (which copies a database's rows **with their content**) and the
+  chat context that is sent to the AI, so a row that was linked across
+  workspaces before the check existed no longer surfaces there. The invariant is
+  checked mechanically where the repository gate can see it
+  (`scripts/check-parent-scope.mjs`): the gate finds the `Page.parentId` writes
+  in `src/` statically and fails when one of them stores a value the helper has
+  not proved. The allow-list of that gate is **precise**: every entry names the
+  value it releases **and** the proof that makes that value safe (the
+  authorization the entry relies on), and the gate checks that the proof is
+  still there — an entry whose context is gone releases nothing. The taint of a
+  raw request value is transitive as well: a local that is derived from a
+  tainted local is tainted too, and a read of `.parentId` from a name whose
+  origin the gate cannot see is a raw value, whatever that receiver is called.
+  The gate follows the taint as far as it can see it: the **unresolvability**
+  is transitive as well (a local that takes the value of an unresolved local is
+  unresolved itself), the read of `.parentId` is seen in every form that names
+  the property directly (the plain read, the optional chain, the non-null
+  assertion, the computed member with the literal key, the indexed member, the
+  result of a call), and the compound assignments (`&&=`, `||=`, `??=`, `+=`, …)
+  are assignments it follows like every other. What it does **not** reach is a
+  value that mixes an unresolved local with the proved one
+  (`const parentId = o ?? checked.parentId`): the gate cannot see into `o`, so
+  the raw value may hide in it — and the write is released all the same. A
+  member whose key is not the literal (`input["parent" + "Id"]`, `input[KEY]`)
+  and a reflective read (`Reflect.get(input, "parentId")`) are not reads the gate
+  sees at all — the write is released all the same.
+  It is a safety net over the tests, not a proof — a write it
+  cannot recognise is not covered by it. The holes that are known today are
+  listed in the gate's own docstring — **eight** of them — and that list is a
+  safety net, not an
+  enumeration: a new shape of write can open a new hole, and the list only
+  grows when somebody measures one. It is shorter than it was: the precise
+  allow-list closed the two holes of the name-based list — the callers of an
+  allow-listed helper (the gate checks that no caller hands in a raw parent)
+  and the payload whose parent a helper computes (a value the gate cannot
+  attribute is no longer mistaken for the checked one). The shapes that *are*
+  closed are pinned by the gate's own regression test
+  (`scripts/check-parent-scope.test.mjs`), which holds every allow-list entry
+  to the one path it describes. The gate and its suite normalise path
+  separators and line endings, so a Windows checkout makes the same decision
+  as the Linux CI job.
+- A cell value is bound to the database of its row. The property id came from
+  the client and was written into the table unchecked, so a member of workspace
+  A could file a value under a column of workspace B; the foreign value was
+  invisible in B but advanced B's `UNIQUE_ID` counter. The column is now
+  resolved by `id` and the row's `databasePageId`, and AI autofill checks the
+  row's parent against the caller's workspace first, so a legacy row that still
+  points at another tenant's database cannot be used to reach it either.
+- A workspace role that is not `OWNER`, `ADMIN`, `MEMBER` or `GUEST` now sees
+  nothing. `viewerScopeFor()` treated every non-guest role as a full member, so
+  a forged or stale role read the whole workspace; it now fails closed with an
+  empty scope.
+- A malformed or empty API-token digest can no longer throw a `500` or match
+  an empty buffer. `apiTokenMatches()` refuses a value that is not a non-empty
+  string before it calls `Buffer.from`.
+- The desktop shell no longer grants `tauri-plugin-store` to any webview.
+  `store|load` performs no scope check and takes an absolute path, so a script
+  in a granted origin could read or overwrite any JSON file; the shell reaches
+  the store through Rust, which the ACL does not gate. The unredacted database
+  connection string is therefore no longer reachable from the webview, and the
+  `database_url` command returns the redacted form.
+- The desktop shell no longer believes any server that answers `200` on its
+  loopback port. It chose the port by binding `127.0.0.1:0`, reading the port
+  and closing the socket again, so a program on the same machine could take the
+  port first, answer `/api/health` with `200`, and have the window load *its*
+  page — on an origin the Tauri capability covers, with the app's IPC rights.
+  The shell now hands the server a random 32-byte token per start through
+  `NOEMA_SHELL_TOKEN`; the server echoes it in the `x-noema-shell-token`
+  response header, and the supervisor waits for that token before it trusts the
+  port. A squatter that wins the race never sees the token, because the server
+  it displaced never runs to echo it; a restart issues a new token. The token is
+  per start and never enters the frozen health body or the log, so a caller
+  that reads it from the running server cannot replay it against the next
+  start.
+- The ops gate spends the rate-limit budget before it compares the shared
+  secret. `/api/metrics` was the remaining route that compared first, so a
+  wrong secret was answered `401` without a limit; it now follows the same
+  `safeSecretEqual` and budget order as the cron and readiness routes.
+- The AI failure log no longer writes a provider's key as context. The
+  attribution carries the key only to test it, and the provider, model and
+  workspace values are dropped from the log when any part of them echoes the
+  key; the transcription route logs only the class.
 - The workspace export and the trash purge now refuse storage keys that belong
   to another workspace. A page can reference an upload of a different
   workspace — a URL that leaked through a share link, a copied image — and the

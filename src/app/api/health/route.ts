@@ -19,6 +19,10 @@ export const dynamic = "force-dynamic";
  * the body only if the frozen contract is ever intentionally relaxed (that also
  * requires updating the B62 guard test, out of scope here).
  *
+ * The desktop shell's handshake token (B49) travels in a header too, for the
+ * same reason: the body stays frozen, and a header is where an additive value
+ * belongs.
+ *
  * Work per probe: one `SELECT 1`, raced against a short timeout so a hung
  * database answers 503 instead of hanging a supervisor's probe. No auth,
  * no rate-limit bucket, no `Set-Cookie` — safe to hit every few seconds.
@@ -101,6 +105,34 @@ function reportHeaders(report: HealthReport): Record<string, string> {
 }
 
 /**
+ * The header the desktop shell's handshake token travels in.
+ *
+ * The shell starts the server on a loopback port and points the window at it
+ * as soon as `/api/health` answers `200`. That port is picked by binding
+ * `127.0.0.1:0`, reading the port and closing the socket again, so another
+ * program on the same machine can take it before the server does — and it only
+ * has to answer `200` to be believed. The window would then load *that* page,
+ * on an origin the Tauri capability covers, with the app's IPC rights.
+ *
+ * So the shell hands the server a random token per start (through the
+ * environment) and the server echoes it back here. The shell believes a
+ * server only when this header carries its token.
+ */
+const SHELL_TOKEN_HEADER = "x-noema-shell-token";
+
+/**
+ * The handshake token of this run, if the desktop shell started the server.
+ *
+ * `null` in a normal web deployment: no shell, no token, and then the header
+ * is absent rather than empty — an empty value would look like a token to a
+ * caller.
+ */
+function shellToken(): string | null {
+  const token = (process.env.NOEMA_SHELL_TOKEN ?? "").trim();
+  return token === "" ? null : token;
+}
+
+/**
  * Record the probe into the process telemetry registry. Side-effect only: the
  * frozen JSON body is untouched. This is what makes `observability.ts` a
  * load-bearing module on a hot path — a probe counter + DB-ping histogram (with
@@ -128,8 +160,16 @@ export async function GET(): Promise<NextResponse<HealthPayload>> {
     checks: { db },
   };
   recordHealth(db, report);
+  const headers: Record<string, string> = {
+    "cache-control": "no-store",
+    ...reportHeaders(report),
+  };
+  // The shell's handshake: present only when a shell handed the server a
+  // token, and never part of the frozen body.
+  const token = shellToken();
+  if (token) headers[SHELL_TOKEN_HEADER] = token;
   return NextResponse.json(payload, {
     status: report.status === "down" ? 503 : 200,
-    headers: { "cache-control": "no-store", ...reportHeaders(report) },
+    headers,
   });
 }

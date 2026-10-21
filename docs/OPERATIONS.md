@@ -513,20 +513,148 @@ What that means for an operator:
   application-side.
 - **Every write path has to opt in.** The single gate is `assertScopedParent()`
   in [`src/lib/page-parent.ts`](../src/lib/page-parent.ts): it loads the parent
-  **tenant-scoped** (`{ id, workspaceId }`), so a foreign parent is never read
-  and the refusal never names it. **That file is the place to pull in when a
-  new write path stores a `Page.parentId`** — a path that skips the helper
-  re-opens the hole.
+  **tenant-scoped** (`{ id, workspaceId, deletedAt: null }`), so a foreign parent
+  is never read and the refusal never names it. **That file is the place to pull
+  in when a new write path stores a `Page.parentId`** — a path that skips the
+  helper re-opens the hole. The rule is **checked mechanically where the gate
+  can see it**: `node scripts/check-parent-scope.mjs` finds the
+  `Page.parentId` writes in `src/` statically and fails when one of them
+  stores a value the helper has not proved (the paths where the workspace
+  equality holds *by construction* are listed there with their reason), and
+  `node scripts/check-parent-scope.mjs --list` shows every write it found. The
+  allow-list of the gate is **precise**: every entry names the value it
+  releases **and** the proof that makes that value safe (the authorization the
+  entry relies on), and the gate checks that the proof is still there — an
+  entry whose context is gone releases nothing, so a path that loses its
+  authorization turns the gate red instead of staying green.
+  It is a safety net over the tests, not a proof — a write it cannot recognise is
+  not covered by it. The taint of a raw request value is transitive as well: a
+  local that is derived from a tainted local is tainted too, and a read of
+  `.parentId` from a name whose origin the gate cannot see — a parameter, a
+  module-level name, or a local whose initializer the gate cannot resolve (a
+  spread it cannot follow, a call whose result it cannot see into, an
+  interpolation it cannot read) — is a raw value, whatever that receiver is
+  called. The gate follows the taint as far as it can see it: the
+  **unresolvability** is transitive as well (a local that takes the value of
+  an unresolved local is unresolved itself), the read of `.parentId` is seen in
+  every form that names the property directly (the plain read, the optional
+  chain, the non-null assertion, the computed member with the literal key, the
+  indexed member, the result of a call), and the compound assignments (`&&=`,
+  `||=`, `??=`, `+=`, …) are assignments it follows like every other. What it does **not** reach is a value that mixes
+  an unresolved local with the proved one (`const parentId = o ??
+  checked.parentId`): the gate cannot see into `o`, so the raw value may hide
+  in it — and the write is released all the same. A member whose key is not the
+literal (`input["parent" + "Id"]`, `input[KEY]`) and a reflective read
+(`Reflect.get(input, "parentId")`) are not reads the gate sees at all — the
+write is released all the same. The holes that are known
+  today are listed in the gate's
+  own docstring — **eight** of them there, **nine** with the write outside
+  `src/` the gate cannot see: a raw SQL write, a write outside `src/`, a
+  member assignment such as `data.parentId = …`, a computed receiver
+  (`prisma["page"]`), a payload that arrives through a spread the gate cannot
+  read, a value that mixes an unresolved local with the proved one, a computed
+  member whose key is not the literal, a reflective read, and a
+  proof that is matched as text — the gate sees that the named authorization
+  is called, not that it still checks the workspace); that list is a
+  safety net, not an enumeration — a new shape of write can open a new hole,
+  and the list only grows when somebody measures one. It is shorter than it
+  was: the precise allow-list closed the two holes of the name-based list —
+  the callers of an allow-listed helper (the gate checks that no caller hands
+  in a raw parent) and the payload whose parent a helper computes (a value
+  the gate cannot attribute is no longer mistaken for the checked one). The
+  shapes that *are* closed are pinned by the gate's own regression test
+  (`scripts/check-parent-scope.test.mjs`), which holds every allow-list entry
+  to the one path it describes.
 - **What a refusal looks like:** the write is refused with `That parent page
   does not exist in this workspace.` (HTTP 400 on the REST routes, an
   `{error}` on the server actions). If a *legitimate* parent is refused, the
   page it names is not in the workspace the write was scoped to — check the
-  ids, not the helper.
+  ids, not the helper. A parent in the **trash** is refused as well: a page
+  under a trashed parent would be invisible in the tree and would be purged
+  with the parent's own trash.
 - **Old rows are not repaired by the deploy.** Pages that were linked across
-  workspaces before the check existed stay in the database; the read side
-  (database view, CSV/JSON export) filters rows by the database's workspace, so
-  they no longer surface in the foreign workspace's views — but the rows
-  themselves are still there until someone moves or deletes them.
+  workspaces before the check existed stay in the database; every read filters
+  rows by the workspace of the database they hang under — the database view, the
+  relation database, the CSV/JSON export (both the single database and the
+  workspace archive), the "Deleted rows" panel, the database duplicate (which
+  copies the rows **with their content**) and the two chat-context blocks that
+  are sent to the AI — so they no longer surface in the foreign workspace's
+  views — but the rows themselves are still there until someone moves or
+  deletes them.
+
+## 9. Incident quick reference
+
+| Symptom | First checks |
+| --- | --- |
+| `/api/health` → 503 `db: down` | `docker compose ps` (db healthy?), `DATABASE_URL` reachable, `pg_isready` healthcheck logs |
+| `/api/health` refused / no answer | app process alive? port correct (3000 vs 3200 vs compose app)? `docker compose logs app` |
+| Cron never materializes | 503 = `CRON_SECRET` unset in the *app’s* env; 401 = header/value mismatch; `journalctl -u noema-templates.service`; rate limit is 12/min |
+| Invites never arrive | settings “Email & invitations” → status shows `environment SMTP` / `not configured`; run `npm run check:mail`; delivery log error text (10 s connect / 20 s socket timeouts) |
+| Collaborative editing refuses everything (4401) | `AUTH_SECRET` missing/short in the relay’s env; wrong `NEXT_PUBLIC_COLLAB_URL`; 4403 = page scope/permission, not a secret problem |
+| Backup exits 1 | the script says why: no `pg_dump`, dump < 1 KiB, or missing core tables — it deletes the bad file rather than keeping it. `npm run backup -- --dry-run` shows what a run would do |
+| Collaborative socket closed 4400 | `APP_ORIGINS` is set and the client’s `Origin` isn’t on the list (checked pre-auth) — add the origin or unset `APP_ORIGINS` |
+| Collaborative socket closed 4429 | per-user connection cap (5) or message rate (30 / 10 s) exceeded |
+| `EADDRINUSE` / weird build output | dev and prod share `.next` and the ports — exactly one writer at a time |
+
+## 10. Verification appendix
+
+How each command above was cross-checked (this change read the named source;
+nothing was executed against live servers):
+
+| Section | Command / fact | Source of truth |
+| --- | --- | --- |
+| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL” | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 23 tests) |
+| 2.2 | `psql "$DATABASE_URL" < backups/<file>.sql` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) |
+| 3 | `POST /api/cron/templates`, `x-cron-secret`, 503/401, `12/60_000` limit, `{due,created,skipped,failed}`, fail-closed order | `src/app/api/cron/templates/route.ts` |
+| 3.1 | `CRON_SECRET` key + secret generator one-liner | `.env.example:8,50` |
+| 3.4 | `node --env-file=.env scripts/check-share-cron.mjs [baseUrl]` (no npm alias) | `scripts/check-share-cron.mjs:2` · absent from `package.json` |
+| 4.1 | SMTP env names/defaults, precedence, fail-soft, `EmailDelivery`, TLS self-signed switch | `src/lib/mailer.ts` · `src/server/actions/email.ts` · `.env.example:35-44` |
+| 4.2 | “Email & invitations” / “Verify & send test” labels, `testEmailAction` → `verifyMail` | `src/components/email-settings.tsx` · `src/lib/i18n.ts` (`emailHeading`, `verifySendTest`, `smtpVerified`, `recentEmail`) |
+| 4.3 | `npm run check:mail`, mock on 2525, `MOCK_SMTP_PORT`, assertions, cleanup | `package.json` · `scripts/check-mail.mjs` |
+| 5.1 | `npm run collab`, `PORT`/`HOST`, `loadEnvFile`, `AUTH_SECRET` warn, `DATABASE_URL`, `NEXT_PUBLIC_COLLAB_URL` | `package.json` · `scripts/collab-server.mjs` (PORT/HOST, `ensureEnv`, `start()`) · `.env.example:11-12` |
+| 5.2 | 4401/4403 table, read-only drop, no oracle; B75: 4400 Origin (`APP_ORIGINS`), 4429 rate limits (5 conns / 30 msg per 10 s), presence identity binding, current known-gaps list | `scripts/collab-server.mjs` header contract (B53) |
+| 5.3 | collab test count (38 `it()` lines), `check-collab.mjs` → 4401 not a gate | `scripts/collab-server.test.mjs` |
+| 6 | `--profile app`, service names/ports/env/healthchecks, volume behaviour | `docker-compose.yml` |
+| 7 | `/api/health` 200/503 shapes, 2 s ping, `no-store`, no auth/disclosure, compose healthcheck | `src/app/api/health/route.ts` · `docker-compose.yml` |
+| 8 | `db:push` / `db:migrate` / `db:seed`, `migrate deploy/status/diff` + `db push --accept-data-loss/--force-reset` | `package.json` · `npx prisma migrate --help` · `npx prisma db push --help` (both executed) |
+| 8 | single `20260113000000_init` migration vs push-evolved schema | `prisma/migrations/` · `docs/specs/engineering-hardening.md:149,367-373` |
+| 8.1 | tenant boundary enforced in the application (`assertScopedParent`), no `(parentId, workspaceId)` constraint, refusal message, trashed parent refused, legacy rows not repaired (read side: database view, relation database, both exports, deleted rows, database duplicate, the two chat-context blocks), write paths checked where the gate can see them (`scripts/check-parent-scope.mjs`) | `src/lib/page-parent.ts` · `scripts/check-parent-scope.mjs` · `prisma/schema.prisma` (`Page.parentId`) · `src/server/actions/import-pdf.ts` · `src/server/queries.ts` (`getDatabase`) |
+| all | ports, `npm run smoke`, `check:routes`, Node 24, dev/prod `.next` warning | `README.md` · `scripts/smoke.mjs` |
+
+**Not verified by execution (be explicit when relying on them):** the backup →
+restore drill (§2.2), the systemd/crontab drivers (§3.2/3.3 — standard tooling,
+not repo code), and `docker compose --profile app up --build` end-to-end (the
+build itself was proven by B74: real build + run on 3202 + health probe; this
+guide did not rebuild).
+
+**Observed staleness (not fixed here):** `docs/specs/templates.md` refers to a
+`check:share-cron` npm script that does **not** exist in `package.json` — the
+script must be run directly (§3.4); the collab relay’s “residual risk” list
+predates B75 (§5.2); and
+`scripts/backup.mjs:1` says “compressed” while the dump is plain SQL (§2.1).
+
+**Note on concurrent work:** `scripts/backup.mjs` (B92) and
+`scripts/collab-server.mjs` (B75) both changed *while this guide was being
+written*; §2 and §5 were re-read and re-verified against the post-landing
+versions. Re-check those two sections if either file changes again.
+
+## 11. Authoring-window policy
+
+The project timeline follows a fixed rhythm: work lands only inside four
+overnight windows, in `Europe/Paris`:
+
+```
+Wed 19:00 → Thu 06:00
+Thu 19:00 → Fri 06:00
+Fri 19:00 → Sat 06:00
+Sat 19:00 → Sun 06:00
+```
+
+A window is **half-open**: `19:00:00` is inside it and `06:00:00` is outside
+it, so the last allowed instant of a night is `05:59:59`. Monday and Tuesday
+have no window. The offset is read from the platform ICU database (summer
+`+02:00`, winter `+01:00`), never hardcoded, so the two yearly transitions are
+handled automatically; both happen to fall inside a Saturday night.
 
 ### 8.2 Seal the stored two-factor seeds (B05)
 
@@ -745,19 +873,21 @@ nothing about the workspace it was aimed at.
 
 ### 8.6 Ops gates: the shared secret, the rate limit, the order
 
-The cron routes and the readiness probe run the **same gate** —
-`@/lib/ops-guard` (`src/lib/ops-guard.ts`) — so they cannot drift apart. The
-metrics route and the cron server actions use the same constant-time comparison
-and the same fail-closed rule; metrics has one documented ordering exception
-(below). The gate owns three properties:
+Every endpoint that authenticates with the shared ops secret uses the **same
+helper** — `@/lib/ops-guard` (`src/lib/ops-guard.ts`) — so the routes cannot
+drift apart: seven of the nine gate files (ten of the eleven HTTP handlers)
+go through `guardOpsSecret` (which owns the order); the two exceptions are
+`/api/metrics` — it compares with the same `safeSecretEqual` but keeps the
+order in the route body — and the server-action surface (`cronActionGate` in
+`src/server/actions/automations.ts`). The gate owns three properties:
 
 | Property | What it means | Where |
 | --- | --- | --- |
-| **Fail closed** | No configured secret ⇒ the gate is **closed** (`503`), never open. An empty/absent presented value is never a match. | `guardOpsSecret` |
+| **Fail closed** | No configured secret ⇒ the gate is **closed**, never open. The routes answer `503` there; the two exceptions answer something else *without* opening the gate: `/api/metrics` answers `401` (its second, session-based admin path — a `503` would lock the admins out) and the server actions answer `{"error":"Unauthorized"}` (an action result, not an HTTP status — see the exceptions below). An empty/absent presented value is never a match. | `guardOpsSecret` · `cronActionGate` |
 | **Constant-time comparison** | The presented secret is compared byte by byte without an early exit, so the response time does not reveal *where* a guess differs. The comparison is case sensitive; both sides are trimmed before it. | `safeSecretEqual` → `constantTimeEqual` (`src/lib/secrets.ts`) |
-| **Throttle first** | The rate limit runs **before** the comparison, so a wrong secret is answered `429` once the budget is spent — the guessing is bounded instead of unlimited. (`/api/metrics` resolves the caller first so its budget can be keyed by user; its comparison is constant time and a wrong secret still reaches the limiter.) | `guardOpsSecret` |
+| **Throttle first** | The rate limit runs **before** the comparison, so a wrong secret is answered `429` once the budget is spent — the guessing is bounded instead of unlimited. The order holds on every ops surface: `/api/metrics` keeps it in its route body, and the server actions answer `{"error":"Rate limit exceeded."}` (an action result, not an HTTP status) once their budget is spent — see the exceptions below. | `guardOpsSecret` · `cronActionGate` |
 
-**Order of the answers** (this is the contract):
+**Order of the answers** (this is the contract of the HTTP routes):
 
 1. no secret configured → `503 {"error":"…is not configured…"}` (fail closed);
 2. over the rate limit → `429` (with a `retry-after` header) — **also for a
@@ -765,11 +895,22 @@ and the same fail-closed rule; metrics has one documented ordering exception
 3. wrong/missing secret → `401 {"error":"Unauthorized"}`;
 4. otherwise the request runs.
 
-**Exception — `/api/metrics`:** the route resolves the admin identity first so
-the 120/60 s budget can be keyed on the user (an IP-rotating caller must not
-dodge it), then applies the limit. The secret comparison is constant time and a
-wrong secret still consumes the limiter; the only difference is that a wrong
-guess is answered `401` until that per-user/IP budget is spent, then `429`.
+**Exception — `GET /api/metrics`:** with no secret configured it answers
+**`401`**, not `503`. The route has a second, session-based admin path (a
+workspace OWNER/ADMIN), and a `503` would lock those admins out; `401` is
+therefore the unchanged and correct contract there. Its **order** is the same
+as everywhere else: the rate limit runs before the secret comparison, so a
+wrong secret is throttled (`429`) once the budget is spent.
+
+**Exception — the server actions** (`listDueAutomationsForCronAction`,
+`commitRecurringRunAction`): with no secret configured they answer
+**`{"error":"Unauthorized"}`**, not `503`. An action returns an **action
+result**, not an HTTP response — it has no status code to answer with, so it
+has no `503` contract at all. The gate is still **closed** there (fail closed,
+also for a whitespace-only `CRON_SECRET`): the actions differ only in *how*
+they say "no". Their **order** is the same as everywhere else: the budget is
+spent before the secret is compared, so a wrong secret is answered
+`{"error":"Rate limit exceeded."}` once the budget is spent.
 
 **Which environment variable guards which route:**
 
@@ -782,8 +923,8 @@ guess is answered `401` until that per-user/IP budget is spent, then `429`.
 | `GET`/`POST /api/cron/digest` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
 | `GET /api/cron/backups` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
 | `GET`/`POST /api/ready` | `CRON_SECRET` **or** `READY_SECRET` | `x-cron-secret` **or** `x-ready-secret` | token bucket: burst 30, 1/s |
-| `GET /api/metrics` | `CRON_SECRET` (besides the session-based workspace-admin path) | `x-cron-secret` | 120 / 60 s |
-| `listDueAutomationsForCronAction`, `commitRecurringRunAction` (server actions — HTTP endpoints too) | `CRON_SECRET` | the action's `secret` argument | 120 / 60 s, deployment-wide |
+| `GET /api/metrics` | `CRON_SECRET` (besides the session-based workspace-admin path) | `x-cron-secret` | 120 / 60 s — no secret configured ⇒ `401`, not `503` (the admin path stays open) |
+| `listDueAutomationsForCronAction`, `commitRecurringRunAction` (server actions — HTTP endpoints too) | `CRON_SECRET` | the action's `secret` argument | 120 / 60 s, deployment-wide — no secret configured ⇒ `{"error":"Unauthorized"}`, not `503` (an action result, not an HTTP status) |
 
 `READY_SECRET` is an **alternative name for the readiness probe only** — it is
 accepted *in addition to* `CRON_SECRET` there, and nowhere else.
@@ -799,7 +940,9 @@ accepted *in addition to* `CRON_SECRET` there, and nowhere else.
   presented one — a key built from the guess would be a fresh bucket per
   attempt and the limit would be bypassable. The budget is deployment-wide
   (the action has no request of its own) and therefore more generous than the
-  routes' 12/min.
+  routes' 12/min. A missing secret and a wrong secret are **indistinguishable
+  there** — both answer `{"error":"Unauthorized"}` — so the operator reads the
+  difference in the cron tick's log, not in the answer.
 - Rotation of `CRON_SECRET` changes the rate-limit key of the action surface
   (it is hashed into the key) — the new secret starts with a fresh budget.
 

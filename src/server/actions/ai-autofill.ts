@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
+import { assertScopedParent } from "@/lib/page-parent";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
 import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfig } from "@/lib/ai-provider";
 import { parseAiAutofillConfig, validateAiAutofillConfig } from "@/lib/ai-autofill";
@@ -32,8 +33,9 @@ function describeValue(value: unknown): string {
  * The config is untrusted stored JSON, so it is validated with
  * `validateAiAutofillConfig` (rejecting an empty prompt, out-of-range sampling
  * knobs) and then parsed with `parseAiAutofillConfig` before use. Guests and
- * non-members are refused, and both the column and the row must belong to the
- * workspace the caller names — a forged id cannot write across workspaces.
+ * non-members are refused, the column and the row must belong to the workspace
+ * the caller names, and the column the value is written into must belong to
+ * the row's own database — a forged id cannot write across workspaces.
  */
 export async function runAiAutofillAction(input: {
   workspaceId: string;
@@ -77,6 +79,7 @@ export async function runAiAutofillAction(input: {
     select: {
       id: true,
       workspaceId: true,
+      parentId: true,
       title: true,
       propertyValues: {
         select: { value: true, property: { select: { name: true } } },
@@ -85,6 +88,40 @@ export async function runAiAutofillAction(input: {
   });
   if (!row || row.workspaceId !== input.workspaceId) {
     return { ok: false, error: "That row does not belong to this workspace." };
+  }
+
+  // B08/B99: the row's parent is the database that decides where the generated
+  // value may be written. It has to be a live page of the caller's workspace
+  // as well: a legacy row can carry the caller's `workspaceId` while its
+  // `parentId` still points at another tenant's database, and binding the
+  // target to that foreign database would write into it. The checked parent is
+  // the only id used from here on.
+  const rowParent = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: row.parentId,
+  });
+  if ("error" in rowParent || !rowParent.parentId) {
+    return { ok: false, error: "That row does not belong to this workspace." };
+  }
+
+  // B99: the column the generated value is written into has to belong to the
+  // row's **own** database — the database the row hangs under. The target id
+  // comes out of the stored, untrusted column config and used to be written
+  // unchecked, so a forged `targetPropertyId` filed the generated value under
+  // a column of a foreign database (another workspace, or another database of
+  // this workspace). The same rule binds the fallback target — the column
+  // itself — to the row's database.
+  //
+  // The answer is the same for a target id that does not exist (no existence
+  // oracle), and the check runs before the provider is called: a run that
+  // cannot write is not worth a model call.
+  const targetPropertyId = config.targetPropertyId ?? property.id;
+  const targetProperty = await prisma.property.findFirst({
+    where: { id: targetPropertyId, databasePageId: rowParent.parentId },
+    select: { id: true },
+  });
+  if (!targetProperty) {
+    return { ok: false, error: "That target property does not belong to this database." };
   }
 
   const runtime = await resolveAiConfig(input.workspaceId);
@@ -110,7 +147,6 @@ export async function runAiAutofillAction(input: {
   if (!result.ok) return { ok: false, error: result.error };
 
   const value = result.text.trim();
-  const targetPropertyId = config.targetPropertyId ?? property.id;
   await prisma.propertyValue.upsert({
     where: { propertyId_pageId: { propertyId: targetPropertyId, pageId: row.id } },
     create: { propertyId: targetPropertyId, pageId: row.id, value: { text: value } },

@@ -140,8 +140,9 @@ export async function guestVisiblePageIds(
 }
 
 /**
- * The scope of a viewer: `null` when the viewer sees the whole workspace (every
- * role but `GUEST`), the guest scope otherwise.
+ * The scope of a viewer: `null` when the viewer sees the whole workspace (the
+ * full-access roles), the guest scope for a `GUEST`, and an **empty** scope for
+ * a role that is not a known workspace role — it fails closed, never wide.
  *
  * Callers hand `scope.pageIds` to the page queries (`getPageTree`,
  * `getFavorites`, `searchPages`) and `scope.teamspaceIds` to the teamspace
@@ -152,8 +153,10 @@ export async function viewerScopeFor(
   workspaceId: string,
   role: string,
 ): Promise<ViewerScope | null> {
-  if (role !== "GUEST") return null;
-  return guestScope(userId, workspaceId);
+  if (role === "GUEST") return guestScope(userId, workspaceId);
+  if (FULL_ACCESS_ROLES.has(role)) return null;
+  // Fails closed: a role that is not a known workspace role sees nothing.
+  return { pageIds: new Set<string>(), teamspaceIds: new Set<string>() };
 }
 
 /** The roles that may see the whole workspace. */
@@ -174,10 +177,7 @@ export async function pageScopeFor(
   role: string,
 ): Promise<Set<string> | null> {
   const scope = await viewerScopeFor(userId, workspaceId, role);
-  if (scope) return scope.pageIds;
-  if (FULL_ACCESS_ROLES.has(role)) return null;
-  // Fail closed: a forged or corrupted role must never widen the view.
-  return new Set<string>();
+  return scope ? scope.pageIds : null;
 }
 
 /**

@@ -69,6 +69,7 @@
     "check:secrets": "node scripts/check-secrets.mjs",
     "check:workflow-permissions": "node scripts/check-workflow-permissions.mjs",
     "check:use-server": "node scripts/check-use-server.mjs",
+    "check:parent-scope": "node scripts/check-parent-scope.mjs",
     "check:design": "node scripts/check-design-system.mjs --check",
     "design:report": "node scripts/check-design-system.mjs",
     "check:motion": "node scripts/check-motion.mjs --check",

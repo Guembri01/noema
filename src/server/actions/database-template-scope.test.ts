@@ -17,6 +17,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * The fake database below applies the same filters the real one would — a
  * `where` with a `workspaceId`/`parentId` that does not match the row returns
  * nothing. Without that, the tests would stay green even without the fix.
+ * It also honours the `select`: the real database returns **only** the
+ * selected fields, so a field that the query does not select is `undefined`.
+ * A mock that hands out the whole record would hide a comparison against a
+ * field the query never asked for.
  */
 
 const WORKSPACE_A = "ws-a";
@@ -124,6 +128,28 @@ const PAGES: FakePage[] = [
       ],
     },
     propertyValues: [{ propertyId: "prop-c", value: { text: "C's cell value" } }],
+  },
+  {
+    /**
+     * A **legacy** row: it hangs under the authorized database (`db-a`) — but
+     * it belongs to **another** workspace (`ws-b`). Such rows exist where a
+     * row was linked across the workspace boundary before the binding was
+     * enforced. The parent is not enough here: only the workspace binding
+     * keeps this row out of the caller's template.
+     */
+    id: "row-legacy",
+    workspaceId: WORKSPACE_B,
+    parentId: DATABASE_A,
+    type: "PAGE",
+    schemaLocked: false,
+    icon: "🕰️",
+    content: {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Legacy row body" }] },
+      ],
+    },
+    propertyValues: [{ propertyId: "prop-b", value: { text: "Legacy cell value" } }],
   },
 ];
 
@@ -258,15 +284,34 @@ function rowQuery(): {
   return (call?.[0] as { where?: never; select?: never }) ?? {};
 }
 
+/**
+ * The fields the real database returns: **only** the selected ones. A field
+ * that the query does not select is `undefined` — a comparison against it can
+ * never succeed, and a mock that hands out the whole record would hide that.
+ */
+function selectedFields(
+  row: object,
+  select: Record<string, boolean> | undefined,
+): Record<string, unknown> {
+  const source = row as Record<string, unknown>;
+  if (!select) return source;
+  const projected: Record<string, unknown> = {};
+  for (const [field, wanted] of Object.entries(select)) {
+    if (wanted) projected[field] = source[field];
+  }
+  return projected;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 
   // The fake database applies every filter of the `where` clause, exactly as
   // the real one does — a row of another workspace or another database is not
-  // found under a bound query.
+  // found under a bound query — and it returns only the selected fields.
   db.pageFindUnique.mockImplementation(
     async (args: {
       where: { id?: string; parentId?: unknown; workspaceId?: unknown };
+      select?: Record<string, boolean>;
     }) => {
       const where = args.where ?? {};
       const page = PAGES.find((entry) => entry.id === where.id);
@@ -275,7 +320,7 @@ beforeEach(() => {
       if (where.workspaceId !== undefined && page.workspaceId !== where.workspaceId) {
         return null;
       }
-      return page;
+      return selectedFields(page, args.select);
     },
   );
 
@@ -285,8 +330,11 @@ beforeEach(() => {
   db.propertyValueCreateMany.mockResolvedValue({ count: 1 });
 
   db.templateFindUnique.mockImplementation(
-    async (args: { where: { id?: string } }) =>
-      TEMPLATES.find((template) => template.id === args.where?.id) ?? null,
+    async (args: { where: { id?: string }; select?: Record<string, boolean> }) => {
+      const template = TEMPLATES.find((entry) => entry.id === args.where?.id);
+      if (!template) return null;
+      return selectedFields(template, args.select);
+    },
   );
 });
 
@@ -308,6 +356,16 @@ describe("saveRowAsTemplateAction — the row must belong to the authorized data
 
   it("does not copy a row of another database of the same workspace", async () => {
     const result = (await saveRowAsTemplateAction(DATABASE_A, "row-in-c", "Stolen")) as ActionResult;
+
+    expect(result.error).toBe("Row not found.");
+    expect(db.templateCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not copy a legacy row that hangs under the database of another workspace", async () => {
+    // `row-legacy` sits under `db-a` — but belongs to `ws-b`. The parent is
+    // right, the workspace is not: the row must be refused like any other
+    // foreign row, and no template may be created from it.
+    const result = (await saveRowAsTemplateAction(DATABASE_A, "row-legacy", "Stolen")) as ActionResult;
 
     expect(result.error).toBe("Row not found.");
     expect(db.templateCreate).not.toHaveBeenCalled();

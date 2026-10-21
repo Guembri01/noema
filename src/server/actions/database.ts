@@ -507,7 +507,14 @@ export async function reorderRowsAction(
   if (!canEditContent(auth.access.role)) return { error: "No permission." };
 
   const existing = await prisma.page.findMany({
-    where: { parentId: anchor.parentId, deletedAt: null },
+    // The rows belong to the database's workspace: a row that was linked across
+    // the boundary before the fix (B08) is not this workspace's row, and
+    // reordering must not write its `position` (a cross-tenant write).
+    where: {
+      parentId: anchor.parentId,
+      workspaceId: auth.page.workspaceId,
+      deletedAt: null,
+    },
     orderBy: { position: "asc" },
     select: { id: true },
   });
@@ -581,6 +588,23 @@ export async function setPropertyValueAction(
   if (!fileUrlsAreAppOwned(value)) {
     return { error: "That file link is not allowed." };
   }
+
+  // B99: the cell belongs to a column of the row's **own** database — the
+  // same database the call was authorised against (`auth.page` is the
+  // database of `row.parentId`). The property id arrives from the client and
+  // used to be written into the table unchecked, so a member of workspace A
+  // could file a value under a column of a database in workspace B: the
+  // value is invisible in B (B reads its rows by `pageId`), but it hijacks
+  // the UNIQUE_ID counter of that foreign column.
+  //
+  // The refusal is the same as for a property id that does not exist
+  // ("Property not found."), so the caller learns nothing about the foreign
+  // id — no existence oracle.
+  const property = await prisma.property.findFirst({
+    where: { id: propertyId, databasePageId: auth.page.id },
+    select: { id: true },
+  });
+  if (!property) return { error: "Property not found." };
 
   await prisma.propertyValue.upsert({
     where: { propertyId_pageId: { propertyId, pageId: rowPageId } },
@@ -743,7 +767,14 @@ export async function listDeletedRowsAction(
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
   const rows = await prisma.page.findMany({
-    where: { parentId: databasePageId, deletedAt: { not: null } },
+    // The rows belong to the database's workspace: a row that was linked
+    // across the boundary before the fix (B08) is not this workspace's row and
+    // must not show its title in the "Deleted rows" panel.
+    where: {
+      parentId: databasePageId,
+      workspaceId: auth.page.workspaceId,
+      deletedAt: { not: null },
+    },
     orderBy: { deletedAt: "desc" },
     take: 50,
     select: { id: true, title: true, icon: true, deletedAt: true },
@@ -986,7 +1017,15 @@ export async function duplicateDatabaseAction(
       orderBy: { position: "asc" },
     }),
     prisma.page.findMany({
-      where: { parentId: databasePageId, deletedAt: null },
+      // The rows belong to the database's workspace. A row that was linked
+      // across the boundary before the fix (B08) is still in the table — the
+      // clone would copy its title, its body and its cell values into another
+      // tenant, so the read is filtered by the workspace (B08).
+      where: {
+        parentId: databasePageId,
+        workspaceId: auth.page.workspaceId,
+        deletedAt: null,
+      },
       orderBy: { position: "asc" },
       include: { propertyValues: { select: { propertyId: true, value: true } } },
     }),

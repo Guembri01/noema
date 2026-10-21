@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const db = vi.hoisted(() => ({
   pageFindUnique: vi.fn(),
+  propertyFindFirst: vi.fn(),
   valueUpsert: vi.fn(),
   activityCreate: vi.fn(),
 }));
@@ -21,6 +22,7 @@ const perm = vi.hoisted(() => ({ getWorkspaceAccess: vi.fn(), canEditContent: vi
 vi.mock("@/lib/db", () => ({
   prisma: {
     page: { findUnique: db.pageFindUnique },
+    property: { findFirst: db.propertyFindFirst },
     propertyValue: { upsert: db.valueUpsert },
     activity: { create: db.activityCreate },
   },
@@ -47,6 +49,21 @@ beforeEach(() => {
   perm.canEditContent.mockReturnValue(true);
   db.valueUpsert.mockResolvedValue({});
   db.activityCreate.mockResolvedValue({});
+  // `p1` is a column of the database `db1` the row hangs under; the fake
+  // applies the filter the real database applies (the property binding of
+  // B99).
+  db.propertyFindFirst.mockImplementation(
+    async (args: { where: { id?: string; databasePageId?: string } }) => {
+      const where = args.where ?? {};
+      const property = [{ id: "p1", databasePageId: "db1" }].find(
+        (candidate) =>
+          (where.id === undefined || candidate.id === where.id) &&
+          (where.databasePageId === undefined ||
+            candidate.databasePageId === where.databasePageId),
+      );
+      return property ? { id: property.id } : null;
+    },
+  );
 });
 
 describe("setPropertyValueAction - FILES write-path URL validation", () => {
