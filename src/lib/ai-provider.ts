@@ -10,7 +10,9 @@
 
 import { prisma } from "./db";
 import { decryptSecret } from "./secrets";
-import { providerDefaultBaseUrl, normalizeBaseUrl } from "./ai-providers";
+import { isOpenCodeGoEndpoint, providerDefaultBaseUrl, normalizeBaseUrl } from "./ai-providers";
+import { serverAppVersion } from "./app-version";
+import { DEPLOYMENT_SESSION_ID, workspaceSessionId } from "./ai-session";
 import { checkBudget, estimateTokens, recordUsage, type BudgetRecord } from "./ai-cost";
 import { z } from "zod";
 import { getWorkspaceAccess } from "./permissions";
@@ -407,6 +409,58 @@ export function providerClass(
   return transportFailure(context);
 }
 
+/* -------------------------------------------------------------------------- *
+ * Provider identity
+ *
+ * A provider should be able to tell *who* is calling it. Two headers carry
+ * that, and OpenCode Go asks for both
+ * (https://opencode.ai/v2/docs/console/go/):
+ *
+ * - `user-agent` — the product's own name and version, not the name of the
+ *   HTTP library underneath. Without it the runtime fills the header in with
+ *   its own name (`node`), which says nothing about the application.
+ * - `x-opencode-session` — a session id that is *stable* for a conversation,
+ *   so the provider can route and cache per conversation instead of per
+ *   request.
+ *
+ * The session id is sent to Go only: it names an internal object (a
+ * discussion, a workspace), and no other provider has any use for it. The ids
+ * themselves live in `./ai-session` — a session names a conversation, and the
+ * surface that has one knows it before the transport is reached.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * The user agent the provider sees: `noema/<version>`.
+ *
+ * The version is the one the health probe reports, so a provider log can be
+ * matched against a deployment.
+ */
+export function providerUserAgent(): string {
+  return `noema/${serverAppVersion()}`;
+}
+
+/**
+ * The headers a provider request carries.
+ *
+ * `authorization` is the workspace's key, `user-agent` names the application,
+ * and `x-opencode-session` names the conversation — the last one only to
+ * OpenCode Go, which asks for it and is the only provider that reads it.
+ */
+export function providerRequestHeaders(
+  config: { apiKey: string; baseUrl: string; sessionId?: string },
+  options: { json?: boolean } = {},
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${config.apiKey}`,
+    "user-agent": providerUserAgent(),
+  };
+  if (options.json) headers["content-type"] = "application/json";
+  if (isOpenCodeGoEndpoint(config.baseUrl)) {
+    headers["x-opencode-session"] = config.sessionId ?? DEPLOYMENT_SESSION_ID;
+  }
+  return headers;
+}
+
 export type AiRuntimeConfig = {
   provider: string;
   baseUrl: string;
@@ -415,6 +469,11 @@ export type AiRuntimeConfig = {
   source: "workspace" | "env";
   /** Workspace the call is billed to; absent for the env/global defaults. */
   workspaceId?: string;
+  /**
+   * The session the request belongs to, sent to OpenCode Go as
+   * `x-opencode-session`. A conversation replaces it with its own id.
+   */
+  sessionId?: string;
 };
 
 /**
@@ -512,6 +571,7 @@ function envConfig(): AiRuntimeConfig | null {
     model: process.env.AI_MODEL ?? "gpt-4o-mini",
     apiKey,
     source: "env",
+    sessionId: DEPLOYMENT_SESSION_ID,
   };
 }
 
@@ -538,11 +598,18 @@ export async function resolveAiConfig(
           apiKey,
           source: "workspace",
           workspaceId,
+          sessionId: workspaceSessionId(workspaceId),
         };
       }
     }
   }
-  return envConfig();
+  const fallback = envConfig();
+  if (!fallback) return null;
+  // The environment configuration is shared, but the *session* is not: a
+  // workspace's requests still belong to that workspace.
+  return workspaceId
+    ? { ...fallback, sessionId: workspaceSessionId(workspaceId) }
+    : fallback;
 }
 
 /**
@@ -603,10 +670,7 @@ export async function chatComplete(
   try {
     const response = await fetch(`${config.baseUrl}/chat/completions`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${config.apiKey}`,
-      },
+      headers: providerRequestHeaders(config, { json: true }),
       body: JSON.stringify({
         model: config.model,
         messages,
@@ -677,10 +741,7 @@ export async function* chatCompleteStream(
 
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${config.apiKey}`,
-    },
+    headers: providerRequestHeaders(config, { json: true }),
     body: JSON.stringify({
       model: config.model,
       messages,
@@ -729,11 +790,11 @@ export async function* chatCompleteStream(
 
 /** Fetch the provider's live model list (falls back to the catalog upstream). */
 export async function listProviderModels(
-  config: { baseUrl: string; apiKey: string },
+  config: { baseUrl: string; apiKey: string; modelsUrl?: string },
 ): Promise<{ ok: true; models: string[] } | { ok: false; error: string }> {
   try {
-    const response = await fetch(`${normalizeBaseUrl(config.baseUrl)}/models`, {
-      headers: { authorization: `Bearer ${config.apiKey}` },
+    const response = await fetch(config.modelsUrl ?? `${normalizeBaseUrl(config.baseUrl)}/models`, {
+      headers: providerRequestHeaders(config),
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) {
