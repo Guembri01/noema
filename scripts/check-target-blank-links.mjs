@@ -247,12 +247,107 @@ function lineAt(lineStarts, offset) {
   return line + 1;
 }
 
+/** The index after the `)` that closes the `(` at `start`. */
+function matchParen(text, start) {
+  let depth = 0;
+  let quote = null;
+  for (let i = start; i < text.length; i += 1) {
+    const char = text[i];
+    if (quote) {
+      if (char === "\\") i += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+    } else if (char === "(") {
+      depth += 1;
+    } else if (char === ")") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/** Split a call's argument list on top-level commas. */
+function splitArguments(text) {
+  const args = [];
+  let start = 0;
+  let depth = 0;
+  let quote = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (quote) {
+      if (char === "\\") i += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") quote = char;
+    else if (char === "(" || char === "{" || char === "[") depth += 1;
+    else if (char === ")" || char === "}" || char === "]") depth -= 1;
+    else if (char === "," && depth === 0) {
+      args.push(text.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  args.push(text.slice(start).trim());
+  return args;
+}
+
+/**
+ * `window.open` calls that open a new tab. The feature string is the third
+ * argument; the second argument names `_blank`. The gate reads the same two
+ * tokens as a `rel`, because `window.open` is the one new-tab path a JSX tag
+ * scanner cannot see.
+ */
+function scanWindowOpen(source, lineStarts) {
+  const calls = [];
+  const needle = "window.open(";
+  let index = 0;
+  while ((index = source.indexOf(needle, index)) !== -1) {
+    const start = index + needle.length;
+    const end = matchParen(source, start - 1);
+    if (end === -1) break;
+    const args = splitArguments(source.slice(start, end));
+    const target = args[1] ?? "";
+    if (!/["'`]_blank["'`]/.test(target)) {
+      index = end + 1;
+      continue;
+    }
+    const features = args[2] ?? "";
+    const tokens = new Set((features.match(/[A-Za-z]+/g) ?? []).map((token) => token.toLowerCase()));
+    calls.push({
+      line: lineAt(lineStarts, index),
+      missing: REQUIRED.filter((token) => !tokens.has(token)),
+      features,
+    });
+    index = end + 1;
+  }
+  return calls;
+}
+
 const files = collectFiles(ROOT);
 const violations = [];
 let links = 0;
+let windowOpenCalls = 0;
 
 for (const file of files) {
   const source = readFileSync(file, "utf8");
+  const lineStarts = [0];
+  for (let i = 0; i < source.length; i += 1) if (source[i] === "\n") lineStarts.push(i + 1);
+  for (const call of scanWindowOpen(source, lineStarts)) {
+    windowOpenCalls += 1;
+    if (call.missing.length === 0) continue;
+    violations.push({
+      file: relative(ROOT, file).replace(/\\/g, "/"),
+      line: call.line,
+      missing: call.missing,
+      rel: null,
+      kind: "window.open",
+      features: call.features,
+    });
+  }
   for (const tag of scanTags(source)) {
     const attributes = parseAttributes(tag.blob);
     const target = attributes.find((attribute) => attribute.name === "target");
@@ -275,6 +370,9 @@ for (const file of files) {
 }
 
 const relText = (violation) => {
+  if (violation.kind === "window.open") {
+    return `window.open(..., ${violation.features || "no features"}) is missing ${violation.missing.join(" and ")}`;
+  }
   const rel = violation.rel;
   if (!rel) return "no rel attribute";
   const value = rel.expression ? `{${rel.value}}` : `"${rel.value}"`;
@@ -297,5 +395,6 @@ if (violations.length > 0) {
 }
 
 console.log(
-  `PASS  ${links} link(s) open a new tab and every one of them carries noreferrer noopener (${files.length} file(s) scanned)`,
+  `PASS  ${links} link(s) open a new tab and every one of them carries noreferrer noopener, ` +
+    `${windowOpenCalls} window.open call(s) carry noopener,noreferrer (${files.length} file(s) scanned)`,
 );

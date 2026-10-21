@@ -48,6 +48,24 @@ const CASES = [
     expect: 'rel="noreferrer" is missing noopener',
   },
   {
+    name: "a window.open that opens a tab without noreferrer is reported",
+    file: "src/probe.ts",
+    source: `export function go(href: string) {
+  window.open(href, "_blank", "noopener");
+}
+`,
+    expect: 'window.open(..., "noopener") is missing noreferrer',
+  },
+  {
+    name: "a window.open that carries both tokens is accepted",
+    file: "src/probe.ts",
+    source: `export function go(href: string) {
+  window.open(href, "_blank", "noopener,noreferrer");
+}
+`,
+    clean: true,
+  },
+  {
     name: "a link without a `rel` is reported",
     file: "src/probe.tsx",
     source: `export function Probe() {
