@@ -332,7 +332,25 @@ export type RelationData = {
   properties: { id: string; name: string; type: string }[];
 };
 
-export async function getDatabase(databasePageId: string) {
+/**
+ * Read a database: its schema, its views, its rows, its templates and the
+ * data of the databases its relations point at.
+ *
+ * `readablePageIds` is the **read scope** of the viewer - the pages they may
+ * read (the pages shared with them plus their whole subtree, never an
+ * ancestor; `lib/guest-access.ts` -> `guestReadablePageIds`). `null` means
+ * "no scope": the viewer may read the whole workspace (every role but
+ * `GUEST`), so nothing is filtered.
+ *
+ * A relation target outside the scope delivers nothing - no rows, no cell
+ * values and no schema - the same empty answer a target outside the
+ * workspace gets. The check stands in front of the target's content query,
+ * so a target the viewer may not read is never read at all.
+ */
+export async function getDatabase(
+  databasePageId: string,
+  readablePageIds: ReadonlySet<string> | null = null,
+) {
   // A database's rows are the pages that hang under it, and they belong to the
   // database's own workspace. `Page.parentId` is a plain foreign key, so a row
   // that was linked across workspaces (the unchecked `parentId` hole, B08)
@@ -412,13 +430,33 @@ export async function getDatabase(databasePageId: string) {
     relationProperties.map(async (property) => {
       const targetDatabaseId = (property.config as { targetDatabaseId: string })
         .targetDatabaseId;
-      // B98 — the target of a relation must be a database of the *same*
+      /**
+       * B100 - the relation target must lie inside the viewer's **read**
+       * scope.
+       *
+       * The read scope is the set of pages the viewer may read: the pages
+       * shared with them plus their whole subtree, never an ancestor - the
+       * canonical inheritance rule of `lib/access-inheritance.ts`. So a guest
+       * who was given a single row of the target database does **not** get the
+       * database above it, while a guest who was given a parent page does get
+       * the database below it.
+       *
+       * The scope is checked **before** the target is resolved, so a target
+       * the viewer may not read is not read at all, and the answer is the same
+       * empty one a target outside the workspace gets - a refusal must not
+       * confirm that the target exists (no existence oracle).
+       */
+      if (readablePageIds && !readablePageIds.has(targetDatabaseId)) {
+        relationData[property.id] = { options: [], valuesByRow: {}, properties: [] };
+        return;
+      }
+      // B98 - the target of a relation must be a database of the *same*
       // workspace as the database being read. Filtering the target's rows by
       // the target's own workspace would be tautological (a foreign target's
       // rows all carry the foreign workspace id and would pass), so the two
       // workspaces are compared explicitly. A relation that points outside the
-      // workspace — from an old revision, an import or a direct database edit —
-      // yields no options, no cell values and no schema.
+      // workspace - from an old revision, an import or a direct database edit
+      // - yields no options, no cell values and no schema.
       const target = await prisma.page.findFirst({
         where: { id: targetDatabaseId, type: "DATABASE", deletedAt: null },
         select: { id: true, workspaceId: true },

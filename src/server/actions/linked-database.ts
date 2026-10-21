@@ -71,15 +71,21 @@ export async function getLinkedDatabaseAction(
   // must not confirm that the database exists (no existence oracle).
   if (!access) return { error: "Database not found." };
 
-  // A guest may read a database only inside their read scope: the pages shared
-  // with them plus their subtree — a shared row does not grant the database
-  // above it, a shared parent page does grant the database below it.
-  if (access.role === "GUEST") {
-    const readable = await guestReadablePageIds(user.id, page.workspaceId);
-    if (!readable.has(databasePageId)) return { error: "Database not found." };
+  // A guest's read scope answers both questions below: whether they may open
+  // the requested database at all, and which relation *targets* of it may be
+  // resolved. A shared row does not grant the database above it; a shared
+  // parent page does grant the database below it. Every other role has no
+  // scope (`null`) and keeps the whole workspace. Compute it once, so the two
+  // checks cannot disagree.
+  const readable =
+    access.role === "GUEST"
+      ? await guestReadablePageIds(user.id, page.workspaceId)
+      : null;
+  if (readable && !readable.has(databasePageId)) {
+    return { error: "Database not found." };
   }
 
-  const database = await getDatabase(databasePageId);
+  const database = await getDatabase(databasePageId, readable);
   return {
     databasePageId,
     title: page.title,
