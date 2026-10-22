@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -131,6 +134,21 @@ describe("roleHue", () => {
 });
 
 describe("MembersManager render", () => {
+  it("asks the owner for their password before the transfer (B138)", () => {
+    // The dialog is interactive and the repository has no DOM test, so the
+    // plumbing is pinned on the source: the field exists and the call carries
+    // the password. The security boundary itself is pinned by the test of the
+    // action (`src/server/actions/workspaces.test.ts`).
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "members-manager.tsx"),
+      "utf8",
+    );
+    expect(source).toContain(
+      "transferOwnershipAction(workspaceId, target.userId, transferPassword)",
+    );
+    expect(source).toContain('type="password"');
+  });
+
   it("renders Members / Pending invites / Guests sections with the roster", () => {
     const html = render();
     expect(html).toContain("Members");
