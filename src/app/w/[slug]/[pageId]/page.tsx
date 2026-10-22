@@ -201,9 +201,9 @@ export default async function PageRoute({
 
   let surface: ReactNode;
   if (database) {
-    const { DatabaseView } = await import("@/components/database/database-view");
+    const { DatabaseSurface } = await import("@/components/database/database-surface");
     surface = (
-      <DatabaseView
+      <DatabaseSurface
         locale={locale}
         databasePageId={page.id}
         workspaceId={workspace.id}

@@ -18,6 +18,6 @@ describe("page route surface split", () => {
 
   it("imports both surfaces with dynamic import calls", () => {
     expect(source).toMatch(/await import\("@\/components\/editor\/page-editor"\)/);
-    expect(source).toMatch(/await import\("@\/components\/database\/database-view"\)/);
+    expect(source).toMatch(/await import\("@\/components\/database\/database-surface"\)/);
   });
 });

@@ -24,10 +24,7 @@ export async function loadCollaborationSession(
   pageId: string,
   user: { name: string; color: string },
 ): Promise<CollaborationSession | null> {
-  // `collaborationUrl()` is the build-time NEXT_PUBLIC value. Testing it here
-  // (not only the parameter) lets the production minifier drop the dynamic
-  // imports entirely when no room is configured.
-  if (!collaborationUrl() || !url) return null;
+  if (!url) return null;
 
   const [
     { Doc },

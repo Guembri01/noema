@@ -60,7 +60,7 @@ const components = vi.hoisted(() => ({
   CommentPanel: vi.fn(() => null),
   Backlinks: vi.fn(() => null),
   VersionHistory: vi.fn(() => null),
-  DatabaseView: vi.fn(() => null),
+  DatabaseSurface: vi.fn(() => null),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -95,7 +95,9 @@ vi.mock("@/components/page-title", () => ({ PageTitle: components.PageTitle }));
 vi.mock("@/components/comment-panel", () => ({ CommentPanel: components.CommentPanel }));
 vi.mock("@/components/backlinks", () => ({ Backlinks: components.Backlinks }));
 vi.mock("@/components/version-history", () => ({ VersionHistory: components.VersionHistory }));
-vi.mock("@/components/database/database-view", () => ({ DatabaseView: components.DatabaseView }));
+vi.mock("@/components/database/database-surface", () => ({
+  DatabaseSurface: components.DatabaseSurface,
+}));
 
 import PageRoute from "./page";
 
@@ -334,7 +336,7 @@ describe("the page route — the guest scope for database pages", () => {
 
     expect(queries.getDatabase).toHaveBeenCalledWith("db-1", expect.any(Set));
     // The database view the route renders carries the database's own rows.
-    const [view] = elementsOfType(tree, components.DatabaseView);
+    const [view] = elementsOfType(tree, components.DatabaseSurface);
     expect(view).toBeDefined();
     expect(view?.props.databasePageId).toBe("db-1");
     expect((view?.props.rows as { id: string }[]).map((row) => row.id)).toEqual(["row-1"]);
@@ -414,7 +416,7 @@ describe("the page route — the guest scope for database pages", () => {
     const tree = await run("row-1");
 
     expect(queries.getDatabase).not.toHaveBeenCalled();
-    expect(elementsOfType(tree, components.DatabaseView)).toHaveLength(0);
+    expect(elementsOfType(tree, components.DatabaseSurface)).toHaveLength(0);
     expect(elementsOfType(tree, components.PageEditor)).toHaveLength(1);
     // The database of that row is above the grant — it is not in the read
     // scope, so the sidebar of this guest carries no database at all.

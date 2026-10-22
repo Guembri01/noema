@@ -472,13 +472,13 @@ to TSX by `src/lib/design-tokens.ts` (`Z`, `DUR`, `EASE`, `RADIUS`, `SHADOW`,
 
 | # | Item | Status |
 |---|---|---|
-| 20.1 | Route-level code splitting + prefetch on hover | 🟡 |
+| 20.1 | Route-level code splitting + prefetch on hover | 🟡 route split for `/w/[slug]/[pageId]` landed; hover prefetch remains |
 | 20.2 | Virtualize every long list/grid (tree ✅, rows ✅, search ✅, chat ⬜) | 🟡 |
 | 20.3 | Image lazy loading + responsive `srcset` + blur placeholder | 🟡 |
 | 20.4 | Debounced inputs (search, autosave, resize) | 🟡 |
 | 20.5 | Memoised heavy renders (database rows, editor) | 🟡 |
 | 20.6 | Instant interactions (<100ms) even when network is slow (optimistic) | 🟡 |
-| 20.7 | Bundle budget + Lighthouse budget in CI | ⬜ |
+| 20.7 | Bundle budget + Lighthouse budget in CI | ✅ route gzip gate; Lighthouse budget remains a follow-up |
 | 20.8 | Web vitals reporting | ⬜ |
 | 20.9 | Font loading strategy (no FOUT/CLS) | 🟡 |
 | 20.10 | Offline cache + background sync | ✅ |

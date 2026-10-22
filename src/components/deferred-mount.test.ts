@@ -21,11 +21,12 @@ import { DeferredBacklinks } from "@/components/deferred-backlinks";
 describe("DeferredMount", () => {
   it("renders only the fallback during server rendering", () => {
     const html = renderToStaticMarkup(
-      createElement(
-        DeferredMount,
-        { fallback: createElement("span", null, "waiting") },
-        createElement("span", null, "content"),
-      ),
+      // React 19's createElement typing requires `children` in props here.
+      // eslint-disable-next-line react/no-children-prop
+      createElement(DeferredMount, {
+        fallback: createElement("span", null, "waiting"),
+        children: createElement("span", null, "content"),
+      }),
     );
 
     expect(html).toContain("waiting");

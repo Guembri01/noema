@@ -1,5 +1,7 @@
 "use client";
 
+import dynamic from "next/dynamic";
+
 import {
   useCallback,
   useEffect,
@@ -32,7 +34,6 @@ import { Mathematics } from "@tiptap/extension-mathematics";
 import "katex/dist/katex.min.css";
 import { toast } from "sonner";
 import { BlockContextMenu } from "@/components/editor/block-context-menu";
-import { EquationEditor } from "@/components/editor/equation-editor";
 import { EQUATION_EVENT } from "@/lib/editor-events";
 import { MathAutoDetect } from "@/components/editor/extensions/math-input";
 import { Fragment, Slice, type Node as PMNode } from "@tiptap/pm/model";
@@ -146,12 +147,9 @@ import {
 } from "@/lib/block-refs";
 // B18: markdown shortcut long tail + emoji shortcodes (one-line registration).
 import { InputRules } from "@/components/editor/extensions/input-rules";
-import { BubbleToolbar } from "@/components/editor/bubble-toolbar";
-import { SlashMenu } from "@/components/editor/slash-menu";
-import { HistoryControls } from "@/components/editor/history-controls";
-import { MentionMenu } from "@/components/editor/mention-menu";
+
 import { t } from "@/lib/i18n";
-import { SuggestionsControls } from "@/components/editor/suggestions-controls";
+
 import {
   EditorRowChrome,
   blockMotionClass,
@@ -430,6 +428,49 @@ const MathSafety = Extension.create({
     ];
   },
 });
+
+const BubbleToolbar = dynamic(
+  () =>
+    import("@/components/editor/bubble-toolbar").then((mod) => ({
+      default: mod.BubbleToolbar,
+    })),
+  { ssr: false },
+);
+const SlashMenu = dynamic(
+  () =>
+    import("@/components/editor/slash-menu").then((mod) => ({
+      default: mod.SlashMenu,
+    })),
+  { ssr: false },
+);
+const MentionMenu = dynamic(
+  () =>
+    import("@/components/editor/mention-menu").then((mod) => ({
+      default: mod.MentionMenu,
+    })),
+  { ssr: false },
+);
+const EquationEditor = dynamic(
+  () =>
+    import("@/components/editor/equation-editor").then((mod) => ({
+      default: mod.EquationEditor,
+    })),
+  { ssr: false },
+);
+const HistoryControls = dynamic(
+  () =>
+    import("@/components/editor/history-controls").then((mod) => ({
+      default: mod.HistoryControls,
+    })),
+  { ssr: false },
+);
+const SuggestionsControls = dynamic(
+  () =>
+    import("@/components/editor/suggestions-controls").then((mod) => ({
+      default: mod.SuggestionsControls,
+    })),
+  { ssr: false },
+);
 
 export type PageEditorProps = {
   pageId: string;

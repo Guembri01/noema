@@ -392,6 +392,22 @@ measurements. A quick-find click plus four typed characters produced **no long
 tasks over 50 ms** and a worst event duration of **24 ms** (20 event entries).
 The editor bundle is the next budget to set.
 
+### Bundle budget (2026-10-22)
+
+- Baseline: **922,531 bytes gzip** across 35 route chunks (919 kB First Load JS,
+  233 kB route size).
+- Final: **776,916 bytes gzip** across 32 route chunks (15.8% below baseline),
+  enforced by `npm run check:bundle` at a **780,000-byte** ceiling in the site
+  workflow.
+- The editor route no longer imports Yjs/WebSocket when
+  `NEXT_PUBLIC_COLLAB_URL` is unset; the database view, below-fold panels,
+  version-history panel, page-title dialogs, optional database views, and
+  editor tool palettes are loaded behind their own boundaries.
+- Next measured follow-up: KaTeX (76.5 kB gzip) on pages without math; safe
+  deferral needs editor schema reinitialisation.
+- Browser transfer/TTFB/LCP should be re-measured when the seeded database is
+  available; this section records the build-manifest gate, not a field number.
+
 ---
 
 ## 9. Acceptance criteria
