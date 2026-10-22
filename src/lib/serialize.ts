@@ -200,9 +200,13 @@ export function pageToMarkdown(title: string, doc: unknown): string {
   return `${heading}${body}\n`.trimEnd() + "\n";
 }
 
-/** Escape a single CSV field. */
+/** Escape a single CSV field and prefix formula-like values with an apostrophe.
+ * Spreadsheet applications may evaluate fields beginning with =, +, -, or @,
+ * including when those characters follow leading whitespace/control characters.
+ */
 export function csvEscape(value: string): string {
-  const text = value ?? "";
+  const raw = value ?? "";
+  const text = /^[\s\u0000-\u001f]*[=+\-@]/u.test(raw) ? `'${raw}` : raw;
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
@@ -436,4 +440,3 @@ ${docToHtml(doc)}
 </html>
 `;
 }
-

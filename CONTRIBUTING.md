@@ -96,6 +96,12 @@ every commit of the ref under review: that the author and the committer date
 fall into one of the authoring windows, and that the e-mail address belongs to
 a project human — the `HUMANS` map in that script.
 
+Before committing, configure Git to use the e-mail address registered for you
+in `HUMANS` for both the author and committer identity. For example, Florian
+Reisinger should run `git config user.email
+2719454+reisi007@users.noreply.github.com` in the repository. Do not use a
+machine's default e-mail address; the commit gate checks both identities.
+
 **Registering an identity is a maintainer decision, not a side effect of a
 change.** The map is the only thing that lets a contributor's commits pass the
 identity check, so a commit that adds its own address to it authorises itself
