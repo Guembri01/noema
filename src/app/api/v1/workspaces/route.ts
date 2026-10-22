@@ -40,6 +40,8 @@ function nextLinkHeader(requestUrl: string, nextCursor: string | null): string |
  * reserved for member listings, which `/api/v1` does not expose.
  */
 export async function GET(request: Request) {
+  const pre = rateLimit(request, "v1-pre", 120, 60_000);
+  if (pre) return pre;
   const auth = await authenticateApiRequest(request);
   const limited = rateLimit(request, "v1", 120, 60_000, { userId: auth?.userId });
   if (limited) return limited;

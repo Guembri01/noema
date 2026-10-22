@@ -8,7 +8,14 @@ import {
   readJsonBody,
 } from "@/lib/body-limit";
 import { prisma } from "@/lib/db";
-import { resolveAiConfig, chatCompleteStream, providerAttribution, providerClass } from "@/lib/ai-provider";
+import {
+  AI_BUDGET_EXCEEDED,
+  aiRequestBudgetAllows,
+  chatCompleteStream,
+  providerAttribution,
+  providerClass,
+  resolveAiConfig,
+} from "@/lib/ai-provider";
 import { conversationSessionId } from "@/lib/ai-session";
 import { buildChatRequest } from "@/lib/chat-runtime";
 import { effectiveChatModel } from "@/lib/chat-model";
@@ -178,6 +185,16 @@ export async function POST(request: Request) {
     activePageId: typeof payload.pageId === "string" ? payload.pageId.slice(0, 64) : null,
     question: message,
   });
+
+  if (
+    !aiRequestBudgetAllows(requestConfig, {
+      system: chatRequest.system,
+      context: chatRequest.context,
+      user: chatRequest.user,
+    })
+  ) {
+    return NextResponse.json({ error: AI_BUDGET_EXCEEDED }, { status: 429 });
+  }
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({

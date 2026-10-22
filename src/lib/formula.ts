@@ -412,7 +412,7 @@ function pinnedApart(separator: string, matcher: (char: string) => boolean): boo
  * result is a product of the split counts, which is what the budget is
  * checked against.
  */
-function estimatedRegexSteps(text: string, pattern: string): number {
+export function estimatedRegexSteps(text: string, pattern: string): number {
   const counts = characterCounts(text);
   let steps = text.length;
   let previous: RegexRepetition | null = null;

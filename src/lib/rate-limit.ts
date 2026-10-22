@@ -563,7 +563,12 @@ export type AuthLimitResult = {
  * carry their own, explicit policies. The key prefixes keep the three
  * budgets apart inside the one key space.
  */
-const authLimiter = new RateLimiter();
+// Three stores, not one: the address keys are client-controlled, so a flood of
+// forged addresses must not evict the victim's account or 2FA bucket from the
+// LRU. This is the same separation the fixed-window path already uses.
+const authAddressLimiter = new RateLimiter();
+const authAccountLimiter = new RateLimiter();
+const authTwoFactorLimiter = new RateLimiter();
 
 /**
  * Charge one authentication attempt against the address and the account
@@ -579,11 +584,11 @@ export function checkAuthLimit(args: {
   now?: number;
 }): AuthLimitResult {
   const now = args.now ?? Date.now();
-  const address = authLimiter.slidingHit(`ip:${args.ip}`, now, AUTH_IP_LIMIT);
+  const address = authAddressLimiter.slidingHit(`ip:${args.ip}`, now, AUTH_IP_LIMIT);
   if (!address.allowed) {
     return { allowed: false, scope: "ip", retryAfterMs: address.retryAfterMs };
   }
-  const account = authLimiter.hit({
+  const account = authAccountLimiter.hit({
     key: `account:${args.email}`,
     tier: "AUTH",
     now,
@@ -606,7 +611,7 @@ export function checkTwoFactorLimit(args: {
   now?: number;
 }): AuthLimitResult {
   const now = args.now ?? Date.now();
-  const guess = authLimiter.slidingHit(`2fa:${args.key}`, now, AUTH_TWO_FACTOR_LIMIT);
+  const guess = authTwoFactorLimiter.slidingHit(`2fa:${args.key}`, now, AUTH_TWO_FACTOR_LIMIT);
   if (guess.allowed) return { allowed: true, scope: null, retryAfterMs: 0 };
   return { allowed: false, scope: "twoFactor", retryAfterMs: guess.retryAfterMs };
 }
@@ -640,5 +645,7 @@ export function authLockoutMessage(
 
 /** Test/ops helper: forget every authentication budget. */
 export function resetAuthLimits(): void {
-  authLimiter.reset();
+  authAddressLimiter.reset();
+  authAccountLimiter.reset();
+  authTwoFactorLimiter.reset();
 }

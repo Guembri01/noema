@@ -217,10 +217,18 @@ export function recordUsage(budget: BudgetRecord, event: UsageEvent): BudgetReco
  */
 export function checkBudget(
   budget: BudgetRecord,
-  request: { estimatedTokens?: number; model?: string },
+  request: { estimatedTokens?: number; model?: string; period?: string },
 ): BudgetCheck {
   const current = normalizeBudget(budget);
-  const used = current.usedInput + current.usedOutput;
+  // A record from another period has no usage in this one. The in-process
+  // loader rolls the record before it calls this, but the explicit period also
+  // makes the exported check correct on its own.
+  const used =
+    typeof request?.period === "string" &&
+    request.period !== "" &&
+    request.period !== current.period
+      ? 0
+      : current.usedInput + current.usedOutput;
   const limit = current.limitTokens;
   const estimated = nonNegative(request?.estimatedTokens);
   const allowed = used + estimated <= limit;
