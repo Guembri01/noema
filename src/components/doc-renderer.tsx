@@ -16,6 +16,7 @@ import {
 import { buildTocItems, tocAnchorId, type TocHeading, type TocItem } from "@/lib/toc";
 import { truncateMiddle } from "@/lib/truncate";
 import { cn } from "@/lib/utils";
+import { styleColor } from "@/lib/serialize";
 import { sanitizeHref } from "@/lib/validation";
 
 /**
@@ -59,15 +60,17 @@ function applyMarks(node: PMNode, children: ReactNode, key: string): ReactNode {
           </code>
         );
         break;
-      case "highlight":
+      case "highlight": {
+        const color = styleColor(mark.attrs?.color);
         element = (
-          <mark key={key} style={{ background: (mark.attrs?.color as string) ?? undefined }}>
+          <mark key={key} style={color ? { background: color } : undefined}>
             {element}
           </mark>
         );
         break;
+      }
       case "textStyle": {
-        const color = mark.attrs?.color as string | undefined;
+        const color = styleColor(mark.attrs?.color);
         element = color ? (
           <span key={key} style={{ color }}>
             {element}
