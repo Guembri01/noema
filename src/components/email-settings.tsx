@@ -307,7 +307,7 @@ export function EmailForm({
           <Input
             value={value.host}
             onChange={(event) => onChange({ host: event.target.value })}
-            placeholder="smtp.example.com"
+            placeholder={t(locale, "smtpHostPlaceholder")}
             autoComplete="off"
             spellCheck={false}
           />
@@ -386,7 +386,7 @@ export function EmailForm({
           <Input
             value={value.fromEmail}
             onChange={(event) => onChange({ fromEmail: event.target.value })}
-            placeholder="noema@example.com"
+            placeholder={t(locale, "smtpFromPlaceholder")}
             autoComplete="off"
             spellCheck={false}
           />
@@ -722,7 +722,7 @@ export function EmailSettings({
             <Input
               value={inviteEmail}
               onChange={(event) => setInviteEmail(event.target.value)}
-              placeholder="client@example.com"
+              placeholder={t(locale, "inviteEmailPlaceholder")}
               autoComplete="off"
               spellCheck={false}
             />

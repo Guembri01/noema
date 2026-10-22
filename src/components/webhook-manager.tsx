@@ -746,7 +746,7 @@ export function WebhookManager({
                 <Input
                   value={url}
                   onChange={(event) => setUrl(event.target.value)}
-                  placeholder="https://example.com/hooks/noema"
+                  placeholder={t(locale, "webhookUrlPlaceholder")}
                   inputMode="url"
                   autoComplete="url"
                   spellCheck={false}

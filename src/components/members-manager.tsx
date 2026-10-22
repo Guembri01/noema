@@ -720,7 +720,7 @@ export function MembersManager({
             type="password"
             value={transferPassword}
             onChange={(event) => setTransferPassword(event.target.value)}
-            placeholder="Your password"
+            placeholder={t(locale, "passwordLabel")}
             autoComplete="current-password"
             className="focus-ring mt-1 h-9 w-full rounded-sm border border-border bg-bg px-2 text-sm"
           />
