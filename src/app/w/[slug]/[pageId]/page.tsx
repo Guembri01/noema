@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
 import { notFound } from "next/navigation";
 import type { PropertyType } from "@prisma/client";
 import { cn } from "@/lib/utils";
@@ -21,17 +21,15 @@ import {
   getWorkspaceMembers,
 } from "@/server/queries";
 import { getPageReferences, type PageReferences } from "@/server/backlinks";
-import { PageEditor } from "@/components/editor/page-editor";
 import { PageTitle } from "@/components/page-title";
 import { CommentPanel, type CommentNode } from "@/components/comment-panel";
 import { Backlinks } from "@/components/backlinks";
 import { VersionHistory } from "@/components/version-history";
 import { loadVersionAuthors } from "@/server/version-authors";
-import {
-  DatabaseView,
-  type DBProperty,
-  type DBRow,
-  type DBView,
+import type {
+  DBProperty,
+  DBRow,
+  DBView,
 } from "@/components/database/database-view";
 
 export default async function PageRoute({
@@ -200,6 +198,67 @@ export default async function PageRoute({
     })),
   }));
 
+  let surface: ReactNode;
+  if (database) {
+    const { DatabaseView } = await import("@/components/database/database-view");
+    surface = (
+      <DatabaseView
+        locale={locale}
+        databasePageId={page.id}
+        workspaceId={workspace.id}
+        workspaceSlug={workspace.slug}
+        templates={database.templates}
+        relationData={database.relationData}
+        databases={databases}
+        properties={
+          database.properties.map((p) => ({
+            ...p,
+            type: p.type as PropertyType,
+            config: (p.config ?? null) as DBProperty["config"],
+          })) as DBProperty[]
+        }
+        views={database.views.map((v) => ({
+          id: v.id,
+          name: v.name,
+          type: v.type,
+          config: (v.config ?? null) as DBView["config"],
+        }))}
+        rows={
+          database.rows.map((r) => ({
+            id: r.id,
+            title: r.title,
+            icon: r.icon,
+            createdAt: r.createdAt.toISOString(),
+            updatedAt: r.updatedAt.toISOString(),
+            createdByName: r.createdBy?.name ?? null,
+            lastEditedByName: database.lastEditedBy[r.id] ?? r.createdBy?.name ?? null,
+            propertyValues: r.propertyValues.map((pv) => ({
+              propertyId: pv.propertyId,
+              value: pv.value,
+            })),
+          })) as DBRow[]
+        }
+        members={members.map((member) => ({ id: member.id, name: member.name }))}
+        editable={editable}
+        schemaLocked={page.schemaLocked}
+      />
+    );
+  } else {
+    const { PageEditor } = await import("@/components/editor/page-editor");
+    surface = (
+      <PageEditor
+        locale={locale}
+        editorPlaceholder={t(locale, "editorPlaceholder")}
+        pageId={page.id}
+        workspaceId={workspace.id}
+        workspaceSlug={workspace.slug}
+        breadcrumbTrail={breadcrumbTrail}
+        initialContent={page.content}
+        editable={editable}
+      />
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -238,59 +297,7 @@ export default async function PageRoute({
         locale={locale}
       />
 
-      {database ? (
-        <DatabaseView
-          locale={locale}
-          databasePageId={page.id}
-          workspaceId={workspace.id}
-          workspaceSlug={workspace.slug}
-          templates={database.templates}
-          relationData={database.relationData}
-          databases={databases}
-          properties={
-            database.properties.map((p) => ({
-              ...p,
-              type: p.type as PropertyType,
-              config: (p.config ?? null) as DBProperty["config"],
-            })) as DBProperty[]
-          }
-          views={database.views.map((v) => ({
-            id: v.id,
-            name: v.name,
-            type: v.type,
-            config: (v.config ?? null) as DBView["config"],
-          }))}
-          rows={
-            database.rows.map((r) => ({
-              id: r.id,
-              title: r.title,
-              icon: r.icon,
-              createdAt: r.createdAt.toISOString(),
-              updatedAt: r.updatedAt.toISOString(),
-              createdByName: r.createdBy?.name ?? null,
-              lastEditedByName: database.lastEditedBy[r.id] ?? r.createdBy?.name ?? null,
-              propertyValues: r.propertyValues.map((pv) => ({
-                propertyId: pv.propertyId,
-                value: pv.value,
-              })),
-            })) as DBRow[]
-          }
-          members={members.map((member) => ({ id: member.id, name: member.name }))}
-          editable={editable}
-          schemaLocked={page.schemaLocked}
-        />
-      ) : (
-        <PageEditor
-            locale={locale}
-            editorPlaceholder={t(locale, "editorPlaceholder")}
-          pageId={page.id}
-          workspaceId={workspace.id}
-          workspaceSlug={workspace.slug}
-          breadcrumbTrail={breadcrumbTrail}
-          initialContent={page.content}
-          editable={editable}
-        />
-      )}
+      {surface}
 
       <Suspense
         fallback={
