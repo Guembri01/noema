@@ -61,6 +61,30 @@ const nextConfig: NextConfig = {
   // build time from the one place that owns it — `package.json`, which is also
   // what `tauri.conf.json` and `/api/health` report.
   env: { NEXT_PUBLIC_APP_VERSION: packageVersion },
+  // Default builds do not enable collaboration. Alias the real Yjs loader to a
+  // no-op module so its dynamic imports never create a chunk in the first place;
+  // a deploy that sets NEXT_PUBLIC_COLLAB_URL builds the real loader instead.
+  webpack(config) {
+    if (!process.env.NEXT_PUBLIC_COLLAB_URL) {
+      config.resolve = config.resolve ?? {};
+      config.resolve.alias = {
+        ...(config.resolve.alias ?? {}),
+        "@/components/editor/collaboration-session": join(
+          root,
+          "src/components/editor/collaboration-session-disabled.ts",
+        ),
+        "./collaboration-session": join(
+          root,
+          "src/components/editor/collaboration-session-disabled.ts",
+        ),
+        [join(root, "src/components/editor/collaboration-session.ts")]: join(
+          root,
+          "src/components/editor/collaboration-session-disabled.ts",
+        ),
+      };
+    }
+    return config;
+  },
   // B78: the response must not name the framework. Next.js sends
   // `X-Powered-By: Next.js` on every HTML response unless this switch is off,
   // and the default is on (`poweredByHeader: true` in Next's own default

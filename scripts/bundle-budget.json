@@ -2,7 +2,7 @@
   "routes": {
     "/w/[slug]/[pageId]/page": {
       "baselineGzipBytes": 922531,
-      "budgetGzipBytes": 905000
+      "budgetGzipBytes": 895000
     }
   }
 }

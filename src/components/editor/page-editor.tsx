@@ -32,7 +32,8 @@ import { Mathematics } from "@tiptap/extension-mathematics";
 import "katex/dist/katex.min.css";
 import { toast } from "sonner";
 import { BlockContextMenu } from "@/components/editor/block-context-menu";
-import { EquationEditor, EQUATION_EVENT } from "@/components/editor/equation-editor";
+import { EquationEditor } from "@/components/editor/equation-editor";
+import { EQUATION_EVENT } from "@/lib/editor-events";
 import { MathAutoDetect } from "@/components/editor/extensions/math-input";
 import { Fragment, Slice, type Node as PMNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, Selection } from "@tiptap/pm/state";
@@ -116,10 +117,11 @@ import {
   animateTaskTick,
 } from "@/components/editor/extensions/custom-blocks";
 import { Mention } from "@/components/editor/extensions/mention";
-import * as Y from "yjs";
-import { WebsocketProvider } from "y-websocket";
-import Collaboration from "@tiptap/extension-collaboration";
-import CollaborationCaret from "@tiptap/extension-collaboration-caret";
+import {
+  collaborationUrl,
+  loadCollaborationSession,
+  type CollaborationSession,
+} from "@/components/editor/collaboration-session";
 import { Bookmark, Embed, MapBlock, PdfPreview } from "@/components/editor/extensions/bookmark";
 import { Breadcrumb, type BreadcrumbCrumb } from "@/components/editor/extensions/breadcrumb";
 import { PageEmbed } from "@/components/editor/extensions/page-embed";
@@ -429,7 +431,83 @@ const MathSafety = Extension.create({
   },
 });
 
-export function PageEditor({
+export type PageEditorProps = {
+  pageId: string;
+  workspaceId: string;
+  workspaceSlug: string;
+  breadcrumbTrail?: BreadcrumbCrumb[];
+  initialContent: unknown;
+  editorPlaceholder?: string;
+  locale?: string;
+  editable?: boolean;
+};
+
+function EditorLoading() {
+  return (
+    <div
+      role="status"
+      aria-busy="true"
+      className="mx-auto min-h-[60vh] w-full max-w-[1100px] animate-pulse-soft"
+    >
+      <span className="sr-only">Loading.</span>
+    </div>
+  );
+}
+
+export function PageEditor(props: PageEditorProps) {
+  const url = collaborationUrl();
+  if (!url) return <PageEditorBody {...props} collab={null} />;
+  return <CollaborativePageEditor {...props} url={url} />;
+}
+
+function CollaborativePageEditor({
+  url,
+  ...props
+}: PageEditorProps & { url: string }) {
+  const [session, setSession] = useState<CollaborationSession | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    setSession(null);
+    loadCollaborationSession(url, props.pageId, {
+      name: "You",
+      color: presenceCursorColor(),
+    })
+      .then((next) => {
+        if (!cancelled) setSession(next);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt, props.pageId, url]);
+
+  if (failed) {
+    return (
+      <div role="alert" className="m-6 rounded border border-border p-4">
+        <p>{t(props.locale ?? "en", "somethingWentWrong")}</p>
+        <button
+          type="button"
+          onClick={() => setAttempt((value) => value + 1)}
+          className="focus-ring u-interactive mt-2 rounded border border-border px-2 py-1 text-sm hover:bg-surface-2"
+        >
+          {t(props.locale ?? "en", "retry")}
+        </button>
+      </div>
+    );
+  }
+
+  if (!session) return <EditorLoading />;
+
+  return <PageEditorBody {...props} collab={session} />;
+}
+
+function PageEditorBody({
   locale = "en",
   editorPlaceholder,
   pageId,
@@ -439,16 +517,8 @@ export function PageEditor({
   /** Localised empty-paragraph hint. */
   initialContent,
   editable = true,
-}: {
-  pageId: string;
-  workspaceId: string;
-  workspaceSlug: string;
-  breadcrumbTrail?: BreadcrumbCrumb[];
-  initialContent: unknown;
-  editorPlaceholder?: string;
-  locale?: string;
-  editable?: boolean;
-}) {
+  collab,
+}: PageEditorProps & { collab: CollaborationSession | null }) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [bubblePanelOpen, setBubblePanelOpen] = useState(false);
   const [snapshotDepth, setSnapshotDepth] = useState({ undoable: 0, redoable: 0 });
@@ -508,22 +578,6 @@ export function PageEditor({
   const offlineRef = useRef<QueuedMutation[]>([]);
   /** Monotonic counter so each buffered write gets a unique queue id. */
   const offlineSeqRef = useRef(0);
-
-  const collabUrl = process.env.NEXT_PUBLIC_COLLAB_URL ?? "";
-  const collab = useMemo(() => {
-    if (!collabUrl) return null;
-    const ydoc = new Y.Doc();
-    // `connect: false` keeps the socket closed while the component renders
-    // (and under React StrictMode's double-invoke, which would otherwise leak a
-    // second connection). The mount effect below opens it; the unmount effect
-    // tears it down.
-    const provider = new WebsocketProvider(collabUrl, pageId, ydoc, { connect: false });
-    provider.awareness.setLocalStateField("user", {
-      name: "You",
-      color: presenceCursorColor(),
-    });
-    return { ydoc, provider };
-  }, [collabUrl, pageId]);
 
   /**
    * Admit a document snapshot to the local offline buffer. Every entry is a
@@ -959,15 +1013,7 @@ export function PageEditor({
       // Presentation: block enter/leave motion + a 2px accent drop indicator.
       BlockMotion,
       DropIndicator,
-      ...(collab
-        ? [
-            Collaboration.configure({ document: collab.ydoc }),
-            CollaborationCaret.configure({
-              provider: collab.provider,
-              user: { name: "You", color: presenceCursorColor() },
-            }),
-          ]
-        : []),
+      ...(collab?.extensions ?? []),
     ],
     content: (initialContent as object) ?? {
       type: "doc",
