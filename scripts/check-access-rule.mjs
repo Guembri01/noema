@@ -107,7 +107,22 @@ function lineOf(text, needle) {
   return index === -1 ? 0 : text.slice(0, index).split("\n").length;
 }
 
-const sources = collectSources(SRC).filter((source) => !isClientComponent(source.text));
+const collected = collectSources(SRC);
+
+// B133: a gate that read nothing has checked nothing. `collectSources`
+// swallows a directory it cannot read, so a run in the wrong directory (or
+// with an unreadable `src`) used to end in "PASS  0 access helper(s)" — a
+// green gate that saw no code at all. A broken walk is not a clean
+// repository: the gate fails instead.
+if (collected.length === 0) {
+  console.error(
+    "FAIL  the gate read no source at all — a broken walk is not a clean repository",
+  );
+  console.error(`      expected the sources under \`${SRC}/\` — run the gate in the repository root`);
+  process.exit(1);
+}
+
+const sources = collected.filter((source) => !isClientComponent(source.text));
 
 /** Every exported access helper: its name, its module and its line. */
 const helpers = [];
