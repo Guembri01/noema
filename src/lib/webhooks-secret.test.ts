@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 /**
@@ -38,6 +39,22 @@ describe("webhook secret envelope at rest (R28.17)", () => {
     expect(first).not.toBe(second);
     expect(decryptWebhookSecret(first)).toBe("same-secret");
     expect(decryptWebhookSecret(second)).toBe("same-secret");
+  });
+});
+
+describe("demo seed obeys the seal-at-rest rule (R28.17)", () => {
+  // The seed self-executes `main()`, so it cannot be imported here; the seal
+  // rule is pinned by reading the source instead. `check-secrets` scans for
+  // credential-shaped literals, not for this wiring, so nothing else would
+  // catch a re-introduced plaintext demo secret.
+  const seedSource = readFileSync(
+    new URL("../../prisma/seed.ts", import.meta.url),
+    "utf8",
+  );
+
+  it("seals the demo webhook signing secret instead of storing raw plaintext", () => {
+    expect(seedSource).toMatch(/secret:\s*encryptWebhookSecret\(/);
+    expect(seedSource).not.toMatch(/secret:\s*"demo-webhook-signing-secret/);
   });
 });
 

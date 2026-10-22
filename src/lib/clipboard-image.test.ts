@@ -23,6 +23,13 @@ import {
 
 const b64 = (text: string): string => Buffer.from(text, "utf8").toString("base64");
 const bytes = (text: string): number => Buffer.byteLength(text, "utf8");
+/** The bytes of a UTF-16LE document — a NUL after every ASCII character. */
+const utf16Bytes = (text: string): Buffer =>
+  Buffer.from(
+    text.split("").flatMap((char) => [char.charCodeAt(0) & 0xff, char.charCodeAt(0) >> 8]),
+  );
+/** The base64 of raw bytes — the payload of a clipboard item. */
+const b64Bytes = (raw: Buffer): string => raw.toString("base64");
 const NOW = new Date("2026-01-02T15:30:00Z");
 
 describe("extractDataUrl", () => {
@@ -259,6 +266,31 @@ describe("inspectClipboardItem", () => {
     );
     expect(unsafe.accept).toBe(false);
     expect(unsafe.reason).toBe("unsafe-svg");
+  });
+
+  it("rejects an svg payload that is not valid UTF-8", () => {
+    // A UTF-16 document interleaves a NUL after every ASCII character. A
+    // lenient decoder replaces the invalid bytes with U+FFFD, the rule reads
+    // the replacement characters instead of the markup — and a browser would
+    // decode the file as UTF-16 and find the script the rule never saw.
+    const utf16 = utf16Bytes('<svg onload="x()"/>');
+    const verdict = inspectClipboardItem(
+      { mimeType: "image/svg+xml", data: b64Bytes(utf16) },
+      {},
+    );
+    expect(verdict.accept).toBe(false);
+    expect(verdict.reason).toBe("unsafe-svg");
+  });
+
+  it("rejects an svg payload that carries a NUL", () => {
+    // The same document, read as text: the NUL is what a UTF-16 document
+    // looks like after a lenient decode, and XML forbids it in a document.
+    const verdict = inspectClipboardItem(
+      { mimeType: "image/svg+xml", data: '<svg onload="x()"/>\u0000' },
+      {},
+    );
+    expect(verdict.accept).toBe(false);
+    expect(verdict.reason).toBe("unsafe-svg");
   });
 
   it("rejects an item with no payload", () => {
