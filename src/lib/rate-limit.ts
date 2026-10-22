@@ -1,6 +1,13 @@
 /**
  * Tiny in-memory fixed-window rate limiter. Good enough for a single-node
  * self-hosted deployment; swap for Redis in a multi-instance setup.
+ *
+ * **Per process, not shared:** each app instance keeps its own counters, so
+ * horizontally scaling the app multiplies every budget by the replica count.
+ * That is an explicitly supported single-instance deployment, not a hidden
+ * assumption — see `docs/OPERATIONS.md` §1.1. Multi-instance needs a shared
+ * atomic store before the second replica is started.
+ *
  * Pure core so it can be unit-tested with an injected clock.
  */
 import { createLru, LruCache } from "./lru";

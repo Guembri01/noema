@@ -7,7 +7,7 @@ import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { markdownToDoc } from "@/lib/serialize";
 import { sanitizeDocHrefs } from "@/lib/validation";
-import { assertScopedParent } from "@/lib/page-parent";
+import { assertEditableParent } from "@/lib/page-parent";
 import { cardDescriptionBlocks, parseTrelloBoard, pathToTitles, type ImportCounts } from "@/lib/importers";
 import type { CreatePropertyDescriptor } from "@/lib/csv-mapping";
 import { fileNameExt, isAllowedType, mimeForExt } from "@/lib/file-type";
@@ -143,7 +143,12 @@ export async function importDocxAction(formData: FormData): Promise<ImportResult
   // The parent must live in the same workspace — `Page.parentId` is a plain
   // foreign key, so a foreign parent would link the imported page into another
   // tenant's tree (B08). Refused before anything is written.
-  const parent = await assertScopedParent({ workspaceId, parentId });
+  const parent = await assertEditableParent({
+    workspaceId,
+    parentId,
+    userId: user.id,
+    role: access.role,
+  });
   if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
@@ -218,9 +223,11 @@ export async function importTrelloAction(input: {
   // The parent must live in the same workspace — `Page.parentId` is a plain
   // foreign key, so a foreign parent would link the imported page into another
   // tenant's tree (B08). Refused before anything is written.
-  const parent = await assertScopedParent({
+  const parent = await assertEditableParent({
     workspaceId: input.workspaceId,
     parentId: input.parentId,
+    userId: user.id,
+    role: access.role,
   });
   if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({
@@ -478,7 +485,12 @@ export async function importZipAction(formData: FormData): Promise<ImportResult>
   // The parent must live in the same workspace — `Page.parentId` is a plain
   // foreign key, so a foreign parent would link the imported tree into another
   // tenant's tree (B08). Refused before anything is written.
-  const parent = await assertScopedParent({ workspaceId, parentId });
+  const parent = await assertEditableParent({
+    workspaceId,
+    parentId,
+    userId: user.id,
+    role: access.role,
+  });
   if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
@@ -616,9 +628,11 @@ export async function importMarkdownAction(input: {
   // The parent must live in the same workspace — `Page.parentId` is a plain
   // foreign key, so a foreign parent would link the imported page into another
   // tenant's tree (B08). Refused before anything is written.
-  const parent = await assertScopedParent({
+  const parent = await assertEditableParent({
     workspaceId: input.workspaceId,
     parentId: input.parentId,
+    userId: user.id,
+    role: access.role,
   });
   if ("error" in parent) return parent;
 
@@ -685,9 +699,11 @@ export async function importCsvDatabaseAction(input: {
   // The parent must live in the same workspace — `Page.parentId` is a plain
   // foreign key, so a foreign parent would link the imported database into
   // another tenant's tree (B08). Refused before anything is written.
-  const parent = await assertScopedParent({
+  const parent = await assertEditableParent({
     workspaceId: input.workspaceId,
     parentId: input.parentId,
+    userId: user.id,
+    role: access.role,
   });
   if ("error" in parent) return parent;
   const workspace = await prisma.workspace.findUnique({

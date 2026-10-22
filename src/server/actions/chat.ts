@@ -11,7 +11,7 @@ import { buildChatRequest } from "@/lib/chat-runtime";
 import { chatComplete, resolveAiConfig } from "@/lib/ai-provider";
 import { conversationSessionId } from "@/lib/ai-session";
 import { effectiveChatModel } from "@/lib/chat-model";
-import { assertScopedParent } from "@/lib/page-parent";
+import { assertEditableParent } from "@/lib/page-parent";
 import {
   planChatAction,
   proposalBody,
@@ -303,9 +303,11 @@ export async function saveChatAnswerAction(
   // `ChatThread.pageId` is a plain foreign key, so the thread row does not prove
   // that the page lives in the thread's workspace — check it before the new
   // page is written under it (B08).
-  const parent = await assertScopedParent({
+  const parent = await assertEditableParent({
     workspaceId: message.thread.workspaceId,
     parentId: message.thread.pageId ?? null,
+    userId: user.id,
+    role: access.role,
   });
   if ("error" in parent) return parent;
   const parentId = parent.parentId;

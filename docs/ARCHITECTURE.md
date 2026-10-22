@@ -105,9 +105,18 @@ This is intentionally centralized so a future public API can reuse it.
   (`src/lib/guest-access.ts`: the pages shared with them, the pages they
   created and the pages of their teamspaces, plus those pages' subtree — never
   an ancestor).
-- **edit** — the same membership plus the page's own `PagePermission` row,
-  which the page route reads as an edit lock (`editable`): a member whose row
-  is `READ` or `COMMENT` may open the page but not change it.
+- **edit** — workspace membership plus the page's own `PagePermission` row,
+  enforced on the server for every page mutation (not only the route's
+  `editable` flag): a member whose row is `READ` or `COMMENT` may open the page
+  but not change it, share it, duplicate it, restore a version/snapshot, or
+  write a database row under it. `src/lib/page-access.ts` is the single
+  capability matrix; page, database, comment, page-menu, duplicate, version,
+  snapshot, import, project/teamspace assignment and cross-workspace move
+  actions all consult it, and the MCP write tools apply the same matrix before
+  creating a page, appending blocks or writing a database cell. `OWNER`/`ADMIN`
+  are immune to page restrictions. `COMMENT` additionally allows comments;
+  `READ` does not. Guests never edit, even on a legacy `EDIT`/`FULL` row —
+  guest editing is not implemented.
 
 A `PagePermission` row never reaches a child page: there is **no** page-tree
 inheritance in the product. An inheritance engine that implemented such a rule
@@ -122,8 +131,11 @@ A second, separate guard covers the page *tree*: `assertScopedParent()`
 ([`src/lib/page-parent.ts`](../src/lib/page-parent.ts)) loads a parent
 **tenant-scoped** (`{ id, workspaceId, deletedAt: null }`) and refuses a parent
 that lives in another workspace or that is in the trash — the foreign page is
-never read and the error never names it. A page therefore never hangs under a
-page of a different workspace, which keeps it out of the foreign workspace's
+never read and the error never names it. Creation, move and duplicate paths use
+`assertEditableParent()`, which adds the page capability check to the same
+tenant/trash proof so a `READ`/`COMMENT` parent cannot become a writable branch.
+A page therefore never hangs under a page of a different workspace, which keeps
+it out of the foreign workspace's
 database view and CSV/JSON export, and keeps Postgres' `onDelete: Cascade` from
 deleting it together with a foreign parent. Every write path that stores a
 `Page.parentId` goes through that helper — or holds the workspace equality by

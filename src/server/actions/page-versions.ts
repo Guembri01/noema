@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { Prisma, type WorkspaceRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { getWorkspaceAccess } from "@/lib/permissions";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { pageSearchText } from "@/lib/search";
@@ -43,14 +44,28 @@ export async function restorePageVersionAction(versionId: string): Promise<Resul
       createdAt: true,
       pageId: true,
       page: {
-        select: { id: true, title: true, content: true, workspaceId: true, locked: true },
+        select: {
+          id: true,
+          title: true,
+          content: true,
+          workspaceId: true,
+          locked: true,
+          permissions: {
+            where: { userId: user.id },
+            select: { level: true },
+            take: 1,
+          },
+        },
       },
     },
   });
   if (!version) return { error: "Version not found." };
 
   const access = await getWorkspaceAccess(user.id, version.page.workspaceId);
-  if (!access || !canEditContent(access.role)) {
+  if (!access) {
+    return { error: "You do not have permission to restore this page." };
+  }
+  if (!pageCapabilitiesFromRelation(access.role, version.page.permissions).edit) {
     return { error: "You do not have permission to restore this page." };
   }
 

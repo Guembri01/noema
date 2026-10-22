@@ -15,9 +15,14 @@ import { SITEMAP_LIMIT, normalizeUrl, type ChangeFreq } from "@/lib/sitemap";
  * `APP_URL` is the site origin the relative `/s/<token>` paths are resolved
  * against (the module returns absolute locs); it falls back to localhost for a
  * self-hosted/dev run with no configured origin.
+ *
+ * The route is **dynamic**, not prerendered: a build must not need a live
+ * database (a database blip blocked a deploy and the desktop payload build
+ * died on a placeholder `DATABASE_URL`). The query still fails closed, so a
+ * runtime outage serves an empty sitemap rather than a stale or partial one.
  */
 
-export const revalidate = 3600;
+export const dynamic = "force-dynamic";
 
 const DEFAULT_ORIGIN = "http://localhost:3000";
 
@@ -42,12 +47,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       take: SITEMAP_LIMIT,
     });
   } catch (error) {
-    // A build must not depend on a reachable database. This route is prerendered
-    // (`revalidate` above), so an unreachable database failed `next build`
-    // outright — a database blip could block a deploy, and the desktop payload
-    // build died on a placeholder `DATABASE_URL` in `.env`. An empty sitemap is
-    // the honest answer: no database, no known published pages. ISR refills it
-    // on the first request that succeeds.
+    // A build must not depend on a reachable database, and a runtime outage
+    // must not fail the route. An empty sitemap is the honest answer: no
+    // database, no known published pages. The next successful request fills it.
     console.warn(
       `[sitemap] no published pages: ${error instanceof Error ? error.message : String(error)}`,
     );

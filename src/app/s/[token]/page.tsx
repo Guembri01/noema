@@ -224,7 +224,7 @@ export default async function PublicSharedPage({
                 "Shared page · read-only"
               ) : (
                 <>
-                  Shared page · anyone with the link can edit —{" "}
+                  Shared page ·{" "}
                   <a href="/login" className="underline">
                     sign in
                   </a>{" "}

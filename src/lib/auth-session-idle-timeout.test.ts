@@ -94,12 +94,19 @@ describe("session idle timeout — the request path", () => {
     }
   });
 
-  it("fails open when the registry does not know the session", async () => {
+  it("fails closed when the registry does not know the session", async () => {
     await createSession("user-a");
-    // The registry file is gone (wiped volume, fresh deploy): the request
-    // must not sign every device out.
+    // The registry file is gone (wiped volume, fresh deploy): an unknown sid
+    // must be rejected, not treated as a legacy session. Otherwise a revoked
+    // row that the registry forgot would spring back to life.
     rmSync(join(dir, "sessions.json"), { force: true });
-    expect(await getSessionUserId()).toBe("user-a");
+    expect(await getSessionUserId()).toBeNull();
+  });
+
+  it("fails closed when the registry is corrupt", async () => {
+    await createSession("user-a");
+    writeFileSync(join(dir, "sessions.json"), "{not json", "utf8");
+    expect(await getSessionUserId()).toBeNull();
   });
 
   it("a session without a registry row dies after the idle window, not after 30 days", async () => {

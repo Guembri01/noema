@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { Prisma, type WorkspaceRole } from "@prisma/client";
 import { authenticateApiRequest } from "@/lib/api-auth";
 import { rateLimit } from "@/lib/api-guard";
 import {
@@ -22,7 +22,9 @@ import {
   type McpTool,
 } from "@/lib/mcp-server";
 import { apiScopesForRole, canEditContent, getWorkspaceAccess } from "@/lib/permissions";
-import { assertScopedParent } from "@/lib/page-parent";
+import { assertEditableParent } from "@/lib/page-parent";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
+import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { MAX_PAGE_CONTENT_BYTES, parsePageContent } from "@/lib/validation";
 import { searchPagesPage } from "@/server/queries";
 
@@ -69,6 +71,8 @@ const asNumber = (value: unknown): number | undefined =>
 type ExecContext = {
   workspaceId: string;
   userId: string;
+  /** The workspace role, used for page-level `PagePermission` checks. */
+  role: WorkspaceRole;
   /**
    * The pages the caller may read in this workspace; `null` means "all of them"
    * (every role but `GUEST`).
@@ -248,32 +252,61 @@ async function runReadTool(name: string, args: RpcParams, ctx: ExecContext): Pro
 }
 
 /* ------------------------------------------------------------------ */
-/* Write tools (gated by allowWrite + authCheck + canEditContent)      */
+/* Write tools (allowWrite + authCheck + role + PagePermission)        */
 /* ------------------------------------------------------------------ */
 
 /**
- * The page a write tool acts on. Writes are already refused for a guest, but
- * the scope is applied here too so that no tool can touch a page the caller
- * may not see.
+ * The page a write tool acts on.
+ *
+ * The workspace role is checked at the transport edge; this helper applies the
+ * per-page restriction as well. A page the caller may only read or comment on
+ * is reported exactly like a page outside their scope: a write tool never
+ * learns that the restriction exists or targets the page anyway.
  */
 async function loadPageForWrite(pageId: string, ctx: ExecContext) {
   if (!inScope(ctx.visiblePageIds, pageId)) return null;
-  return prisma.page.findFirst({
+  const page = await prisma.page.findFirst({
     where: { id: pageId, workspaceId: ctx.workspaceId },
-    select: { id: true, content: true },
+    select: {
+      id: true,
+      content: true,
+      parentId: true,
+      type: true,
+      locked: true,
+      permissions: {
+        where: { userId: ctx.userId },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
+  if (!page) return null;
+  if (!pageCapabilitiesFromRelation(ctx.role, page.permissions).edit) return null;
+  return page;
+}
+
+/** The lock policy's role shape; only the owner keeps the locked-page override. */
+function lockRoleFor(role: WorkspaceRole): LockRole {
+  return {
+    isOwner: role === "OWNER",
+    isMember: role === "ADMIN" || role === "MEMBER",
+  };
 }
 
 async function runWriteTool(name: string, args: RpcParams, ctx: ExecContext): Promise<unknown> {
   switch (name) {
     case "create_page": {
       const requestedParentId = asString(args.parentId) || null;
-      // The parent must live in the tool's workspace — `Page.parentId` is a
+      // The parent must live in the tool's workspace - `Page.parentId` is a
       // plain foreign key, so a foreign parent would link the page into another
-      // tenant's tree (B08).
-      const parent = await assertScopedParent({
+      // tenant's tree (B08) - and the caller must be allowed to edit it. A
+      // `READ`/`COMMENT` row on the parent must not become a writable branch
+      // just because the workspace role is `MEMBER`.
+      const parent = await assertEditableParent({
         workspaceId: ctx.workspaceId,
         parentId: requestedParentId,
+        userId: ctx.userId,
+        role: ctx.role,
       });
       if ("error" in parent) throw new Error(parent.error);
       const parentId = parent.parentId;
@@ -300,6 +333,11 @@ async function runWriteTool(name: string, args: RpcParams, ctx: ExecContext): Pr
       const pageId = asString(args.pageId);
       const page = await loadPageForWrite(pageId, ctx);
       if (!page) throw new Error("Page not found.");
+      // The page lock freezes content for every surface, not only the editor's
+      // save action; the MCP tool is another content writer.
+      if (!canEditSchema({ locked: Boolean(page.locked) }, lockRoleFor(ctx.role))) {
+        throw new Error("This page is locked. Unlock it to edit its content.");
+      }
       const blocks = Array.isArray(args.blocks) ? args.blocks : [];
       const doc =
         typeof page.content === "object" && page.content !== null && !Array.isArray(page.content)
@@ -327,18 +365,16 @@ async function runWriteTool(name: string, args: RpcParams, ctx: ExecContext): Pr
     case "update_property_value": {
       const pageId = asString(args.pageId);
       const propertyId = asString(args.property);
-      const page = inScope(ctx.visiblePageIds, pageId)
-        ? await prisma.page.findFirst({
-            where: { id: pageId, workspaceId: ctx.workspaceId },
-            select: { id: true, parentId: true },
-          })
-        : null;
+      const page = await loadPageForWrite(pageId, ctx);
       if (!page) throw new Error("Row not found.");
       // The property has to belong to the row's *own* database, so a property
       // of another database cannot be attached to this row. A row without a
-      // database has no property at all. This is a correctness fix, not a
-      // guest-facing one: writes are already refused for a guest.
+      // database has no property at all. The database is also a page: a
+      // `READ`/`COMMENT` restriction on it blocks every cell write, even when
+      // the row itself carries no restriction.
       const databasePageId = page.parentId;
+      const database = databasePageId ? await loadPageForWrite(databasePageId, ctx) : null;
+      if (!database || database.type !== "DATABASE") throw new Error("Property not found.");
       const property = databasePageId
         ? await prisma.property.findFirst({
             where: {
@@ -520,7 +556,12 @@ export async function POST(request: Request) {
     access.role === "GUEST"
       ? await guestReadablePageIds(auth.userId, workspaceId)
       : null;
-  const ctx: ExecContext = { workspaceId, userId: auth.userId, visiblePageIds };
+  const ctx: ExecContext = {
+    workspaceId,
+    userId: auth.userId,
+    role: access.role,
+    visiblePageIds,
+  };
   // The token says which tools may be called; the role says which of them the
   // caller may use. The role therefore caps the token — a token can never
   // widen the role that owns it.

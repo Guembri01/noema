@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { logActivity } from "@/lib/activity";
 import { requireUser } from "@/lib/auth";
 import { canPerformWorkspaceAction, getWorkspaceAccess } from "@/lib/permissions";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { randomToken } from "@/lib/slug";
 import { hashPassword, verifyPassword } from "@/lib/auth";
 
@@ -13,9 +14,11 @@ export type ShareOptions = {
   password?: string;
   expiresInDays?: number;
   /**
-   * Edit vs read-only share. Explicit `true` grants EDIT; `false`/omitted is
-   * READ, so a link is never editable unless the publisher asked for it.
-   * On an existing link `undefined` leaves the current choice untouched.
+   * Legacy read/edit marker on the share row. The public page is read-only
+   * (there is no anonymous write surface), so `true` no longer grants an
+   * anonymous edit: it only records the publisher's intent and the page copy
+   * says "sign in to edit". `false`/omitted is READ. On an existing link
+   * `undefined` leaves the stored marker untouched.
    */
   allowEditing?: boolean;
   /**
@@ -47,11 +50,19 @@ export async function getShareLinkStateAction(pageId: string): Promise<ShareLink
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { workspaceId: true },
+    select: {
+      workspaceId: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!page) return empty;
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!canPerformWorkspaceAction(access?.role ?? null, "sharePage")) return empty;
+  if (!pageCapabilitiesFromRelation(access?.role, page.permissions).share) return empty;
 
   const link = await prisma.shareLink.findFirst({ where: { pageId } });
   if (!link) return empty;
@@ -73,11 +84,21 @@ export async function createShareLinkAction(
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { workspaceId: true },
+    select: {
+      workspaceId: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!page) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!canPerformWorkspaceAction(access?.role ?? null, "sharePage")) {
+    return { error: "You do not have permission to share this page." };
+  }
+  if (!pageCapabilitiesFromRelation(access?.role, page.permissions).share) {
     return { error: "You do not have permission to share this page." };
   }
 
@@ -260,11 +281,21 @@ export async function revokeShareLinkAction(
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { workspaceId: true },
+    select: {
+      workspaceId: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!page) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!canPerformWorkspaceAction(access?.role ?? null, "sharePage")) {
+    return { error: "You do not have permission to change sharing." };
+  }
+  if (!pageCapabilitiesFromRelation(access?.role, page.permissions).share) {
     return { error: "You do not have permission to change sharing." };
   }
   await prisma.shareLink.deleteMany({ where: { pageId } });

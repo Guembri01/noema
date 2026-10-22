@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { Prisma, type WorkspaceRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { getWorkspaceAccess } from "@/lib/permissions";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { pageScopeFor } from "@/lib/guest-access";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { pageSearchText } from "@/lib/search";
@@ -157,12 +158,26 @@ export async function createPageSnapshotAction(
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { id: true, title: true, content: true, workspaceId: true, locked: true },
+    select: {
+      id: true,
+      title: true,
+      content: true,
+      workspaceId: true,
+      locked: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!page) return { error: "Page not found." };
 
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
-  if (!access || !canEditContent(access.role)) {
+  if (!access) {
+    return { error: "You do not have permission to snapshot this page." };
+  }
+  if (!pageCapabilitiesFromRelation(access.role, page.permissions).edit) {
     return { error: "You do not have permission to snapshot this page." };
   }
   if (!canEditSchema({ locked: Boolean(page.locked) }, lockRoleFor(access.role))) {
@@ -331,18 +346,33 @@ export async function restorePageSnapshotAction(
   if (typeof snapshotId !== "string" || snapshotId.trim() === "") {
     return { error: "A snapshot id is required." };
   }
+  const user = await requireUser();
   const row = await prisma.pageVersion.findUnique({
     where: { id: snapshotId },
     select: {
       ...SNAPSHOT_SELECT,
-      page: { select: { workspaceId: true, title: true, content: true, locked: true } },
+      page: {
+        select: {
+          workspaceId: true,
+          title: true,
+          content: true,
+          locked: true,
+          permissions: {
+            where: { userId: user.id },
+            select: { level: true },
+            take: 1,
+          },
+        },
+      },
     },
   });
   if (!row) return { error: "Snapshot not found." };
 
-  const user = await requireUser();
   const access = await getWorkspaceAccess(user.id, row.page.workspaceId);
-  if (!access || !canEditContent(access.role)) {
+  if (!access) {
+    return { error: "You do not have permission to restore this page." };
+  }
+  if (!pageCapabilitiesFromRelation(access.role, row.page.permissions).edit) {
     return { error: "You do not have permission to restore this page." };
   }
   if (!canEditSchema({ locked: Boolean(row.page.locked) }, lockRoleFor(access.role))) {

@@ -1,4 +1,5 @@
-// Gate: a `Page.parentId` may only be written through `assertScopedParent()`.
+// Gate: a `Page.parentId` may only be written through `assertScopedParent()` or
+// its page-capability superset `assertEditableParent()`.
 //
 //   node scripts/check-parent-scope.mjs          # the gate
 //   node scripts/check-parent-scope.mjs --list   # every write it found
@@ -13,7 +14,8 @@
 // This gate checks the write paths:
 //
 //   1. Every write of a `Page.parentId` must carry the value that
-//      `assertScopedParent()` proved — or be listed in the ALLOW_LIST below.
+//      `assertScopedParent()` / `assertEditableParent()` proved - or be listed
+//      in the ALLOW_LIST below.
 //      An entry of that list is **not** a name that is trusted: it names the
 //      **value** that is written **and** the **context** that makes it safe
 //      (its `proof` — the authorization the entry relies on). The gate
@@ -209,12 +211,12 @@ const ALLOW_LIST = [
     file: "src/server/actions/import-formats.ts",
     fn: "createPage",
     value: "input.parentId",
-    proof: ["assertScopedParent({ workspaceId, parentId: input.parentId })"],
+    proof: ["assertEditableParent({ workspaceId, parentId: input.parentId"],
     scope: "file",
     vouches: true,
     callers: "checked",
     reason:
-      "the importers resolve the parent with `assertScopedParent` before they call this helper — the value handed in is the checked one",
+      "the importers resolve the parent with `assertEditableParent` before they call this helper - the value handed in is the checked one",
   },
   {
     file: "src/server/actions/move-workspace.ts",
@@ -236,8 +238,20 @@ const ALLOW_LIST = [
   },
 ];
 
-/** The helper that makes a parent write safe. */
-const HELPER = "assertScopedParent";
+/**
+ * The helpers that make a parent write safe. `assertScopedParent` proves the
+ * parent lives in the workspace; `assertEditableParent` calls it and adds the
+ * caller's page-level edit right. Both return the proved `parentId` local, so
+ * the gate treats them the same when it follows the value into a write.
+ */
+const HELPER = "(?:assertScopedParent|assertEditableParent)";
+
+/**
+ * Human-readable form for the gate's messages. `assertEditableParent` is a
+ * superset of `assertScopedParent` (it delegates to it and adds the page-level
+ * edit check), so the historical name stays in the message the tests pin.
+ */
+const HELPER_LABEL = "assertScopedParent()";
 
 /** Object keys that carry a *read* filter, never a write. */
 const READ_KEYS = new Set([
@@ -1519,14 +1533,14 @@ for (const path of collectFiles(root)) {
       problems.push({
         file,
         line: lineOf(source, index),
-        text: `parentId: ${value} — write the value ${HELPER}() returned, not the raw request value${verdict.hint}`,
+        text: `parentId: ${value} - write the value ${HELPER_LABEL} returned, not the raw request value${verdict.hint}`,
       });
       continue;
     }
     problems.push({
       file,
       line: lineOf(source, index),
-      text: `parentId: ${value} — no ${HELPER}() call in ${fnName}() and no allow-list entry`,
+      text: `parentId: ${value} - no ${HELPER_LABEL} call in ${fnName}() and no allow-list entry`,
     });
   }
 }
@@ -1672,5 +1686,5 @@ const counts = checked.reduce((acc, item) => {
   return acc;
 }, {});
 console.log(
-  `PASS  ${checked.length} Page.parentId write(s): ${counts.guarded ?? 0} guarded by ${HELPER}(), ${counts["allow-listed"] ?? 0} allow-listed, ${counts.root ?? 0} workspace root`,
+  `PASS  ${checked.length} Page.parentId write(s): ${counts.guarded ?? 0} guarded by ${HELPER_LABEL}, ${counts["allow-listed"] ?? 0} allow-listed, ${counts.root ?? 0} workspace root`,
 );

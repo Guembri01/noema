@@ -5,7 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
-import { assertScopedParent } from "@/lib/page-parent";
+import { assertEditableParent } from "@/lib/page-parent";
 import { sanitizeDocHrefs } from "@/lib/validation";
 import type { ImportCounts } from "@/lib/importers";
 import {
@@ -188,9 +188,11 @@ export async function importNotionPageAction(input: {
   // The parent must live in the same workspace — `Page.parentId` is a plain
   // foreign key, so a foreign parent would link the imported tree into another
   // tenant's tree (B08). Refused before anything is written.
-  const parent = await assertScopedParent({
+  const parent = await assertEditableParent({
     workspaceId: input.workspaceId,
     parentId: input.parentId,
+    userId: user.id,
+    role: access.role,
   });
   if ("error" in parent) return parent;
 

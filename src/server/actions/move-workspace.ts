@@ -28,6 +28,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { logActivity } from "@/lib/activity";
 import { pageSearchText } from "@/lib/search";
 import {
@@ -272,7 +273,17 @@ async function prepareMove(
 ): Promise<PrepareResult> {
   const source = await prisma.page.findUnique({
     where: { id: sourcePageId },
-    select: { id: true, title: true, workspaceId: true, deletedAt: true },
+    select: {
+      id: true,
+      title: true,
+      workspaceId: true,
+      deletedAt: true,
+      permissions: {
+        where: { userId },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!source || source.deletedAt) return { ok: false, error: "Page not found." };
   if (source.workspaceId === targetWorkspaceId) {
@@ -286,7 +297,11 @@ async function prepareMove(
   if (!target) return { ok: false, error: "Destination workspace not found." };
 
   const sourceAccess = await getWorkspaceAccess(userId, source.workspaceId);
-  if (!sourceAccess || !canEditContent(sourceAccess.role)) {
+  if (
+    !sourceAccess ||
+    !canEditContent(sourceAccess.role) ||
+    !pageCapabilitiesFromRelation(sourceAccess.role, source.permissions).edit
+  ) {
     return { ok: false, error: "You do not have permission to move this page." };
   }
   const targetAccess = await getWorkspaceAccess(userId, targetWorkspaceId);

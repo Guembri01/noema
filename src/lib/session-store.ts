@@ -1,5 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 
 /**
@@ -12,13 +22,22 @@ import { dirname, join } from "node:path";
  *
  * Storage is a small JSON file with atomic rename writes (`.data/sessions.json`
  * by default, `SESSION_STORE_PATH` override), because B54 must not change the
- * prisma schema — the spec deferred the `Session` table (D28.2/O28.2). One
- * writer process per file is the design point: dev :3201 and prod :3200 share
- * the file, and a simultaneous write from two live servers can drop the slower
- * record update (accepted for now).
+ * prisma schema — the spec deferred the `Session` table (D28.2/O28.2). Dev
+ * :3201 and prod :3200 may share the file on one host; the lock below keeps
+ * their read-modify-write cycles from dropping each other's record update.
+ * This is still a single-host store, not a multi-host database.
  *
- * Reads fail OPEN: a missing or corrupt file yields "no sessions", never an
- * auth outage — a broken registry must not lock every device out.
+ * Reads are fail-closed for the **request path**: a missing or corrupt file
+ * yields "no sessions", and `getSessionUserId` rejects a token that carries a
+ * `sid` when the registry cannot prove the session is live. Tokens without a
+ * `sid` (legacy cookies issued before the registry existed) keep working until
+ * their own 30-day expiry. A broken registry must not silently turn revocation
+ * off.
+ *
+ * Writes take an on-disk lock around the read-modify-write cycle and publish
+ * with an atomic rename, so two server processes sharing the store cannot drop
+ * each other's record update. A stale lock left by a crash is reclaimed after
+ * `LOCK_STALE_MS`.
  *
  * §17 deepening (session management row): on top of the B54 list/revoke
  * primitives this module adds `validateSession` (fail-closed: a revoked or
@@ -62,15 +81,23 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
  * A revoked row lives as long as its token can be replayed.
  *
  * B129: the row used to be dropped a week after the revocation. The token of
- * the session lives 30 days, and the request path treats an **unknown** sid
- * as a legacy session (fail-open) — so a revoked session that was forgotten
- * by the registry was accepted again, for the rest of the token's life. The
- * retention is therefore the absolute lifetime of a session: the row outlives
- * the token, so "revoked" stays "revoked" as long as the token can be used.
+ * the session lives 30 days, and the request path used to treat an **unknown**
+ * sid as a legacy session — so a revoked session that was forgotten by the
+ * registry was accepted again, for the rest of the token's life. The request
+ * path now rejects an unknown sid too, and the retention still outlives the
+ * token: both halves keep "revoked" equal to "revoked".
  */
 const REVOKED_RETENTION_MS = SESSION_TTL_MS;
 /** lastActiveAt rewrites are throttled to one per minute per session. */
 const TOUCH_INTERVAL_MS = 60_000;
+
+/**
+ * A lock file older than this is treated as a crash leftover. Writes are a
+ * few milliseconds, so a live writer never holds it anywhere near this long.
+ */
+const LOCK_STALE_MS = 30_000;
+const LOCK_ATTEMPTS = 200;
+const LOCK_RETRY_MS = 10;
 
 export function storePath(): string {
   return process.env.SESSION_STORE_PATH || join(process.cwd(), ".data", "sessions.json");
@@ -91,14 +118,39 @@ function isRecord(value: unknown): value is SessionRecord {
   );
 }
 
-function readAll(): SessionRecord[] {
+export type SessionStoreStatus = "ok" | "missing" | "corrupt";
+type StoreRead = { records: SessionRecord[]; status: SessionStoreStatus };
+
+function readAllWithStatus(): StoreRead {
+  let raw: string;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(storePath(), "utf8"));
-    return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
+    raw = readFileSync(storePath(), "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return { records: [], status: code === "ENOENT" ? "missing" : "corrupt" };
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return { records: [], status: "corrupt" };
+    return { records: parsed.filter(isRecord), status: "ok" };
   } catch {
-    return []; // missing or corrupt → empty (fail open)
+    return { records: [], status: "corrupt" };
   }
 }
+
+function readAll(): SessionRecord[] {
+  return readAllWithStatus().records;
+}
+
+/**
+ * Whether the registry can currently prove a session's state. The request path
+ * uses this to distinguish "no such session in a healthy registry" (reject)
+ * from a registry that is missing or unreadable (also reject — fail closed).
+ */
+export function sessionStoreStatus(): SessionStoreStatus {
+  return readAllWithStatus().status;
+}
+
 
 /**
  * Set a mode, but never let it stop a write.
@@ -136,8 +188,60 @@ function writeAll(records: SessionRecord[]): void {
   renameSync(tmp, file); // atomic: readers never see a half-written file
 }
 
+/** Sleep without a busy loop; the store is synchronous by design. */
+function sleep(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Acquire the process-shared lock file. `wx` is atomic: exactly one writer
+ * creates it. A lock older than `LOCK_STALE_MS` is a crash leftover and is
+ * removed so a dead process cannot block sign-in forever.
+ */
+function acquireLock(file: string): number {
+  const lock = `${file}.lock`;
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt += 1) {
+    try {
+      return openSync(lock, "wx", 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) unlinkSync(lock);
+      } catch {
+        // The owner removed it between `stat` and `unlink`; retry normally.
+      }
+      sleep(LOCK_RETRY_MS);
+    }
+  }
+  throw new Error(`Session store lock timed out: ${lock}`);
+}
+
+function withStoreLock<T>(fn: () => T): T {
+  const file = storePath();
+  const fd = acquireLock(file);
+  try {
+    return fn();
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      // Best effort: the lock file is unlinked below.
+    }
+    try {
+      unlinkSync(`${file}.lock`);
+    } catch {
+      // Another writer may have reclaimed a stale lock already.
+    }
+  }
+}
+
+/**
+ * The read-modify-write cycle runs under the lock: without it two live servers
+ * sharing the file could both read the same list and one update would vanish.
+ */
 function mutate(fn: (records: SessionRecord[]) => SessionRecord[]): void {
-  writeAll(fn(readAll()));
+  withStoreLock(() => writeAll(fn(readAll())));
 }
 
 /**
@@ -188,10 +292,10 @@ function deadlineMs(record: SessionRecord, options: TouchOptions): number {
 /** Drop records that outlived their session deadline (or revocation retention). */
 function prune(records: SessionRecord[], nowMs: number): SessionRecord[] {
   return records.filter((record) => {
-    // Keep an idle-expired record until its absolute lifetime is over. Dropping
-    // it at the idle deadline would make `findSession` return null, and the
-    // request path treats an unknown sid as a legacy (fail-open) session - so
-    // the next write would resurrect an idle-expired JWT.
+    // Keep an idle-expired record until its absolute lifetime is over, so the
+    // settings view can still show the session that died and an unknown sid
+    // never has to stand in for it. The request path rejects the record via
+    // `validateSession`'s deadline check either way.
     const created = Date.parse(record.createdAt);
     const absolute = Number.isFinite(created) ? created + SESSION_TTL_MS : Number.NEGATIVE_INFINITY;
     if (absolute <= nowMs) return false;
@@ -228,11 +332,12 @@ export function findSession(sid: string): SessionRecord | null {
 }
 
 /**
- * Revocation flag of a session. Unknown sid → false (fail open).
+ * Revocation flag of a session. Unknown sid → false (fail open by design: this
+ * is a status probe, not an authentication gate).
  *
- * B39: the request path asks `validateSession` instead — it also knows the
- * deadline, so a revoked-but-unexpired *and* an expired-but-unrevoked
- * session are both rejected.
+ * The request path uses `validateSession` instead — it also knows the deadline,
+ * so a revoked-but-unexpired *and* an expired-but-unrevoked session are both
+ * rejected, and an unknown sid is rejected rather than treated as legacy.
  */
 export function isSessionRevoked(sid: string): boolean {
   const record = findSession(sid);

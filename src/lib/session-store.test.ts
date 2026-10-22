@@ -13,6 +13,7 @@ import {
   revokeAllSessionsForUser,
   revokeSession,
   revokeSessionForUser,
+  sessionStoreStatus,
   storePath,
   touchSession,
   validateSession,
@@ -65,17 +66,25 @@ describe("session registry — register & list", () => {
     expect(listActiveSessions("user-a")[0]?.device).toBeNull();
   });
 
-  it("fails open on a corrupt store file instead of throwing", () => {
+  it("does not throw on a corrupt store file", () => {
     writeFileSync(storePath(), "{not json", "utf8");
     expect(listActiveSessions("user-a")).toEqual([]);
     expect(isSessionRevoked("anything")).toBe(false);
   });
 
+  it("reports whether the registry can prove a session state", () => {
+    expect(sessionStoreStatus()).toBe("missing");
+    writeFileSync(storePath(), "{not json", "utf8");
+    expect(sessionStoreStatus()).toBe("corrupt");
+    writeFileSync(storePath(), "[]", "utf8");
+    expect(sessionStoreStatus()).toBe("ok");
+  });
+
   it("keeps a revoked record as long as its token can be replayed", () => {
     // B129: the row used to be dropped a week after the revocation. The
-    // token of the session lives 30 days, and the request path treats an
-    // unknown sid as a legacy session (fail-open) — so a revoked session
-    // that the registry had forgotten was accepted again.
+    // token of the session lives 30 days, and the request path used to treat
+    // an unknown sid as a legacy session — so a revoked session that the
+    // registry had forgotten was accepted again.
     const record = registerSession({ userId: "user-a", device: "Chrome" });
     expect(revokeSessionForUser(record.sid, "user-a")).toBe("revoked");
 

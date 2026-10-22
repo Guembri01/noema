@@ -787,10 +787,10 @@ const ALLOW_LIST_CASES = [
     file: "src/server/actions/import-formats.ts",
     fn: "",
     scope: "file",
-    from: "assertScopedParent({ workspaceId, parentId: input.parentId })",
-    to: "assertScopedParent({ workspaceId, parentId: rawParentId })",
+    from: "await assertEditableParent({",
+    to: "await assertEditableParentUnchecked({",
     expect:
-      "the allow-list entry createPage() requires `assertScopedParent({ workspaceId, parentId: input.parentId })` in the file",
+      "the allow-list entry createPage() requires `assertEditableParent({ workspaceId, parentId: input.parentId` in the file",
   },
   {
     name: "a caller that hands the allow-listed helper the raw parent is reported",

@@ -16,12 +16,13 @@ import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { getWorkspaceAccess } from "@/lib/permissions";
 import { pageScopeFor } from "@/lib/guest-access";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { pageSearchText } from "@/lib/search";
 import { prosemirrorToText } from "@/lib/blocks";
-import { assertScopedParent } from "@/lib/page-parent";
+import { assertEditableParent } from "@/lib/page-parent";
 import { formatWordStats } from "@/lib/actions-menu";
 import { loadVersionAuthors } from "@/server/version-authors";
 
@@ -265,21 +266,31 @@ export async function duplicatePageAction(
       font: true,
       content: true,
       deletedAt: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
       workspace: { select: { slug: true } },
     },
   });
   if (!source || source.deletedAt) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, source.workspaceId);
-  if (!access || !canEditContent(access.role)) {
+  if (!access) {
+    return { error: "You do not have permission to duplicate this page." };
+  }
+  if (!pageCapabilitiesFromRelation(access.role, source.permissions).edit) {
     return { error: "You do not have permission to duplicate this page." };
   }
 
   // The copy becomes a sibling of the source, so it keeps the source's own
-  // parent. The source row proves that the *source* lives in this workspace,
-  // not that its parent does — check that one link before it is written (B08).
-  const parent = await assertScopedParent({
+  // parent. The parent must be in this workspace (B08) and editable by the
+  // caller (a READ/COMMENT parent must not become a writable branch).
+  const parent = await assertEditableParent({
     workspaceId: source.workspaceId,
     parentId: source.parentId,
+    userId: user.id,
+    role: access.role,
   });
   if ("error" in parent) return parent;
 

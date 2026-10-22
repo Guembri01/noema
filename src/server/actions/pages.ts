@@ -14,8 +14,12 @@ import {
   type WorkspaceAccess,
 } from "@/lib/permissions";
 import { pageScopeFor } from "@/lib/guest-access";
+import {
+  pageCapabilitiesFromRelation,
+  type PageCapabilities,
+} from "@/lib/page-access";
 import { parsePageContent } from "@/lib/validation";
-import { assertScopedParent } from "@/lib/page-parent";
+import { assertEditableParent } from "@/lib/page-parent";
 import { assertScopedProject } from "@/lib/page-project";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { prosemirrorToText } from "@/lib/blocks";
@@ -33,17 +37,34 @@ async function authorizePage(
       userId: string;
       page: { id: string; workspaceId: string; parentId: string | null; deletedAt: Date | null };
       access: NonNullable<WorkspaceAccess>;
+      /** Effective page rights after the page-level restriction row. */
+      capabilities: PageCapabilities;
     }
 > {
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { id: true, workspaceId: true, parentId: true, deletedAt: true },
+    select: {
+      id: true,
+      workspaceId: true,
+      parentId: true,
+      deletedAt: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!page) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
   if (!access) return { error: "You do not have access to this page." };
-  return { userId: user.id, page, access };
+  return {
+    userId: user.id,
+    page,
+    access,
+    capabilities: pageCapabilitiesFromRelation(access.role, page.permissions),
+  };
 }
 
 function revalidateWorkspace(workspaceId: string): void {
@@ -82,12 +103,15 @@ export async function createPageAction(input: {
   });
   if (!workspace) return { error: "Workspace not found." };
 
-  // The parent must live in the same workspace: `Page.parentId` is a plain
-  // foreign key, so nothing but this check keeps a page inside its tenant
-  // (B08). A foreign parent is refused before anything is written.
-  const parent = await assertScopedParent({
+  // The parent must live in the same workspace and be editable by the caller:
+  // `Page.parentId` is a plain foreign key, so nothing but this check keeps a
+  // page inside its tenant (B08), and a page-level READ/COMMENT row on the
+  // parent must not become a writable branch.
+  const parent = await assertEditableParent({
     workspaceId: input.workspaceId,
     parentId: input.parentId,
+    userId: user.id,
+    role: access.role,
   });
   if ("error" in parent) return parent;
   const parentId = parent.parentId;
@@ -257,7 +281,7 @@ export async function updatePageAction(
 ): Promise<Result> {
   const auth = await authorizePage(pageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) {
+  if (!auth.capabilities.edit) {
     return { error: "You do not have permission to edit this page." };
   }
 
@@ -370,12 +394,26 @@ export async function toggleSchemaLockAction(
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { id: true, workspaceId: true, type: true, schemaLocked: true },
+    select: {
+      id: true,
+      workspaceId: true,
+      type: true,
+      schemaLocked: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!page || page.type !== "DATABASE") return { error: "Database not found." };
 
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
-  if (!access || !canEditContent(access.role)) {
+  if (!access) {
+    return { error: "You do not have permission to change this database's lock." };
+  }
+  const capabilities = pageCapabilitiesFromRelation(access.role, page.permissions);
+  if (!capabilities.edit) {
     return { error: "You do not have permission to change this database's lock." };
   }
   // Evaluate the policy against the *current* lock state, so unlocking a locked
@@ -398,17 +436,21 @@ export async function movePageAction(
 ): Promise<Result> {
   const auth = await authorizePage(pageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) {
+  if (!auth.capabilities.edit) {
     return { error: "You do not have permission to move this page." };
   }
   if (parentId === pageId) return { error: "A page cannot be its own parent." };
 
-  // The new parent must live in the same workspace as the page: without this
-  // check a move would link the page into another tenant's tree (B08).
-  const parent = await assertScopedParent({
+  // The new parent must live in the same workspace as the page and be
+  // editable: without the first check a move would link the page into another
+  // tenant's tree (B08); without the second a READ/COMMENT parent would become
+  // a writable branch.
+  const parent = await assertEditableParent({
     workspaceId: auth.page.workspaceId,
     parentId,
     pageId,
+    userId: auth.userId,
+    role: auth.access.role,
   });
   if ("error" in parent) return parent;
   // The *checked* parent id from here on — the helper trims the requested
@@ -572,6 +614,7 @@ export async function getPageContentAction(
 > {
   const auth = await authorizePage(pageId);
   if ("error" in auth) return auth;
+  if (!auth.capabilities.read) return { error: "Page not found." };
   // A trashed page is gone: the read API answers 404 for it, so this action
   // must not hand its document out either.
   if (auth.page.deletedAt) return { error: "Page not found." };
@@ -681,21 +724,17 @@ export async function transferPageAction(
   pageId: string,
   targetWorkspaceId: string,
 ): Promise<Result> {
-  const user = await requireUser();
-  const page = await prisma.page.findUnique({
-    where: { id: pageId },
-    select: { workspaceId: true },
-  });
-  if (!page) return { error: "Page not found." };
+  const auth = await authorizePage(pageId);
+  if ("error" in auth) return auth;
+  const page = { workspaceId: auth.page.workspaceId };
   if (page.workspaceId === targetWorkspaceId) {
     return { error: "That page is already in this workspace." };
   }
 
-  const sourceAccess = await getWorkspaceAccess(user.id, page.workspaceId);
-  if (!sourceAccess || !canEditContent(sourceAccess.role)) {
+  if (!auth.capabilities.edit) {
     return { error: "You do not have permission to move this page." };
   }
-  const targetAccess = await getWorkspaceAccess(user.id, targetWorkspaceId);
+  const targetAccess = await getWorkspaceAccess(auth.userId, targetWorkspaceId);
   if (!targetAccess || !canEditContent(targetAccess.role)) {
     return { error: "You do not have permission in the target workspace." };
   }
@@ -735,7 +774,7 @@ export async function transferPageAction(
 export async function archivePageAction(pageId: string): Promise<Result> {
   const auth = await authorizePage(pageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) {
+  if (!auth.capabilities.edit) {
     return { error: "You do not have permission to delete this page." };
   }
   await prisma.page.update({
@@ -756,7 +795,7 @@ export async function archivePageAction(pageId: string): Promise<Result> {
 export async function restorePageAction(pageId: string): Promise<Result> {
   const auth = await authorizePage(pageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) {
+  if (!auth.capabilities.edit) {
     return { error: "You do not have permission to restore this page." };
   }
   // Only trashed pages restore: a live page (or a double restore) is a no-op
@@ -798,7 +837,7 @@ export async function restorePageAction(pageId: string): Promise<Result> {
 export async function deletePageAction(pageId: string, workspaceId: string): Promise<Result> {
   const auth = await authorizePage(pageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) {
+  if (!auth.capabilities.edit) {
     return { error: "You do not have permission to delete this page." };
   }
   const guard = purgeableError(auth.page, workspaceId);

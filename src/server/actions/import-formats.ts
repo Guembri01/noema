@@ -3,12 +3,12 @@
 import { constants as zlibConstants, inflateSync } from "node:zlib";
 import { HTML_TOO_COMPLEX_ERROR, underHtmlScanBudget } from "@/lib/html-budget";
 import { revalidatePath } from "next/cache";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, WorkspaceRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { markdownToDoc } from "@/lib/serialize";
-import { assertScopedParent } from "@/lib/page-parent";
+import { assertEditableParent } from "@/lib/page-parent";
 import { sanitizeDocHrefs } from "@/lib/validation";
 import type { RichNode } from "@/lib/blocks";
 import { parseGoogleDoc } from "@/lib/import-gdocs";
@@ -68,7 +68,7 @@ const MAX_PDF_BYTES = 10 * 1024 * 1024;
  */
 const MAX_BASE64_CHARS = Math.ceil(MAX_PDF_BYTES / 3) * 4;
 
-type Authorized = { user: { id: string }; slug: string };
+type Authorized = { user: { id: string }; slug: string; role: WorkspaceRole };
 
 /**
  * Shared authorization preamble: authenticated user, edit permission on the
@@ -85,7 +85,7 @@ async function authorize(workspaceId: string): Promise<Authorized | { error: str
     select: { slug: true },
   });
   if (!workspace) return { error: "Workspace not found." };
-  return { user: { id: user.id }, slug: workspace.slug };
+  return { user: { id: user.id }, slug: workspace.slug, role: access.role };
 }
 
 /** Filename stem → page title (the same rule the other import actions use). */
@@ -186,7 +186,12 @@ export async function importHtmlAction(input: {
   // The parent must live in the same workspace — `Page.parentId` is a plain
   // foreign key, so a foreign parent would link the imported tree into another
   // tenant's tree (B08). Refused before anything is written.
-  const parent = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const parent = await assertEditableParent({
+    workspaceId,
+    parentId: input.parentId,
+    userId: auth.user.id,
+    role: auth.role,
+  });
   if ("error" in parent) return parent;
 
   const userId = auth.user.id;
@@ -591,7 +596,12 @@ export async function importPdfAction(input: {
   // The parent must live in the same workspace — `Page.parentId` is a plain
   // foreign key, so a foreign parent would link the imported page into another
   // tenant's tree (B08). Refused before anything is written.
-  const parent = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const parent = await assertEditableParent({
+    workspaceId,
+    parentId: input.parentId,
+    userId: auth.user.id,
+    role: auth.role,
+  });
   if ("error" in parent) return parent;
 
   const bytes = Buffer.from(data, "base64");

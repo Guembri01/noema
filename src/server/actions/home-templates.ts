@@ -2,10 +2,11 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, WorkspaceRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { pageScopeFor } from "@/lib/guest-access";
 import { templateContent, type TemplateId } from "@/lib/templates";
 import { galleryTemplate, type GalleryProperty } from "@/lib/workflow-templates";
@@ -145,6 +146,37 @@ async function nextPosition(workspaceId: string, parentId: string | null) {
   return (last?.position ?? 0) + 1000;
 }
 
+/**
+ * A page may only be created inside a parent the caller can edit. The parent
+ * already passed `assertScopedParent`; this adds the page-level restriction
+ * (a READ or COMMENT row on the parent must not become a writable branch).
+ */
+async function parentPageEditError(input: {
+  userId: string;
+  workspaceId: string;
+  role: WorkspaceRole;
+  parentId: string | null;
+}): Promise<string | null> {
+  if (!input.parentId) return null;
+  const parent = await prisma.page.findFirst({
+    where: { id: input.parentId, workspaceId: input.workspaceId },
+    select: {
+      permissions: {
+        where: { userId: input.userId },
+        select: { level: true },
+        take: 1,
+      },
+    },
+  });
+  if (
+    parent &&
+    !pageCapabilitiesFromRelation(input.role, parent.permissions).edit
+  ) {
+    return "You do not have permission to add a page here.";
+  }
+  return null;
+}
+
 function optionsFor(property: GalleryProperty) {
   return (property.options ?? []).map((option, index) => ({
     id: `opt-${index}-${option.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
@@ -175,6 +207,13 @@ export async function createGalleryTemplateAction(input: {
     parentId: input.parentId,
   });
   if ("error" in parent) return parent;
+  const parentDenied = await parentPageEditError({
+    userId: user.id,
+    workspaceId: input.workspaceId,
+    role: access.role,
+    parentId: parent.parentId,
+  });
+  if (parentDenied) return { error: parentDenied };
   const template = galleryTemplate(input.templateId);
   if (!template) return { error: "That template does not exist." };
   const workspace = await prisma.workspace.findUnique({
@@ -303,6 +342,13 @@ export async function createBlockTemplateAction(input: {
     parentId: input.parentId,
   });
   if ("error" in parent) return parent;
+  const parentDenied = await parentPageEditError({
+    userId: user.id,
+    workspaceId: input.workspaceId,
+    role: access.role,
+    parentId: parent.parentId,
+  });
+  if (parentDenied) return { error: parentDenied };
   const content = templateContent(input.templateId);
   if (content.length === 0) return { error: "That template does not exist." };
   const workspace = await prisma.workspace.findUnique({
@@ -353,6 +399,13 @@ export async function createQuickStartAction(input: {
     parentId: input.parentId,
   });
   if ("error" in parent) return parent;
+  const parentDenied = await parentPageEditError({
+    userId: user.id,
+    workspaceId: input.workspaceId,
+    role: access.role,
+    parentId: parent.parentId,
+  });
+  if (parentDenied) return { error: parentDenied };
   const workspace = await prisma.workspace.findUnique({
     where: { id: input.workspaceId },
     select: { slug: true },
@@ -506,10 +559,22 @@ export async function instantiateWorkspaceTemplateAction(input: {
   if (!template) return { error: "That template does not exist." };
   const database = await prisma.page.findUnique({
     where: { id: template.databasePageId },
-    select: { id: true, workspaceId: true, title: true },
+    select: {
+      id: true,
+      workspaceId: true,
+      title: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!database || database.workspaceId !== input.workspaceId) {
     return { error: "That template does not exist." };
+  }
+  if (!pageCapabilitiesFromRelation(access.role, database.permissions).edit) {
+    return { error: "You do not have permission to add a page here." };
   }
 
   const properties = await prisma.property.findMany({
@@ -631,9 +696,19 @@ export async function manageWorkspaceTemplateAction(formData: FormData): Promise
   if (!target) return;
   const database = await prisma.page.findUnique({
     where: { id: target.databasePageId },
-    select: { id: true, workspaceId: true, title: true },
+    select: {
+      id: true,
+      workspaceId: true,
+      title: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!database || database.workspaceId !== workspaceId) return;
+  if (!pageCapabilitiesFromRelation(access.role, database.permissions).edit) return;
 
   const siblings = await prisma.template.findMany({
     where: { databasePageId: target.databasePageId },

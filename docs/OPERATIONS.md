@@ -84,6 +84,18 @@ authenticated users* with a live budget in the same window — a real
 installation, not a flood. Because the stores are separate, a flood of forged
 client addresses can never reset an exhausted per-user budget.
 
+**Deployment topology (important):** the limiter is **per process**. It is not
+a shared store, so a deployment with more than one app instance gives each
+instance its own 120/min budget — an attacker who reaches a load balancer can
+multiply the allowance by the number of instances. The shipped
+`docker-compose` setup runs **one** app instance and is the supported topology.
+If you scale the app horizontally, put a shared limiter (Redis or an equivalent
+atomic store) in front of these calls **before** adding the second instance;
+until then, keep the replica count at one. The same restriction applies to the
+JSON session registry (`SESSION_STORE_PATH`): its on-disk lock serializes
+writers on one host, but it is not a multi-host database. For a multi-host
+deployment, move both the limiter and the session registry to shared storage.
+
 > **Edge runtime:** `src/middleware.ts` runs in the Edge runtime, where
 > `process.env` is frozen at **build** time. `TRUSTED_PROXY_HOPS` therefore
 > has to be set for the **build** (`npm run build` / `docker compose build`),

@@ -198,6 +198,23 @@ describe("previewWorkspaceMoveAction — plan → UI mapping", () => {
     });
   });
 
+  it("refuses a source page the caller may only read", async () => {
+    access.getWorkspaceAccess.mockImplementation(async (_userId: string, workspaceId: string) =>
+      workspaceId === SOURCE_WORKSPACE ? { role: "MEMBER" } : { role: "OWNER" },
+    );
+    db.pageFindUnique.mockResolvedValue({
+      id: "p-root",
+      title: "Root",
+      workspaceId: SOURCE_WORKSPACE,
+      deletedAt: null,
+      permissions: [{ level: "READ" }],
+    });
+    await expect(preview()).resolves.toEqual({
+      ok: false,
+      error: "You do not have permission to move this page.",
+    });
+  });
+
   it("warns about a dropped author and refuses to reuse a missing page id", async () => {
     db.pageFindMany.mockImplementation(async (args: { where: { workspaceId: string } }) =>
       args.where.workspaceId === SOURCE_WORKSPACE
@@ -309,5 +326,23 @@ describe("executeWorkspaceMoveAction — ref-remapped write payload", () => {
       error: "You do not have permission to move this page.",
     });
     expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses a source page the caller may only read and writes nothing", async () => {
+    access.getWorkspaceAccess.mockImplementation(async (_userId: string, workspaceId: string) =>
+      workspaceId === SOURCE_WORKSPACE ? { role: "MEMBER" } : { role: "OWNER" },
+    );
+    db.pageFindUnique.mockResolvedValue({
+      id: "p-root",
+      title: "Root",
+      workspaceId: SOURCE_WORKSPACE,
+      deletedAt: null,
+      permissions: [{ level: "READ" }],
+    });
+    await expect(execute()).resolves.toEqual({
+      error: "You do not have permission to move this page.",
+    });
+    expect(db.transaction).not.toHaveBeenCalled();
+    expect(tx.pageCreateMany).not.toHaveBeenCalled();
   });
 });

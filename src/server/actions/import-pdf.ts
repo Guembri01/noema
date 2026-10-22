@@ -7,7 +7,7 @@ import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
 import { assembleDoc, describeImport, type PdfImportSummary } from "@/lib/pdf-import";
 import { extractedTextToPages, pdfBlocksToRichNodes } from "@/lib/pdf-import-blocks";
-import { assertScopedParent } from "@/lib/page-parent";
+import { assertEditableParent } from "@/lib/page-parent";
 import { sanitizeDocHrefs } from "@/lib/validation";
 import type { ImportCounts } from "@/lib/importers";
 
@@ -92,7 +92,12 @@ export async function importPdfTextAction(input: {
   // foreign key, so a foreign parent would link the imported page into another
   // tenant's tree (B08). The parent comes straight from the request body
   // (`POST /api/import/pdf`), so it is checked before anything is written.
-  const parent = await assertScopedParent({ workspaceId, parentId: input.parentId });
+  const parent = await assertEditableParent({
+    workspaceId,
+    parentId: input.parentId,
+    userId: user.id,
+    role: access.role,
+  });
   if ("error" in parent) return parent;
 
   const pages = extractedTextToPages(text);

@@ -8,6 +8,7 @@ import { requireUser } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { groupReactions } from "@/lib/comments";
 import { getWorkspaceAccess, canPerformWorkspaceAction } from "@/lib/permissions";
+import { pageCapabilities } from "@/lib/page-access";
 import { viewerScopeFor, guestReadablePageIds } from "@/lib/guest-access";
 import { buildVersionRecord } from "@/lib/version-history";
 import {
@@ -178,12 +179,9 @@ export default async function PageRoute({
     page.versions.map((version) => version.createdById),
   );
 
-  const editable =
-    access.role !== "GUEST" &&
-    !page.locked &&
-    (pagePermissions[0] === undefined ||
-      pagePermissions[0].level === "EDIT" ||
-      pagePermissions[0].level === "FULL");
+  const capabilities = pageCapabilities(access.role, pagePermissions[0]?.level);
+  const editable = capabilities.edit && !page.locked;
+  const canComment = capabilities.comment;
 
   const comments: CommentNode[] = page.comments.map((c) => ({
     id: c.id,
@@ -350,7 +348,7 @@ export default async function PageRoute({
         pageId={page.id}
         comments={comments}
         currentUserId={user.id}
-        canComment={editable}
+        canComment={canComment}
       />
     </div>
   );

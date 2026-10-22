@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getWorkspaceAccess, canManageMembers, canEditContent } from "@/lib/permissions";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 
 export async function createTeamspaceAction(
   workspaceId: string,
@@ -96,12 +97,32 @@ export async function setPageTeamspaceAction(
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { workspaceId: true },
+    select: {
+      workspaceId: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!page) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
-  if (!access || !canEditContent(access.role)) {
+  if (
+    !access ||
+    !canEditContent(access.role) ||
+    !pageCapabilitiesFromRelation(access.role, page.permissions).edit
+  ) {
     return { error: "You do not have permission to move this page." };
+  }
+  if (teamspaceId) {
+    const teamspace = await prisma.teamspace.findUnique({
+      where: { id: teamspaceId },
+      select: { workspaceId: true },
+    });
+    if (!teamspace || teamspace.workspaceId !== page.workspaceId) {
+      return { error: "That teamspace belongs to another workspace." };
+    }
   }
   await prisma.page.update({ where: { id: pageId }, data: { teamspaceId } });
   revalidatePath("/w", "layout");

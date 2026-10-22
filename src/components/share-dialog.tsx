@@ -337,7 +337,6 @@ export function ShareDialog({
   const [password, setPassword] = useState("");
   const [days, setDays] = useState("");
   const [created, setCreated] = useState<string | null>(null);
-  const [allowEditing, setAllowEditing] = useState(false);
   const [indexing, setIndexing] = useState(false);
   const [confirmUnpublish, setConfirmUnpublish] = useState(false);
 
@@ -351,7 +350,6 @@ export function ShareDialog({
     getShareLinkStateAction(pageId)
       .then((state) => {
         if (!live) return;
-        setAllowEditing(state.allowEditing);
         setIndexing(state.indexing);
       })
       .catch(() => {
@@ -381,13 +379,15 @@ export function ShareDialog({
       : shortUrl(typeof window === "undefined" ? "/s" : `${window.location.origin}/s`, shortCode);
 
   const publish = () => {
-    // Additive payload: the publish settings travel with the link. The action
-    // persists `allowEditing` today; the other keys are forwarded so it can
+    // Additive payload: the publish settings travel with the link. Public
+    // share links are read-only (there is no anonymous editing surface), so
+    // `allowEditing` is deliberately not offered here — a new or republished
+    // link is always READ. The other keys are forwarded so the action can
     // store them once `ShareOptions` (and the share model) opt in.
     const options: PublishOptions = {
       password: password.trim() || undefined,
       expiresInDays: days.trim() ? Number(days) : undefined,
-      allowEditing,
+      allowEditing: false,
       ...publishTogglePatch("indexing", indexing),
     };
     return run(() => createShareLinkAction(pageId, options), {
@@ -395,8 +395,6 @@ export function ShareDialog({
         if (!("url" in result)) return;
         const value = result.url.replace("/s/", "");
         setCreated(value);
-        // A fresh link is read-only until the publisher opts into editing.
-        setAllowEditing(false);
         onTokenChange(value);
         router.refresh();
       },
@@ -405,14 +403,10 @@ export function ShareDialog({
 
   /**
    * Persist one publish setting on the share link, mirroring it locally only
-   * once the server accepts the change (same contract as `chooseMode`).
+   * once the server accepts the change.
    */
   const saveSetting = (patch: PublishOptions, apply: () => void) =>
     run(() => createShareLinkAction(pageId, patch), { onSuccess: apply });
-
-  /** The allow-editing choice: persists READ/EDIT on the share record. */
-  const chooseMode = (mode: "READ" | "EDIT") =>
-    saveSetting({ allowEditing: mode === "EDIT" }, () => setAllowEditing(mode === "EDIT"));
 
   /** One switch → one single-field patch, mirrored locally on success. */
   const toggleSetting = (id: PublishToggleId, value: boolean) => {
@@ -428,7 +422,6 @@ export function ShareDialog({
       success: "Unpublished",
       onSuccess: () => {
         setCreated(null);
-        setAllowEditing(false);
         setIndexing(false);
         onTokenChange(null);
         router.refresh();
@@ -460,20 +453,14 @@ export function ShareDialog({
                     <span className="min-w-0">
                       <span className="block truncate text-sm">{t(locale, "anyoneWithLink")}</span>
                       <span className="block truncate text-2xs text-muted">
-                        {allowEditing ? t(locale, "canEdit") : t(locale, "canView")}
+                        {t(locale, "canView")} ·{" "}
+                        <a href="/login" className="underline">
+                          {t(locale, "signIn")}
+                        </a>{" "}
+                        to edit in Noema
                       </span>
                     </span>
                   </span>
-                  <select
-                    value={allowEditing ? "EDIT" : "READ"}
-                    aria-label={t(locale, "anyoneWithLink")}
-                    disabled={pending}
-                    onChange={(event) => chooseMode(event.target.value as "READ" | "EDIT")}
-                    className="focus-ring h-8 shrink-0 rounded-sm border border-border bg-bg px-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value="READ">{t(locale, "canView")}</option>
-                    <option value="EDIT">{t(locale, "canEdit")}</option>
-                  </select>
                 </div>
               </div>
             ) : (

@@ -17,18 +17,26 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import {
+  assertEditableParent,
   assertScopedParent,
   INVALID_PARENT_ERROR,
+  PARENT_EDIT_ERROR,
   SELF_PARENT_ERROR,
 } from "./page-parent";
 
 /** The pages that exist in the fake database, across two workspaces. */
 const PAGES = [
   { id: "page-parent", workspaceId: "ws-1", deletedAt: null },
+  { id: "page-read", workspaceId: "ws-1", deletedAt: null },
   { id: "page-foreign", workspaceId: "ws-2", deletedAt: null },
   // A page in the trash of the *same* workspace: it is not a usable parent.
   { id: "page-trashed", workspaceId: "ws-1", deletedAt: new Date("2026-01-02T03:04:05.000Z") },
 ];
+
+/** The fake page-permission rows, keyed by page id. */
+const PERMISSIONS: Record<string, { level: string }[]> = {
+  "page-read": [{ level: "READ" }],
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -42,7 +50,7 @@ beforeEach(() => {
       );
       if (!row) return null;
       if (args.where.deletedAt === null && row.deletedAt !== null) return null;
-      return { id: row.id };
+      return { id: row.id, permissions: PERMISSIONS[row.id] ?? [] };
     },
   );
 });
@@ -112,5 +120,44 @@ describe("assertScopedParent", () => {
     });
     expect("error" in result ? result.error : "").not.toContain("ws-2");
     expect("error" in result ? result.error : "").not.toContain("page-foreign");
+  });
+});
+
+describe("assertEditableParent", () => {
+  const base = { workspaceId: "ws-1", userId: "member-1", role: "MEMBER" as const };
+
+  it("accepts the workspace root without a permission lookup", async () => {
+    await expect(assertEditableParent(base)).resolves.toEqual({
+      ok: true,
+      parentId: null,
+    });
+    expect(db.pageFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("accepts a parent with no restriction row", async () => {
+    await expect(
+      assertEditableParent({ ...base, parentId: "page-parent" }),
+    ).resolves.toEqual({ ok: true, parentId: "page-parent" });
+  });
+
+  it("refuses a parent the member may only read", async () => {
+    await expect(
+      assertEditableParent({ ...base, parentId: "page-read" }),
+    ).resolves.toEqual({ error: PARENT_EDIT_ERROR });
+  });
+
+  it("keeps an admin/owner immune from a READ parent row", async () => {
+    await expect(
+      assertEditableParent({ ...base, parentId: "page-read", role: "ADMIN" }),
+    ).resolves.toEqual({ ok: true, parentId: "page-read" });
+    await expect(
+      assertEditableParent({ ...base, parentId: "page-read", role: "OWNER" }),
+    ).resolves.toEqual({ ok: true, parentId: "page-read" });
+  });
+
+  it("still refuses a foreign parent before looking at permissions", async () => {
+    await expect(
+      assertEditableParent({ ...base, parentId: "page-foreign" }),
+    ).resolves.toEqual({ error: INVALID_PARENT_ERROR });
   });
 });

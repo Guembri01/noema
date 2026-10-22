@@ -36,11 +36,12 @@
  *      token, whose scopes this gate cannot see, so it counts as "may
  *      publish".
  *
- * Scope: this gate knows two publishing scopes — `packages: write`, which
- * pushes an image to GHCR, and `id-token: write`, which mints the OIDC
- * token that cosign signs with. `contents: write` is out of scope here: it
- * is issue #65 (finding B50) and is fixed on its own branch. The success
- * message says exactly what was checked — nothing more.
+ * Scope: this gate knows three write scopes — `packages: write`, which
+ * pushes an image to GHCR; `id-token: write`, which mints the OIDC token that
+ * cosign signs with; and `contents: write`, which can push commits, tags and
+ * releases. Any of them is a publishing capability, so pull-request code must
+ * not run with any of them. The success message says exactly what was
+ * checked — nothing more.
  *
  * Limits of the YAML subset this reader understands. It is a scanner, not a
  * YAML parser, and the repository has no YAML dependency on purpose:
@@ -528,10 +529,10 @@ export function hasPullRequestTrigger(top) {
  *
  * `packages: write` pushes an image to GHCR. `id-token: write` mints the
  * OIDC token that cosign signs with — the other half of "this job can put
- * something in front of a user". `contents: write` is *not* in this list:
- * it is issue #65 (finding B50) and lives in its own gate.
+ * something in front of a user". `contents: write` can push commits, tags and
+ * releases, which is just as much a way to publish pull-request code.
  */
-const PUBLISHING_SCOPES = ["packages", "id-token"];
+const PUBLISHING_SCOPES = ["packages", "id-token", "contents"];
 
 /** Does this `permissions:` block grant a publishing scope? */
 function grantsPublishingScope(node) {
@@ -625,7 +626,7 @@ export function analyzeWorkflow(text, file = "workflow.yml") {
       line: permissions.line,
       rule: "workflow-level-publishing-scope",
       message:
-        "the workflow-level `permissions:` block grants a publishing scope (`packages: write`, `id-token: write`); it applies to every job, including the ones that run pull-request code",
+        "the workflow-level `permissions:` block grants a publishing scope (`packages: write`, `id-token: write`, `contents: write`); it applies to every job, including the ones that run pull-request code",
     });
   }
 
@@ -648,8 +649,7 @@ export function analyzeWorkflow(text, file = "workflow.yml") {
   // The rule is scoped to the workflows that can publish at all: in such a
   // workflow the token on disk is a publishing token the moment a scope is
   // added, and the code that a pull request controls reads `.git/config`
-  // before it does anything else. `contents: write` is out of scope for this
-  // gate — that is issue #65 (finding B50).
+  // before it does anything else.
   if (pullRequestTrigger && workflowMayPublish(jobNodes, permissions)) {
     for (const job of jobNodes) {
       const gate = job.children.find((node) => node.key === "if");
@@ -747,9 +747,6 @@ function main() {
     console.log(
       "  ok      no workflow grants a publishing scope outside a job that no pull-request event can reach",
     );
-    console.log(
-      "          (this gate does not look at `contents: write` — that is issue #65 / B50)",
-    );
     console.log("\n0 finding(s).");
     process.exit(0);
   }
@@ -759,7 +756,7 @@ function main() {
       "",
       `${findings.length} finding(s).`,
       "",
-      "Grant `packages: write` and `id-token: write` in the job that publishes",
+      "Grant `packages: write`, `id-token: write` and `contents: write` in the job that publishes",
       "the image only, and gate that job so that no pull-request event can",
       "reach it — the gate has to be false for `pull_request` *and* for",
       "`pull_request_target`. Set `persist-credentials: false` on the checkout",

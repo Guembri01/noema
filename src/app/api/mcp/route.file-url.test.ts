@@ -114,9 +114,24 @@ beforeEach(() => {
   perm.getWorkspaceAccess.mockResolvedValue({ role: "MEMBER" });
   perm.canEditContent.mockReturnValue(true);
   db.apiTokenFindUnique.mockResolvedValue({ scopes: ["write:databases"] });
-  // The row belongs to a database (`parentId`) — the property of a row has to
-  // belong to the row's own database, so the lookup needs it.
-  db.pageFindFirst.mockResolvedValue({ id: "row1", parentId: "db1" });
+  // The row belongs to a database (`parentId`) - the property of a row has to
+  // belong to the row's own database, so the lookup needs it. Both the row and
+  // the database carry no page-level restriction in this fixture.
+  db.pageFindFirst.mockImplementation(async (args: { where: { id?: string } }) => {
+    if (args.where.id === "row1") {
+      return { id: "row1", parentId: "db1", type: "PAGE", content: null, permissions: [] };
+    }
+    if (args.where.id === "db1") {
+      return {
+        id: "db1",
+        parentId: null,
+        type: "DATABASE",
+        content: null,
+        permissions: [],
+      };
+    }
+    return null;
+  });
   db.propertyFindFirst.mockResolvedValue({ id: "p1" });
   db.valueUpsert.mockResolvedValue({ id: "v1", propertyId: "p1", pageId: "row1", value: null });
 });

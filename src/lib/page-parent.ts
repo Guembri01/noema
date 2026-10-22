@@ -23,9 +23,14 @@
  */
 
 import { prisma } from "@/lib/db";
+import type { WorkspaceRole } from "@prisma/client";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 
 /** The message every unusable parent gets (it never names the foreign page). */
 export const INVALID_PARENT_ERROR = "That parent page does not exist in this workspace.";
+
+/** The message a parent the caller may only read/comment on gets. */
+export const PARENT_EDIT_ERROR = "You do not have permission to add a page here.";
 
 /** The message a self-parent gets (a page can never be its own parent). */
 export const SELF_PARENT_ERROR = "A page cannot be its own parent.";
@@ -66,4 +71,47 @@ export async function assertScopedParent(input: {
   });
   if (!parent) return { error: INVALID_PARENT_ERROR };
   return { ok: true, parentId: parent.id };
+}
+
+/**
+ * `assertScopedParent` plus the caller's page-level edit right on the parent.
+ *
+ * A page row is a restriction, not an inheritance grant, so a parent with a
+ * `READ`/`COMMENT` row must not become a writable branch just because the
+ * workspace role is `MEMBER`. This is the guard every page-create path uses
+ * when it accepts a `parentId` from the client.
+ */
+export async function assertEditableParent(input: {
+  workspaceId: string;
+  parentId?: string | null;
+  /** The page being moved — it may not be its own parent. */
+  pageId?: string | null;
+  userId: string;
+  role: WorkspaceRole;
+}): Promise<ParentScope> {
+  const scope = await assertScopedParent({
+    workspaceId: input.workspaceId,
+    parentId: input.parentId,
+    pageId: input.pageId,
+  });
+  if ("error" in scope) return scope;
+  if (!scope.parentId) return scope;
+
+  const parent = await prisma.page.findFirst({
+    // Re-assert the tenant/trash invariants in the capability lookup: the
+    // parent may have been trashed between the two reads.
+    where: { id: scope.parentId, workspaceId: input.workspaceId, deletedAt: null },
+    select: {
+      permissions: {
+        where: { userId: input.userId },
+        select: { level: true },
+        take: 1,
+      },
+    },
+  });
+  if (!parent) return { error: INVALID_PARENT_ERROR };
+  if (!pageCapabilitiesFromRelation(input.role, parent.permissions).edit) {
+    return { error: PARENT_EDIT_ERROR };
+  }
+  return scope;
 }

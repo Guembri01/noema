@@ -429,6 +429,47 @@ describe("analyzeWorkflow", () => {
     );
   });
 
+  it("flags `contents: write` in a job a pull request can reach", () => {
+    // `contents: write` can push commits, tags and releases: it is a
+    // publishing scope too, not a harmless metadata grant.
+    const workflow = [
+      "name: release",
+      "on:",
+      "  pull_request:",
+      "jobs:",
+      "  release:",
+      "    permissions:",
+      "      contents: write",
+      "    steps:",
+      "      - uses: actions/checkout@v4",
+      "",
+    ].join("\n");
+
+    expect(rules(analyzeWorkflow(workflow, "release.yml"))).toContain(
+      "publishing-scope-in-pull-request-job",
+    );
+  });
+
+  it("accepts `contents: write` only behind a gate that rules pull requests out", () => {
+    const workflow = [
+      "name: release",
+      "on:",
+      "  pull_request:",
+      "jobs:",
+      "  release:",
+      "    if: startsWith(github.ref, 'refs/tags/')",
+      "    permissions:",
+      "      contents: write",
+      "    steps:",
+      "      - uses: actions/checkout@v4",
+      "        with:",
+      "          persist-credentials: false",
+      "",
+    ].join("\n");
+
+    expect(analyzeWorkflow(workflow, "release.yml")).toEqual([]);
+  });
+
   it("accepts a publishing scope behind a gate that rules pull requests out", () => {
     const workflow = [
       "name: site",

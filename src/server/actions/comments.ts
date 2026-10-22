@@ -1,9 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { SharePermission, WorkspaceRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { getWorkspaceAccess, canEditContent } from "@/lib/permissions";
+import { getWorkspaceAccess } from "@/lib/permissions";
+import { guestReadablePageIds } from "@/lib/guest-access";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { commentSchema } from "@/lib/validation";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { logActivity } from "@/lib/activity";
@@ -15,6 +18,30 @@ import {
 } from "@/lib/comment-threads";
 
 type Result<T = unknown> = ({ ok: true } & T) | { error: string };
+
+/**
+ * The page-level comment gate shared by every comment action.
+ *
+ * Workspace membership is not enough: a page `READ` row (or a guest outside
+ * the guest read scope) must not be able to add, edit, resolve or delete
+ * comments. `COMMENT` and above may comment; editing stays separate.
+ */
+async function commentPermissionError(input: {
+  userId: string;
+  pageId: string;
+  workspaceId: string;
+  role: WorkspaceRole;
+  permissions: readonly { level: SharePermission }[] | null | undefined;
+}): Promise<string | null> {
+  if (!pageCapabilitiesFromRelation(input.role, input.permissions).comment) {
+    return "You do not have permission to comment.";
+  }
+  if (input.role === "GUEST") {
+    const readable = await guestReadablePageIds(input.userId, input.workspaceId);
+    if (!readable.has(input.pageId)) return "Page not found.";
+  }
+  return null;
+}
 
 /**
  * Distinct copy per `validateThreadDepth` issue so a rejected reply tells the
@@ -49,13 +76,26 @@ export async function addCommentAction(input: {
 
   const page = await prisma.page.findUnique({
     where: { id: parsed.data.pageId },
-    select: { workspaceId: true },
+    select: {
+      workspaceId: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!page) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
-  if (!access || !canEditContent(access.role)) {
-    return { error: "You do not have permission to comment." };
-  }
+  if (!access) return { error: "You do not have permission to comment." };
+  const denied = await commentPermissionError({
+    userId: user.id,
+    pageId: parsed.data.pageId,
+    workspaceId: page.workspaceId,
+    role: access.role,
+    permissions: page.permissions,
+  });
+  if (denied) return { error: denied };
 
   // Thread depth is enforced before the write (R79.1): a reply may only target
   // a thread root, so a reply-to-a-reply creates no row. We walk the prospective
@@ -220,13 +260,32 @@ export async function toggleCommentReactionAction(
   if (!clean) return { error: "Pick an emoji." };
   const comment = await prisma.comment.findUnique({
     where: { id: commentId },
-    select: { id: true, page: { select: { workspaceId: true } } },
+    select: {
+      id: true,
+      pageId: true,
+      page: {
+        select: {
+          workspaceId: true,
+          permissions: {
+            where: { userId: user.id },
+            select: { level: true },
+            take: 1,
+          },
+        },
+      },
+    },
   });
   if (!comment) return { error: "Comment not found." };
   const access = await getWorkspaceAccess(user.id, comment.page.workspaceId);
-  if (!access || !canEditContent(access.role)) {
-    return { error: "You do not have permission to react." };
-  }
+  if (!access) return { error: "You do not have permission to react." };
+  const denied = await commentPermissionError({
+    userId: user.id,
+    pageId: comment.pageId,
+    workspaceId: comment.page.workspaceId,
+    role: access.role,
+    permissions: comment.page.permissions,
+  });
+  if (denied) return { error: denied };
 
   const existing = await prisma.commentReaction.findUnique({
     where: { commentId_userId_emoji: { commentId, userId: user.id, emoji: clean } },
@@ -256,11 +315,33 @@ export async function editCommentAction(
 
   const comment = await prisma.comment.findUnique({
     where: { id: commentId },
-    select: { id: true, pageId: true, authorId: true, page: { select: { workspaceId: true } } },
+    select: {
+      id: true,
+      pageId: true,
+      authorId: true,
+      page: {
+        select: {
+          workspaceId: true,
+          permissions: {
+            where: { userId: user.id },
+            select: { level: true },
+            take: 1,
+          },
+        },
+      },
+    },
   });
   if (!comment) return { error: "Comment not found." };
   const access = await getWorkspaceAccess(user.id, comment.page.workspaceId);
-  if (!access || !canEditContent(access.role)) return { error: "No permission." };
+  if (!access) return { error: "No permission." };
+  const denied = await commentPermissionError({
+    userId: user.id,
+    pageId: comment.pageId,
+    workspaceId: comment.page.workspaceId,
+    role: access.role,
+    permissions: comment.page.permissions,
+  });
+  if (denied) return { error: denied };
   const isAdmin = access.role === "OWNER" || access.role === "ADMIN";
   if (comment.authorId !== user.id && !isAdmin) {
     return { error: "You can only edit your own comments." };
@@ -274,16 +355,36 @@ export async function editCommentAction(
 export async function resolveCommentAction(
   commentId: string,
   resolved: boolean,
-): Promise<Result> {  const user = await requireUser();
+): Promise<Result> {
+  const user = await requireUser();
   const comment = await prisma.comment.findUnique({
     where: { id: commentId },
-    select: { id: true, pageId: true, page: { select: { workspaceId: true } } },
+    select: {
+      id: true,
+      pageId: true,
+      page: {
+        select: {
+          workspaceId: true,
+          permissions: {
+            where: { userId: user.id },
+            select: { level: true },
+            take: 1,
+          },
+        },
+      },
+    },
   });
   if (!comment) return { error: "Comment not found." };
   const access = await getWorkspaceAccess(user.id, comment.page.workspaceId);
-  if (!access || !canEditContent(access.role)) {
-    return { error: "No permission." };
-  }
+  if (!access) return { error: "No permission." };
+  const denied = await commentPermissionError({
+    userId: user.id,
+    pageId: comment.pageId,
+    workspaceId: comment.page.workspaceId,
+    role: access.role,
+    permissions: comment.page.permissions,
+  });
+  if (denied) return { error: denied };
   await prisma.comment.update({
     where: { id: commentId },
     data: { resolved },
@@ -298,12 +399,38 @@ export async function deleteCommentAction(
   const user = await requireUser();
   const comment = await prisma.comment.findUnique({
     where: { id: commentId },
-    select: { id: true, authorId: true, page: { select: { workspaceId: true } } },
+    select: {
+      id: true,
+      pageId: true,
+      authorId: true,
+      page: {
+        select: {
+          workspaceId: true,
+          permissions: {
+            where: { userId: user.id },
+            select: { level: true },
+            take: 1,
+          },
+        },
+      },
+    },
   });
   if (!comment) return { error: "Comment not found." };
   const access = await getWorkspaceAccess(user.id, comment.page.workspaceId);
   if (!access) return { error: "No access." };
-  if (comment.authorId !== user.id && !canEditContent(access.role)) {
+  const denied = await commentPermissionError({
+    userId: user.id,
+    pageId: comment.pageId,
+    workspaceId: comment.page.workspaceId,
+    role: access.role,
+    permissions: comment.page.permissions,
+  });
+  if (denied) return { error: denied };
+  const canModerate = pageCapabilitiesFromRelation(
+    access.role,
+    comment.page.permissions,
+  ).edit;
+  if (comment.authorId !== user.id && !canModerate) {
     return { error: "You can only delete your own comments." };
   }
   await prisma.comment.delete({ where: { id: commentId } });

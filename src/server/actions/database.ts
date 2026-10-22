@@ -8,12 +8,12 @@ import { pageSearchText } from "@/lib/search";
 import { requireUser, type SessionUser } from "@/lib/auth";
 import {
   getWorkspaceAccess,
-  canEditContent,
   type WorkspaceAccess,
 } from "@/lib/permissions";
+import { pageCapabilitiesFromRelation, type PageCapabilities } from "@/lib/page-access";
 import { guestReadablePageIds } from "@/lib/guest-access";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
-import { assertScopedParent } from "@/lib/page-parent";
+import { assertEditableParent } from "@/lib/page-parent";
 import { csvToMatrix } from "@/lib/serialize";
 import { coerceCsvValue, type CsvPropertyConfig } from "@/lib/csv-value-coercion";
 import type { ImportCounts } from "@/lib/importers";
@@ -44,6 +44,8 @@ type DatabaseAuth =
       };
       access: NonNullable<WorkspaceAccess>;
       user: SessionUser;
+      /** Effective page rights after the page-level restriction row. */
+      capabilities: PageCapabilities;
     };
 
 /**
@@ -73,7 +75,17 @@ async function authorizeDatabase(
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: databasePageId },
-    select: { id: true, workspaceId: true, type: true, schemaLocked: true },
+    select: {
+      id: true,
+      workspaceId: true,
+      type: true,
+      schemaLocked: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!page || page.type !== "DATABASE") return { error: "Database not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
@@ -104,7 +116,12 @@ async function authorizeDatabase(
     // never widen the view (fail closed).
     return { error: "Database not found." };
   }
-  return { page, access, user };
+  return {
+    page,
+    access,
+    user,
+    capabilities: pageCapabilitiesFromRelation(access.role, page.permissions),
+  };
 }
 
 /**
@@ -218,7 +235,7 @@ function lockRoleFor(role: NonNullable<WorkspaceAccess>["role"]): LockRole {
  * keeps access so the lock toggle stays reachable. Row and cell writes never
  * call this: the schema lock leaves values editable.
  *
- * Callers perform the role check first (the existing `canEditContent` guard),
+ * Callers perform the page capability check first (`auth.capabilities.edit`),
  * so a denial here is always the schema lock and not a missing role.
  */
 function schemaLockDenied(auth: {
@@ -353,7 +370,7 @@ export async function createPropertyAction(
 ): Promise<Result<{ id: string }>> {
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
@@ -401,7 +418,7 @@ export async function updatePropertyAction(
   if (!property) return { error: "Property not found." };
   const auth = await authorizeDatabase(property.databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
@@ -438,7 +455,7 @@ export async function deletePropertyAction(
   if (!property) return { error: "Property not found." };
   const auth = await authorizeDatabase(property.databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
   await prisma.property.delete({ where: { id: propertyId } });
@@ -457,7 +474,7 @@ export async function reorderPropertiesAction(
 ): Promise<Result> {
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
@@ -504,7 +521,7 @@ export async function reorderRowsAction(
   if (!anchor?.parentId) return { error: "Row not found." };
   const auth = await authorizeDatabase(anchor.parentId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
 
   const existing = await prisma.page.findMany({
     // The rows belong to the database's workspace: a row that was linked across
@@ -564,7 +581,11 @@ export async function setPropertyValueAction(
 ): Promise<Result> {
   const row = await prisma.page.findUnique({
     where: { id: rowPageId },
-    select: { workspaceId: true, parentId: true },
+    select: {
+      workspaceId: true,
+      parentId: true,
+      permissions: { select: { userId: true, level: true } },
+    },
   });
   if (!row) return { error: "Row not found." };
   const auth = await authorizeDatabase(row.parentId ?? "");
@@ -584,7 +605,16 @@ export async function setPropertyValueAction(
   if (row.workspaceId !== auth.page.workspaceId) {
     return { error: "Row not found." };
   }
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
+  // A page-level restriction may also sit on the row itself: the database may
+  // be editable while this one row is READ/COMMENT. The row check runs after
+  // the workspace check so a foreign row still answers "Row not found.".
+  const rowPermissions = (row.permissions ?? []).filter(
+    (permission) => permission.userId === auth.user.id,
+  );
+  if (!pageCapabilitiesFromRelation(auth.access.role, rowPermissions).edit) {
+    return { error: "No permission." };
+  }
   if (!fileUrlsAreAppOwned(value)) {
     return { error: "That file link is not allowed." };
   }
@@ -643,7 +673,7 @@ export async function createRowAction(
 ): Promise<Result<{ id: string }>> {
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
 
   // R89.25: the row, its primary cell and every UNIQUE_ID allocation commit or
   // roll back together, so a crash can never leave a row without its id.
@@ -735,7 +765,11 @@ export async function createRowAction(
 export async function deleteRowAction(rowId: string): Promise<Result> {
   const row = await prisma.page.findUnique({
     where: { id: rowId },
-    select: { parentId: true, workspaceId: true },
+    select: {
+      parentId: true,
+      workspaceId: true,
+      permissions: { select: { userId: true, level: true } },
+    },
   });
   if (!row?.parentId) return { error: "Row not found." };
   const auth = await authorizeDatabase(row.parentId);
@@ -748,7 +782,13 @@ export async function deleteRowAction(rowId: string): Promise<Result> {
   if (row.workspaceId !== auth.page.workspaceId) {
     return { error: "Row not found." };
   }
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
+  const rowPermissions = (row.permissions ?? []).filter(
+    (permission) => permission.userId === auth.user.id,
+  );
+  if (!pageCapabilitiesFromRelation(auth.access.role, rowPermissions).edit) {
+    return { error: "No permission." };
+  }
   // Soft delete: the row leaves every view (queries filter `deletedAt`) but
   // stays restorable from the database's "Deleted rows" panel and the
   // workspace trash.
@@ -812,7 +852,7 @@ export async function createViewAction(
 ): Promise<Result<{ id: string }>> {
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
   const last = await prisma.databaseView.findFirst({
@@ -844,7 +884,7 @@ export async function updateViewAction(
   if (!view) return { error: "View not found." };
   const auth = await authorizeDatabase(view.databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
   if (patch.type !== undefined && !isViewType(patch.type)) {
@@ -879,7 +919,7 @@ export async function duplicateViewAction(
   if (!source) return { error: "View not found." };
   const auth = await authorizeDatabase(source.databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
@@ -985,7 +1025,7 @@ export async function duplicateDatabaseAction(
 ): Promise<Result<{ id: string }>> {
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
@@ -999,9 +1039,11 @@ export async function duplicateDatabaseAction(
   // parent. The source row proves that the *database* lives in this
   // workspace, not that its parent does — check that one link before the
   // clone is written (B08).
-  const parent = await assertScopedParent({
+  const parent = await assertEditableParent({
     workspaceId: auth.page.workspaceId,
     parentId: source.parentId,
+    userId: auth.user.id,
+    role: auth.access.role,
   });
   if ("error" in parent) return parent;
 
@@ -1206,7 +1248,7 @@ export async function saveRowAsTemplateAction(
 ): Promise<Result<{ id: string }>> {
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
@@ -1252,7 +1294,7 @@ export async function createRowFromTemplateAction(
 ): Promise<Result<{ id: string }>> {
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
 
   // The template is bound to the **authorized database** — the same way a
   // template of another workspace is resolved through its database in
@@ -1325,7 +1367,7 @@ export async function deleteTemplateAction(
   if (!template) return { error: "Template not found." };
   const auth = await authorizeDatabase(template.databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
   await prisma.template.delete({ where: { id: templateId } });
@@ -1347,7 +1389,7 @@ export async function setTemplateRecurrenceAction(
   if (!template) return { error: "Template not found." };
   const auth = await authorizeDatabase(template.databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
   await prisma.template.update({
@@ -1380,7 +1422,7 @@ export async function setDefaultTemplateAction(
   if (!template) return { error: "Template not found." };
   const auth = await authorizeDatabase(template.databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
@@ -1415,7 +1457,7 @@ export async function reorderTemplatesAction(
 ): Promise<Result> {
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
@@ -1459,7 +1501,7 @@ export async function importCsvAction(
 ): Promise<Result<{ created: number; counts: ImportCounts }>> {
   const auth = await authorizeDatabase(databasePageId);
   if ("error" in auth) return auth;
-  if (!canEditContent(auth.access.role)) return { error: "No permission." };
+  if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 

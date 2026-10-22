@@ -6,7 +6,6 @@ import { resolveAuthSecret } from "./auth-secret";
 import { prisma } from "./db";
 import {
   describeDevice,
-  findSession,
   registerSession,
   revokeSessionForUser,
   touchSession,
@@ -65,11 +64,12 @@ export async function verifyPassword(
  * succeeds — the session then behaves like a legacy (unlisted) one, because a
  * broken store must not block authentication.
  *
- * B129: a session that is not in the registry cannot be revoked, cannot be
- * listed and does not get the idle window — the request path treats an
- * unknown sid as a legacy session. Such a session therefore gets the **idle**
- * lifetime instead of the absolute one: the sign-in still works, and the
- * exposure is bounded to the idle window instead of the 30 days of the token.
+ * B129: a session that is not in the registry cannot be revoked and cannot be
+ * listed. It gets the **idle** lifetime instead of the absolute one: the
+ * sign-in still works, and the exposure is bounded to the idle window instead
+ * of the 30 days of the token. A *request* that presents a `sid` the registry
+ * does not know is rejected (fail closed); this legacy-free path only applies
+ * to tokens minted while the registry was unwritable, which carry no `sid`.
  */
 export async function createSession(userId: string): Promise<void> {
   let record: { sid: string } | null = null;
@@ -137,21 +137,22 @@ export async function getSessionUserId(): Promise<string | null> {
     if (typeof payload.sub !== "string") return null;
     const sid = typeof payload.sid === "string" ? payload.sid : null;
     if (sid) {
-      // B39: the registry decides whether this session is still alive. A
-      // revoked or expired (idle) record is rejected even though the JWT is
-      // still valid; an unknown sid fails OPEN, so a legacy session (no
-      // registry row) or an unavailable registry never signs every device out.
+      // B39 + session-registry hardening: the registry decides whether this
+      // session is still alive. A revoked, expired (idle) **or unknown** sid is
+      // rejected even though the JWT is still valid; a missing/corrupt registry
+      // also rejects, because an unavailable revocation list must not turn every
+      // revocation into a no-op. Legacy tokens without a `sid` keep working
+      // until their own 30-day expiry.
+      const now = Date.now();
+      const record = validateSession(sid, now, SESSION_POLICY);
+      if (!record) return null;
+      // Activity renews the idle window — never past the absolute cap. The
+      // touch is best-effort: a full lock or a read-only store must not sign a
+      // still-valid session out, and the next request retries it.
       try {
-        const now = Date.now();
-        const record = validateSession(sid, now, SESSION_POLICY);
-        if (record) {
-          // Activity renews the idle window — never past the absolute cap.
-          touchSession(sid, now, SESSION_POLICY);
-        } else if (findSession(sid)) {
-          return null;
-        }
+        touchSession(sid, now, SESSION_POLICY);
       } catch {
-        /* registry unavailable → revocation lags a request */
+        // Keep the authenticated request; only the activity timestamp lags.
       }
     }
     return payload.sub;

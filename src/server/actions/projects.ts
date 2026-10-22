@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { canEditContent, canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { sanitizeDescription } from "@/lib/description";
 
 export type ProjectResult<T = unknown> = ({ ok: true } & T) | { error: string };
@@ -138,11 +139,22 @@ export async function setPageProjectAction(
   const user = await requireUser();
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { workspaceId: true },
+    select: {
+      workspaceId: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!page) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
-  if (!access || !canEditContent(access.role)) {
+  if (
+    !access ||
+    !canEditContent(access.role) ||
+    !pageCapabilitiesFromRelation(access.role, page.permissions).edit
+  ) {
     return { error: "You do not have permission to move this page." };
   }
   if (projectId) {

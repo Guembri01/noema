@@ -125,7 +125,7 @@ Right-click on a chat answer is a first-class requirement (shared action set for
 | # | Scenario | Expected |
 | --- | --- | --- |
 | S1 | Share link | Public read; password gate; expiry enforced; revoke kills access |
-| S2 | Page permissions | Member levels honoured; viewers cannot edit via crafted calls |
+| S2 | Page permissions | Member levels honoured on every server surface (page/database/comment/duplicate/version/snapshot/import); `OWNER`/`ADMIN` immune; guests never edit; crafted calls cannot bypass |
 | S3 | Teamspaces | Members see and search only their teamspaces |
 | S4 | Roles | Admin-only settings hidden for editors; server enforces the same |
 | S5 | OIDC SSO | Login → callback → session; state/PKCE verified; replays rejected |

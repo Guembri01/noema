@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { assertScopedParent } from "@/lib/page-parent";
 import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { AI_NOT_CONFIGURED, chatComplete, resolveAiConfig } from "@/lib/ai-provider";
 import { parseAiAutofillConfig, validateAiAutofillConfig } from "@/lib/ai-autofill";
 import { foldToLine, frameRowContext } from "@/lib/ai-row-context";
@@ -55,7 +56,16 @@ export async function runAiAutofillAction(input: {
       id: true,
       type: true,
       config: true,
-      databasePage: { select: { workspaceId: true } },
+      databasePage: {
+        select: {
+          workspaceId: true,
+          permissions: {
+            where: { userId: user.id },
+            select: { level: true },
+            take: 1,
+          },
+        },
+      },
     },
   });
   if (!property || property.type !== "AI_AUTOFILL") {
@@ -63,6 +73,14 @@ export async function runAiAutofillAction(input: {
   }
   if (property.databasePage.workspaceId !== input.workspaceId) {
     return { ok: false, error: "That column does not belong to this workspace." };
+  }
+  if (
+    !pageCapabilitiesFromRelation(
+      access.role,
+      property.databasePage.permissions,
+    ).edit
+  ) {
+    return { ok: false, error: "You do not have permission to run AI autofill." };
   }
 
   const issues = validateAiAutofillConfig(property.config);
@@ -82,6 +100,11 @@ export async function runAiAutofillAction(input: {
       workspaceId: true,
       parentId: true,
       title: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
       propertyValues: {
         select: { value: true, property: { select: { name: true } } },
       },
@@ -89,6 +112,9 @@ export async function runAiAutofillAction(input: {
   });
   if (!row || row.workspaceId !== input.workspaceId) {
     return { ok: false, error: "That row does not belong to this workspace." };
+  }
+  if (!pageCapabilitiesFromRelation(access.role, row.permissions).edit) {
+    return { ok: false, error: "You do not have permission to run AI autofill." };
   }
 
   // B08/B99: the row's parent is the database that decides where the generated

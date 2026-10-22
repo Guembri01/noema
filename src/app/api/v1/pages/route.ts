@@ -13,7 +13,7 @@ import {
 } from "@/lib/body-limit";
 import { clampLimit, decodeCursor, malformedCursorResult } from "@/lib/cursor-pagination";
 import { buildBreadcrumb } from "@/lib/breadcrumb";
-import { assertScopedParent } from "@/lib/page-parent";
+import { assertEditableParent, PARENT_EDIT_ERROR } from "@/lib/page-parent";
 import { withIdempotency } from "@/lib/idempotency";
 import { getPagesPage, getPageTree, type ApiPageRow } from "@/server/queries";
 
@@ -176,12 +176,20 @@ export async function POST(request: Request) {
     const type = body.type === "DATABASE" ? "DATABASE" : "PAGE";
     const title = typeof body.title === "string" ? body.title.slice(0, 500) : "Untitled";
 
-    // The parent must live in the caller's workspace — `Page.parentId` is a
-    // plain foreign key, so a foreign parent would link the page into another
-    // tenant's tree (B08). Refused before anything is written.
-    const parent = await assertScopedParent({ workspaceId, parentId });
+    // The parent must live in the caller's workspace (B08) and be editable by
+    // the caller — a page-level READ/COMMENT row must not become a writable
+    // branch. Refused before anything is written.
+    const parent = await assertEditableParent({
+      workspaceId,
+      parentId,
+      userId: auth.userId,
+      role: access.role,
+    });
     if ("error" in parent) {
-      return NextResponse.json({ error: parent.error }, { status: 400 });
+      return NextResponse.json(
+        { error: parent.error },
+        { status: parent.error === PARENT_EDIT_ERROR ? 403 : 400 },
+      );
     }
 
     const last = await prisma.page.findFirst({

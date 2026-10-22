@@ -16,10 +16,11 @@ import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { canEditContent, getWorkspaceAccess } from "@/lib/permissions";
+import { getWorkspaceAccess } from "@/lib/permissions";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { dispatchWebhooks } from "@/lib/webhooks";
 import { pageSearchText } from "@/lib/search";
-import { assertScopedParent } from "@/lib/page-parent";
+import { assertEditableParent } from "@/lib/page-parent";
 import {
   planPageDuplicate,
   validatePageDuplicate,
@@ -96,12 +97,20 @@ export async function duplicatePageSubtreeAction(
       workspaceId: true,
       parentId: true,
       deletedAt: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
       workspace: { select: { slug: true } },
     },
   });
   if (!source || source.deletedAt) return { error: "Page not found." };
   const access = await getWorkspaceAccess(user.id, source.workspaceId);
-  if (!access || !canEditContent(access.role)) {
+  if (!access) {
+    return { error: "You do not have permission to duplicate this page." };
+  }
+  if (!pageCapabilitiesFromRelation(access.role, source.permissions).edit) {
     return { error: "You do not have permission to duplicate this page." };
   }
 
@@ -139,13 +148,14 @@ export async function duplicatePageSubtreeAction(
   if (!rootId) return { error: "Could not plan the page copy." };
 
   // The copy root lands as a sibling of the source, so it keeps the source's
-  // own parent — the one parent link that leaves the copied set. The source
-  // row proves that the *source* lives in this workspace, not that its parent
-  // does, so that link is checked against the workspace here (B08). Every
-  // other copy hangs under a copy that is created in this same workspace.
-  const parent = await assertScopedParent({
+  // own parent — the one parent link that leaves the copied set. It must be in
+  // this workspace (B08) and editable by the caller; every other copy hangs
+  // under a copy created in this same workspace.
+  const parent = await assertEditableParent({
     workspaceId: source.workspaceId,
     parentId: source.parentId,
+    userId: user.id,
+    role: access.role,
   });
   if ("error" in parent) return parent;
 
