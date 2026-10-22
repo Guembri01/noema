@@ -27,25 +27,37 @@ function backfillCommand() {
   return pkg.scripts["backfill:2fa"];
 }
 
+/**
+ * Run the documented command without a shell.
+ *
+ * The old test used `sh -c`, which does not exist on Windows: `spawnSync`
+ * returned `status: null` before the command started. Resolve the loader from
+ * `node_modules` and pass the rest of the package script to it through the
+ * current `node` binary instead — the same thing npm does, on every platform.
+ */
+function runBackfillHelp() {
+  const command = backfillCommand();
+  const parts = command.split(/\s+/).filter(Boolean);
+  assert.equal(parts[0], "tsx", `the documented command must use the tsx loader: ${command}`);
+  const tsxCli = join(ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+  return spawnSync(process.execPath, [tsxCli, ...parts.slice(1), "--help"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+}
+
 if (process.env.VITEST) {
   const { describe, it } = await import("vitest");
 
   describe("the backfill command (B134)", () => {
     it("runs and prints its usage", () => {
-      const command = `${backfillCommand()} --help`;
-      const result = spawnSync("sh", ["-c", command], {
-        cwd: ROOT,
-        encoding: "utf8",
-        // The loader lives in `node_modules/.bin`; npm puts it on the PATH
-        // for a script, the test has to do it itself.
-        env: { ...process.env, PATH: `${join(ROOT, "node_modules", ".bin")}:${process.env.PATH}` },
-        timeout: 60_000,
-      });
+      const result = runBackfillHelp();
 
       assert.equal(
         result.status,
         0,
-        `the documented command must run\\n${command}\\n${result.stdout ?? ""}${result.stderr ?? ""}`,
+        `the documented command must run\n${backfillCommand()}\n${result.stdout ?? ""}${result.stderr ?? ""}`,
       );
       assert.match(
         `${result.stdout ?? ""}${result.stderr ?? ""}`,
@@ -55,13 +67,7 @@ if (process.env.VITEST) {
     });
   });
 } else {
-  const command = `${backfillCommand()} --help`;
-  const result = spawnSync("sh", ["-c", command], {
-    cwd: ROOT,
-    encoding: "utf8",
-    env: { ...process.env, PATH: `${join(ROOT, "node_modules", ".bin")}:${process.env.PATH}` },
-    timeout: 60_000,
-  });
+  const result = runBackfillHelp();
   assert.equal(result.status, 0, `the documented command must run\n${result.stderr ?? ""}`);
   console.log("ok — the documented backfill command runs");
 }
