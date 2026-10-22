@@ -145,4 +145,22 @@ describe("isSvgSafe", () => {
     expect(isSvgSafe("<svg/onload=alert(1)>")).toBe(false);
     expect(isSvgSafe("<svg / >")).toBe(true);
   });
+
+  it("rejects a document that carries a NUL", () => {
+    // XML forbids U+0000 in a document, and a UTF-16 document interleaves a
+    // NUL after every ASCII character. A browser would decode such a file and
+    // find the markup the scanner did not see, so the file is refused — even
+    // when the markup behind it is harmless. A document the scanner cannot
+    // read is not one it can clear.
+    expect(isSvgSafe("<svg>\u0000</svg>")).toBe(false);
+    expect(isSvgSafe("<svg><rect/></svg>\u0000")).toBe(false);
+  });
+
+  it("rejects a UTF-16 document that the scanner would read as text", () => {
+    // The same document, spelled the way a UTF-16 payload arrives after a
+    // lenient decode: the tag is not a tag any more, so the scan would find
+    // nothing — and the browser finds the script.
+    const utf16 = '<svg onload="alert(1)">'.split("").join("\u0000");
+    expect(isSvgSafe(utf16)).toBe(false);
+  });
 });

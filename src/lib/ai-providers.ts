@@ -6,13 +6,15 @@
  *   OpenAI   https://api.openai.com/v1
  *   DeepSeek https://api.deepseek.com
  *   Gemini   https://generativelanguage.googleapis.com/v1beta/openai
+ *   Go       https://opencode.ai/inference/go/openai/v1
  *   Custom   anything OpenAI-compatible (Ollama, vLLM, LiteLLM, Azure proxy…)
  *
  * The listed models are a curated default; the settings UI can also fetch the
- * live list from `GET {baseUrl}/models`.
+ * live list from the provider's catalogue URL (`GET {baseUrl}/models` for most
+ * providers, a path of its own for Go).
  */
 
-export type ProviderId = "openai" | "deepseek" | "gemini" | "custom";
+export type ProviderId = "openai" | "deepseek" | "gemini" | "opencode-go" | "custom";
 
 export type ProviderModel = { id: string; label: string };
 
@@ -23,6 +25,13 @@ export type ProviderDefinition = {
   keyHint: string;
   docsUrl: string;
   models: ProviderModel[];
+  /**
+   * Where the provider publishes its model catalogue, when that is not
+   * `<baseUrl>/models`. Go publishes it under `/inference/go/v1/models` while
+   * its chat endpoint lives under `/inference/go/openai/v1` — two paths, one
+   * provider.
+   */
+  modelsUrl?: string;
 };
 
 export const AI_PROVIDERS: ProviderDefinition[] = [
@@ -64,6 +73,39 @@ export const AI_PROVIDERS: ProviderDefinition[] = [
       { id: "gemini-2.0-flash-lite", label: "Gemini 2.0 Flash Lite" },
       { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
       { id: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
+    ],
+  },
+  {
+    id: "opencode-go",
+    label: "OpenCode Go",
+    defaultBaseUrl: "https://opencode.ai/inference/go/openai/v1",
+    keyHint: "key from opencode.ai/console",
+    docsUrl: "https://opencode.ai/console",
+    // The catalogue does not live under the chat endpoint's path.
+    modelsUrl: "https://opencode.ai/inference/go/v1/models",
+    // Only the models behind Go's OpenAI-compatible surface
+    // (`/inference/go/openai/v1/chat/completions`) can be called at all: the
+    // Anthropic, Google and Responses models need a transport Noema does not
+    // speak. The live list holds more of them — those are not offered here.
+    models: [
+      { id: "glm-5.3-flash", label: "GLM-5.3 Flash" },
+      { id: "glm-5.3", label: "GLM-5.3" },
+      { id: "glm-5.2", label: "GLM-5.2" },
+      { id: "kimi-k3", label: "Kimi K3" },
+      { id: "kimi-k2.7-code", label: "Kimi K2.7 Code" },
+      { id: "longcat-2.0", label: "LongCat 2.0" },
+      { id: "deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash" },
+      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+      { id: "mimo-v2.6-flash", label: "MiMo-V2.6 Flash" },
+      { id: "mimo-v2.6-pro", label: "MiMo-V2.6 Pro" },
+      { id: "mimo-v2.5", label: "MiMo-V2.5" },
+      { id: "mimo-v2.5-pro", label: "MiMo-V2.5 Pro" },
+      { id: "minimax-m3.1-flash-free", label: "MiniMax M3.1 Flash (free)" },
+      { id: "longcat-2.5-preview-free", label: "LongCat 2.5 Preview (free)" },
+      { id: "step-5-preview", label: "Step 5 Preview" },
+      { id: "beam-free", label: "Beam (free)" },
+      { id: "hy4-preview", label: "Hy4 (preview)" },
+      { id: "hy3", label: "Hy3" },
     ],
   },
   {
@@ -118,6 +160,37 @@ export function providerForBaseUrl(baseUrl: string | null | undefined): Provider
 
 export function providerDefaultBaseUrl(id: string): string {
   return providerDefinition(id)?.defaultBaseUrl ?? "";
+}
+
+/**
+ * True when the endpoint is an OpenCode Go endpoint.
+ *
+ * Go asks its clients for a user agent of their own and for a stable session
+ * id in `x-opencode-session` (https://opencode.ai/v2/docs/console/go/). The
+ * host is what tells the endpoint apart — the path does not, and a deployment
+ * may reach Go through a proxy under another name.
+ */
+export function isOpenCodeGoEndpoint(baseUrl: string | null | undefined): boolean {
+  const host = urlHost(baseUrl);
+  if (!host) return false;
+  return host === "opencode.ai" || host.endsWith(".opencode.ai");
+}
+
+/**
+ * The URL the provider's model catalogue is read from.
+ *
+ * Most providers publish it at `<baseUrl>/models`. Go does not: its catalogue
+ * lives at `https://opencode.ai/inference/go/v1/models` while its chat
+ * endpoint lives under `…/openai/v1` — asking the chat endpoint's path for
+ * the catalogue answers 404.
+ */
+export function providerModelsUrl(
+  providerId: string | null | undefined,
+  baseUrl: string,
+): string {
+  const definition = providerDefinition(providerId);
+  if (definition?.modelsUrl) return definition.modelsUrl;
+  return `${normalizeBaseUrl(baseUrl)}/models`;
 }
 
 /** Normalise a user-typed base URL (no trailing slash, https by default). */

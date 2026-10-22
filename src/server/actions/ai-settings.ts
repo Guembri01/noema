@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { canManageMembers, getWorkspaceAccess } from "@/lib/permissions";
-import { AI_PROVIDERS, normalizeBaseUrl, providerDefaultBaseUrl, providerDefinition } from "@/lib/ai-providers";
+import { AI_PROVIDERS, normalizeBaseUrl, providerDefaultBaseUrl, providerDefinition, providerForBaseUrl, providerModelsUrl } from "@/lib/ai-providers";
 import { encryptSecret, maskSecret } from "@/lib/secrets";
 import { chatComplete, listProviderModels, resolveAiConfig } from "@/lib/ai-provider";
 
@@ -188,6 +188,14 @@ export async function listAiModelsAction(input: {
   const catalog = definition?.models.map((model) => model.id) ?? [];
   const baseUrl = normalizeBaseUrl(input.baseUrl ?? "") || definition?.defaultBaseUrl || "";
 
+  // A "custom" endpoint that is really a documented provider keeps that
+  // provider's catalogue — and its catalogue URL. Go publishes its model list
+  // under `/inference/go/v1/models` while its chat endpoint lives under
+  // `…/openai/v1`; asking the chat endpoint's path answers 404.
+  const effective =
+    input.provider === "custom" ? (providerForBaseUrl(baseUrl) ?? "custom") : input.provider;
+  const modelsUrl = providerModelsUrl(effective, baseUrl);
+
   let apiKey = (input.apiKey ?? "").trim();
   if (!apiKey) {
     const stored = await prisma.aiProviderConfig.findUnique({
@@ -203,7 +211,7 @@ export async function listAiModelsAction(input: {
       : { ok: false, error: "Add an API key to list models for this provider." };
   }
 
-  const live = await listProviderModels({ baseUrl, apiKey });
+  const live = await listProviderModels({ baseUrl, apiKey, modelsUrl });
   if (live.ok) {
     // Keep the curated labels for models we know, append anything new.
     const known = new Set(catalog);

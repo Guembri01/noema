@@ -149,6 +149,51 @@ describe("a confirmation names the proposal it applies (B17)", () => {
   });
 });
 
+describe("the conversation names itself to the provider (#271)", () => {
+  it("sends the discussion's id as the session and the app as the agent", async () => {
+    // OpenCode Go asks for a user agent of the client's own and a stable
+    // session id per conversation. The session is the discussion's own id, so
+    // the provider can route and cache per conversation.
+    vi.stubEnv("AI_API_KEY", PROVIDER_KEY);
+    vi.stubEnv("AI_BASE_URL", "https://opencode.ai/inference/go/openai/v1");
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response('data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n', {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await streamPost(jsonRequest({ threadId: "t1", body: "hello" }));
+    await response.text();
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["x-opencode-session"]).toBe("noema:conversation:t1");
+    expect(headers["user-agent"]).toMatch(/^noema\//);
+  });
+
+  it("does not name the session to another provider", async () => {
+    vi.stubEnv("AI_API_KEY", PROVIDER_KEY);
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response('data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n', {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await streamPost(jsonRequest({ threadId: "t1", body: "hello" }));
+    await response.text();
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["x-opencode-session"]).toBeUndefined();
+  });
+});
+
 describe("a transport failure never carries the key", () => {
   it("stays out of the stream, out of the chat row and out of the log", async () => {
     // The runtime rejects an invalid header value with the *whole* header in

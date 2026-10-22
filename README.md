@@ -193,6 +193,14 @@ AI_BASE_URL="https://api.deepseek.com"
 AI_MODEL="deepseek-flash"
 ```
 
+An OpenCode Go subscription works the same way — the endpoint is Go's OpenAI-compatible surface:
+
+```bash
+AI_API_KEY="go-…"
+AI_BASE_URL="https://opencode.ai/inference/go/openai/v1"
+AI_MODEL="glm-5.3-flash"
+```
+
 | Surface | Route | Notes |
 | --- | --- | --- |
 | Ask / grounded ask | `POST /api/ai` | `{ prompt, workspaceId? }` — the workspace is searched with keyword extraction + relevance scoring, so answers are grounded in your pages |
@@ -369,9 +377,14 @@ guard leaves prices (`$5 and $6`) alone.
 | OpenAI | `https://api.openai.com/v1` | GPT-4o family, o-series |
 | DeepSeek | `https://api.deepseek.com` | deepseek-chat / reasoner |
 | Google Gemini | `…/v1beta/openai` | Gemini's OpenAI-compatible surface |
+| OpenCode Go | `https://opencode.ai/inference/go/openai/v1` | Go subscription; the models behind Go's OpenAI-compatible surface |
 | Custom | your URL | Ollama, vLLM, LiteLLM, Azure proxy… |
 
 Pick a model from the curated list or press **Fetch models** to pull the provider's live `GET /models`, then **Test connection** before saving. Environment variables (`AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL`) stay as the fallback for workspaces without their own configuration.
+
+Every provider request carries the product's own user agent (`noema/<version>`), so a provider's log says which application is talking to it. **OpenCode Go** additionally gets a stable session id (`x-opencode-session`): the discussion's own id for a chat, the workspace's id for the one-shot surfaces. Go asks its clients for exactly that — an agent that identifies itself, and a session that stays the same for a conversation.
+
+Go serves some of its models over other surfaces (Anthropic, Google, OpenAI's *Responses* API); those need a transport Noema does not speak, so the curated list holds only the models behind Go's OpenAI-compatible surface. **Fetch models** returns Go's complete list — the curated ids are the ones that work.
 
 A workspace's own endpoint and key are used only for requests from members of that workspace. Anyone else gets the environment configuration, so a workspace id alone never spends another workspace's key or budget.
 

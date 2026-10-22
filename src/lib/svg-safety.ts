@@ -346,6 +346,13 @@ export function isSvgSafe(svg: string): boolean {
   if (typeof svg !== "string") return false;
   const source = svg.trim();
   if (source === "") return false;
+  // XML forbids U+0000 in a document, so a document that carries one is
+  // either binary or written in an encoding this scanner does not read: a
+  // UTF-16 document interleaves a NUL after every ASCII character, and a
+  // browser would decode it as UTF-16 and find the very markup the scanner
+  // did not see. Such a document is refused — the rule is "no script", and a
+  // document the scanner cannot read is not one it can clear.
+  if (source.includes("\u0000")) return false;
   if (SOURCE_FORBIDDEN.some((re) => re.test(source))) return false;
   const canonical = canonicalize(source);
   if (CANONICAL_FORBIDDEN.some((re) => re.test(canonical))) return false;

@@ -166,7 +166,13 @@ describe("regenerateChatAnswerAction — the conversation's model", () => {
 
   it("sends the chosen model instead of the configured one", async () => {
     await regenerateChatAnswerAction("thread-1", "m2");
-    expect(sentConfig()).toEqual({ ...CONFIG, model: "m2" });
+    expect(sentConfig()).toEqual({
+      ...CONFIG,
+      model: "m2",
+      // The session is the discussion's own id — the provider can cache and
+      // route per conversation.
+      sessionId: "noema:conversation:thread-1",
+    });
   });
 
   it("changes only the model: provider, endpoint and key stay the workspace's", async () => {
