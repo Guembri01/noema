@@ -67,7 +67,7 @@ import {
   type ChatModelInfo,
 } from "@/lib/chat-model";
 import { OPEN_CHAT_EVENT } from "@/components/sidebar-chat";
-import { Z, TAG_HUES, type TagHue } from "@/lib/design-tokens";
+import { Z, TAG_PALETTE, type TagHue } from "@/lib/design-tokens";
 import {
   assembleContext,
   estimateTokens,
@@ -328,7 +328,7 @@ export function citationHue(seed: string): TagHue {
   for (let index = 0; index < value.length; index += 1) {
     hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
   }
-  return TAG_HUES[hash % TAG_HUES.length];
+  return TAG_PALETTE[hash % TAG_PALETTE.length];
 }
 
 /** Compact citation chips (links) for the workspace pages an answer cited. */
@@ -1161,54 +1161,45 @@ export function ChatPanel({
           )}
         </div>
 
-        <div className="relative">
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label={t(locale, "chatHistory")}
-            aria-expanded={historyOpen}
-            onClick={() => setHistoryOpen((value) => !value)}
-          >
-            <History className="h-4 w-4" />
-          </Button>
-          {historyOpen && (
-            <div
-              style={{ zIndex: Z.popover }}
-              className="surface-raised absolute end-0 top-8 w-64 p-1"
-            >
-              {threads.length === 0 ? (
-                <p className="px-2 py-1.5 text-xs text-muted">{t(locale, "chatEmptyThreads")}</p>
-              ) : (
-                threads.map((item) => (
-                  <div key={item.id} className="group flex items-center">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveThreadId(item.id);
-                        setHistoryOpen(false);
-                      }}
-                      className={cn(
-                        "focus-ring min-w-0 flex-1 truncate rounded-sm px-2 py-1.5 text-left text-sm hover:bg-surface-2",
-                        item.id === active?.id && "bg-surface-2",
-                      )}
-                    >
-                      {item.title || "New discussion"}
-                    </button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label={`Delete ${item.title || "discussion"}`}
-                      onClick={() => deleteThread(item.id)}
-                      className="h-6 w-6 text-muted opacity-0 hover:text-danger group-hover:opacity-100 group-focus-within:opacity-100"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </div>
+        <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon" variant="ghost" aria-label={t(locale, "chatHistory")}>
+              <History className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64 p-1">
+            {threads.length === 0 ? (
+              <p className="px-2 py-1.5 text-xs text-muted">{t(locale, "chatEmptyThreads")}</p>
+            ) : (
+              threads.map((item) => (
+                <div key={item.id} className="group flex items-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveThreadId(item.id);
+                      setHistoryOpen(false);
+                    }}
+                    className={cn(
+                      "focus-ring min-w-0 flex-1 truncate rounded-sm px-2 py-1.5 text-left text-sm hover:bg-surface-2",
+                      item.id === active?.id && "bg-surface-2",
+                    )}
+                  >
+                    {item.title || "New discussion"}
+                  </button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Delete ${item.title || "discussion"}`}
+                    onClick={() => deleteThread(item.id)}
+                    className="h-6 w-6 text-muted opacity-0 hover:text-danger group-hover:opacity-100 group-focus-within:opacity-100"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <Button
           size="icon"

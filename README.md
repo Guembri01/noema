@@ -505,6 +505,7 @@ password: password123
 | `npm run check:a11y` | WCAG structural + contrast audit of the rendered shell |
 | `npm run check:sso` | OIDC SSO + teamspaces + transcription checks (uses a local mock IdP) |
 | `npm run check:ui` | Home gallery, sidebar tabs, discussions and calendar checks (uses a local mock ICS feed) |
+| `npm run check:public-ui` | Landing, auth and 404 at 390/1440 light/dark: HTTP, overflow, h1, accessible names, text and control-border contrast (no DB needed) |
 | `npm run check:ai` | Full AI suite against the configured provider (ask, grounded ask, summarize, autofill, all 7 skills) |
 | `npm run check:routes` | Probes every rendered route and fails on any 5xx |
 | `npm run check:mail` | SMTP end-to-end check against a throwaway SMTP server (invitation received, link inside, hashed storage, delivery log) |

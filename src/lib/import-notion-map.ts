@@ -45,8 +45,8 @@ export const NOEMA_BLOCK_TYPES = [
 
 export type NoemaBlockType = (typeof NOEMA_BLOCK_TYPES)[number];
 
-/** Noema option/tint palette (see `COLOR_CHOICES` / `BLOCK_COLORS`). */
-export const NOEMA_COLORS = [
+/** Noema option/tint palette (see `COLOR_CHOICES` / `BLOCK_COLOR_CATALOGUE`). */
+export const NOEMA_PALETTE_IDS = [
   "gray",
   "brown",
   "orange",
@@ -58,9 +58,9 @@ export const NOEMA_COLORS = [
   "red",
 ] as const;
 
-export type NoemaColor = (typeof NOEMA_COLORS)[number];
+export type NoemaColor = (typeof NOEMA_PALETTE_IDS)[number];
 
-const NOEMA_COLOR_SET: ReadonlySet<string> = new Set(NOEMA_COLORS);
+const NOEMA_COLOR_SET: ReadonlySet<string> = new Set(NOEMA_PALETTE_IDS);
 
 /**
  * Notion block type → Noema node name.

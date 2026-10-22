@@ -251,7 +251,12 @@ async function main() {
     await submit.click();
     await page.waitForTimeout(2500);
 
-    const card = page.locator('[data-testid="ticket-board-card"], tbody tr').first();
+    // Target the ticket this check just created. Taking the first card would
+    // open (and later delete) an unrelated demo ticket.
+    const card = page
+      .locator('[data-testid="ticket-board-card"], tbody tr')
+      .filter({ hasText: "Layering check ticket" })
+      .first();
     const opened = (await card.count()) > 0;
     record(opened, "the new ticket is on the board");
     if (opened) await card.click();
@@ -292,14 +297,31 @@ async function main() {
     if ((await remove.count()) > 0) {
       await remove.click();
       await page.waitForTimeout(700);
+      // The confirm button's accessible name is stable; match its test id
+      // rather than its visible label, which is easy to break with markup.
+      await page.locator('[data-testid="confirm-submit"]').click();
+      // Wait for the drawer to close, which happens after the server action
+      // resolves. A fixed pause can reload into the in-flight delete and abort
+      // it, leaving the ticket behind.
       await page
-        .locator("button")
-        .filter({ hasText: /^Delete permanently$/ })
-        .first()
-        .click();
-      await page.waitForTimeout(1500);
-      const gone = (await page.locator("text=Layering check ticket").count()) === 0;
-      record(gone, "the check cleans up the ticket it created");
+        .locator('[data-testid="ticket-delete"]')
+        .waitFor({ state: "detached", timeout: 10_000 })
+        .catch(() => {});
+      await page.waitForTimeout(500);
+      // Reload before asserting so the check reads the persisted board, not the
+      // optimistic client copy that can keep the card mounted for a frame. Count
+      // the card, not matching text: the success toast also contains the title.
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(1000);
+      const remaining = page
+        .locator('[data-testid="ticket-board-card"]')
+        .filter({ hasText: "Layering check ticket" });
+      const gone = (await remaining.count()) === 0;
+      record(
+        gone,
+        "the check cleans up the ticket it created",
+        gone ? "" : JSON.stringify((await remaining.allTextContents()).slice(0, 2)),
+      );
     }
 
     // 4. A real modal from the page header still covers the panel's column.

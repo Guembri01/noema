@@ -72,7 +72,7 @@ export const BREAKPOINT = {
 } as const;
 
 /** Tag palette hue names, matching `--tag-<hue>-*`. */
-export const TAG_HUES = [
+export const TAG_PALETTE = [
   "gray",
   "brown",
   "orange",
@@ -85,11 +85,11 @@ export const TAG_HUES = [
   "teal",
 ] as const;
 
-export type TagHue = (typeof TAG_HUES)[number];
+export type TagHue = (typeof TAG_PALETTE)[number];
 
 /** Type guard for a tag hue coming from untrusted data. */
 export function isTagHue(value: unknown): value is TagHue {
-  return typeof value === "string" && (TAG_HUES as readonly string[]).includes(value);
+  return typeof value === "string" && (TAG_PALETTE as readonly string[]).includes(value);
 }
 
 /**

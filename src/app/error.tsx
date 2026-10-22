@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import {
   fingerprint,
   normalizeError,
@@ -72,19 +74,22 @@ export default function RouteError({ error, reset }: Props) {
   }, [error]);
 
   return (
-    <main id="main" className="mx-auto min-h-[60vh] max-w-[720px] px-12 py-12">
-      <h1 className="text-3xl font-semibold text-fg">Something went wrong</h1>
-      <p className="mt-3 text-sm text-muted">
+    <main id="main" className="mx-auto min-h-dvh max-w-2xl px-6 py-12">
+      <h1 className="text-3xl font-semibold tracking-title text-fg">
+        Something went wrong
+      </h1>
+      <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
         This page hit an unexpected error. You can try again, or head back to
-        your workspace.
+        your workspace. Nothing you had already saved was discarded.
       </p>
-      <button
-        type="button"
-        onClick={() => reset()}
-        className="mt-6 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-      >
-        Try again
-      </button>
+      <div className="mt-6 flex flex-wrap items-center gap-2">
+        <Button type="button" onClick={() => reset()}>
+          Try again
+        </Button>
+        <Button variant="secondary" asChild>
+          <Link href="/app">Back to workspace</Link>
+        </Button>
+      </div>
     </main>
   );
 }

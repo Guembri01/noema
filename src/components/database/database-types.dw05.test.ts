@@ -1,7 +1,7 @@
 /**
  * DW05 — the option colour catalogue on the design system.
  *
- * `OPTION_COLORS` used to hold raw hex. It now resolves to `var(--tag-*)`
+ * `OPTION_FOREGROUND` used to hold raw hex. It now resolves to `var(--tag-*)`
  * token expressions while the persisted colour ids stay frozen (a stored option
  * `color` round-trips through the DB as one of those names). These node tests
  * keep both promises: every catalogue value is a tag token, the id list is
@@ -19,10 +19,10 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 }));
 
-import { TAG_HUES } from "@/lib/design-tokens";
+import { TAG_PALETTE } from "@/lib/design-tokens";
 import {
   COLOR_CHOICES,
-  OPTION_COLORS,
+  OPTION_FOREGROUND,
   optionEdge,
   optionHue,
   optionInk,
@@ -77,7 +77,7 @@ const noop = () => {};
 
 describe("option colour catalogue", () => {
   it("resolves every catalogue value to a --tag-* token expression", () => {
-    for (const [id, value] of Object.entries(OPTION_COLORS)) {
+    for (const [id, value] of Object.entries(OPTION_FOREGROUND)) {
       expect(value, `${id} should be a tag token`).toMatch(TAG_TOKEN);
       // The catalogue paints the solid hue with the tag ink token.
       expect(value).toBe(`var(--tag-${id}-fg)`);
@@ -85,7 +85,7 @@ describe("option colour catalogue", () => {
   });
 
   it("exposes ink/surface/edge accessors for every hue, defaulting to gray", () => {
-    for (const hue of TAG_HUES) {
+    for (const hue of TAG_PALETTE) {
       expect(optionHue(hue)).toBe(hue);
       expect(optionInk(hue)).toBe(`var(--tag-${hue}-fg)`);
       expect(optionSurface(hue)).toBe(`var(--tag-${hue}-bg)`);
@@ -100,7 +100,7 @@ describe("option colour catalogue", () => {
   });
 
   it("keeps the persisted option-colour id list frozen (snapshot)", () => {
-    const ids = Object.keys(OPTION_COLORS);
+    const ids = Object.keys(OPTION_FOREGROUND);
     // The same nine ids `COLOR_CHOICES` offers — a stored `color` value must
     // keep resolving forever.
     expect(new Set(ids)).toEqual(new Set(COLOR_CHOICES));

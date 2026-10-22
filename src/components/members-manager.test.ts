@@ -31,7 +31,7 @@ vi.mock("@/server/actions/email", () => ({
   sendWorkspaceInviteAction: vi.fn(),
 }));
 
-import { TAG_HUES, isTagHue } from "@/lib/design-tokens";
+import { TAG_PALETTE, isTagHue } from "@/lib/design-tokens";
 import { roleLabelKey } from "@/lib/workspace-role-map";
 import {
   MembersManager,
@@ -197,7 +197,7 @@ describe("MembersManager render", () => {
     const hues = html.match(/--tag-([a-z]+)-/g) ?? [];
     expect(hues.length).toBeGreaterThan(0);
     for (const hue of hues) {
-      expect(TAG_HUES.some((known) => hue.includes(`-${known}-`))).toBe(true);
+      expect(TAG_PALETTE.some((known) => hue.includes(`-${known}-`))).toBe(true);
     }
   });
 });

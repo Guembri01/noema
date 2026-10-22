@@ -162,7 +162,12 @@ const rule = (bucket, title, why) => {
     const text = raw.split("\n").map((l) => expandClassNames(l, sources)).join("\n");
     for (const block of text.matchAll(/<button[\s\S]{0,500}?<\/button>/g)) {
       const body = block[0];
-      const named = /aria-label=|aria-labelledby=|\bsr-only\b/.test(body);
+      // `{t(locale, "close")}` is visible, translated copy. The old rule
+      // stripped every JSX expression before deciding the control was
+      // icon-only, so the three dialog close buttons were reported as unnamed
+      // even though a screen reader announces their text.
+      const named =
+        /aria-label=|aria-labelledby=|\bsr-only\b|\{\s*t\(/.test(body);
       const visibleText = body.replace(/<[^>]+>/g, " ").replace(/\{[^}]*\}/g, " ").trim();
       if (!named && visibleText.length < 2) {
         g.hit(file, text.slice(0, block.index).split("\n").length, body.split("\n")[0].trim());
@@ -220,6 +225,9 @@ const rule = (bucket, title, why) => {
   const g = rule("DEBT", "Anchored popovers built by hand instead of the shared placement engine", "they drift and get clipped");
   for (const file of tsx) {
     if (isDevOnly(file)) continue;
+    // The shared placement engine itself is the one place a `position: fixed`
+    // portal must live; flagging it would demand replacing the replacement.
+    if (/components[\\/]ui[\\/]floating-layer\.tsx$/.test(file)) continue;
     const raw = stripComments(readFileSync(file, "utf8"));
     const sources = classNameSources(raw);
     const text = raw.split("\n").map((l) => expandClassNames(l, sources)).join("\n");

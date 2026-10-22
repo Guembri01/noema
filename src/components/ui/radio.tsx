@@ -287,7 +287,7 @@ export function Radio({
           className={cn(
             "flex items-center justify-center rounded-full border bg-bg u-colors",
             CIRCLE[resolvedSize],
-            selected ? "border-accent" : "border-border-strong",
+            selected ? "border-accent" : "border-control",
           )}
         >
           <span

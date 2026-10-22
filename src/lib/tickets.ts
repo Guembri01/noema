@@ -40,7 +40,7 @@ export type TicketType = (typeof TICKET_TYPES)[number]["id"];
 export const ESTIMATE_UNITS = ["points", "hours", "days"] as const;
 export type EstimateUnit = (typeof ESTIMATE_UNITS)[number];
 
-export const LABEL_COLORS = [
+export const LABEL_STYLES = [
   "gray",
   "blue",
   "green",
@@ -68,7 +68,7 @@ export function normalizeLabelInput(input: {
   const name = input.name.trim().slice(0, 40);
   if (!name) return { ok: false, error: "Give the label a name." };
   const requested = input.color ?? "gray";
-  const color = LABEL_COLORS.includes(requested as (typeof LABEL_COLORS)[number])
+  const color = LABEL_STYLES.includes(requested as (typeof LABEL_STYLES)[number])
     ? requested
     : "gray";
   return { ok: true, name, color, description: input.description?.trim().slice(0, 200) || null };

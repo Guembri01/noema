@@ -23,8 +23,8 @@ vi.mock("@/server/actions/tickets", () => ({
   updateLabelAction: vi.fn(),
 }));
 
-import { TAG_HUES } from "@/lib/design-tokens";
-import { LABEL_COLORS } from "@/lib/tickets";
+import { TAG_PALETTE } from "@/lib/design-tokens";
+import { LABEL_STYLES } from "@/lib/tickets";
 import {
   LABEL_HUE_TOKENS,
   LabelManager,
@@ -48,7 +48,7 @@ const render = (over: Partial<Parameters<typeof LabelManager>[0]> = {}) =>
 
 describe("labelHue", () => {
   it("maps every token hue to itself", () => {
-    for (const hue of TAG_HUES) expect(labelHue(hue)).toBe(hue);
+    for (const hue of TAG_PALETTE) expect(labelHue(hue)).toBe(hue);
   });
 
   it("fails closed to gray for unknown colours", () => {
@@ -62,8 +62,8 @@ describe("labelHue", () => {
 describe("LABEL_HUE_TOKENS", () => {
   it("exposes all ten token hues and covers the persisted colour domain", () => {
     expect(LABEL_HUE_TOKENS).toHaveLength(10);
-    expect([...LABEL_HUE_TOKENS]).toEqual([...TAG_HUES]);
-    for (const color of LABEL_COLORS) {
+    expect([...LABEL_HUE_TOKENS]).toEqual([...TAG_PALETTE]);
+    for (const color of LABEL_STYLES) {
       expect(LABEL_HUE_TOKENS).toContain(labelHue(color));
     }
   });

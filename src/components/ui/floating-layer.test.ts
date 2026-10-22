@@ -60,7 +60,7 @@ describe("every modal surface publishes a host", () => {
     ["./sheet.tsx", "the side drawer / peek sheet"],
     ["./dialog.tsx", "the shared dialog"],
     ["./confirm-dialog.tsx", "the confirm dialog"],
-    ["../database/database-view.tsx", "the database peek"],
+    ["../database/database-peek.tsx", "the database peek"],
   ])("%s (%s) wraps its content in FloatingHostProvider", (path) => {
     expect(source(path)).toContain("FloatingHostProvider");
   });

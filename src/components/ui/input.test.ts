@@ -30,13 +30,13 @@ describe("input class maps", () => {
     expect(INPUT_BASE).toContain("focus-ring");
     expect(INPUT_BASE).toContain("disabled:opacity-50");
     const classes = inputClasses({});
-    expect(classes).toContain("border-border");
+    expect(classes).toContain("border-control");
     expect(classes).toContain("focus-ring");
   });
 
   it("switches the ring to danger when invalid", () => {
     expect(inputClasses({ invalid: true })).toContain("border-danger");
-    expect(inputClasses({ invalid: false })).toContain("border-border");
+    expect(inputClasses({ invalid: false })).toContain("border-control");
   });
 
   it("pads for leading and trailing adornments", () => {

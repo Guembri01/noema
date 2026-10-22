@@ -74,7 +74,7 @@ const PROPERTY_IDS = {
 /** Same cycle the existing Trello import action uses for list options. */
 const STATUS_COLORS = ["gray", "blue", "green", "yellow", "orange", "purple", "pink", "red"];
 
-const NOEMA_COLORS = new Set(STATUS_COLORS.concat("brown"));
+const NOEMA_PALETTE_IDS = new Set(STATUS_COLORS.concat("brown"));
 
 /** Trello colour names that need folding onto Noema's palette. */
 const COLOR_ALIASES: Record<string, string> = {
@@ -100,7 +100,7 @@ function nonEmptyString(value: unknown): string | null {
 function normalizeColor(color: unknown): string {
   const raw = nonEmptyString(color);
   if (!raw) return "gray";
-  if (NOEMA_COLORS.has(raw)) return raw;
+  if (NOEMA_PALETTE_IDS.has(raw)) return raw;
   return COLOR_ALIASES[raw] ?? "gray";
 }
 

@@ -403,7 +403,7 @@ export function WorkspaceShell({
           type="button"
           aria-label={t(locale, "openNavigation")}
           onClick={() => setSidebarOpen(true)}
-          className="flex h-8 w-8 items-center justify-center rounded text-muted hover:bg-surface-2"
+          className="focus-ring u-interactive flex h-10 w-10 items-center justify-center rounded-md text-muted hover:bg-surface-2"
         >
           <Menu className="h-5 w-5" />
         </button>
@@ -477,7 +477,7 @@ export function WorkspaceShell({
             <nav
               data-testid="workspace-tabs"
               aria-label={t(locale, "recent")}
-              className="sticky top-[calc(3rem_+_env(safe-area-inset-top))] z-20 flex items-stretch gap-1 overflow-x-auto border-b border-border bg-bg px-2 md:top-0"
+              className="no-scrollbar sticky top-[calc(3rem_+_env(safe-area-inset-top))] z-20 flex snap-x items-stretch gap-1 overflow-x-auto border-b border-border bg-bg px-2 md:top-0"
             >
               {openTabs.map(({ entry, node }) => {
                 const active = entry.pageId === activePageId;
@@ -521,7 +521,7 @@ export function WorkspaceShell({
                       type="button"
                       aria-label={`${t(locale, "close")} ${title}`}
                       onClick={() => closeTab(entry.pageId)}
-                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted hover:bg-border hover:text-fg"
+                      className="focus-ring flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-border hover:text-fg"
                     >
                       <X className="h-3 w-3" />
                     </button>

@@ -13,7 +13,7 @@ import {
   type CellVisualState,
 } from "./view-parts";
 import { COLOR_CHOICES, type DBProperty, type DBRow } from "@/components/database/database-types";
-import { TAG_HUES, tagClass, tagStyle } from "@/lib/design-tokens";
+import { TAG_PALETTE, tagClass, tagStyle } from "@/lib/design-tokens";
 import type { RowColorRule } from "@/lib/row-color-rules";
 
 /**
@@ -228,7 +228,7 @@ describe("optionTagHue — stored option colour → shared tag palette", () => {
   });
 
   it("builds a token class + style for every hue (never a raw colour)", () => {
-    for (const hue of TAG_HUES) {
+    for (const hue of TAG_PALETTE) {
       expect(tagClass(hue)).toBe(`tag tag-${hue}`);
       expect(tagStyle(hue)).toEqual({
         color: `var(--tag-${hue}-fg)`,
@@ -243,7 +243,7 @@ describe("avatarHue — deterministic mini-avatar colour", () => {
   it("is stable for a name and always a palette hue", () => {
     for (const name of ["Ada Lovelace", "Grace Hopper", "Zoe", "", "林徽因"]) {
       const hue = avatarHue(name);
-      expect(TAG_HUES).toContain(hue);
+      expect(TAG_PALETTE).toContain(hue);
       expect(avatarHue(name)).toBe(hue);
     }
   });

@@ -57,6 +57,7 @@
     "check:sso": "node --env-file=.env scripts/check-sso-teamspaces.mjs",
     "check:matrix": "node scripts/feature-matrix-counts.mjs",
     "check:ui": "node --env-file=.env scripts/check-workspace-ui.mjs",
+    "check:public-ui": "node scripts/check-public-surfaces.mjs",
     "check:ai": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file=.env scripts/check-ai.mjs",
     "check:routes": "node --env-file=.env scripts/check-routes.mjs",
     "check:mail": "node --env-file=.env scripts/check-mail.mjs",

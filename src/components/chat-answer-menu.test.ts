@@ -18,7 +18,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 }));
 
-import { TAG_HUES } from "@/lib/design-tokens";
+import { TAG_PALETTE } from "@/lib/design-tokens";
 import {
   ANSWER_ACTION_TAGS,
   ChatAnswerItems,
@@ -44,7 +44,7 @@ describe("answer action tags", () => {
 
   it("keeps every hint hue on the tag palette, and the open rows bare", () => {
     for (const tag of Object.values(ANSWER_ACTION_TAGS)) {
-      if (tag) expect(TAG_HUES).toContain(tag.hue);
+      if (tag) expect(TAG_PALETTE).toContain(tag.hue);
     }
     expect(answerActionTag("copy")).toEqual({ hint: "⌘C", hue: "blue" });
     expect(answerActionTag("save")?.hue).toBe("green");

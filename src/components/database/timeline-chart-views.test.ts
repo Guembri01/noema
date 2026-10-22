@@ -14,7 +14,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { MS_PER_DAY } from "@/lib/calendar-multiday";
-import { TAG_HUES } from "@/lib/design-tokens";
+import { TAG_PALETTE } from "@/lib/design-tokens";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   CALENDAR_LANE_HEIGHT,
@@ -221,8 +221,8 @@ describe("calendar geometry", () => {
   it("derives a stable tag hue per event", () => {
     const hue = calendarEventHue("row-1");
     expect(calendarEventHue("row-1")).toBe(hue);
-    expect(TAG_HUES).toContain(hue);
-    expect(TAG_HUES).toContain(calendarEventHue(""));
+    expect(TAG_PALETTE).toContain(hue);
+    expect(TAG_PALETTE).toContain(calendarEventHue(""));
   });
 
   it("builds a single aligned week", () => {

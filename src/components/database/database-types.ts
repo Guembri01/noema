@@ -2,7 +2,7 @@ import type { PropertyType } from "@prisma/client";
 import type { RelationData } from "@/server/queries";
 import type { GeoValue } from "@/lib/geo";
 import type { UniqueIdConfig } from "@/lib/unique-id";
-import type { TagHue } from "@/lib/design-tokens";
+import { TAG_PALETTE, isTagHue, type TagHue } from "@/lib/design-tokens";
 import { hueEdge, hueInk, hueSurface, normalizeHue } from "@/lib/palette";
 
 /**
@@ -123,6 +123,28 @@ export function optionEdge(color: string | null | undefined): string {
 }
 
 /**
+ * Map a stored option colour onto the shared tag palette. The option colours
+ * (`OPTION_FOREGROUND`) are the hue names, so this is the one place a select/status
+ * chip resolves its token hue; an unknown colour degrades to `gray` rather than
+ * rendering unstyled.
+ */
+export function optionTagHue(color: string | null | undefined): TagHue {
+  return isTagHue(color) ? color : "gray";
+}
+
+/**
+ * Stable tag hue for a person's mini avatar, derived from their name so the
+ * same person always gets the same colour across cells, board cards and peeks.
+ */
+export function avatarHue(name: string): TagHue {
+  let hash = 0;
+  for (let index = 0; index < name.length; index += 1) {
+    hash = (hash * 31 + name.charCodeAt(index)) >>> 0;
+  }
+  return TAG_PALETTE[hash % TAG_PALETTE.length];
+}
+
+/**
  * Option colour catalogue, shared by the table/board cells, the list chips and
  * the chart series.
  *
@@ -134,7 +156,7 @@ export function optionEdge(color: string | null | undefined): string {
  * colour source. Reach for this map when a solid hue paint is wanted; use
  * `optionSurface` / `optionEdge` for the softer `-bg` / `-bd` tokens.
  */
-export const OPTION_COLORS: Record<string, string> = {
+export const OPTION_FOREGROUND: Record<string, string> = {
   gray: hueInk("gray"),
   blue: hueInk("blue"),
   green: hueInk("green"),

@@ -23,7 +23,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 }));
 
-import { TAG_HUES, type TagHue } from "@/lib/design-tokens";
+import { TAG_PALETTE, type TagHue } from "@/lib/design-tokens";
 import { estimateTokens } from "@/lib/ai-context";
 import {
   ChatEmptyState,
@@ -114,7 +114,7 @@ describe("citation chips", () => {
   it("derives a stable hue from the tag palette", () => {
     for (const reference of references) {
       const hue = citationHue(reference.id);
-      expect(TAG_HUES).toContain(hue);
+      expect(TAG_PALETTE).toContain(hue);
       expect(citationHue(reference.id)).toBe(hue);
     }
   });
@@ -404,6 +404,6 @@ describe("streaming phases are the documented set", () => {
 
   it("keeps citation hues inside the palette", () => {
     const hue: TagHue = citationHue("any-page");
-    expect(TAG_HUES).toContain(hue);
+    expect(TAG_PALETTE).toContain(hue);
   });
 });

@@ -26,6 +26,10 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // Agent-harness skills and local tooling are not application source;
+      // their CommonJS helper scripts have their own runtime contract.
+      ".agents/**",
+      ".opencode/**",
       // Staged desktop payload (bundled runtime + standalone server): build
       // output, never linted as source.
       "src-tauri/server/**",

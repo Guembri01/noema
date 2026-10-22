@@ -9,7 +9,7 @@ import {
   DropdownMenuSubContentImpl,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
-import { BLOCK_COLORS } from "@/components/editor/extensions/block-colors";
+import { BLOCK_COLOR_CATALOGUE } from "@/components/editor/extensions/block-colors";
 import { BlockColorMenu, BlockContextMenu } from "./block-context-menu";
 
 /**
@@ -71,7 +71,7 @@ describe("BlockColorMenu — static render", () => {
   });
 
   it("paints every block tint with the catalogue's token", () => {
-    for (const entry of BLOCK_COLORS) {
+    for (const entry of BLOCK_COLOR_CATALOGUE) {
       expect(html).toContain(entry.tint);
     }
   });
@@ -91,7 +91,7 @@ describe("BlockColorMenu — static render", () => {
     // One swatch row per palette entry (Default + nine) + background rows +
     // the clear row, each carrying the ring class.
     const rows = html.match(/focus-ring/g) ?? [];
-    expect(rows.length).toBeGreaterThanOrEqual(BLOCK_COLORS.length + 10);
+    expect(rows.length).toBeGreaterThanOrEqual(BLOCK_COLOR_CATALOGUE.length + 10);
   });
 });
 

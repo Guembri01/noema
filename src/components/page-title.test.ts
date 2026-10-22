@@ -274,14 +274,15 @@ describe("PageTitleRow render", () => {
     expect(html).not.toContain('data-testid="breadcrumb-overflow"');
   });
 
-  it("folds a long breadcrumb trail into a native overflow menu", () => {
+  it("folds a long breadcrumb trail into the shared popover overflow menu", () => {
     const crumbs = ["a", "b", "c", "d", "e"].map((id) => crumb(id));
     const html = render({ crumbs, pageId: "e", breadcrumbWidth: 70 });
     expect(html).toContain('data-testid="breadcrumb-overflow"');
-    // The middle crumbs are not in the inline nav but live in the overflow list.
-    expect(html).toContain(">…</summary>");
-    expect(html).toContain("C");
-    expect(html).toContain("D");
+    // Radix owns the trigger contract; the collapsed crumbs render in the
+    // portalled content only once the popover opens.
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).toContain('aria-label="Show 3 more pages"');
+    expect(html).not.toContain("<summary");
   });
 
   it("marks a locked page and a favourited star", () => {

@@ -6,11 +6,9 @@ import {
   useRef,
   useState,
   useTransition,
-  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { PromptDialog } from "@/components/prompt-dialog";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Ban,
@@ -37,20 +35,17 @@ import {
   duplicateViewAction,
   importCsvAction,
   createRowFromTemplateAction,
-  deleteTemplateAction,
   listDeletedRowsAction,
   reorderPropertiesAction,
   saveRowAsTemplateAction,
   setPropertyValueAction,
-  setTemplateRecurrenceAction,
   updatePropertyAction,
   updateViewAction } from "@/server/actions/database";
 import {
   restorePageAction,
   toggleSchemaLockAction,
   updatePageAction } from "@/server/actions/pages";
-import { cn } from "@/lib/utils";
-import { DUR, Z } from "@/lib/design-tokens";
+import { DUR } from "@/lib/design-tokens";
 import { toast } from "sonner";
 import {
   applyView,
@@ -100,7 +95,6 @@ import {
 import { childrenOf as subItemChildrenOf } from "@/lib/sub-items";
 import { CARD_SIZES, type CardSizeName } from "@/lib/view-presets";
 import type { RelationData } from "@/server/queries";
-import { FloatingHostProvider } from "@/components/ui/floating-layer";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -120,12 +114,18 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Tag } from "@/components/ui/tag";
 import {
-  OPTION_COLORS,
   type DBProperty,
   type DBRow,
   type DBView } from "@/components/database/database-types";
 import { ChartView, TimelineView } from "@/components/database/timeline-chart-views";
-import { ViewSettings } from "@/components/database/view-settings";
+import {
+  DatabaseViewTabs,
+  VIEW_TYPES,
+  type ViewTypeName,
+} from "@/components/database/view-tabs";
+import { DatabaseViewToolbar } from "@/components/database/view-toolbar";
+import { DatabasePeek } from "@/components/database/database-peek";
+import { DatabaseActions } from "@/components/database/database-actions";
 import { PropertyOptionsEditor } from "@/components/database/property-options-editor";
 import { Dialog } from "@/components/ui/dialog";
 import { t } from "@/lib/i18n";
@@ -142,7 +142,7 @@ export type {
   HeaderConfig,
 } from "@/components/database/database-types";
 import { stableTime } from "@/lib/time";
-import { AddPropertyForm, Cell, icon as propertyIcon } from "./view-parts";
+import { AddPropertyForm } from "./view-parts";
 import {
   TableView,
   ListView,
@@ -160,27 +160,8 @@ import {
 export {
   COLOR_CHOICES,
   CONTROL_CLASS,
-  OPTION_COLORS,
+  OPTION_FOREGROUND,
 } from "@/components/database/database-types";
-
-type ViewTypeName =
-  | "TABLE"
-  | "BOARD"
-  | "LIST"
-  | "GALLERY"
-  | "CALENDAR"
-  | "TIMELINE"
-  | "CHART";
-
-const VIEW_TYPES: { type: ViewTypeName; label: string }[] = [
-  { type: "TABLE", label: "Table" },
-  { type: "BOARD", label: "Board" },
-  { type: "LIST", label: "List" },
-  { type: "GALLERY", label: "Gallery" },
-  { type: "CALENDAR", label: "Calendar" },
-  { type: "TIMELINE", label: "Timeline" },
-  { type: "CHART", label: "Chart" },
-];
 
 /**
  * A saved row template as the database view receives it. The display fields
@@ -413,8 +394,6 @@ export function propertyTypeLabel(type: string): string {
  */
 type EditableViewConfig = ViewConfig & {
   description?: string;
-  /** TABLE: the persisted row-height mode (`short` / `medium` / `tall`). */
-  rowHeight?: TableRowHeight;
 };
 
 /**
@@ -849,7 +828,6 @@ export function DatabaseView({
   const [deletedRows, setDeletedRows] = useState<
     { id: string; title: string; icon: string | null; deletedAt: string }[] | null
   >(null);
-  const csvInputRef = useRef<HTMLInputElement | null>(null);
   /** Latest intended view config while a save is still in flight (see below). */
   const pendingConfig = useRef<EditableViewConfig | undefined>(undefined);
   /**
@@ -1896,6 +1874,19 @@ export function DatabaseView({
       setDeletedRows(result.rows);
     });
 
+  const importCsv = (text: string) =>
+    startTransition(async () => {
+      const result = await importCsvAction(databasePageId, text);
+      if ("ok" in result) {
+        toast.success(
+          `${t(locale, "importedPrefix")} ${result.created} ${t(locale, "rowsUnit")}`,
+        );
+        router.refresh();
+      } else {
+        toast.error(result.error);
+      }
+    });
+
   const restoreRow = (rowId: string) =>
     startTransition(async () => {
       const result = await restorePageAction(rowId);
@@ -1921,100 +1912,23 @@ export function DatabaseView({
 
   return (
     <div className="mt-2">
-      {/* View tabs — the active tab is persisted per database. */}
-      <div className="mb-3 flex flex-wrap items-center gap-1 border-b border-border">
-        {views.map((view) => (
-          <div key={view.id} className="flex items-center">
-            <button
-              type="button"
-              aria-current={view.id === activeView.id ? "true" : undefined}
-              onClick={() => selectView(view.id)}
-              className={cn(
-                "focus-ring u-colors flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm",
-                view.id === activeView.id
-                  ? "-mb-px border-fg font-medium text-fg"
-                  : "border-transparent text-muted hover:text-fg",
-              )}
-            >
-              <ViewIcon type={view.type} />
-              {view.name}
-            </button>
-            {editable && view.id === activeView.id && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    type="button"
-                    aria-label={t(locale, "dbViewMenu")}
-                    title={t(locale, "dbViewMenu")}
-                    className="-mb-px"
-                  >
-                    <Ellipsis className="h-3.5 w-3.5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuItem
-                    onSelect={() => setPromptState({ kind: "renameView", view })}
-                  >
-                    {t(locale, "rename")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => duplicateView(view)}>
-                    <Copy className="h-4 w-4 text-muted" /> {t(locale, "duplicate")}
-                  </DropdownMenuItem>
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger>{t(locale, "typeLabel")}</DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent>
-                      {VIEW_TYPES.map((candidate) => (
-                        <DropdownMenuItem
-                          key={candidate.type}
-                          onSelect={() => changeViewType(view, candidate.type)}
-                        >
-                          <ViewIcon type={candidate.type} />
-                          {candidate.label}
-                          {view.type === candidate.type ? " ✓" : ""}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
-        ))}
-        {editable && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                type="button"
-                aria-label={t(locale, "addViewAria")}
-                className="-mb-px ml-1"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              {VIEW_TYPES.map((v) => (
-                <DropdownMenuItem key={v.type} onSelect={() => addView(v.type)}>
-                  <ViewIcon type={v.type} />
-                  {v.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-        <span className="ml-auto flex items-center gap-1.5 pr-1 text-xs text-muted">
-          <Badge tone="neutral" count={viewRows.length} />
-          {t(locale, "rowsUnit")}
-        </span>
-      </div>
+      <DatabaseViewTabs
+        views={views}
+        activeView={activeView}
+        editable={editable}
+        locale={locale}
+        rowCount={viewRows.length}
+        onSelect={selectView}
+        onRename={(view) => setPromptState({ kind: "renameView", view })}
+        onDuplicate={duplicateView}
+        onChangeType={changeViewType}
+        onAdd={addView}
+      />
 
       {/* Full-page toolbar: view settings on the left, row/schema actions on
           the right — everything that shapes this view sits above the table. */}
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
-        <ViewSettings
+        <DatabaseViewToolbar
           locale={locale}
           properties={properties}
           config={viewConfig}
@@ -2023,250 +1937,29 @@ export function DatabaseView({
           layout={layout}
           onLayoutChange={onLayoutChange}
         />
-        <div className="flex flex-wrap items-center gap-1">
-          {/* TABLE row height (design-system §5 density): persisted per view so
-              the table reopens at the height the user chose. */}
-          {editable && activeView.type === "TABLE" && (
-            <Select
-              aria-label="Row height"
-              size="sm"
-              searchable={false}
-              value={rowHeight}
-              onChange={(value) =>
-                setViewConfig({ rowHeight: resolveTableRowHeight(value) })
-              }
-              options={TABLE_ROW_HEIGHT_OPTIONS.map((option) => ({
-                value: option.value,
-                label: option.label,
-              }))}
-              className="w-28"
-            />
-          )}
-          {/* R89.30 — sub-items nesting toggle. A pure view preference, so it
-              is offered to every viewer, not just editors. */}
-          <Checkbox
-            size="sm"
-            checked={nestSubItems}
-            onCheckedChange={setNestSubItems}
-            label={t(locale, "subticketsHeading")}
-          />
-          {/* R89.31 — how many rows this view has blocked. Only shown once the
-              caller supplies dependency edges. */}
-          {blockedRowCount > 0 && (
-            <Badge
-              tone="warning"
-              icon={<Ban className="h-3.5 w-3.5" />}
-              title={t(locale, "relationBlockedBy")}
-            >
-              {blockedRowCount} {t(locale, "relationBlockedBy")}
-            </Badge>
-          )}
-          {/* R89.24 — database lock. An `editSchema` holder gets the interactive
-              toggle wired to `toggleSchemaLockAction` (unlock stays reachable
-              because it is the same control); everyone else keeps the engine's
-              canonical read-only summary, which also covers the per-property
-              lock (`describeLock` renders both). */}
-          {lockControl.canToggle ? (
-            <Switch
-              size="sm"
-              checked={schemaLockedState}
-              pending={lockPending}
-              onCheckedChange={toggleSchemaLock}
-              label={describeLock(lockState)}
-            />
-          ) : (
-            (schemaLockedState || (lockedPropertyIds?.length ?? 0) > 0) && (
-              <Badge
-                tone="neutral"
-                icon={<Lock className="h-3.5 w-3.5" />}
-                title={describeLock(lockState)}
-              >
-                {describeLock(lockState)}
-              </Badge>
-            )
-          )}
-          {editable && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={addRow}
-              aria-label={t(locale, "newRow")}
-              leftIcon={<Plus className="h-4 w-4" />}
-              title={
-                defaultTemplate
-                  ? `${t(locale, "newRow")} — ${defaultTemplate.name}`
-                  : undefined
-              }
-            >
-              {t(locale, "newRow")}
-            </Button>
-          )}
-          {editable && (
-            <Button
-              variant={deletedRows !== null ? "subtle" : "ghost"}
-              size="sm"
-              aria-expanded={deletedRows !== null}
-              onClick={() =>
-                deletedRows === null ? loadDeletedRows() : setDeletedRows(null)
-              }
-              leftIcon={<History className="h-4 w-4" />}
-            >
-              {t(locale, "dbDeletedRows")}
-            </Button>
-          )}
-          {editable && templates.length > 0 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  type="button"
-                  aria-label={t(locale, "chooseTemplate")}
-                  leftIcon={<LayoutTemplate className="h-4 w-4" />}
-                >
-                  {t(locale, "templates")}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                {templates.map((template) => (
-                  <DropdownMenuSub key={template.id}>
-                    <DropdownMenuSubTrigger>
-                      <span>{template.icon ?? "📄"}</span>
-                      <span className="flex-1 truncate">{template.name}</span>
-                      {template.isDefault && (
-                        <span aria-hidden title={t(locale, "templates")}>
-                          ★
-                        </span>
-                      )}
-                      {template.recurrence && (
-                        <span className="text-3xs text-muted">{template.recurrence}</span>
-                      )}
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent>
-                      <DropdownMenuItem onSelect={() => addRowFromTemplate(template)}>
-                        {t(locale, "newRow")}
-                      </DropdownMenuItem>
-                      <DropdownMenuSub>
-                        <DropdownMenuSubTrigger>{t(locale, "repeatLabel")}</DropdownMenuSubTrigger>
-                        <DropdownMenuSubContent>
-                          {(["daily", "weekly", "monthly"] as const).map((recurrence) => (
-                            <DropdownMenuItem
-                              key={recurrence}
-                              onSelect={() =>
-                                startTransition(async () => {
-                                  await setTemplateRecurrenceAction(template.id, recurrence);
-                                  toast.success(`${t(locale, "repeatsPrefix")} ${recurrence}`);
-                                  router.refresh();
-                                })
-                              }
-                            >
-                              {recurrence}
-                            </DropdownMenuItem>
-                          ))}
-                          <DropdownMenuItem
-                            onSelect={() =>
-                              startTransition(async () => {
-                                await setTemplateRecurrenceAction(template.id, null);
-                                toast.success(t(locale, "repeatDisabled"));
-                                router.refresh();
-                              })
-                            }
-                          >
-                            {t(locale, "offWord")}
-                          </DropdownMenuItem>
-                        </DropdownMenuSubContent>
-                      </DropdownMenuSub>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        className="text-danger"
-                        onSelect={() =>
-                          startTransition(async () => {
-                            const result = await deleteTemplateAction(template.id);
-
-                            if ("error" in result) toast.error(result.error);
-                            else toast.success(`${t(locale, "deletedPrefix")} “${template.name}”`);
-                            router.refresh();
-                          })
-                        }
-                      >
-                        <Trash2 className="h-4 w-4 text-muted" /> {t(locale, "deleteTemplate")}
-                      </DropdownMenuItem>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          {editable && (
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-expanded={addingProperty}
-              onClick={() => setAddingProperty((v) => !v)}
-              leftIcon={<Plus className="h-4 w-4" />}
-            >
-              {t(locale, "newProperty")}
-            </Button>
-          )}
-          {editable && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={duplicateDatabase}
-              aria-label={t(locale, "duplicate")}
-              leftIcon={<Copy className="h-4 w-4" />}
-            >
-              {t(locale, "duplicate")}
-            </Button>
-          )}
-          <Button
-            asChild
-            variant="ghost"
-            size="sm"
-            leftIcon={<Download className="h-4 w-4" />}
-          >
-            <a href={`/api/export/database/${databasePageId}`} download>
-              {t(locale, "exportCsv")}
-            </a>
-          </Button>
-          {editable && (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => csvInputRef.current?.click()}
-                leftIcon={<Upload className="h-4 w-4" />}
-              >
-                {t(locale, "importCsv")}
-              </Button>
-              <input
-                ref={csvInputRef}
-                type="file"
-                accept=".csv,text/csv"
-                className="hidden"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.target.value = "";
-                  if (!file) return;
-                  file.text().then((text) =>
-                    startTransition(async () => {
-                      const result = await importCsvAction(databasePageId, text);
-
-                      if ("ok" in result) {
-                        toast.success(
-                          `${t(locale, "importedPrefix")} ${result.created} ${t(locale, "rowsUnit")}`,
-                        );
-                        router.refresh();
-                      } else {
-                        toast.error(result.error);
-                      }
-                    }),
-                  );
-                }}
-              />
-            </>
-          )}
-        </div>
+        <DatabaseActions
+          locale={locale}
+          editable={editable}
+          nestSubItems={nestSubItems}
+          onToggleNest={() => setNestSubItems((value) => !value)}
+          blockedRowCount={blockedRowCount}
+          canToggleLock={lockControl.canToggle}
+          lockLabel={describeLock(lockState)}
+          schemaLockedState={schemaLockedState}
+          showReadOnlyLock={schemaLockedState || (lockedPropertyIds?.length ?? 0) > 0}
+          onToggleLock={toggleSchemaLock}
+          onAddRow={addRow}
+          defaultTemplateName={defaultTemplate?.name ?? null}
+          templates={templates}
+          onAddRowFromTemplate={addRowFromTemplate}
+          onToggleDeletedRows={() =>
+            deletedRows === null ? loadDeletedRows() : setDeletedRows(null)
+          }
+          onNewProperty={() => setAddingProperty((v) => !v)}
+          onDuplicateDatabase={duplicateDatabase}
+          databasePageId={databasePageId}
+          onImportCsv={importCsv}
+        />
       </div>
 
       {/* Database description (R89.21): intro text above the view. Editors get
@@ -2520,131 +2213,40 @@ export function DatabaseView({
       )}
 
       {peekMounted && shownPeek !== null && (
-        <FloatingHostProvider>
-          {/* Token scrim: `--overlay` at `Z.overlay`, fading with `--dur-3`. */}
-          <button
-            type="button"
-            tabIndex={-1}
-            aria-hidden="true"
-            data-testid="peek-scrim"
-            onClick={() => setPeek(null)}
-            className={peekScrimClass()}
-            style={peekScrimStyle(peekEntered)}
-          />
-          {/* `.surface-raised` supplies bg + border + `--shadow-2` + radius; the
-              panel rides `animate-slide-in-right` in and mirrors that out. */}
-          <aside
-            data-testid="peek-drawer"
-            data-state={peekEntered ? "open" : "closed"}
-            role="dialog"
-            aria-modal="false"
-            aria-label={t(locale, "rowLabel")}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setPeek(null);
-            }}
-            className={cn(
-              "surface-raised scrollbar-thin fixed inset-y-0 right-0 w-[26rem] overflow-y-auto p-5 outline-none",
-              "focus-ring",
-              peekPanelClass(peekEntered),
-            )}
-            style={peekPanelStyle(peekEntered)}
-          >
-            <PeekHeader
-              row={shownPeek}
-              locale={locale}
-              workspaceSlug={workspaceSlug}
-              rowColor={colorOf(shownPeek)}
-              onClose={() => setPeek(null)}
-            />
-            <h2 className="mb-4 text-xl font-semibold">
-              {shownPeek.icon ? `${shownPeek.icon} ` : ""}
-              {shownPeek.title || t(locale, "untitled")}
-            </h2>
-            {/* R89.31 — the open row's dependency indicator: what blocks it and
-                what it blocks, resolved to titles where the view has them. Blank
-                (and rendered nothing) until the caller supplies edges. */}
-            {dependencySummary(shownPeek.id) !== "" && (
-              <p className="mb-2 flex items-center gap-1.5 text-xs text-muted">
-                <Ban className="h-3.5 w-3.5" aria-hidden />
-                <span>{dependencySummary(shownPeek.id)}</span>
-              </p>
-            )}
-            {(dependencyGraph.nodes.get(shownPeek.id)?.blockedBy.length ?? 0) > 0 && (
-              <p className="mb-2 text-xs text-muted">
-                {t(locale, "relationBlockedBy")}:{" "}
-                {(dependencyGraph.nodes.get(shownPeek.id)?.blockedBy ?? [])
-                  .map((id) => rowsById.get(id)?.title ?? id)
-                  .join(", ")}
-              </p>
-            )}
-            {/* R89.30 — sub-issue controls: fold children, read the rolled-up
-                estimate/done state, or promote a nested row to the top level.
-                No-ops until rows carry a `parentId`. */}
-            {nestSubItems &&
-              subItemChildrenOf(effectiveSubItemRows, shownPeek.id).length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => toggleSubItemCollapse(shownPeek.id)}
-                  className="focus-ring u-colors mb-2 flex items-center gap-1.5 rounded-sm text-xs text-accent hover:underline"
-                >
-                  <ChevronRight
-                    className={cn(
-                      "h-3.5 w-3.5 transition-transform",
-                      !collapsedSubItemIds.has(shownPeek.id) && "rotate-90",
-                    )}
-                  />
-                  {collapsedSubItemIds.has(shownPeek.id)
-                    ? t(locale, "toggleExpand")
-                    : t(locale, "toggleCollapse")}{" "}
-                  ({subItemChildrenOf(effectiveSubItemRows, shownPeek.id).length}{" "}
-                  {t(locale, "subTicketMany")})
-                </button>
-              )}
-            {nestSubItems && subIssueRollupText(shownPeek.id) !== null && (
-              <p className="mb-2 text-xs text-muted">{subIssueRollupText(shownPeek.id)}</p>
-            )}
-            {nestSubItems &&
-              effectiveSubItemRows.find((entry) => entry.id === shownPeek.id)?.parentId !=
-                null && (
-                <button
-                  type="button"
-                  aria-label={t(locale, "subticketsHeading")}
-                  title={t(locale, "subticketsHeading")}
-                  onClick={() => promoteSubIssue(shownPeek.id)}
-                  className="focus-ring u-colors mb-2 flex items-center gap-1.5 rounded-sm text-xs text-accent hover:underline"
-                >
-                  ↥
-                </button>
-              )}
-            {mutualRelationsFor(shownPeek.id) > 0 && (
-              <p className="mb-2 text-xs text-muted">
-                ↔ {mutualRelationsFor(shownPeek.id)} {t(locale, "relationsHeading")}
-              </p>
-            )}
-            {/* Properties panel: one labelled row per property, editable in
-                place — computed values (formula, rollup, system) stay read-only.
-                Each row carries the same hover tint + rail as a table body row. */}
-            <dl className="divide-y divide-border border-t border-border text-sm">
-              {properties.map((property) => (
-                <PeekRow
-                  key={property.id}
-                  locale={locale}
-                  property={property}
-                  row={shownPeek}
-                  isPrimary={property.id === primary?.id}
-                  computed={computedFor(shownPeek, property)}
-                  value={valueFor(shownPeek, property.id)}
-                  relationOptions={relationOptionsFor(property.id)}
-                  peopleOptions={members ?? []}
-                  workspaceId={workspaceId}
-                  editable={editable}
-                  onChange={(value) => setValue(shownPeek.id, property.id, value)}
-                  onRenamePrimary={(text) => setPrimary(shownPeek, text)}
-                />
-              ))}
-            </dl>
-          </aside>
-        </FloatingHostProvider>
+        <DatabasePeek
+          row={shownPeek}
+          locale={locale}
+          workspaceSlug={workspaceSlug}
+          rowColor={colorOf(shownPeek)}
+          entered={peekEntered}
+          onClose={() => setPeek(null)}
+          dependencySummary={dependencySummary(shownPeek.id)}
+          blockedByTitles={(dependencyGraph.nodes.get(shownPeek.id)?.blockedBy ?? []).map(
+            (id) => rowsById.get(id)?.title ?? id,
+          )}
+          subItemCount={
+            nestSubItems ? subItemChildrenOf(effectiveSubItemRows, shownPeek.id).length : 0
+          }
+          collapsed={collapsedSubItemIds.has(shownPeek.id)}
+          onToggleCollapse={() => toggleSubItemCollapse(shownPeek.id)}
+          rollupText={nestSubItems ? subIssueRollupText(shownPeek.id) : null}
+          isNested={
+            nestSubItems &&
+            effectiveSubItemRows.find((entry) => entry.id === shownPeek.id)?.parentId != null
+          }
+          onPromote={() => promoteSubIssue(shownPeek.id)}
+          mutualRelations={mutualRelationsFor(shownPeek.id)}
+          properties={properties}
+          primaryId={primary?.id ?? null}
+          computedFor={(property) => computedFor(shownPeek, property)}
+          valueFor={(propertyId) => valueFor(shownPeek, propertyId)}
+          relationOptionsFor={relationOptionsFor}
+          peopleOptions={members ?? []}
+          workspaceId={workspaceId}
+          editable={editable}
+          onChange={(propertyId, value) => setValue(shownPeek.id, propertyId, value)}
+          onRenamePrimary={(text) => setPrimary(shownPeek, text)}
+        />
       )}
 
       <Dialog
@@ -2782,220 +2384,16 @@ export function DatabaseView({
   );
 }
 
-/*
- * dw07 — the side peek's design-system layer.
- *
- * The peek used to be a hand-rolled `<aside>`: a raw `z-40`, a legacy
- * `shadow-2xl`, and no scrim, entrance or exit. It now speaks the same
- * vocabulary as every other overlay in the app:
- *  - colour from tokens — the scrim is `--overlay` (`bg-overlay`), the panel
- *    `.surface-raised` (`--shadow-2` + `--radius-lg`);
- *  - layering from `Z.*` — scrim `Z.overlay`, panel `Z.modal`;
- *  - motion from tokens — the panel enters on the named
- *    `animate-slide-in-right` and mirrors it out on `--dur-3` / `--ease-smooth`,
- *    while the scrim merely fades.
- *
- * The mappings are pure so the node tests can pin them without a browser.
- */
 
-/**
- * The tint a hovered/selected row shares between the table body
- * (`view-renderers.tsx`) and the peek, so the two surfaces read as one.
- */
-export const ROW_HOVER_TINT = "hover:bg-surface-2/60";
-
-/** The rail the open row carries when it has no colour of its own. */
-export const ROW_ACCENT_RAIL = "3px solid var(--accent)";
-
-/** The peek scrim: a fixed `--overlay` wash at `Z.overlay`. */
-export function peekScrimClass(): string {
-  return "fixed inset-0 bg-overlay u-colors";
-}
-
-/** The scrim's fade — token-only, so reduced-motion neutralises it globally. */
-export function peekScrimStyle(entered: boolean): CSSProperties {
-  return {
-    zIndex: Z.overlay,
-    opacity: entered ? 1 : 0,
-    transition: "opacity var(--dur-3) var(--ease-smooth)",
-  };
-}
-
-/** The entrance: the design system's named right-drawer animation. */
-export function peekPanelClass(entered: boolean): string {
-  return entered ? "animate-slide-in-right" : "";
-}
-
-/**
- * The panel's inline motion. While open the named animation owns the transform;
- * on the way out the exact mirror (`translateX(8px)` + fade) replays on the
- * `--dur-3` token — no ad-hoc millisecond anywhere, and `Z.modal` either way.
- */
-export function peekPanelStyle(entered: boolean): CSSProperties {
-  if (entered) return { zIndex: Z.modal };
-  return {
-    zIndex: Z.modal,
-    transform: "translateX(8px)",
-    opacity: 0,
-    transition:
-      "transform var(--dur-3) var(--ease-smooth), opacity var(--dur-3) var(--ease-smooth)",
-  };
-}
-
-/**
- * The rail colour for a row: the table body's stripe hue when the row carries a
- * colour (the same `OPTION_COLORS` map `view-renderers.tsx` uses), otherwise the
- * accent token — so the peek's selected rail always matches the table.
- */
-export function peekRail(rowColor?: string | null): string {
-  return rowColor ? `3px solid ${OPTION_COLORS[rowColor] ?? rowColor}` : ROW_ACCENT_RAIL;
-}
-
-/** A peek row's shared treatment: the table body tint + a colour transition. */
-export function peekRowClass(): string {
-  return cn("u-colors rounded-sm", ROW_HOVER_TINT);
-}
-
-/**
- * The peek header — the open row's identity, carrying the same tint + accent
- * rail as a hovered/selected table body row, plus the focus-ringed
- * "Open as page" and close affordances. The rename affordance is the primary
- * title {@link PeekRow} below.
- */
-export function PeekHeader({
-  row,
-  locale,
-  workspaceSlug,
-  rowColor,
-  onClose,
-}: {
-  row: DBRow;
-  locale: string;
-  workspaceSlug: string;
-  rowColor: string | null;
-  onClose: () => void;
-}) {
-  return (
-    <header
-      data-testid="peek-header"
-      className={cn(
-        "-mx-1 mb-4 flex items-center justify-between gap-3 rounded-sm py-1 pe-1 ps-3",
-        peekRowClass(),
-      )}
-      style={{ borderInlineStart: peekRail(rowColor) }}
-    >
-      <p className="text-xs font-medium uppercase tracking-wide text-muted">
-        {t(locale, "rowLabel")}
-      </p>
-      <div className="flex items-center gap-3">
-        <Link
-          href={`/w/${workspaceSlug}/${row.id}`}
-          title={t(locale, "openAsPage")}
-          // Navigating away should not leave the drawer hanging over the row's page.
-          onClick={onClose}
-          className="focus-ring u-colors rounded-sm text-xs text-accent hover:underline"
-        >
-          {t(locale, "openAsPage")}
-        </Link>
-        <button
-          type="button"
-          aria-label={t(locale, "closeSidePeek")}
-          onClick={onClose}
-          className="focus-ring u-colors rounded-sm text-muted hover:text-fg"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-    </header>
-  );
-}
-
-/**
- * One labelled property row in the peek. Computed (formula/rollup/system)
- * values stay read-only, and the primary property edits the row title in place
- * — exactly as the panel did inline. Carries {@link peekRowClass} so it shares
- * the table body's row treatment.
- */
-export function PeekRow({
-  locale,
-  property,
-  row,
-  isPrimary,
-  computed,
-  value,
-  relationOptions,
-  peopleOptions,
-  workspaceId,
-  editable,
-  onChange,
-  onRenamePrimary,
-}: {
-  locale: string;
-  property: DBProperty;
-  row: DBRow;
-  isPrimary: boolean;
-  computed: string | undefined;
-  value: unknown;
-  relationOptions: { id: string; title: string; icon: string | null }[];
-  peopleOptions: { id: string; name: string }[];
-  workspaceId: string;
-  editable: boolean;
-  onChange: (value: unknown) => void;
-  onRenamePrimary: (text: string) => void;
-}) {
-  return (
-    <div
-      data-testid={`peek-row-${property.id}`}
-      className={cn(
-        "-mx-1 grid grid-cols-[7.5rem_1fr] items-start gap-3 rounded-sm px-1 py-2",
-        peekRowClass(),
-      )}
-    >
-      <dt className="flex items-center gap-1.5 truncate text-muted" title={property.name}>
-        <span aria-hidden>{propertyIcon(property.type)}</span>
-        <span className="truncate">{property.name}</span>
-      </dt>
-      <dd className="min-w-0">
-        {isPrimary ? (
-          <input
-            defaultValue={row.title}
-            aria-label={t(locale, "nameLabel")}
-            readOnly={!editable}
-            placeholder={t(locale, "untitled")}
-            onBlur={(event) =>
-              event.target.value !== row.title && onRenamePrimary(event.target.value)
-            }
-            className="focus-ring u-colors w-full rounded-sm bg-transparent outline-none placeholder:text-muted"
-          />
-        ) : computed !== undefined ? (
-          <span className="text-muted">{computed}</span>
-        ) : (
-          <Cell
-            locale={locale}
-            property={property}
-            value={value}
-            relationOptions={relationOptions}
-            peopleOptions={peopleOptions}
-            workspaceId={workspaceId}
-            editable={editable}
-            onChange={onChange}
-          />
-        )}
-      </dd>
-    </div>
-  );
-}
-
-function ViewIcon({ type }: { type: string }) {
-  const map: Record<string, string> = {
-    TABLE: "⊞",
-    BOARD: "▤",
-    LIST: "☰",
-    GALLERY: "▦",
-    CALENDAR: "🗓",
-    TIMELINE: "⟷",
-    CHART: "📈",
-    FORM: "📝",
-  };
-  return <span className="text-xs text-muted">{map[type] ?? "⊞"}</span>;
-}
+export {
+  ROW_HOVER_TINT,
+  ROW_ACCENT_RAIL,
+  peekScrimClass,
+  peekScrimStyle,
+  peekPanelClass,
+  peekPanelStyle,
+  peekRail,
+  peekRowClass,
+  PeekHeader,
+  PeekRow,
+} from "@/components/database/database-peek";

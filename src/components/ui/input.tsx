@@ -42,7 +42,7 @@ export const INPUT_SIZES: Record<InputSize, string> = {
 /** Danger ring for the error state; paired with `aria-invalid`. */
 export const INPUT_INVALID = "border-danger focus:border-danger";
 
-const INPUT_CHROME = "border-border";
+const INPUT_CHROME = "border-control";
 const TRAILING_PADDING = "pe-8";
 const LEADING_PADDING = "ps-8";
 

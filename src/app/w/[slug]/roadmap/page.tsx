@@ -226,7 +226,11 @@ export default async function RoadmapPage({
         <section>
           <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Rollup</h2>
           {rollups.length === 0 ? (
-            <EmptyState variant="compact" title="Nothing tracked yet" />
+            <EmptyState
+              variant="compact"
+              title="Nothing tracked yet"
+              description="Add projects or tickets with estimates to see progress here."
+            />
           ) : (
             <ul className="space-y-2">
               {rollups.map((rollup) => (
@@ -252,7 +256,11 @@ export default async function RoadmapPage({
             Milestones · {milestoneItems.length}
           </h2>
           {milestoneItems.length === 0 ? (
-            <EmptyState variant="compact" title="No milestones yet" />
+            <EmptyState
+              variant="compact"
+              title="No milestones yet"
+              description="A project milestone will appear here once you add one."
+            />
           ) : (
             <ul className="space-y-1">
               {milestoneItems.slice(0, 12).map((item) => (

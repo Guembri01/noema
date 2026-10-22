@@ -25,11 +25,13 @@ stop it from drifting.
 | Purpose | Tokens |
 |---|---|
 | Page / chrome | `bg` `sidebar` `surface` `surface-2` `surface-3` |
-| Lines | `border` (hairline) · `border-strong` (dividers, scrollbar thumb) |
+| Lines | `border` (hairline) → `border-strong` (dividers, scrollbar thumb) → `border-control` (form-control boundary) |
 | Text | `fg` (primary) · `fg-subtle` (tertiary) · `muted` (secondary) |
 | Brand | `accent` `accent-fg` `accent-soft` `ring` `selection` |
-| Status | `danger` `danger-fg` `danger-soft` · `success` `success-soft` · `warning` `warning-soft` · `overlay` |
+| Status | `danger` `danger-fg` `danger-soft` · `success` `success-soft` · `warning` `warning-soft` · `overlay` (all inks clear AA on `bg`, `sidebar` and `surface`) |
 | Tags | `--tag-{gray,brown,orange,yellow,green,blue,purple,pink,red,teal}-{fg,bg,bd}` |
+
+`border-control` is deliberately stronger than the decorative hairline: form controls need a 3:1 boundary against the page (WCAG 1.4.11). Inputs, selects, checkboxes, radios and switches use it; cards, dividers and scrollbars keep `border` / `border-strong`.
 
 Every token is defined three times: light (`:root`), dark (`.dark`), and
 high-contrast (`[data-contrast="more"]` + `.dark [data-contrast="more"]`). **A new
@@ -41,6 +43,20 @@ Usage:
 <div className="border-b border-border bg-surface-2" />
 <span className="tag" style={tagStyle("blue")}>Done</span>
 ```
+
+### Brand surfaces
+
+The N mark is the product's identity, not a one-off glyph for the assistant.
+`components/brand/noema-mark.tsx` owns the measured letterform and
+`components/brand/noema-wordmark.tsx` owns the lockup (mark tile + `Noema`).
+The public landing page, sign-in and sign-up all render the same lockup; the
+workspace itself keeps the workspace emoji as the primary identity. Do not
+recreate the mark with text, an emoji or a second SVG.
+
+The account surfaces share `components/auth-shell.tsx`: one brand panel, one
+form card, light/dark support, and a single-column collapse below `lg`. A new
+account surface should compose that frame rather than copy the old centred
+card.
 
 ## 3. Typography
 
@@ -395,14 +411,16 @@ itself (copy, labels, type, rings, hand-rolled popups). It went from
 | Buttons without the shared focus ring | 63 | **0** |
 | Inline static styles | 8 | **0** |
 | Routes with no `loading.tsx` | 12 | **0** |
-| Legacy `.notion-*` / `.noema-*` rules | 95 | 95 — deliberate |
-| Hand-rolled anchored popovers | 6 | 6 — 3 explained (absolute + static offsets) |
-| Duplicated helpers / colour catalogues | 10 | 12 — the canonical catalogue is one of them |
+| Legacy `.notion-*` / `.noema-*` rules | 95 | **0** — converted to Tailwind v4 utilities |
+| Hand-rolled anchored popovers | 6 | **0** — shared Popover/DropdownMenu; engine exempt |
+| Duplicated helpers / colour catalogues | 10 | **0** — domain catalogues renamed and consolidated |
 
 The remaining DEBT is a documented backlog, not a defect list: every one of the 95
-legacy rules is still referenced (deleting one is a visual regression — the families
-that need them are recorded in `globals.css`), and the duplicate-helper heuristic
-counts `src/lib/palette.ts` *because* that module is the single catalogue.
+block selectors is still referenced (deleting one is a visual regression — the
+families that need them are recorded in `globals.css`). The duplicate-catalogue
+count is now zero: domain names are explicit (`OPTION_FOREGROUND`,
+`TAG_PALETTE`, `LABEL_APPEARANCE`, `STATUS_GROUP_APPEARANCE`) and share one
+palette source.
 
 **Trust the audit no further than its red test.** Three of the checker's own false
 positives surfaced while closing this list: classes held in a constant

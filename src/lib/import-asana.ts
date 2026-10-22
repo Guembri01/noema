@@ -61,7 +61,7 @@ export const ASANA_CUSTOM_FIELD_TYPE_MAP = {
 
 /** Noema option/tint palette (see `COLOR_CHOICES`). */
 const OPTION_COLORS = ["gray", "blue", "green", "yellow", "orange", "purple", "pink", "red"];
-const NOEMA_COLORS: ReadonlySet<string> = new Set(OPTION_COLORS.concat("brown"));
+const NOEMA_PALETTE_IDS: ReadonlySet<string> = new Set(OPTION_COLORS.concat("brown"));
 
 /** Asana colour names that need folding onto Noema's palette. */
 const ASANA_COLOR_ALIASES: Readonly<Record<string, string>> = {
@@ -140,8 +140,8 @@ export function mapAsanaColor(value: unknown): string | null {
   if (!raw) return null;
   const lower = raw.toLowerCase();
   const base = lower.replace(/^(light|dark)-/, "");
-  if (NOEMA_COLORS.has(base)) return base;
-  if (NOEMA_COLORS.has(lower)) return lower;
+  if (NOEMA_PALETTE_IDS.has(base)) return base;
+  if (NOEMA_PALETTE_IDS.has(lower)) return lower;
   return ASANA_COLOR_ALIASES[lower] ?? null;
 }
 

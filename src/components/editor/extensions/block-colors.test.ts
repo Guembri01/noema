@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  BLOCK_COLORS,
-  BLOCK_COLOR_HUES,
+  BLOCK_COLOR_CATALOGUE,
+  BLOCK_COLOR_ORDER,
   BLOCK_COLOR_TYPES,
   blockColorCss,
   blockColorHue,
@@ -16,9 +16,9 @@ import {
 
 const HEX = /#[0-9a-fA-F]{3,8}\b/;
 
-describe("BLOCK_COLORS catalogue", () => {
+describe("BLOCK_COLOR_CATALOGUE catalogue", () => {
   it("offers Default plus the nine hues, in menu order", () => {
-    expect(BLOCK_COLORS.map((entry) => entry.label)).toEqual([
+    expect(BLOCK_COLOR_CATALOGUE.map((entry) => entry.label)).toEqual([
       "Default",
       "Gray",
       "Brown",
@@ -30,11 +30,11 @@ describe("BLOCK_COLORS catalogue", () => {
       "Pink",
       "Red",
     ]);
-    expect(BLOCK_COLORS.map((entry) => entry.value)).toEqual([
+    expect(BLOCK_COLOR_CATALOGUE.map((entry) => entry.value)).toEqual([
       null,
-      ...BLOCK_COLOR_HUES,
+      ...BLOCK_COLOR_ORDER,
     ]);
-    expect(BLOCK_COLOR_HUES).toEqual([
+    expect(BLOCK_COLOR_ORDER).toEqual([
       "gray",
       "brown",
       "orange",
@@ -48,7 +48,7 @@ describe("BLOCK_COLORS catalogue", () => {
   });
 
   it("resolves every tinted entry to a var(--tag-…-bg) token", () => {
-    for (const entry of BLOCK_COLORS) {
+    for (const entry of BLOCK_COLOR_CATALOGUE) {
       if (entry.value === null) {
         expect(entry.hue).toBeNull();
         expect(entry.tint).toBe("transparent");
@@ -61,7 +61,7 @@ describe("BLOCK_COLORS catalogue", () => {
   });
 
   it("has no raw hex in the catalogue", () => {
-    expect(JSON.stringify(BLOCK_COLORS)).not.toMatch(HEX);
+    expect(JSON.stringify(BLOCK_COLOR_CATALOGUE)).not.toMatch(HEX);
   });
 
   it("keeps the same paintable node types", () => {
@@ -73,7 +73,7 @@ describe("BLOCK_COLORS catalogue", () => {
 
 describe("blockColorHue — stable id ↔ hue mapping", () => {
   it("pins the persisted id → tag hue table", () => {
-    const mapping = BLOCK_COLORS.filter((entry) => entry.value !== null).map(
+    const mapping = BLOCK_COLOR_CATALOGUE.filter((entry) => entry.value !== null).map(
       (entry) => [entry.value, entry.hue],
     );
     expect(mapping).toEqual([
@@ -123,7 +123,7 @@ describe("blockColorCss", () => {
   });
 
   it("never emits a raw hex for any catalogue id", () => {
-    for (const hue of BLOCK_COLOR_HUES) {
+    for (const hue of BLOCK_COLOR_ORDER) {
       expect(JSON.stringify(blockColorCss(hue))).not.toMatch(HEX);
     }
   });

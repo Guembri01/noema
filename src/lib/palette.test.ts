@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  HUE_LABELS,
-  HUE_NAMES,
+  TAG_LABELS_BY_NAME,
+  TAG_SEQUENCE,
   hueEdge,
   hueInk,
   hueLabel,
@@ -9,14 +9,14 @@ import {
   isHue,
   normalizeHue,
 } from "./palette";
-import { TAG_HUES } from "@/lib/design-tokens";
+import { TAG_PALETTE } from "@/lib/design-tokens";
 import {
-  BLOCK_COLORS,
-  BLOCK_COLOR_HUES,
+  BLOCK_COLOR_CATALOGUE,
+  BLOCK_COLOR_ORDER,
 } from "@/components/editor/extensions/block-colors";
 import {
   COLOR_CHOICES,
-  OPTION_COLORS,
+  OPTION_FOREGROUND,
   optionEdge,
   optionHue,
   optionInk,
@@ -39,7 +39,7 @@ const RAW_HEX = /#[0-9a-fA-F]{3,8}\b/;
 
 describe("palette — hue list and token lookups", () => {
   it("exposes the shared tag-hue list, in token order", () => {
-    expect(HUE_NAMES).toEqual([
+    expect(TAG_SEQUENCE).toEqual([
       "gray",
       "brown",
       "orange",
@@ -52,19 +52,19 @@ describe("palette — hue list and token lookups", () => {
       "teal",
     ]);
     // The list is the token layer's list — not a second copy that can drift.
-    expect(HUE_NAMES).toBe(TAG_HUES);
+    expect(TAG_SEQUENCE).toBe(TAG_PALETTE);
   });
 
   it("labels every hue", () => {
-    for (const hue of HUE_NAMES) {
-      expect(typeof HUE_LABELS[hue]).toBe("string");
-      expect(HUE_LABELS[hue].length).toBeGreaterThan(0);
-      expect(hueLabel(hue)).toBe(HUE_LABELS[hue]);
+    for (const hue of TAG_SEQUENCE) {
+      expect(typeof TAG_LABELS_BY_NAME[hue]).toBe("string");
+      expect(TAG_LABELS_BY_NAME[hue].length).toBeGreaterThan(0);
+      expect(hueLabel(hue)).toBe(TAG_LABELS_BY_NAME[hue]);
     }
   });
 
   it("resolves every hue to a var(--tag-*) token", () => {
-    for (const hue of HUE_NAMES) {
+    for (const hue of TAG_SEQUENCE) {
       expect(hueInk(hue)).toBe(`var(--tag-${hue}-fg)`);
       expect(hueSurface(hue)).toBe(`var(--tag-${hue}-bg)`);
       expect(hueEdge(hue)).toBe(`var(--tag-${hue}-bd)`);
@@ -91,7 +91,7 @@ describe("palette — hue list and token lookups", () => {
 
 describe("palette — the persisted catalogues delegate to it", () => {
   it("pins the block-colour id list (unchanged serialization contract)", () => {
-    expect(BLOCK_COLOR_HUES).toEqual([
+    expect(BLOCK_COLOR_ORDER).toEqual([
       "gray",
       "brown",
       "orange",
@@ -103,8 +103,8 @@ describe("palette — the persisted catalogues delegate to it", () => {
       "red",
     ]);
     // Default + the nine hue rows, painted from the palette.
-    expect(BLOCK_COLORS.map((entry) => entry.value)).toEqual([null, ...BLOCK_COLOR_HUES]);
-    for (const entry of BLOCK_COLORS) {
+    expect(BLOCK_COLOR_CATALOGUE.map((entry) => entry.value)).toEqual([null, ...BLOCK_COLOR_ORDER]);
+    for (const entry of BLOCK_COLOR_CATALOGUE) {
       if (entry.value === null) {
         expect(entry.tint).toBe("transparent");
         continue;
@@ -117,7 +117,7 @@ describe("palette — the persisted catalogues delegate to it", () => {
 
   it("pins the option-colour id list (unchanged serialization contract)", () => {
     // The same nine ids `COLOR_CHOICES` offers, in the frozen catalogue order.
-    expect(Object.keys(OPTION_COLORS)).toEqual([
+    expect(Object.keys(OPTION_FOREGROUND)).toEqual([
       "gray",
       "blue",
       "green",
@@ -128,15 +128,15 @@ describe("palette — the persisted catalogues delegate to it", () => {
       "pink",
       "brown",
     ]);
-    expect(new Set(Object.keys(OPTION_COLORS))).toEqual(new Set(COLOR_CHOICES));
+    expect(new Set(Object.keys(OPTION_FOREGROUND))).toEqual(new Set(COLOR_CHOICES));
   });
 
   it("resolves both catalogues through the palette lookups", () => {
-    for (const [id, value] of Object.entries(OPTION_COLORS)) {
+    for (const [id, value] of Object.entries(OPTION_FOREGROUND)) {
       expect(value).toBe(hueInk(id));
       expect(value).toMatch(TAG_TOKEN);
     }
-    for (const hue of TAG_HUES) {
+    for (const hue of TAG_PALETTE) {
       expect(optionHue(hue)).toBe(hue);
       expect(optionInk(hue)).toBe(hueInk(hue));
       expect(optionSurface(hue)).toBe(hueSurface(hue));

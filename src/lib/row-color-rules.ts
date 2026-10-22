@@ -26,7 +26,7 @@ import type { Filter, QueryProperty, QueryRow } from "@/lib/database-query";
 /**
  * The nine Notion-style tints, in the order the rest of the app offers them
  * (same names as `COLOR_CHOICES` in `@/components/database/database-types` and
- * `BLOCK_COLORS` in the editor). Colours are stored as these names — never raw
+ * `BLOCK_COLOR_CATALOGUE` in the editor). Colours are stored as these names — never raw
  * hex — so the CSS owns the values and a dark theme only remaps them.
  */
 export const ROW_COLOR_PALETTE = [

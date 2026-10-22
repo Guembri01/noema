@@ -88,7 +88,7 @@ export default async function LibraryPage({
           description="Create a page or a database to start building your library."
           primaryAction={
             <Button asChild>
-              <Link href={`/w/${workspace.slug}`}>New page</Link>
+              <Link href={`/w/${workspace.slug}`}>Create content</Link>
             </Button>
           }
         />

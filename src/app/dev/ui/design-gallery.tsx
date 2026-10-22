@@ -19,7 +19,7 @@ import {
   Sparkles,
   Star,
 } from "lucide-react";
-import { TAG_HUES, Z } from "@/lib/design-tokens";
+import { TAG_PALETTE, Z } from "@/lib/design-tokens";
 import { AVATAR_SIZES } from "@/lib/avatars";
 import { t } from "@/lib/i18n";
 import { Badge, BADGE_TONES } from "@/components/ui/badge";
@@ -958,14 +958,14 @@ export function DesignGallery() {
     tag: (
       <>
         <Group label="Ten hues · md">
-          {TAG_HUES.map((hue) => (
+          {TAG_PALETTE.map((hue) => (
             <Tag key={hue} hue={hue} size="md">
               {hue}
             </Tag>
           ))}
         </Group>
         <Group label="Ten hues · sm · dot">
-          {TAG_HUES.map((hue) => (
+          {TAG_PALETTE.map((hue) => (
             <Tag key={hue} hue={hue} size="sm" dot>
               {hue}
             </Tag>

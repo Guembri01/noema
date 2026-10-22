@@ -16,7 +16,7 @@ vi.mock("next/link", async () => {
 
 import { Z } from "@/lib/design-tokens";
 import {
-  OPTION_COLORS,
+  OPTION_FOREGROUND,
   type DBProperty,
   type DBRow,
 } from "@/components/database/database-types";
@@ -108,7 +108,7 @@ describe("peek row state — the table body's tint + a matching accent rail", ()
     expect(peekRail(null)).toBe(ROW_ACCENT_RAIL);
     expect(peekRail(undefined)).toBe(ROW_ACCENT_RAIL);
     expect(ROW_ACCENT_RAIL).toBe("3px solid var(--accent)");
-    expect(peekRail("blue")).toBe(`3px solid ${OPTION_COLORS.blue}`);
+    expect(peekRail("blue")).toBe(`3px solid ${OPTION_FOREGROUND.blue}`);
   });
 });
 
@@ -142,7 +142,7 @@ describe("PeekHeader — renders the open row's tint + accent rail", () => {
         onClose: noop,
       }),
     );
-    expect(html).toContain(OPTION_COLORS.blue);
+    expect(html).toContain(OPTION_FOREGROUND.blue);
   });
 });
 

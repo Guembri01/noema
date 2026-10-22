@@ -1087,16 +1087,9 @@ function ColumnsView({ node, editor, getPos, locale }: NodeViewProps & { locale:
       <NodeViewContent className="noema-columns-content" data-columns="" />
       {editable && (
         <div
-          className={columnsToolbarClass()}
+          className={`${columnsToolbarClass()} absolute end-0.5 top-0.5 flex gap-0.5`}
           contentEditable={false}
-          style={{
-            position: "absolute",
-            top: "2px",
-            right: "2px",
-            display: "flex",
-            gap: "2px",
-            zIndex: Z.sticky,
-          }}
+          style={{ zIndex: Z.sticky }}
         >
           <button
             type="button"
@@ -1252,7 +1245,7 @@ function ColumnView({ node, editor, getPos, locale }: NodeViewProps & { locale: 
       <NodeViewContent style={{ display: "contents" }} />
       {editable && !isLast && (
         <span
-          className="noema-column-resize u-no-transition"
+          className="noema-column-resize u-no-transition absolute inset-y-0"
           role="separator"
           aria-orientation="vertical"
           aria-label={t(locale, "blockColumns")}
@@ -1261,9 +1254,6 @@ function ColumnView({ node, editor, getPos, locale }: NodeViewProps & { locale: 
           onPointerDown={onPointerDown}
           onKeyDown={onKeyDown}
           style={{
-            position: "absolute",
-            top: "0",
-            bottom: "0",
             right: "-14px",
             width: "2px",
             padding: "0 5px",

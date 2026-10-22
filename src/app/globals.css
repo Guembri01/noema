@@ -28,6 +28,7 @@
   --color-surface-3: var(--surface-3);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
+  --color-control: var(--border-control);
   --color-fg: var(--fg);
   --color-fg-subtle: var(--fg-subtle);
   --color-muted: var(--muted);
@@ -87,8 +88,8 @@
   --surface-2: #eeeeec;
   --border: #e9e9e7;
   --fg: #37352f;
-  --muted: #6b6a65;
-  --accent: #1a75d2;
+  --muted: #62615c;
+  --accent: #156cc7;
   --accent-fg: #ffffff;
   --selection: #b8d7fb;
   --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -103,7 +104,7 @@
   --surface-2: #333333;
   --border: #2f2f2f;
   --fg: rgba(255, 255, 255, 0.81);
-  --muted: rgba(255, 255, 255, 0.52);
+  --muted: rgba(255, 255, 255, 0.68);
   --accent: #4c9bea;
   --accent-fg: #191919;
   --selection: #1f4a7a;
@@ -413,10 +414,6 @@ body {
  * Code block wrapper (the language picker lives in the node view now) and the
  * highlight.js token palette below.
  * ------------------------------------------------------------------------ */
-.noema-code-block {
-  position: relative;
-  margin: 6px 0;
-}
 .noema-code-block > pre {
   margin: 0;
   /* Room for the language chip in the top-left corner. */
@@ -594,28 +591,9 @@ body {
   border-radius: var(--radius-sm);
   margin: 6px 0;
 }
-.noema-callout-emoji {
-  position: relative;
-  flex-shrink: 0;
-}
 .noema-callout-emoji > button {
   font-size: 18px;
   line-height: 1.4;
-}
-.noema-callout-picker {
-  position: absolute;
-  z-index: var(--z-popover);
-  top: 28px;
-  inset-inline-start: 0;
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: var(--space-0-5);
-  width: 210px;
-  padding: 6px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-2);
 }
 .noema-callout-picker button {
   font-size: 16px;
@@ -624,10 +602,6 @@ body {
 }
 .noema-callout-picker button:hover {
   background: var(--surface-2);
-}
-.noema-callout-content {
-  flex: 1;
-  min-width: 0;
 }
 .noema-callout-content > * + * {
   margin-top: var(--space-0-5);
@@ -639,35 +613,11 @@ body {
 .noema-editor .ProseMirror .noema-toggle {
   margin: var(--space-0-5) 0;
 }
-.noema-toggle-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-0-5);
-}
-.noema-toggle-chevron {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 24px;
-  color: var(--muted);
-  border-radius: var(--radius-sm);
-}
 .noema-toggle-chevron:hover {
   background: var(--surface-2);
 }
-.noema-toggle-summary {
-  flex: 1;
-  padding: 3px var(--space-0-5);
-  font-weight: 500;
-  background: transparent;
-  outline: none;
-}
 .noema-toggle-summary::placeholder {
   color: var(--muted);
-}
-.noema-toggle-body {
-  padding-inline-start: 22px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -739,18 +689,6 @@ body {
   border-radius: var(--radius-md);
   background: var(--surface);
 }
-.noema-toc-title {
-  margin-bottom: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.noema-toc-empty {
-  font-size: 14px;
-  color: var(--muted);
-}
 .noema-toc ul {
   margin: 0;
   padding: 0;
@@ -779,18 +717,6 @@ body {
 .noema-editor .ProseMirror [data-type="block-math"] {
   margin: 6px 0;
 }
-.noema-drag-handle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 24px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  color: var(--muted);
-  cursor: grab;
-  opacity: 0.55;
-}
 .noema-drag-handle:hover {
   background: var(--surface-2);
   opacity: 1;
@@ -818,95 +744,13 @@ body {
 .noema-editor .ProseMirror .noema-bookmark {
   margin: 6px 0;
 }
-.noema-bookmark-input {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.noema-bookmark-field,
-.noema-embed-field,
-.noema-page-embed-field {
-  flex: 1;
-  height: 36px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  font-size: 14px;
-  outline: none;
-}
 .noema-bookmark-field:focus,
 .noema-embed-field:focus,
 .noema-page-embed-field:focus {
   border-color: var(--accent);
 }
-.noema-bookmark-btn {
-  height: 36px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: 14px;
-}
 .noema-bookmark-btn:hover {
   background: var(--surface-2);
-}
-.noema-bookmark-card {
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-.noema-bookmark-link {
-  display: flex;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  color: inherit;
-  text-decoration: none;
-}
-.noema-bookmark-text {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 3px;
-}
-.noema-bookmark-title {
-  font-weight: 500;
-}
-.noema-bookmark-desc {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 13px;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-.noema-bookmark-host {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  color: var(--muted);
-  font-size: 12px;
-}
-.noema-bookmark-favicon {
-  width: 16px;
-  height: 16px;
-}
-.noema-bookmark-image {
-  width: 120px;
-  height: 84px;
-  border-radius: var(--radius-sm);
-  object-fit: cover;
-}
-.noema-bookmark-actions,
-.noema-embed-actions {
-  position: absolute;
-  top: 6px;
-  inset-inline-end: 6px;
-  display: flex;
-  gap: var(--space-0-5);
-  opacity: 0;
-  transition: opacity var(--dur-1) var(--ease-smooth);
 }
 .noema-bookmark-card:hover .noema-bookmark-actions,
 .noema-embed-frame:hover .noema-embed-actions {
@@ -931,39 +775,11 @@ body {
 .noema-editor .ProseMirror .noema-embed {
   margin: var(--space-2) 0;
 }
-.noema-embed-input {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.noema-embed-hint {
-  color: var(--muted);
-  font-size: 12px;
-}
-.noema-embed-frame {
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  aspect-ratio: 16 / 9;
-}
 .noema-embed-frame iframe {
   display: block;
   width: 100%;
   height: 100%;
   border: 0;
-}
-.noema-embed-provider {
-  position: absolute;
-  inset-inline-start: 8px;
-  bottom: 8px;
-  padding: var(--space-0-5) 6px;
-  font-size: 11px;
-  color: var(--muted);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  pointer-events: none;
 }
 
 /* ---------------------------------------------------------------------------
@@ -973,13 +789,6 @@ body {
   margin: 6px 0;
   font-size: 13px;
 }
-.noema-breadcrumb-trail {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-0-5) var(--space-1);
-  color: var(--muted);
-}
 .noema-breadcrumb-item a {
   color: var(--muted);
   text-decoration: none;
@@ -988,13 +797,6 @@ body {
   color: var(--fg);
   text-decoration: underline;
 }
-.noema-breadcrumb-sep {
-  margin-inline-start: var(--space-1);
-}
-.noema-breadcrumb-empty {
-  color: var(--muted);
-  font-style: italic;
-}
 
 /* ---------------------------------------------------------------------------
    Synced page view
@@ -1002,65 +804,10 @@ body {
 .noema-editor .ProseMirror .noema-page-embed {
   margin: var(--space-2) 0;
 }
-.noema-page-embed-shell {
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-.noema-page-embed-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: var(--surface);
-  font-size: 13px;
-}
-.noema-page-embed-chevron {
-  display: flex;
-  color: var(--muted);
-}
-.noema-page-embed-title {
-  flex: 1;
-  font-weight: 500;
-}
-.noema-page-embed-open,
-.noema-page-embed-remove {
-  padding: var(--space-0-5);
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-}
 .noema-page-embed-open:hover,
 .noema-page-embed-remove:hover {
   background: var(--surface-2);
   color: var(--fg);
-}
-.noema-page-embed-body {
-  padding: 10px 14px;
-}
-.noema-page-embed-loading {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 13px;
-}
-.noema-page-embed-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.noema-page-embed-results {
-  display: flex;
-  flex-direction: column;
-}
-.noema-page-embed-result {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 6px var(--space-2);
-  border-radius: var(--radius-sm);
-  font-size: 14px;
-  text-align: start;
 }
 .noema-page-embed-result:hover {
   background: var(--surface-2);
@@ -1069,10 +816,6 @@ body {
 /* ---------------------------------------------------------------------------
    Read-only document renderer
    --------------------------------------------------------------------------- */
-.noema-doc-renderer {
-  font-size: 15px;
-  line-height: 1.6;
-}
 .noema-doc-renderer h1 {
   margin: 10px 0 var(--space-1);
   font-size: 1.6rem;
@@ -1188,28 +931,8 @@ body {
   background: var(--surface);
   font-size: 13px;
 }
-.noema-template-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 500;
-}
-.noema-template-select,
-.noema-template-insert {
-  height: 26px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  font-size: 13px;
-}
 .noema-template-insert:hover {
   background: var(--surface-2);
-}
-.noema-template-remove {
-  color: var(--muted);
-  padding: 0 var(--space-1);
-  font-size: 15px;
 }
 .noema-template-remove:hover {
   color: var(--danger);
@@ -1250,59 +973,14 @@ body {
   border-radius: var(--radius-md);
   background: var(--surface);
 }
-.noema-ask-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-}
-.noema-ask-input {
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  font-size: 14px;
-  outline: none;
-}
 .noema-ask-input:focus {
   border-color: var(--accent);
-}
-.noema-ask-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.noema-ask-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  font-size: 13px;
 }
 .noema-ask-btn:hover {
   background: var(--surface-2);
 }
-.noema-ask-icon {
-  margin-inline-start: auto;
-  color: var(--muted);
-}
 .noema-ask-icon:hover {
   color: var(--danger);
-}
-.noema-ask-answer {
-  font-size: 14px;
-  line-height: 1.6;
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-2);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1314,43 +992,9 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
-.noema-linked-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: var(--surface);
-  font-size: 13px;
-}
-.noema-linked-title {
-  flex: 1;
-  font-weight: 500;
-}
-.noema-linked-open {
-  padding: var(--space-0-5);
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-}
 .noema-linked-open:hover {
   background: var(--surface-2);
   color: var(--fg);
-}
-.noema-linked-body {
-  overflow-x: auto;
-  padding: var(--space-2) 10px;
-}
-.noema-linked-loading,
-.noema-linked-empty {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 13px;
-}
-.noema-linked-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
 }
 .noema-linked-table th,
 .noema-linked-table td {
@@ -1361,33 +1005,6 @@ body {
 .noema-linked-table th {
   color: var(--muted);
   font-weight: 500;
-}
-.noema-linked-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.noema-linked-field {
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  font-size: 14px;
-  outline: none;
-}
-.noema-linked-results {
-  display: flex;
-  flex-direction: column;
-}
-.noema-linked-result {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 6px var(--space-2);
-  border-radius: var(--radius-sm);
-  font-size: 14px;
-  text-align: start;
 }
 .noema-linked-result:hover {
   background: var(--surface-2);
@@ -1436,12 +1053,6 @@ body {
    Markdown rendering (AI answers, Ask AI block, previews)
    Mirrors `.noema-editor` typography so a reply looks like a Notion page.
    --------------------------------------------------------------------------- */
-.notion-markdown {
-  font-size: 15px;
-  line-height: 1.6;
-  color: var(--fg);
-  overflow-wrap: anywhere;
-}
 .notion-markdown > *:first-child {
   margin-top: 0;
 }
@@ -1541,33 +1152,6 @@ body {
 }
 
 /* Fenced code */
-.notion-code {
-  margin: var(--space-2) 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  overflow: hidden;
-}
-.notion-code-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-1) 10px;
-  border-bottom: 1px solid var(--border);
-  font-size: 11px;
-  color: var(--muted);
-}
-.notion-code-lang {
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.notion-code-copy {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  border-radius: var(--radius-sm);
-  padding: var(--space-0-5) 6px;
-}
 .notion-code-copy:hover {
   background: var(--surface-2);
   color: var(--fg);
@@ -1587,10 +1171,6 @@ body {
 }
 
 /* Tables */
-.notion-markdown-table {
-  margin: var(--space-2) 0;
-  overflow-x: auto;
-}
 .notion-markdown table {
   border-collapse: collapse;
   width: 100%;
@@ -1611,62 +1191,16 @@ body {
 }
 
 /* Task lists */
-.notion-markdown-tasks {
-  list-style: none;
-  padding-inline-start: 0.2em;
-}
-.notion-markdown-task {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-}
 .notion-markdown-task > :not(.notion-check) {
   min-width: 0;
 }
-.notion-check {
-  flex: none;
-  margin-top: 3px;
-  display: inline-grid;
-  place-items: center;
-  width: 14px;
-  height: 14px;
-  border: 1px solid var(--muted);
-  border-radius: var(--radius-xs);
-}
-.notion-check-on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-fg);
-}
 
 /* Note references inside answers */
-.notion-ref {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  padding: 1px 6px;
-  font-size: 0.92em;
-  font-weight: 500;
-}
-.notion-ref-link {
-  text-decoration: none;
-}
 .notion-ref-link:hover .notion-ref {
   background: var(--surface-2);
 }
-.notion-ref-title {
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 /* Narrow surfaces (the docked AI rail) */
-.notion-markdown-compact {
-  font-size: 14px;
-}
 .notion-markdown-compact h1 {
   font-size: 1.2em;
 }
@@ -1684,36 +1218,6 @@ body {
 /* ---------------------------------------------------------------------------
    Notion-like surface primitives
    --------------------------------------------------------------------------- */
-.notion-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: var(--space-10) var(--space-4);
-  text-align: center;
-  color: var(--muted);
-  font-size: 14px;
-}
-.notion-empty-icon {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  color: var(--muted);
-}
-.notion-skeleton {
-  border-radius: var(--radius-sm);
-  background: linear-gradient(
-    90deg,
-    var(--surface) 0%,
-    var(--surface-2) 50%,
-    var(--surface) 100%
-  );
-  background-size: 200% 100%;
-  animation: var(--animate-sweep);
-}
 
 /* ---------------------------------------------------------------------------
    Typographic fine-tuning (progressive enhancement — ignored where unsupported)
@@ -1755,91 +1259,24 @@ body {
 
 @layer components {
 /* ------------------------------------------------------------------ image */
-.noema-image-block {
-  margin: var(--space-2) 0;
-}
 .noema-image-block.is-selected .noema-image {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-md);
 }
-.noema-image {
-  display: block;
-  max-width: 100%;
-  border-radius: var(--radius-md);
-}
-.noema-image-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-1);
-}
-.noema-image-caption {
-  flex: 1;
-  padding: var(--space-0-5) 6px;
-  font-size: 12px;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  outline: none;
-}
 .noema-image-caption:focus {
   color: var(--fg);
   border-color: var(--border);
 }
-.noema-image-alt-toggle {
-  font-size: 11px;
-  color: var(--muted);
-  text-decoration: underline;
-}
-.noema-image-alt {
-  width: 100%;
-  padding: 3px 6px;
-  font-size: 12px;
-  color: var(--fg);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  outline: none;
-}
-.noema-image-caption-view {
-  margin: var(--space-1) 0 0;
-  font-size: 12px;
-  color: var(--muted);
-  text-align: center;
-}
 /* Resize + alignment (the picture lives in a shrink-wrapped figure so the
    handle sits on its right edge whatever the width). */
-.noema-image-figure {
-  position: relative;
-  max-width: 100%;
-}
 .noema-image-figure .noema-image {
   display: block;
   width: 100%;
 }
-.noema-image-resize {
-  position: absolute;
-  top: 50%;
-  inset-inline-end: -7px;
-  width: 12px;
-  height: 34px;
-  transform: translateY(-50%);
-  border-radius: var(--radius-md);
-  background: var(--accent);
-  opacity: 0;
-  cursor: ew-resize;
-  touch-action: none;
-  transition: opacity var(--dur-1) var(--ease-smooth);
-}
 .noema-image-block:hover .noema-image-resize,
 .noema-image-block.is-selected .noema-image-resize {
   opacity: 1;
-}
-.noema-image-align {
-  display: inline-flex;
-  gap: var(--space-0-5);
 }
 .noema-image-align button {
   padding: 3px;
@@ -1907,6 +1344,7 @@ body {
     --surface: #ececec;
     --surface-2: #e0e0e0;
     --border: #767676;
+    --border-control: #4a4a4a;
     --fg: #1b1b1b;
     --muted: #4a4a4a;
     --accent: #0b57d0;
@@ -1919,6 +1357,7 @@ body {
     --surface: #151515;
     --surface-2: #202020;
     --border: #8a8a8a;
+    --border-control: #9a9a9a;
     --fg: #ffffff;
     --muted: #c9c9c9;
     --accent: #7cb8ff;
@@ -1933,6 +1372,7 @@ body {
   --surface: #ececec;
   --surface-2: #e0e0e0;
   --border: #767676;
+  --border-control: #4a4a4a;
   --fg: #1b1b1b;
   --muted: #4a4a4a;
   --accent: #0b57d0;
@@ -1946,6 +1386,7 @@ body {
   --surface: #151515;
   --surface-2: #202020;
   --border: #8a8a8a;
+  --border-control: #9a9a9a;
   --fg: #ffffff;
   --muted: #c9c9c9;
   --accent: #7cb8ff;
@@ -1962,6 +1403,7 @@ body {
   --surface: #ececec;
   --surface-2: #e0e0e0;
   --border: #767676;
+  --border-control: #4a4a4a;
   --fg: #1b1b1b;
   --muted: #4a4a4a;
   --accent: #0b57d0;
@@ -1975,6 +1417,7 @@ body {
   --surface: #151515;
   --surface-2: #202020;
   --border: #8a8a8a;
+  --border-control: #9a9a9a;
   --fg: #ffffff;
   --muted: #c9c9c9;
   --accent: #7cb8ff;
@@ -2028,8 +1471,626 @@ body {
 .dark .noema-editor .ProseMirror .noema-suggestion[data-suggestion-kind="replace"] {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
+.noema-suggestion-badge[data-suggestion-kind="insert"] {
+  color: var(--suggestion-insert-fg);
+}
+.noema-suggestion-badge[data-suggestion-kind="replace"] {
+  color: var(--accent);
+}
+.dark .noema-suggestion-delete {
+  background: color-mix(in srgb, var(--suggestion-delete) 24%, transparent);
+  color: var(--suggestion-delete-fg);
+}
+}
+@utility noema-code-block{
+  position: relative;
+  margin: 6px 0;
+  }
+@utility noema-callout-emoji{
+  position: relative;
+  flex-shrink: 0;
+  }
+@utility noema-callout-picker{
+  position: absolute;
+  z-index: var(--z-popover);
+  top: 28px;
+  inset-inline-start: 0;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: var(--space-0-5);
+  width: 210px;
+  padding: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  }
+@utility noema-callout-content{
+  flex: 1;
+  min-width: 0;
+  }
+@utility noema-toggle-header{
+  display: flex;
+  align-items: center;
+  gap: var(--space-0-5);
+  }
+@utility noema-toggle-chevron{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 24px;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  }
+@utility noema-toggle-summary{
+  flex: 1;
+  padding: 3px var(--space-0-5);
+  font-weight: 500;
+  background: transparent;
+  outline: none;
+  }
+@utility noema-toggle-body{
+  padding-inline-start: 22px;
+  }
+@utility noema-toc-title{
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  }
+@utility noema-toc-empty{
+  font-size: 14px;
+  color: var(--muted);
+  }
+@utility noema-drag-handle{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--muted);
+  cursor: grab;
+  opacity: 0.55;
+  }
+@utility noema-bookmark-input{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  }
+@utility noema-bookmark-field{
+  flex: 1;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-size: 14px;
+  outline: none;
+  }
+@utility noema-embed-field{
+  flex: 1;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-size: 14px;
+  outline: none;
+  }
+@utility noema-page-embed-field{
+  flex: 1;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-size: 14px;
+  outline: none;
+  }
+@utility noema-bookmark-btn{
+  height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  }
+@utility noema-bookmark-card{
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  }
+@utility noema-bookmark-link{
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  color: inherit;
+  text-decoration: none;
+  }
+@utility noema-bookmark-text{
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  }
+@utility noema-bookmark-title{
+  font-weight: 500;
+  }
+@utility noema-bookmark-desc{
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  }
+@utility noema-bookmark-host{
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--muted);
+  font-size: 12px;
+  }
+@utility noema-bookmark-favicon{
+  width: 16px;
+  height: 16px;
+  }
+@utility noema-bookmark-image{
+  width: 120px;
+  height: 84px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  }
+@utility noema-bookmark-actions{
+  position: absolute;
+  top: 6px;
+  inset-inline-end: 6px;
+  display: flex;
+  gap: var(--space-0-5);
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-smooth);
+  }
+@utility noema-embed-actions{
+  position: absolute;
+  top: 6px;
+  inset-inline-end: 6px;
+  display: flex;
+  gap: var(--space-0-5);
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-smooth);
+  }
+@utility noema-embed-input{
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  }
+@utility noema-embed-hint{
+  color: var(--muted);
+  font-size: 12px;
+  }
+@utility noema-embed-frame{
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  aspect-ratio: 16 / 9;
+  }
+@utility noema-embed-provider{
+  position: absolute;
+  inset-inline-start: 8px;
+  bottom: 8px;
+  padding: var(--space-0-5) 6px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+  }
+@utility noema-breadcrumb-trail{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-0-5) var(--space-1);
+  color: var(--muted);
+  }
+@utility noema-breadcrumb-sep{
+  margin-inline-start: var(--space-1);
+  }
+@utility noema-breadcrumb-empty{
+  color: var(--muted);
+  font-style: italic;
+  }
+@utility noema-page-embed-shell{
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  }
+@utility noema-page-embed-header{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface);
+  font-size: 13px;
+  }
+@utility noema-page-embed-chevron{
+  display: flex;
+  color: var(--muted);
+  }
+@utility noema-page-embed-title{
+  flex: 1;
+  font-weight: 500;
+  }
+@utility noema-page-embed-open{
+  padding: var(--space-0-5);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  }
+@utility noema-page-embed-remove{
+  padding: var(--space-0-5);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  }
+@utility noema-page-embed-body{
+  padding: 10px 14px;
+  }
+@utility noema-page-embed-loading{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  }
+@utility noema-page-embed-picker{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  }
+@utility noema-page-embed-results{
+  display: flex;
+  flex-direction: column;
+  }
+@utility noema-page-embed-result{
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  text-align: start;
+  }
+@utility noema-doc-renderer{
+  font-size: 15px;
+  line-height: 1.6;
+  }
+@utility noema-template-label{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  }
+@utility noema-template-select{
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: 13px;
+  }
+@utility noema-template-insert{
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: 13px;
+  }
+@utility noema-template-remove{
+  color: var(--muted);
+  padding: 0 var(--space-1);
+  font-size: 15px;
+  }
+@utility noema-ask-head{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  }
+@utility noema-ask-input{
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-size: 14px;
+  outline: none;
+  }
+@utility noema-ask-actions{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  }
+@utility noema-ask-btn{
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-size: 13px;
+  }
+@utility noema-ask-icon{
+  margin-inline-start: auto;
+  color: var(--muted);
+  }
+@utility noema-ask-answer{
+  font-size: 14px;
+  line-height: 1.6;
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+  }
+@utility noema-linked-header{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface);
+  font-size: 13px;
+  }
+@utility noema-linked-title{
+  flex: 1;
+  font-weight: 500;
+  }
+@utility noema-linked-open{
+  padding: var(--space-0-5);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  }
+@utility noema-linked-body{
+  overflow-x: auto;
+  padding: var(--space-2) 10px;
+  }
+@utility noema-linked-loading{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  }
+@utility noema-linked-empty{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  }
+@utility noema-linked-table{
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  }
+@utility noema-linked-picker{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  }
+@utility noema-linked-field{
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-size: 14px;
+  outline: none;
+  }
+@utility noema-linked-results{
+  display: flex;
+  flex-direction: column;
+  }
+@utility noema-linked-result{
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  text-align: start;
+  }
+@utility notion-markdown{
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+  }
+@utility notion-code{
+  margin: var(--space-2) 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+  }
+@utility notion-code-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  }
+@utility notion-code-lang{
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  }
+@utility notion-code-copy{
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  padding: var(--space-0-5) 6px;
+  }
+@utility notion-markdown-table{
+  margin: var(--space-2) 0;
+  overflow-x: auto;
+  }
+@utility notion-markdown-tasks{
+  list-style: none;
+  padding-inline-start: 0.2em;
+  }
+@utility notion-markdown-task{
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  }
+@utility notion-check{
+  flex: none;
+  margin-top: 3px;
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--muted);
+  border-radius: var(--radius-xs);
+  }
+@utility notion-check-on{
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+  }
+@utility notion-ref{
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 1px 6px;
+  font-size: 0.92em;
+  font-weight: 500;
+  }
+@utility notion-ref-link{
+  text-decoration: none;
+  }
+@utility notion-ref-title{
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  }
+@utility notion-markdown-compact{
+  font-size: 14px;
+  }
+@utility notion-empty{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-10) var(--space-4);
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+  }
+@utility notion-empty-icon{
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--muted);
+  }
+@utility notion-skeleton{
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--surface) 0%,
+    var(--surface-2) 50%,
+    var(--surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: var(--animate-sweep);
+  }
+@utility noema-image-block{
+  margin: var(--space-2) 0;
+  }
+@utility noema-image{
+  display: block;
+  max-width: 100%;
+  border-radius: var(--radius-md);
+  }
+@utility noema-image-meta{
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  }
+@utility noema-image-caption{
+  flex: 1;
+  padding: var(--space-0-5) 6px;
+  font-size: 12px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  outline: none;
+  }
+@utility noema-image-alt-toggle{
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: underline;
+  }
+@utility noema-image-alt{
+  width: 100%;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  }
+@utility noema-image-caption-view{
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  }
+@utility noema-image-figure{
+  position: relative;
+  max-width: 100%;
+  }
+@utility noema-image-resize{
+  position: absolute;
+  top: 50%;
+  inset-inline-end: -7px;
+  width: 12px;
+  height: 34px;
+  transform: translateY(-50%);
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  opacity: 0;
+  cursor: ew-resize;
+  touch-action: none;
+  transition: opacity var(--dur-1) var(--ease-smooth);
+  }
+@utility noema-image-align{
+  display: inline-flex;
+  gap: var(--space-0-5);
+  }
 
-.noema-suggestion-badge {
+@utility noema-suggestion-badge{
   display: inline-block;
   margin-inline-end: 0.25rem;
   font-size: 0.85em;
@@ -2037,15 +2098,9 @@ body {
   vertical-align: middle;
   user-select: none;
   opacity: 0.85;
-}
-.noema-suggestion-badge[data-suggestion-kind="insert"] {
-  color: var(--suggestion-insert-fg);
-}
-.noema-suggestion-badge[data-suggestion-kind="replace"] {
-  color: var(--accent);
-}
+  }
 
-.noema-suggestion-delete {
+@utility noema-suggestion-delete{
   display: inline-block;
   margin-inline: 0.25rem;
   padding: 0 0.25rem;
@@ -2055,9 +2110,4 @@ body {
   text-decoration: line-through;
   font-size: 0.85em;
   user-select: none;
-}
-.dark .noema-suggestion-delete {
-  background: color-mix(in srgb, var(--suggestion-delete) 24%, transparent);
-  color: var(--suggestion-delete-fg);
-}
-}
+  }

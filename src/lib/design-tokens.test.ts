@@ -6,7 +6,7 @@ import {
   RADIUS,
   SHADOW,
   SPACE,
-  TAG_HUES,
+  TAG_PALETTE,
   Z,
   isTagHue,
   tagClass,
@@ -66,9 +66,9 @@ describe("design tokens", () => {
 
   describe("tag hues", () => {
     it("ships exactly the ten hues the stylesheet defines", () => {
-      expect(TAG_HUES).toHaveLength(10);
-      expect(TAG_HUES).toContain("gray");
-      expect(TAG_HUES).toContain("teal");
+      expect(TAG_PALETTE).toHaveLength(10);
+      expect(TAG_PALETTE).toContain("gray");
+      expect(TAG_PALETTE).toContain("teal");
     });
 
     it("guards unknown hues", () => {

@@ -6,7 +6,7 @@ import { Trash2 } from "lucide-react";
 import { createPropertyAction } from "@/server/actions/database";
 import { useAction } from "@/lib/actions-client";
 import { cn, initials } from "@/lib/utils";
-import { TAG_HUES, isTagHue, tagClass, tagStyle, type TagHue } from "@/lib/design-tokens";
+import { tagClass, tagStyle, type TagHue } from "@/lib/design-tokens";
 import { PropertyType } from "@prisma/client";
 import { formatCell, normalizeOptionIds } from "@/lib/database-query";
 import { formatNumberValue, type NumberFormatSpec } from "@/lib/number-format";
@@ -14,6 +14,7 @@ import { uploadFile } from "@/lib/upload-client";
 import { toast } from "sonner";
 import { ROLLUP_FUNCTIONS } from "@/lib/rollup";
 import { t } from "@/lib/i18n";
+import type { ButtonRole } from "@/lib/button-property";
 import { clampWidth } from "@/lib/column-layout";
 import { maxLineWidth, type CharWidths } from "@/lib/text-measure";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
@@ -25,29 +26,10 @@ import {
   parseUniqueId,
   type UniqueIdConfig,
 } from "@/lib/unique-id";
-import { formatDateRange, parseDateValue } from "@/lib/date-range";
-import {
-  queryRelationCandidates,
-  relationSummary,
-  toggleRelation,
-} from "@/lib/relation-picker";
-import { formatGeo, normalizeGeo, parseGeo } from "@/lib/geo";
 import { isValidEmail } from "@/lib/email-validation";
 import { sanitizeFileUrl, sanitizeHref } from "@/lib/validation";
 import { isValidPhone, normalizePhone } from "@/lib/phone-format";
 import { classifyLink } from "@/lib/link-check";
-import {
-  canRun,
-  dryRun,
-  isAllowedActionUrl,
-  planRowButton,
-  validateButtonConfig,
-  type ButtonAction,
-  type ButtonPlanStep,
-  type ButtonPropertyConfig,
-  type ButtonRole,
-} from "@/lib/button-property";
-import { type ButtonRow } from "@/lib/row-buttons";
 import {
   cellDisplay,
   cellToValue,
@@ -56,7 +38,27 @@ import {
   type LegacyVerificationCell,
 } from "@/lib/verification-cell";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { type DBProperty, type DBRow, type HeaderConfig } from "@/components/database/database-types";
+import {
+  avatarHue,
+  optionTagHue,
+  type DBProperty,
+  type DBRow,
+  type HeaderConfig,
+} from "@/components/database/database-types";
+import { ButtonCell } from "@/components/database/button-cell";
+import { DateCell } from "@/components/database/date-cell";
+import { IconCell } from "@/components/database/icon-cell";
+import { PeopleCell } from "@/components/database/people-cell";
+import { PlaceCell } from "@/components/database/place-cell";
+import { RelationCell } from "@/components/database/relation-cell";
+import { StatusCell } from "@/components/database/status-cell";
+
+export { avatarHue, optionTagHue };
+export {
+  buttonStepUnrunnableReason,
+  readRowButton,
+  type RowButtonSource,
+} from "@/components/database/button-cell";
 
 export const PROPERTY_TYPES: PropertyType[] = [
   "TEXT",
@@ -205,28 +207,6 @@ export function cellKeyOutcome(key: string): CellKeyOutcome {
     default:
       return "none";
   }
-}
-
-/**
- * Map a stored option colour onto the shared tag palette. The option colours
- * (`OPTION_COLORS`) are the hue names, so this is the one place a select/status
- * chip resolves its token hue; an unknown colour degrades to `gray` rather than
- * rendering unstyled.
- */
-export function optionTagHue(color: string | null | undefined): TagHue {
-  return isTagHue(color) ? color : "gray";
-}
-
-/**
- * Stable tag hue for a person's mini avatar, derived from their name so the
- * same person always gets the same colour across cells, board cards and peeks.
- */
-export function avatarHue(name: string): TagHue {
-  let hash = 0;
-  for (let index = 0; index < name.length; index += 1) {
-    hash = (hash * 31 + name.charCodeAt(index)) >>> 0;
-  }
-  return TAG_HUES[hash % TAG_HUES.length];
 }
 
 /**
@@ -598,8 +578,6 @@ export function uniqueIdCellText(
 }
 
 /** Editable draft for a PLACE cell: the three raw input strings. */
-type PlaceDraft = { lat: string; lng: string; label: string };
-
 /**
  * Read the optional NUMBER `numberFormat` spec off a property config, or
  * `undefined` when the property predates the number-format engine. The shared
@@ -642,169 +620,6 @@ function typedValueError(type: string, value: unknown): string {
     }
     default:
       return "";
-  }
-}
-
-/** A BUTTON property's stored action, adapted for the `@/lib/button-property` engine. */
-export type RowButtonSource = {
-  /** A normalised `ButtonPropertyConfig`; `validateButtonConfig` re-checks it. */
-  config: ButtonPropertyConfig;
-  /** Label to render (the config's own label, else the property name / "Run"). */
-  label: string;
-  /** True when reshaped from the legacy `targetPropertyId`/`value` pair. */
-  legacy: boolean;
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * Map one stored row-button action (`kind`-discriminated, `@/lib/row-buttons`)
- * onto the Button-property engine's `type`-discriminated `ButtonAction`. The
- * two models share the action ids, so this only renames the discriminant and
- * passes the fields through. Returns `null` for an unknown kind, letting
- * `validateButtonConfig` report it.
- */
-function toPropertyAction(action: unknown): ButtonAction | null {
-  if (!isRecord(action)) return null;
-  switch (action.kind) {
-    case "open_url":
-      return {
-        type: "open_url",
-        url: typeof action.url === "string" ? action.url : "",
-        openInNewTab: action.openInNewTab !== false,
-      };
-    case "set_property":
-      return {
-        type: "set_property",
-        propertyId: typeof action.propertyId === "string" ? action.propertyId : "",
-        value: action.value,
-      };
-    case "insert_template":
-      return {
-        type: "insert_template",
-        templateId: typeof action.templateId === "string" ? action.templateId : "",
-      };
-    case "notify":
-      return {
-        type: "notify",
-        message: typeof action.message === "string" ? action.message : "",
-        ...(typeof action.level === "string"
-          ? { level: action.level as "info" | "success" | "warning" }
-          : {}),
-      };
-    default:
-      return null;
-  }
-}
-
-/**
- * Read a BUTTON property's stored action and adapt it for the Button-property
- * engine (`@/lib/button-property`). A button configured through the property
- * editor stores a row-buttons `ButtonConfig` (single `action`) under
- * `config.button`; a button configured before either engine carries only the
- * legacy `targetPropertyId`/`value` pair, reshaped here into the equivalent
- * `set_property` action. A `config.button` already shaped as a
- * `ButtonPropertyConfig` (`actions` array) is accepted as-is. Returns
- * `undefined` when the property has no action, so the pre-engine shell keeps
- * rendering exactly as before.
- */
-export function readRowButton(
-  property: DBProperty,
-  fallbackLabel: string,
-): RowButtonSource | undefined {
-  const config = property.config;
-  if (!config || typeof config !== "object") return undefined;
-
-  if ("button" in config && config.button !== undefined) {
-    const raw = config.button;
-    if (isRecord(raw) && Array.isArray(raw.actions)) {
-      const label =
-        typeof raw.label === "string" && raw.label.trim() !== ""
-          ? raw.label
-          : fallbackLabel;
-      return { config: raw as ButtonPropertyConfig, label, legacy: false };
-    }
-    if (isRecord(raw)) {
-      const label =
-        typeof raw.label === "string" && raw.label.trim() !== ""
-          ? raw.label
-          : fallbackLabel;
-      const action = isRecord(raw.action) ? raw.action : undefined;
-      const mapped = action ? toPropertyAction(action) : null;
-      return {
-        legacy: false,
-        label,
-        config: {
-          // An unknown/missing kind stays in the list verbatim so the engine
-          // reports it instead of silently dropping the button.
-          actions: [mapped ?? (action as ButtonAction)],
-          ...(typeof raw.showLabelInCell === "boolean"
-            ? { showLabelInCell: raw.showLabelInCell }
-            : {}),
-          ...(typeof raw.confirmRequired === "boolean"
-            ? { confirmRequired: raw.confirmRequired }
-            : {}),
-        },
-      };
-    }
-  }
-
-  if (
-    "targetPropertyId" in config &&
-    typeof config.targetPropertyId === "string" &&
-    config.targetPropertyId !== ""
-  ) {
-    return {
-      legacy: true,
-      label: fallbackLabel,
-      config: {
-        actions: [
-          {
-            type: "set_property",
-            propertyId: config.targetPropertyId,
-            value: "value" in config ? config.value ?? { checked: true } : { checked: true },
-          },
-        ],
-      },
-    };
-  }
-  return undefined;
-}
-
-/**
- * Why a resolved BUTTON step stays disabled here. `open_url` runs as a link and
- * the legacy `set_property` pair runs through `onRunButton`; the other kinds
- * need the automations dispatcher (spec R27.x) this view does not wire yet.
- */
-export function buttonStepUnrunnableReason(step: ButtonPlanStep | undefined): string {
-  switch (step?.kind) {
-    case "set_property":
-      return "This property-write button runs from automations.";
-    case "insert_template":
-      return "Insert-template buttons run from automations.";
-    case "notify":
-      return "Notification buttons run from automations.";
-    case "duplicate_row":
-      return "Duplicate-row buttons run from automations.";
-    case "delete_row":
-      return "Delete-row buttons run from automations.";
-    case "webhook":
-      return "Webhook buttons run from automations.";
-    default:
-      return "This button is not runnable in this view.";
-  }
-}
-
-/** A short, human-readable rendering of a dry-run before/after value. */
-function buttonPreviewValue(value: unknown): string {
-  if (typeof value === "string") return `"${value}"`;
-  if (value === undefined) return "nothing";
-  try {
-    return JSON.stringify(value) ?? String(value);
-  } catch {
-    return String(value);
   }
 }
 
@@ -946,15 +761,11 @@ export function Cell({
   const [editingDate, setEditingDate] = useState(false);
   // PLACE: the display swaps to lat/lng/label inputs; the draft holds the raw
   // strings so an in-progress coordinate can be typed before it parses.
-  const [editingPlace, setEditingPlace] = useState(false);
-  const [placeDraft, setPlaceDraft] = useState<PlaceDraft | null>(null);
   // PEOPLE keeps a local draft so two quick picks can't overwrite each other
   // from stale server props (the echo from the server lands after both clicks).
-  const [peopleDraft, setPeopleDraft] = useState<string[] | null>(null);
   // RELATION: the searchable picker's typeahead text. Local-only so opening the
   // picker never touches the stored `pageIds`; `@/lib/relation-picker` owns the
   // filtering/matching rules.
-  const [relationQuery, setRelationQuery] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const readOnly = (node: React.ReactNode, title?: string) => (
     <span
@@ -996,7 +807,7 @@ export function Cell({
       case "DATE":
         return dateFormatted || property.config?.date ? editingDate : true;
       case "PLACE":
-        return editingPlace;
+        return false;
       case "SELECT":
       case "STATUS":
       case "MULTI_SELECT":
@@ -1074,31 +885,6 @@ export function Cell({
       return { text: normalizePhone(trimmed) || trimmed };
     }
     return { text: raw };
-  };
-
-  // Validate + persist a PLACE draft. `parseGeo` owns the finiteness/bounds
-  // rules and `normalizeGeo` clamps/wraps before storage; a draft that does not
-  // parse yet (half-typed coordinate) is left in the editor, not saved. An
-  // entirely blank draft clears the cell.
-  const commitPlace = (draft: PlaceDraft): boolean => {
-    const lat = draft.lat.trim();
-    const lng = draft.lng.trim();
-    const label = draft.label.trim();
-    if (lat === "" || lng === "") {
-      if (lat === "" && lng === "" && label === "") {
-        onChange(null);
-        return true;
-      }
-      return false;
-    }
-    const parsed = parseGeo({
-      lat: Number(lat),
-      lng: Number(lng),
-      label: draft.label,
-    });
-    if (!parsed.ok) return false;
-    onChange(normalizeGeo(parsed.value));
-    return true;
   };
 
   const attachFile = (file: File) => {
@@ -1234,205 +1020,29 @@ export function Cell({
         </label>
       );
     case "DATE": {
-      const dateConfig = property.config?.date;
-      // Without a DATE config the single-date editor is byte-for-byte the
-      // original: existing properties (and every other caller) are unchanged.
-      if (!dateConfig) {
-        if (dateFormatted) {
-          const text = formatCell(value, property);
-          if (!editable) {
-            return (
-              <span
-                aria-label={property.name}
-                title={text || undefined}
-                className="min-w-0 max-w-full truncate text-muted"
-              >
-                {text || "—"}
-              </span>
-            );
-          }
-          if (editingDate) {
-            return (
-              <input
-                autoFocus
-                type="date"
-                aria-label={property.name}
-                aria-invalid={errorMessage !== "" || undefined}
-                defaultValue={typeof v.start === "string" ? v.start.slice(0, 10) : ""}
-                onChange={(e) => {
-                  if (e.target.value) onChange({ start: e.target.value });
-                }}
-                onBlur={() => setEditingDate(false)}
-                onKeyDown={(e) => {
-                  if (cellKeyOutcome(e.key) === "cancel") setEditingDate(false);
-                }}
-                className="focus-ring w-full bg-transparent outline-none"
-              />
-            );
-          }
-          return (
-            <button
-              type="button"
-              aria-label={property.name}
-              title={text || undefined}
-              onClick={() => setEditingDate(true)}
-              className="focus-ring w-full min-w-0 truncate rounded px-1 py-0.5 text-left hover:bg-surface-2"
-            >
-              {text || <span className="text-muted">—</span>}
-            </button>
-          );
-        }
-        return (
-          <input
-            type="date"
-            aria-label={property.name}
-            aria-invalid={errorMessage !== "" || undefined}
-            defaultValue={typeof v.start === "string" ? v.start.slice(0, 10) : ""}
-            readOnly={!editable}
-            onChange={(e) => onChange({ start: e.target.value })}
-            className="focus-ring w-full bg-transparent outline-none"
-          />
-        );
-      }
-
-      // Range/all-day aware editor driven by `@/lib/date-range`: the stored
-      // value is normalised with `parseDateValue` so display agrees with the
-      // engine, and `allDay`/`timeZone` defaults come from the property config.
-      const parsedRange = parseDateValue(value);
-      const rangeValue = parsedRange.ok ? parsedRange.value : null;
-      const startText = typeof v.start === "string" ? v.start : "";
-      const endText = typeof v.end === "string" ? v.end : "";
-      const allDayValue =
-        typeof v.allDay === "boolean" ? v.allDay : dateConfig.allDay ?? true;
-      const hasRange =
-        rangeValue !== null &&
-        typeof rangeValue.end === "string" &&
-        rangeValue.end !== rangeValue.start;
-      const label =
-        rangeValue && hasRange
-          ? formatDateRange(rangeValue)
-          : formatCell(value, property);
-      const commitDate = (patch: { start?: string; end?: string; allDay?: boolean }) => {
-        const nextStart = patch.start ?? startText;
-        if (nextStart.trim() === "") {
-          onChange(null);
-          return;
-        }
-        const next: Record<string, unknown> = {
-          start: nextStart,
-          allDay: patch.allDay ?? allDayValue,
-        };
-        const nextEnd = patch.end ?? endText;
-        if (dateConfig.allowRange && nextEnd) next.end = nextEnd;
-        if (dateConfig.timeZone) next.timeZone = dateConfig.timeZone;
-        onChange(next);
-      };
-      if (!editable) {
-        return (
-          <span
-            aria-label={property.name}
-            title={label || undefined}
-            className="min-w-0 max-w-full truncate text-muted"
-          >
-            {label || "—"}
-          </span>
-        );
-      }
-      if (editingDate) {
-        return (
-          <div className="flex flex-col gap-1" role="group" aria-label={property.name}>
-            <div className="flex items-center gap-1">
-              <input
-                autoFocus
-                type="date"
-                aria-label={property.name}
-                defaultValue={startText.slice(0, 10)}
-                onChange={(e) => commitDate({ start: e.target.value })}
-                className="focus-ring min-w-0 bg-transparent outline-none"
-              />
-              {dateConfig.allowRange && (
-                <>
-                  <span className="text-muted">–</span>
-                  <input
-                    type="date"
-                    aria-label={`${property.name} end`}
-                    defaultValue={endText.slice(0, 10)}
-                    onChange={(e) => commitDate({ end: e.target.value })}
-                    className="focus-ring min-w-0 bg-transparent outline-none"
-                  />
-                </>
-              )}
-            </div>
-            <label className="flex items-center gap-1 text-xs text-muted">
-              <input
-                type="checkbox"
-                aria-label={t(locale, "allDayWord")}
-                checked={allDayValue}
-                onChange={(e) => commitDate({ allDay: e.target.checked })}
-                className="focus-ring accent-[var(--accent)]"
-              />
-              {t(locale, "allDayWord")}
-            </label>
-            <button
-              type="button"
-              onClick={() => setEditingDate(false)}
-              className="focus-ring self-start text-xs text-accent hover:underline"
-            >
-              {t(locale, "close")}
-            </button>
-          </div>
-        );
-      }
       return (
-        <button
-          type="button"
-          aria-label={property.name}
-          title={label || undefined}
-          onClick={() => setEditingDate(true)}
-          className="focus-ring w-full min-w-0 truncate rounded px-1 py-0.5 text-left hover:bg-surface-2"
-        >
-          {label || <span className="text-muted">—</span>}
-        </button>
+        <DateCell
+          property={property}
+          value={value}
+          editable={editable}
+          errorMessage={errorMessage}
+          locale={locale}
+          editing={editingDate}
+          onEditingChange={setEditingDate}
+          onChange={onChange}
+        />
       );
     }
     case "SELECT":
     case "STATUS": {
-      const options = property.config?.options ?? [];
-      const current = options.find((o) => o.id === v.optionId);
-      const currentHue = optionTagHue(current?.color);
       return (
-        <div className="flex min-w-0 items-center gap-1">
-          {current && (
-            <span
-              data-testid="option-chip"
-              data-color={currentHue}
-              // Hover preview of the colour name (the chip's own label is the
-              // option name, so the hue is what a title should disclose).
-              title={currentHue}
-              className={cn(tagClass(currentHue), "min-w-0 max-w-full truncate")}
-              style={tagStyle(currentHue)}
-            >
-              {current.name}
-            </span>
-          )}
-          {editable && (
-            <select
-              aria-label={property.name}
-              value={(v.optionId as string) ?? ""}
-              onChange={(e) =>
-                onChange(e.target.value ? { optionId: e.target.value } : null)
-              }
-              className="focus-ring max-w-[110px] bg-transparent text-xs text-muted outline-none"
-            >
-              <option value="">—</option>
-              {options.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
+        <StatusCell
+          propertyName={property.name}
+          options={property.config?.options ?? []}
+          value={v}
+          editable={editable}
+          onChange={onChange}
+        />
       );
     }
     case "MULTI_SELECT": {
@@ -1476,95 +1086,15 @@ export function Cell({
       );
     }
     case "PEOPLE": {
-      const valueNames = Array.from(
-        new Set(
-          ((v.names as string[]) ?? []).filter(
-            (entry): entry is string => typeof entry === "string" && entry !== "",
-          ),
-        ),
-      );
-      // The local draft wins until the component remounts: the server echo of
-      // the first pick would otherwise be stale when the second pick is made.
-      const names = peopleDraft ?? valueNames;
-      const emit = (next: string[]) => {
-        setPeopleDraft(next);
-        onChange({ names: next });
-      };
-      const members = peopleOptions ?? [];
       return (
-        <div
-          className="flex min-w-0 flex-wrap items-center gap-1"
-          role="group"
-          aria-label={property.name}
-        >
-          {names.map((name) => (
-            <span
-              key={name}
-              className="flex min-w-0 max-w-full items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-xs"
-            >
-              {/* Mini avatar: initials on the same tag palette, so a person
-                  keeps one colour everywhere (deterministic from their name). */}
-              <span
-                aria-hidden
-                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-3xs font-medium"
-                style={tagStyle(avatarHue(name))}
-              >
-                {initials(name)}
-              </span>
-              <span className="min-w-0 truncate" title={name}>
-                {name}
-              </span>
-              {editable && (
-                <button
-                  type="button"
-                  aria-label={`${t(locale, "remove")}: ${name}`}
-                  onClick={() => emit(names.filter((n) => n !== name))}
-                  className="focus-ring shrink-0 text-muted hover:text-fg"
-                >
-                  ×
-                </button>
-              )}
-            </span>
-          ))}
-          {editable && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={t(locale, "addPersonAria")}
-                  className="focus-ring rounded px-1 text-xs text-muted hover:bg-surface-2"
-                >
-                  +
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                {members.length === 0 ? (
-                  <DropdownMenuItem disabled>{t(locale, "noMembersYet")}</DropdownMenuItem>
-                ) : (
-                  members.map((member) => {
-                    const active = names.includes(member.name);
-                    return (
-                      <DropdownMenuItem
-                        key={member.id}
-                        onSelect={() =>
-                          emit(
-                            active
-                              ? names.filter((n) => n !== member.name)
-                              : [...names, member.name],
-                          )
-                        }
-                      >
-                        {active ? "✓ " : ""}
-                        {member.name}
-                      </DropdownMenuItem>
-                    );
-                  })
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          {names.length === 0 && !editable && readOnly("—")}
-        </div>
+        <PeopleCell
+          propertyName={property.name}
+          value={value}
+          editable={editable}
+          locale={locale}
+          members={peopleOptions ?? []}
+          onChange={onChange}
+        />
       );
     }
     case "FORMULA":
@@ -1669,387 +1199,53 @@ export function Cell({
       );
     }
     case "PLACE": {
-      // A stored `{ lat, lng, label? }` (or `"lat, lng"` string) renders through
-      // `@/lib/geo`; anything unparseable stays blank. Editable cells swap the
-      // `formatGeo` display for lat/lng/label inputs.
-      const parsed = parseGeo(value);
-      const place = parsed.ok ? parsed.value : null;
-      const display = place
-        ? `${place.label ? `${place.label} · ` : ""}${formatGeo(place)}`
-        : "";
-      if (!editable) {
-        return (
-          <span
-            aria-label={property.name}
-            title={display || undefined}
-            className="min-w-0 max-w-full truncate text-muted"
-          >
-            {display || "—"}
-          </span>
-        );
-      }
-      if (editingPlace && placeDraft) {
-        const draft = placeDraft;
-        const update = (patch: Partial<PlaceDraft>) =>
-          setPlaceDraft((prev) => (prev ? { ...prev, ...patch } : prev));
-        const blurCommit = () => commitPlace(draft);
-        const placeKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-          const outcome = cellKeyOutcome(e.key);
-          if (outcome === "commit") e.currentTarget.blur();
-          if (outcome === "cancel") {
-            setEditingPlace(false);
-            setPlaceDraft(null);
-          }
-        };
-        return (
-          <div className="flex flex-col gap-1" role="group" aria-label={property.name}>
-            <div className="flex items-center gap-1">
-              <input
-                autoFocus
-                type="text"
-                inputMode="decimal"
-                aria-label={`${property.name} lat`}
-                value={draft.lat}
-                onChange={(e) => update({ lat: e.target.value })}
-                onBlur={blurCommit}
-                onKeyDown={placeKeyDown}
-                className="focus-ring w-20 bg-transparent outline-none tabular-nums"
-              />
-              <span className="text-muted">,</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                aria-label={`${property.name} lng`}
-                value={draft.lng}
-                onChange={(e) => update({ lng: e.target.value })}
-                onBlur={blurCommit}
-                onKeyDown={placeKeyDown}
-                className="focus-ring w-20 bg-transparent outline-none tabular-nums"
-              />
-            </div>
-            <input
-              type="text"
-              aria-label={`${property.name} label`}
-              value={draft.label}
-              onChange={(e) => update({ label: e.target.value })}
-              onBlur={blurCommit}
-              onKeyDown={placeKeyDown}
-              className="focus-ring w-full bg-transparent outline-none"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                commitPlace(draft);
-                setEditingPlace(false);
-              }}
-              className="focus-ring self-start text-xs text-accent hover:underline"
-            >
-              {t(locale, "close")}
-            </button>
-          </div>
-        );
-      }
       return (
-        <button
-          type="button"
-          aria-label={property.name}
-          title={display || undefined}
-          onClick={() => {
-            setPlaceDraft({
-              lat: place ? String(place.lat) : "",
-              lng: place ? String(place.lng) : "",
-              label: place?.label ?? "",
-            });
-            setEditingPlace(true);
-          }}
-          className="focus-ring w-full min-w-0 truncate rounded px-1 py-0.5 text-left hover:bg-surface-2"
-        >
-          {display || <span className="text-muted">—</span>}
-        </button>
+        <PlaceCell
+          propertyName={property.name}
+          value={value}
+          editable={editable}
+          locale={locale}
+          onChange={onChange}
+        />
       );
     }
     case "ICON": {
-      // An emoji-valued cell (like the VERIFICATION cell, a type the generated
-      // enum may not list yet). Editable cells open the real picker
-      // (`@/components/ui/emoji-picker`, backed by `@/lib/emoji-frecency`) whose
-      // "frequently used" strip ranks per user; read-only cells render the
-      // stored glyph. The value is `{ emoji }`, falling back to a legacy
-      // `{ text }` so an icon stored as text still shows.
-      const glyph =
-        typeof v.emoji === "string"
-          ? v.emoji
-          : typeof v.text === "string"
-            ? v.text
-            : "";
-      if (!editable) {
-        return (
-          <span
-            aria-label={property.name}
-            title={glyph || undefined}
-            className="min-w-0 max-w-full truncate text-muted"
-          >
-            {glyph || "—"}
-          </span>
-        );
-      }
       return (
-        <span
-          className="inline-flex min-w-0 items-center gap-1"
-          role="group"
-          aria-label={property.name}
-        >
-          {glyph ? <span className="text-base leading-none">{glyph}</span> : null}
-          <EmojiPicker
-            locale={locale}
-            userId={actingUserId}
-            storageKey="noema:emoji-frecency:icon"
-            onSelect={(emoji) => onChange({ emoji })}
-          />
-          {glyph ? (
-            <button
-              type="button"
-              aria-label={`${t(locale, "remove")} ${property.name}`}
-              onClick={() => onChange(null)}
-              className="focus-ring text-muted hover:text-fg"
-            >
-              ×
-            </button>
-          ) : null}
-        </span>
+        <IconCell
+          propertyName={property.name}
+          value={value}
+          editable={editable}
+          locale={locale}
+          userId={actingUserId}
+          onChange={onChange}
+        />
       );
     }
     case "RELATION": {
-      const options = relationOptions ?? [];
-      const selectedIds = (v.pageIds as string[]) ?? [];
-      // The picker's pure brain (`@/lib/relation-picker`): filter by title,
-      // keep already-linked rows visible in multi mode so they can be
-      // unchecked, never offer the row itself, de-duplicate and cap the list.
-      const byId = new Map(
-        options.map((option): [string, { title: string }] => [
-          option.id,
-          { title: option.title },
-        ]),
-      );
-      const candidates = queryRelationCandidates(
-        options.map((option) => ({ id: option.id, title: option.title })),
-        {
-          query: relationQuery,
-          excludeIds: selectedIds,
-          allowMultiple: true,
-          selfId: row?.id,
-        },
-      );
-      // e.g. "2 related pages: Alpha, Beta" — read by screen readers.
-      const selectionLabel = relationSummary(selectedIds, byId);
-      const pick = (id: string) =>
-        onChange({
-          pageIds: toggleRelation(selectedIds, id, { allowMultiple: true }),
-        });
       return (
-        <div
-          className="flex min-w-0 flex-wrap items-center gap-1"
-          role="group"
-          aria-label={selectionLabel}
-        >
-          {selectedIds.map((id) => {
-            const option = options.find((candidate) => candidate.id === id);
-            const title = option?.title || t(locale, "untitled");
-            return option ? (
-              <span
-                key={id}
-                title={title}
-                className="flex min-w-0 max-w-full items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-xs"
-              >
-                <span aria-hidden>{option.icon ?? "📄"}</span>
-                <span className="min-w-0 truncate">{title}</span>
-              </span>
-            ) : null;
-          })}
-          {editable && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={t(locale, "addRelationAria")}
-                  className="focus-ring rounded px-1 text-xs text-muted hover:bg-surface-2"
-                >
-                  +
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                <div className="p-1">
-                  <input
-                    autoFocus
-                    value={relationQuery}
-                    aria-label={t(locale, "search")}
-                    placeholder={t(locale, "search")}
-                    onChange={(e) => setRelationQuery(e.target.value)}
-                    // Keep the menu's roving focus/typeahead from swallowing the
-                    // keystrokes meant for the filter box.
-                    onKeyDown={(e) => e.stopPropagation()}
-                    className="focus-ring w-full rounded border border-border bg-bg px-1.5 py-0.5 text-xs outline-none"
-                  />
-                </div>
-                {candidates.length === 0 ? (
-                  <DropdownMenuItem disabled>
-                    {t(locale, "noRelatedRows")}
-                  </DropdownMenuItem>
-                ) : (
-                  candidates.map((option) => {
-                    const meta = options.find(
-                      (candidate) => candidate.id === option.id,
-                    );
-                    return (
-                      <DropdownMenuItem
-                        key={option.id}
-                        onSelect={() => {
-                          pick(option.id);
-                          setRelationQuery("");
-                        }}
-                      >
-                        {selectedIds.includes(option.id) ? "✓ " : ""}
-                        {meta?.icon ?? "📄"}{" "}
-                        {option.title || t(locale, "untitled")}
-                      </DropdownMenuItem>
-                    );
-                  })
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          {selectedIds.length === 0 && !editable && readOnly("—")}
-        </div>
+        <RelationCell
+          propertyName={property.name}
+          value={value}
+          editable={editable}
+          locale={locale}
+          options={relationOptions ?? []}
+          rowId={row?.id}
+          onChange={onChange}
+        />
       );
     }
-    case "BUTTON": {
-      const buttonLabel = t(locale, "runWord");
-      const source = readRowButton(property, buttonLabel);
-      // No stored action: the pre-engine shell is byte-for-byte unchanged.
-      if (source === undefined) {
-        return editable && onRunButton ? (
-          <button
-            type="button"
-            onClick={onRunButton}
-            aria-label={buttonLabel}
-            className="focus-ring u-interactive rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
-          >
-            {buttonLabel}
-          </button>
-        ) : (
-          readOnly("—")
-        );
-      }
-      // `{{token}}` interpolation runs against the row when the caller provided
-      // it (table), else against just this cell's value (board/peek cards).
-      const buttonRow: ButtonRow = (() => {
-        if (!row) return { id: "", values: { [property.id]: value } };
-        const values: Record<string, unknown> = {};
-        for (const entry of row.propertyValues) values[entry.propertyId] = entry.value;
-        return { id: row.id, title: row.title, values };
-      })();
-      // The Button-property engine owns validation, the ordered plan and the
-      // destructive-action permission gate; `editable` maps onto an editor role
-      // when the caller does not pass one.
-      const issues = validateButtonConfig(source.config);
-      const plan = planRowButton(source.config, { row: buttonRow });
-      const step: ButtonPlanStep | undefined = plan[0];
-      const role: ButtonRole = actingRole ?? (editable ? "editor" : "viewer");
-      const permitted = canRun(source.config, { role });
-      const label = source.label || buttonLabel;
-      const reason =
-        issues.length > 0
-          ? issues[0].message
-          : !permitted
-            ? "Your role cannot run this button."
-            : step?.kind === "open_url"
-              ? "This link is not safe to open."
-              : buttonStepUnrunnableReason(step);
-      // `dryRun` predicts the exact `set_property` before/after changes (and the
-      // destructive flag) without side effects. The confirmation is non-blocking
-      // (no window.confirm): the first activation arms the control and surfaces
-      // the predicted changes on its tooltip, the second one runs it.
-      const confirmRun = (element?: HTMLElement | null): boolean => {
-        if (source.config.confirmRequired !== true) return true;
-        if (typeof window === "undefined") return true;
-        if (element?.dataset.confirmArmed === "1") return true;
-        const preview = dryRun(source.config, { row: buttonRow });
-        const detail = preview.changes
-          .map(
-            (change) =>
-              `${change.propertyId}: ${buttonPreviewValue(change.before)} → ${buttonPreviewValue(change.after)}`,
-          )
-          .join("; ");
-        const message = detail
-          ? `${label}\n${detail}\nClick again to confirm.`
-          : preview.destructive
-            ? `${label}\nThis action cannot be undone.\nClick again to confirm.`
-            : `${label}\nClick again to confirm.`;
-        if (element) {
-          element.dataset.confirmArmed = "1";
-          element.title = message;
-        }
-        return false;
-      };
-      // `open_url` is the kind this view can execute: a safe link. The URL is
-      // re-checked after interpolation, so a `{{token}}` can never smuggle a
-      // `javascript:`/`data:` scheme into the anchor.
-      if (
-        issues.length === 0 &&
-        permitted &&
-        step?.kind === "open_url" &&
-        isAllowedActionUrl(step.payload.url)
-      ) {
-        return (
-          <a
-            href={step.payload.url}
-            target={step.payload.openInNewTab ? "_blank" : undefined}
-            rel={step.payload.openInNewTab ? "noreferrer noopener" : undefined}
-            onClick={(event) => {
-              if (!confirmRun(event.currentTarget)) event.preventDefault();
-            }}
-            className="focus-ring inline-block max-w-full truncate rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
-          >
-            {label}
-          </a>
-        );
-      }
-      // A legacy target pair keeps its pre-engine behaviour (a property write
-      // through `onRunButton`); without an editable runner it stays blank.
-      if (
-        source.legacy &&
-        issues.length === 0 &&
-        permitted &&
-        step?.kind === "set_property"
-      ) {
-        return editable && onRunButton ? (
-          <button
-            type="button"
-            onClick={(event) => {
-              if (confirmRun(event.currentTarget)) onRunButton();
-            }}
-            className="focus-ring max-w-full truncate rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
-          >
-            {label}
-          </button>
-        ) : (
-          readOnly("—")
-        );
-      }
-      // Invalid config, a disallowed role or an action kind no dispatcher runs
-      // here: the button is present but disabled, the reason on its tooltip.
+    case "BUTTON":
       return (
-        <button
-          type="button"
-          disabled
-          title={reason}
-          aria-label={`${label}: ${reason}`}
-          data-testid="button-cell-disabled"
-          className="focus-ring u-interactive max-w-full truncate rounded border border-border px-2 py-0.5 text-xs opacity-60"
-        >
-          {label}
-        </button>
+        <ButtonCell
+          property={property}
+          value={value}
+          editable={editable}
+          locale={locale}
+          row={row}
+          onRunButton={onRunButton}
+          actingRole={actingRole}
+        />
       );
-    }
     case "AI_AUTOFILL":
       return editable && onRunAi ? (
         <button

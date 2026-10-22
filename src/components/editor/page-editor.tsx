@@ -89,7 +89,7 @@ import {
 } from "@/lib/offline-queue";
 import { cn, initials } from "@/lib/utils";
 import { FLOATING_CORNER } from "@/lib/floating-corner";
-import { OPTION_COLORS } from "@/components/database/database-types";
+import { OPTION_FOREGROUND } from "@/components/database/database-types";
 
 /** Clicking an equation anywhere in the document reopens the LaTeX editor. */
 const editEquation = (node: { type: { name: string }; attrs: { latex?: string } }, pos: number) => {
@@ -149,6 +149,44 @@ import { SlashMenu } from "@/components/editor/slash-menu";
 import { HistoryControls } from "@/components/editor/history-controls";
 import { MentionMenu } from "@/components/editor/mention-menu";
 import { t } from "@/lib/i18n";
+import { SuggestionsControls } from "@/components/editor/suggestions-controls";
+import {
+  EditorRowChrome,
+  blockMotionClass,
+  blockMotionFrames,
+  blockMotionOptions,
+  dragActiveClass,
+  dropIndicatorOptions,
+  dropLiftStyle,
+  dropSettleFrames,
+  dropSettleOptions,
+} from "@/components/editor/page-editor-motion";
+import {
+  cleanClipboardHtml,
+  planClipboardImages,
+  dataUrlUploadFile,
+  type ClipboardFileDescriptor,
+  type ClipboardImageUpload,
+  type ClipboardImagePlan,
+  type CleanedClipboardHtml,
+} from "@/components/editor/page-editor-clipboard";
+import {
+  topLevelBlockIds,
+  blockIdAt,
+  descendantBlockIds,
+  pmDocToReferenceBlocks,
+  blockReferenceIndex,
+  blockReferenceEntries,
+  brokenBlockReferences,
+  resolveBlockReference,
+  blockReferenceCopy,
+  planBlockReorder,
+  reorderTopLevelBlocks,
+  deleteBlocksByIds,
+} from "@/components/editor/page-editor-blockrefs";
+export * from "@/components/editor/page-editor-motion";
+export * from "@/components/editor/page-editor-clipboard";
+export * from "@/components/editor/page-editor-blockrefs";
 // Suggestions (track-changes) chrome: the extension owns the review session,
 // this file only reads its selectors and dispatches its commands.
 import {
@@ -200,10 +238,10 @@ function uploadedMediaKind(asset: { url: string; mimeType: string }): MediaKind 
 /** Resolve a presence palette name (`assignColor`) to its avatar CSS colour. */
 function presenceColor(name: string | undefined): string {
   if (typeof name === "string") {
-    const hex = OPTION_COLORS[name];
+    const hex = OPTION_FOREGROUND[name];
     if (hex) return hex;
   }
-  return OPTION_COLORS.gray;
+  return OPTION_FOREGROUND.gray;
 }
 
 /**
@@ -265,459 +303,6 @@ export function presenceCursorColor(): string {
 }
 
 /** Human label for one pending suggestion (kind + the affected text). */
-function suggestionLabel(suggestion: Suggestion, locale: string): string {
-  const before = suggestion.before?.text?.trim();
-  const after = suggestion.after?.text?.trim();
-  if (suggestion.kind === "insert") {
-    return `${t(locale, "suggestionInserted")}: ${after ?? "…"}`;
-  }
-  if (suggestion.kind === "delete") {
-    return `${t(locale, "deletedPrefix")}: ${before ?? "…"}`;
-  }
-  return `${t(locale, "suggestionReplaced")}: ${before ?? "…"} → ${after ?? "…"}`;
-}
-
-/* ----------------------------------------------------------- motion (§6/§19) */
-
-/** The two block-lifecycle motions the editor animates. */
-export type BlockMotion = "insert" | "remove";
-
-/**
- * Height + opacity keyframes for a block entering (`insert`) or leaving
- * (`remove`). Animating the block's own height is what lets its neighbours
- * slide instead of jumping (DESIGN_SYSTEM §6, FRONTEND_PLAN 19.7); the opacity
- * ramp also hides the empty-block placeholder until the block has settled, so
- * it never flashes mid-insert.
- */
-export function blockMotionFrames(action: BlockMotion, height: number): Keyframe[] {
-  const measured = Number.isFinite(height) && height > 0 ? `${Math.round(height)}px` : "0px";
-  const hidden: Keyframe = { height: "0px", opacity: 0, overflow: "hidden" };
-  const shown: Keyframe = { height: measured, opacity: 1, overflow: "hidden" };
-  return action === "insert" ? [hidden, shown] : [shown, hidden];
-}
-
-/** Duration + easing for a block lifecycle animation (base token, smooth). */
-export function blockMotionOptions(): { duration: number; easing: string } {
-  return { duration: DUR.base, easing: EASE.smooth };
-}
-
-/** Class marker applied while a block plays its enter/leave motion. */
-export function blockMotionClass(action: BlockMotion): string {
-  return action === "insert" ? "noema-block-insert" : "noema-block-remove";
-}
-
-/**
- * ProseMirror drop-cursor options: the drag destination is a 2px accent line
- * (FRONTEND_PLAN 19.8). Fed straight to `dropCursor`, so the indicator needs no
- * bespoke stylesheet and always uses the accent token.
- */
-export function dropIndicatorOptions(): { color: string; width: number; class: string } {
-  return { color: "var(--accent)", width: 2, class: "noema-drop-indicator" };
-}
-
-/**
- * Root class while a drag is live. Dragging must track the cursor 1:1, so the
- * whole editor drops its transitions (DESIGN_SYSTEM §6 "Dragging is 1:1").
- */
-export function dragActiveClass(active: boolean): string {
-  return active ? "u-no-transition noema-drag-active" : "";
-}
-
-/** Inline lift for the block under the cursor: shadow-2 + a slight scale. */
-export function dropLiftStyle(): { boxShadow: string; transform: string } {
-  return { boxShadow: "var(--shadow-2)", transform: "scale(1.01)" };
-}
-
-/** Spring-settle keyframes played when a drag ends (popovers/drag settle). */
-export function dropSettleFrames(): Keyframe[] {
-  return [
-    { transform: "scale(1.01)", boxShadow: "var(--shadow-2)", offset: 0 },
-    { transform: "scale(1)", boxShadow: "var(--shadow-1)", offset: 1 },
-  ];
-}
-
-/** Duration + easing for the drag settle (base token, spring ease). */
-export function dropSettleOptions(): { duration: number; easing: string } {
-  return { duration: DUR.base, easing: EASE.spring };
-}
-
-/** Visibility inputs for a block's hover chrome (grip + add). */
-export type RowChromeState = {
-  hovered?: boolean;
-  focused?: boolean;
-  selected?: boolean;
-};
-
-/**
- * The drag handle + add-button fade in on row hover and stay put while the row
- * is focused or selected, so the keyboard path gets the same affordances as the
- * pointer (DESIGN_SYSTEM §8/§9). Colour-only motion via `.u-colors`.
- */
-export function rowChromeClass(state: RowChromeState = {}): string {
-  const visible = Boolean(state.hovered || state.focused || state.selected);
-  return `noema-row-chrome u-colors ${visible ? "opacity-100" : "opacity-0"}`;
-}
-
-/**
- * Presentational block chrome: the ⋮⋮ drag affordance and the + affordance.
- * Pure (no hooks), so it renders identically on the server and in this slice's
- * `renderToStaticMarkup` proof. The grip is decorative — the surrounding
- * `DragHandle` owns the actual drag behaviour, and the + stays chrome-only so
- * this slice never introduces a new command.
- */
-export function EditorRowChrome({ state = {} }: { state?: RowChromeState }) {
-  const visible = Boolean(state.hovered || state.focused || state.selected);
-  return (
-    <span
-      className={rowChromeClass(state)}
-      data-row-chrome=""
-      data-chrome-visible={visible ? "true" : "false"}
-    >
-      <span className="noema-drag-handle" aria-hidden="true">
-        ⋮⋮
-      </span>
-      <span className="noema-row-add" aria-hidden="true">
-        +
-      </span>
-    </span>
-  );
-}
-
-/* --------------------------------------------------------------- paste engines */
-
-/**
- * Attributes the Noema paste normaliser understands, mirroring the rich list
- * `paste.ts` feeds its own sanitizer. `sanitizePaste` (paste-cleanup) has no
- * per-tag wildcard, so the same list is attached to every structural tag; the
- * allowlist then keeps exactly what `normalizePasteHtml` reads while still
- * dropping `on*` handlers and unsafe URL schemes on top.
- */
-const NOEMA_PASTE_ATTRS: readonly string[] = [
-  "href", "src", "alt", "title", "colspan", "rowspan", "lang", "class",
-  "style", "type", "checked", "open", "color", "emoji", "summary",
-  "data-block-color", "data-pm-slice", "data-type", "data-checked",
-  "data-language", "data-callout", "data-toggle", "data-columns",
-  "data-column", "data-toc", "data-caption", "data-summary",
-  "data-collapsed", "aria-expanded", "data-color",
-];
-
-/**
- * Structural tags the Noema paste normaliser maps to block nodes: the
- * sanitizer's defaults plus the wrappers/atoms `normalizePasteHtml` reads
- * (callout/toggle/columns `div`s, task-list `input`s, inline `span`/`mark`).
- */
-const NOEMA_PASTE_TAGS: readonly string[] = [
-  ...DEFAULT_ALLOWED_TAGS,
-  "div", "span", "ins", "mark", "font", "sub", "sup", "img", "input",
-];
-
-const NOEMA_PASTE_ATTR_MAP: Readonly<Record<string, readonly string[]>> =
-  Object.fromEntries(
-    NOEMA_PASTE_TAGS.map((tag): [string, readonly string[]] => [tag, NOEMA_PASTE_ATTRS]),
-  );
-
-/** The sanitized clipboard HTML plus the source fingerprint behind it. */
-export type CleanedClipboardHtml = {
-  /** Allowlist-sanitised HTML, safe to hand to `normalizePasteHtml`. */
-  html: string;
-  /** The clipboard source `detectSource` recognised. */
-  source: PasteSource;
-  /** The extra cleanup steps that source declares (`sourceCleanups`). */
-  cleanups: readonly PasteCleanupStep[];
-};
-
-/**
- * Route clipboard HTML through the paste-cleanup engine before it ever reaches
- * the document model: fingerprint the source (`detectSource`), read the
- * source-specific cleanup catalogue (`sourceCleanups`), collapse redundant mark
- * nesting, strip Word's `mso-*` inline noise, then harden everything through
- * `sanitizePaste`'s tag/attribute/URL allowlist.
- *
- * Only Word's clipboard triggers the inline-style strip: it is the one source
- * whose noise is both heavy and unambiguous. Noema's *own* copies carry
- * `data-block-id`, which `detectSource` fingerprints as Notion — stripping
- * every non-generic source would therefore erase real text colour on an
- * internal copy/paste, so GDocs/Notion keep their (now class/attr-limited)
- * markup.
- */
-export function cleanClipboardHtml(html: string): CleanedClipboardHtml {
-  const source = detectSource(html);
-  const cleanups = sourceCleanups(source);
-  const wantsStyleStrip = cleanups.some((step) => step.id === "word:mso-styles");
-  const deNoised = wantsStyleStrip
-    ? normalizeNestedMarks(stripInlineStyles(html))
-    : normalizeNestedMarks(html);
-  return {
-    html: sanitizePaste(deNoised, {
-      mode: "rich",
-      allowedTags: NOEMA_PASTE_TAGS,
-      allowedAttrs: NOEMA_PASTE_ATTR_MAP,
-    }),
-    source,
-    cleanups,
-  };
-}
-
-/** One clipboard file the editor can upload, described without the blob. */
-export type ClipboardFileDescriptor = {
-  name: string;
-  mimeType: string;
-  size: number;
-};
-
-/** A gated upload, tied back to the file or HTML data URL it came from. */
-export type ClipboardImageUpload = PasteUpload & {
-  /** Whether the bytes came from a real `File` or an HTML `data:` image. */
-  source: "file" | "data-url";
-  /** Index into the input `files` array (present for `source: "file"`). */
-  fileIndex?: number;
-  /** Base64 payload (present for `source: "data-url"`). */
-  data?: string;
-};
-
-/** What the clipboard-image pipeline will upload, and what it refused. */
-export type ClipboardImagePlan = {
-  uploads: ClipboardImageUpload[];
-  skipped: PasteSkip[];
-};
-
-/**
- * Run the clipboard-image engine over a paste: prefer real `File`s, otherwise
- * pull the first `data:image/*` out of the HTML flavour with `extractDataUrl`.
- * Every candidate is gated by `inspectClipboardItem` (allow-list, SVG safety,
- * size) and named/skipped by `planPaste` before any upload is attempted.
- * Pure: takes descriptors, returns a plan, never touches the network.
- */
-export function planClipboardImages(options: {
-  files: readonly ClipboardFileDescriptor[];
-  html?: string;
-  maxBytes?: number;
-  existingNames?: Iterable<string>;
-  now?: Date | number | string;
-}): ClipboardImagePlan {
-  type Candidate = ClipboardItem & { source: "file" | "data-url"; fileIndex?: number };
-  const candidates: Candidate[] = options.files.map((file, fileIndex) => ({
-    mimeType: file.mimeType,
-    size: file.size,
-    name: file.name,
-    source: "file",
-    fileIndex,
-  }));
-
-  if (candidates.length === 0) {
-    const extracted = extractDataUrl(options.html ?? "");
-    // A percent-encoded SVG carries no base64 payload, so its safety cannot be
-    // re-checked here; skip it rather than reject it as `unsafe-svg`.
-    if (extracted && !(extracted.mimeType === "image/svg+xml" && extracted.base64 === "")) {
-      candidates.push({
-        mimeType: extracted.mimeType,
-        size: extracted.size,
-        name: "",
-        source: "data-url",
-        ...(extracted.base64 !== "" ? { data: extracted.base64 } : {}),
-      });
-    }
-  }
-
-  const plan = planPaste({
-    items: candidates,
-    maxBytes: options.maxBytes,
-    existingNames: options.existingNames,
-    now: options.now,
-  });
-
-  // `planPaste` reports only counts, so re-run the same verdict per candidate to
-  // line each accepted upload back up with the bytes it should upload.
-  const uploads: ClipboardImageUpload[] = [];
-  let cursor = 0;
-  for (const candidate of candidates) {
-    const verdict = inspectClipboardItem(candidate, { maxBytes: options.maxBytes });
-    if (!verdict.accept) continue;
-    const upload = plan.uploads[cursor];
-    cursor += 1;
-    if (!upload) break;
-    uploads.push({
-      ...upload,
-      source: candidate.source,
-      ...(candidate.fileIndex !== undefined ? { fileIndex: candidate.fileIndex } : {}),
-      ...(candidate.data !== undefined ? { data: candidate.data } : {}),
-    });
-  }
-  return { uploads, skipped: plan.skipped };
-}
-
-/* --------------------------------------------------------- block selection/move */
-
-/** The top-level block ids of a document, in document order. */
-export function topLevelBlockIds(doc: PMNode): string[] {
-  const ids: string[] = [];
-  doc.forEach((node) => {
-    const id = node.attrs?.id;
-    ids.push(typeof id === "string" ? id : "");
-  });
-  return ids;
-}
-
-/** The id of the top-level block containing `pos`, or `null`. */
-function blockIdAt(doc: PMNode, pos: number): string | null {
-  let found: string | null = null;
-  doc.forEach((node, offset) => {
-    if (found !== null) return;
-    if (pos >= offset && pos <= offset + node.nodeSize) {
-      const id = node.attrs?.id;
-      found = typeof id === "string" && id !== "" ? id : null;
-    }
-  });
-  return found;
-}
-
-/**
- * Every block id nested inside the top-level block `id`, depth-first. Used to
- * seed the invalid-drop decision: a block may never be dropped into its own
- * subtree, so the editor needs that set before the first `dragover`.
- */
-function descendantBlockIds(doc: PMNode, id: string): string[] {
-  const ids: string[] = [];
-  const walk = (node: PMNode) => {
-    node.forEach((child) => {
-      const childId = child.attrs?.id;
-      if (typeof childId === "string" && childId !== "") ids.push(childId);
-      walk(child);
-    });
-  };
-  doc.forEach((node) => {
-    if (node.attrs?.id === id) walk(node);
-  });
-  return ids;
-}
-
-/* ------------------------------------------------- block references (refs) */
-
-/**
- * Lift a ProseMirror node into the shared `Block` shape `src/lib/block-refs.ts`
- * reads, preserving a node's `refBlockId`/`refBlockIds` reference fields.
- */
-function pmNodeToReferenceBlock(node: PMNode): ReferenceBlock {
-  const id = typeof node.attrs?.id === "string" ? node.attrs.id : "";
-  const block: ReferenceBlock = { id, type: node.type.name };
-  const refBlockId = node.attrs?.refBlockId;
-  if (typeof refBlockId === "string" && refBlockId !== "") block.refBlockId = refBlockId;
-  const refBlockIds = node.attrs?.refBlockIds;
-  if (Array.isArray(refBlockIds)) {
-    const ids = refBlockIds.filter((value): value is string => typeof value === "string");
-    if (ids.length > 0) block.refBlockIds = ids;
-  }
-  const children: ReferenceBlock[] = [];
-  node.forEach((child) => {
-    if (child.isText) return;
-    children.push(pmNodeToReferenceBlock(child));
-  });
-  if (children.length > 0) block.children = children;
-  return block;
-}
-
-/**
- * The document's block-reference view: the same tree `page-editor` uses for
- * block ids, projected into the `block-refs.ts` engine so its helpers own the
- * reference bookkeeping. Pure — the ProseMirror document is never mutated.
- */
-export function pmDocToReferenceBlocks(doc: PMNode): ReferenceBlock[] {
-  const blocks: ReferenceBlock[] = [];
-  doc.forEach((node) => blocks.push(pmNodeToReferenceBlock(node)));
-  return blocks;
-}
-
-/** The canonical id → block index for a document (`collectBlocks`). */
-export function blockReferenceIndex(doc: PMNode): ReturnType<typeof collectBlocks> {
-  return collectBlocks(pmDocToReferenceBlocks(doc));
-}
-
-/** Every block that references another block (`extractReferences`). */
-export function blockReferenceEntries(doc: PMNode): ReturnType<typeof extractReferences> {
-  return extractReferences(pmDocToReferenceBlocks(doc));
-}
-
-/** Referenced block ids the document does not contain (`missingReferences`). */
-export function brokenBlockReferences(doc: PMNode): string[] {
-  return missingReferences(pmDocToReferenceBlocks(doc));
-}
-
-/** Resolve a referenced block's subtree (`resolveSynced`). */
-export function resolveBlockReference(doc: PMNode, blockId: string) {
-  return resolveSynced(pmDocToReferenceBlocks(doc), blockId);
-}
-
-/** The paste pair for a synced block reference (`copyReference`). */
-export function blockReferenceCopy(doc: PMNode, blockId: string) {
-  return copyReference(pmDocToReferenceBlocks(doc), blockId);
-}
-
-
-/**
- * Plan a multi-block drag reorder with `moveBlocks`: given the flat block ids,
- * the selected range and the destination index, return the new id order, or
- * `null` when fewer than two whole blocks are selected (the single-block
- * indent path keeps handling that case).
- */
-export function planBlockReorder(
-  blockIds: readonly string[],
-  range: MaybeRange,
-  targetIndex: number,
-): string[] | null {
-  const selected = resolveRange(blockIds, range);
-  if (selected.length < 2) return null;
-  const indices = selected.map((id) => blockIds.indexOf(id)).filter((index) => index >= 0);
-  if (indices.length < 2) return null;
-  const page: BlockPage = {
-    id: "page",
-    blocks: blockIds.map((id) => ({ id, type: "block" })),
-  };
-  const result = moveBlocks({ from: page, to: page }, { indices, targetIndex });
-  return result.toDoc.blocks.map((block) => block.id);
-}
-
-/** Reorder the document's top-level blocks to match `order` in one transaction. */
-function reorderTopLevelBlocks(view: EditorView, order: readonly string[]): void {
-  const doc = view.state.doc;
-  const byId = new Map<string, PMNode>();
-  doc.forEach((node) => {
-    const id = node.attrs?.id;
-    if (typeof id === "string") byId.set(id, node);
-  });
-  const nodes = order
-    .map((id) => byId.get(id))
-    .filter((node): node is PMNode => node !== undefined);
-  if (nodes.length !== doc.childCount) return;
-  view.dispatch(
-    view.state.tr.replaceWith(0, doc.content.size, Fragment.fromArray(nodes)),
-  );
-}
-
-/** Delete every top-level block whose id is in `ids` as one transaction. */
-function deleteBlocksByIds(view: EditorView, ids: readonly string[]): void {
-  const doc = view.state.doc;
-  const targets = new Set(ids);
-  let from = -1;
-  let to = -1;
-  doc.forEach((node, offset) => {
-    const id = node.attrs?.id;
-    if (typeof id === "string" && targets.has(id)) {
-      if (from === -1) from = offset;
-      to = offset + node.nodeSize;
-    }
-  });
-  if (from === -1 || to === -1) return;
-  const tr = view.state.tr;
-  // A document is `block+`: replacing the whole body with one empty paragraph
-  // keeps the schema valid when the range was the entire page.
-  if (from === 0 && to === doc.content.size) {
-    tr.replaceWith(0, doc.content.size, view.state.schema.nodes.paragraph.create());
-  } else {
-    tr.delete(from, to);
-  }
-  view.dispatch(tr.scrollIntoView());
-}
-
 /* ---------------------------------------------------------- block motion plugin */
 
 /** Id/offset view of a document's top-level blocks (ids come from BlockIds). */
@@ -843,147 +428,6 @@ const MathSafety = Extension.create({
     ];
   },
 });
-
-/** Build a browser `File` from a planned `data:` image upload. */
-function dataUrlUploadFile(upload: ClipboardImageUpload): File | null {
-  if (!upload.data) return null;
-  try {
-    const binary = atob(upload.data);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    return new File([bytes], upload.name, { type: upload.mimeType });
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Compact review chrome for Suggestions (track-changes) mode: a "Suggesting"
- * on/off toggle, a live pending count and per-item / bulk accept-reject.
- *
- * The `SmartSuggestions` plugin (registered through `InputRules.addExtensions`)
- * owns the base snapshot and the diff; this component is a pure view over it.
- * It re-renders on the editor's `transaction` event — the same hook
- * `HistoryControls` uses — so the count tracks the document even on changes
- * that do not originate from this control.
- */
-function SuggestionsControls({ editor, locale }: { editor: Editor; locale: string }) {
-  const [, force] = useState(0);
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    const update = () => force((n) => n + 1);
-    editor.on("transaction", update);
-    return () => {
-      editor.off("transaction", update);
-    };
-  }, [editor]);
-
-  const active = isSuggesting(editor.state);
-  const pending = pendingSuggestions(editor.state);
-
-  return (
-    <div
-      // Bottom-right, in the stack above the undo/redo bar. It used to be pinned
-      // to the bottom-*left* to stay out of the undo/redo bar's way, which put it
-      // straight on top of the sidebar footer — picking a corner the contract does
-      // not cover is not a way to avoid a collision, it just moves it. See
-      // `src/lib/floating-corner.ts`.
-      className={cn(
-        "fixed flex flex-col items-end gap-1 text-xs",
-        FLOATING_CORNER.suggest,
-      )}
-      style={{ zIndex: Z.sticky }}
-    >
-      {open && pending.length > 0 && (
-        <ul
-          aria-label={t(locale, "suggestionsWord")}
-          className="max-h-64 w-72 overflow-y-auto rounded-lg border border-border bg-bg p-1 shadow-lg"
-        >
-          {pending.map((suggestion) => (
-            <li
-              key={suggestion.id}
-              className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-surface-2"
-            >
-              <span
-                className="min-w-0 flex-1 truncate text-fg"
-                title={suggestionLabel(suggestion, locale)}
-              >
-                {suggestionLabel(suggestion, locale)}
-              </span>
-              <button
-                type="button"
-                aria-label={t(locale, "acceptSuggestion")}
-                title={t(locale, "acceptSuggestion")}
-                onClick={() => editor.chain().focus().acceptSuggestion(suggestion.id).run()}
-                className="rounded px-1 text-success hover:bg-surface"
-              >
-                ✓
-              </button>
-              <button
-                type="button"
-                aria-label={t(locale, "rejectSuggestion")}
-                title={t(locale, "rejectSuggestion")}
-                onClick={() => editor.chain().focus().rejectSuggestion(suggestion.id).run()}
-                className="rounded px-1 text-danger hover:bg-surface"
-              >
-                ✕
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <div className="flex items-center gap-1 rounded-lg border border-border bg-bg p-1 shadow-lg">
-        <button
-          type="button"
-          aria-pressed={active}
-          aria-label={t(locale, "suggestingWord")}
-          title={t(locale, "suggestingWord")}
-          onClick={() => {
-            editor.chain().focus().setSuggesting(!active).run();
-            if (active) setOpen(false);
-          }}
-          className={`flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-surface-2 ${
-            active ? "text-success" : "text-muted"
-          }`}
-        >
-          <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-success" : "bg-muted"}`} />
-          {t(locale, "suggestingWord")}
-        </button>
-
-        {pending.length > 0 && (
-          <>
-            <button
-              type="button"
-              aria-expanded={open}
-              aria-label={t(locale, "reviewSuggestions")}
-              title={t(locale, "reviewSuggestions")}
-              onClick={() => setOpen((value) => !value)}
-              className="rounded bg-surface px-1.5 py-0.5 text-fg hover:bg-surface-2"
-            >
-              {pending.length} {t(locale, "pendingWord")}
-            </button>
-            <button
-              type="button"
-              onClick={() => editor.chain().focus().acceptAll().run()}
-              className="rounded px-1.5 py-0.5 text-success hover:bg-surface-2"
-            >
-              {t(locale, "acceptAllSuggestions")}
-            </button>
-            <button
-              type="button"
-              onClick={() => editor.chain().focus().rejectAll().run()}
-              className="rounded px-1.5 py-0.5 text-danger hover:bg-surface-2"
-            >
-              {t(locale, "rejectAllSuggestions")}
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
 
 export function PageEditor({
   locale = "en",

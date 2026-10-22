@@ -1,5 +1,5 @@
 import { Extension } from "@tiptap/core";
-import { HUE_NAMES, hueInk, hueLabel, hueSurface } from "@/lib/palette";
+import { TAG_SEQUENCE, hueInk, hueLabel, hueSurface } from "@/lib/palette";
 import type { TagHue } from "@/lib/design-tokens";
 
 /**
@@ -31,11 +31,11 @@ export const BLOCK_COLOR_TYPES = [
  * keeps light / dark / high-contrast working from a single source instead of a
  * literal hex per row.
  */
-export const BLOCK_COLOR_HUES = HUE_NAMES.filter(
+export const BLOCK_COLOR_ORDER = TAG_SEQUENCE.filter(
   (hue): hue is Exclude<TagHue, "teal"> => hue !== "teal",
 );
 
-export type BlockColorHue = (typeof BLOCK_COLOR_HUES)[number];
+export type BlockColorHue = (typeof BLOCK_COLOR_ORDER)[number];
 
 /** One palette row: a stable persisted id plus the tag hue that paints it. */
 export type BlockColorEntry = {
@@ -74,9 +74,9 @@ export type BlockColorEntry = {
  */
 
 /** The nine tints Notion offers, plus Default (which clears the colour). */
-export const BLOCK_COLORS: BlockColorEntry[] = [
+export const BLOCK_COLOR_CATALOGUE: BlockColorEntry[] = [
   { label: "Default", value: null, hue: null, tint: "transparent" },
-  ...BLOCK_COLOR_HUES.map((hue): BlockColorEntry => ({
+  ...BLOCK_COLOR_ORDER.map((hue): BlockColorEntry => ({
     label: hueLabel(hue),
     value: hue,
     hue,
@@ -88,12 +88,12 @@ export const BLOCK_COLORS: BlockColorEntry[] = [
  * The tag hue a stored block-colour id paints with, or `null` when the id is
  * missing / unknown (a block that is not tinted, or data from an older
  * catalogue). Reads the catalogue rather than assuming id === hue, so renaming
- * a hue only touches {@link BLOCK_COLORS}.
+ * a hue only touches {@link BLOCK_COLOR_CATALOGUE}.
  */
 export function blockColorHue(id: string | null | undefined): BlockColorHue | null {
   if (typeof id !== "string") return null;
   const key = id.trim().toLowerCase();
-  const entry = BLOCK_COLORS.find((candidate) => candidate.value === key);
+  const entry = BLOCK_COLOR_CATALOGUE.find((candidate) => candidate.value === key);
   return entry?.hue ?? null;
 }
 

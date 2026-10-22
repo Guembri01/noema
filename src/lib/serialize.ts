@@ -7,7 +7,7 @@
 
 import { docToMarkdown, type BlockDoc, type RichNode } from "./blocks";
 import { formatCaption } from "./code-block";
-import { HUE_NAMES } from "./palette";
+import { TAG_SEQUENCE } from "./palette";
 import { DEFAULT_PULL_QUOTE_SIZE, isPullQuoteSize } from "./pull-quote";
 import { sanitizeHref } from "./validation";
 
@@ -268,7 +268,7 @@ function escapeHtml(value: string): string {
  * foreground tokens (`var(--tag-<hue>-fg)`) the editor writes, and a plain
  * hex value for a document stored before the token migration.
  */
-const ALLOWED_STYLE_COLORS = new Set(HUE_NAMES.map((hue) => `var(--tag-${hue}-fg)`));
+const ALLOWED_STYLE_COLORS = new Set(TAG_SEQUENCE.map((hue) => `var(--tag-${hue}-fg)`));
 
 /** `#rgb`, `#rgba`, `#rrggbb` or `#rrggbbaa` - the legacy stored colour form. */
 const HEX_COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;

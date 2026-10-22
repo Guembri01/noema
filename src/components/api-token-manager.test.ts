@@ -27,7 +27,7 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-import { isTagHue, TAG_HUES } from "@/lib/design-tokens";
+import { isTagHue, TAG_PALETTE } from "@/lib/design-tokens";
 import { API_SCOPE_IDS } from "@/lib/api-token-scope";
 import { ApiTokensPanel } from "./api-tokens-panel";
 import {
@@ -83,7 +83,7 @@ describe("scopeHue", () => {
   it("only ever emits a known tag hue", () => {
     for (const id of API_SCOPE_IDS) expect(isTagHue(scopeHue(id))).toBe(true);
     for (const hue of Object.values(SCOPE_RESOURCE_HUES)) {
-      expect(TAG_HUES).toContain(hue);
+      expect(TAG_PALETTE).toContain(hue);
     }
   });
 });

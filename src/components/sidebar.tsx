@@ -239,7 +239,7 @@ export function Sidebar({
                 aria-selected={active}
                 onClick={() => setTab(item.id)}
                 className={cn(
-                  "focus-ring u-interactive u-colors flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium",
+                  "focus-ring u-interactive u-colors flex min-w-0 flex-1 items-center justify-center gap-0.5 rounded-md px-1 py-1 text-2xs font-medium",
                   active
                     ? "bg-surface-2 text-fg"
                     : "text-muted hover:bg-surface-2",

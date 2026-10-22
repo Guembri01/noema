@@ -53,7 +53,7 @@ export type SelectOption = {
   keywords?: readonly string[];
   /** Not pickable; skipped by keyboard navigation and clicks. */
   disabled?: boolean;
-  /** A tag hue (`TAG_HUES`) rendered as a coloured chip on the row. */
+  /** A tag hue (`TAG_PALETTE`) rendered as a coloured chip on the row. */
   tag?: string | null;
   /** Leading affordance (icon / emoji / avatar). */
   icon?: React.ReactNode;
@@ -787,7 +787,7 @@ export function Select(props: SelectProps) {
           onClick={() => (open ? closeMenu() : openMenu())}
           onKeyDown={handleKeyDown}
           className={cn(
-            "u-interactive u-colors focus-ring relative flex w-full items-center gap-2 rounded-sm border border-border bg-bg px-2 text-start text-fg",
+            "u-interactive u-colors focus-ring relative flex w-full items-center gap-2 rounded-sm border border-control bg-bg px-2 text-start text-fg",
             SIZE_CLASS[size],
             "hover:bg-surface-2",
             "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-bg",
@@ -887,7 +887,7 @@ export function Select(props: SelectProps) {
             )}
           >
             {searchable ? (
-              <div className="mb-1 flex items-center gap-2 rounded-sm border border-border px-2">
+              <div className="mb-1 flex items-center gap-2 rounded-sm border border-control px-2">
                 <Search aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted" />
                 <input
                   autoFocus

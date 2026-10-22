@@ -143,6 +143,8 @@ export type ViewConfig = {
   numberFormat?: unknown;
   /** TABLE: the serialized column layout (order / widths / hidden). */
   columnLayout?: string;
+  /** TABLE: row density (`short` / `medium` / `tall`). */
+  rowHeight?: string;
   /**
    * BOARD: per-column visibility keyed by group id (option id, or the "no
    * value" group key). A key mapped to `false` hides that column; a missing key
@@ -337,7 +339,7 @@ export const STATUS_GROUP_NAMES: Record<StatusGroup, string> = {
   done: "Done",
 };
 
-export const STATUS_GROUP_COLORS: Record<StatusGroup, string> = {
+export const STATUS_GROUP_APPEARANCE: Record<StatusGroup, string> = {
   todo: "gray",
   doing: "yellow",
   done: "green",
@@ -379,7 +381,7 @@ export function statusGroupColumns(
   const columns: RowGroup[] = STATUS_GROUPS.map((id) => ({
     id,
     name: STATUS_GROUP_NAMES[id],
-    color: STATUS_GROUP_COLORS[id],
+    color: STATUS_GROUP_APPEARANCE[id],
     rows: [],
   }));
   const noValue: RowGroup = { id: "__none", name: noValueName, color: "gray", rows: [] };

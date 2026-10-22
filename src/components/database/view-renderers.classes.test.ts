@@ -21,7 +21,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 }));
 
-import { TAG_HUES } from "@/lib/design-tokens";
+import { TAG_PALETTE } from "@/lib/design-tokens";
 import {
   CARD_LIFT,
   SKELETON_COUNTS,
@@ -148,7 +148,7 @@ describe("board card lift & drag motion", () => {
 describe("gallery badges & skeletons", () => {
   it("picks a deterministic hue from the tag palette", () => {
     const hue = galleryBadgeHue("status");
-    expect(TAG_HUES).toContain(hue);
+    expect(TAG_PALETTE).toContain(hue);
     expect(galleryBadgeHue("status")).toBe(hue);
     expect(galleryBadgeHue("")).toBe(galleryBadgeHue(""));
   });

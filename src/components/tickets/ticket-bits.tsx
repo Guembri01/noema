@@ -7,7 +7,7 @@ import {
 import { formatRemaining, type SlaStatus } from "@/lib/sla-timer";
 import { statusMeta } from "@/lib/tickets";
 import { cn } from "@/lib/utils";
-import { LABEL_TONES } from "./ticket-types";
+import { LABEL_APPEARANCE } from "./ticket-types";
 
 /** SLA grades reuse the status palette so the chip reads at a glance. */
 const SLA_TONES: Record<SlaStatus, string> = {
@@ -21,7 +21,7 @@ export function LabelChip({ name, color }: { name: string; color: string }) {
     <span
       className={cn(
         "rounded px-1.5 py-0.5 text-3xs font-medium",
-        LABEL_TONES[color] ?? LABEL_TONES.gray,
+        LABEL_APPEARANCE[color] ?? LABEL_APPEARANCE.gray,
       )}
     >
       {name}
@@ -35,7 +35,7 @@ export function StatusPill({ status }: { status: string }) {
     <span
       className={cn(
         "rounded-full px-2 py-0.5 text-3xs font-medium uppercase",
-        LABEL_TONES[meta.color] ?? LABEL_TONES.gray,
+        LABEL_APPEARANCE[meta.color] ?? LABEL_APPEARANCE.gray,
       )}
     >
       {meta.label}

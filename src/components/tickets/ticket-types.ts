@@ -30,7 +30,7 @@ export type TicketRow = {
 
 export type LabelRow = { id: string; name: string; color: string; count: number };
 
-export const LABEL_TONES: Record<string, string> = {
+export const LABEL_APPEARANCE: Record<string, string> = {
   gray: "bg-surface-2 text-muted",
   blue: "bg-[var(--tag-blue-bg)] text-[var(--tag-blue-fg)]",
   green: "bg-[var(--tag-green-bg)] text-[var(--tag-green-fg)]",

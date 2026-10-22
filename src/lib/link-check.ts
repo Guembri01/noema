@@ -34,7 +34,7 @@ export type LinkKind =
   | "invalid";
 
 /** Every {@link LinkKind}, in a stable order for tests and pickers. */
-export const LINK_KINDS = [
+export const URL_TYPES = [
   "page",
   "anchor",
   "external",
@@ -48,7 +48,7 @@ export const LINK_KINDS = [
  * Schemes a link may declare. Mirrors `ALLOWED_HREF_SCHEMES` in
  * `src/lib/validation.ts`; anything else is `"unsafe"`.
  */
-export const SAFE_LINK_SCHEMES = ["http", "https", "mailto", "tel"] as const;
+export const SAFE_URL_PROTOCOLS = ["http", "https", "mailto", "tel"] as const;
 
 /** Context that refines `"page"` vs `"external"`; both fields are optional. */
 export type LinkContext = {
@@ -76,7 +76,7 @@ function clean(raw: unknown): string | null {
 /**
  * True when a cleaned value cannot be handed to a renderer: protocol-relative
  * (`//host`, `\\host`) targets, an encoded colon hiding a scheme, or an
- * explicit scheme outside {@link SAFE_LINK_SCHEMES}.
+ * explicit scheme outside {@link SAFE_URL_PROTOCOLS}.
  */
 function isUnsafeValue(value: string): boolean {
   if (/^[\\/]{2}/.test(value)) return true;
@@ -85,7 +85,7 @@ function isUnsafeValue(value: string): boolean {
   const scheme = SCHEME.exec(value);
   return (
     scheme !== null &&
-    !(SAFE_LINK_SCHEMES as readonly string[]).includes(scheme[1].toLowerCase())
+    !(SAFE_URL_PROTOCOLS as readonly string[]).includes(scheme[1].toLowerCase())
   );
 }
 

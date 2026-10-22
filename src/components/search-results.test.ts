@@ -55,7 +55,7 @@ const {
 type SearchResultsProps = Parameters<typeof SearchResults>[0];
 type SearchRow = import("./search-results").SearchRow;
 
-const { TAG_HUES } = await import("@/lib/design-tokens");
+const { TAG_PALETTE } = await import("@/lib/design-tokens");
 
 /* -------------------------------------------------------------------------- */
 /* 1. Pure mappings                                                           */
@@ -81,7 +81,7 @@ describe("resultTypeHue — result type → tag palette", () => {
   it("falls back to gray and never leaks an unknown hue", () => {
     expect(resultTypeHue("TICKET")).toBe("gray");
     for (const type of [...SEARCH_RESULT_TYPES, "TICKET", ""]) {
-      expect(TAG_HUES).toContain(resultTypeHue(type));
+      expect(TAG_PALETTE).toContain(resultTypeHue(type));
     }
   });
 });

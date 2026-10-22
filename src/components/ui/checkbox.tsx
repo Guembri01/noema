@@ -147,7 +147,7 @@ export function Checkbox({
                 ? "border-danger"
                 : filled
                   ? "border-accent"
-                  : "border-border-strong",
+                  : "border-control",
             )}
           />
           <span

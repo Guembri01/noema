@@ -8,7 +8,7 @@
  * token layer — this file is the single façade over them, so a hue is declared
  * once and both catalogues resolve through the same lookups.
  *
- * The list itself is {@link HUE_NAMES}, a re-export of `TAG_HUES` from
+ * The list itself is {@link TAG_SEQUENCE}, a re-export of `TAG_PALETTE` from
  * `@/lib/design-tokens` (the CSS variables in `tokens.css` are the real source;
  * `design-tokens.test.ts` keeps the two in sync). Everything here is pure and
  * fail-soft: a missing or unknown hue reads as `gray` so a swatch can never be
@@ -19,13 +19,13 @@
  * lookup that turns them into a token moved here.
  */
 
-import { TAG_HUES, isTagHue, type TagHue } from "@/lib/design-tokens";
+import { TAG_PALETTE, isTagHue, type TagHue } from "@/lib/design-tokens";
 
 /** Every hue the tag palette defines, in menu order (the single hue list). */
-export const HUE_NAMES = TAG_HUES;
+export const TAG_SEQUENCE = TAG_PALETTE;
 
 /** Human labels for each hue (used by the block-colour menu). */
-export const HUE_LABELS: Record<TagHue, string> = {
+export const TAG_LABELS_BY_NAME: Record<TagHue, string> = {
   gray: "Gray",
   brown: "Brown",
   orange: "Orange",
@@ -69,5 +69,5 @@ export function hueEdge(hue: string | null | undefined): string {
 
 /** The display label for a hue, defaulting to gray's. */
 export function hueLabel(hue: string | null | undefined): string {
-  return HUE_LABELS[normalizeHue(hue)];
+  return TAG_LABELS_BY_NAME[normalizeHue(hue)];
 }

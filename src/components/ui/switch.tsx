@@ -133,7 +133,7 @@ export function Switch({
               FOCUS_RING,
               checked
                 ? "border-accent bg-accent"
-                : "border-border-strong bg-surface-3",
+                : "border-control bg-surface-3",
             )}
           />
           <span

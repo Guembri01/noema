@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { TAG_HUES } from "@/lib/design-tokens";
+import { TAG_PALETTE } from "@/lib/design-tokens";
 import {
   TAG_REMOVAL_IDLE,
   Tag,
@@ -21,8 +21,8 @@ const render = (props: Parameters<typeof Tag>[0]) =>
 
 describe("hue palette via tagStyle/tagClass", () => {
   it("renders every one of the ten hues with its CSS variables", () => {
-    expect(TAG_HUES).toHaveLength(10);
-    for (const hue of TAG_HUES) {
+    expect(TAG_PALETTE).toHaveLength(10);
+    for (const hue of TAG_PALETTE) {
       const html = render({ hue, children: hue });
       expect(html).toContain(`--tag-${hue}-fg`);
       expect(html).toContain(`--tag-${hue}-bg`);

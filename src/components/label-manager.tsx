@@ -10,8 +10,8 @@ import {
   updateLabelAction,
 } from "@/server/actions/tickets";
 import { safeAction } from "@/lib/actions-client";
-import { LABEL_COLORS } from "@/lib/tickets";
-import { TAG_HUES, tagStyle, type TagHue } from "@/lib/design-tokens";
+import { LABEL_STYLES } from "@/lib/tickets";
+import { TAG_PALETTE, tagStyle, type TagHue } from "@/lib/design-tokens";
 import { allocateSlugs, uniqueSlug } from "@/lib/slug-uniqueness";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
@@ -35,16 +35,16 @@ import { Tag as TagChip } from "@/components/ui/tag";
  * ------------------------------------------------------------------------- */
 
 /** The 10 tag-palette hues a label swatch may paint with. */
-export const LABEL_HUE_TOKENS: readonly TagHue[] = TAG_HUES;
+export const LABEL_HUE_TOKENS: readonly TagHue[] = TAG_PALETTE;
 
 /**
  * Resolve a stored label colour to a tag-palette hue. The persisted domain
- * (`LABEL_COLORS`) is a subset of the 10 tokens; anything else (including a
+ * (`LABEL_STYLES`) is a subset of the 10 tokens; anything else (including a
  * future hue the server does not know yet) reads as `gray` so a chip is never
  * unstyled.
  */
 export function labelHue(color: unknown): TagHue {
-  return typeof color === "string" && (TAG_HUES as readonly string[]).includes(color)
+  return typeof color === "string" && (TAG_PALETTE as readonly string[]).includes(color)
     ? (color as TagHue)
     : "gray";
 }
@@ -105,7 +105,7 @@ function slugForName(
 
 /**
  * Colour swatch picker for labels. The grid is a radiogroup over the persisted
- * `LABEL_COLORS` values, so the stored value domain and CRUD are unchanged,
+ * `LABEL_STYLES` values, so the stored value domain and CRUD are unchanged,
  * while each swatch is painted from the tag token palette (`labelSwatchStyle`)
  * — no raw hex anywhere.
  */
@@ -125,7 +125,7 @@ function LabelColorPicker({
   };
   return (
     <div role="radiogroup" aria-label={ariaLabel} className="flex flex-wrap items-center gap-1">
-      {LABEL_COLORS.map((option) => {
+      {LABEL_STYLES.map((option) => {
         const active = option === selected;
         return (
           <Button
@@ -196,7 +196,7 @@ export function LabelManager({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [name, setName] = useState("");
-  const [color, setColor] = useState<string>(TAG_HUES[5]);
+  const [color, setColor] = useState<string>(TAG_PALETTE[5]);
   const [description, setDescription] = useState("");
   const [renamedSlug, setRenamedSlug] = useState<Record<string, string>>({});
   const [deleteTarget, setDeleteTarget] = useState<LabelManagerRow | null>(null);

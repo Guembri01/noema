@@ -34,7 +34,7 @@ import { runAiSkill } from "@/lib/ai-client";
 import { COMMENT_EVENT } from "@/components/comment-panel";
 import { EQUATION_EVENT } from "@/components/editor/equation-editor";
 import {
-  BLOCK_COLORS,
+  BLOCK_COLOR_CATALOGUE,
   BLOCK_COLOR_TYPES,
 } from "@/components/editor/extensions/block-colors";
 import {
@@ -259,7 +259,7 @@ export function BlockColorMenu({
       <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted">
         {t(locale, "backgroundLabel")}
       </p>
-      {BLOCK_COLORS.map((color) => (
+      {BLOCK_COLOR_CATALOGUE.map((color) => (
         <DropdownMenuItem
           key={color.label}
           className={COLOR_ITEM_CLASS}
@@ -699,13 +699,8 @@ export function BlockContextMenu({
         <DropdownMenuTrigger asChild>
           <span
             aria-hidden
-            style={{
-              position: "fixed",
-              left: point.x,
-              top: point.y,
-              width: 0,
-              height: 0,
-            }}
+            className="fixed h-0 w-0"
+            style={{ left: point.x, top: point.y }}
           />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56">

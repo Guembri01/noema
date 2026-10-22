@@ -26,9 +26,10 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const SCRIPT = new URL("./check-commit-dates.mjs", import.meta.url).pathname;
+const SCRIPT = fileURLToPath(new URL("./check-commit-dates.mjs", import.meta.url));
 
 /** A window that is closed: Saturday 2026-10-17 19:30 Europe/Paris. */
 const IN_WINDOW = "2026-10-17T17:30:00Z";

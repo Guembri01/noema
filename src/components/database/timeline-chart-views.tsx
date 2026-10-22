@@ -61,7 +61,7 @@ import {
 } from "@/lib/calendar-multiday";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
-import { TAG_HUES, isTagHue, tagStyle, type TagHue } from "@/lib/design-tokens";
+import { TAG_PALETTE, isTagHue, tagStyle, type TagHue } from "@/lib/design-tokens";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -456,7 +456,7 @@ export function calendarEventHue(id: string): TagHue {
   for (let index = 0; index < id.length; index += 1) {
     hash = (hash * 31 + id.charCodeAt(index)) >>> 0;
   }
-  return TAG_HUES[hash % TAG_HUES.length];
+  return TAG_PALETTE[hash % TAG_PALETTE.length];
 }
 
 /**
