@@ -22,8 +22,9 @@ import {
 } from "@/server/queries";
 import { getPageReferences, type PageReferences } from "@/server/backlinks";
 import { PageTitle } from "@/components/page-title";
-import { CommentPanel, type CommentNode } from "@/components/comment-panel";
-import { Backlinks } from "@/components/backlinks";
+import type { CommentNode } from "@/components/comment-panel";
+import { DeferredCommentPanel } from "@/components/deferred-comment-panel";
+import { DeferredBacklinks } from "@/components/deferred-backlinks";
 import { VersionHistory } from "@/components/version-history";
 import { loadVersionAuthors } from "@/server/version-authors";
 import type {
@@ -301,7 +302,7 @@ export default async function PageRoute({
 
       <Suspense
         fallback={
-          <Backlinks
+          <DeferredBacklinks
             items={[]}
             workspaceSlug={workspace.slug}
             locale={locale}
@@ -350,7 +351,7 @@ export default async function PageRoute({
         />
       </section>
 
-      <CommentPanel
+      <DeferredCommentPanel
           locale={locale}
         pageId={page.id}
         comments={comments}
@@ -383,7 +384,7 @@ async function PageReferencesPanel({
   const data = await references.catch(() => null);
   if (data === null) {
     return (
-      <Backlinks
+      <DeferredBacklinks
         items={[]}
         workspaceSlug={workspaceSlug}
         locale={locale}
@@ -393,7 +394,7 @@ async function PageReferencesPanel({
     );
   }
   return (
-    <Backlinks
+    <DeferredBacklinks
       items={data.linked}
       unlinked={data.unlinked}
       workspaceSlug={workspaceSlug}

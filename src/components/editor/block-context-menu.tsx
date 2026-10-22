@@ -31,8 +31,7 @@ import {
 import { PromptDialog } from "@/components/prompt-dialog";
 import { AI_SKILLS, type AiSkillId } from "@/lib/ai-skills";
 import { runAiSkill } from "@/lib/ai-client";
-import { COMMENT_EVENT } from "@/components/comment-panel";
-import { EQUATION_EVENT } from "@/components/editor/equation-editor";
+import { COMMENT_EVENT, EQUATION_EVENT } from "@/lib/editor-events";
 import {
   BLOCK_COLOR_CATALOGUE,
   BLOCK_COLOR_TYPES,

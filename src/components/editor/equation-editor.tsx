@@ -3,6 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import katex from "katex";
+import { EQUATION_EVENT, type EquationRequest } from "@/lib/editor-events";
 import type { Editor } from "@tiptap/react";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -49,13 +50,8 @@ import {
  * the snippet's `$0` placeholder asked for it.
  */
 
-export const EQUATION_EVENT = "noema:equation";
-
-export type EquationRequest = {
-  kind: "inline" | "block";
-  latex?: string;
-  pos?: number | null;
-};
+export { EQUATION_EVENT } from "@/lib/editor-events";
+export type { EquationRequest } from "@/lib/editor-events";
 
 /** Display headings for the palette's sections, in `MATH_CATEGORIES` order. */
 const CATEGORY_LABELS: Record<MathCategory, string> = {

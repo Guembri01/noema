@@ -45,7 +45,7 @@ import { Z } from "@/lib/design-tokens";
 import { placeFloating } from "@/lib/floating";
 import { Kbd } from "@/components/ui/kbd";
 import { EmptyState } from "@/components/ui/empty-state";
-import { EQUATION_EVENT } from "@/components/editor/equation-editor";
+import { EQUATION_EVENT } from "@/lib/editor-events";
 import { t } from "@/lib/i18n";
 import { BLOCK_TYPES } from "@/lib/block-conversion";
 import {

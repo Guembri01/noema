@@ -51,6 +51,7 @@ import { resolveAvatar, type Avatar as ResolvedAvatar } from "@/lib/avatars";
 import { cn } from "@/lib/utils";
 import { parseCommentBody, toPlainText, type CommentSegment } from "@/lib/comment-body";
 import { extractMentions } from "@/lib/comments";
+import { COMMENT_EVENT } from "@/lib/editor-events";
 import { t } from "@/lib/i18n";
 import { formatRelativeTime } from "@/lib/i18n-format";
 import { stableTime } from "@/lib/time";
@@ -104,7 +105,7 @@ export type CommentNode = {
 };
 
 /** Custom event the editor fires when "Comment" is pressed. */
-export const COMMENT_EVENT = "noema:comment";
+export { COMMENT_EVENT } from "@/lib/editor-events";
 
 /**
  * How long the composer keeps its accent flash after the editor hands it a

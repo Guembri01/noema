@@ -27,8 +27,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { COMMENT_EVENT } from "@/components/comment-panel";
-import { EQUATION_EVENT } from "@/components/editor/equation-editor";
+import { COMMENT_EVENT, EQUATION_EVENT } from "@/lib/editor-events";
 import { AI_SKILLS, type AiSkillId } from "@/lib/ai-skills";
 import { runAiSkill } from "@/lib/ai-client";
 import { Tooltip } from "@/components/ui/tooltip";
