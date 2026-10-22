@@ -561,7 +561,6 @@ export function GalleryView({
    that is actually rendered.
    --------------------------------------------------------------------------- */
 
-export { CalendarView } from "./timeline-chart-views";
 
 /* ---------------------------------------------------------------------------
    Form view

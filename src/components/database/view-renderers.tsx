@@ -18,4 +18,3 @@ export {
 } from "./gallery-view";
 export { PropertyPanel } from "./property-panel";
 export { FormView, resolveFormPlan, type FormPlan } from "./form-view";
-export { CalendarView } from "./timeline-chart-views";

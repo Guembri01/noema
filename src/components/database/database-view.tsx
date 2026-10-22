@@ -1,5 +1,7 @@
 "use client";
 
+import dynamic from "next/dynamic";
+
 import {
   useEffect,
   useMemo,
@@ -117,7 +119,6 @@ import {
   type DBProperty,
   type DBRow,
   type DBView } from "@/components/database/database-types";
-import { ChartView, TimelineView } from "@/components/database/timeline-chart-views";
 import {
   DatabaseViewTabs,
   VIEW_TYPES,
@@ -126,7 +127,6 @@ import {
 import { DatabaseViewToolbar } from "@/components/database/view-toolbar";
 import { DatabasePeek } from "@/components/database/database-peek";
 import { DatabaseActions } from "@/components/database/database-actions";
-import { PropertyOptionsEditor } from "@/components/database/property-options-editor";
 import { Dialog } from "@/components/ui/dialog";
 import { t } from "@/lib/i18n";
 import {
@@ -148,14 +148,52 @@ import {
   ListView,
   BoardView,
   GalleryView,
-  CalendarView,
-  FormView,
   resolveTableRowHeight,
   skeletonCount,
   type TableFooterCalculation,
   type TableRowHeight,
   type ViewKind,
 } from "./view-renderers";
+
+function ViewFallback() {
+  return <Skeleton variant="table" rows={6} cols={4} />;
+}
+
+const LazyCalendarView = dynamic(
+  () =>
+    import("@/components/database/timeline-chart-views").then((mod) => ({
+      default: mod.CalendarView,
+    })),
+  { ssr: false, loading: () => <ViewFallback /> },
+);
+const LazyTimelineView = dynamic(
+  () =>
+    import("@/components/database/timeline-chart-views").then((mod) => ({
+      default: mod.TimelineView,
+    })),
+  { ssr: false, loading: () => <ViewFallback /> },
+);
+const LazyChartView = dynamic(
+  () =>
+    import("@/components/database/timeline-chart-views").then((mod) => ({
+      default: mod.ChartView,
+    })),
+  { ssr: false, loading: () => <ViewFallback /> },
+);
+const LazyFormView = dynamic(
+  () =>
+    import("@/components/database/form-view").then((mod) => ({
+      default: mod.FormView,
+    })),
+  { ssr: false, loading: () => <ViewFallback /> },
+);
+const LazyPropertyOptionsEditor = dynamic(
+  () =>
+    import("@/components/database/property-options-editor").then((mod) => ({
+      default: mod.PropertyOptionsEditor,
+    })),
+  { ssr: false },
+);
 
 export {
   COLOR_CHOICES,
@@ -2105,7 +2143,7 @@ export function DatabaseView({
           onAddRow={editable ? addRow : undefined}
         />
       ) : activeView.type === "CALENDAR" ? (
-        <CalendarView
+        <LazyCalendarView
           locale={locale}
           workspaceSlug={workspaceSlug}
           properties={properties}
@@ -2113,7 +2151,7 @@ export function DatabaseView({
           valueFor={valueFor}
         />
       ) : activeView.type === "TIMELINE" ? (
-        <TimelineView
+        <LazyTimelineView
           locale={locale}
           workspaceSlug={workspaceSlug}
           properties={properties}
@@ -2121,7 +2159,7 @@ export function DatabaseView({
           editable={editable}
         />
       ) : activeView.type === "CHART" ? (
-        <ChartView
+        <LazyChartView
           locale={locale}
           properties={properties}
           rows={viewRows}
@@ -2130,7 +2168,7 @@ export function DatabaseView({
           aggregateFn={chartAggregate}
         />
       ) : activeView.type === "FORM" ? (
-        <FormView
+        <LazyFormView
           locale={locale}
           properties={properties}
           config={formConfig}
@@ -2256,7 +2294,7 @@ export function DatabaseView({
         }}
       >
         {optionsEditor && (
-          <PropertyOptionsEditor
+          <LazyPropertyOptionsEditor
             locale={locale}
             property={optionsEditor}
             onClose={() => setOptionsEditor(null)}
