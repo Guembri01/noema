@@ -9,6 +9,7 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
   Bell,
@@ -41,9 +42,6 @@ import {
   type PageMenuData,
 } from "@/server/actions/page-menu";
 import { setPageTeamspaceAction } from "@/server/actions/teamspaces";
-import { WhoHasAccess } from "@/components/who-has-access";
-import { ShareDialog } from "@/components/share-dialog";
-import { NotionImportDialog } from "@/components/notion-import-dialog";
 import { NavHistory } from "@/components/nav-history";
 import {
   Popover,
@@ -132,6 +130,19 @@ import {
   HEADER_SCROLL_HAIRLINE,
 } from "./page-title-model";
 export * from "./page-title-model";
+
+const ShareDialog = dynamic(
+  () => import("@/components/share-dialog").then((mod) => ({ default: mod.ShareDialog })),
+  { ssr: false },
+);
+const NotionImportDialog = dynamic(
+  () => import("@/components/notion-import-dialog").then((mod) => ({ default: mod.NotionImportDialog })),
+  { ssr: false },
+);
+const WhoHasAccess = dynamic(
+  () => import("@/components/who-has-access").then((mod) => ({ default: mod.WhoHasAccess })),
+  { ssr: false },
+);
 
 /**
  * Presentational props for {@link PageTitleRow}. Every handler and interactive
@@ -618,7 +629,9 @@ export function PageTitle({
   const [repositioning, setRepositioning] = useState(false);
   const [accessOpen, setAccessOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [shareLoaded, setShareLoaded] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [importLoaded, setImportLoaded] = useState(false);
   const [edited, setEdited] = useState<PageEditedInfo | null>(null);
   const [menuData, setMenuData] = useState<PageMenuData | null>(null);
   const [blocks, setBlocks] = useState<TextBlock[] | null>(null);
@@ -1130,7 +1143,10 @@ export function PageTitle({
         onToggleFavorite={toggleFavorite}
         onToggleFollow={toggleFollow}
         onCopyLink={() => void copyLink()}
-        onShare={() => setShareOpen(true)}
+        onShare={() => {
+          setShareLoaded(true);
+          setShareOpen(true);
+        }}
         navHistory={<NavHistory locale={locale} />}
         iconMenuLabel={
           showEmoji ? t(locale, "pickAnIcon") : t(locale, "pickACover")
@@ -1280,7 +1296,10 @@ export function PageTitle({
             onMoveTo={moveTo}
             onTrash={trash}
             onUndo={undoEditor}
-            onImport={() => setImportOpen(true)}
+            onImport={() => {
+              setImportLoaded(true);
+              setImportOpen(true);
+            }}
             onVersionHistory={scrollToHistory}
             onNotify={applyNotify}
             onWorkspaceMove={transferToWorkspace}
@@ -1379,21 +1398,25 @@ export function PageTitle({
           onClose={() => setAccessOpen(false)}
         />
       )}
-      <ShareDialog
-        open={shareOpen}
-        pageId={pageId}
-        token={shareToken}
-        locale={locale}
-        onTokenChange={setShareToken}
-        onClose={() => setShareOpen(false)}
-      />
-      <NotionImportDialog
-        open={importOpen}
-        onOpenChange={setImportOpen}
-        workspaceId={workspaceId}
-        slug={workspaceSlug}
-        locale={locale}
-      />
+      {shareLoaded && (
+        <ShareDialog
+          open={shareOpen}
+          pageId={pageId}
+          token={shareToken}
+          locale={locale}
+          onTokenChange={setShareToken}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
+      {importLoaded && (
+        <NotionImportDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          workspaceId={workspaceId}
+          slug={workspaceSlug}
+          locale={locale}
+        />
+      )}
     </header>
   );
 }
