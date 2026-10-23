@@ -84,9 +84,21 @@ describe("csv", () => {
     expect(csvEscape("a\nb")).toBe('"a\nb"');
   });
 
+  it("prefixes spreadsheet formula-like values, including after whitespace/control characters", () => {
+    for (const formula of ["=1+1", "+cmd", "-1+2", "@SUM(A1)", "  =1+1", "\t@SUM(A1)"]) {
+      expect(csvEscape(formula)).toBe(`'${formula}`);
+    }
+    expect(csvEscape("\r\n+1")).toBe("\"'\r\n+1\"");
+    expect(csvEscape(" ordinary = text")).toBe(" ordinary = text");
+  });
+
   it("builds a CRLF CSV with a header row", () => {
     const csv = matrixToCsv(["Name", "Status"], [["Alpha", "Done"], ["Beta, Inc", 'x"y']]);
     expect(csv).toBe('Name,Status\r\nAlpha,Done\r\n"Beta, Inc","x""y"\r\n');
+  });
+
+  it("neutralizes formula-like cells when building CSV", () => {
+    expect(matrixToCsv(["Name"], [["=1+1"]])).toBe("Name\r\n'=1+1\r\n");
   });
 });
 
