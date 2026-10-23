@@ -196,7 +196,7 @@ export const TWO_FACTOR_DISABLE_LABELS = {
 
 const STEP_BUBBLE: Record<StepVisualState, string> = {
   done: "border-success bg-success-soft text-success",
-  current: "border-accent bg-accent-soft text-accent",
+  current: "border-action bg-action-soft text-action",
   upcoming: "border-border bg-surface-2 text-muted",
 };
 
@@ -321,7 +321,7 @@ export function SecretBlock({
   return (
     <div
       data-testid="two-factor-secret"
-      className="rounded-md border border-border bg-surface-2 p-3"
+      className="rounded-card border border-border bg-surface-2 p-3"
     >
       <p className="text-xs font-medium text-muted">{secretLabel}</p>
       <div className="mt-1 flex items-center gap-2">

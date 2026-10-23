@@ -221,7 +221,7 @@ export function AnimatedImageView({ node, deleteNode, locale }: NodeViewProps & 
         )}
         {kind === "file" && fileHref !== null && (
           <a
-            className="noema-media-file inline-flex max-w-full items-center gap-2 rounded-md border border-[var(--border)] px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--hover)]"
+            className="noema-media-file inline-flex max-w-full items-center gap-2 rounded-control border border-[var(--border)] px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--hover)]"
             href={fileHref}
             download={alt || fileNameOf(src)}
             target="_blank"

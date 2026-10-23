@@ -530,12 +530,12 @@ function CollaborativePageEditor({
 
   if (failed) {
     return (
-      <div role="alert" className="m-6 rounded border border-border p-4">
+      <div role="alert" className="m-6 rounded-card border border-border p-4">
         <p>{t(props.locale ?? "en", "somethingWentWrong")}</p>
         <button
           type="button"
           onClick={() => setAttempt((value) => value + 1)}
-          className="focus-ring u-interactive mt-2 rounded border border-border px-2 py-1 text-sm hover:bg-surface-2"
+          className="focus-ring u-interactive mt-2 rounded-control border border-border px-2 py-1 text-sm hover:bg-surface-2"
         >
           {t(props.locale ?? "en", "retry")}
         </button>
@@ -1465,7 +1465,7 @@ function PageEditorBody({
   );
 
   if (!editor) {
-    return <div className="h-40 animate-pulse rounded bg-surface" />;
+    return <div className="h-40 animate-pulse rounded-card bg-surface" />;
   }
 
   // The bottom breathing room (30vh) belongs to the editable area itself — see
@@ -1535,7 +1535,7 @@ function PageEditorBody({
           role="status"
           aria-invalid
           aria-label={t(locale, "invalidDropTarget")}
-          className="pointer-events-none fixed flex items-center gap-1 rounded-sm border border-danger bg-danger-soft px-1.5 py-0.5 text-xs font-medium text-danger"
+          className="pointer-events-none fixed flex items-center gap-1 rounded-control border border-danger bg-danger-soft px-1.5 py-0.5 text-xs font-medium text-danger"
           style={{ left: dropRejection.x, top: dropRejection.y, zIndex: Z.drag }}
         >
           <span aria-hidden="true">⊘</span>
@@ -1591,7 +1591,7 @@ function PageEditorBody({
         )}
         {collab && (
           <span
-            className="flex items-center gap-1 rounded bg-surface px-1.5 py-0.5"
+            className="flex items-center gap-1 rounded-chip bg-surface px-1.5 py-0.5"
             data-collab-status={collabStatus}
           >
             <span
@@ -1604,7 +1604,7 @@ function PageEditorBody({
         )}
         {brokenRefs > 0 && (
           <span
-            className="pointer-events-auto flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-danger"
+            className="pointer-events-auto flex items-center gap-1 rounded-chip bg-surface px-1.5 py-0.5 text-danger"
             data-broken-refs={brokenRefs}
             title={t(locale, "somethingWentWrongDot")}
           >
@@ -1619,7 +1619,7 @@ function PageEditorBody({
             <button
               type="button"
               onClick={() => void runSave()}
-              className="rounded border border-border px-1 text-xs text-fg hover:bg-surface-2"
+              className="rounded-control border border-border px-1 text-xs text-fg hover:bg-surface-2"
             >
               {t(locale, "retry")}
             </button>

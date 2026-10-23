@@ -27,7 +27,11 @@ stop it from drifting.
 | Page / chrome | `bg` `sidebar` `surface` `surface-2` `surface-3` |
 | Lines | `border` (hairline) → `border-strong` (dividers, scrollbar thumb) → `border-control` (form-control boundary) |
 | Text | `fg` (primary) · `fg-subtle` (tertiary) · `muted` (secondary) |
-| Brand | `accent` `accent-fg` `accent-soft` `ring` `selection` |
+| Action | `action` `action-fg` `action-soft` (primary buttons, checked controls) |
+| Link / info | `accent` `accent-fg` `accent-soft` (links, informational badges, data viz) |
+| Focus | `focus` `focus-halo` `focus-border` `ring` (one neutral ring; `ring` is the compatibility alias) |
+| Selection | `selection` `selection-soft` `selection-strong` (text selection and selected rows/cells) |
+| Highlight | `highlight` `highlight-fg` (search / fuzzy-match marks) |
 | Status | `danger` `danger-fg` `danger-soft` · `success` `success-soft` · `warning` `warning-soft` · `overlay` (all inks clear AA on `bg`, `sidebar` and `surface`) |
 | Tags | `--tag-{gray,brown,orange,yellow,green,blue,purple,pink,red,teal}-{fg,bg,bd}` |
 
@@ -89,15 +93,21 @@ Density is user-selectable later; today the default is comfortable.
 
 | Token | Value | Used for |
 |---|---|---|
-| `rounded-xs` | 3 px | chips, kbd |
-| `rounded-sm` | 4 px | buttons, inputs, cells |
-| `rounded-md` | 6 px | cards, menus |
-| `rounded-lg` | 10 px | popovers, panels, modals |
-| `rounded-xl` | 14 px | large sheets |
+| `rounded-xs` | 4 px | kbd, tiny cells |
+| `rounded-sm` | 6 px | chips, tags, dense rows |
+| `rounded-md` | 8 px | controls, menus, table rows |
+| `rounded-lg` | 12 px | cards, panels, lists |
+| `rounded-xl` | 14 px | dialogs, sheets, overlays |
+| `rounded-chip` | 6 px | semantic alias for chips/tags |
+| `rounded-control` | 8 px | semantic alias for buttons/inputs |
+| `rounded-card` | 12 px | semantic alias for cards/panels |
+| `rounded-overlay` | 14 px | semantic alias for dialogs/sheets |
 | `shadow-1` | — | raised cards |
 | `shadow-2` | — | popovers / menus (`.surface-raised`) |
 | `shadow-3` | — | modals (`.surface-raised-strong`) |
-| `shadow-focus` | — | the focus ring |
+| `shadow-focus` | — | soft neutral focus halo |
+
+Component code should use the semantic aliases (`rounded-control`, `rounded-card`, `rounded-overlay`, `rounded-chip`). The numeric steps are the underlying scale for primitives and the documented exceptions (16 px checkboxes, skeletons, media, data-visualisation marks, inline link focus targets).
 
 ## 6. Motion vocabulary
 

@@ -293,7 +293,7 @@ function HighlightedTitle({ text, query }: { text: string; query: string }) {
   ranges.forEach((range, index) => {
     if (range.start > cursor) nodes.push(text.slice(cursor, range.start));
     nodes.push(
-      <mark key={index} className="rounded-xs bg-accent/20 text-inherit">
+      <mark key={index} className="rounded-xs bg-highlight px-0.5 text-highlight-fg">
         {text.slice(range.start, range.end)}
       </mark>,
     );
@@ -311,7 +311,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   return (
     <>
       {excerpt.slice(0, matchStart)}
-      <mark className="rounded-xs bg-accent/20 text-inherit">
+      <mark className="rounded-xs bg-highlight px-0.5 text-highlight-fg">
         {excerpt.slice(matchStart, matchEnd)}
       </mark>
       {excerpt.slice(matchEnd)}
@@ -470,7 +470,7 @@ export function QuickFind({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent aria-label={t(locale, "quickFind")} className="overflow-hidden p-0">
         <div className="flex animate-rise max-h-[420px] flex-col">
-          <div className="flex items-center gap-2 border-b border-border px-3">
+          <div className="noema-search-field u-colors flex items-center gap-2 border-b border-border px-3">
             <Search className="h-4 w-4 text-muted" />
             <input
               autoFocus
@@ -507,9 +507,9 @@ export function QuickFind({
               onMouseDown={(event) => event.preventDefault()}
               onClick={createNew}
               className={cn(
-                "u-colors flex h-9 cursor-pointer items-center gap-2 rounded-sm px-2 text-sm",
+                "u-colors flex h-9 cursor-pointer items-center gap-2 rounded-control px-2 text-sm",
                 active !== 0 && "hover:bg-surface-2",
-                active === 0 && "bg-accent-soft",
+                active === 0 && "bg-surface-2",
               )}
             >
               <Plus className="h-4 w-4 text-muted" />
@@ -537,9 +537,9 @@ export function QuickFind({
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => go(row)}
                   className={cn(
-                    "u-colors flex cursor-pointer items-start gap-2 rounded-sm px-2 py-2 text-sm",
+                    "u-colors flex cursor-pointer items-start gap-2 rounded-control px-2 py-2 text-sm",
                     !isActive && "hover:bg-surface-2",
-                    isActive && "bg-accent-soft",
+                    isActive && "bg-surface-2",
                   )}
                 >
                   <span className="mt-0.5 w-4 shrink-0 text-center">

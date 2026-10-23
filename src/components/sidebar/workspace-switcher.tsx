@@ -156,7 +156,7 @@ function WorkspaceGlyph({
     return (
       <span
         aria-hidden
-        className="grid shrink-0 place-items-center rounded-sm bg-surface-2"
+        className="grid shrink-0 place-items-center rounded-control bg-surface-2"
         style={{ width: size, height: size, fontSize: Math.round(size * 0.6) }}
       >
         {workspace.icon}
@@ -347,7 +347,7 @@ export function WorkspaceSwitcher({
             type="button"
             aria-label={workspace.name}
             className={cn(
-              "flex min-w-0 items-center gap-2 rounded-sm px-1 py-1 text-fg",
+              "flex min-w-0 items-center gap-2 rounded-control px-1 py-1 text-fg",
               "u-interactive u-colors focus-ring hover:bg-surface-2",
             )}
           >

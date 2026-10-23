@@ -198,7 +198,7 @@ export function Sidebar({
         <button
           type="button"
           onClick={onOpenQuickFind}
-          className="focus-ring u-interactive u-colors flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted hover:bg-surface-2"
+          className="focus-ring u-interactive u-colors flex min-w-0 flex-1 items-center gap-2 rounded-control px-2 py-1.5 text-sm text-muted hover:bg-surface-2"
         >
           <Search className="h-4 w-4 shrink-0" />
           <span className="flex-1 truncate text-left">{t(locale, "quickFind")}</span>
@@ -215,7 +215,7 @@ export function Sidebar({
             title={`${t(locale, "hideSidebar")} (${formatShortcut("toggle-sidebar", { isMac })})`}
             aria-label={t(locale, "hideSidebar")}
             data-testid="sidebar-hide"
-            className="focus-ring u-interactive u-colors shrink-0 rounded-md p-1.5 text-muted hover:bg-surface-2 hover:text-fg"
+            className="focus-ring u-interactive u-colors shrink-0 rounded-control p-1.5 text-muted hover:bg-surface-2 hover:text-fg"
           >
             <PanelLeftClose className="h-4 w-4" />
           </button>
@@ -239,7 +239,7 @@ export function Sidebar({
                 aria-selected={active}
                 onClick={() => setTab(item.id)}
                 className={cn(
-                  "focus-ring u-interactive u-colors flex min-w-0 flex-1 items-center justify-center gap-0.5 rounded-md px-1 py-1 text-2xs font-medium",
+                  "focus-ring u-interactive u-colors flex min-w-0 flex-1 items-center justify-center gap-0.5 rounded-control px-1 py-1 text-2xs font-medium",
                   active
                     ? "bg-surface-2 text-fg"
                     : "text-muted hover:bg-surface-2",
@@ -290,14 +290,14 @@ export function Sidebar({
               type="button"
               disabled={pending}
               onClick={() => addPage(null, "PAGE")}
-              className="focus-ring u-interactive u-colors flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-sm text-muted hover:bg-surface-2"
+              className="focus-ring u-interactive u-colors flex w-full items-center gap-2 rounded-control px-1 py-1.5 text-sm text-muted hover:bg-surface-2"
             >
               <Plus className="h-4 w-4" />
               {t(locale, "add")}
             </button>
             <Link
               href={`/w/${workspace.slug}/settings`}
-              className="flex items-center gap-2 rounded-md px-1 py-1.5 text-sm text-muted hover:bg-surface-2"
+              className="flex items-center gap-2 rounded-control px-1 py-1.5 text-sm text-muted hover:bg-surface-2"
             >
               <SlidersHorizontal className="h-4 w-4" />
               {t(locale, "customizeSidebar")}

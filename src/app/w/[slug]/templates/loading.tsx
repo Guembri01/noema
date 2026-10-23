@@ -13,9 +13,9 @@ export default function TemplatesLoading() {
       <Skeleton variant="text" lines={1} className="mt-2 max-w-sm" />
 
       <div className="mt-6 flex flex-wrap items-center gap-2">
-        <Skeleton variant="block" className="h-9 w-56 rounded-md" />
-        <Skeleton variant="block" className="h-9 w-32 rounded-md" />
-        <Skeleton variant="block" className="h-9 w-24 rounded-md" />
+        <Skeleton variant="block" className="h-9 w-56 rounded-card" />
+        <Skeleton variant="block" className="h-9 w-32 rounded-card" />
+        <Skeleton variant="block" className="h-9 w-24 rounded-card" />
       </div>
 
       <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

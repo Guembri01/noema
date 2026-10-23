@@ -93,7 +93,7 @@ export const COLOR_CHOICES = [
 
 /** Class for the small filter/sort/group controls. */
 export const CONTROL_CLASS =
-  "h-8 rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent";
+  "h-8 rounded-control border border-control bg-bg px-2 text-sm text-fg outline-none focus-ring";
 
 /**
  * Resolve a persisted colour id to a hue in the shared tag palette

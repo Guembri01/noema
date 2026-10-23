@@ -31,7 +31,7 @@ export type InputSize = "sm" | "md" | "lg";
 
 /** Layout + state contract shared by Input and Textarea. */
 export const INPUT_BASE =
-  "w-full rounded-sm border bg-bg text-fg placeholder:text-muted focus-ring u-colors disabled:cursor-not-allowed disabled:opacity-50";
+  "w-full rounded-control border bg-bg text-fg placeholder:text-muted focus-ring u-colors disabled:cursor-not-allowed disabled:opacity-50";
 
 export const INPUT_SIZES: Record<InputSize, string> = {
   sm: "h-8 px-2.5 text-sm",

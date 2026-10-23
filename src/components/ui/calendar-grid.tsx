@@ -344,7 +344,7 @@ export function CalendarGrid({
           aria-label={t(locale, "previousMonth")}
           disabled={!onShiftMonth}
           onClick={() => onShiftMonth?.(-1)}
-          className="focus-ring grid h-7 w-7 place-items-center rounded-sm text-muted u-interactive hover:bg-surface-2 hover:text-fg disabled:pointer-events-none disabled:opacity-50"
+          className="focus-ring grid h-7 w-7 place-items-center rounded-control text-muted u-interactive hover:bg-surface-2 hover:text-fg disabled:pointer-events-none disabled:opacity-50"
         >
           <span aria-hidden>‹</span>
         </button>
@@ -356,7 +356,7 @@ export function CalendarGrid({
           aria-label={t(locale, "nextMonth")}
           disabled={!onShiftMonth}
           onClick={() => onShiftMonth?.(1)}
-          className="focus-ring grid h-7 w-7 place-items-center rounded-sm text-muted u-interactive hover:bg-surface-2 hover:text-fg disabled:pointer-events-none disabled:opacity-50"
+          className="focus-ring grid h-7 w-7 place-items-center rounded-control text-muted u-interactive hover:bg-surface-2 hover:text-fg disabled:pointer-events-none disabled:opacity-50"
         >
           <span aria-hidden>›</span>
         </button>
@@ -369,7 +369,7 @@ export function CalendarGrid({
         tabIndex={0}
         aria-activedescendant={`${gridId}-${grid.days[focusIndex].key}`}
         onKeyDown={handleKeyDown}
-        className="focus-ring rounded-sm outline-none"
+        className="focus-ring rounded-control outline-none"
       >
         <div role="row" className="grid grid-cols-7">
           {headers.map((weekday) => (
@@ -423,12 +423,12 @@ export function CalendarGrid({
                   onFocus={() => setFocus(day.key)}
                   onClick={() => onSelectDay?.(day.key)}
                   className={cn(
-                    "focus-ring relative grid h-9 w-9 place-items-center rounded-sm text-sm tabular-nums u-interactive before:absolute before:-inset-1 before:content-['']",
+                    "focus-ring relative grid h-9 w-9 place-items-center rounded-control text-sm tabular-nums u-interactive before:absolute before:-inset-1 before:content-['']",
                     day.inMonth ? "text-fg" : "text-fg-subtle",
                     isFocused && !edges.inRange && "bg-surface-2",
-                    edges.inRange && !selected && "bg-accent-soft text-fg",
-                    selected && "bg-accent text-accent-fg",
-                    isToday && !selected && "font-semibold text-accent",
+                    edges.inRange && !selected && "bg-selection-soft text-fg",
+                    selected && "bg-action text-action-fg",
+                    isToday && !selected && "font-semibold text-focus",
                     edges.continuesBefore && "rounded-l-none",
                     edges.continuesAfter && "rounded-r-none",
                   )}

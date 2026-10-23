@@ -592,6 +592,9 @@ export function TicketsToolbar({
           value={view}
           onValueChange={(next) => setView(next)}
           size="sm"
+          // On phones the switcher otherwise sizes to its min-content width,
+          // squeezing "Timeline" into "Timeli…" while leaving the row empty.
+          className="w-full sm:w-auto"
         />
 
         {/* Entry point for the archive view — the flip side of the board's
@@ -874,7 +877,10 @@ export function TicketsToolbar({
           type="button"
           variant="primary"
           size="sm"
-          className="ml-auto"
+          // On a phone the filters wrap into a tall stack; the primary action
+          // belongs above them, not stranded at the bottom. It returns to the
+          // right edge of the single toolbar row from `sm` up.
+          className="ml-auto max-sm:order-first max-sm:ml-0 max-sm:w-full"
           leftIcon={<Plus className="h-4 w-4" />}
           onClick={openComposer}
         >

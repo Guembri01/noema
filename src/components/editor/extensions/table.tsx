@@ -189,7 +189,7 @@ export const TABLE_CHROME_REVEAL =
  * shared `Button` adds `.u-interactive` + `.focus-ring`.
  */
 export function gutterButtonClass(): string {
-  return "border border-accent bg-accent-soft text-accent hover:bg-accent/20";
+  return "border border-focus bg-selection-soft text-fg hover:bg-selection-strong";
 }
 
 /** Inline layer for a gutter control (above the table, below menus). */

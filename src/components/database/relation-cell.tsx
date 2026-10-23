@@ -77,7 +77,7 @@ export function RelationCell({
           <span
             key={id}
             title={title}
-            className="flex min-w-0 max-w-full items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-xs"
+            className="flex min-w-0 max-w-full items-center gap-1 rounded-chip bg-surface-2 px-1.5 py-0.5 text-xs"
           >
             <span aria-hidden>{option.icon ?? "📄"}</span>
             <span className="min-w-0 truncate">{title}</span>
@@ -90,7 +90,7 @@ export function RelationCell({
             <button
               type="button"
               aria-label={t(locale, "addRelationAria")}
-              className="focus-ring rounded px-1 text-xs text-muted hover:bg-surface-2"
+              className="focus-ring rounded-control px-1 text-xs text-muted hover:bg-surface-2"
             >
               +
             </button>
@@ -104,7 +104,7 @@ export function RelationCell({
                 placeholder={t(locale, "search")}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => event.stopPropagation()}
-                className="focus-ring w-full rounded border border-border-control bg-bg px-1.5 py-0.5 text-xs outline-none"
+                className="focus-ring w-full rounded-control border border-border-control bg-bg px-1.5 py-0.5 text-xs outline-none"
               />
             </div>
             {candidates.length === 0 ? (

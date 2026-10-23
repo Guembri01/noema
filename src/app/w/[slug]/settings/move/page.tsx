@@ -111,7 +111,7 @@ export default async function MovePagesPage({
       <SettingsNav slug={workspace.slug} locale={locale} className="mb-8" />
 
       {error && (
-        <p role="alert" className="mb-4 rounded border border-danger/40 bg-danger-soft px-3 py-2 text-sm">
+        <p role="alert" className="mb-4 rounded-card border border-danger/40 bg-danger-soft px-3 py-2 text-sm">
           {error}
         </p>
       )}
@@ -126,7 +126,7 @@ export default async function MovePagesPage({
           <select
             name="source"
             defaultValue={source ?? ""}
-            className="h-9 rounded border border-border bg-bg px-2 text-sm text-fg"
+            className="h-9 rounded-control border border-border bg-bg px-2 text-sm text-fg"
           >
             <option value="">Select a page…</option>
             {pages.map((page) => (
@@ -144,7 +144,7 @@ export default async function MovePagesPage({
           <select
             name="to"
             defaultValue={to ?? ""}
-            className="h-9 rounded border border-border bg-bg px-2 text-sm text-fg"
+            className="h-9 rounded-control border border-border bg-bg px-2 text-sm text-fg"
           >
             <option value="">Select a workspace…</option>
             {destinations.map((candidate) => (
@@ -158,7 +158,7 @@ export default async function MovePagesPage({
 
         <button
           type="submit"
-          className="focus-ring u-interactive inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
+          className="focus-ring u-interactive inline-flex h-9 items-center rounded-control border border-border px-3 text-sm hover:bg-surface-2"
         >
           Preview
         </button>
@@ -171,7 +171,7 @@ export default async function MovePagesPage({
       )}
 
       {preview && !preview.ok && (
-        <p role="alert" className="mt-6 rounded border border-danger/40 bg-danger-soft px-3 py-2 text-sm">
+        <p role="alert" className="mt-6 rounded-card border border-danger/40 bg-danger-soft px-3 py-2 text-sm">
           {preview.error}
         </p>
       )}
@@ -206,7 +206,7 @@ export default async function MovePagesPage({
           </dl>
 
           {!preview.access.allowed && (
-            <div className="mt-4 rounded border border-danger/40 bg-danger-soft px-3 py-2">
+            <div className="mt-4 rounded-card border border-danger/40 bg-danger-soft px-3 py-2">
               <p className="text-sm font-medium text-danger">
                 The destination workspace refuses this move
               </p>
@@ -219,7 +219,7 @@ export default async function MovePagesPage({
           )}
 
           {!preview.validation.ok && (
-            <div className="mt-4 rounded border border-danger/40 bg-danger-soft px-3 py-2">
+            <div className="mt-4 rounded-card border border-danger/40 bg-danger-soft px-3 py-2">
               <p className="text-sm font-medium text-danger">The plan is not valid</p>
               <ul className="mt-1 list-inside list-disc text-xs text-muted">
                 {preview.validation.errors.map((planError) => (
@@ -266,7 +266,7 @@ export default async function MovePagesPage({
               <input type="hidden" name="to" value={preview.targetWorkspaceId} />
               <button
                 type="submit"
-                className="focus-ring u-interactive inline-flex h-9 items-center rounded bg-accent px-3 text-sm font-medium text-white hover:opacity-90"
+                className="focus-ring u-interactive inline-flex h-9 items-center rounded-control bg-action px-3 text-sm font-medium text-action-fg hover:opacity-90"
               >
                 Move {preview.summary.pageCount} page
                 {preview.summary.pageCount === 1 ? "" : "s"} to {preview.targetName}

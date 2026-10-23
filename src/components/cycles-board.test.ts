@@ -135,7 +135,7 @@ describe("renderToStaticMarkup — cycle card", () => {
 
   it("renders the burndown on token colours with per-point tooltips", () => {
     expect(html.match(/data-testid="burndown-point"/g)).toHaveLength(5);
-    expect(html).toContain("text-accent");
+    expect(html).toContain("text-action");
     expect(html).toContain("text-muted");
     expect(html).toContain("<title>2026-04-01 · 8 points remaining</title>");
   });

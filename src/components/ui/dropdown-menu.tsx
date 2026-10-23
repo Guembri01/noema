@@ -77,7 +77,7 @@ export const MENU_LABEL_CLASS = "px-2 py-1.5 text-xs font-medium text-muted";
 export const MENU_SEPARATOR_CLASS = "-mx-1 my-1 h-px bg-border";
 
 const MENU_ITEM_BASE =
-  "relative flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none u-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50";
+  "relative flex cursor-pointer select-none items-center gap-2 rounded-control px-2 py-1.5 text-sm outline-none u-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50";
 
 /**
  * The two highlights are deliberately different: a pointer hover uses the
@@ -87,7 +87,7 @@ const MENU_ITEM_BASE =
  */
 function highlightClass(nav: NavMode): string {
   return nav === "keyboard"
-    ? "data-[highlighted]:bg-accent-soft data-[highlighted]:text-accent"
+    ? "data-[highlighted]:bg-selection-soft data-[highlighted]:text-fg"
     : "data-[highlighted]:bg-surface-2";
 }
 
@@ -117,9 +117,9 @@ export function menuItemClass({
 
 export function menuChoiceItemClass({ nav = "pointer" }: { nav?: NavMode } = {}): string {
   return cn(
-    "relative flex cursor-pointer select-none items-center gap-2 rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none u-colors",
+    "relative flex cursor-pointer select-none items-center gap-2 rounded-control py-1.5 pl-8 pr-2 text-sm outline-none u-colors",
     "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
-    "data-[state=checked]:text-accent",
+    "data-[state=checked]:text-action",
     highlightClass(nav),
   );
 }

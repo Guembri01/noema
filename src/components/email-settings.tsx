@@ -297,7 +297,7 @@ export function EmailForm({
         onSave();
       }}
     >
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2">
         <Field
           id={hostId}
           label={t(locale, "smtpHostLabel")}
@@ -313,7 +313,7 @@ export function EmailForm({
           />
         </Field>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field
             id={portId}
             label={t(locale, "portLabel")}
@@ -342,6 +342,7 @@ export function EmailForm({
                 })
               }
               locale={locale}
+              allowClear={false}
               aria-label={t(locale, "tlsAria")}
             />
           </Field>
@@ -760,7 +761,7 @@ export function EmailSettings({
         ) : null}
 
         {invites.length > 0 ? (
-          <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
+          <ul className="divide-y divide-border overflow-hidden rounded-card border border-border">
             {invites.map((row) => (
               <li
                 key={row.id}
@@ -799,7 +800,7 @@ export function EmailSettings({
       >
         {deliveries.length === 0 ? (
           savePending || testPending ? (
-            <div className="divide-y divide-border overflow-hidden rounded-md border border-border">
+            <div className="divide-y divide-border overflow-hidden rounded-card border border-border">
               {[0, 1, 2].map((index) => (
                 <Skeleton key={index} variant="row" />
               ))}
@@ -823,7 +824,7 @@ export function EmailSettings({
             />
           )
         ) : (
-          <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
+          <ul className="divide-y divide-border overflow-hidden rounded-card border border-border">
             {deliveries.map((row) => (
               <li
                 key={row.id}

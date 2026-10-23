@@ -344,7 +344,7 @@ function HighlightedLabel({ text, query }: { text: string; query: string }) {
     <>
       {highlightSegments(text, query).map((segment, index) =>
         segment.match ? (
-          <mark key={index} className="bg-transparent font-semibold text-accent">
+          <mark key={index} className="rounded-xs bg-highlight px-0.5 font-semibold text-highlight-fg">
             {segment.text}
           </mark>
         ) : (
@@ -372,7 +372,7 @@ export type SlashMenuSurfaceProps<T extends SlashMenuItem = SlashMenuItem> = {
 
 /**
  * The menu chrome: sticky section headings, fuzzy-highlighted labels,
- * right-aligned shortcut hints, an active row on `bg-accent-soft`, a
+ * right-aligned shortcut hints, an active row on `bg-surface-2`, a
  * `scrollbar-thin` list, footer key hints and a real empty state. Pure of the
  * editor, so the node tests render it at 0 and many results.
  */
@@ -445,13 +445,13 @@ export function SlashMenuSurface<T extends SlashMenuItem>({
                     onMouseEnter={() => onHover?.(index)}
                     onClick={() => onPick?.(item)}
                     className={cn(
-                      "focus-ring u-colors flex w-full items-center gap-3 rounded-sm px-2 py-1.5 text-left text-sm",
+                      "focus-ring u-colors flex w-full items-center gap-3 rounded-control px-2 py-1.5 text-left text-sm",
                       isActive
-                        ? "bg-accent-soft text-accent"
+                        ? "bg-surface-2 text-fg"
                         : "text-fg hover:bg-surface-2",
                     )}
                   >
-                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-sm border border-border bg-bg text-muted">
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-control border border-border bg-bg text-muted">
                       {item.icon}
                     </span>
                     <span className="min-w-0 flex-1">

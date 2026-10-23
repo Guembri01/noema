@@ -28,7 +28,7 @@ export const Z = {
 /** Motion durations in ms. Mirrors `--dur-*`. */
 export const DUR = {
   instant: 80,
-  fast: 120,
+  fast: 150,
   base: 180,
   slow: 240,
   slower: 320,
@@ -43,11 +43,15 @@ export const EASE = {
 
 /** Radii in px. Mirrors `--radius-*`. */
 export const RADIUS = {
-  xs: 3,
-  sm: 4,
-  md: 6,
-  lg: 10,
+  xs: 4,
+  sm: 6,
+  md: 8,
+  lg: 12,
   xl: 14,
+  control: 8,
+  card: 12,
+  overlay: 14,
+  chip: 6,
   full: 999,
 } as const;
 

@@ -111,7 +111,7 @@ function MotionLane({
       <span className="block h-4 w-40 shrink-0 overflow-hidden rounded-full bg-surface-2">
         <span
           data-testid={testId}
-          className="block h-4 w-4 rounded-full bg-accent"
+          className="block h-4 w-4 rounded-full bg-action"
           style={{
             ...motion(reduced, "transform", token, easeToken),
             transform: playing ? "translateX(144px)" : "translateX(0px)",
@@ -195,7 +195,7 @@ function MotionButtons({ reduced }: { reduced: boolean }) {
       <button
         type="button"
         data-testid="motion-button-press"
-        className="focus-ring inline-flex h-9 items-center justify-center rounded-sm bg-accent px-3.5 text-sm font-medium text-accent-fg active:scale-[0.98]"
+        className="focus-ring inline-flex h-9 items-center justify-center rounded-control bg-action px-3.5 text-sm font-medium text-action-fg active:scale-[0.98]"
         style={motion(reduced, "transform", "var(--dur-1)")}
       >
         {t(locale, "motionPressButton")}
@@ -241,15 +241,15 @@ function MotionCheckbox({ reduced }: { reduced: boolean }) {
           checked={checked}
           onChange={(event) => setChecked(event.target.checked)}
           className={cn(
-            "focus-ring m-0 h-full w-full appearance-none rounded-sm border bg-bg outline-none",
-            checked ? "border-accent bg-accent" : "border-border-strong",
+            "focus-ring m-0 h-full w-full appearance-none rounded-control border bg-bg outline-none",
+            checked ? "border-action bg-action" : "border-border-strong",
           )}
           style={motion(reduced, "background-color, border-color", "var(--dur-1)")}
         />
         <span
           aria-hidden="true"
           className={cn(
-            "pointer-events-none absolute inset-0 flex items-center justify-center text-accent-fg",
+            "pointer-events-none absolute inset-0 flex items-center justify-center text-action-fg",
             checked ? "opacity-100" : "opacity-0",
           )}
           style={motion(reduced, "opacity", "var(--dur-2)")}
@@ -269,7 +269,7 @@ function MotionSwitch({ reduced }: { reduced: boolean }) {
       <span
         className={cn(
           "relative inline-flex h-6 w-11 shrink-0 rounded-full border",
-          on ? "border-accent bg-accent" : "border-border-strong bg-surface-3",
+          on ? "border-action bg-action" : "border-border-strong bg-surface-3",
         )}
         style={motion(reduced, "background-color, border-color", "var(--dur-2)")}
       >
@@ -322,7 +322,7 @@ function MotionRadio({ reduced }: { reduced: boolean }) {
             aria-checked={selected}
             onClick={() => setValue(option.value)}
             className={cn(
-              "focus-ring inline-flex items-center gap-2 rounded-sm text-sm",
+              "focus-ring inline-flex items-center gap-2 rounded-control text-sm",
               selected ? "font-medium text-fg" : "text-muted",
             )}
             style={motion(reduced, "background-color, border-color", "var(--dur-1)")}
@@ -330,14 +330,14 @@ function MotionRadio({ reduced }: { reduced: boolean }) {
             <span
               className={cn(
                 "flex h-5 w-5 items-center justify-center rounded-full border bg-bg",
-                selected ? "border-accent" : "border-border-strong",
+                selected ? "border-action" : "border-border-strong",
               )}
               style={motion(reduced, "border-color, background-color", "var(--dur-1)")}
             >
               <span
                 aria-hidden="true"
                 className={cn(
-                  "h-2.5 w-2.5 rounded-full bg-accent",
+                  "h-2.5 w-2.5 rounded-full bg-action",
                   selected ? "scale-100" : "scale-0",
                 )}
                 style={motion(reduced, "transform", "var(--dur-2)", "var(--ease-spring)")}
@@ -396,7 +396,7 @@ function MotionSidebar({ reduced }: { reduced: boolean }) {
     >
       <div
         data-testid="motion-sidebar-demo"
-        className="flex flex-col gap-2 rounded-md bg-surface-2 p-2"
+        className="flex flex-col gap-2 rounded-control bg-surface-2 p-2"
         style={motion(reduced, "background-color", "var(--dur-2)")}
       >
         <Button
@@ -411,7 +411,7 @@ function MotionSidebar({ reduced }: { reduced: boolean }) {
         <div
           data-testid="motion-sidebar-panel"
           aria-hidden={!open}
-          className="overflow-hidden rounded-md border border-border bg-sidebar p-1"
+          className="overflow-hidden rounded-card border border-border bg-sidebar p-1"
           style={{
             ...motion(reduced, "width", "var(--dur-3)"),
             width: open ? 232 : 56,
@@ -460,7 +460,7 @@ function MotionTabs({ reduced }: { reduced: boolean }) {
       <div
         role="tablist"
         data-testid="motion-tabs"
-        className="inline-flex items-center gap-1 rounded-md bg-surface-2 p-1"
+        className="inline-flex items-center gap-1 rounded-control bg-surface-2 p-1"
         style={motion(reduced, "background-color", "var(--dur-1)")}
       >
         {TAB_ITEMS.map((tab) => {
@@ -474,7 +474,7 @@ function MotionTabs({ reduced }: { reduced: boolean }) {
               aria-label={t(locale, tab.labelKey)}
               onClick={() => setActive(tab.id)}
               className={cn(
-                "focus-ring inline-flex items-center gap-2 rounded-sm px-2 py-1 text-sm",
+                "focus-ring inline-flex items-center gap-2 rounded-control px-2 py-1 text-sm",
                 selected ? "bg-bg text-fg shadow-1" : "text-muted",
               )}
               style={motion(reduced, "background-color, color", "var(--dur-1)")}
@@ -547,7 +547,7 @@ function MotionChevron({ reduced }: { reduced: boolean }) {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="focus-ring inline-flex items-center gap-2 rounded-sm px-2 py-1 text-sm text-fg hover:bg-surface-2"
+        className="focus-ring inline-flex items-center gap-2 rounded-control px-2 py-1 text-sm text-fg hover:bg-surface-2"
       >
         <ChevronRight
           aria-hidden="true"
@@ -644,7 +644,7 @@ function MotionDropIndicator({ reduced }: { reduced: boolean }) {
           <li
             key={key}
             data-testid={index === 1 ? "motion-drop-indicator" : undefined}
-            className="rounded-sm border border-transparent bg-surface-2 px-2 py-1 text-sm text-fg"
+            className="rounded-chip border border-transparent bg-surface-2 px-2 py-1 text-sm text-fg"
             style={{
               ...(index === 1
                 ? dropIndicatorStyle({ index, mode: "before" })
@@ -679,7 +679,7 @@ function MotionGroup({
         <h3 className="text-sm font-semibold text-fg">{title}</h3>
         {hint ? <p className="text-xs text-muted">{hint}</p> : null}
       </div>
-      <div className="flex flex-wrap items-center gap-4 rounded-md border border-border bg-surface p-4">
+      <div className="flex flex-wrap items-center gap-4 rounded-card border border-border bg-surface p-4">
         {children}
       </div>
     </section>
@@ -699,7 +699,7 @@ function MotionReduceToggle({
       <span
         className={cn(
           "relative inline-flex h-6 w-11 shrink-0 rounded-full border",
-          reduced ? "border-accent bg-accent" : "border-border-strong bg-surface-3",
+          reduced ? "border-action bg-action" : "border-border-strong bg-surface-3",
         )}
         style={motion(false, "background-color, border-color", "var(--dur-2)")}
       >

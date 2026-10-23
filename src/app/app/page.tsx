@@ -12,7 +12,7 @@ export default async function AppIndex() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
-      <div className="rounded-xl border border-border bg-surface p-8">
+      <div className="rounded-lg border border-border bg-surface p-8">
         <h1 className="text-2xl font-semibold tracking-tight">
           {t(locale, "createWorkspace")}
         </h1>

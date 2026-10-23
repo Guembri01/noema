@@ -83,7 +83,7 @@ export function VersionHistory({
         <History className="h-4 w-4" />
         {t(locale, "history")}
         {versions.length > 0 && (
-          <span className="rounded bg-surface-2 px-1 text-3xs">{versions.length}</span>
+          <span className="rounded-chip bg-surface-2 px-1 text-3xs">{versions.length}</span>
         )}
       </button>
 

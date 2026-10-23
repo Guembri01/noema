@@ -170,7 +170,9 @@ export function Segmented<T extends string = string>({
   };
 
   const sizeClass =
-    size === "sm" ? "h-7 px-2 text-xs" : "h-8 px-3 text-sm";
+    size === "sm"
+      ? "h-7 min-w-20 px-2 text-xs"
+      : "h-8 min-w-20 px-3 text-sm";
 
   const segmentWidth = count > 0 ? 100 / count : 100;
 
@@ -182,7 +184,7 @@ export function Segmented<T extends string = string>({
       data-testid="segmented"
       data-count={count}
       className={cn(
-        "relative inline-flex rounded-md bg-surface-2 p-0.5",
+        "relative inline-flex rounded-control bg-surface-2 p-0.5",
         disabled && "opacity-50",
         className,
       )}
@@ -191,7 +193,7 @@ export function Segmented<T extends string = string>({
         <span
           aria-hidden="true"
           data-testid="segmented-indicator"
-          className="absolute inset-y-0 rounded-sm border border-border bg-bg shadow-1"
+          className="absolute inset-y-0 rounded-control border border-border bg-bg shadow-1"
           style={{
             insetInlineStart: `${selectedIndex * segmentWidth}%`,
             inlineSize: `${segmentWidth}%`,
@@ -219,7 +221,7 @@ export function Segmented<T extends string = string>({
               onClick={() => select(index)}
               onKeyDown={(e) => onKeyDown(e, index)}
               className={cn(
-                "focus-ring relative z-10 inline-flex flex-1 basis-0 items-center justify-center gap-1.5 rounded-sm font-medium",
+                "focus-ring relative z-10 inline-flex flex-1 basis-0 items-center justify-center gap-1.5 rounded-control font-medium",
                 "min-w-0 whitespace-nowrap",
                 sizeClass,
                 isSelected ? "text-fg" : "text-muted hover:text-fg",

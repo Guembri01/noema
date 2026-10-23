@@ -57,7 +57,7 @@ describe("Card render", () => {
     "renders the %s variant",
     (variant) => {
       const html = renderToStaticMarkup(h(Card, { variant }, "content"));
-      expect(html).toContain("rounded-md");
+      expect(html).toContain("rounded-card");
       for (const token of CARD_VARIANTS[variant].split(" ")) {
         expect(html).toContain(token);
       }

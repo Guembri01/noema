@@ -172,11 +172,11 @@ describe("SearchResults — a result row", () => {
     const html = renderResults();
     expect(html).toContain('href="/w/acme/p1"');
     expect(html).toContain('data-active="true"');
-    expect(html).toContain("bg-accent-soft");
+    expect(html).toContain("bg-surface-2");
     expect(html).toContain("focus-ring");
-    // The match is emphasised with --accent ink on --accent-soft.
-    expect(html).toMatch(/<mark[^>]*bg-accent-soft/);
-    expect(html).toMatch(/<mark[^>]*text-accent/);
+    // The match uses the dedicated highlight pair, not the action/link blue.
+    expect(html).toMatch(/<mark[^>]*bg-highlight/);
+    expect(html).toMatch(/<mark[^>]*text-highlight-fg/);
     expect(html).toContain(">Alpha</mark>");
     expectTokensOnly(html);
   });

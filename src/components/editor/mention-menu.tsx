@@ -56,13 +56,13 @@ function labelSegments(text: string, query: string): Array<{ text: string; match
   return segments;
 }
 
-/** A mention row label with the matching query runs underlined in the accent colour. */
+/** A mention row label with the matching query runs highlighted. */
 function MentionLabel({ text, query }: { text: string; query: string }) {
   return (
     <span className="truncate">
       {labelSegments(text, query).map((segment, index) =>
         segment.match ? (
-          <mark key={index} className="bg-transparent font-medium text-accent">
+          <mark key={index} className="rounded-xs bg-highlight px-0.5 font-semibold text-highlight-fg">
             {segment.text}
           </mark>
         ) : (
@@ -290,7 +290,7 @@ export function MentionMenu({
       onMouseEnter={() => setActive(index)}
       onClick={() => insert(item)}
       className={cn(
-        "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm",
+        "flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-sm",
         index === active ? "bg-surface-2" : "hover:bg-surface-2",
       )}
     >

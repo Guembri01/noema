@@ -126,7 +126,7 @@ const GALLERY_CARD_STATE = "text-left aria-disabled:cursor-not-allowed aria-disa
 function MiniTable({ hue }: { hue: string }) {
   const pill = `var(--tag-${hue}-bg)`;
   return (
-    <div className="overflow-hidden rounded-sm border border-border-strong bg-bg" aria-hidden>
+    <div className="overflow-hidden rounded-card border border-border-strong bg-bg" aria-hidden>
       <div className="flex items-center gap-1 border-b border-border-strong px-1.5 py-1">
         <span className="h-1.5 w-1.5 rounded-full bg-surface-3" />
         <span className="h-1 flex-1 rounded-full bg-surface-3" />

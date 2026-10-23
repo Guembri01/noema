@@ -132,7 +132,7 @@ export function Switch({
               "m-0 h-full w-full appearance-none rounded-full border u-colors outline-none",
               FOCUS_RING,
               checked
-                ? "border-accent bg-accent"
+                ? "border-action bg-action"
                 : "border-control bg-surface-3",
             )}
           />

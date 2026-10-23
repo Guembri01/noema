@@ -56,7 +56,7 @@ export function ChatModelPicker({
           aria-label={`${t(locale, "modelLabel")}: ${label}`}
           data-testid="chat-model-trigger"
           className={cn(
-            "focus-ring u-interactive flex h-6 max-w-40 min-w-0 items-center gap-1.5 rounded-sm border border-border px-1.5 text-2xs text-muted hover:bg-surface-2 hover:text-fg",
+            "focus-ring u-interactive flex h-6 max-w-40 min-w-0 items-center gap-1.5 rounded-control border border-border px-1.5 text-2xs text-muted hover:bg-surface-2 hover:text-fg",
           )}
         >
           <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-60" />

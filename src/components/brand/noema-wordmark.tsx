@@ -24,7 +24,7 @@ export function NoemaWordmark({
     <span className={cn("inline-flex min-w-0 items-center gap-2", className)}>
       <span
         className={cn(
-          "grid h-8 w-8 shrink-0 place-items-center rounded-md bg-accent text-accent-fg shadow-1",
+          "grid h-8 w-8 shrink-0 place-items-center rounded-card bg-action text-action-fg shadow-1",
           markClassName,
         )}
       >

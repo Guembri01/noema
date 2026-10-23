@@ -73,11 +73,11 @@ export default async function Home() {
     <main id="main" className="relative overflow-hidden bg-bg">
       <div
         aria-hidden
-        className="pointer-events-none absolute -start-52 -top-52 size-128 rounded-full bg-accent-soft blur-3xl"
+        className="pointer-events-none absolute -start-52 -top-52 size-128 rounded-full bg-surface-2/70 blur-3xl"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -end-56 top-[26rem] size-120 rounded-full bg-warning-soft blur-3xl"
+        className="pointer-events-none absolute -end-56 top-[26rem] size-120 rounded-full bg-surface-2/50 blur-3xl"
       />
 
       <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-6">
@@ -132,7 +132,7 @@ export default async function Home() {
         <div className="relative min-w-0">
           <div
             aria-hidden
-            className="absolute -inset-5 rounded-xl bg-accent-soft blur-2xl"
+            className="absolute -inset-5 rounded-lg bg-surface-2/70 blur-2xl"
           />
           <figure className="relative overflow-hidden rounded-lg border border-border bg-bg shadow-3">
             <div className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2.5">
@@ -179,7 +179,7 @@ export default async function Home() {
             {FEATURES.map(({ icon: Icon, title, body }) => (
               <article
                 key={title}
-                className="rounded-md border border-border bg-bg p-5 shadow-1"
+                className="rounded-card border border-border bg-bg p-5 shadow-1"
               >
                 <span className="grid size-9 place-items-center rounded-md bg-surface text-fg">
                   <Icon className="size-5" aria-hidden />

@@ -34,17 +34,22 @@ export function DatabaseViewToolbar({
   const [open, setOpen] = useState(false);
   return (
     <>
-      <div className="flex min-w-0 flex-wrap items-center gap-1">
-        <ViewSettings
-          variant="primary"
-          locale={locale}
-          properties={properties}
-          config={config}
-          editable={editable}
-          onChange={onChange}
-          layout={layout}
-          onLayoutChange={onLayoutChange}
-        />
+      <div className="flex min-w-0 items-center gap-1">
+        {/* On a phone the five primary controls scroll sideways inside this
+            flexible track; the “More” trigger stays pinned to the right instead
+            of wrapping onto a row of its own. */}
+        <div className="min-w-0 flex-1 sm:flex-none">
+          <ViewSettings
+            variant="primary"
+            locale={locale}
+            properties={properties}
+            config={config}
+            editable={editable}
+            onChange={onChange}
+            layout={layout}
+            onLayoutChange={onLayoutChange}
+          />
+        </div>
         <button
           type="button"
           aria-expanded={open}
@@ -52,7 +57,7 @@ export function DatabaseViewToolbar({
           title={t(locale, "dbViewMenu")}
           onClick={() => setOpen((value) => !value)}
           className={cn(
-            "focus-ring u-colors mb-3 flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2",
+            "focus-ring u-colors mb-3 flex h-7 w-7 items-center justify-center rounded-control text-muted hover:bg-surface-2",
             open && "bg-surface-2 text-fg",
           )}
         >

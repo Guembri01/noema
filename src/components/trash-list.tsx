@@ -180,7 +180,7 @@ function TrashSkeleton() {
       data-testid="trash-loading"
       aria-busy="true"
       aria-live="polite"
-      className="overflow-hidden rounded-xl border border-border"
+      className="overflow-hidden rounded-lg border border-border"
     >
       {Array.from({ length: SKELETON_ROWS }, (_, index) => (
         <Skeleton
@@ -531,7 +531,7 @@ export function TrashList({
             "aria-busy": pending || undefined,
             tabIndex: 0,
           }}
-          className="overflow-y-auto rounded-xl border border-border"
+          className="overflow-y-auto rounded-lg border border-border"
           // Absolute items stacked at their true offset: the spacer <ul> carries
           // the full height so the scrollbar matches the list.
           rowClassName={(item) =>
@@ -547,7 +547,7 @@ export function TrashList({
       ) : (
         <ul
           aria-busy={pending || undefined}
-          className="divide-y divide-border overflow-hidden rounded-xl border border-border"
+          className="divide-y divide-border overflow-hidden rounded-lg border border-border"
         >
           {items.map((item) => (
             <li

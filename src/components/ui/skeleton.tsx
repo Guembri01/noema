@@ -154,7 +154,7 @@ export function Skeleton({
           aria-hidden
           data-skeleton="card"
           className={cn(
-            "rounded-md border border-border bg-bg p-4 shadow-1",
+            "rounded-card border border-border bg-bg p-4 shadow-1",
             className,
           )}
           style={style}
@@ -199,7 +199,7 @@ export function Skeleton({
           aria-hidden
           data-skeleton="table"
           className={cn(
-            "w-full overflow-hidden rounded-md border border-border",
+            "w-full overflow-hidden rounded-card border border-border",
             className,
           )}
           style={style}

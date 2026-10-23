@@ -65,7 +65,7 @@ export default async function TemplatesPage({
     return (
       <li
         key={template.id}
-        className="flex flex-col gap-3 rounded-xl border border-border p-4"
+        className="flex flex-col gap-3 rounded-lg border border-border p-4"
         data-default={isDefault ? "true" : undefined}
       >
         <div className="flex items-start gap-3">
@@ -103,7 +103,7 @@ export default async function TemplatesPage({
             <button
               type="submit"
               aria-label={t(locale, "apply")}
-              className="focus-ring u-interactive rounded-md border border-border px-2 py-1 text-xs font-medium transition hover:bg-surface-2"
+              className="focus-ring u-interactive rounded-control border border-border px-2 py-1 text-xs font-medium transition hover:bg-surface-2"
             >
               {t(locale, "apply")}
             </button>
@@ -118,12 +118,12 @@ export default async function TemplatesPage({
               name="name"
               defaultValue={template.name}
               aria-label={t(locale, "rename")}
-              className="w-32 rounded-md border border-border px-2 py-1 text-xs"
+              className="w-32 rounded-control border border-border px-2 py-1 text-xs"
             />
             <button
               type="submit"
               aria-label={t(locale, "save")}
-              className="focus-ring u-interactive rounded-md border border-border px-2 py-1 text-xs transition hover:bg-surface-2"
+              className="focus-ring u-interactive rounded-control border border-border px-2 py-1 text-xs transition hover:bg-surface-2"
             >
               {t(locale, "save")}
             </button>
@@ -136,7 +136,7 @@ export default async function TemplatesPage({
             <button
               type="submit"
               aria-label={t(locale, "duplicate")}
-              className="focus-ring u-interactive rounded-md border border-border px-2 py-1 text-xs transition hover:bg-surface-2"
+              className="focus-ring u-interactive rounded-control border border-border px-2 py-1 text-xs transition hover:bg-surface-2"
             >
               {t(locale, "duplicate")}
             </button>
@@ -150,7 +150,7 @@ export default async function TemplatesPage({
               type="submit"
               aria-label={t(locale, "favorites")}
               title={t(locale, "favorites")}
-              className="focus-ring u-interactive rounded-md border border-border px-2 py-1 text-xs transition hover:bg-surface-2"
+              className="focus-ring u-interactive rounded-control border border-border px-2 py-1 text-xs transition hover:bg-surface-2"
             >
               {isDefault ? "★" : "☆"}
             </button>
@@ -163,7 +163,7 @@ export default async function TemplatesPage({
             <button
               type="submit"
               aria-label={`${t(locale, "sort")} ↑`}
-              className="focus-ring u-interactive rounded-md border border-border px-2 py-1 text-xs transition hover:bg-surface-2"
+              className="focus-ring u-interactive rounded-control border border-border px-2 py-1 text-xs transition hover:bg-surface-2"
             >
               ↑
             </button>
@@ -175,7 +175,7 @@ export default async function TemplatesPage({
             <button
               type="submit"
               aria-label={`${t(locale, "sort")} ↓`}
-              className="focus-ring u-interactive rounded-md border border-border px-2 py-1 text-xs transition hover:bg-surface-2"
+              className="focus-ring u-interactive rounded-control border border-border px-2 py-1 text-xs transition hover:bg-surface-2"
             >
               ↓
             </button>
@@ -214,14 +214,14 @@ export default async function TemplatesPage({
           defaultValue={q ?? ""}
           placeholder={t(locale, "search")}
           aria-label={t(locale, "search")}
-          className="focus-ring w-56 rounded-md border border-border px-3 py-1.5 text-sm"
+          className="focus-ring w-56 rounded-control border border-border px-3 py-1.5 text-sm"
         />
         <label className="text-xs text-muted">
           {t(locale, "sort")}
           <select
             name="sort"
             defaultValue={normalizeSort(sort)}
-            className="focus-ring ml-2 rounded-md border border-border px-2 py-1.5 text-sm"
+            className="focus-ring ml-2 rounded-control border border-border px-2 py-1.5 text-sm"
           >
             {SORTS.map((key) => (
               <option key={key} value={key}>
@@ -233,7 +233,7 @@ export default async function TemplatesPage({
         <button
           type="submit"
           aria-label={t(locale, "search")}
-          className="focus-ring u-interactive rounded-md border border-border px-3 py-1.5 text-sm transition hover:bg-surface-2"
+          className="focus-ring u-interactive rounded-control border border-border px-3 py-1.5 text-sm transition hover:bg-surface-2"
         >
           {t(locale, "search")}
         </button>

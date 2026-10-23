@@ -31,7 +31,7 @@ export default function ProjectDetailLoading() {
       </div>
 
       {/* Gantt block. */}
-      <Skeleton variant="block" height={128} className="mt-6 rounded-xl" />
+      <Skeleton variant="block" height={128} className="mt-6 rounded-lg" />
 
       {/* Overview section. */}
       <div className="mt-10 space-y-3">
@@ -48,7 +48,7 @@ export default function ProjectDetailLoading() {
       {/* Milestones section. */}
       <div className="mt-10 space-y-3">
         <Skeleton variant="block" height={20} width={160} />
-        <ul aria-hidden className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+        <ul aria-hidden className="divide-y divide-border overflow-hidden rounded-lg border border-border">
           {Array.from({ length: 4 }, (_, row) => (
             <li key={row}>
               <Skeleton variant="row" className="border-b-0" />
@@ -60,7 +60,7 @@ export default function ProjectDetailLoading() {
       {/* Tickets section. */}
       <div className="mt-10 space-y-3">
         <Skeleton variant="block" height={20} width={120} />
-        <ul aria-hidden className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+        <ul aria-hidden className="divide-y divide-border overflow-hidden rounded-lg border border-border">
           {Array.from({ length: 5 }, (_, row) => (
             <li key={row}>
               <Skeleton variant="row" className="border-b-0" />

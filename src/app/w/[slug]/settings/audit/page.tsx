@@ -134,7 +134,7 @@ export default async function AuditLogPage({
           <select
             name="actor"
             defaultValue={actor ?? ""}
-            className="h-9 rounded border border-border bg-bg px-2 text-sm text-fg"
+            className="h-9 rounded-control border border-border bg-bg px-2 text-sm text-fg"
           >
             <option value="">All</option>
             {actorOptions.map((option) => (
@@ -150,7 +150,7 @@ export default async function AuditLogPage({
           <select
             name="type"
             defaultValue={type ?? ""}
-            className="h-9 rounded border border-border bg-bg px-2 text-sm text-fg"
+            className="h-9 rounded-control border border-border bg-bg px-2 text-sm text-fg"
           >
             <option value="">All</option>
             {typeOptions.map((option) => (
@@ -168,7 +168,7 @@ export default async function AuditLogPage({
             name="from"
             defaultValue={from ?? ""}
             aria-label={t(locale, "fromLabel")}
-            className="h-9 rounded border border-border bg-bg px-2 text-sm text-fg"
+            className="h-9 rounded-control border border-border bg-bg px-2 text-sm text-fg"
           />
         </label>
 
@@ -179,20 +179,20 @@ export default async function AuditLogPage({
             name="to"
             defaultValue={to ?? ""}
             aria-label={t(locale, "toLabel")}
-            className="h-9 rounded border border-border bg-bg px-2 text-sm text-fg"
+            className="h-9 rounded-control border border-border bg-bg px-2 text-sm text-fg"
           />
         </label>
 
         <button
           type="submit"
           aria-label={t(locale, "apply")}
-          className="focus-ring u-interactive inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
+          className="focus-ring u-interactive inline-flex h-9 items-center rounded-control border border-border px-3 text-sm hover:bg-surface-2"
         >
           {t(locale, "apply")}
         </button>
         <Link
           href={`/w/${workspace.slug}/settings/audit`}
-          className="focus-ring inline-flex h-9 items-center rounded px-2 text-sm text-muted hover:underline"
+          className="focus-ring inline-flex h-9 items-center rounded-control px-2 text-sm text-muted hover:underline"
         >
           Clear
         </Link>

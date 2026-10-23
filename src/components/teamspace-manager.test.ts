@@ -127,10 +127,10 @@ describe("TeamspaceManager markup", () => {
     expect(html).toContain('aria-label="Invite by email to Design"');
     expect(html).toContain("Invite");
     expect(html).toContain("new@example.com · member · pending");
-    // member chips with the accent selected state
+    // member chips with the action selected state
     expect(html).toContain("Ada");
     expect(html).toContain("Bob");
-    expect(html).toContain("bg-accent");
+    expect(html).toContain("bg-action");
   });
 
   it("renders skeleton rows while loading", () => {

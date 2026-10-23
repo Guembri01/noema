@@ -30,7 +30,7 @@ export function EmptyTicketsState({
   return (
     <div
       data-testid="tickets-empty"
-      className="animate-fade rounded-xl border border-dashed border-border"
+      className="animate-fade rounded-lg border border-dashed border-border"
     >
       <EmptyState
         variant="full"

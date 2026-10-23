@@ -315,6 +315,10 @@ export default async function SettingsPage({
         {t(locale, "workspaceSettings")}
       </h1>
 
+      {/* One section switcher at the top of every settings screen, including
+          this index. It used to sit between General and Members here. */}
+      <SettingsNav slug={workspace.slug} locale={locale} className="mb-10" />
+
       <Section title={t(locale, "general")}>
         {canManageMembers(access.role) ? (
           <EditWorkspaceButton
@@ -330,8 +334,6 @@ export default async function SettingsPage({
           {t(locale, "yourRole")} {access.role.toLowerCase()}
         </p>
       </Section>
-
-      <SettingsNav slug={workspace.slug} locale={locale} className="mt-8" />
 
       {/* MembersManager owns the Members / Pending invites / Guests Section
           headers, so the page only supplies the roster and the pending invites. */}
@@ -423,7 +425,7 @@ export default async function SettingsPage({
                   title={`${bucket.date}: ${bucket.total}`}
                   className={
                     bucket.total > 0
-                      ? "w-full flex-1 rounded-sm bg-accent"
+                      ? "w-full flex-1 rounded-sm bg-action"
                       : "w-full flex-1 rounded-sm bg-border"
                   }
                   style={{ height: `${barHeight(bucket.total, dailyMax)}px` }}
@@ -484,7 +486,7 @@ export default async function SettingsPage({
         <a
           href={`/api/export/workspace/${workspace.slug}`}
           download
-          className="inline-flex h-9 w-fit items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
+          className="inline-flex h-9 w-fit items-center rounded-control border border-border px-3 text-sm hover:bg-surface-2"
         >
           {t(locale, "downloadWorkspace")}
         </a>

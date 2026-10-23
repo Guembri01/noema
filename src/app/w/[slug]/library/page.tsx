@@ -47,7 +47,7 @@ export default async function LibraryPage({
             <li key={node.id}>
               <Link
                 href={`/w/${workspace.slug}/${node.id}`}
-                className="flex h-full items-start gap-3 rounded-xl border border-border p-4 transition hover:bg-surface-2"
+                className="flex h-full items-start gap-3 rounded-lg border border-border p-4 transition hover:bg-surface-2"
               >
                 <span className="text-lg" aria-hidden>
                   {node.icon ?? (node.type === "DATABASE" ? "🗂️" : "📄")}

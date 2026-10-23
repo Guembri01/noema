@@ -26,7 +26,9 @@ import { assertEditableParent } from "@/lib/page-parent";
 import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { canEditSchema, type LockRole } from "@/lib/database-lock";
 import { MAX_PAGE_CONTENT_BYTES, parsePageContent } from "@/lib/validation";
-import { searchPagesPage } from "@/server/queries";
+import { searchPages, searchPagesPage } from "@/server/queries";
+import { applyFilters, applyFilterTree, type Filter, type FilterNode } from "@/lib/database-query";
+import { encodePropertyValue, ensureBlockIds, isExtraTool, runExtraTool } from "@/lib/mcp-extra-exec";
 
 export const runtime = "nodejs";
 
@@ -61,6 +63,11 @@ function textResult(value: unknown, isError = false): Record<string, unknown> {
 }
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
+const isFilterTree = (value: unknown): value is FilterNode =>
+  typeof value === "object" &&
+  value !== null &&
+  !Array.isArray(value) &&
+  ("and" in value || "or" in value);
 const asNumber = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
@@ -162,6 +169,7 @@ async function loadRows(
   workspaceId: string,
   take: number,
   visiblePageIds: Set<string> | null,
+  skip = 0,
 ) {
   // The rows *are* the database's content, so a caller who may open the
   // database may read its rows — the database itself has to be in scope, so no
@@ -176,6 +184,7 @@ async function loadRows(
     where: { parentId: databaseId, workspaceId, deletedAt: null },
     orderBy: { position: "asc" },
     take,
+    skip,
     select: {
       id: true,
       title: true,
@@ -191,11 +200,33 @@ async function runReadTool(name: string, args: RpcParams, ctx: ExecContext): Pro
   switch (name) {
     case "search_pages": {
       const limit = asNumber(args.limit) ?? 20;
-      // `null` means "sees everything" — only a caller whose role covers the
+      const sort = asString(args.sort) || "relevance";
+      // `null` means "sees everything" ? only a caller whose role covers the
       // whole workspace gets it, a guest's search is narrowed to their pages.
+      if (sort === "last_edited") {
+        const all = await searchPages(ctx.workspaceId, asString(args.query), ctx.visiblePageIds, {
+          take: 1000,
+        });
+        const ordered = [...all].sort(
+          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+        );
+        const offset = Math.max(0, Number(asString(args.cursor)) || 0);
+        const pages = ordered.slice(offset, offset + limit).map((row) => ({
+          id: row.id,
+          title: row.title,
+          type: row.type,
+          snippet: row.snippet,
+          updatedAt: row.updatedAt,
+        }));
+        return {
+          pages,
+          has_more: offset + limit < ordered.length,
+          next_cursor: offset + limit < ordered.length ? String(offset + limit) : null,
+        };
+      }
       const page = await searchPagesPage(ctx.workspaceId, asString(args.query), ctx.visiblePageIds, {
         limit,
-        cursor: null,
+        cursor: asString(args.cursor) || null,
       });
       return {
         pages: page.items.map((row) => ({
@@ -203,8 +234,10 @@ async function runReadTool(name: string, args: RpcParams, ctx: ExecContext): Pro
           title: row.title,
           type: row.type,
           snippet: row.snippet,
+          updatedAt: row.updatedAt,
         })),
         has_more: page.hasMore,
+        next_cursor: page.nextCursor,
       };
     }
     case "get_page": {
@@ -226,14 +259,74 @@ async function runReadTool(name: string, args: RpcParams, ctx: ExecContext): Pro
       return { databases };
     }
     case "query_database_rows": {
+      const databaseId = asString(args.databaseId);
+      const pageSize = asNumber(args.pageSize) ?? 50;
+      const offset = Math.max(0, asNumber(args.offset) ?? 0);
+      const filter = args.filter;
+      if (
+        filter !== undefined &&
+        (typeof filter !== "object" || filter === null || Array.isArray(filter))
+      ) {
+        throw new Error("filter must be a filter object.");
+      }
+      if (filter !== undefined) {
+        // Filtering happens after the bounded read because the row values are
+        // Postgres JSON. The read is capped, so a pathological filter cannot
+        // turn a single MCP call into an unbounded table scan.
+        const database = await prisma.page.findFirst({
+          where: {
+            id: databaseId,
+            workspaceId: ctx.workspaceId,
+            type: "DATABASE",
+            deletedAt: null,
+            ...(ctx.visiblePageIds ? { id: { in: [...ctx.visiblePageIds] } } : {}),
+          },
+          select: { id: true },
+        });
+        if (!database) throw new Error("Database not found.");
+        const [properties, allRows] = await Promise.all([
+          prisma.property.findMany({
+            where: { databasePageId: databaseId },
+            select: { id: true, name: true, type: true, config: true },
+          }),
+          prisma.page.findMany({
+            where: { parentId: databaseId, workspaceId: ctx.workspaceId, deletedAt: null },
+            orderBy: { position: "asc" },
+            take: 1000,
+            select: {
+              id: true,
+              title: true,
+              icon: true,
+              updatedAt: true,
+              propertyValues: { select: { propertyId: true, value: true } },
+            },
+          }),
+        ]);
+        const queryRows = allRows.map((row) => ({
+          id: row.id,
+          title: row.title,
+          icon: row.icon,
+          propertyValues: row.propertyValues,
+        }));
+        const filtered = isFilterTree(filter)
+          ? applyFilterTree(queryRows, properties as never, [filter])
+          : applyFilters(queryRows, properties as never, [filter as Filter]);
+        return {
+          rows: filtered.slice(offset, offset + pageSize),
+          total: filtered.length,
+          next_offset:
+            offset + pageSize < filtered.length ? offset + pageSize : null,
+        };
+      }
       const rows = await loadRows(
-        asString(args.databaseId),
+        databaseId,
         ctx.workspaceId,
-        asNumber(args.pageSize) ?? 50,
+        pageSize,
         ctx.visiblePageIds,
+        offset,
       );
       if (rows === null) throw new Error("Database not found.");
-      return { rows };
+      return { rows, next_offset: rows.length === pageSize ? offset + pageSize : null };
     }
     case "get_comments": {
       const resolved = typeof args.resolved === "boolean" ? args.resolved : undefined;
@@ -323,7 +416,7 @@ async function runWriteTool(name: string, args: RpcParams, ctx: ExecContext): Pr
           title: (asString(args.title) || "Untitled").slice(0, 500),
           createdById: ctx.userId,
           position: (last?.position ?? 0) + 1000,
-          content: { type: "doc", content: [{ type: "paragraph" }] },
+          content: { type: "doc", content: [ensureBlockIds({ type: "paragraph" })] } as unknown as Prisma.InputJsonValue,
         },
         select: { id: true, title: true, type: true },
       });
@@ -338,7 +431,11 @@ async function runWriteTool(name: string, args: RpcParams, ctx: ExecContext): Pr
       if (!canEditSchema({ locked: Boolean(page.locked) }, lockRoleFor(ctx.role))) {
         throw new Error("This page is locked. Unlock it to edit its content.");
       }
-      const blocks = Array.isArray(args.blocks) ? args.blocks : [];
+      const blocks = (Array.isArray(args.blocks) ? args.blocks : []).map((block) =>
+        typeof block === "object" && block !== null && !Array.isArray(block)
+          ? ensureBlockIds(block as Record<string, unknown>)
+          : block,
+      );
       const doc =
         typeof page.content === "object" && page.content !== null && !Array.isArray(page.content)
           ? (page.content as Record<string, unknown>)
@@ -382,7 +479,7 @@ async function runWriteTool(name: string, args: RpcParams, ctx: ExecContext): Pr
               databasePageId,
               databasePage: { workspaceId: ctx.workspaceId },
             },
-            select: { id: true },
+            select: { id: true, type: true },
           })
         : null;
       if (!property) throw new Error("Property not found.");
@@ -393,6 +490,7 @@ async function runWriteTool(name: string, args: RpcParams, ctx: ExecContext): Pr
       } catch {
         value = raw;
       }
+      value = encodePropertyValue(property.type, value);
       // No URL gate on this path. The MCP surface has no upload tool and the
       // upload file name is a random token, so a client cannot produce an
       // app-owned `/api/files/...` URL: a write gate on that basis refused
@@ -461,11 +559,13 @@ export async function GET(request: Request) {
   if (limited) return limited;
   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const allowWrite = new URL(request.url).searchParams.get("allowWrite") === "true";
+  const params = new URL(request.url).searchParams;
+  const allowWrite = params.get("allowWrite") === "true";
+  const allowAdmin = params.get("allowAdmin") === "true";
   return NextResponse.json({
     ...SERVER_INFO,
     protocolVersion: PROTOCOL_VERSION,
-    tools: listTools({ allowWrite }).map(toolDescriptor),
+    tools: listTools({ allowWrite, allowAdmin, includeExtended: true }).map(toolDescriptor),
     resources: RESOURCE_CATALOG,
   });
 }
@@ -515,6 +615,7 @@ export async function POST(request: Request) {
 
   const url = new URL(request.url);
   const allowWrite = url.searchParams.get("allowWrite") === "true";
+  const allowAdmin = url.searchParams.get("allowAdmin") === "true";
   const workspaceId = url.searchParams.get("workspaceId") ?? asString(params.workspaceId);
   // `authenticateApiRequest` resolves the token row once and hands over the
   // granted scopes with it, so the grant is read from the same row the token
@@ -537,7 +638,9 @@ export async function POST(request: Request) {
   }
 
   if (method === "tools/list") {
-    return rpcOk(id, { tools: listTools({ allowWrite }).map(toolDescriptor) });
+    return rpcOk(id, {
+      tools: listTools({ allowWrite, allowAdmin, includeExtended: true }).map(toolDescriptor),
+    });
   }
 
   if (method === "resources/list") {
@@ -581,10 +684,23 @@ export async function POST(request: Request) {
     if (!decision.allowed) {
       return rpcFail(id, -32003, "Insufficient scope.", { missing: decision.missing });
     }
+    if (tool.adminOnly && !allowAdmin) {
+      return rpcFail(id, -32004, "Admin tools require allowAdmin.");
+    }
 
     try {
+      const toolArgs = validation.value ?? {};
+      if (isExtraTool(tool.name)) {
+        if (!tool.readOnly && !allowWrite) {
+          return rpcFail(id, -32004, "Write tools require allowWrite.");
+        }
+        if (!tool.readOnly && !canEditContent(access.role)) {
+          return rpcFail(id, -32003, "Insufficient workspace role for a write.");
+        }
+        return rpcOk(id, textResult(await runExtraTool(tool.name, toolArgs, ctx)));
+      }
       if (tool.readOnly) {
-        return rpcOk(id, textResult(await runReadTool(tool.name, validation.value ?? {}, ctx)));
+        return rpcOk(id, textResult(await runReadTool(tool.name, toolArgs, ctx)));
       }
       if (!allowWrite) {
         return rpcFail(id, -32004, "Write tools require allowWrite.");
@@ -592,7 +708,7 @@ export async function POST(request: Request) {
       if (!canEditContent(access.role)) {
         return rpcFail(id, -32003, "Insufficient workspace role for a write.");
       }
-      return rpcOk(id, textResult(await runWriteTool(tool.name, validation.value ?? {}, ctx)));
+      return rpcOk(id, textResult(await runWriteTool(tool.name, toolArgs, ctx)));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Tool execution failed.";
       return rpcOk(id, textResult({ error: message }, true));

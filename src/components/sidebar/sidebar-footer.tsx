@@ -56,7 +56,7 @@ export function SidebarFooter({
             router.refresh();
           })
         }
-        className="mb-2 h-8 w-full rounded border border-border bg-bg px-2 text-xs text-muted outline-none"
+        className="mb-2 h-8 w-full rounded-control border-control bg-bg px-2 text-xs text-muted outline-none"
       >
         {LOCALES.map((option) => (
           <option key={option.code} value={option.code}>
@@ -81,7 +81,7 @@ export function SidebarFooter({
           <button
             type="button"
             aria-label={t(locale, "help")}
-            className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
+            className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded-control text-muted hover:bg-surface-2"
           >
             <HelpCircle className="h-4 w-4" />
           </button>
@@ -114,7 +114,7 @@ export function SidebarFooter({
           <button
             type="submit"
             aria-label={t(locale, "signOut")}
-            className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
+            className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded-control text-muted hover:bg-surface-2"
           >
             <LogOut className="h-4 w-4" />
           </button>

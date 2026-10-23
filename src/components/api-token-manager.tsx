@@ -231,7 +231,7 @@ export function ScopePicker({
   const effective = expandScopes(selected);
   return (
     <fieldset
-      className="rounded-md border border-border p-3"
+      className="rounded-card border border-border p-3"
       data-testid="token-scope-picker"
       disabled={disabled}
     >
@@ -508,6 +508,7 @@ export function ApiTokenPanelBody({
   loading = false,
   create,
   revoke,
+  title,
   "data-testid": testId = "api-token-panel",
 }: {
   tokens: readonly ApiTokenRow[];
@@ -516,6 +517,8 @@ export function ApiTokenPanelBody({
   loading?: boolean;
   create: TokenCreateAction;
   revoke: TokenRevokeAction;
+  /** Section heading; the dedicated page avoids repeating its h1. */
+  title?: string;
   "data-testid"?: string;
 }) {
   const router = useRouter();
@@ -556,7 +559,7 @@ export function ApiTokenPanelBody({
     <Section
       className="mt-10"
       data-testid={testId}
-      title={t(locale, "apiTokens")}
+      title={title ?? t(locale, "apiTokens")}
       description={
         <>
           {t(locale, "apiTokensIntroA")}{" "}

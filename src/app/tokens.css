@@ -19,7 +19,7 @@
      hairline `--border` is deliberately too quiet for that job. */
   --border-control: #8f8f88;
   --fg-subtle: #6b6b65;
-  --accent-soft: rgba(21, 108, 199, 0.1);
+  --accent-soft: rgba(47, 111, 159, 0.1);
   /* Status inks are text colours, so each clears AA on every surface the
      product puts them on (white, sidebar, surface). The previous amber was
      2.75:1 and the red 4.26:1 — both failed normal text. */
@@ -31,7 +31,7 @@
   --warning: #94640e;
   --warning-soft: rgba(148, 100, 14, 0.14);
   --overlay: rgba(15, 15, 15, 0.4);
-  --ring: rgba(21, 108, 199, 0.45);
+  --ring: rgba(47, 52, 55, 0.32);
 
   /* Tag palette (10 hues): text / background / border per hue. */
   --tag-gray-fg: #5a5a55;   --tag-gray-bg: #f1f1ef;   --tag-gray-bd: #e3e3e0;
@@ -46,7 +46,7 @@
   --tag-teal-fg: #2c7a72;   --tag-teal-bg: #e8f2f1;   --tag-teal-bd: #cfe4e2;
 
   /* Motion durations (one vocabulary for the whole app). */
-  --dur-1: 120ms;
+  --dur-1: 150ms;
   --dur-2: 180ms;
   --dur-3: 240ms;
   --dur-4: 320ms;
@@ -84,8 +84,10 @@
 
   /* Page headings. Twelve surfaces wrote the same size and tracking as
      arbitrary values, which is a token waiting to be named rather than twelve
-     coincidences. */
-  --text-title: 1.75rem; /* 28px — page headings */
+     coincidences. `page-title` is the document title itself; it sits one step
+     above every section heading so the page never reads as a flat outline. */
+  --text-title: 2rem; /* 32px — page headings */
+  --text-page-title: 2.5rem; /* 40px — the document title */
   --tracking-title: -0.02em; /* page headings */
   /* …and the same is true one step down: eleven panel/section headings shared
      one tracking value. */
@@ -97,7 +99,7 @@
   --border-strong: #454545;
   --border-control: #707070;
   --fg-subtle: rgba(255, 255, 255, 0.58);
-  --accent-soft: rgba(76, 155, 234, 0.16);
+  --accent-soft: rgba(143, 189, 232, 0.16);
   --danger: #ff8a85;
   --danger-fg: #191919;
   --danger-soft: rgba(255, 138, 133, 0.18);
@@ -106,7 +108,7 @@
   --warning: #e0b45c;
   --warning-soft: rgba(224, 180, 92, 0.22);
   --overlay: rgba(0, 0, 0, 0.55);
-  --ring: rgba(76, 155, 234, 0.55);
+  --ring: rgba(232, 232, 228, 0.35);
 
   --tag-gray-fg: #c7c7c2;   --tag-gray-bg: #2f2f2f;   --tag-gray-bd: #3b3b3b;
   --tag-brown-fg: #d3a88b;  --tag-brown-bg: #33291f;  --tag-brown-bd: #443528;
@@ -125,7 +127,7 @@
   --border-strong: #4a4a4a;
   --border-control: #4a4a4a;
   --fg-subtle: #4a4a4a;
-  --ring: #0b57d0;
+  --ring: #000000;
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.22);
   --shadow-2: 0 6px 16px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.24);
   --shadow-3: 0 16px 40px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.26);
@@ -136,7 +138,7 @@
   --border-strong: #9a9a9a;
   --border-control: #9a9a9a;
   --fg-subtle: rgba(255, 255, 255, 0.72);
-  --ring: #8fc2ff;
+  --ring: #ffffff;
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.18);
   --shadow-2: 0 6px 16px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.2);
   --shadow-3: 0 16px 40px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.22);
@@ -188,14 +190,14 @@
 
 /* --- Utilities ----------------------------------------------------------- */
 
-/* One focus ring, everywhere. */
+/* One focus ring, everywhere: a neutral outline plus a soft halo. */
 .focus-ring {
   outline: none;
 }
 .focus-ring:focus-visible {
-  outline: none;
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
   box-shadow: var(--shadow-focus);
-  border-color: var(--ring);
 }
 
 /* Standard transitions (never animate layout on scroll). */
@@ -227,13 +229,13 @@
   background: var(--bg);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-2);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-card);
 }
 .surface-raised-strong {
   background: var(--bg);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-3);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-overlay);
 }
 
 /* Tag / chip. */
@@ -242,7 +244,7 @@
   align-items: center;
   gap: var(--space-1);
   padding: 1px var(--space-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-chip);
   font-size: 12px;
   line-height: 18px;
   font-weight: 500;

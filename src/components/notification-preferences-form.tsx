@@ -102,7 +102,14 @@ function quietEqual(a: QuietHours, b: QuietHours): boolean {
 }
 
 const DELIVERY_OPTIONS: ReadonlyArray<SegmentedOption<DeliveryLevel>> =
-  DELIVERY_LEVELS.map((level) => ({ value: level, label: LEVEL_LABELS[level] }));
+  DELIVERY_LEVELS.map((level) => ({
+    value: level,
+    // At 320px the three-up control has ~80px per option; the shortened
+    // visible label keeps “Mentions only” from ellipsising while the full
+    // meaning stays on the accessible name.
+    label: level === "MENTIONS" ? "Mentions" : LEVEL_LABELS[level],
+    ariaLabel: LEVEL_LABELS[level],
+  }));
 
 const CADENCE_OPTIONS = DIGEST_CADENCES.map((cadence) => ({
   value: cadence,
@@ -193,10 +200,10 @@ export function NotificationPreferencesForm({
         title={
           <span className="flex items-center gap-2">
             <BellRing className="h-4 w-4" aria-hidden />
-            {t(locale, "notifications")}
+            Channels
           </span>
         }
-        description="Choose where we reach you, what you hear about, and when."
+        description="Choose where alerts reach you. The event levels and quiet hours below refine what and when."
       >
         <div className="flex flex-col gap-3">
           {CHANNELS.map((channel) => (
@@ -219,10 +226,13 @@ export function NotificationPreferencesForm({
         title="Notify me about"
         description="Set the delivery level for each kind of event."
       >
-        <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
+        <ul className="divide-y divide-border overflow-hidden rounded-card border border-border">
           {EVENT_TYPES.map((type) => (
-            <li key={type} className="flex flex-wrap items-center gap-3 px-3 py-3">
-              <span className="min-w-0 flex-1">
+            <li
+              key={type}
+              className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
+            >
+              <span className="min-w-0 sm:flex-1">
                 <span className="block text-sm text-fg">{EVENT_LABELS[type]}</span>
                 <span className="block text-xs text-muted">{EVENT_DESCRIPTIONS[type]}</span>
               </span>
@@ -232,7 +242,11 @@ export function NotificationPreferencesForm({
                 onValueChange={(level) => setLevel(type, level)}
                 ariaLabel={EVENT_LABELS[type]}
                 size="sm"
-                className="shrink-0"
+                // The three delivery levels sit on their own full-width row on
+                // a phone; squeezing them beside the description leaves the
+                // copy in a one-word column. From `sm` up the fixed track is
+                // wide enough that “Mentions only” is not ellipsised.
+                className="w-full shrink-0 sm:w-72"
               />
             </li>
           ))}
@@ -287,7 +301,7 @@ export function NotificationPreferencesForm({
                 setQuiet((current) => ({ ...current, start: event.target.value }));
               }}
               className={cn(
-                "focus-ring h-9 rounded-sm border bg-bg px-2.5 text-sm text-fg disabled:cursor-not-allowed disabled:opacity-50",
+                "focus-ring h-9 rounded-control border bg-bg px-2.5 text-sm text-fg disabled:cursor-not-allowed disabled:opacity-50",
                 quietError ? "border-danger" : "border-border",
               )}
             />
@@ -302,7 +316,7 @@ export function NotificationPreferencesForm({
                 setQuiet((current) => ({ ...current, end: event.target.value }));
               }}
               className={cn(
-                "focus-ring h-9 rounded-sm border bg-bg px-2.5 text-sm text-fg disabled:cursor-not-allowed disabled:opacity-50",
+                "focus-ring h-9 rounded-control border bg-bg px-2.5 text-sm text-fg disabled:cursor-not-allowed disabled:opacity-50",
                 quietError ? "border-danger" : "border-border",
               )}
             />

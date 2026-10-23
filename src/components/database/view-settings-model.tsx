@@ -201,7 +201,12 @@ export function SettingsPopoverContent({
   return (
     <PopoverContent
       data-testid={testId}
-      className={cn("flex max-h-[70vh] w-72 flex-col overflow-hidden p-0", className)}
+      className={cn(
+        // Every settings popover is width-matched to its content; the viewport
+        // cap keeps the 24rem Builder panel from spilling off a 320px phone.
+        "flex max-h-[70vh] w-72 max-w-[calc(100vw-1rem)] flex-col overflow-hidden p-0",
+        className,
+      )}
     >
       <div className="sticky top-0 z-10 shrink-0 border-b border-border bg-surface-2/95 px-3 py-2 backdrop-blur">
         <p className="text-xs font-medium text-fg">{title}</p>
@@ -376,7 +381,7 @@ export function FilterLeafRow({
     leaf.operator,
   );
   return (
-    <div className="space-y-1 rounded border border-border p-2">
+    <div className="space-y-1 rounded-control border border-border p-2">
       <div className="flex items-center gap-1">
         <span className="min-w-0 flex-1">
           <Select
@@ -449,7 +454,7 @@ export function FilterGroupRows({
   return (
     <div
       className={cn(
-        "space-y-2 rounded border border-border p-2",
+        "space-y-2 rounded-control border border-border p-2",
         depth > 0 && "bg-surface-2/40",
       )}
     >
@@ -609,7 +614,7 @@ export function BuilderLeafRow({
   const property = properties.find((p) => p.id === leaf.propertyId);
   const noValue = BUILDER_VALUELESS_OPERATORS.includes(leaf.op);
   return (
-    <div className="space-y-1 rounded border border-border p-2">
+    <div className="space-y-1 rounded-control border border-border p-2">
       <div className="flex items-center gap-1">
         <span className="min-w-0 flex-1" data-testid="builder-property">
           <Select
@@ -714,7 +719,7 @@ export function BuilderGroupRows({
   return (
     <div
       className={cn(
-        "space-y-2 rounded border border-border p-2",
+        "space-y-2 rounded-control border border-border p-2",
         depth > 0 && "bg-surface-2/40",
       )}
     >

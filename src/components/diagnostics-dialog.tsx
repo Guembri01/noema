@@ -102,7 +102,7 @@ export function DiagnosticsDialog({
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
       <DialogContent
-        className="w-full max-w-2xl rounded-xl border border-border bg-bg p-4 shadow-2xl"
+        className="w-full max-w-2xl rounded-overlay border border-border bg-bg p-4 shadow-2xl"
         aria-label={t(locale, "diagnostics")}
       >
         <h2 className="text-base font-semibold">{t(locale, "diagnostics")}</h2>
@@ -129,7 +129,7 @@ export function DiagnosticsDialog({
         </h3>
         <pre
           data-testid="diagnostics-log"
-          className="mt-2 max-h-56 overflow-auto rounded border border-border bg-surface p-2 font-mono text-2xs leading-relaxed"
+          className="mt-2 max-h-56 overflow-auto rounded-control border border-border bg-surface p-2 font-mono text-2xs leading-relaxed"
         >
           {logs.length > 0 ? logs.join("\n") : "—"}
         </pre>
@@ -141,7 +141,7 @@ export function DiagnosticsDialog({
           <button
             type="button"
             onClick={onClose}
-            className="focus-ring u-interactive h-9 rounded border border-border px-3 text-sm text-muted hover:bg-surface-2"
+            className="focus-ring u-interactive h-9 rounded-control border border-border px-3 text-sm text-muted hover:bg-surface-2"
           >
             {t(locale, "close")}
           </button>
@@ -149,7 +149,7 @@ export function DiagnosticsDialog({
             type="button"
             onClick={() => void copy()}
             disabled={state !== "ready"}
-            className="focus-ring u-interactive h-9 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-40"
+            className="focus-ring u-interactive h-9 rounded-control bg-action px-3 text-sm text-action-fg disabled:opacity-40"
           >
             {t(locale, "copyDiagnostics")}
           </button>

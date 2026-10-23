@@ -184,11 +184,11 @@ describe("chrome visibility + accent styling", () => {
     expect(TABLE_CHROME_REVEAL).toContain("focus-within:opacity-100");
   });
 
-  it("tints the gutter controls with the accent tokens", () => {
+  it("tints the gutter controls with the selection + focus tokens", () => {
     const cls = gutterButtonClass();
-    expect(cls).toContain("bg-accent-soft");
-    expect(cls).toContain("text-accent");
-    expect(cls).toContain("border-accent");
+    expect(cls).toContain("bg-selection-soft");
+    expect(cls).toContain("text-fg");
+    expect(cls).toContain("border-focus");
   });
 
   it("layers the gutter with a token z-index", () => {
@@ -206,7 +206,7 @@ describe("TableAffordances (renderToStaticMarkup)", () => {
     expect(html).toContain("data-table-drag-grip");
     expect(html).toContain('data-chrome-visible="true"');
     expect(html).toContain("opacity-100");
-    expect(html).toContain("bg-accent-soft");
+    expect(html).toContain("bg-selection-soft");
   });
 
   it("marks the header row for the same hover/focus treatment", () => {

@@ -29,14 +29,14 @@ export const PROGRESS_TRACK_STROKE = "stroke-surface-2";
 
 /** Bar fill per tone. */
 export const PROGRESS_TONE_CLASS: Record<ProgressTone, string> = {
-  accent: "bg-accent",
+  accent: "bg-action",
   success: "bg-success",
   danger: "bg-danger",
 };
 
 /** Ring stroke / label colour per tone (paired with `stroke-current`). */
 export const PROGRESS_TONE_TEXT: Record<ProgressTone, string> = {
-  accent: "text-accent",
+  accent: "text-action",
   success: "text-success",
   danger: "text-danger",
 };

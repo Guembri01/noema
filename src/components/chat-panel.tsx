@@ -553,13 +553,13 @@ export function TypingIndicator({
       className="flex items-center gap-2 text-xs text-muted"
     >
       <span aria-hidden className="flex shrink-0 items-center gap-0.5">
-        <span className="size-1.5 rounded-full bg-accent animate-pulse-soft" />
+        <span className="size-1.5 rounded-full bg-action animate-pulse-soft" />
         <span
-          className="size-1.5 rounded-full bg-accent animate-pulse-soft"
+          className="size-1.5 rounded-full bg-action animate-pulse-soft"
           style={{ animationDelay: "var(--dur-1)" }}
         />
         <span
-          className="size-1.5 rounded-full bg-accent animate-pulse-soft"
+          className="size-1.5 rounded-full bg-action animate-pulse-soft"
           style={{ animationDelay: "var(--dur-2)" }}
         />
       </span>
@@ -685,7 +685,7 @@ export const ChatMessageItem = forwardRef<HTMLLIElement, ChatMessageItemProps>(
         <div className={cn("flex min-w-0 flex-col", isAssistant ? "w-full" : "max-w-[85%] items-end")}>
           {isAssistant ? (
             <div className="flex items-center gap-1.5 pb-1 text-2xs text-muted">
-              <Sparkles className="h-3 w-3 shrink-0 text-accent" aria-hidden />
+              <Sparkles className="h-3 w-3 shrink-0 text-muted" aria-hidden />
               <span className="font-medium text-fg">{meta?.model || modelLabel || "Noema AI"}</span>
               {(meta?.activity?.length ?? 0) > 0 ? (
                 <Tag size="sm" hue="gray" className="min-w-0 max-w-[12rem]" title={meta?.activity?.join(", ")}>
@@ -1143,7 +1143,7 @@ export function ChatPanel({
       <header className="flex items-center gap-2 border-b border-border px-3 py-2">
         <span
           aria-hidden
-          className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-accent-soft text-accent"
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-surface-2 text-fg"
         >
           <NoemaMark className="h-4 w-4" />
         </span>
@@ -1180,7 +1180,7 @@ export function ChatPanel({
                       setHistoryOpen(false);
                     }}
                     className={cn(
-                      "focus-ring min-w-0 flex-1 truncate rounded-sm px-2 py-1.5 text-left text-sm hover:bg-surface-2",
+                      "focus-ring min-w-0 flex-1 truncate rounded-control px-2 py-1.5 text-left text-sm hover:bg-surface-2",
                       item.id === active?.id && "bg-surface-2",
                     )}
                   >
@@ -1241,7 +1241,7 @@ export function ChatPanel({
                       <button
                         type="button"
                         aria-label={t(locale, "chatAnswerActions")}
-                        className="focus-ring u-colors flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted opacity-0 hover:bg-surface-2 focus-visible:opacity-100 group-hover:opacity-100"
+                        className="focus-ring u-colors flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-muted opacity-0 hover:bg-surface-2 focus-visible:opacity-100 group-hover:opacity-100"
                       >
                         <MoreHorizontal className="h-3.5 w-3.5" />
                       </button>
@@ -1338,7 +1338,7 @@ export function ChatPanel({
                 <li data-testid="chat-streaming" className="animate-fade">
                   <div className="flex items-center gap-1.5 pb-1 text-2xs text-muted">
                     <Sparkles
-                      className="h-3 w-3 shrink-0 animate-pulse-soft text-accent"
+                      className="h-3 w-3 shrink-0 animate-pulse-soft text-muted"
                       aria-hidden
                     />
                     <span className="font-medium text-fg">{modelLabel}</span>
@@ -1403,7 +1403,7 @@ export function ChatPanel({
             aria-label={t(locale, "chatContextBudget")}
             aria-expanded={contextOpen}
             onClick={() => setContextOpen((value) => !value)}
-            className="focus-ring u-colors flex w-full items-center gap-1.5 rounded-lg border border-border px-2 py-1 text-2xs text-muted hover:bg-surface-2"
+            className="focus-ring u-colors flex w-full items-center gap-1.5 rounded-control border border-border px-2 py-1 text-2xs text-muted hover:bg-surface-2"
           >
             <Gauge className="h-3.5 w-3.5 shrink-0" aria-hidden />
             <span className="font-medium text-fg">Context</span>
@@ -1438,7 +1438,7 @@ export function ChatPanel({
                     Number.isFinite(next) ? clampContextBudget(next) : DEFAULT_CONTEXT_BUDGET,
                   );
                 }}
-                className="ms-auto h-7 w-24 rounded-sm border border-border bg-bg px-2 text-right text-xs text-fg outline-none focus-ring"
+                className="ms-auto h-7 w-24 rounded-control border-control bg-bg px-2 text-right text-xs text-fg outline-none focus-ring"
               />
             </label>
             <p className="mt-1.5">

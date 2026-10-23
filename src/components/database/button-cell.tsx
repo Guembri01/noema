@@ -187,7 +187,7 @@ export function ButtonCell({
         type="button"
         onClick={onRunButton}
         aria-label={buttonLabel}
-        className="focus-ring u-interactive rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
+        className="focus-ring u-interactive rounded-control border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
       >
         {buttonLabel}
       </button>
@@ -254,7 +254,7 @@ export function ButtonCell({
         onClick={(event) => {
           if (!confirmRun(event.currentTarget)) event.preventDefault();
         }}
-        className="focus-ring inline-block max-w-full truncate rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
+        className="focus-ring inline-block max-w-full truncate rounded-control border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
       >
         {label}
       </a>
@@ -268,7 +268,7 @@ export function ButtonCell({
         onClick={(event) => {
           if (confirmRun(event.currentTarget)) onRunButton();
         }}
-        className="focus-ring max-w-full truncate rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
+        className="focus-ring max-w-full truncate rounded-control border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
       >
         {label}
       </button>
@@ -284,7 +284,7 @@ export function ButtonCell({
       title={reason}
       aria-label={`${label}: ${reason}`}
       data-testid="button-cell-disabled"
-      className="focus-ring u-interactive max-w-full truncate rounded border border-border px-2 py-0.5 text-xs opacity-60"
+      className="focus-ring u-interactive max-w-full truncate rounded-control border border-border px-2 py-0.5 text-xs opacity-60"
     >
       {label}
     </button>

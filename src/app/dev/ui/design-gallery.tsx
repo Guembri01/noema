@@ -101,9 +101,8 @@ import { MotionGallery } from "./motion-gallery";
  * printed beneath its heading. Exists only for review: `page.tsx` calls
  * `notFound()` in production.
  *
- * Overlay demos that portal on first paint (`Select defaultOpen`) are gated on
- * `mounted` so the server and first client render agree — no hydration warning,
- * no console noise.
+ * Overlay demos open on interaction, so the server and first client render
+ * agree without a hydration warning or console noise.
  */
 
 /* ------------------------------------------------------------------------- *
@@ -178,7 +177,7 @@ function Note({ children }: { children: ReactNode }) {
   return <p className="text-xs text-muted">{children}</p>;
 }
 
-const ROW = "flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface p-4";
+const ROW = "flex flex-wrap items-center gap-3 rounded-card border border-border bg-surface p-4";
 
 /* ------------------------------------------------------------------------- *
  * Theme switcher — the same mechanism the app uses (next-themes class + the
@@ -236,10 +235,11 @@ function ThemeSwitcher() {
       size="sm"
       value={value}
       onValueChange={onChange}
+      className="shrink-0"
       options={[
         { value: "light", label: "Light" },
         { value: "dark", label: "Dark" },
-        { value: "contrast", label: "High contrast" },
+        { value: "contrast", label: "High", ariaLabel: "High contrast" },
       ]}
     />
   );
@@ -472,7 +472,7 @@ function VirtualListDemo() {
         getKey={(row) => row}
         renderItem={(row) => <span className="block px-3 py-1.5 text-sm">{row}</span>}
         scrollerProps={{ role: "region", "aria-label": "Virtual list demo" }}
-        className="overflow-y-auto rounded-md border border-border"
+        className="overflow-y-auto rounded-card border border-border"
         rowClassName="absolute inset-x-0 border-b border-border"
         rowStyle={{ height: 32 }}
       />
@@ -483,7 +483,7 @@ function VirtualListDemo() {
 
 function ResizablePanelDemo() {
   return (
-    <div className="flex w-full max-w-xl overflow-hidden rounded-md border border-border">
+    <div className="flex w-full max-w-xl overflow-hidden rounded-card border border-border">
       <ResizablePanel
         defaultWidth={240}
         min={160}
@@ -548,9 +548,6 @@ function GallerySection({
  * ------------------------------------------------------------------------- */
 
 export function DesignGallery() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-
   const primitiveCount = galleryCoveredFiles().length;
 
   const content: Record<GallerySectionId, ReactNode> = {
@@ -692,21 +689,20 @@ export function DesignGallery() {
           </div>
         </Group>
         <Group label="Open · empty">
-          {mounted ? (
-            <>
-              <div className="w-64">
-                <Select options={SELECT_OPTIONS} defaultOpen searchable={false} />
-              </div>
-              <div className="w-64">
-                <Select options={[]} defaultOpen searchable={false} />
-              </div>
-              <Note>
-                Open menus portal to the body, so they render after mount.
-              </Note>
-            </>
-          ) : (
-            <Note>Open menus render after mount.</Note>
-          )}
+          <div className="w-64">
+            <Select
+              options={SELECT_OPTIONS}
+              placeholder="Open to inspect"
+              searchable={false}
+            />
+          </div>
+          <div className="w-64">
+            <Select options={[]} placeholder="No options" searchable={false} />
+          </div>
+          <Note>
+            Open a trigger to inspect the menu and empty state; menus portal to
+            the body.
+          </Note>
         </Group>
       </>
     ),
@@ -904,7 +900,7 @@ export function DesignGallery() {
           <DatePicker mode="datetime" />
         </Group>
         <Group label="Calendar grid">
-          <div className="rounded-md border border-border bg-bg p-3">
+          <div className="rounded-card border border-border bg-bg p-3">
             <CalendarGrid
               year={2026}
               month={2}
@@ -1118,7 +1114,7 @@ export function DesignGallery() {
           </div>
         </Group>
         <Group label="Compact">
-          <div className="w-72 rounded-md border border-border">
+          <div className="w-72 rounded-card border border-border">
             <EmptyState
               variant="compact"
               icon={<Mail className="h-4 w-4" />}
@@ -1214,7 +1210,7 @@ export function DesignGallery() {
     "scroll-area": (
       <>
         <Group label="Vertical">
-          <ScrollArea maxHeight={160} className="w-64 rounded-md border border-border">
+          <ScrollArea maxHeight={160} className="w-64 rounded-card border border-border">
             <div className="flex flex-col gap-1 p-2">
               {Array.from({ length: 16 }).map((_, index) => (
                 <div
@@ -1233,7 +1229,7 @@ export function DesignGallery() {
               {Array.from({ length: 20 }).map((_, index) => (
                 <div
                   key={index}
-                  className="shrink-0 rounded-md border border-border bg-surface-2 px-4 py-2 text-sm"
+                  className="shrink-0 rounded-chip border border-border bg-surface-2 px-4 py-2 text-sm"
                 >
                   Item {index + 1}
                 </div>
@@ -1330,7 +1326,7 @@ export function DesignGallery() {
           </div>
         </Group>
         <Note>
-          A 2px accent bar pinned to the viewport top; never blocks input.
+          A 2px action bar pinned to the viewport top; never blocks input.
         </Note>
       </>
     ),

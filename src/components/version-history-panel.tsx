@@ -69,8 +69,8 @@ const MAX_INLINE_DIFF_LENGTH = 2000;
 
 const INLINE_DIFF_CLASS: Record<DiffSegment["op"], string> = {
   equal: "",
-  insert: "rounded bg-success-soft text-success",
-  delete: "rounded bg-danger-soft text-danger",
+  insert: "rounded-chip bg-success-soft text-success",
+  delete: "rounded-chip bg-danger-soft text-danger",
 };
 
 /** The panel's real tabbable elements, tagged with their index as the id. */
@@ -160,10 +160,10 @@ function InlineDiff({ before, after }: { before: string; after: string }) {
         )}
       </p>
       <p className="flex items-center gap-2 text-2xs text-muted">
-        <span className="rounded bg-success-soft px-1.5 py-0.5 text-success">
+        <span className="rounded-chip bg-success-soft px-1.5 py-0.5 text-success">
           +{stats.added}
         </span>
-        <span className="rounded bg-danger-soft px-1.5 py-0.5 text-danger">
+        <span className="rounded-chip bg-danger-soft px-1.5 py-0.5 text-danger">
           -{stats.removed}
         </span>
       </p>
@@ -272,7 +272,7 @@ export function VersionHistoryPanel({
             type="button"
             aria-label={t(locale, "close")}
             onClick={onClose}
-            className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
+            className="focus-ring u-interactive flex h-7 w-7 items-center justify-center rounded-control text-muted hover:bg-surface-2"
           >
             <X className="h-4 w-4" />
           </button>
@@ -350,7 +350,7 @@ export function VersionHistoryPanel({
                         {label !== null && (
                           <span
                             data-testid="version-label"
-                            className="inline-flex items-center gap-0.5 rounded bg-warning-soft px-1.5 py-0.5 text-warning"
+                            className="inline-flex items-center gap-0.5 rounded-chip bg-warning-soft px-1.5 py-0.5 text-warning"
                           >
                             <Tag className="h-2.5 w-2.5" aria-hidden />
                             {label}
@@ -364,7 +364,7 @@ export function VersionHistoryPanel({
                     {typeof version.charDelta === "number" && version.charDelta !== 0 && (
                       <span
                         className={cn(
-                          "shrink-0 rounded px-1.5 py-0.5 text-3xs",
+                          "shrink-0 rounded-chip px-1.5 py-0.5 text-3xs",
                           version.charDelta > 0
                             ? "bg-success-soft text-success"
                             : "bg-danger-soft text-danger",
@@ -389,7 +389,7 @@ export function VersionHistoryPanel({
                     type="button"
                     disabled={pending}
                     onClick={() => restoreVersion(version.id)}
-                    className="focus-ring u-interactive mt-2 inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-50"
+                    className="focus-ring u-interactive mt-2 inline-flex items-center gap-1 rounded-control border border-border px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-50"
                   >
                     <RotateCcw className="h-3 w-3" /> {t(locale, "restore")}
                   </button>
@@ -404,14 +404,14 @@ export function VersionHistoryPanel({
                       setConfirmingRestore(null);
                       setSelected((previous) => (previous === version.id ? null : version.id));
                     }}
-                    className="focus-ring u-interactive mt-2 inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2"
+                    className="focus-ring u-interactive mt-2 inline-flex items-center gap-1 rounded-control border border-border px-2 py-1 text-xs hover:bg-surface-2"
                   >
                     {t(locale, "suggestionReplaced")}
                   </button>
                   {selected === version.id && (
                     <div
                       data-testid="version-inline-diff"
-                      className="mt-3 rounded border border-border bg-surface-2 p-2"
+                      className="mt-3 rounded-control border border-border bg-surface-2 p-2"
                     >
                       <div
                         role="group"
@@ -426,7 +426,7 @@ export function VersionHistoryPanel({
                             setConfirmingRestore(null);
                           }}
                           className={cn(
-                            "focus-ring u-interactive rounded px-2 py-0.5 text-2xs",
+                            "focus-ring u-interactive rounded-control px-2 py-0.5 text-2xs",
                             effectiveComparison === "current"
                               ? "bg-surface text-fg"
                               : "text-muted hover:bg-surface",
@@ -443,7 +443,7 @@ export function VersionHistoryPanel({
                             setConfirmingRestore(null);
                           }}
                           className={cn(
-                            "focus-ring u-interactive rounded px-2 py-0.5 text-2xs",
+                            "focus-ring u-interactive rounded-control px-2 py-0.5 text-2xs",
                             effectiveComparison === "previous"
                               ? "bg-surface text-fg"
                               : "text-muted hover:bg-surface",
@@ -471,14 +471,14 @@ export function VersionHistoryPanel({
                               data-testid="version-restore-confirm"
                               disabled={pending}
                               onClick={() => restoreVersion(restoreTarget.id)}
-                              className="focus-ring u-interactive rounded bg-danger/90 px-2 py-0.5 text-2xs text-white hover:bg-danger disabled:opacity-50"
+                              className="focus-ring u-interactive rounded-control bg-danger/90 px-2 py-0.5 text-2xs text-white hover:bg-danger disabled:opacity-50"
                             >
                               {t(locale, "restore")}
                             </button>
                             <button
                               type="button"
                               onClick={() => setConfirmingRestore(null)}
-                              className="focus-ring u-interactive rounded px-2 py-0.5 text-2xs text-muted hover:bg-surface"
+                              className="focus-ring u-interactive rounded-control px-2 py-0.5 text-2xs text-muted hover:bg-surface"
                             >
                               {t(locale, "close")}
                             </button>
@@ -490,7 +490,7 @@ export function VersionHistoryPanel({
                             data-comparison={effectiveComparison}
                             disabled={pending}
                             onClick={() => setConfirmingRestore(version.id)}
-                            className="focus-ring u-interactive inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-50"
+                            className="focus-ring u-interactive inline-flex items-center gap-1 rounded-control border border-border px-2 py-1 text-xs hover:bg-surface-2 disabled:opacity-50"
                           >
                             <RotateCcw className="h-3 w-3" /> Restore this version
                           </button>

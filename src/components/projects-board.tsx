@@ -380,7 +380,7 @@ function WipLimitsEditor({
   const statusByKey = new Map(columns.map((column) => [column.key, column.status]));
   const limited = Object.keys(limits).length > 0;
   return (
-    <div className="mb-6 rounded-xl border border-border p-4" data-testid="wip-editor">
+    <div className="mb-6 rounded-lg border border-border p-4" data-testid="wip-editor">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-2 text-sm font-medium">
           <Gauge className="h-4 w-4" /> {t(locale, "wipLimits")}
@@ -410,7 +410,7 @@ function WipLimitsEditor({
                 placeholder="∞"
                 aria-label={`${label} ${t(locale, "wipLimitAria")}`}
                 onChange={(event) => onChange(status, event.target.value)}
-                className="h-8 w-16 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
+                className="h-8 w-16 rounded-control border-control bg-bg px-2 text-sm outline-none focus-ring"
               />
               {grade === "over" ? (
                 <span className="text-2xs text-danger">over</span>
@@ -536,7 +536,7 @@ export function ProjectsBoard({
 
   return (
     <div>
-      <div className="mb-6 rounded-xl border border-border p-4">
+      <div className="mb-6 rounded-lg border border-border p-4">
         <p className="mb-3 flex items-center gap-2 text-sm font-medium">
           <FolderKanban className="h-4 w-4" /> {t(locale, "newProject")}
         </p>
@@ -547,21 +547,21 @@ export function ProjectsBoard({
             aria-label={t(locale, "projectName")}
             placeholder={t(locale, "projectName")}
             onChange={(event) => setName(event.target.value)}
-            className="h-9 w-56 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
+            className="h-9 w-56 rounded-control border-control bg-bg px-2 text-sm outline-none focus-ring"
           />
           <input
             value={summary}
             aria-label={t(locale, "projectSummary")}
             placeholder={t(locale, "projectSummary")}
             onChange={(event) => setSummary(event.target.value)}
-            className="h-9 w-72 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
+            className="h-9 w-72 rounded-control border-control bg-bg px-2 text-sm outline-none focus-ring"
           />
           <input
             type="date"
             value={dueDate}
             aria-label={t(locale, "projectDue")}
             onChange={(event) => setDueDate(event.target.value)}
-            className="h-9 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
+            className="h-9 rounded-control border-control bg-bg px-2 text-sm outline-none focus-ring"
           />
           <Button
             type="button"
@@ -583,7 +583,7 @@ export function ProjectsBoard({
       />
 
       {wipEnabled && (
-        <div className="mb-6 rounded-xl border border-border p-4">
+        <div className="mb-6 rounded-lg border border-border p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-medium">{t(locale, "wipLimits")}</p>
             <p className="text-2xs text-muted">
@@ -602,7 +602,7 @@ export function ProjectsBoard({
               return (
                 <li
                   key={column.key}
-                  className={`rounded border px-1.5 py-0.5 ${WIP_STYLES[column.status]} ${
+                  className={`rounded-chip border px-1.5 py-0.5 ${WIP_STYLES[column.status]} ${
                     column.limit === undefined ? "opacity-60" : ""
                   }`}
                   title={
@@ -624,7 +624,7 @@ export function ProjectsBoard({
       {error && (
         <div
           role="alert"
-          className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger bg-danger-soft px-3 py-2 text-sm text-danger"
+          className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-card border border-danger bg-danger-soft px-3 py-2 text-sm text-danger"
         >
           <span>{error}</span>
           {onRetry && (
@@ -696,7 +696,7 @@ export function ProjectsBoard({
                             : `${label} is at its WIP limit`
                         }
                         onClick={() => moveTo(project.id, status)}
-                        className="rounded border border-border px-1.5 py-0.5 text-muted u-interactive hover:bg-surface-2 focus-ring disabled:cursor-not-allowed disabled:opacity-40"
+                        className="rounded-control border border-border px-1.5 py-0.5 text-muted u-interactive hover:bg-surface-2 focus-ring disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         {label}
                       </button>

@@ -113,7 +113,13 @@ export function SettingsNav({
     <nav
       aria-label={t(locale, "settings")}
       data-testid="settings-nav"
-      className={cn("grid gap-2 sm:grid-cols-2", className)}
+      className={cn(
+        // Below the wide desktop the seven description cards push the actual
+        // settings form an entire screen down. Use a compact, scrollable
+        // section switcher there; the two-column cards return at `xl`.
+        "flex gap-2 overflow-x-auto pb-1 no-scrollbar xl:grid xl:grid-cols-2 xl:gap-2 xl:overflow-visible xl:pb-0",
+        className,
+      )}
     >
       {items.map((item) => {
         const active = isActiveSettingsPath(pathname, item.href, item.exact);
@@ -123,14 +129,18 @@ export function SettingsNav({
             href={item.href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "rounded-lg border px-4 py-3 text-sm u-colors focus-ring hover:bg-surface-2",
+              "shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs u-colors focus-ring hover:bg-surface-2",
+              "xl:whitespace-normal xl:rounded-lg xl:px-4 xl:py-3 xl:text-sm",
+              // Start the strip on the current section below the wide desktop,
+              // so a deep link does not open with its active item off-screen.
+              active && "order-first xl:order-none",
               active
                 ? "border-border-strong bg-surface-2 text-fg"
                 : "border-border text-fg",
             )}
           >
             {item.label}
-            <span className="mt-0.5 block text-xs text-muted">{item.description}</span>
+            <span className="mt-0.5 hidden text-xs text-muted xl:block">{item.description}</span>
           </Link>
         );
       })}

@@ -107,13 +107,13 @@ describe("link popover state machine", () => {
 });
 
 describe("bubbleButtonClass", () => {
-  it("carries the interactive states and marks the active one with the soft accent", () => {
+  it("carries the interactive states and marks the active one with a neutral fill", () => {
     const idle = bubbleButtonClass();
     expect(idle).toContain("focus-ring");
     expect(idle).toContain("u-interactive");
     expect(idle).toContain("hover:bg-surface-2");
     expect(idle).not.toContain("bg-accent-soft");
-    expect(bubbleButtonClass({ active: true })).toContain("bg-accent-soft");
+    expect(bubbleButtonClass({ active: true })).toContain("bg-surface-2");
   });
 });
 
@@ -174,7 +174,7 @@ describe("BubbleToolbar render", () => {
       }),
     );
     expect(html).toContain('aria-pressed="true"');
-    expect(html).toContain("bg-accent-soft");
+    expect(html).toContain("bg-surface-2");
     expect(html).not.toMatch(/#[0-9a-fA-F]{3,6}\b/);
   });
 });

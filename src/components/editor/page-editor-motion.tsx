@@ -7,6 +7,7 @@
  * that module's re-export. Pure mappings only — the ProseMirror plugin that
  * plays them stays with the editor.
  */
+import { GripVertical, Plus } from "lucide-react";
 import { DUR, EASE } from "@/lib/design-tokens";
 
 /* ----------------------------------------------------------- motion (§6/§19) */
@@ -91,7 +92,7 @@ export function rowChromeClass(state: RowChromeState = {}): string {
 }
 
 /**
- * Presentational block chrome: the ⋮⋮ drag affordance and the + affordance.
+ * Presentational block chrome: the drag grip and the + affordance.
  * Pure (no hooks), so it renders identically on the server and in this slice's
  * `renderToStaticMarkup` proof. The grip is decorative — the surrounding
  * `DragHandle` owns the actual drag behaviour, and the + stays chrome-only so
@@ -106,10 +107,10 @@ export function EditorRowChrome({ state = {} }: { state?: RowChromeState }) {
       data-chrome-visible={visible ? "true" : "false"}
     >
       <span className="noema-drag-handle" aria-hidden="true">
-        ⋮⋮
+        <GripVertical className="h-3.5 w-3.5" strokeWidth={1.8} />
       </span>
       <span className="noema-row-add" aria-hidden="true">
-        +
+        <Plus className="h-3.5 w-3.5" strokeWidth={1.8} />
       </span>
     </span>
   );

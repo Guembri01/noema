@@ -112,7 +112,7 @@ export function ShareSection({
   className?: string;
 }) {
   return (
-    <section className={cn("rounded-md border border-border bg-surface p-3", className)}>
+    <section className={cn("rounded-card border border-border bg-surface p-3", className)}>
       <h3 className="text-xs font-medium uppercase tracking-wide text-muted">{title}</h3>
       {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
       <div className="mt-2">{children}</div>
@@ -142,7 +142,7 @@ export function Switch({
       onClick={() => onCheckedChange(!checked)}
       className={cn(
         "focus-ring u-colors relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border",
-        checked ? "border-accent bg-accent" : "border-border-strong bg-surface-3",
+        checked ? "border-action bg-action" : "border-border-strong bg-surface-3",
         disabled && "cursor-not-allowed opacity-50",
       )}
     >
@@ -238,7 +238,7 @@ export function CopyLinkButton({
       aria-label={announced}
       title={announced}
       className={cn(
-        "focus-ring u-interactive u-colors inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-sm border px-3 text-sm",
+        "focus-ring u-interactive u-colors inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-control border px-3 text-sm",
         copied ? "border-success text-success" : "border-border hover:bg-surface-2",
         iconOnly && "w-9 px-0",
         className,
@@ -276,7 +276,7 @@ function LinkField({
           value={value}
           aria-label={label}
           onFocus={(event) => event.currentTarget.select()}
-          className="focus-ring h-9 w-full rounded-sm border border-border bg-bg px-2 text-sm"
+          className="focus-ring h-9 w-full rounded-control border-control bg-bg px-2 text-sm"
         />
         <CopyLinkButton value={value} locale={locale} />
       </span>
@@ -433,14 +433,14 @@ export function ShareDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
-      <DialogContent className="animate-scale-in max-h-[85vh] w-full max-w-xl overflow-y-auto scrollbar-thin rounded-xl border border-border bg-bg p-4 shadow-2xl">
+      <DialogContent className="animate-scale-in max-h-[85vh] w-full max-w-xl overflow-y-auto scrollbar-thin rounded-overlay border border-border bg-bg p-4 shadow-2xl">
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <Globe className="h-4 w-4 text-muted" aria-hidden /> {t(locale, "shareTitle")}
         </h2>
         <p className="mt-1 text-xs text-muted">{t(locale, "shareIntro")}</p>
 
         <div className="mt-4 space-y-6">
-          <ShareSection title={t(locale, "invite")} hint={t(locale, "whoHasAccessIntro")}>
+          <ShareSection title={t(locale, "whoHasAccess")} hint={t(locale, "whoHasAccessIntro")}>
             <AccessList pageId={pageId} locale={locale} />
           </ShareSection>
 
@@ -483,7 +483,7 @@ export function ShareDialog({
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     placeholder={t(locale, "passwordHint")}
-                    className="focus-ring mt-1 h-9 w-full rounded-sm border border-border bg-bg px-2 text-sm"
+                    className="focus-ring mt-1 h-9 w-full rounded-control border-control bg-bg px-2 text-sm"
                   />
                 </label>
                 <label className="block text-sm">
@@ -495,7 +495,7 @@ export function ShareDialog({
                     value={days}
                     onChange={(event) => setDays(event.target.value)}
                     placeholder={t(locale, "never")}
-                    className="focus-ring mt-1 h-9 w-full rounded-sm border border-border bg-bg px-2 text-sm"
+                    className="focus-ring mt-1 h-9 w-full rounded-control border-control bg-bg px-2 text-sm"
                   />
                 </label>
 
@@ -504,14 +504,14 @@ export function ShareDialog({
                     type="button"
                     onClick={onClose}
                     aria-label={t(locale, "cancel")}
-                    className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm text-muted hover:bg-surface-2"
+                    className="focus-ring u-colors h-9 rounded-control border border-border px-3 text-sm text-muted hover:bg-surface-2"
                   >
                     {t(locale, "cancel")}
                   </button>
                   <button
                     type="submit"
                     disabled={pending}
-                    className="focus-ring u-interactive u-colors flex h-9 items-center gap-1.5 rounded-sm bg-accent px-3 text-sm text-accent-fg disabled:cursor-not-allowed disabled:opacity-40"
+                    className="focus-ring u-interactive u-colors flex h-9 items-center gap-1.5 rounded-control bg-action px-3 text-sm text-action-fg disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {pending ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -566,7 +566,7 @@ export function ShareDialog({
                   disabled={pending}
                   onClick={unpublish}
                   aria-label={t(locale, "unpublish")}
-                  className="focus-ring u-interactive flex h-9 items-center gap-1.5 rounded-sm bg-danger px-3 text-sm font-medium text-danger-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="focus-ring u-interactive flex h-9 items-center gap-1.5 rounded-control bg-danger px-3 text-sm font-medium text-danger-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {pending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
                   {t(locale, "unpublish")}
@@ -574,7 +574,7 @@ export function ShareDialog({
                 <button
                   type="button"
                   onClick={() => setConfirmUnpublish(false)}
-                  className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm hover:bg-surface-2"
+                  className="focus-ring u-colors h-9 rounded-control border border-border px-3 text-sm hover:bg-surface-2"
                 >
                   {t(locale, "cancel")}
                 </button>
@@ -584,7 +584,7 @@ export function ShareDialog({
                 type="button"
                 disabled={pending}
                 onClick={() => setConfirmUnpublish(true)}
-                className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm text-danger hover:bg-danger-soft disabled:cursor-not-allowed disabled:opacity-50"
+                className="focus-ring u-colors h-9 rounded-control border border-border px-3 text-sm text-danger hover:bg-danger-soft disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {t(locale, "unpublish")}
               </button>
@@ -596,7 +596,7 @@ export function ShareDialog({
             type="button"
             onClick={onClose}
             aria-label={t(locale, "done")}
-            className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm hover:bg-surface-2"
+            className="focus-ring u-colors h-9 rounded-control border border-border px-3 text-sm hover:bg-surface-2"
           >
             {t(locale, "done")}
           </button>

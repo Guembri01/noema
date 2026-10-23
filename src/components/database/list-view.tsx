@@ -292,7 +292,7 @@ export function ListView({
             aria-pressed={density === option.value}
             onClick={() => setDensity(option.value)}
             className={cn(
-              "focus-ring u-interactive rounded px-2 py-0.5 text-xs",
+              "focus-ring u-interactive rounded-control px-2 py-0.5 text-xs",
               density === option.value
                 ? "bg-surface-2 text-fg"
                 : "text-muted hover:bg-surface-2",
@@ -346,7 +346,7 @@ export function ListView({
                         [row.id]: !(current[row.id] === true),
                       }))
                     }
-                    className="focus-ring flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-2"
+                    className="focus-ring flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-muted hover:bg-surface-2"
                   >
                     <ChevronRight
                       className={cn(
@@ -378,7 +378,7 @@ export function ListView({
                 </span>
                 {option && (
                   <span
-                    className="rounded px-1.5 py-0.5 text-xs"
+                    className="rounded-chip px-1.5 py-0.5 text-xs"
                     style={{
                       backgroundColor: optionSurface(option.color),
                       color: optionInk(option.color),
@@ -406,7 +406,7 @@ export function ListView({
                         onReorderRows,
                       )
                     }
-                    className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                    className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg disabled:opacity-30"
                   >
                     <ArrowUp className="h-3.5 w-3.5" />
                   </button>
@@ -425,7 +425,7 @@ export function ListView({
                         onReorderRows,
                       )
                     }
-                    className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                    className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg disabled:opacity-30"
                   >
                     <ArrowDown className="h-3.5 w-3.5" />
                   </button>
@@ -439,7 +439,7 @@ export function ListView({
                     aria-label={`${t(locale, "outdentWord")}: ${row.title}`}
                     disabled={level === 0}
                     onClick={() => onLevelChange(row.id, nextOutlineLevel(outline, row.id, "out"))}
-                    className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                    className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg disabled:opacity-30"
                   >
                     <ArrowLeft className="h-3.5 w-3.5" />
                   </button>
@@ -448,7 +448,7 @@ export function ListView({
                     title={t(locale, "indentWord")}
                     aria-label={`${t(locale, "indentWord")}: ${row.title}`}
                     onClick={() => onLevelChange(row.id, nextOutlineLevel(outline, row.id, "in"))}
-                    className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                    className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg disabled:opacity-30"
                   >
                     <ArrowRight className="h-3.5 w-3.5" />
                   </button>
@@ -471,7 +471,7 @@ export function ListView({
                   data-testid="list-add-row"
                   onClick={onAddRow}
                   aria-label={t(locale, "newRow")}
-                  className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
+                  className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-control bg-action px-3 py-1 text-xs font-medium text-action-fg hover:opacity-90"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   {t(locale, "newRow")}

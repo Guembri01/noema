@@ -33,7 +33,7 @@ export type ToastVariant =
 
 /** Shared frame: token surface, radius, elevation and rhythm. Never raw values. */
 export const TOAST_BASE_CLASS =
-  "relative flex items-start gap-2 rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg shadow-2";
+  "relative flex items-start gap-2 rounded-card border border-border bg-bg px-3 py-2 text-sm text-fg shadow-2";
 
 /**
  * Variant → classes. The left edge carries the status colour so a status is
@@ -111,7 +111,7 @@ export function ToastView({
           type="button"
           onClick={onAction}
           aria-label={actionLabel}
-          className="focus-ring u-interactive shrink-0 rounded-sm bg-fg px-2 py-1 text-xs font-medium text-bg transition-opacity hover:opacity-90"
+          className="focus-ring u-interactive shrink-0 rounded-control bg-fg px-2 py-1 text-xs font-medium text-bg transition-opacity hover:opacity-90"
         >
           {actionLabel}
         </button>
@@ -186,11 +186,11 @@ export function Toaster() {
             description: "text-xs text-muted",
             icon: "relative flex h-4 w-4 shrink-0 items-center justify-center",
             actionButton:
-              "shrink-0 rounded-sm bg-fg px-2 py-1 text-xs font-medium text-bg transition-opacity hover:opacity-90",
+              "shrink-0 rounded-control bg-fg px-2 py-1 text-xs font-medium text-bg transition-opacity hover:opacity-90",
             cancelButton:
-              "shrink-0 rounded-sm px-2 py-1 text-xs font-medium text-muted transition-colors hover:text-fg",
+              "shrink-0 rounded-control px-2 py-1 text-xs font-medium text-muted transition-colors hover:text-fg",
             closeButton:
-              "absolute right-1.5 top-1.5 rounded-sm p-0.5 text-muted transition-colors hover:bg-surface-2 hover:text-fg",
+              "absolute right-1.5 top-1.5 rounded-control p-0.5 text-muted transition-colors hover:bg-surface-2 hover:text-fg",
             default: toastVariantClass("default"),
             success: toastVariantClass("success"),
             error: toastVariantClass("error"),

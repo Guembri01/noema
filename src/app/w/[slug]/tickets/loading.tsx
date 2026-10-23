@@ -55,7 +55,7 @@ export default function TicketsLoading() {
         {Array.from({ length: 4 }, (_, column) => (
           <div
             key={column}
-            className="flex w-64 shrink-0 flex-col rounded-xl border border-border"
+            className="flex w-64 shrink-0 flex-col rounded-lg border border-border"
           >
             <div className="flex items-center gap-2 border-b border-border px-3 py-2">
               <Skeleton variant="block" height={12} width="55%" />

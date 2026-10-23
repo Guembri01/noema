@@ -183,7 +183,7 @@ function AuditRow({ event, now }: { event: AuditEvent; now: number }) {
           DOT_TONE[tone],
         )}
       />
-      <div className="u-colors flex items-start gap-3 rounded-sm px-2 py-2 hover:bg-surface-2">
+      <div className="u-colors flex items-start gap-3 rounded-control px-2 py-2 hover:bg-surface-2">
         <Avatar user={{ id: event.actorId, name: event.actorId }} size={24} alt={event.actorId} />
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-2">
@@ -443,7 +443,7 @@ export function AuditFeed({
       {error && (
         <div
           role="alert"
-          className="flex items-center gap-3 rounded-md border border-danger bg-danger-soft px-3 py-2 text-sm text-danger"
+          className="flex items-center gap-3 rounded-card border border-danger bg-danger-soft px-3 py-2 text-sm text-danger"
         >
           <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
           <span className="min-w-0 flex-1">{error}</span>

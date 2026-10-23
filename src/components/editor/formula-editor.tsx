@@ -233,7 +233,7 @@ export function FormulaEditor({
 
       {signature !== null && (
         <div
-          className="flex flex-wrap items-center gap-1.5 rounded-sm border border-border bg-surface-2 px-2 py-1 text-xs text-muted"
+          className="flex flex-wrap items-center gap-1.5 rounded-control border border-border bg-surface-2 px-2 py-1 text-xs text-muted"
           data-testid={dataTestId ? `${dataTestId}-signature` : undefined}
         >
           <code className="font-mono text-fg">{signature.label}</code>
@@ -266,7 +266,7 @@ export function FormulaEditor({
                     accept(item);
                   }}
                   className={cn(
-                    "u-colors flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-xs hover:bg-surface-2",
+                    "u-colors flex w-full items-center gap-2 rounded-control px-2 py-1 text-left text-xs hover:bg-surface-2",
                     index === activeIndex && "bg-surface-2",
                   )}
                 >

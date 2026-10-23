@@ -161,7 +161,7 @@ function ReferenceList({
   targetPageId?: string;
 }) {
   return (
-    <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
+    <ul className="divide-y divide-border overflow-hidden rounded-card border border-border">
       {items.map((item) => (
         <li key={item.id}>
           <ReferenceRow
@@ -265,7 +265,7 @@ export function Backlinks({
           <button
             type="button"
             onClick={retry}
-            className="focus-ring u-interactive mt-1 flex items-center gap-1 rounded-sm border border-border px-2.5 py-1 text-xs text-fg hover:bg-surface-2"
+            className="focus-ring u-interactive mt-1 flex items-center gap-1 rounded-control border border-border px-2.5 py-1 text-xs text-fg hover:bg-surface-2"
           >
             <RefreshCw className="h-3.5 w-3.5" aria-hidden />
             Retry
@@ -293,7 +293,7 @@ export function Backlinks({
           <button
             type="button"
             onClick={retry}
-            className="focus-ring u-interactive mt-1 flex items-center gap-1 rounded-sm bg-accent px-2.5 py-1 text-xs text-accent-fg hover:opacity-90"
+            className="focus-ring u-interactive mt-1 flex items-center gap-1 rounded-control bg-action px-2.5 py-1 text-xs text-action-fg hover:opacity-90"
           >
             <RefreshCw className="h-3.5 w-3.5" aria-hidden />
             Refresh

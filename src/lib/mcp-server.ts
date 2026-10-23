@@ -17,6 +17,7 @@
  */
 
 import { expandScopes } from "./api-token-scope";
+import { EXTRA_TOOLS } from "./mcp-extra-catalog";
 
 /** The JSON-Schema types the tool contracts use. */
 export type JsonSchemaType =
@@ -64,6 +65,8 @@ export interface McpTool {
   readonly readOnly: boolean;
   /** Scope ids a caller must hold, from the API scope catalogue. */
   readonly requiredScopes: readonly string[];
+  /** Hidden unless the endpoint opts in with `allowAdmin=true`. */
+  readonly adminOnly?: boolean;
 }
 
 /** One URI-addressable MCP resource. */
@@ -175,6 +178,7 @@ export const TOOL_CATALOG: readonly McpTool[] = [
           description: "Result ordering.",
           enum: ["relevance", "last_edited"],
         },
+        cursor: { type: "string", description: "Opaque cursor returned as next_cursor." },
       },
       required: ["query"],
       additionalProperties: false,
@@ -221,6 +225,12 @@ export const TOOL_CATALOG: readonly McpTool[] = [
           description: "Rows per page.",
           minimum: 1,
           maximum: 100,
+        },
+        offset: {
+          type: "integer",
+          description: "Rows to skip. Use next_offset from the previous page.",
+          minimum: 0,
+          maximum: 100000,
         },
       },
       required: ["databaseId"],
@@ -294,8 +304,11 @@ export const TOOL_CATALOG: readonly McpTool[] = [
   },
 ];
 
+/** The public catalogue: the original core plus the extended read/write/admin surface. */
+export const ALL_TOOLS: readonly McpTool[] = [...TOOL_CATALOG, ...EXTRA_TOOLS];
+
 const BY_NAME = new Map<string, McpTool>(
-  TOOL_CATALOG.map((entry) => [entry.name, entry]),
+  ALL_TOOLS.map((entry) => [entry.name, entry]),
 );
 
 /** Look up a catalog tool by name; `undefined` when the name is unknown. */
@@ -307,6 +320,10 @@ export function getTool(name: string): McpTool | undefined {
 export interface ListToolsOptions {
   /** Include the write tools; defaults to `false` (read-only). */
   readonly allowWrite?: boolean;
+  /** Include tools marked admin-only; defaults to `false`. */
+  readonly allowAdmin?: boolean;
+  /** Include the extended catalogue. The transport passes `true`. */
+  readonly includeExtended?: boolean;
 }
 
 /**
@@ -316,7 +333,11 @@ export interface ListToolsOptions {
  */
 export function listTools(options: ListToolsOptions = {}): McpTool[] {
   const allowWrite = options.allowWrite === true;
-  return TOOL_CATALOG.filter((entry) => allowWrite || entry.readOnly);
+  const allowAdmin = options.allowAdmin === true;
+  const pool = options.includeExtended ? ALL_TOOLS : TOOL_CATALOG;
+  return pool.filter(
+    (entry) => (allowWrite || entry.readOnly) && (!entry.adminOnly || allowAdmin),
+  );
 }
 
 /** Resolve a tool passed either as a catalogue object or by name. */
@@ -332,7 +353,10 @@ export interface McpWireTool {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: JsonSchema;
-  readonly annotations: { readonly readOnlyHint: boolean };
+  readonly annotations: {
+    readonly readOnlyHint: boolean;
+    readonly destructiveHint: boolean;
+  };
 }
 
 /**
@@ -360,7 +384,10 @@ export function toJsonSchema(tool: McpTool | string): string {
     name: resolved.name,
     description: resolved.description,
     inputSchema: resolved.inputSchema,
-    annotations: { readOnlyHint: resolved.readOnly },
+    annotations: {
+      readOnlyHint: resolved.readOnly,
+      destructiveHint: !resolved.readOnly,
+    },
   };
   return escapeJson(JSON.stringify(wire));
 }

@@ -125,7 +125,7 @@ export default async function BillingSettingsPage({
               <dt className="text-xs uppercase tracking-wide text-muted">Member seats</dt>
               <dd className="text-sm">
                 {usageText(model.seats)}{" "}
-                <span className={model.seats.canAdd ? "text-muted" : "text-accent"}>
+                <span className={model.seats.canAdd ? "text-muted" : "text-danger"}>
                   · {model.seats.canAdd ? "room to add" : "at the ceiling"}
                 </span>
               </dd>
@@ -134,7 +134,7 @@ export default async function BillingSettingsPage({
               <dt className="text-xs uppercase tracking-wide text-muted">External guests</dt>
               <dd className="text-sm">
                 {usageText(model.guests)}{" "}
-                <span className={model.guests.canAdd ? "text-muted" : "text-accent"}>
+                <span className={model.guests.canAdd ? "text-muted" : "text-danger"}>
                   · {model.guests.canAdd ? "room to invite" : "at the ceiling"}
                 </span>
               </dd>

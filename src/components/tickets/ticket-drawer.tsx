@@ -594,7 +594,7 @@ export function TicketDrawerBody({
           <button
             type="button"
             onClick={() => onOpen(parent.id)}
-            className="focus-ring u-colors mb-2 flex w-full items-center gap-1.5 rounded-sm border border-border px-2 py-1 text-left text-xs hover:bg-surface-2"
+            className="focus-ring u-colors mb-2 flex w-full items-center gap-1.5 rounded-control border border-border px-2 py-1 text-left text-xs hover:bg-surface-2"
           >
             <span className="text-muted">{t(locale, "partOf")}</span>
             <span className="font-mono text-muted">{parent.key}</span>
@@ -632,7 +632,7 @@ export function TicketDrawerBody({
                 ))}
               </ul>
             )}
-            <ul className="mb-2 divide-y divide-border rounded-md border border-border">
+            <ul className="mb-2 divide-y divide-border rounded-card border border-border">
               {children.map((child) => (
                 <li key={child.id}>
                   <button
@@ -670,7 +670,7 @@ export function TicketDrawerBody({
             name="child"
             aria-label={t(locale, "newSubTicketAria")}
             placeholder={t(locale, "addSubTicketPlaceholder")}
-            className="focus-ring u-colors h-8 min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 text-xs outline-none placeholder:text-muted"
+            className="focus-ring u-colors h-8 min-w-0 flex-1 rounded-control border-control bg-bg px-2 text-xs outline-none placeholder:text-muted"
           />
           <Button type="submit" size="sm" variant="secondary">
             {t(locale, "add")}
@@ -702,7 +702,7 @@ export function TicketDrawerBody({
             aria-label={t(locale, "findTicketAria")}
             placeholder={t(locale, "findTicketPlaceholder")}
             onChange={(event) => setRelationQuery(event.target.value)}
-            className="focus-ring u-colors h-8 min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 text-xs outline-none placeholder:text-muted focus:border-accent"
+            className="focus-ring u-colors h-8 min-w-0 flex-1 rounded-control border-control bg-bg px-2 text-xs outline-none placeholder:text-muted"
           />
         </div>
         {candidates.length > 0 && (
@@ -715,7 +715,7 @@ export function TicketDrawerBody({
                     onLinkTicket(candidate.id, relationType);
                     setRelationQuery("");
                   }}
-                  className="focus-ring u-colors w-full rounded-sm border border-border px-2 py-1 text-left text-xs hover:bg-surface-2"
+                  className="focus-ring u-colors w-full rounded-control border border-border px-2 py-1 text-left text-xs hover:bg-surface-2"
                 >
                   <span className="font-mono text-muted">{candidate.key}</span> {candidate.title}
                 </button>
@@ -742,7 +742,7 @@ export function TicketDrawerBody({
             rows={2}
             placeholder={t(locale, "leaveCommentPlaceholder")}
             onChange={(event) => setComment(event.target.value)}
-            className="focus-ring u-colors w-full rounded-sm border border-border bg-bg px-2 py-1.5 text-sm outline-none placeholder:text-muted focus:border-accent"
+            className="focus-ring u-colors w-full rounded-control border-control bg-bg px-2 py-1.5 text-sm outline-none placeholder:text-muted"
           />
           <Button
             type="button"

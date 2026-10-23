@@ -56,7 +56,7 @@ export function ShortcutsDialog({
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
       <DialogContent
-        className="w-full max-w-md rounded-xl border border-border bg-bg p-4 shadow-2xl"
+        className="w-full max-w-md rounded-overlay border border-border bg-bg p-4 shadow-2xl"
         aria-label={t(locale, "keyboardShortcuts")}
       >
         <h2 className="text-base font-semibold">{t(locale, "keyboardShortcuts")}</h2>
@@ -68,7 +68,7 @@ export function ShortcutsDialog({
           <button
             type="button"
             onClick={onClose}
-            className="focus-ring u-interactive h-9 rounded border border-border px-3 text-sm text-muted hover:bg-surface-2"
+            className="focus-ring u-interactive h-9 rounded-control border border-border px-3 text-sm text-muted hover:bg-surface-2"
           >
             {t(locale, "close")}
           </button>

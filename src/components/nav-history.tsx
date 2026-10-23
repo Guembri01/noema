@@ -111,7 +111,7 @@ export function useNavHistory() {
 
 export function NavHistory({ locale, className }: { locale: string; className?: string }) {
   const { canGoBack, canGoForward, goBack, goForward } = useNavHistory();
-  const button = "focus-ring u-interactive u-colors flex h-7 w-7 items-center justify-center rounded-sm text-muted hover:bg-surface-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40";
+  const button = "focus-ring u-interactive u-colors flex h-7 w-7 items-center justify-center rounded-control text-muted hover:bg-surface-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40";
   return (
     <div className={cn("flex shrink-0 items-center gap-0.5", className)} data-testid="nav-history">
       <button

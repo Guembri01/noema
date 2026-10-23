@@ -247,7 +247,7 @@ export function SidebarChat({
             const stamp = relativeTime(lastAt);
             return (
               <li key={thread.id}>
-                <div className="group flex items-center gap-1 rounded-sm px-1 py-1 u-colors hover:bg-surface-2 focus-within:bg-surface-2">
+                <div className="group flex items-center gap-1 rounded-control px-1 py-1 u-colors hover:bg-surface-2 focus-within:bg-surface-2">
                   {renaming === thread.id ? (
                     <Input
                       autoFocus

@@ -38,6 +38,7 @@ export function ApiTokensPanel({
       loading={loading}
       create={(name, scopes) => createApiTokenAction(name, scopes)}
       revoke={revokeApiTokenAction}
+      title="Personal access tokens"
       data-testid="api-tokens-panel"
     />
   );

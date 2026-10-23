@@ -25,7 +25,7 @@ export default function ProjectsLoading() {
       <Skeleton variant="block" height={16} width={360} className="mt-3 mb-8" />
 
       {/* "New project" panel. */}
-      <div aria-hidden className="mb-6 rounded-xl border border-border p-4">
+      <div aria-hidden className="mb-6 rounded-lg border border-border p-4">
         <Skeleton variant="block" height={16} width={140} className="mb-3" />
         <div className="flex flex-wrap items-center gap-2">
           <Skeleton variant="block" height={36} width={224} />
@@ -36,7 +36,7 @@ export default function ProjectsLoading() {
       </div>
 
       {/* WIP-limit editor panel. */}
-      <div aria-hidden className="mb-6 rounded-xl border border-border p-4">
+      <div aria-hidden className="mb-6 rounded-lg border border-border p-4">
         <Skeleton variant="block" height={16} width={120} className="mb-3" />
         <div className="flex flex-wrap gap-3">
           {Array.from({ length: 4 }, (_, field) => (

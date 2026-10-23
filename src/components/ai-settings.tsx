@@ -655,7 +655,7 @@ export function AiSettings({
 
         <pre
           aria-label={t(locale, "truncatedSamplePreview")}
-          className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-2 text-xs text-fg scrollbar-thin"
+          className="max-h-40 overflow-auto whitespace-pre-wrap rounded-control border border-border bg-surface-2 p-2 text-xs text-fg scrollbar-thin"
         >
           {contextPreview.preview}
         </pre>

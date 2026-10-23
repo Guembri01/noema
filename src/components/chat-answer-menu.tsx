@@ -167,7 +167,7 @@ export function ChatAnswerItems({
         <Item onSelect={() => router.push(`/w/${slug}/${savedId}`)}>
           <ActionRow
             id="openSaved"
-            icon={<Sparkles className="h-4 w-4 text-accent" />}
+            icon={<Sparkles className="h-4 w-4 text-muted" />}
             label={`Open “${savedTitle ?? "note"}”`}
           />
         </Item>

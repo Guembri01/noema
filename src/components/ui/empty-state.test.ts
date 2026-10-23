@@ -19,8 +19,8 @@ const render = (props: EmptyStateProps) =>
 const VARIANTS = Object.keys(EMPTY_STATE_VARIANTS) as EmptyStateVariant[];
 
 describe("EMPTY_STATE_VARIANTS", () => {
-  it("ships both densities, each with the full slot set", () => {
-    expect(VARIANTS).toEqual(["full", "compact"]);
+  it("ships every density, each with the full slot set", () => {
+    expect(VARIANTS).toEqual(["full", "compact", "inline"]);
     for (const variant of VARIANTS) {
       expect(Object.keys(EMPTY_STATE_VARIANTS[variant]).sort()).toEqual([
         "actions",
@@ -33,13 +33,17 @@ describe("EMPTY_STATE_VARIANTS", () => {
     }
   });
 
-  it("makes compact denser than full", () => {
+  it("makes compact denser than full, and inline denser still", () => {
     const compact = EMPTY_STATE_VARIANTS.compact;
     const full = EMPTY_STATE_VARIANTS.full;
+    const inline = EMPTY_STATE_VARIANTS.inline;
     expect(compact.root).toContain("py-6");
     expect(full.root).toContain("py-12");
-    expect(compact.icon).toBe("size-8");
-    expect(full.icon).toBe("size-10");
+    expect(inline.root).toContain("py-1.5");
+    expect(inline.root).toContain("flex-row");
+    expect(compact.icon).toContain("size-8");
+    expect(full.icon).toContain("size-10");
+    expect(inline.icon).toBe("size-6");
   });
 });
 

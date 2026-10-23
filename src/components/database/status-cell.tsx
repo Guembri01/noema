@@ -38,7 +38,7 @@ export function StatusCell({
   return (
     <div
       className={cn(
-        "relative flex min-w-0 items-center rounded-sm focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1 focus-within:ring-offset-bg",
+        "relative flex min-w-0 items-center rounded-control focus-within:ring-2 focus-within:ring-focus focus-within:ring-offset-1 focus-within:ring-offset-bg",
         className,
       )}
     >
@@ -62,7 +62,7 @@ export function StatusCell({
           onChange={(event) =>
             onChange(event.target.value ? { optionId: event.target.value } : null)
           }
-          className="focus-ring absolute inset-0 h-full w-full cursor-pointer rounded-sm opacity-0"
+          className="focus-ring absolute inset-0 h-full w-full cursor-pointer rounded-control opacity-0"
         >
           <option value="">—</option>
           {options.map((option) => (

@@ -131,8 +131,8 @@ export default async function RoadmapPage({
             href={`/w/${workspace.slug}/roadmap?zoom=${value}`}
             className={
               value === zoom
-                ? "rounded border border-accent px-2 py-1 text-xs text-accent"
-                : "rounded border border-border px-2 py-1 text-xs text-muted hover:text-fg"
+                ? "rounded-control border border-border-strong bg-surface-2 px-2 py-1 text-xs text-fg"
+                : "rounded-control border border-border px-2 py-1 text-xs text-muted hover:text-fg"
             }
           >
             {ZOOM_LABELS[value]}
@@ -161,7 +161,7 @@ export default async function RoadmapPage({
           {roadmap.lanes.map((lane) => {
             const rollup = rollups.find((entry) => entry.projectId === lane.projectId);
             return (
-              <section key={lane.projectId} className="rounded-xl border border-border p-4">
+              <section key={lane.projectId} className="rounded-lg border border-border p-4">
                 <div className="mb-3 flex flex-wrap items-baseline gap-3">
                   <h2 className="text-sm font-medium">{laneName(lane.projectId)}</h2>
                   <span className="text-xs text-muted">
@@ -200,7 +200,7 @@ export default async function RoadmapPage({
                                   ? "absolute top-1 h-4 rounded bg-danger/70 px-1.5 text-3xs leading-4 text-white"
                                   : row.width === 0
                                     ? "absolute top-1.5 h-3 w-3 -translate-x-1/2 rotate-45 rounded-sm bg-accent"
-                                    : "absolute top-1 h-4 overflow-hidden rounded bg-accent px-1.5 text-3xs leading-4 text-accent-fg"
+                                    : "absolute top-1 h-4 overflow-hidden rounded bg-action px-1.5 text-3xs leading-4 text-action-fg"
                               }
                               style={
                                 row.width === 0

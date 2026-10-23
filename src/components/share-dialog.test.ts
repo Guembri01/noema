@@ -88,7 +88,7 @@ describe("ShareSection", () => {
     expect(html).toContain("General access");
     expect(html).toContain("Hint text");
     expect(html).toContain("body");
-    expect(html).toContain("rounded-md");
+    expect(html).toContain("rounded-card");
   });
 });
 

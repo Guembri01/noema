@@ -158,9 +158,9 @@ function cellRingClass(name: CellVisualStateName): string {
     case "invalid":
       return "ring-2 ring-danger";
     case "editing":
-      return "bg-surface ring-2 ring-accent";
+      return "bg-bg ring-1 ring-focus/40";
     case "selected":
-      return "ring-2 ring-accent";
+      return "bg-selection-soft";
     case "focus":
       return "ring-2 ring-ring/60";
     default:
@@ -347,7 +347,7 @@ export function PropertyHeader({
             <button
               type="button"
               aria-label={t(locale, "propertyOptionsAria")}
-              className="focus-ring u-colors rounded opacity-0 group-hover/head:opacity-100"
+              className="focus-ring u-colors rounded-control opacity-0 group-hover/head:opacity-100"
             >
               <span className="text-muted">⌄</span>
             </button>
@@ -955,7 +955,7 @@ export function Cell({
             aria-label={property.name}
             title={text || undefined}
             onClick={() => setEditingNumber(true)}
-            className="focus-ring w-full min-w-0 truncate rounded px-1 py-0.5 text-left tabular-nums hover:bg-surface-2"
+            className="focus-ring w-full min-w-0 truncate rounded-control px-1 py-0.5 text-left tabular-nums hover:bg-surface-2"
           >
             {text || <span className="text-muted">—</span>}
           </button>
@@ -996,14 +996,14 @@ export function Cell({
             aria-hidden
             className={cn(
               "u-colors flex h-4 w-4 items-center justify-center rounded-xs border border-border-strong bg-bg",
-              "peer-focus-visible:ring-2 peer-focus-visible:ring-ring",
-              Boolean(v.checked) && "border-accent bg-accent text-accent-fg",
+              "peer-focus-visible:ring-2 peer-focus-visible:ring-focus",
+              Boolean(v.checked) && "border-action bg-action text-action-fg",
               !editable && "opacity-50",
             )}
           >
             {Boolean(v.checked) ? (
               // The 160 ms tick: the shared `animate-scale-in` token is exactly
-              // `scale-in 0.16s var(--ease-smooth)`.
+              // `scale-in 0.18s var(--ease-smooth)`.
               <svg
                 viewBox="0 0 12 12"
                 className="animate-scale-in h-3 w-3"
@@ -1252,7 +1252,7 @@ export function Cell({
           type="button"
           onClick={onRunAi}
           aria-label={t(locale, "autofillWord")}
-          className="focus-ring max-w-full truncate rounded border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
+          className="focus-ring max-w-full truncate rounded-control border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
         >
           {t(locale, "autofillWord")}
         </button>
@@ -1285,7 +1285,7 @@ export function Cell({
               target="_blank"
               rel="noreferrer noopener"
               title={entry.name}
-              className="focus-ring max-w-[10rem] truncate rounded bg-surface-2 px-1.5 py-0.5 text-xs underline-offset-2 hover:underline"
+              className="focus-ring max-w-[10rem] truncate rounded-chip bg-surface-2 px-1.5 py-0.5 text-xs underline-offset-2 hover:underline"
             >
               {entry.name}
             </a>
@@ -1296,7 +1296,7 @@ export function Cell({
                 type="button"
                 aria-label={t(locale, "attachFile")}
                 onClick={() => fileInputRef.current?.click()}
-                className="focus-ring rounded px-1 text-xs text-muted hover:bg-surface-2"
+                className="focus-ring rounded-control px-1 text-xs text-muted hover:bg-surface-2"
               >
                 +
               </button>
@@ -1380,7 +1380,7 @@ export function AddPropertyForm({
           id="prop-name"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="h-9 w-44 rounded border border-border bg-bg px-2 text-sm outline-none"
+          className="h-9 w-44 rounded-control border-control bg-bg px-2 text-sm outline-none"
         />
       </div>
       <div className="space-y-1">
@@ -1391,7 +1391,7 @@ export function AddPropertyForm({
           id="prop-type"
           value={type}
           onChange={(e) => setType(e.target.value as PropertyType)}
-          className="h-9 rounded border border-border bg-bg px-2 text-sm outline-none"
+          className="h-9 rounded-control border-control bg-bg px-2 text-sm outline-none"
         >
           {PROPERTY_TYPES.map((code) => (
             <option key={code} value={code}>
@@ -1414,7 +1414,7 @@ export function AddPropertyForm({
             },
           })
         }
-        className="focus-ring u-interactive h-9 rounded bg-accent px-4 text-sm text-accent-fg disabled:opacity-50"
+        className="focus-ring u-interactive h-9 rounded-control bg-action px-4 text-sm text-action-fg disabled:opacity-50"
       >
         {t(locale, "add")}
       </button>
@@ -1422,7 +1422,7 @@ export function AddPropertyForm({
         type="button"
         onClick={onClose}
         aria-label={t(locale, "cancel")}
-        className="focus-ring u-interactive h-9 rounded px-3 text-sm text-muted hover:bg-surface-2"
+        className="focus-ring u-interactive h-9 rounded-control px-3 text-sm text-muted hover:bg-surface-2"
       >
         {t(locale, "cancel")}
       </button>

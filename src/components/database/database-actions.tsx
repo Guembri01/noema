@@ -109,7 +109,7 @@ export function DatabaseActions({
         title={t(locale, "breadcrumbHint")}
         onClick={onToggleNest}
         className={cn(
-          "focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
+          "focus-ring u-colors flex items-center gap-1 rounded-control px-2 py-1 text-sm text-muted hover:bg-surface-2",
           nestSubItems && "bg-surface-2 text-fg",
         )}
       >
@@ -122,7 +122,7 @@ export function DatabaseActions({
           caller supplies dependency edges. */}
       {blockedRowCount > 0 && (
         <span
-          className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted"
+          className="flex items-center gap-1 rounded-chip px-2 py-1 text-sm text-muted"
           title={t(locale, "relationBlockedBy")}
         >
           <Ban className="h-4 w-4" />
@@ -142,7 +142,7 @@ export function DatabaseActions({
           title={lockLabel}
           onClick={onToggleLock}
           className={cn(
-            "focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2",
+            "focus-ring u-colors flex items-center gap-1 rounded-control px-2 py-1 text-sm text-muted hover:bg-surface-2",
             schemaLockedState && "bg-surface-2 text-fg",
           )}
         >
@@ -156,7 +156,7 @@ export function DatabaseActions({
       ) : (
         showReadOnlyLock && (
           <span
-            className="flex items-center gap-1 rounded px-2 py-1 text-sm text-muted"
+            className="flex items-center gap-1 rounded-chip px-2 py-1 text-sm text-muted"
             title={lockLabel}
             aria-label={lockLabel}
           >
@@ -173,7 +173,7 @@ export function DatabaseActions({
           title={
             defaultTemplateName ? `${t(locale, "newRow")} — ${defaultTemplateName}` : undefined
           }
-          className="focus-ring u-colors flex items-center gap-1 rounded bg-accent px-2.5 py-1 text-sm text-accent-fg hover:opacity-90"
+          className="focus-ring u-colors flex items-center gap-1 rounded-control bg-action px-2.5 py-1 text-sm text-action-fg hover:opacity-90"
         >
           <Plus className="h-4 w-4" />
           {t(locale, "newRow")}
@@ -185,7 +185,7 @@ export function DatabaseActions({
             <button
               type="button"
               aria-label={t(locale, "chooseTemplate")}
-              className="focus-ring u-colors flex items-center gap-1 rounded px-2 py-1 text-sm text-muted hover:bg-surface-2"
+              className="focus-ring u-colors flex items-center gap-1 rounded-control px-2 py-1 text-sm text-muted hover:bg-surface-2"
             >
               <LayoutTemplate className="h-4 w-4" />
               {t(locale, "templates")}
@@ -267,7 +267,7 @@ export function DatabaseActions({
             type="button"
             aria-label={t(locale, "moreActions")}
             title={t(locale, "moreActions")}
-            className="focus-ring u-colors flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2"
+            className="focus-ring u-colors flex h-7 w-7 items-center justify-center rounded-control text-muted hover:bg-surface-2"
           >
             <Ellipsis className="h-4 w-4" />
           </button>

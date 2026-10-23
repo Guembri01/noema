@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -190,6 +191,8 @@ export type PageTitleRowProps = {
   avatars?: ReactNode;
   cover?: ReactNode;
   addCover?: ReactNode;
+  /** Classes for the cover/title group; the bar stays outside it so it can stick. */
+  headerClassName?: string;
 };
 
 /**
@@ -240,6 +243,7 @@ export function PageTitleRow({
   avatars,
   cover,
   addCover,
+  headerClassName = "mb-4",
 }: PageTitleRowProps) {
   const { visible, overflow } = layoutHeaderBreadcrumbs(crumbs, breadcrumbWidth);
   const displayTitle = title.trim() || "Untitled";
@@ -249,21 +253,44 @@ export function PageTitleRow({
     <>
       <div
         className={cn(
-          "relative sticky top-0 -mx-12 mb-2 flex items-center justify-between gap-2 bg-bg/85 px-12 py-2 backdrop-blur-sm u-colors",
+          // The bar is a sibling of the cover/title group, so sticky can hold it
+          // below the page-tab strip for the whole page instead of being clipped
+          // by the header's own box. The shell publishes the strip height; `0`
+          // keeps the bar at the top when no tab strip is mounted.
+          "sticky top-[var(--workspace-tabbar-height,0rem)] -mx-5 mb-2 flex items-center justify-between gap-2 bg-bg/85 px-5 py-2 backdrop-blur-sm u-colors sm:-mx-8 sm:px-8 lg:-mx-12 lg:px-12",
           scrolled ? "border-b border-border" : "border-b border-transparent",
         )}
         style={{ zIndex: Z.sticky }}
         data-testid="page-title-bar"
       >
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          {navHistory}
+          {navHistory ? (
+            <div
+              className={cn(
+                "flex shrink-0 items-center",
+                // At the narrowest phone widths the two history arrows would
+                // leave the compact title only a few characters. They come back
+                // as soon as the viewport can hold both.
+                showStickyTitle && "max-[380px]:hidden",
+              )}
+            >
+              {navHistory}
+            </div>
+          ) : null}
           <nav
             aria-label={t(locale, "blockBreadcrumb")}
-            className="flex min-w-0 items-center gap-1 text-sm text-muted"
+            className={cn(
+              "min-w-0 items-center gap-1 text-sm text-muted",
+              // Phones have the workspace name in the app bar, and while the
+              // h1 is on screen the trail adds little. Show it from `sm` up at
+              // the top of the page; once the sticky title takes over, the
+              // current page is the more useful label at every width.
+              showStickyTitle ? "hidden" : "hidden sm:flex",
+            )}
           >
             <a
               href={`/w/${workspaceSlug}`}
-              className="focus-ring u-colors truncate rounded px-0.5 hover:text-fg"
+              className="focus-ring u-colors truncate rounded-sm px-0.5 hover:text-fg"
             >
               {workspaceName}
             </a>
@@ -279,7 +306,7 @@ export function PageTitleRow({
                 ) : (
                   <a
                     href={`/w/${workspaceSlug}/${crumb.id}`}
-                    className="focus-ring u-colors truncate rounded px-0.5 hover:text-fg"
+                    className="focus-ring u-colors truncate rounded-sm px-0.5 hover:text-fg"
                     title={crumb.label}
                   >
                     {crumb.label}
@@ -299,7 +326,7 @@ export function PageTitleRow({
                     aria-label={`Show ${overflow.length} more ${
                       overflow.length === 1 ? "page" : "pages"
                     }`}
-                    className="focus-ring u-colors flex shrink-0 items-center rounded px-1 text-muted hover:bg-surface-2 hover:text-fg"
+                    className="focus-ring u-colors flex shrink-0 items-center rounded-control px-1 text-muted hover:bg-surface-2 hover:text-fg"
                   >
                     …
                   </button>
@@ -326,7 +353,7 @@ export function PageTitleRow({
             )}
             {locked && (
               <span
-                className="flex shrink-0 items-center rounded px-1 text-muted"
+                className="flex shrink-0 items-center rounded-sm px-1 text-muted"
                 role="img"
                 aria-label={t(locale, "pageLocked")}
                 title={t(locale, "pageLockedHint")}
@@ -338,6 +365,9 @@ export function PageTitleRow({
           {showStickyTitle && (
             <span
               data-testid="sticky-title"
+              // The compact title is the current location; the breadcrumb is
+              // already hidden while it is showing. Let the title truncate on
+              // very narrow screens rather than overflow into the actions.
               className="animate-fade flex min-w-0 items-center gap-1.5 ps-2"
             >
               {icon.kind === "emoji" && (
@@ -355,7 +385,10 @@ export function PageTitleRow({
         <div className="flex shrink-0 items-center gap-1">
           {editedLabel && (
             <span
-              className="hidden whitespace-nowrap text-xs text-muted md:inline"
+              // Below `lg` the sticky title and actions need the row more than
+              // the relative timestamp does. It remains in the page body and on
+              // wide screens.
+              className="hidden whitespace-nowrap text-xs text-muted lg:inline"
               suppressHydrationWarning
             >
               {editedLabel}
@@ -370,8 +403,8 @@ export function PageTitleRow({
             disabled={followPending}
             onClick={onToggleFollow}
             className={cn(
-              "focus-ring u-interactive flex h-8 w-8 items-center justify-center rounded text-muted sm:h-7 sm:w-7 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50",
-              following && "text-accent",
+              "focus-ring u-interactive flex h-8 w-8 items-center justify-center rounded-control text-muted sm:h-7 sm:w-7 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50",
+              following && "text-fg",
               followPending && "animate-pulse-soft",
             )}
           >
@@ -385,7 +418,7 @@ export function PageTitleRow({
             type="button"
             aria-label={t(locale, "share")}
             onClick={onShare}
-            className="focus-ring u-interactive flex h-8 items-center gap-1 rounded px-2 sm:h-7 text-sm text-muted hover:bg-surface-2"
+            className="focus-ring u-interactive flex h-8 items-center gap-1 rounded-control px-2 sm:h-7 text-sm text-muted hover:bg-surface-2"
           >
             <Lock className="h-3.5 w-3.5" aria-hidden />
             <span className="hidden sm:inline">Share</span>
@@ -395,7 +428,7 @@ export function PageTitleRow({
             aria-label={t(locale, "copyLink")}
             title={t(locale, "copyLink")}
             onClick={onCopyLink}
-            className="focus-ring u-interactive hidden h-8 w-8 items-center justify-center rounded text-muted hover:bg-surface-2 sm:flex sm:h-7 sm:w-7"
+            className="focus-ring u-interactive hidden h-8 w-8 items-center justify-center rounded-control text-muted hover:bg-surface-2 sm:flex sm:h-7 sm:w-7"
           >
             <LinkIcon className="h-4 w-4" aria-hidden />
           </button>
@@ -406,7 +439,7 @@ export function PageTitleRow({
             title={favorite ? t(locale, "removeFromFavorites") : t(locale, "addToFavorites")}
             onClick={onToggleFavorite}
             className={cn(
-              "focus-ring u-interactive flex h-8 w-8 items-center justify-center rounded text-muted sm:h-7 sm:w-7 hover:bg-surface-2",
+              "focus-ring u-interactive flex h-8 w-8 items-center justify-center rounded-control text-muted sm:h-7 sm:w-7 hover:bg-surface-2",
               favorite && "text-warning",
             )}
           >
@@ -420,7 +453,20 @@ export function PageTitleRow({
               aria-hidden
             />
           </button>
-          {undoRedo}
+          {undoRedo ? (
+            <div
+              className={cn(
+                "flex items-center",
+                // While the sticky title is showing on a narrow screen, undo/
+                // redo is still in the actions menu (and in the editor's own
+                // floating bar while writing), so the duplicate pair yields the
+                // row to the title. It returns at `lg`, where there is room.
+                showStickyTitle && "max-lg:hidden",
+              )}
+            >
+              {undoRedo}
+            </div>
+          ) : null}
           {actions}
           {avatars ? (
             <div className="hidden items-center sm:flex">{avatars}</div>
@@ -428,82 +474,84 @@ export function PageTitleRow({
         </div>
       </div>
 
-      {cover}
+      <header className={headerClassName}>
+        {cover}
 
-      <div className="group/title relative">
-        <div className="relative mb-1 flex h-8 items-center gap-1">
-          <Popover
-            open={Boolean(iconMenu)}
-            onOpenChange={(open) => {
-              if (!open) onCloseIconMenu?.();
-            }}
-          >
-            <PopoverAnchor asChild>
-              <span className="inline-flex items-center">
-                {icon.kind !== "none" ? (
-                  <button
-                    type="button"
-                    disabled={!canEdit}
-                    onClick={onToggleIcon}
-                    aria-label={t(locale, "changeIcon")}
-                    className={cn(
-                      "focus-ring u-interactive rounded p-0.5 leading-none hover:bg-surface-2 disabled:cursor-not-allowed",
-                      // The page icon reads as an icon, not a logo: at `text-5xl`/`h-14` a filled
-                      // emoji such as ✅ became a 48–56px tile that dominated the header. These
-                      // are deliberately calm against the 28px title (`text-title`).
-                      icon.kind === "emoji" && "text-4xl",
-                      icon.kind === "image" && "h-10 w-10 bg-cover bg-center bg-no-repeat",
-                    )}
-                    style={iconStyle}
-                  >
-                    {icon.kind === "emoji" ? icon.value : null}
-                  </button>
-                ) : canEdit ? (
-                  <button
-                    type="button"
-                    onClick={onToggleIcon}
-                    aria-label={t(locale, "addIcon")}
-                    className="focus-ring u-colors flex items-center gap-1 rounded px-1 py-0.5 text-sm text-muted opacity-0 hover:bg-surface-2 hover:text-fg focus-visible:opacity-100 group-hover/title:opacity-100"
-                  >
-                    <Smile className="h-4 w-4" aria-hidden /> Add icon
-                  </button>
-                ) : null}
-              </span>
-            </PopoverAnchor>
-            {iconMenu && (
-              <PopoverContent
-                align="start"
-                sideOffset={12}
-                aria-label={iconMenuLabel}
-                className="w-72 p-2"
-              >
-                {iconMenu}
-              </PopoverContent>
-            )}
-          </Popover>
+        <div className="group/title relative mb-3">
+          <div className="relative mb-1 flex h-8 items-center gap-1">
+            <Popover
+              open={Boolean(iconMenu)}
+              onOpenChange={(open) => {
+                if (!open) onCloseIconMenu?.();
+              }}
+            >
+              <PopoverAnchor asChild>
+                <span className="inline-flex items-center">
+                  {icon.kind !== "none" ? (
+                    <button
+                      type="button"
+                      disabled={!canEdit}
+                      onClick={onToggleIcon}
+                      aria-label={t(locale, "changeIcon")}
+                      className={cn(
+                        "focus-ring u-interactive rounded-control p-0.5 leading-none hover:bg-surface-2 disabled:cursor-not-allowed",
+                        // The page icon reads as an icon, not a logo: at `text-5xl`/`h-14` a filled
+                        // emoji such as ✅ became a 48–56px tile that dominated the header. These
+                        // are deliberately calm against the 28px title (`text-title`).
+                        icon.kind === "emoji" && "text-4xl",
+                        icon.kind === "image" && "h-10 w-10 bg-cover bg-center bg-no-repeat",
+                      )}
+                      style={iconStyle}
+                    >
+                      {icon.kind === "emoji" ? icon.value : null}
+                    </button>
+                  ) : canEdit ? (
+                    <button
+                      type="button"
+                      onClick={onToggleIcon}
+                      aria-label={t(locale, "addIcon")}
+                      className="focus-ring u-colors flex items-center gap-1 rounded-control px-1 py-0.5 text-sm text-muted opacity-0 hover:bg-surface-2 hover:text-fg focus-visible:opacity-100 group-hover/title:opacity-100"
+                    >
+                      <Smile className="h-4 w-4" aria-hidden /> Add icon
+                    </button>
+                  ) : null}
+                </span>
+              </PopoverAnchor>
+              {iconMenu && (
+                <PopoverContent
+                  align="start"
+                  sideOffset={12}
+                  aria-label={iconMenuLabel}
+                  className="w-72 p-2"
+                >
+                  {iconMenu}
+                </PopoverContent>
+              )}
+            </Popover>
+          </div>
+          <h1 ref={h1Ref} className="scroll-mt-16">
+            <textarea
+              ref={titleRef}
+              aria-label={t(locale, "pageTitle")}
+              aria-roledescription={t(locale, "pageTitleRoleDescription")}
+              value={title}
+              readOnly={!canEdit}
+              placeholder={t(locale, "untitled")}
+              rows={1}
+              spellCheck={false}
+              onChange={(event) => {
+                onTitleChange(event.target.value);
+                event.target.style.height = "auto";
+                event.target.style.height = `${event.target.scrollHeight}px`;
+              }}
+              onBlur={onTitleBlur}
+              onKeyDown={onTitleKeyDown}
+              className="noema-page-title w-full resize-none overflow-hidden bg-transparent text-page-title font-semibold tracking-title text-fg outline-none placeholder:text-muted/40"
+            />
+          </h1>
+          {addCover}
         </div>
-        <h1 ref={h1Ref} className="scroll-mt-16">
-          <textarea
-            ref={titleRef}
-            aria-label={t(locale, "pageTitle")}
-            aria-roledescription={t(locale, "pageTitleRoleDescription")}
-            value={title}
-            readOnly={!canEdit}
-            placeholder={t(locale, "untitled")}
-            rows={1}
-            spellCheck={false}
-            onChange={(event) => {
-              onTitleChange(event.target.value);
-              event.target.style.height = "auto";
-              event.target.style.height = `${event.target.scrollHeight}px`;
-            }}
-            onBlur={onTitleBlur}
-            onKeyDown={onTitleKeyDown}
-            className="noema-page-title w-full resize-none overflow-hidden bg-transparent text-title font-semibold leading-[1.2] tracking-title text-fg outline-none placeholder:text-muted/40"
-          />
-        </h1>
-        {addCover}
-      </div>
+      </header>
     </>
   );
 }
@@ -744,6 +792,16 @@ export function PageTitle({
     // Caret at the end of the (empty) value, so typing appends.
     field.setSelectionRange(field.value.length, field.value.length);
   }, [canEdit, pageId, title]);
+
+  // The title is a one-row textarea that grows with its content. Resize before
+  // paint (including on first mount and when the server sends a long title), so
+  // the larger display type never clips a wrapped line.
+  useLayoutEffect(() => {
+    const field = titleRef.current;
+    if (!field) return;
+    field.style.height = "auto";
+    field.style.height = `${field.scrollHeight}px`;
+  }, [title]);
 
   // Per-page comment notification level (localStorage — no server model yet).
   useEffect(() => {
@@ -1107,8 +1165,9 @@ export function PageTitle({
     });
 
   return (
-    <header className={cn("mb-4", ...appearanceClasses(appearance))}>
+    <>
       <PageTitleRow
+        headerClassName={cn("mb-4", ...appearanceClasses(appearance))}
         workspaceSlug={workspaceSlug}
         workspaceName={workspaceName}
         pageId={pageId}
@@ -1186,13 +1245,13 @@ export function PageTitle({
                       placeholder={t(locale, "coverImageUrl")}
                       aria-label={t(locale, "coverImageUrl")}
                       aria-invalid={coverError ? true : undefined}
-                      className="focus-ring h-8 min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 text-xs text-fg outline-none placeholder:text-muted/60"
+                      className="focus-ring h-8 min-w-0 flex-1 rounded-control border-control bg-bg px-2 text-xs text-fg outline-none placeholder:text-muted/60"
                     />
                     <button
                       type="button"
                       onClick={() => applyCoverImage(coverUrlDraft)}
                       disabled={coverUrlDraft.trim() === ""}
-                      className="focus-ring u-interactive h-8 shrink-0 rounded-sm bg-accent px-2 text-xs font-medium text-accent-fg disabled:opacity-40"
+                      className="focus-ring u-interactive h-8 shrink-0 rounded-control bg-action px-2 text-xs font-medium text-action-fg disabled:opacity-40"
                     >
                       {t(locale, "useImage")}
                     </button>
@@ -1202,7 +1261,7 @@ export function PageTitle({
                       type="button"
                       onClick={() => coverFileRef.current?.click()}
                       disabled={coverUploading || !canEdit}
-                      className="focus-ring u-interactive flex h-8 items-center gap-1.5 rounded-sm border border-border px-2 text-xs text-fg hover:bg-surface-2 disabled:opacity-50"
+                      className="focus-ring u-interactive flex h-8 items-center gap-1.5 rounded-control border border-border px-2 text-xs text-fg hover:bg-surface-2 disabled:opacity-50"
                     >
                       <Upload className="h-3.5 w-3.5" aria-hidden />
                       {coverUploading ? t(locale, "uploading") : t(locale, "uploadImage")}
@@ -1225,7 +1284,7 @@ export function PageTitle({
                           storedCover.value.gradientId === id
                         }
                         onClick={() => pickCover(GRADIENTS[id])}
-                        className="focus-ring h-12 rounded-sm bg-cover"
+                        className="focus-ring h-12 rounded-control bg-cover"
                         style={{
                           backgroundImage: coverCss({
                             type: "gradient",
@@ -1349,7 +1408,7 @@ export function PageTitle({
                   <button
                     type="button"
                     onClick={() => setShowCover(true)}
-                    className="focus-ring u-colors pointer-events-auto flex h-7 items-center gap-1 rounded-sm bg-bg/90 px-2 text-xs text-fg shadow-1 hover:bg-bg"
+                    className="focus-ring u-colors pointer-events-auto flex h-7 items-center gap-1 rounded-control bg-bg/90 px-2 text-xs text-fg shadow-1 hover:bg-bg"
                   >
                     <ImagePlus className="h-3.5 w-3.5" aria-hidden /> Change cover
                   </button>
@@ -1358,8 +1417,8 @@ export function PageTitle({
                     aria-pressed={repositioning}
                     onClick={() => setRepositioning((value) => !value)}
                     className={cn(
-                      "focus-ring u-colors pointer-events-auto flex h-7 items-center gap-1 rounded-sm bg-bg/90 px-2 text-xs text-fg shadow-1 hover:bg-bg",
-                      repositioning && "text-accent",
+                      "focus-ring u-colors pointer-events-auto flex h-7 items-center gap-1 rounded-control bg-bg/90 px-2 text-xs text-fg shadow-1 hover:bg-bg",
+                      repositioning && "bg-surface-2 text-fg",
                     )}
                   >
                     <Move className="h-3.5 w-3.5" aria-hidden /> Reposition
@@ -1367,7 +1426,7 @@ export function PageTitle({
                   <button
                     type="button"
                     onClick={() => pickCover(null)}
-                    className="focus-ring u-colors pointer-events-auto flex h-7 items-center gap-1 rounded-sm bg-bg/90 px-2 text-xs text-fg shadow-1 hover:bg-bg"
+                    className="focus-ring u-colors pointer-events-auto flex h-7 items-center gap-1 rounded-control bg-bg/90 px-2 text-xs text-fg shadow-1 hover:bg-bg"
                   >
                     <Trash2 className="h-3.5 w-3.5" aria-hidden /> Remove
                   </button>
@@ -1417,6 +1476,6 @@ export function PageTitle({
           locale={locale}
         />
       )}
-    </header>
+    </>
   );
 }

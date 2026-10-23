@@ -591,7 +591,7 @@ export function ProjectGantt({
   const handleOffset = GANTT_HANDLE_WIDTH / 2;
 
   return (
-    <div className="rounded-xl border border-border p-4">
+    <div className="rounded-lg border border-border p-4">
       <div className="mb-3 flex items-center justify-between">
         <p className="text-sm font-medium">{t(locale, "timelineLabel")}</p>
         <p className="text-2xs text-muted">

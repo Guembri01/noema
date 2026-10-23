@@ -334,7 +334,7 @@ export function FormView({
             setSubmitted(false);
           }}
           aria-label={t(locale, "add")}
-          className="focus-ring u-interactive rounded bg-accent px-4 py-1.5 text-sm text-accent-fg hover:opacity-90"
+          className="focus-ring u-interactive rounded-control bg-action px-4 py-1.5 text-sm text-action-fg hover:opacity-90"
         >
           {t(locale, "add")}
         </button>
@@ -371,7 +371,7 @@ export function FormView({
                 </span>
               )}
             </div>
-            <div className="u-surface focus-within:outline-none rounded-sm border border-border bg-bg px-2 py-1.5 focus-within:border-[var(--ring)] focus-within:shadow-[var(--shadow-focus)]">
+            <div className="u-surface focus-within:outline-none rounded-control border-control bg-bg px-2 py-1.5 focus-within:border-[var(--ring)] focus-within:shadow-[var(--shadow-focus)]">
               <Cell
                 locale={locale}
                 property={property}
@@ -398,7 +398,7 @@ export function FormView({
           type="submit"
           data-testid="form-submit"
           aria-label={meta.submitLabel}
-          className="focus-ring u-interactive rounded bg-accent px-4 py-1.5 text-sm text-accent-fg hover:opacity-90"
+          className="focus-ring u-interactive rounded-control bg-action px-4 py-1.5 text-sm text-action-fg hover:opacity-90"
         >
           {meta.submitLabel}
         </button>

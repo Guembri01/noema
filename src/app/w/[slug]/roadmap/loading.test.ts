@@ -14,7 +14,7 @@ describe("RoadmapLoading", () => {
     expect(html).toContain("notion-skeleton");
     expect(html).toContain("animate-shimmer");
     // The lanes are card-like sections (bordered) holding text skeletons.
-    expect(html).toContain("rounded-xl border border-border");
+    expect(html).toContain("rounded-lg border border-border");
     expect(html).toContain('data-skeleton="text"');
   });
 });

@@ -26,11 +26,11 @@ export function AuthShell({
     <main id="main" className="relative min-h-screen overflow-hidden bg-bg">
       <div
         aria-hidden
-        className="pointer-events-none absolute -start-40 -top-48 h-[32rem] w-[32rem] rounded-full bg-accent-soft blur-3xl"
+        className="pointer-events-none absolute -start-40 -top-48 h-[32rem] w-[32rem] rounded-full bg-surface-2/70 blur-3xl"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -end-48 top-1/3 h-[28rem] w-[28rem] rounded-full bg-success-soft blur-3xl"
+        className="pointer-events-none absolute -end-48 top-1/3 h-[28rem] w-[28rem] rounded-full bg-surface-2/50 blur-3xl"
       />
 
       <div className="relative mx-auto grid min-h-screen max-w-6xl items-center gap-12 px-6 py-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,27rem)] lg:gap-20 lg:py-16">

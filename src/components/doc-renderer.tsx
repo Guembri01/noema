@@ -244,7 +244,7 @@ export const DOC_BLOCK_CLASS = {
   listItem: "my-0.5",
   blockquote: "my-2 ps-3 text-muted",
   codeBlock:
-    "my-2 overflow-x-auto rounded-md border border-border bg-surface-2 p-4 font-mono text-sm leading-[1.5] text-fg",
+    "my-2 overflow-x-auto rounded-control border border-border bg-surface-2 p-4 font-mono text-sm leading-[1.5] text-fg",
   inlineCode:
     "rounded-xs bg-surface-2 px-1 py-0.5 font-mono text-[0.85em] text-danger",
   divider: "my-4 border-0 border-t border-border",
@@ -253,7 +253,7 @@ export const DOC_BLOCK_CLASS = {
   tableHeader: "bg-surface-2 text-start font-semibold",
   link: "u-colors text-accent underline decoration-accent-soft underline-offset-2 hover:decoration-accent",
   mention: "align-middle",
-  callout: "my-2 flex gap-2 rounded-md border border-border bg-surface-2 px-4 py-3",
+  callout: "my-2 flex gap-2 rounded-card border border-border bg-surface-2 px-4 py-3",
   toggle: "my-2",
   image: "h-auto max-w-full",
   imageCaption: "mt-1 text-center text-xs text-muted",
@@ -1030,7 +1030,7 @@ export function DocRendererError({
       data-doc-state="error"
       role="alert"
     >
-      <div className="flex flex-col items-start gap-2 rounded-md border border-border bg-danger-soft px-4 py-3 text-sm">
+      <div className="flex flex-col items-start gap-2 rounded-card border border-border bg-danger-soft px-4 py-3 text-sm">
         <p className="m-0 font-medium text-danger">
           {message ?? "This document could not be rendered."}
         </p>
@@ -1038,7 +1038,7 @@ export function DocRendererError({
           <button
             type="button"
             onClick={onRetry}
-            className="focus-ring u-interactive rounded-sm border border-border bg-bg px-2 py-1 text-xs text-fg"
+            className="focus-ring u-interactive rounded-control border-control bg-bg px-2 py-1 text-xs text-fg"
           >
             Try again
           </button>

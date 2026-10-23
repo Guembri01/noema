@@ -54,7 +54,7 @@ export function ChatFab({
       className={cn(
         "focus-ring u-interactive u-transform fixed z-0 grid h-10 w-10 place-items-center",
         FLOATING_CORNER.fab,
-        "rounded-full bg-accent text-accent-fg shadow-2 hover:scale-105 active:scale-95",
+        "rounded-full bg-action text-action-fg shadow-2 hover:scale-105 active:scale-95",
         open && "hidden",
       )}
       // Motion from the vocabulary: the spring easing is the one token that makes

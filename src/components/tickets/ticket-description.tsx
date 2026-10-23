@@ -393,7 +393,7 @@ export function TicketDescription({ doc, text, locale, onSave }: TicketDescripti
       className={cn(
         // `noema-editor` borrows the page body's typography (headings, lists,
         // code, tables); the wrapper below adds the panel's own frame.
-        "noema-editor noema-description-editor rounded-md border px-3 py-2 u-colors",
+        "noema-editor noema-description-editor rounded-control border px-3 py-2 u-colors",
         hasContent || focused
           ? "border-border bg-bg"
           : "border-dashed border-border bg-transparent",

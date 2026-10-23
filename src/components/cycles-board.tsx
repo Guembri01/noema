@@ -196,7 +196,7 @@ export function CycleCard({
   return (
     <li
       data-testid="cycle-card"
-      className={cn("rounded-xl border p-4", isCurrent ? "border-accent/40" : "border-border")}
+      className={cn("rounded-lg border p-4", isCurrent ? "border-action/40" : "border-border")}
     >
       <div className="flex flex-wrap items-baseline gap-2">
         <h3 className="text-sm font-semibold">{cycle.name}</h3>
@@ -223,7 +223,7 @@ export function CycleCard({
             aria-label={`${t(locale, "edit")} ${cycle.name}`}
             onClick={onEdit}
             disabled={!onEdit}
-            className="flex h-7 w-7 items-center justify-center rounded text-muted u-interactive hover:bg-surface-2 focus-ring disabled:opacity-50"
+            className="flex h-7 w-7 items-center justify-center rounded-control text-muted u-interactive hover:bg-surface-2 focus-ring disabled:opacity-50"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
@@ -232,7 +232,7 @@ export function CycleCard({
             aria-label={`${t(locale, "delete")} ${cycle.name}`}
             onClick={onDelete}
             disabled={!onDelete || deleting}
-            className="flex h-7 w-7 items-center justify-center rounded text-muted u-interactive hover:bg-surface-2 hover:text-danger focus-ring disabled:opacity-50"
+            className="flex h-7 w-7 items-center justify-center rounded-control text-muted u-interactive hover:bg-surface-2 hover:text-danger focus-ring disabled:opacity-50"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -296,7 +296,7 @@ export function CycleCard({
             points={burndownPolyline(burndown, "ideal")}
           />
           <polyline
-            className="text-accent"
+            className="text-action"
             fill="none"
             stroke="currentColor"
             strokeWidth="0.2"
@@ -309,7 +309,7 @@ export function CycleCard({
               <circle
                 key={point.date}
                 data-testid="burndown-point"
-                className="fill-accent"
+                className="fill-action"
                 cx={index}
                 cy={point.remaining}
                 r={pointRadius}
@@ -321,7 +321,7 @@ export function CycleCard({
         </svg>
         <figcaption className="mt-1 flex items-center gap-3 text-3xs text-muted">
           <span className="inline-flex items-center gap-1">
-            <span aria-hidden className="inline-block h-px w-3 bg-accent" />
+            <span aria-hidden className="inline-block h-px w-3 bg-action" />
             remaining
           </span>
           <span className="inline-flex items-center gap-1">
@@ -337,7 +337,7 @@ export function CycleCard({
           {load.map((bucket) => (
             <li
               key={bucket.assigneeId}
-              className="rounded border border-border px-1.5 py-0.5"
+              className="rounded-chip border border-border px-1.5 py-0.5"
               title={`${bucket.openCount} open · ${formatEstimate(bucket.points, bucket.unit)}`}
             >
               {loadLabel(bucket.assigneeId)}: {bucket.openCount} open ·{" "}

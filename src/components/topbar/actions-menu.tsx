@@ -1342,7 +1342,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
                       onFocus={() => setActiveIndex(index)}
                       onClick={() => activateItem(item)}
                       className={cn(
-                        "u-colors focus-ring mx-1 flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-fg outline-none",
+                        "u-colors focus-ring mx-1 flex cursor-default select-none items-center gap-2 rounded-control px-2 py-1.5 text-sm text-fg outline-none",
                         groupIndex > 0 &&
                           indexOf.get(group.items[0].id) === index &&
                           "mt-1 border-t border-border pt-2.5",
@@ -1426,7 +1426,7 @@ export function ActionsMenu(props: ActionsMenuProps) {
                           entry.onSelect?.();
                         }}
                         className={cn(
-                          "u-colors focus-ring mx-1 flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
+                          "u-colors focus-ring mx-1 flex cursor-default select-none items-center gap-2 rounded-control px-2 py-1.5 text-sm",
                           index === subIndex && "bg-surface-2",
                           entry.disabled && "cursor-not-allowed opacity-50",
                         )}
@@ -1687,7 +1687,7 @@ export function CustomizePanel({
               type="button"
               aria-label={`Set icon ${emoji}`}
               onClick={() => onPickIcon(emoji)}
-              className="focus-ring u-interactive u-colors grid h-7 w-7 place-items-center rounded-sm text-lg text-fg hover:bg-surface-2"
+              className="focus-ring u-interactive u-colors grid h-7 w-7 place-items-center rounded-control text-lg text-fg hover:bg-surface-2"
             >
               {emoji}
             </button>
@@ -1712,13 +1712,13 @@ export function CustomizePanel({
             placeholder={t(locale, "coverImageUrl")}
             aria-label={t(locale, "coverImageUrl")}
             aria-invalid={coverError ? true : undefined}
-            className="focus-ring h-7 min-w-0 flex-1 rounded-sm border border-border bg-bg px-2 text-xs text-fg outline-none placeholder:text-muted/60"
+            className="focus-ring h-7 min-w-0 flex-1 rounded-control border-control bg-bg px-2 text-xs text-fg outline-none placeholder:text-muted/60"
           />
           <button
             type="button"
             onClick={() => applyCoverUrl(coverUrlDraft)}
             disabled={coverUrlDraft.trim() === ""}
-            className="focus-ring u-interactive u-colors h-7 shrink-0 rounded-sm bg-accent px-2 text-xs font-medium text-accent-fg disabled:opacity-40"
+            className="focus-ring u-interactive u-colors h-7 shrink-0 rounded-control bg-action px-2 text-xs font-medium text-action-fg disabled:opacity-40"
           >
             {t(locale, "useImage")}
           </button>
@@ -1728,7 +1728,7 @@ export function CustomizePanel({
             type="button"
             onClick={() => coverFileRef.current?.click()}
             disabled={coverUploading || !canEdit}
-            className="focus-ring u-interactive u-colors flex h-7 items-center gap-1.5 rounded-sm border border-border px-2 text-xs text-fg hover:bg-surface-2 disabled:opacity-50"
+            className="focus-ring u-interactive u-colors flex h-7 items-center gap-1.5 rounded-control border border-border px-2 text-xs text-fg hover:bg-surface-2 disabled:opacity-50"
           >
             <Upload className="h-3.5 w-3.5" aria-hidden />
             {coverUploading ? t(locale, "uploading") : t(locale, "uploadImage")}
@@ -1761,8 +1761,8 @@ export function CustomizePanel({
                 aria-pressed={selected}
                 onClick={() => onPickCover({ type: "gradient", gradientId: id })}
                 className={cn(
-                  "focus-ring u-interactive u-colors h-10 rounded-sm bg-cover bg-center",
-                  selected && "ring-2 ring-accent",
+                  "focus-ring u-interactive u-colors h-10 rounded-control bg-cover bg-center",
+                  selected && "ring-2 ring-focus/40",
                 )}
                 style={{
                   backgroundImage: coverPreviewCss(id),
@@ -1792,8 +1792,8 @@ export function CustomizePanel({
                     aria-pressed={selected}
                     onClick={() => onPickPosition(preset.position)}
                     className={cn(
-                      "focus-ring u-interactive u-colors h-7 w-7 rounded-sm border border-border",
-                      selected && "bg-surface-2 ring-1 ring-accent",
+                      "focus-ring u-interactive u-colors h-7 w-7 rounded-control border border-border",
+                      selected && "bg-selection-soft ring-1 ring-focus/30",
                     )}
                   />
                 );
@@ -1802,7 +1802,7 @@ export function CustomizePanel({
             <button
               type="button"
               onClick={() => onPickCover(null)}
-              className="focus-ring u-interactive u-colors mt-1 self-start rounded-sm px-1 py-0.5 text-xs text-muted hover:bg-surface-2"
+              className="focus-ring u-interactive u-colors mt-1 self-start rounded-control px-1 py-0.5 text-xs text-muted hover:bg-surface-2"
             >
               Remove cover
             </button>
@@ -1860,7 +1860,7 @@ function TriggerButton({
       aria-haspopup="dialog"
       aria-expanded={open}
       onClick={onToggleOpen}
-      className="focus-ring u-interactive u-colors flex h-7 w-7 items-center justify-center rounded-sm text-muted hover:bg-surface-2"
+      className="focus-ring u-interactive u-colors flex h-7 w-7 items-center justify-center rounded-control text-muted hover:bg-surface-2"
     >
       <span aria-hidden className="text-lg leading-none">
         ⋯
@@ -1876,7 +1876,7 @@ function PanelHeader({ title, onBack, locale }: { title: string; onBack: () => v
         type="button"
         aria-label={t(locale, "goBack")}
         onClick={onBack}
-        className="focus-ring u-interactive u-colors rounded-sm p-1 text-muted hover:bg-surface-2"
+        className="focus-ring u-interactive u-colors rounded-control p-1 text-muted hover:bg-surface-2"
       >
         <ArrowLeft className="h-4 w-4" aria-hidden />
       </button>

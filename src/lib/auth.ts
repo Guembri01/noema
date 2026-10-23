@@ -4,6 +4,7 @@ import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import { resolveAuthSecret } from "./auth-secret";
 import { prisma } from "./db";
+import { currentActorUserId } from "./actor-context";
 import {
   describeDevice,
   registerSession,
@@ -200,6 +201,26 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
 
 /** Redirect to /login when unauthenticated. */
 export async function requireUser(): Promise<SessionUser> {
+  // API-token requests have no session cookie. The MCP route verifies the
+  // bearer token first, then runs the action inside `runAsActor`; resolving the
+  // same SessionUser shape keeps every server action's authorization, audit,
+  // snapshot and permission logic identical to the browser path.
+  const actorId = currentActorUserId();
+  if (actorId) {
+    const actor = await prisma.user.findUnique({
+      where: { id: actorId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        avatarUrl: true,
+        theme: true,
+        locale: true,
+      },
+    });
+    if (!actor) redirect("/login");
+    return actor;
+  }
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   return user;

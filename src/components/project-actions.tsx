@@ -119,7 +119,7 @@ export function ProjectActions({
               aria-label={t(locale, "clientEmailAria")}
               placeholder={t(locale, "clientEmailPlaceholder")}
               onChange={(event) => setEmail(event.target.value)}
-              className="h-9 w-64 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
+              className="h-9 w-64 rounded-control border-control bg-bg px-2 text-sm outline-none focus-ring"
             />
             <Button
               type="button"

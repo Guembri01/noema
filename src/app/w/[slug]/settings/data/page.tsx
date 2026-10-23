@@ -135,12 +135,12 @@ export default function DataControlsPage() {
       <SettingsNav slug={slug} locale={locale} className="mb-8" />
 
       {error && (
-        <p role="alert" className="mb-4 rounded border border-danger/40 bg-danger-soft px-3 py-2 text-sm">
+        <p role="alert" className="mb-4 rounded-card border border-danger/40 bg-danger-soft px-3 py-2 text-sm">
           {error}
         </p>
       )}
       {message && (
-        <p role="status" className="mb-4 rounded border border-border bg-surface-2 px-3 py-2 text-sm">
+        <p role="status" className="mb-4 rounded-card border border-border bg-surface-2 px-3 py-2 text-sm">
           {message}
         </p>
       )}
@@ -173,7 +173,7 @@ export default function DataControlsPage() {
               <button
                 type="button"
                 onClick={downloadExport}
-                className="focus-ring u-interactive mt-4 inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
+                className="focus-ring u-interactive mt-4 inline-flex h-9 items-center rounded-control border border-border px-3 text-sm hover:bg-surface-2"
               >
                 Download export (JSON)
               </button>
@@ -202,7 +202,7 @@ export default function DataControlsPage() {
                   : `Plan invalid (${snapshot.validation.errors.length} issue(s)).`}
               </p>
 
-              <ul className="mt-4 divide-y divide-border rounded border border-border">
+              <ul className="mt-4 divide-y divide-border rounded-card border border-border">
                 {snapshot.records.map((record) => (
                   <li key={record.key} className="flex items-center gap-3 px-3 py-2 text-sm">
                     <input
@@ -228,7 +228,7 @@ export default function DataControlsPage() {
                 Checked records are treated as under legal hold: they are retained and never erased.
               </p>
 
-              <div className="mt-5 rounded border border-danger/40 p-3">
+              <div className="mt-5 rounded-card border border-danger/40 p-3">
                 <p className="text-sm font-medium">Erase my personal data</p>
                 <p className="mt-1 text-xs text-muted">
                   This applies the plan above in one transaction. It cannot be undone. Type{" "}
@@ -240,14 +240,14 @@ export default function DataControlsPage() {
                     onChange={(event) => setConfirmText(event.target.value)}
                     placeholder={t(locale, "eraseWord")}
                     aria-label={t(locale, "typeEraseToConfirm")}
-                    className="focus-ring h-9 rounded border border-border bg-bg px-2 text-sm text-fg"
+                    className="focus-ring h-9 rounded-control border-control bg-bg px-2 text-sm text-fg"
                   />
                   <button
                     type="button"
                     disabled={busy || confirmText !== "ERASE"}
                     onClick={executeErasure}
                     aria-label={t(locale, "eraseData")}
-                    className="focus-ring u-interactive inline-flex h-9 items-center rounded border border-danger/60 px-3 text-sm text-danger hover:bg-danger-soft disabled:opacity-40"
+                    className="focus-ring u-interactive inline-flex h-9 items-center rounded-control border border-danger/60 px-3 text-sm text-danger hover:bg-danger-soft disabled:opacity-40"
                   >
                     {busy ? "Erasing…" : "Erase data"}
                   </button>

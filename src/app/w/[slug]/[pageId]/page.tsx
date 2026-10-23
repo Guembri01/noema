@@ -263,10 +263,11 @@ export default async function PageRoute({
   return (
     <div
       className={cn(
-        "mx-auto px-12 py-12",
-        // Full-bleed by default: databases use the whole width, pages get a
-        // generous cap (the per-page "Full width" toggle removes it entirely).
-        page.fullWidth ? "max-w-none" : database ? "max-w-none" : "max-w-[1100px]",
+        "mx-auto px-5 py-8 sm:px-8 sm:py-10 lg:px-12 lg:py-12",
+        // Databases and the per-page "Full width" toggle use the whole canvas;
+        // a normal page keeps a comfortable reading measure (~68–72 characters)
+        // instead of stretching prose across the window.
+        page.fullWidth ? "max-w-none" : database ? "max-w-none" : "max-w-[820px]",
         page.smallText && "noema-page-small",
         page.font === "serif" && "noema-font-serif",
         page.font === "mono" && "noema-font-mono",

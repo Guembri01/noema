@@ -10,6 +10,7 @@ import {
   CircleDot,
   ExternalLink,
   FolderKanban,
+  Star,
   StarOff,
 } from "lucide-react";
 import { toggleFavoriteAction } from "@/server/actions/pages";
@@ -189,7 +190,7 @@ export function quickLinksFor({
 }
 
 const QUICK_LINK_BASE =
-  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted u-colors focus-ring hover:bg-surface-2 hover:text-fg";
+  "flex items-center gap-2 rounded-control px-2 py-1.5 text-sm text-muted u-colors focus-ring hover:bg-surface-2 hover:text-fg";
 
 function QuickLinkRow({ link }: { link: QuickLink }) {
   const pathname = usePathname();
@@ -258,11 +259,11 @@ function PageRow({
     <li
       data-testid={testId}
       data-page-id={pageId}
-      className="group/row flex items-center rounded-md u-colors hover:bg-surface-2"
+      className="group/row flex items-center rounded-control u-colors hover:bg-surface-2"
     >
       <Link
         href={href}
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-sm text-fg focus-ring"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-control px-1.5 py-1 text-sm text-fg focus-ring"
       >
         <span aria-hidden className="w-4 shrink-0 text-center text-sm">
           {icon}
@@ -281,7 +282,7 @@ function PageRow({
 }
 
 const ROW_ACTION_BASE =
-  "flex h-6 w-6 items-center justify-center rounded-sm text-muted u-colors focus-ring hover:bg-surface-3 hover:text-fg";
+  "flex h-6 w-6 items-center justify-center rounded-control text-muted u-colors focus-ring hover:bg-surface-3 hover:text-fg";
 
 /**
  * Sidebar Favorites section (Notion parity).
@@ -322,16 +323,17 @@ export function FavoritesList({ workspace, favorites, locale }: FavoritesListPro
 
       {items.length === 0 ? (
         <EmptyState
-          variant="compact"
+          variant="inline"
           data-testid="favorites-empty"
-          title={t(locale, "favorites")}
-          description={t(locale, "noFavoritesHint")}
+          icon={<Star className="h-3.5 w-3.5" aria-hidden />}
+          title={t(locale, "noFavoritesHint")}
           primaryAction={
-            <Button asChild variant="secondary" size="sm">
-              <Link href={`/w/${workspace.slug}/search`}>
-                {t(locale, "goToSearchPage")}
-              </Link>
-            </Button>
+            <Link
+              href={`/w/${workspace.slug}/search`}
+              className="focus-ring rounded-sm text-2xs font-medium text-link hover:underline"
+            >
+              {t(locale, "goToSearchPage")}
+            </Link>
           }
         />
       ) : (

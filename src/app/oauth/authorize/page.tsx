@@ -33,7 +33,7 @@ export default async function AuthorizePage({
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
-      <div className="rounded-xl border border-border bg-surface p-8">
+      <div className="rounded-lg border border-border bg-surface p-8">
         <h1 className="text-xl font-semibold">
           {t(locale, "authorizeWord")} {app.name}
         </h1>
@@ -55,7 +55,7 @@ export default async function AuthorizePage({
             name="decision"
             value="allow"
             aria-label={t(locale, "authorizeWord")}
-            className="focus-ring u-interactive h-10 rounded bg-accent px-4 text-sm text-accent-fg"
+            className="focus-ring u-interactive h-10 rounded-control bg-action px-4 text-sm text-action-fg"
           >
             {t(locale, "authorizeWord")}
           </button>
@@ -64,7 +64,7 @@ export default async function AuthorizePage({
             name="decision"
             value="deny"
             aria-label={t(locale, "denyWord")}
-            className="focus-ring u-interactive h-10 rounded border border-border px-4 text-sm"
+            className="focus-ring u-interactive h-10 rounded-control border border-border px-4 text-sm"
           >
             {t(locale, "denyWord")}
           </button>

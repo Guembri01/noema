@@ -41,7 +41,7 @@ export default async function WorkspaceHome({
         : t(locale, "goodEvening");
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] px-8 py-12">
+    <div className="mx-auto w-full max-w-[1600px] px-5 py-8 sm:px-8 sm:py-12">
       <div className="flex flex-col gap-6">
         <header className="flex flex-col gap-1">
           <h1 className="text-title font-semibold tracking-title text-fg">

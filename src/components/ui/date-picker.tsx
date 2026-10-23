@@ -229,7 +229,7 @@ function seedCursor(value: DatePickerValue | undefined, clockMs: number | null):
 }
 
 const STEPPER_CLASS =
-  "focus-ring grid h-7 w-7 place-items-center rounded-sm border border-border text-muted u-interactive hover:bg-surface-2 hover:text-fg";
+  "focus-ring grid h-7 w-7 place-items-center rounded-control border border-border text-muted u-interactive hover:bg-surface-2 hover:text-fg";
 
 /**
  * Date / time / range / datetime picker.
@@ -360,7 +360,7 @@ export function DatePicker({
           data-testid="date-picker-trigger"
           title={title || undefined}
           className={cn(
-            "focus-ring inline-flex h-9 max-w-full items-center gap-2 rounded-sm border border-border bg-bg px-3 text-sm text-fg u-interactive hover:bg-surface-2",
+            "focus-ring inline-flex h-9 max-w-full items-center gap-2 rounded-control border-control bg-bg px-3 text-sm text-fg u-interactive hover:bg-surface-2",
             className,
           )}
         >
@@ -382,7 +382,7 @@ export function DatePicker({
                 key={preset}
                 type="button"
                 onClick={() => handlePreset(preset)}
-                className="focus-ring rounded-sm border border-border px-2 py-0.5 text-xs text-muted u-interactive hover:bg-surface-2 hover:text-fg"
+                className="focus-ring rounded-control border border-border px-2 py-0.5 text-xs text-muted u-interactive hover:bg-surface-2 hover:text-fg"
               >
                 {presetLabels?.[preset] ?? PRESET_LABELS[preset]}
               </button>
@@ -434,7 +434,7 @@ export function DatePicker({
               placeholder={formatTime({ hours: 0, minutes: 0 })}
               onChange={(event) => handleTimeDraft(event.target.value)}
               onBlur={() => setTimeDraft(formatTime(time))}
-              className="focus-ring h-7 w-16 rounded-sm border border-border bg-bg text-center text-sm tabular-nums text-fg"
+              className="focus-ring h-7 w-16 rounded-control border-control bg-bg text-center text-sm tabular-nums text-fg"
             />
             <button
               type="button"
@@ -461,7 +461,7 @@ export function DatePicker({
           <button
             type="button"
             onClick={() => setOpen(false)}
-            className="focus-ring rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg u-interactive"
+            className="focus-ring rounded-control bg-action px-3 py-1 text-xs font-medium text-action-fg u-interactive"
           >
             Done
           </button>

@@ -73,7 +73,7 @@ export function PromptDialog({
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
       <DialogContent
-        className="w-full max-w-md rounded-xl border border-border bg-bg p-4 shadow-2xl"
+        className="w-full max-w-md rounded-overlay border border-border bg-bg p-4 shadow-2xl"
         aria-label={title}
       >
         <h2 className="text-base font-semibold">{title}</h2>
@@ -98,7 +98,7 @@ export function PromptDialog({
                   onChange={(event) =>
                     setValues((current) => ({ ...current, [field.name]: event.target.value }))
                   }
-                  className="mt-1 w-full resize-y rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs outline-none focus:border-accent"
+                  className="mt-1 w-full resize-y rounded-control border-control bg-bg px-2 py-1.5 font-mono text-xs outline-none focus-ring"
                 />
               ) : (
                 <input
@@ -107,7 +107,7 @@ export function PromptDialog({
                   onChange={(event) =>
                     setValues((current) => ({ ...current, [field.name]: event.target.value }))
                   }
-                  className="mt-1 h-9 w-full rounded border border-border bg-bg px-2 text-sm outline-none focus:border-accent"
+                  className="mt-1 h-9 w-full rounded-control border-control bg-bg px-2 text-sm outline-none focus-ring"
                 />
               )}
             </label>
@@ -118,7 +118,7 @@ export function PromptDialog({
               type="button"
               onClick={onClose}
               aria-label={t(locale, "cancel")}
-              className="focus-ring u-interactive h-9 rounded border border-border px-3 text-sm text-muted hover:bg-surface-2"
+              className="focus-ring u-interactive h-9 rounded-control border border-border px-3 text-sm text-muted hover:bg-surface-2"
             >
               {t(locale, "cancel")}
             </button>
@@ -126,7 +126,7 @@ export function PromptDialog({
               type="submit"
               disabled={missing || busy}
               aria-label={busy ? t(locale, "working") : confirmLabel ?? t(locale, "save")}
-              className="focus-ring u-interactive h-9 rounded bg-accent px-3 text-sm text-accent-fg disabled:opacity-40"
+              className="focus-ring u-interactive h-9 rounded-control bg-action px-3 text-sm text-action-fg disabled:opacity-40"
             >
               {busy ? t(locale, "working") : confirmLabel ?? t(locale, "save")}
             </button>

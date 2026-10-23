@@ -131,7 +131,7 @@ export const COMPOSER_LAYOUT: Record<
   { form: string; wide: string; footer: string }
 > = {
   inline: {
-    form: "grid gap-2 rounded-xl border border-border bg-surface p-3 sm:grid-cols-2 lg:grid-cols-4",
+    form: "grid gap-2 rounded-lg border border-border bg-surface p-3 sm:grid-cols-2 lg:grid-cols-4",
     wide: "sm:col-span-2 lg:col-span-4",
     footer: "flex items-center gap-2 sm:col-span-2 lg:col-span-4",
   },

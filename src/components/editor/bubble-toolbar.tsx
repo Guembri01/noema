@@ -124,8 +124,8 @@ export function isActiveSwatch(
 /** Swatch button chrome: token colours, `.focus-ring`, active = accent ring. */
 export function swatchButtonClass(active: boolean): string {
   return cn(
-    "u-interactive focus-ring inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-border",
-    active && "ring-2 ring-accent ring-offset-1",
+    "u-interactive focus-ring inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-control border border-border",
+    active && "border-fg",
   );
 }
 
@@ -216,9 +216,9 @@ export function linkPopoverTarget(
 /** Token-only chrome for the square, icon-only toolbar buttons. */
 export function bubbleButtonClass({ active = false }: { active?: boolean } = {}): string {
   return cn(
-    "u-interactive focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm",
+    "u-interactive focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-control",
     "text-muted hover:bg-surface-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50",
-    active ? "bg-accent-soft text-accent" : "bg-transparent",
+    active ? "bg-surface-2 text-fg" : "bg-transparent",
   );
 }
 
@@ -535,7 +535,7 @@ export function BubbleToolbar({
                     applyLink();
                   }
                 }}
-                className="focus-ring h-8 rounded-sm border border-border bg-bg px-2 text-sm text-fg"
+                className="focus-ring h-8 rounded-control border-control bg-bg px-2 text-sm text-fg"
               />
             </label>
             <label className="flex flex-col gap-1 text-xs text-muted">
@@ -554,7 +554,7 @@ export function BubbleToolbar({
                     applyLink();
                   }
                 }}
-                className="focus-ring h-8 rounded-sm border border-border bg-bg px-2 text-sm text-fg"
+                className="focus-ring h-8 rounded-control border-control bg-bg px-2 text-sm text-fg"
               />
             </label>
             <label className="flex items-center gap-2 text-sm text-fg">
@@ -575,7 +575,7 @@ export function BubbleToolbar({
                   editor.chain().focus().extendMarkRange("link").unsetLink().run();
                   setPanel(null);
                 }}
-                className="focus-ring u-colors h-8 rounded-sm px-2 text-sm text-danger hover:bg-danger-soft"
+                className="focus-ring u-colors h-8 rounded-control px-2 text-sm text-danger hover:bg-danger-soft"
               >
                 {t(locale, "remove")}
               </button>
@@ -583,7 +583,7 @@ export function BubbleToolbar({
                 type="button"
                 aria-label={t(locale, "apply")}
                 onClick={applyLink}
-                className="focus-ring u-colors h-8 rounded-sm bg-accent px-3 text-sm font-medium text-accent-fg hover:bg-accent/90"
+                className="focus-ring u-colors h-8 rounded-control bg-action px-3 text-sm font-medium text-action-fg hover:bg-action/90"
               >
                 {t(locale, "apply")}
               </button>
@@ -633,7 +633,7 @@ export function BubbleToolbar({
                   setPanel(null);
                   applySkill(skill.id);
                 }}
-                className="focus-ring u-colors flex flex-col rounded-sm px-2 py-1 text-left text-sm hover:bg-surface-2 disabled:opacity-50"
+                className="focus-ring u-colors flex flex-col rounded-control px-2 py-1 text-left text-sm hover:bg-surface-2 disabled:opacity-50"
               >
                 <span>{skill.label}</span>
                 <span className="text-xs text-muted">{skill.hint}</span>

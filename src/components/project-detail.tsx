@@ -263,7 +263,7 @@ export function ProjectDetail({
             value={name}
             aria-label={t(locale, "projectName")}
             onChange={(event) => setName(event.target.value)}
-            className="h-9 min-w-48 flex-1 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
+            className="h-9 min-w-48 flex-1 rounded-control border-control bg-bg px-2 text-sm outline-none focus-ring"
           />
           <Select
             options={PROJECT_STATUS_OPTIONS}
@@ -305,7 +305,7 @@ export function ProjectDetail({
           rows={2}
           placeholder={t(locale, "projectSummaryPlaceholder")}
           onChange={(event) => setSummary(event.target.value)}
-          className="w-full rounded border border-border bg-bg px-2 py-1.5 text-sm outline-none focus-ring focus:border-accent"
+          className="w-full rounded-control border-control bg-bg px-2 py-1.5 text-sm outline-none focus-ring"
         />
         <textarea
           value={description}
@@ -313,7 +313,7 @@ export function ProjectDetail({
           rows={3}
           placeholder={t(locale, "projectDescriptionPlaceholder")}
           onChange={(event) => setDescription(event.target.value)}
-          className="w-full rounded border border-border bg-bg px-2 py-1.5 text-sm outline-none focus-ring focus:border-accent"
+          className="w-full rounded-control border-control bg-bg px-2 py-1.5 text-sm outline-none focus-ring"
         />
 
         <Progress
@@ -341,7 +341,7 @@ export function ProjectDetail({
             aria-label={t(locale, "milestoneName")}
             placeholder={t(locale, "milestoneName")}
             onChange={(event) => setMilestoneName(event.target.value)}
-            className="h-9 w-56 rounded border border-border bg-bg px-2 text-sm outline-none focus-ring focus:border-accent"
+            className="h-9 w-56 rounded-control border-control bg-bg px-2 text-sm outline-none focus-ring"
           />
           <label htmlFor="milestone-new-due" className="sr-only">
             {t(locale, "milestoneDueAria")}
@@ -372,7 +372,7 @@ export function ProjectDetail({
             description="Add the first milestone to start tracking progress."
           />
         ) : (
-          <ul className="divide-y divide-border rounded-xl border border-border">
+          <ul className="divide-y divide-border rounded-lg border border-border">
             {ordered.map((milestone, index) => (
               <li
                 key={milestone.id}
@@ -477,7 +477,7 @@ export function ProjectDetail({
               description="Tickets scheduled into this project will show up here."
             />
           ) : (
-            <ul className="divide-y divide-border rounded-xl border border-border">
+            <ul className="divide-y divide-border rounded-lg border border-border">
               {tickets.map((ticket) => (
                 <li
                   key={ticket.id}
@@ -641,7 +641,7 @@ function ProjectRoleEditor({ projectId, locale }: { projectId: string; locale: s
           description="No project members yet."
         />
       ) : (
-        <ul className="divide-y divide-border rounded-xl border border-border">
+        <ul className="divide-y divide-border rounded-lg border border-border">
           {members.map((member) => (
             <li key={member.userId} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
               <span className="min-w-0 flex-1 truncate">{member.name ?? member.userId}</span>

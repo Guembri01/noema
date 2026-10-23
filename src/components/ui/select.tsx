@@ -787,7 +787,7 @@ export function Select(props: SelectProps) {
           onClick={() => (open ? closeMenu() : openMenu())}
           onKeyDown={handleKeyDown}
           className={cn(
-            "u-interactive u-colors focus-ring relative flex w-full items-center gap-2 rounded-sm border border-control bg-bg px-2 text-start text-fg",
+            "u-interactive u-colors focus-ring relative flex w-full items-center gap-2 rounded-control border border-control bg-bg px-2 text-start text-fg",
             SIZE_CLASS[size],
             "hover:bg-surface-2",
             "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-bg",
@@ -887,7 +887,7 @@ export function Select(props: SelectProps) {
             )}
           >
             {searchable ? (
-              <div className="mb-1 flex items-center gap-2 rounded-sm border border-control px-2">
+              <div className="noema-search-field noema-search-field-pill u-colors mb-1 flex items-center gap-2 rounded-control border border-control px-2">
                 <Search aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted" />
                 <input
                   autoFocus
@@ -975,7 +975,7 @@ export function Select(props: SelectProps) {
                           if (!option.disabled && index !== activeIndex) setActiveIndex(index);
                         }}
                         className={cn(
-                          "u-colors flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
+                          "u-colors flex cursor-pointer items-center gap-2 rounded-control px-2 py-1.5 text-sm",
                           isActive && "bg-surface-2",
                           option.disabled && "cursor-not-allowed opacity-50",
                         )}
@@ -1010,7 +1010,7 @@ export function Select(props: SelectProps) {
                         if (activeIndex !== rows.length) setActiveIndex(rows.length);
                       }}
                       className={cn(
-                        "u-colors flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-accent",
+                        "u-colors flex cursor-pointer items-center gap-2 rounded-control px-2 py-1.5 text-sm text-action",
                         activeIndex === rows.length && "bg-surface-2",
                       )}
                     >

@@ -189,7 +189,7 @@ export default async function InboxPage({
         <span
           className={cn(
             "h-2 w-2 shrink-0 rounded-full",
-            notification.read ? "bg-transparent" : "bg-accent",
+            notification.read ? "bg-transparent" : "bg-action",
           )}
           aria-hidden
         />
@@ -197,7 +197,7 @@ export default async function InboxPage({
           {labelFor(notification)}
         </span>
         {isInDigest(notification, prefs) && (
-          <span className="rounded bg-surface-2 px-1.5 py-0.5 text-3xs uppercase tracking-wide text-muted">
+          <span className="rounded-chip bg-surface-2 px-1.5 py-0.5 text-3xs uppercase tracking-wide text-muted">
             digest
           </span>
         )}
@@ -211,7 +211,7 @@ export default async function InboxPage({
             <button
               type="submit"
               aria-label={t(locale, "markRead")}
-              className="focus-ring u-interactive rounded px-2 py-0.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
+              className="focus-ring u-interactive rounded-control px-2 py-0.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
             >
               {t(locale, "markRead")}
             </button>
@@ -237,7 +237,7 @@ export default async function InboxPage({
             <Bell className="h-5 w-5" />
             {t(locale, "inbox")}
             {unread > 0 && (
-              <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-medium text-white">
+              <span className="rounded-full bg-action px-2 py-0.5 text-xs font-medium text-action-fg">
                 {unread}
               </span>
             )}
@@ -289,7 +289,7 @@ export default async function InboxPage({
                           <span
                             className={cn(
                               "h-2 w-2 shrink-0 rounded-full",
-                              group.unread > 0 ? "bg-accent" : "bg-transparent",
+                              group.unread > 0 ? "bg-action" : "bg-transparent",
                             )}
                             aria-hidden
                           />

@@ -259,7 +259,7 @@ export const PAGE_CHEVRON_MOTION: CSSProperties = {
  */
 export function pageChevronButtonClass(hasChildren: boolean): string {
   return cn(
-    "flex h-6 w-5 shrink-0 items-center justify-center rounded-sm text-muted",
+    "flex h-6 w-5 shrink-0 items-center justify-center rounded-control text-muted",
     "u-colors hover:text-fg",
     !hasChildren && "invisible",
   );
@@ -281,10 +281,10 @@ export function pageRowClass({
   dragging = false,
 }: PageRowState = {}): string {
   return cn(
-    "group relative flex items-center rounded-md pr-0.5",
+    "group relative flex items-center rounded-control pr-0.5",
     "u-colors u-interactive hover:bg-surface-2",
     selected &&
-      "bg-accent-soft before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-full before:bg-accent before:content-['']",
+      "bg-accent-soft hover:bg-accent-soft before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-full before:bg-accent before:content-['']",
     dragging && "u-no-transition z-[var(--z-drag)] scale-[1.02] opacity-60 shadow-2",
   );
 }
@@ -295,7 +295,7 @@ export function pageRowClass({
  */
 export function pageRowLinkClass(renaming = false): string {
   return cn(
-    "focus-ring flex min-w-0 flex-1 items-center gap-2 rounded-sm py-1 text-sm",
+    "focus-ring flex min-w-0 flex-1 items-center gap-2 rounded-control py-1 text-sm",
     renaming && "hidden",
   );
 }
@@ -617,6 +617,7 @@ export const PageTreeRow = forwardRef<HTMLDivElement, PageTreeRowProps>(
         data-page-row
         data-page-id={id}
         data-selected={state?.selected ? "" : undefined}
+        aria-current={state?.selected ? "page" : undefined}
         data-dragging={state?.dragging ? "" : undefined}
         tabIndex={-1}
         draggable={draggable}
@@ -646,7 +647,7 @@ export const PageTreeRow = forwardRef<HTMLDivElement, PageTreeRowProps>(
           <span className="w-4 shrink-0 text-center text-sm">
             {icon ?? (type === "DATABASE" ? "🗂️" : "📄")}
           </span>
-          <span className="truncate">
+          <span className={cn("truncate", state?.selected && "font-medium")}>
             {truncateEnd(title || "Untitled", SIDEBAR_TITLE_MAX)}
           </span>
         </Link>
@@ -1152,7 +1153,7 @@ export function PageTree({
                       if (event.key === "Enter") event.currentTarget.blur();
                       if (event.key === "Escape") setRenamingId(null);
                     }}
-                    className="min-w-0 flex-1 rounded border border-border bg-bg px-1 py-0.5 text-sm outline-none focus:border-accent"
+                    className="min-w-0 flex-1 rounded-control border-control bg-bg px-1 py-0.5 text-sm outline-none focus-ring"
                   />
                 )}
                 <div className="flex items-center opacity-0 u-transform group-hover:opacity-100 focus-within:opacity-100">
@@ -1161,7 +1162,7 @@ export function PageTree({
                       type="button"
                       aria-label={t(locale, "addSubPage")}
                       onClick={() => addPage(node.id, "PAGE")}
-                      className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
+                      className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg"
                     >
                       <Plus className="h-3.5 w-3.5" />
                     </button>
@@ -1171,7 +1172,7 @@ export function PageTree({
                       <button
                         type="button"
                         aria-label={t(locale, "pageOptions")}
-                        className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
+                        className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg"
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </button>
@@ -1451,7 +1452,7 @@ export function PageTree({
           disabled={pending}
           aria-label={t(locale, "newPage")}
           onClick={() => addPage(null, "PAGE")}
-          className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2"
+          className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-surface-2"
         >
           <Plus className="h-4 w-4" />
         </button>
@@ -1508,9 +1509,10 @@ export function PageTree({
                 <li key={node.id}>
                   <Link
                     href={href}
+                    aria-current={pathname === href ? "page" : undefined}
                     className={cn(
-                      "flex items-center gap-2 rounded-md px-1 py-1 text-sm hover:bg-surface-2",
-                      pathname === href && "bg-surface-2",
+                      "flex items-center gap-2 rounded-control px-1 py-1 text-sm u-colors hover:bg-surface-2",
+                      pathname === href && "bg-accent-soft font-medium text-fg",
                     )}
                   >
                     <span className="w-4 shrink-0 text-center text-sm">
@@ -1538,9 +1540,10 @@ export function PageTree({
                 <li key={node.id}>
                   <Link
                     href={href}
+                    aria-current={pathname === href ? "page" : undefined}
                     className={cn(
-                      "flex items-center gap-2 rounded-md px-1 py-1 text-sm hover:bg-surface-2",
-                      pathname === href && "bg-surface-2",
+                      "flex items-center gap-2 rounded-control px-1 py-1 text-sm u-colors hover:bg-surface-2",
+                      pathname === href && "bg-accent-soft font-medium text-fg",
                     )}
                   >
                     <span className="w-4 shrink-0 text-center text-sm">

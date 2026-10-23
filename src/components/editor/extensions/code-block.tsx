@@ -327,7 +327,7 @@ export function CodeBlockChrome({
                 aria-pressed={showNumbers}
                 aria-label={t(locale, "codeLineNumbers")}
                 data-testid="code-line-numbers"
-                className={cn(showNumbers && "bg-accent-soft text-accent")}
+                className={cn(showNumbers && "bg-surface-2 text-fg")}
                 onClick={onToggleNumbers}
               >
                 <ListOrdered className="h-3.5 w-3.5" aria-hidden />
@@ -342,7 +342,7 @@ export function CodeBlockChrome({
                 aria-pressed={wrap}
                 aria-label={CODE_WRAP_LABEL}
                 data-testid="code-wrap"
-                className={cn(wrap && "bg-accent-soft text-accent")}
+                className={cn(wrap && "bg-surface-2 text-fg")}
                 onClick={onToggleWrap}
               >
                 <WrapText className="h-3.5 w-3.5" aria-hidden />

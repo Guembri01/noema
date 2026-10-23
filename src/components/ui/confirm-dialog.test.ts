@@ -88,7 +88,7 @@ describe("tone map", () => {
     expect(CONFIRM_TONE_CLASS.danger).toContain("bg-danger");
     expect(CONFIRM_TONE_CLASS.danger).toContain("text-danger-fg");
     expect(CONFIRM_ICON_CLASS.danger).toContain("bg-danger-soft");
-    expect(CONFIRM_ICON_CLASS.default).toContain("bg-accent-soft");
+    expect(CONFIRM_ICON_CLASS.default).toContain("bg-action-soft");
   });
 });
 

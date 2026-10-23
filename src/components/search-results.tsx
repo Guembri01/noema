@@ -147,7 +147,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   return (
     <>
       {excerpt.slice(0, matchStart)}
-      <mark className="rounded-xs bg-accent-soft text-accent">
+      <mark className="rounded-xs bg-highlight px-0.5 text-highlight-fg">
         {excerpt.slice(matchStart, matchEnd)}
       </mark>
       {excerpt.slice(matchEnd)}
@@ -339,7 +339,7 @@ export function SearchResults({
       onFocus={() => setActiveIndex(index)}
       className={cn(
         "block px-4 py-3 u-colors focus-ring",
-        index === activeRow ? "bg-accent-soft" : "hover:bg-surface-2",
+        index === activeRow ? "bg-surface-2" : "hover:bg-surface-2",
       )}
     >
       <p className="flex items-center gap-2 text-sm font-medium">

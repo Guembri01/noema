@@ -134,7 +134,7 @@ export type ResizablePanelProps = {
 };
 
 const HANDLE_PSEUDO =
-  "after:absolute after:bg-transparent hover:after:bg-accent/50 focus-visible:after:bg-accent";
+  "after:absolute after:bg-transparent hover:after:bg-border-strong focus-visible:after:bg-focus";
 const HANDLE_VERTICAL =
   "absolute inset-y-0 -right-1 w-2 cursor-col-resize touch-none select-none after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2";
 const HANDLE_HORIZONTAL =
@@ -264,8 +264,8 @@ export function ResizablePanel({
           HANDLE_PSEUDO,
           dragging &&
             (orientation === "vertical"
-              ? "u-no-transition after:w-0.5 after:bg-accent"
-              : "u-no-transition after:h-0.5 after:bg-accent"),
+              ? "u-no-transition after:w-0.5 after:bg-focus"
+              : "u-no-transition after:h-0.5 after:bg-focus"),
           handleClassName,
         )}
       />

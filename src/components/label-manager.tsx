@@ -140,7 +140,7 @@ function LabelColorPicker({
             onClick={() => choose(option)}
             className={cn(
               "rounded-full p-0",
-              active && "ring-2 ring-accent ring-offset-1 ring-offset-bg",
+              active && "ring-2 ring-focus ring-offset-1 ring-offset-bg",
             )}
           >
             <span
@@ -169,7 +169,7 @@ function LabelRowsSkeleton({ rows = 3 }: { rows?: number }) {
       {Array.from({ length: rows }).map((_, index) => (
         <div
           key={index}
-          className="flex items-center gap-2 rounded-md border border-border p-3"
+          className="flex items-center gap-2 rounded-card border border-border p-3"
         >
           <Skeleton variant="block" width={72} height={24} />
           <Skeleton variant="block" width={160} height={32} />

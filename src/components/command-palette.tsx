@@ -453,7 +453,7 @@ function HighlightedLabel({ text, query }: { text: string; query: string }) {
   ranges.forEach((range, index) => {
     if (range.start > cursor) nodes.push(text.slice(cursor, range.start));
     nodes.push(
-      <mark key={index} className="rounded-xs bg-accent/20 text-inherit">
+      <mark key={index} className="rounded-xs bg-highlight px-0.5 text-highlight-fg">
         {text.slice(range.start, range.end)}
       </mark>,
     );
@@ -746,9 +746,9 @@ export function CommandPalette({
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => select(item)}
               className={cn(
-                "u-colors flex h-9 cursor-pointer items-center gap-2 rounded-sm px-2 text-sm",
+                "u-colors flex h-9 cursor-pointer items-center gap-2 rounded-control px-2 text-sm",
                 !isActive && "hover:bg-surface-2",
-                isActive && "bg-accent-soft",
+                isActive && "bg-surface-2",
               )}
               style={{ height: PALETTE_ROW_HEIGHT }}
             >
@@ -799,7 +799,7 @@ export function CommandPalette({
         className="overflow-hidden p-0"
       >
         <div className="flex animate-rise flex-col">
-          <div className="flex items-center gap-2 border-b border-border px-3">
+          <div className="noema-search-field u-colors flex items-center gap-2 border-b border-border px-3">
             <Search className="h-4 w-4 shrink-0 text-muted" />
             <input
               autoFocus
@@ -837,7 +837,7 @@ export function CommandPalette({
                 <button
                   type="button"
                   onClick={() => setQuery(suggestion)}
-                  className="focus-ring mt-2 rounded-sm text-sm text-accent underline underline-offset-2"
+                  className="focus-ring mt-2 rounded-control text-sm text-accent underline underline-offset-2"
                 >
                   {PALETTE_COPY.didYouMean.replace("{suggestion}", suggestion)}
                 </button>

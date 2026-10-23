@@ -689,7 +689,7 @@ export function PropertyOptionsEditor({
 
   return (
     <DialogContent
-      className="w-full max-w-md rounded-xl border border-border bg-bg p-4 shadow-2xl"
+      className="w-full max-w-md rounded-overlay border border-border bg-bg p-4 shadow-2xl"
       aria-label={`${t(locale, "editOptions")} — ${property.name}`}
       aria-describedby={undefined}
       data-testid="property-options-editor"
@@ -703,7 +703,7 @@ export function PropertyOptionsEditor({
           {draft.map((option, index) => (
             <li
               key={option.id}
-              className="space-y-2 rounded border border-border p-2"
+              className="space-y-2 rounded-control border border-border p-2"
             >
               <div className="flex items-center gap-2">
                 <Input

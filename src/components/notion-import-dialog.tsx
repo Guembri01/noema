@@ -94,8 +94,8 @@ function NotionSteps({ step }: { step: NotionStep }) {
               data-state={state}
               className={cn(
                 "grid size-5 shrink-0 place-items-center rounded-full border text-3xs font-medium",
-                state === "current" && "border-accent bg-accent text-accent-fg",
-                state === "done" && "border-accent bg-accent-soft text-accent",
+                state === "current" && "border-action bg-action text-action-fg",
+                state === "done" && "border-success bg-success-soft text-success",
                 state === "upcoming" && "border-border bg-surface-2 text-muted",
               )}
             >
@@ -358,7 +358,7 @@ export function NotionImportDialog({
           </Field>
 
           <fieldset
-            className="flex flex-col gap-2 rounded-md border border-border bg-surface p-3"
+            className="flex flex-col gap-2 rounded-card border border-border bg-surface p-3"
             data-testid="notion-import-options"
           >
             <legend className="px-1 text-xs font-medium uppercase tracking-wide text-muted">
@@ -404,7 +404,7 @@ export function NotionImportDialog({
           )}
 
           {unmappedCount > 0 ? (
-            <div className="rounded-md border border-warning bg-warning-soft p-2 text-sm text-warning" role="alert">
+            <div className="rounded-control border border-warning bg-warning-soft p-2 text-sm text-warning" role="alert">
               <p>
                 {unmappedCount} Notion {unmappedCount === 1 ? "type has" : "types have"} no equivalent
                 and will be skipped:
@@ -420,7 +420,7 @@ export function NotionImportDialog({
             </div>
           ) : null}
 
-          <dl className="grid grid-cols-2 gap-2 rounded-md border border-border bg-surface p-3 text-sm">
+          <dl className="grid grid-cols-2 gap-2 rounded-card border border-border bg-surface p-3 text-sm">
             <div>
               <dt className="text-xs uppercase tracking-wide text-muted">Properties</dt>
               <dd className="text-fg">{importProperties ? "Imported" : "Skipped"}</dd>
@@ -440,7 +440,7 @@ export function NotionImportDialog({
           ) : null}
 
           {failure !== "" ? (
-            <p role="alert" className="rounded-md border border-danger bg-danger-soft p-2 text-sm text-danger">
+            <p role="alert" className="rounded-control border border-danger bg-danger-soft p-2 text-sm text-danger">
               {failure}
             </p>
           ) : null}
@@ -474,7 +474,7 @@ export function NotionImportDialog({
 
           {runState === "done" && importedUnmappedCount > 0 ? (
             <div
-              className="rounded-md border border-warning bg-warning-soft p-2 text-sm text-warning"
+              className="rounded-control border border-warning bg-warning-soft p-2 text-sm text-warning"
               data-testid="notion-import-unmapped"
             >
               <p>

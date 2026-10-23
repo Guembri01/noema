@@ -215,7 +215,7 @@ export function ProviderCard({
       data-provider={id}
       data-status={status}
       data-selected={selected ? "true" : undefined}
-      className={cn("flex flex-col gap-3", selected && "ring-1 ring-accent")}
+      className={cn("flex flex-col gap-3", selected && "bg-selection-soft ring-1 ring-focus/40")}
     >
       <CardHeader
         icon={
@@ -358,7 +358,7 @@ export function PromptCard({
       data-prompt={id}
       data-scope={scope}
       data-selected={selected ? "true" : undefined}
-      className={cn("flex flex-col gap-3", selected && "ring-1 ring-accent")}
+      className={cn("flex flex-col gap-3", selected && "bg-selection-soft ring-1 ring-focus/40")}
     >
       <CardHeader
         title={name}

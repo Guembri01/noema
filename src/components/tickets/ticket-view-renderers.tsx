@@ -286,7 +286,7 @@ const CAPACITY_TONE: Record<CapacityState, BadgeTone> = {
 function DevCycleNotice({ cycle }: { cycle: string[] | null }) {
   if (!cycle) return null;
   return (
-    <p className="mb-2 rounded-sm border border-dashed border-warning bg-warning-soft px-2 py-1 text-2xs text-warning">
+    <p className="mb-2 rounded-chip border border-dashed border-warning bg-warning-soft px-2 py-1 text-2xs text-warning">
       Dependency cycle: {cycle.join(" → ")}
     </p>
   );
@@ -410,7 +410,7 @@ export function BoardCard({
       <button
         type="button"
         onClick={() => onSelect?.(ticket.id)}
-        className="focus-ring block w-full rounded-sm text-left"
+        className="focus-ring block w-full rounded-control text-left"
       >
         <span className="flex items-center gap-1.5 text-2xs text-muted">
           <span aria-hidden>{typeMeta(ticket.type).icon}</span>
@@ -519,7 +519,7 @@ export function TicketListView({
         pending ? (
           <Skeleton variant="table" rows={6} cols={4} data-testid="ticket-list-loading" />
         ) : (
-          <div className="rounded-xl border border-dashed border-border">
+          <div className="rounded-lg border border-dashed border-border">
             <EmptyState
               variant="compact"
               icon={<Inbox className="h-5 w-5" aria-hidden />}
@@ -529,7 +529,7 @@ export function TicketListView({
           </div>
         )
       ) : (
-        <ul className="divide-y divide-border rounded-xl border border-border">
+        <ul className="divide-y divide-border rounded-lg border border-border">
           {rows.map((ticket) => {
             const blockers = dependencies.blockersByTicket.get(ticket.id);
             const dependents = dependencies.dependentsByTicket.get(ticket.id);
@@ -565,7 +565,7 @@ export function TicketListView({
                 <button
                   type="button"
                   onClick={() => onSelect(ticket.id)}
-                  className="focus-ring u-interactive flex min-w-0 flex-1 items-center gap-2 rounded-sm text-left"
+                  className="focus-ring u-interactive flex min-w-0 flex-1 items-center gap-2 rounded-control text-left"
                 >
                   <span aria-hidden>{typeMeta(ticket.type).icon}</span>
                   <span className="w-16 shrink-0 font-mono text-2xs text-muted">{ticket.key}</span>
@@ -704,7 +704,7 @@ export function TicketBoardView({
         {groupByStatus(filtered).map((column) => (
           <div
             key={column.status}
-            className="flex w-64 shrink-0 flex-col rounded-xl border border-border"
+            className="flex w-64 shrink-0 flex-col rounded-lg border border-border"
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
               const ticketId = event.dataTransfer.getData("text/ticket");
@@ -803,7 +803,7 @@ export function TicketTimeline({
 
   if (pending) {
     return (
-      <div className="rounded-xl border border-border p-4">
+      <div className="rounded-lg border border-border p-4">
         <Skeleton variant="block" height={16} width="40%" />
         <div className="mt-3 space-y-1.5">
           {Array.from({ length: 5 }).map((_, index) => (
@@ -816,7 +816,7 @@ export function TicketTimeline({
 
   if (layout.rows.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-border">
+      <div className="rounded-lg border border-dashed border-border">
         <EmptyState
           variant="full"
           icon={<Inbox className="h-5 w-5" aria-hidden />}
@@ -828,7 +828,7 @@ export function TicketTimeline({
   }
 
   return (
-    <div className="rounded-xl border border-border p-4">
+    <div className="rounded-lg border border-border p-4">
       <div className="mb-3 flex items-center justify-between text-xs text-muted">
         <span>
           {layout.from.toLocaleDateString()} → {layout.to.toLocaleDateString()} · {layout.days} days
@@ -837,7 +837,7 @@ export function TicketTimeline({
       </div>
       <div className="relative">
         <div
-          className="absolute -top-1 bottom-0 border-l border-dashed border-accent"
+          className="absolute -top-1 bottom-0 border-l border-dashed border-focus"
           style={{ left: `${layout.todayOffset}%`, zIndex: Z.sticky }}
           aria-hidden
         />
@@ -851,7 +851,7 @@ export function TicketTimeline({
                 <button
                   type="button"
                   onClick={() => onOpen(ticket.id)}
-                  className="focus-ring u-interactive w-56 shrink-0 truncate rounded-sm text-left text-xs text-muted hover:text-fg"
+                  className="focus-ring u-interactive w-56 shrink-0 truncate rounded-control text-left text-xs text-muted hover:text-fg"
                 >
                   <span className="font-mono">{ticket.key}</span> {ticket.title}
                 </button>
@@ -861,7 +861,7 @@ export function TicketTimeline({
                     onClick={() => onOpen(ticket.id)}
                     title={`${ticket.key} · ${formatEstimate(ticket.estimate, ticket.estimateUnit ?? "points")}`}
                     className={cn(
-                      "focus-ring u-colors absolute inset-y-1 flex items-center gap-1 overflow-hidden rounded-sm border px-1.5 text-3xs font-medium",
+                      "focus-ring u-colors absolute inset-y-1 flex items-center gap-1 overflow-hidden rounded-control border px-1.5 text-3xs font-medium",
                       !row.hasDates && "opacity-60",
                     )}
                     style={{

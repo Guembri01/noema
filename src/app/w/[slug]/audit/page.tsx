@@ -50,7 +50,7 @@ function formatInstant(at: string): string {
 
 /** Tailwind classes shared by the filter controls. */
 const CONTROL =
-  "h-9 rounded border border-border bg-bg px-2 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent/40";
+  "h-9 rounded-control border border-border bg-bg px-2 text-sm text-fg focus-ring";
 
 /** One event row, shared by the flat and grouped views. */
 function AuditEventRow({
@@ -73,7 +73,7 @@ function AuditEventRow({
         {event.targetType}{" "}
         <span className="font-mono text-xs text-fg">{event.targetName ?? event.targetId}</span>
       </span>
-      <span className={`ml-auto rounded px-1.5 py-0.5 text-2xs ${SEVERITY_TONE[severity]}`}>
+      <span className={`ml-auto rounded-chip px-1.5 py-0.5 text-2xs ${SEVERITY_TONE[severity]}`}>
         {descriptor?.category ?? "uncategorised"} · {severity}
       </span>
     </li>
@@ -173,12 +173,12 @@ export default async function AuditEnginePage({
       </header>
 
       <div className="mb-6 flex flex-wrap gap-3 text-xs">
-        <span className="rounded border border-border px-2 py-1 text-fg">
+        <span className="rounded-chip border border-border px-2 py-1 text-fg">
           {view.total} matching event{view.total === 1 ? "" : "s"}
         </span>
         {AUDIT_CATEGORIES.filter((category) => view.summary.byCategory[category] > 0).map(
           (category) => (
-            <span key={category} className="rounded border border-border px-2 py-1 text-muted">
+            <span key={category} className="rounded-chip border border-border px-2 py-1 text-muted">
               {category}: {view.summary.byCategory[category]}
             </span>
           ),
@@ -288,19 +288,19 @@ export default async function AuditEnginePage({
         <button
           type="submit"
           aria-label={t(locale, "apply")}
-          className="focus-ring u-interactive inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
+          className="focus-ring u-interactive inline-flex h-9 items-center rounded-control border border-border px-3 text-sm hover:bg-surface-2"
         >
           {t(locale, "apply")}
         </button>
         <Link
           href={base}
-          className="focus-ring inline-flex h-9 items-center rounded px-2 text-sm text-muted hover:underline"
+          className="focus-ring inline-flex h-9 items-center rounded-control px-2 text-sm text-muted hover:underline"
         >
           Clear
         </Link>
         <a
           href={exportHref}
-          className="focus-ring u-interactive inline-flex h-9 items-center rounded border border-border px-3 text-sm hover:bg-surface-2"
+          className="focus-ring u-interactive inline-flex h-9 items-center rounded-control border border-border px-3 text-sm hover:bg-surface-2"
         >
           Export CSV
         </a>
@@ -363,7 +363,7 @@ export default async function AuditEnginePage({
           ))}
         </div>
       ) : (
-        <ul className="rounded border border-border px-4">
+        <ul className="rounded-card border border-border px-4">
           {items.map((event) => (
             <AuditEventRow key={event.id} event={event} actorLabel={actorLabel} />
           ))}

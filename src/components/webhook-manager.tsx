@@ -534,7 +534,7 @@ export function EndpointRow({
 /** Three layout-shaped rows that hold the list height while data reloads. */
 function EndpointListSkeleton() {
   return (
-    <div className="divide-y divide-border overflow-hidden rounded-md border border-border">
+    <div className="divide-y divide-border overflow-hidden rounded-card border border-border">
       {[0, 1, 2].map((index) => (
         <Skeleton key={index} variant="row" />
       ))}
@@ -734,7 +734,7 @@ export function WebhookManager({
         }
       >
         {mode ? (
-          <div className="rounded-md border border-border bg-surface p-4">
+          <div className="rounded-card border border-border bg-surface p-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field
                 id={urlId}
@@ -853,7 +853,7 @@ export function WebhookManager({
             />
           )
         ) : (
-          <ul className="divide-y divide-border overflow-hidden rounded-md border border-border">
+          <ul className="divide-y divide-border overflow-hidden rounded-card border border-border">
             {webhooks.map((webhook) => (
               <EndpointRow
                 key={webhook.id}
@@ -888,7 +888,7 @@ export function WebhookManager({
             />
           )
         ) : (
-          <ul className="divide-y divide-border overflow-hidden rounded-md border border-border text-sm">
+          <ul className="divide-y divide-border overflow-hidden rounded-card border border-border text-sm">
             {deliveries.map((delivery) => (
               <li
                 key={delivery.id}

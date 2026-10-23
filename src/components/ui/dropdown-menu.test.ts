@@ -97,8 +97,8 @@ describe("item states and pointer-vs-keyboard highlight", () => {
     const pointer = menuItemClass({ nav: "pointer" });
     const keyboard = menuItemClass({ nav: "keyboard" });
     expect(pointer).toContain("data-[highlighted]:bg-surface-2");
-    expect(pointer).not.toContain("bg-accent-soft");
-    expect(keyboard).toContain("data-[highlighted]:bg-accent-soft");
+    expect(pointer).not.toContain("bg-selection-soft");
+    expect(keyboard).toContain("data-[highlighted]:bg-selection-soft");
     expect(keyboard).not.toContain("data-[highlighted]:bg-surface-2");
     expect(keyboard).not.toBe(pointer);
   });
@@ -117,7 +117,7 @@ describe("item states and pointer-vs-keyboard highlight", () => {
     expect(menuItemClass({ destructive: true })).toContain("text-danger");
     expect(menuItemClass({ inset: true })).toContain("pl-8");
     expect(menuChoiceItemClass({ nav: "keyboard" })).toContain(
-      "data-[state=checked]:text-accent",
+      "data-[state=checked]:text-action",
     );
     expect(menuSubTriggerClass()).toContain("data-[state=open]:bg-surface-2");
   });
@@ -275,7 +275,7 @@ describe("renderToStaticMarkup — dropdown menu in each state", () => {
   it("marks the keyboard highlight and suppresses the transition", () => {
     const html = renderDropdown({ open: true, defaultNav: "keyboard" });
     expect(html).toContain("u-no-transition");
-    expect(html).toContain("data-[highlighted]:bg-accent-soft");
+    expect(html).toContain("data-[highlighted]:bg-selection-soft");
     expect(html).not.toContain("data-[highlighted]:bg-surface-2");
   });
 
@@ -284,7 +284,7 @@ describe("renderToStaticMarkup — dropdown menu in each state", () => {
     expect(html).toContain("data-disabled");
     expect(html).toContain("data-[disabled]:opacity-50");
     expect(html).toContain('data-state="checked"');
-    expect(html).toContain("data-[state=checked]:text-accent");
+    expect(html).toContain("data-[state=checked]:text-action");
     expect(html).toContain("<svg"); // the Check marker
     expect(html).toContain(MENU_LABEL_CLASS);
     expect(html).toContain(MENU_SEPARATOR_CLASS);

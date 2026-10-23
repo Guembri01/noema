@@ -1063,7 +1063,7 @@ export function TimelineView({
                   onPointerDown={editable ? (event) => beginDrag(event, bar, "move") : undefined}
                   onKeyDown={editable ? (event) => moveBarKeys(event, bar) : undefined}
                   className={cn(
-                    "focus-ring u-interactive flex h-full cursor-grab touch-none select-none items-center truncate rounded-sm bg-accent/70 px-2 text-xs text-accent-fg hover:-translate-y-0.5 hover:bg-accent active:cursor-grabbing",
+                    "focus-ring u-interactive flex h-full cursor-grab touch-none select-none items-center truncate rounded-sm bg-action/70 px-2 text-xs text-action-fg hover:-translate-y-0.5 hover:bg-action active:cursor-grabbing",
                     dragging && "u-no-transition",
                   )}
                   style={{
@@ -1573,7 +1573,7 @@ export function CalendarView({
           type="button"
           onClick={() => shift(-1)}
           aria-label={t(locale, "previousMonth")}
-          className="focus-ring u-colors rounded-sm px-2 py-0.5 text-muted hover:bg-surface-2 hover:text-fg"
+          className="focus-ring u-colors rounded-control px-2 py-0.5 text-muted hover:bg-surface-2 hover:text-fg"
         >
           ‹
         </button>
@@ -1584,7 +1584,7 @@ export function CalendarView({
           type="button"
           onClick={() => shift(1)}
           aria-label={t(locale, "nextMonth")}
-          className="focus-ring u-colors rounded-sm px-2 py-0.5 text-muted hover:bg-surface-2 hover:text-fg"
+          className="focus-ring u-colors rounded-control px-2 py-0.5 text-muted hover:bg-surface-2 hover:text-fg"
         >
           ›
         </button>
@@ -1624,7 +1624,7 @@ export function CalendarView({
                 type="button"
                 onClick={goToday}
                 aria-label={t(locale, "todayWord")}
-                className="focus-ring u-interactive rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
+                className="focus-ring u-interactive rounded-control bg-action px-3 py-1 text-xs font-medium text-action-fg hover:opacity-90"
               >
                 {t(locale, "todayWord")}
               </button>
@@ -1697,7 +1697,7 @@ export function CalendarView({
                   className={cn(
                     "grid h-5 w-5 place-items-center rounded-full tabular-nums",
                     isToday(day)
-                      ? "bg-accent font-semibold text-accent-fg"
+                      ? "bg-action font-semibold text-action-fg"
                       : "text-muted",
                   )}
                 >

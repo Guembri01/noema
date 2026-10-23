@@ -148,7 +148,7 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 | GitHub integration | Link commits/PRs. | 🟡 | Planned. |
 | Google Calendar sync | Two-way calendar sync. | 🟡 | ICS subscription import (read-only); no two-way OAuth sync yet. |
 | Outlook Calendar sync | Two-way calendar sync. | 🟡 | Works through the published ICS URL; native OAuth pending. |
-| MCP server | Expose workspace to AI agents. | 🟡 | Planned; read-first, then write. |
+| MCP server | Expose workspace to AI agents. | ✅ | 43 token-scoped tools over `/api/mcp`; read-first, write/admin opt-in. See `docs/MCP.md`. |
 | Inbound webhooks | Accept events from outside. | 🟡 | Planned. |
 | Public embed oEmbed | Resolve third-party link metadata. | 🟡 | Basic title/favicon fetch. |
 

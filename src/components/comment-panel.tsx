@@ -332,7 +332,7 @@ function CommentListSkeleton() {
       {[0, 1, 2].map((index) => (
         <div
           key={index}
-          className="flex gap-3 rounded-md border border-border bg-bg p-3"
+          className="flex gap-3 rounded-card border border-border bg-bg p-3"
         >
           <Skeleton variant="circle" width={32} height={32} />
           <div className="min-w-0 flex-1 space-y-2">
@@ -596,7 +596,7 @@ export function CommentPanel({
                     data-testid={`comment-${comment.id}`}
                     data-resolved={resolved ? "true" : undefined}
                     className={cn(
-                      "group u-surface flex gap-3 rounded-md border p-3",
+                      "group u-surface flex gap-3 rounded-card border p-3",
                       resolved
                         ? "border-border bg-surface-2/50"
                         : "border-border bg-bg",
@@ -871,12 +871,12 @@ export function CommentPanel({
           className={cn(
             "u-colors mt-6 space-y-2 rounded-lg border p-3",
             flash
-              ? "border-accent bg-accent-soft ring-2 ring-accent/30"
+              ? "border-focus bg-selection-soft"
               : "border-border",
           )}
         >
           {quote && (
-            <div className="flex items-start gap-2 rounded-md bg-surface px-2 py-1.5 text-xs text-muted">
+            <div className="flex items-start gap-2 rounded-control bg-surface px-2 py-1.5 text-xs text-muted">
               <Quote className="mt-0.5 h-3 w-3 shrink-0" />
               <span className="min-w-0 flex-1 truncate">{quote}</span>
               <button
@@ -989,7 +989,7 @@ function CommentSegmentView({ segment }: { segment: CommentSegment }) {
   switch (segment.type) {
     case "mention":
       return (
-        <span className="rounded bg-accent-soft px-1 font-medium text-accent">
+        <span className="rounded-chip bg-surface-2 px-1 font-medium text-fg">
           @{segment.value}
         </span>
       );

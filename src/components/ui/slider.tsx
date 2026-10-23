@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
  * Slider — single value plus a dual-thumb range variant.
  *
  * Design-system contract (docs/DESIGN_SYSTEM.md):
- * - colour/shape/motion only from tokens (`bg-surface-2`, `bg-accent`,
+ * - colour/shape/motion only from tokens (`bg-surface-2`, `bg-action`,
  *   `--dur-2`, `--ease-spring`, `.focus-ring`, `shadow-1`).
  * - dragging is 1:1: the root carries `.u-no-transition` for the duration of a
  *   drag so the thumb never lags the cursor; on release it regains the spring
@@ -218,7 +218,7 @@ function Thumb({
       onKeyDown={onKeyDown}
       className={cn(
         "focus-ring absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border border-border-strong bg-bg shadow-1",
-        !disabled && "hover:border-accent",
+        !disabled && "hover:border-action",
       )}
       style={{
         // Logical offset: `inset-inline-start` flips for RTL on its own, and
@@ -270,7 +270,7 @@ function Track({
       >
         <div
           aria-hidden="true"
-          className="absolute inset-y-0 rounded-full bg-accent"
+          className="absolute inset-y-0 rounded-full bg-action"
           style={{ insetInlineStart: `${fillStart}%`, inlineSize: `${fillSize}%` }}
         />
         {ticks.map((tick) => (

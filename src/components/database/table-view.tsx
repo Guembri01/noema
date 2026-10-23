@@ -495,7 +495,7 @@ export function TableView({
                       onReorderRows,
                     )
                   }
-                  className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                  className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg disabled:opacity-30"
                 >
                   <ArrowUp className="h-3.5 w-3.5" />
                 </button>
@@ -514,7 +514,7 @@ export function TableView({
                       onReorderRows,
                     )
                   }
-                  className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg disabled:opacity-30"
+                  className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg disabled:opacity-30"
                 >
                   <ArrowDown className="h-3.5 w-3.5" />
                 </button>
@@ -524,7 +524,7 @@ export function TableView({
               href={`/w/${workspaceSlug}/${row.id}`}
               title={t(locale, "openAsPage")}
               aria-label={`${t(locale, "openAsPage")}: ${row.title}`}
-              className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
+              className="flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg"
             >
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
@@ -533,7 +533,7 @@ export function TableView({
               title={t(locale, "openSidePeek")}
               aria-label={`${t(locale, "openSidePeek")}: ${row.title}`}
               onClick={() => onOpenPeek(row)}
-              className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
+              className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg"
             >
               <ArrowUpRight className="h-3.5 w-3.5" />
             </button>
@@ -543,7 +543,7 @@ export function TableView({
                 title={t(locale, "saveAsTemplate")}
                 aria-label={`${t(locale, "saveAsTemplate")}: ${row.title}`}
                 onClick={() => onSaveTemplate(row)}
-                className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-bg"
+                className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-bg"
               >
                 <LayoutTemplate className="h-3.5 w-3.5" />
               </button>
@@ -554,7 +554,7 @@ export function TableView({
                 title={t(locale, "deleteRow")}
                 aria-label={`${t(locale, "deleteRow")}: ${row.title}`}
                 onClick={() => removeRow(row.id)}
-                className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded text-muted hover:text-danger"
+                className="focus-ring u-interactive flex h-6 w-6 items-center justify-center rounded-control text-muted hover:text-danger"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
@@ -718,7 +718,7 @@ export function TableView({
                           [group.key]: !(current[group.key] === true),
                         }))
                       }
-                      className="focus-ring u-interactive flex items-center gap-1 rounded-sm"
+                      className="focus-ring u-interactive flex items-center gap-1 rounded-control"
                     >
                       <ChevronRight className={groupChevronClass(!collapsedGroup)} />
                       {group.label}
@@ -757,7 +757,7 @@ export function TableView({
                         data-testid="table-add-row"
                         onClick={onAddRow}
                         aria-label={t(locale, "newRow")}
-                        className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-sm bg-accent px-3 py-1 text-xs font-medium text-accent-fg hover:opacity-90"
+                        className="focus-ring u-interactive mt-1 inline-flex items-center gap-1 rounded-control bg-action px-3 py-1 text-xs font-medium text-action-fg hover:opacity-90"
                       >
                         <Plus className="h-3.5 w-3.5" />
                         {t(locale, "newRow")}

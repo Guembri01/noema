@@ -348,7 +348,7 @@ export function ImageView({
         )}
         {kind === "file" && fileHref !== null && (
           <a
-            className="noema-media-file inline-flex max-w-full items-center gap-2 rounded-md border border-[var(--border)] px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--hover)]"
+            className="noema-media-file inline-flex max-w-full items-center gap-2 rounded-control border border-[var(--border)] px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--hover)]"
             data-testid="media-file"
             href={fileHref}
             download={attrs.alt ?? attrs.title ?? undefined}

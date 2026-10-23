@@ -95,7 +95,7 @@ export function RouteProgressBar({
       <div
         data-testid="route-progress-bar"
         data-value={state.value}
-        className="h-full w-full origin-left bg-accent"
+        className="h-full w-full origin-left bg-action"
         style={{
           // Composited (transform) rather than layout (width): the bar advances
           // on every navigation tick, and `width` forced a reflow each time.

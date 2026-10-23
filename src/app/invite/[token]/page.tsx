@@ -52,7 +52,7 @@ export default async function WorkspaceInvitePage({
   if ("error" in preview) {
     return (
       <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
-        <div className="rounded-xl border border-border bg-surface p-8">
+        <div className="rounded-lg border border-border bg-surface p-8">
           <h1 className="text-xl font-semibold tracking-tight">
             {t(locale, "inviteRejected")}
           </h1>
@@ -71,7 +71,7 @@ export default async function WorkspaceInvitePage({
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
-      <div className="rounded-xl border border-border bg-surface p-8">
+      <div className="rounded-lg border border-border bg-surface p-8">
         <p className="text-sm text-muted">{t(locale, "inviteAcceptHeading")}</p>
         <h1 className="mt-1 text-xl font-semibold tracking-tight">{preview.workspaceName}</h1>
 

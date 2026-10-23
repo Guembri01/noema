@@ -94,7 +94,7 @@ function AvatarFace({
       style={{ backgroundColor: avatar.background, color: avatar.foreground }}
       className={cn(
         "-ml-2 grid shrink-0 place-items-center overflow-hidden rounded-full border-2 border-bg",
-        "text-3xs font-medium leading-none outline-none first:ml-0 focus-visible:ring-2 focus-visible:ring-accent",
+        "text-3xs font-medium leading-none outline-none first:ml-0 focus-visible:ring-2 focus-visible:ring-focus",
       )}
     >
       <span

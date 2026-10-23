@@ -461,7 +461,7 @@ export function WhoHasAccess({
             type="button"
             onClick={onClose}
             aria-label={t(locale, "done")}
-            className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm hover:bg-surface-2"
+            className="focus-ring u-colors h-9 rounded-control border border-border px-3 text-sm hover:bg-surface-2"
           >
             {t(locale, "done")}
           </button>

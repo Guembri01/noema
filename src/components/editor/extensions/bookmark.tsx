@@ -389,7 +389,7 @@ export function BookmarkCardSurface({
 
   return (
     <div
-      className="noema-bookmark-card u-surface u-interactive border border-border rounded-md bg-surface hover:bg-surface-2"
+      className="noema-bookmark-card u-surface u-interactive rounded-card border border-border bg-surface hover:bg-surface-2"
       data-bookmark-state="ready"
       contentEditable={false}
     >

@@ -283,7 +283,7 @@ export function EquationDialogSurface({
                 }
               }}
               className={cn(
-                "focus-ring mt-3 w-full rounded-md border bg-bg px-3 py-2 font-mono text-sm text-fg",
+                "focus-ring mt-3 w-full rounded-control border bg-bg px-3 py-2 font-mono text-sm text-fg",
                 error ? "border-danger" : "border-border",
                 direction.className,
               )}
@@ -293,7 +293,7 @@ export function EquationDialogSurface({
                 {error}
               </p>
             ) : null}
-            <div className="mt-3 rounded-md border border-border">
+            <div className="mt-3 rounded-card border border-border">
               <div className="border-b border-border px-3 py-2">
                 <input
                   type="search"
@@ -301,7 +301,7 @@ export function EquationDialogSurface({
                   onChange={(event) => onSymbolQueryChange(event.target.value)}
                   aria-label={t(locale, "search")}
                   placeholder={t(locale, "searchSymbols")}
-                  className="focus-ring h-8 w-full rounded-sm border border-border bg-bg px-2 text-xs text-fg"
+                  className="focus-ring h-8 w-full rounded-control border-control bg-bg px-2 text-xs text-fg"
                 />
               </div>
               <div className="scrollbar-thin max-h-52 overflow-y-auto px-3 py-2">
@@ -321,7 +321,7 @@ export function EquationDialogSurface({
                             title={symbol.label}
                             aria-label={`${symbol.label} (${symbol.latex})`}
                             onClick={() => onInsertSymbol(symbol.latex)}
-                            className="focus-ring u-colors rounded-sm border border-border px-1.5 py-1 font-mono text-xs text-fg hover:bg-surface-2"
+                            className="focus-ring u-colors rounded-control border border-border px-1.5 py-1 font-mono text-xs text-fg hover:bg-surface-2"
                           >
                             {symbol.latex}
                           </button>
@@ -337,7 +337,7 @@ export function EquationDialogSurface({
           <div
             dir={direction.dir}
             className={cn(
-              "mt-3 min-h-32 overflow-x-auto rounded-md border border-border bg-surface px-3 py-6 text-center",
+              "mt-3 min-h-32 overflow-x-auto rounded-card border border-border bg-surface px-3 py-6 text-center",
               direction.className,
             )}
             aria-live="polite"
@@ -350,7 +350,7 @@ export function EquationDialogSurface({
             type="button"
             onClick={onClose}
             aria-label={t(locale, "cancel")}
-            className="focus-ring u-colors h-9 rounded-sm border border-border px-3 text-sm text-muted hover:bg-surface-2"
+            className="focus-ring u-colors h-9 rounded-control border border-border px-3 text-sm text-muted hover:bg-surface-2"
           >
             {t(locale, "cancel")}
           </button>
@@ -359,7 +359,7 @@ export function EquationDialogSurface({
             onClick={onCommit}
             disabled={!latex.trim()}
             aria-label={t(locale, "apply")}
-            className="focus-ring u-colors h-9 rounded-sm bg-accent px-3 text-sm font-medium text-accent-fg hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="focus-ring u-colors h-9 rounded-control bg-action px-3 text-sm font-medium text-action-fg hover:bg-action/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t(locale, "apply")}
           </button>

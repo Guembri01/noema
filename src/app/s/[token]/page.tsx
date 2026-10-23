@@ -56,7 +56,7 @@ export async function generateMetadata({
 function UnavailableState() {
   return (
     <main className="animate-fade grid min-h-screen place-items-center bg-bg px-6">
-      <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-8 text-center shadow-1">
+      <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-8 text-center shadow-1">
         <span className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-lg bg-surface-2 text-muted">
           <Link2 className="h-4 w-4" aria-hidden />
         </span>
@@ -68,7 +68,7 @@ function UnavailableState() {
         </p>
         <Link
           href="/"
-          className="focus-ring u-interactive mt-4 inline-flex h-9 items-center justify-center rounded-sm bg-accent px-4 text-sm font-medium text-accent-fg hover:opacity-90"
+          className="focus-ring u-interactive mt-4 inline-flex h-9 items-center justify-center rounded-control bg-action px-4 text-sm font-medium text-action-fg hover:opacity-90"
         >
           Go to Noema
         </Link>
@@ -122,7 +122,7 @@ export default async function PublicSharedPage({
         <form
           action={`/s/${token}/unlock`}
           method="POST"
-          className="w-full max-w-sm rounded-xl border border-border bg-surface p-8 shadow-1"
+          className="w-full max-w-sm rounded-lg border border-border bg-surface p-8 shadow-1"
         >
           <span className="mb-3 grid h-10 w-10 place-items-center rounded-lg bg-surface-2 text-muted">
             <Lock className="h-4 w-4" aria-hidden />
@@ -137,7 +137,7 @@ export default async function PublicSharedPage({
             required
             autoFocus
             placeholder={t(locale, "passwordLabel")}
-            className="focus-ring h-10 w-full rounded-sm border border-border bg-bg px-3 text-sm"
+            className="focus-ring h-10 w-full rounded-control border-control bg-bg px-3 text-sm"
           />
           {error && (
             <p role="alert" className="mt-2 text-sm text-danger">
@@ -146,7 +146,7 @@ export default async function PublicSharedPage({
           )}
           <button
             type="submit"
-            className="focus-ring u-interactive mt-4 h-10 w-full rounded-sm bg-accent text-sm font-medium text-accent-fg hover:opacity-90"
+            className="focus-ring u-interactive mt-4 h-10 w-full rounded-control bg-action text-sm font-medium text-action-fg hover:opacity-90"
           >
             Unlock
           </button>
@@ -232,7 +232,7 @@ export default async function PublicSharedPage({
                 </>
               )}
             </p>
-            <h1 className="text-title font-semibold tracking-title">
+            <h1 className="text-page-title font-semibold tracking-title">
               {isEmoji(page.icon) ? `${page.icon} ` : ""}
               {title}
             </h1>

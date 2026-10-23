@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
  * Card — the surface primitive for settings panels, galleries and dashboards.
  *
  * Shape/elevation/motion all come from the design system (docs/DESIGN_SYSTEM.md):
- * `rounded-md` for cards, `shadow-1` for a raised card, `.u-interactive` for the
+ * `rounded-card` for cards, `shadow-1` for a raised card, `.u-interactive` for the
  * press contract and `.focus-ring` for keyboard focus. No raw radius/shadow and
  * no ad-hoc transition — the variant maps below are pinned by `card.test.ts`.
  */
@@ -62,7 +62,7 @@ export function Card({
   return (
     <Comp
       className={cn(
-        "rounded-md text-fg",
+        "rounded-card text-fg",
         CARD_VARIANTS[variant],
         CARD_PADDING[padding],
         className,
@@ -86,7 +86,7 @@ export function CardMedia({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-t-md bg-surface-2",
+        "relative overflow-hidden rounded-t-card bg-surface-2",
         CARD_MEDIA_ASPECT[aspect],
         className,
       )}

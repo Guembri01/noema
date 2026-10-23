@@ -326,9 +326,9 @@ export function TeamspaceManager({
                               })
                             }
                             className={cn(
-                              "rounded-sm border px-2 py-0.5 text-xs u-colors focus-ring disabled:cursor-not-allowed disabled:opacity-50",
+                              "rounded-control border px-2 py-0.5 text-xs u-colors focus-ring disabled:cursor-not-allowed disabled:opacity-50",
                               inTeam
-                                ? "border-transparent bg-accent text-accent-fg"
+                                ? "border-transparent bg-action text-action-fg"
                                 : "border-border text-muted hover:bg-surface-2",
                             )}
                           >
@@ -365,7 +365,7 @@ export function TeamspaceManager({
                             [teamspace.id]: event.target.value as "MEMBER" | "ADMIN",
                           }))
                         }
-                        className="h-8 rounded-sm border border-border bg-bg px-2 text-sm text-fg focus-ring u-colors disabled:cursor-not-allowed disabled:opacity-50"
+                        className="h-8 rounded-control border-control bg-bg px-2 text-sm text-fg focus-ring u-colors disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <option value="MEMBER">{t(locale, "member")}</option>
                         <option value="ADMIN">{t(locale, "admin")}</option>

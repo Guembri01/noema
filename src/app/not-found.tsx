@@ -11,7 +11,7 @@ export default function NotFound() {
     >
       <div
         aria-hidden
-        className="pointer-events-none absolute -top-40 start-1/2 size-96 -translate-x-1/2 rounded-full bg-accent-soft blur-3xl"
+        className="pointer-events-none absolute -top-40 start-1/2 size-96 -translate-x-1/2 rounded-full bg-surface-2/70 blur-3xl"
       />
       <div className="relative flex w-full max-w-md flex-col items-center text-center">
         <NoemaWordmark href="/" />

@@ -8,6 +8,7 @@ import {
 import { t } from "@/lib/i18n";
 import { Z } from "@/lib/design-tokens";
 import { FLOATING_CORNER } from "@/lib/floating-corner";
+import { useEditorFocus } from "@/components/editor/use-editor-focus";
 import { cn } from "@/lib/utils";
 
 /* ---------------------------------------------------------------------------
@@ -72,7 +73,7 @@ function DepthBadge({ depth }: { depth: number }) {
     <span
       aria-hidden
       data-depth={depth}
-      className="pointer-events-none absolute -right-1 -top-1 min-w-3.5 rounded-full bg-accent px-0.5 py-0.5 text-center text-3xs font-medium leading-none text-accent-fg"
+      className="pointer-events-none absolute -right-1 -top-1 min-w-3.5 rounded-full bg-action px-0.5 py-0.5 text-center text-3xs font-medium leading-none text-action-fg"
     >
       {depth}
     </span>
@@ -95,6 +96,7 @@ function shadowDepthSummary(locale: string, depth: ShadowDepth): string {
 export function HistoryControls({ editor, locale = "en" }: { editor: Editor; locale?: string }) {
   const [, force] = useState(0);
   const [depth, setDepth] = useState<ShadowDepth>(NO_DEPTH);
+  const focused = useEditorFocus(editor);
 
   useEffect(() => {
     const update = () => force((n) => n + 1);
@@ -134,6 +136,7 @@ export function HistoryControls({ editor, locale = "en" }: { editor: Editor; loc
   const hasShadow = depth.undo > 0 || depth.redo > 0;
   const shadowLevels = depth.undo + depth.redo;
   const shadowSummary = shadowDepthSummary(locale, depth);
+  const hasHistory = hasShadow || editor.can().undo() || editor.can().redo();
 
   return (
     <div
@@ -143,10 +146,17 @@ export function HistoryControls({ editor, locale = "en" }: { editor: Editor; loc
       className={cn(
         "fixed flex items-center gap-1 rounded-lg border border-border bg-bg p-1 shadow-lg",
         FLOATING_CORNER.bar,
+        // On phones, do not leave a second fixed bar floating over the text
+        // while the page is being read, or while there is nothing to undo. It
+        // returns with the first edit and the editor focus.
+        (!focused || !hasHistory) && "max-sm:hidden",
       )}
       style={{ zIndex: Z.sticky }}
       data-shadow-levels={hasShadow ? shadowLevels : undefined}
       title={hasShadow ? shadowSummary : undefined}
+      // Keep the editor focused while a pointer is down on the bar. Otherwise
+      // the blur would hide the bar (below `sm`) before the click lands.
+      onMouseDown={(event) => event.preventDefault()}
     >
       <button
         type="button"
@@ -154,7 +164,7 @@ export function HistoryControls({ editor, locale = "en" }: { editor: Editor; loc
         title={label(t(locale, "undo"), depth.undo)}
         disabled={!editor.can().undo()}
         onClick={() => editor.chain().focus().undo().run()}
-        className="relative flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-40"
+        className="relative flex h-7 w-7 items-center justify-center rounded-control text-muted hover:bg-surface-2 disabled:opacity-40"
       >
         <Undo2 className="h-4 w-4" />
         <DepthBadge depth={depth.undo} />
@@ -165,7 +175,7 @@ export function HistoryControls({ editor, locale = "en" }: { editor: Editor; loc
         title={label(t(locale, "redo"), depth.redo)}
         disabled={!editor.can().redo()}
         onClick={() => editor.chain().focus().redo().run()}
-        className="relative flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-surface-2 disabled:opacity-40"
+        className="relative flex h-7 w-7 items-center justify-center rounded-control text-muted hover:bg-surface-2 disabled:opacity-40"
       >
         <Redo2 className="h-4 w-4" />
         <DepthBadge depth={depth.redo} />

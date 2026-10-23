@@ -620,7 +620,10 @@ token must carry the scope of every tool it calls **and of every resource it
 reads**: a page needs `read:pages`, a page's comments `read:comments`, a
 database and its rows `read:databases`. A missing scope answers **-32003**
 `Insufficient scope.` on both paths — before the database is touched. A write
-call needs `?allowWrite=true` plus an edit-capable role.
+call needs `?allowWrite=true` plus an edit-capable role; admin/destructive tools
+are hidden until `?allowAdmin=true` and require `admin:workspace`. The full
+43-tool catalogue, action unions, scopes and client setup live in
+[MCP.md](MCP.md).
 
 - **200** the JSON-RPC result (or the JSON-RPC `error` object) · **400**
   `Invalid JSON body.` / `Invalid request.` · **401** `Unauthorized` ·

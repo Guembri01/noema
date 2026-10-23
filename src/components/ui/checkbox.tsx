@@ -142,18 +142,18 @@ export function Checkbox({
             className={cn(
               "m-0 h-full w-full appearance-none rounded-sm border u-colors outline-none",
               FOCUS_RING,
-              filled ? "bg-accent" : "bg-bg",
+              filled ? "bg-action" : "bg-bg",
               error
                 ? "border-danger"
                 : filled
-                  ? "border-accent"
+                  ? "border-action"
                   : "border-control",
             )}
           />
           <span
             aria-hidden="true"
             className={cn(
-              "pointer-events-none absolute inset-0 flex items-center justify-center text-accent-fg u-transform",
+              "pointer-events-none absolute inset-0 flex items-center justify-center text-action-fg u-transform",
               filled ? "opacity-100" : "opacity-0",
             )}
           >

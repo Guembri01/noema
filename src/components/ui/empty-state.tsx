@@ -6,31 +6,39 @@ import { Kbd } from "./kbd";
  * EmptyState — the `empty` half of the states contract in
  * docs/DESIGN_SYSTEM.md §8: icon + title + hint + primary action.
  *
- * Two densities share one shape: `full` for a page or a large panel, `compact`
- * for a table body, a board column or a drawer, where vertical room is tight.
- * Everything is token-only and centred with `min-w-0` so a narrow column never
- * overflows.
+ * Three densities share one shape: `full` for a page or a large panel, `compact`
+ * for a table body, a board column or a drawer, and `inline` for a narrow
+ * sidebar section where an empty state is a hint, not a destination. Everything
+ * is token-only and `min-w-0` so a narrow column never overflows.
  */
 
-export type EmptyStateVariant = "full" | "compact";
+export type EmptyStateVariant = "full" | "compact" | "inline";
 
-/** Per-variant layout tokens. Pure, so the node tests pin both densities. */
+/** Per-variant layout tokens. Pure, so the node tests pin every density. */
 export const EMPTY_STATE_VARIANTS = {
   full: {
-    root: "gap-3 px-6 py-12",
-    icon: "size-10",
+    root: "flex-col items-center justify-center gap-3 px-6 py-12 text-center",
+    icon: "size-10 bg-surface",
     title: "text-sm font-medium",
     description: "text-sm text-muted",
     actions: "flex flex-wrap items-center justify-center gap-2",
     tip: "flex flex-wrap items-center justify-center gap-1.5 text-xs text-fg-subtle",
   },
   compact: {
-    root: "gap-2 px-3 py-6",
-    icon: "size-8",
+    root: "flex-col items-center justify-center gap-2 px-3 py-6 text-center",
+    icon: "size-8 bg-surface",
     title: "text-sm font-medium",
     description: "text-xs text-muted",
     actions: "flex flex-wrap items-center justify-center gap-2",
     tip: "flex flex-wrap items-center justify-center gap-1.5 text-xs text-fg-subtle",
+  },
+  inline: {
+    root: "flex-row flex-wrap items-center gap-x-2 gap-y-1 px-1 py-1.5 text-left",
+    icon: "size-6",
+    title: "text-xs text-muted",
+    description: "text-2xs text-muted",
+    actions: "flex flex-wrap items-center justify-start gap-2",
+    tip: "flex flex-wrap items-center justify-start gap-1.5 text-2xs text-fg-subtle",
   },
 } as const;
 
@@ -84,18 +92,14 @@ export function EmptyState({
   return (
     <div
       data-empty-state={variant}
-      className={cn(
-        "flex min-w-0 flex-col items-center justify-center text-center",
-        v.root,
-        className,
-      )}
+      className={cn("flex min-w-0", v.root, className)}
       {...rest}
     >
       {icon ? (
         <span
           aria-hidden
           className={cn(
-            "grid place-items-center rounded-md bg-surface text-muted",
+            "grid shrink-0 place-items-center rounded-md text-muted",
             v.icon,
           )}
         >
@@ -103,7 +107,12 @@ export function EmptyState({
         </span>
       ) : null}
 
-      <div className="flex min-w-0 flex-col items-center gap-1">
+      <div
+        className={cn(
+          "flex min-w-0 flex-col gap-1",
+          variant === "inline" ? "items-start" : "items-center",
+        )}
+      >
         <p className={cn("m-0 max-w-full break-words", v.title)}>{title}</p>
         {description ? (
           <p className={cn("m-0 max-w-md break-words", v.description)}>

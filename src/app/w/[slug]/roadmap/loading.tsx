@@ -19,7 +19,7 @@ export default function RoadmapLoading() {
 
       <div className="mt-6 space-y-6">
         {[0, 1].map((lane) => (
-          <section key={lane} className="rounded-xl border border-border p-4">
+          <section key={lane} className="rounded-lg border border-border p-4">
             <Skeleton variant="text" lines={1} className="mb-3 max-w-[12rem]" />
             <div className="space-y-2">
               {[0, 1, 2].map((row) => (

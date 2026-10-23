@@ -81,7 +81,7 @@ export function PlaceCell({
             onChange={(event) => update({ lat: event.target.value })}
             onBlur={() => commit(draft)}
             onKeyDown={keyDown}
-            className="focus-ring w-20 rounded-sm border border-border-control bg-bg px-1 tabular-nums outline-none"
+            className="focus-ring w-20 rounded-control border border-border-control bg-bg px-1 tabular-nums outline-none"
           />
           <span className="text-muted">,</span>
           <input
@@ -92,7 +92,7 @@ export function PlaceCell({
             onChange={(event) => update({ lng: event.target.value })}
             onBlur={() => commit(draft)}
             onKeyDown={keyDown}
-            className="focus-ring w-20 rounded-sm border border-border-control bg-bg px-1 tabular-nums outline-none"
+            className="focus-ring w-20 rounded-control border border-border-control bg-bg px-1 tabular-nums outline-none"
           />
         </div>
         <input
@@ -102,7 +102,7 @@ export function PlaceCell({
           onChange={(event) => update({ label: event.target.value })}
           onBlur={() => commit(draft)}
           onKeyDown={keyDown}
-          className="focus-ring w-full rounded-sm border border-border-control bg-bg px-1 outline-none"
+          className="focus-ring w-full rounded-control border border-border-control bg-bg px-1 outline-none"
         />
         <button
           type="button"
@@ -131,7 +131,7 @@ export function PlaceCell({
         });
         setEditing(true);
       }}
-      className="focus-ring w-full min-w-0 truncate rounded px-1 py-0.5 text-left hover:bg-surface-2"
+      className="focus-ring w-full min-w-0 truncate rounded-control px-1 py-0.5 text-left hover:bg-surface-2"
     >
       {display || <span className="text-muted">—</span>}
     </button>

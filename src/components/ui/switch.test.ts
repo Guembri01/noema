@@ -57,7 +57,7 @@ describe("switch render states", () => {
     expect(html).toContain('aria-checked="true"');
     expect(html).toContain('data-state="checked"');
     expect(html).toContain("translate-x-5"); // md default thumb travel
-    expect(html).toContain("bg-accent");
+    expect(html).toContain("bg-action");
   });
 
   it("renders the in-flight state as aria-busy and disabled, keeping the value", () => {

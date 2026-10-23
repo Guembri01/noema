@@ -45,7 +45,7 @@ describe("toast variant → class map", () => {
     for (const classes of Object.values(TOAST_VARIANT_CLASS)) {
       expect(classes).toContain("border-l-2");
     }
-    expect(TOAST_BASE_CLASS).toContain("rounded-md");
+    expect(TOAST_BASE_CLASS).toContain("rounded-card");
     expect(TOAST_BASE_CLASS).toContain("border-border");
   });
 });

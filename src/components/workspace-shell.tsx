@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -403,7 +404,7 @@ export function WorkspaceShell({
           type="button"
           aria-label={t(locale, "openNavigation")}
           onClick={() => setSidebarOpen(true)}
-          className="focus-ring u-interactive flex h-10 w-10 items-center justify-center rounded-md text-muted hover:bg-surface-2"
+          className="focus-ring u-interactive flex h-10 w-10 items-center justify-center rounded-control text-muted hover:bg-surface-2"
         >
           <Menu className="h-5 w-5" />
         </button>
@@ -453,7 +454,7 @@ export function WorkspaceShell({
           title={`${t(locale, "showSidebar")} (${formatShortcut("toggle-sidebar", { isMac })})`}
           aria-label={t(locale, "showSidebar")}
           data-testid="sidebar-show"
-          className="focus-ring u-interactive fixed left-3 top-3 z-40 hidden h-8 w-8 items-center justify-center rounded-md border border-border bg-bg text-muted shadow-sm transition-colors hover:bg-surface-2 hover:text-fg md:flex"
+          className="focus-ring u-interactive fixed left-3 top-3 z-40 hidden h-8 w-8 items-center justify-center rounded-control border border-border bg-bg text-muted shadow-sm transition-colors hover:bg-surface-2 hover:text-fg md:flex"
         >
           <PanelLeftOpen className="h-4 w-4" />
         </button>
@@ -471,13 +472,21 @@ export function WorkspaceShell({
       <div className="flex min-w-0 flex-1">
         <main
           id="main"
-          className="min-w-0 flex-1 overflow-y-auto scrollbar-thin pt-[calc(3rem_+_env(safe-area-inset-top))] md:pt-0"
+          className="min-w-0 flex-1 overflow-y-auto scrollbar-thin pt-[calc(3.5rem_+_env(safe-area-inset-top))] md:pt-0"
+          style={
+            {
+              // The page-title bar sticks just below the tab strip. Publishing
+              // the strip height means the bar has no phantom gap when there are
+              // no open tabs (a direct page load or a cleared tab list).
+              "--workspace-tabbar-height": openTabs.length > 0 ? "2.375rem" : "0rem",
+            } as CSSProperties
+          }
         >
           {openTabs.length > 0 && (
             <nav
               data-testid="workspace-tabs"
               aria-label={t(locale, "recent")}
-              className="no-scrollbar sticky top-[calc(3rem_+_env(safe-area-inset-top))] z-20 flex snap-x items-stretch gap-1 overflow-x-auto border-b border-border bg-bg px-2 md:top-0"
+              className="no-scrollbar sticky top-0 z-20 flex snap-x items-stretch gap-1 overflow-x-auto border-b border-border bg-bg px-2"
             >
               {openTabs.map(({ entry, node }) => {
                 const active = entry.pageId === activePageId;
@@ -521,7 +530,7 @@ export function WorkspaceShell({
                       type="button"
                       aria-label={`${t(locale, "close")} ${title}`}
                       onClick={() => closeTab(entry.pageId)}
-                      className="focus-ring flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-border hover:text-fg"
+                      className="focus-ring flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-muted hover:bg-border hover:text-fg"
                     >
                       <X className="h-3 w-3" />
                     </button>

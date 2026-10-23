@@ -165,8 +165,8 @@ describe("SlashMenuSurface", () => {
     expect(html).toContain(">Media<");
     expect(html).toContain(">Database<");
     expect(html).toContain(">Advanced<");
-    // The active row is accent-tinted, the others neutral.
-    expect(html).toContain("bg-accent-soft");
+    // The active row is a neutral surface, the others transparent.
+    expect(html).toContain("bg-surface-2");
     expect(html).toContain('aria-selected="true"');
     // Fuzzy highlight on "he" inside "Heading 1".
     expect(html).toMatch(/<mark[^>]*>He<\/mark>/);

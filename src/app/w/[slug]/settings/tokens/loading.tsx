@@ -25,7 +25,7 @@ export default function ApiTokensLoading() {
         title={<Skeleton variant="block" width={140} height={20} />}
       >
         <Skeleton variant="block" width="55%" height={12} />
-        <div className="rounded-md border border-border p-6">
+        <div className="rounded-card border border-border p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <Skeleton variant="block" width="60%" height={36} />
             <Skeleton variant="block" width={120} height={36} />

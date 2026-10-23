@@ -138,7 +138,7 @@ function RowsSkeleton({ rows = 3 }: { rows?: number }) {
   return (
     <div
       aria-hidden
-      className="overflow-hidden rounded-md border border-border"
+      className="overflow-hidden rounded-card border border-border"
     >
       {Array.from({ length: rows }).map((_, index) => (
         <div
@@ -722,7 +722,7 @@ export function MembersManager({
             onChange={(event) => setTransferPassword(event.target.value)}
             placeholder={t(locale, "passwordLabel")}
             autoComplete="current-password"
-            className="focus-ring mt-1 h-9 w-full rounded-sm border border-border bg-bg px-2 text-sm"
+            className="focus-ring mt-1 h-9 w-full rounded-control border-control bg-bg px-2 text-sm"
           />
         </label>
       </ConfirmDialog>

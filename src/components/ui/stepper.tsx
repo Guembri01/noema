@@ -10,7 +10,7 @@ import { t } from "@/lib/i18n";
  *
  * Design-system contract (docs/DESIGN_SYSTEM.md):
  * - tokens only: `bg-surface-2`, `border-border`, `text-danger`,
- *   `.focus-ring`, `.u-interactive`, `rounded-md`.
+ *   `.focus-ring`, `.u-interactive`, `rounded-control`.
  * - states: default / hover / focus-visible / active / disabled / invalid
  *   (danger ring + message below, wired by `aria-invalid` + `aria-describedby`).
  * - long-press repeat on the buttons (hold to accelerate); a native path stays
@@ -268,7 +268,7 @@ export function Stepper({
   };
 
   const buttonClass = cn(
-    "u-interactive flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface-2 text-fg",
+    "u-interactive flex h-9 w-9 shrink-0 items-center justify-center rounded-control border border-border bg-surface-2 text-fg",
     "hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50",
   );
 
@@ -339,11 +339,11 @@ export function Stepper({
             onChange={onInputChange}
             onBlur={onInputBlur}
             className={cn(
-              "focus-ring h-9 w-full rounded-md border bg-bg px-3 text-center text-sm tabular-nums text-fg outline-none",
+              "focus-ring h-9 w-full rounded-control border bg-bg px-3 text-center text-sm tabular-nums text-fg outline-none",
               "placeholder:text-muted",
               showInvalid
                 ? "border-danger focus:border-danger"
-                : "border-border focus:border-accent",
+                : "border-border",
               unit ? "pe-10" : undefined,
               inputClassName,
             )}

@@ -85,7 +85,7 @@ export function peekRail(rowColor?: string | null): string {
 
 /** A peek row's shared treatment: the table body tint + a colour transition. */
 export function peekRowClass(): string {
-  return cn("u-colors rounded-sm", ROW_HOVER_TINT);
+  return cn("u-colors rounded-control", ROW_HOVER_TINT);
 }
 
 /**
@@ -111,7 +111,7 @@ export function PeekHeader({
     <header
       data-testid="peek-header"
       className={cn(
-        "-mx-1 mb-4 flex items-center justify-between gap-3 rounded-sm py-1 pe-1 ps-3",
+        "-mx-1 mb-4 flex items-center justify-between gap-3 rounded-control py-1 pe-1 ps-3",
         peekRowClass(),
       )}
       style={{ borderInlineStart: peekRail(rowColor) }}
@@ -133,7 +133,7 @@ export function PeekHeader({
           type="button"
           aria-label={t(locale, "closeSidePeek")}
           onClick={onClose}
-          className="focus-ring u-colors rounded-sm text-muted hover:text-fg"
+          className="focus-ring u-colors rounded-control text-muted hover:text-fg"
         >
           <X className="h-4 w-4" />
         </button>
@@ -179,7 +179,7 @@ export function PeekRow({
     <div
       data-testid={`peek-row-${property.id}`}
       className={cn(
-        "-mx-1 grid grid-cols-[7.5rem_1fr] items-start gap-3 rounded-sm px-1 py-2",
+        "-mx-1 grid grid-cols-[7.5rem_1fr] items-start gap-3 rounded-control px-1 py-2",
         peekRowClass(),
       )}
     >
@@ -197,7 +197,7 @@ export function PeekRow({
             onBlur={(event) =>
               event.target.value !== row.title && onRenamePrimary(event.target.value)
             }
-            className="focus-ring u-colors w-full rounded-sm bg-transparent outline-none placeholder:text-muted"
+            className="focus-ring u-colors w-full rounded-control bg-transparent outline-none placeholder:text-muted"
           />
         ) : computed !== undefined ? (
           <span className="text-muted">{computed}</span>

@@ -100,7 +100,7 @@ export function DatabaseViewTabs({
                   type="button"
                   aria-label={t(locale, "dbViewMenu")}
                   title={t(locale, "dbViewMenu")}
-                  className="-mb-px flex items-center justify-center rounded px-1.5 py-1.5 text-muted hover:bg-surface-2 focus-ring u-colors"
+                  className="-mb-px flex items-center justify-center rounded-control px-1.5 py-1.5 text-muted hover:bg-surface-2 focus-ring u-colors"
                 >
                   <Ellipsis className="h-3.5 w-3.5" />
                 </button>
@@ -138,7 +138,7 @@ export function DatabaseViewTabs({
             <button
               type="button"
               aria-label={t(locale, "addViewAria")}
-              className="-mb-px ml-1 flex items-center justify-center rounded px-2 py-1.5 text-muted hover:bg-surface-2 focus-ring u-colors"
+              className="-mb-px ml-1 flex items-center justify-center rounded-control px-2 py-1.5 text-muted hover:bg-surface-2 focus-ring u-colors"
             >
               <Plus className="h-4 w-4" />
             </button>

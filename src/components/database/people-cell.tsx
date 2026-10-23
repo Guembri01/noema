@@ -59,7 +59,7 @@ export function PeopleCell({
       {names.map((name) => (
         <span
           key={name}
-          className="flex min-w-0 max-w-full items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-xs"
+          className="flex min-w-0 max-w-full items-center gap-1 rounded-chip bg-surface-2 px-1.5 py-0.5 text-xs"
         >
           <span
             aria-hidden
@@ -89,7 +89,7 @@ export function PeopleCell({
             <button
               type="button"
               aria-label={t(locale, "addPersonAria")}
-              className="focus-ring rounded px-1 text-xs text-muted hover:bg-surface-2"
+              className="focus-ring rounded-control px-1 text-xs text-muted hover:bg-surface-2"
             >
               +
             </button>

@@ -71,7 +71,7 @@ describe("pageRowClass — row states map to token classes only", () => {
     expect(cls).not.toContain("u-no-transition");
   });
 
-  it("selected row: accent-soft tint + accent left rail", () => {
+  it("selected row: accent-soft fill + accent left rail", () => {
     const cls = pageRowClass({ selected: true });
     expect(cls).toContain("bg-accent-soft");
     expect(cls).toContain("before:bg-accent");
@@ -197,6 +197,7 @@ describe("PageTreeRow SSR — every state reaches the markup", () => {
     expect(html).toContain('data-selected=""');
     expect(html).toContain("bg-accent-soft");
     expect(html).toContain("before:bg-accent");
+    expect(html).toContain('aria-current="page"');
   });
 
   it("dragging row", () => {

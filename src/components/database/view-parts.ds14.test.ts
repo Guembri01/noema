@@ -141,11 +141,11 @@ describe("cellStateClass — state → class, per cell type", () => {
     }
   });
 
-  it("resolves editing to the accent ring on editable types", () => {
+  it("resolves editing to the neutral focus ring on editable types", () => {
     for (const type of EDITABLE_TYPES) {
       const cls = cellStateClass(type, { editing: true });
-      expect(cls).toContain("ring-accent");
-      expect(cls).toContain("bg-surface");
+      expect(cls).toContain("ring-focus/40");
+      expect(cls).toContain("bg-bg");
       expect(cls).toContain("cursor-text");
     }
   });
@@ -153,7 +153,7 @@ describe("cellStateClass — state → class, per cell type", () => {
   it("never marks a read-only type as editing", () => {
     for (const type of READ_ONLY_TYPES) {
       const cls = cellStateClass(type, { editing: true });
-      expect(cls).not.toContain("ring-accent");
+      expect(cls).not.toContain("ring-focus/40");
       expect(cls).not.toContain("cursor-text");
     }
   });
@@ -164,14 +164,16 @@ describe("cellStateClass — state → class, per cell type", () => {
       expect(cls).toContain("ring-danger");
       // Exactly one *base* ring: danger replaces the editing/selected ring.
       // (`focus-within:ring-ring/60` is a variant, not a competing base ring.)
-      expect(cls).not.toContain("ring-accent");
+      expect(cls).not.toContain("ring-focus/40");
+      expect(cls).not.toContain("bg-selection-soft");
       expect(cls).not.toMatch(/(?:^|\s)ring-ring(?:\/|$|\s)/);
     }
   });
 
-  it("resolves selected to the accent outline", () => {
+  it("resolves selected to the soft selection fill", () => {
     const cls = cellStateClass("TEXT", { selected: true });
-    expect(cls).toContain("ring-accent");
+    expect(cls).toContain("bg-selection-soft");
+    expect(cls).not.toContain("ring-focus/40");
     expect(cls).not.toContain("ring-danger");
   });
 
@@ -269,7 +271,7 @@ describe("Cell — the shell renders each state", () => {
     expect(html).toContain("focus-within:ring-2");
   });
 
-  it("marks an editing cell with the accent ring and a filling input", () => {
+  it("marks an editing cell with the neutral focus ring and a filling input", () => {
     const html = render({
       property: property("TEXT", null, "Notes"),
       value: { text: "hello" },
@@ -278,7 +280,7 @@ describe("Cell — the shell renders each state", () => {
       locale: "en",
     });
     expect(html).toContain('data-state="editing"');
-    expect(html).toContain("ring-accent");
+    expect(html).toContain("ring-focus/40");
     // The editor fills the cell (no layout shift) and carries the focus ring.
     expect(html).toMatch(/<input[^>]*class="[^"]*focus-ring[^"]*w-full/);
   });
@@ -299,7 +301,7 @@ describe("Cell — the shell renders each state", () => {
     expect(html).not.toContain("ring-red-500");
   });
 
-  it("paints the accent outline on a selected cell", () => {
+  it("paints the soft selection fill on a selected cell", () => {
     const html = render({
       property: property("TEXT", null, "Notes"),
       value: { text: "hello" },
@@ -309,7 +311,7 @@ describe("Cell — the shell renders each state", () => {
       locale: "en",
     });
     expect(html).toContain('data-state="selected"');
-    expect(html).toContain("ring-accent");
+    expect(html).toContain("bg-selection-soft");
   });
 });
 

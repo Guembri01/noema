@@ -52,11 +52,11 @@ export type ButtonSize =
 
 /** Layout + interaction contract shared by every variant/size. */
 export const BUTTON_BASE =
-  "relative inline-flex select-none items-center justify-center whitespace-nowrap rounded-sm font-medium focus-ring u-interactive disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
+  "relative inline-flex select-none items-center justify-center whitespace-nowrap rounded-control font-medium focus-ring u-interactive disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
 
 /** Filled (`tone="solid"`) palettes. Colour always comes from a token. */
 export const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
-  primary: "bg-accent text-accent-fg hover:bg-accent/90",
+  primary: "bg-action text-action-fg hover:bg-action/90",
   secondary: "border border-border bg-bg text-fg hover:bg-surface-2",
   ghost: "bg-transparent text-fg hover:bg-surface-2",
   subtle: "bg-surface-2 text-fg hover:bg-surface-3",
@@ -65,9 +65,9 @@ export const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
 
 /** Soft (`tone="soft"`) palettes — the low-emphasis spelling of the same intent. */
 export const BUTTON_SOFT_VARIANTS: Record<ButtonVariant, string> = {
-  primary: "bg-accent-soft text-accent hover:bg-accent/20",
+  primary: "bg-action-soft text-action hover:bg-action/20",
   secondary: "border border-border bg-surface text-fg hover:bg-surface-2",
-  ghost: "bg-transparent text-accent hover:bg-accent-soft",
+  ghost: "bg-transparent text-action hover:bg-action-soft",
   subtle: "bg-surface-2 text-fg hover:bg-surface-3",
   danger: "bg-danger-soft text-danger hover:bg-danger/20",
 };

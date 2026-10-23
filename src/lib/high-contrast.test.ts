@@ -205,7 +205,7 @@ describe("globals.css wiring", () => {
     const at = css.indexOf(ring);
     expect(at, "global focus ring missing from globals.css").toBeGreaterThanOrEqual(0);
     expect(depthAt(at)).toBe(0);
-    expect(ruleBody(ring)).toContain("outline: 2px solid var(--accent)");
+    expect(ruleBody(ring)).toContain("outline: 2px solid var(--focus)");
   });
 
   it("opts the writing surfaces out of the ring, unlayered too", () => {
@@ -227,5 +227,28 @@ describe("globals.css wiring", () => {
     // must report a depth above zero, so the assertions above cannot pass by
     // accident.
     expect(depthAt(css.indexOf(".noema-page-canvas .ProseMirror"))).toBeGreaterThan(0);
+  });
+
+  it("lets composite search fields own their focus state", () => {
+    // Quick find and the command palette put a full-bleed input at the top of
+    // a rounded card. The global ring would trace that input's square box, so
+    // the field row carries the focus affordance instead. Keep the opt-out
+    // unlayered, or the safety net would win again.
+    const input = css.indexOf(".noema-search-field input:focus-visible");
+    const row = css.indexOf(".noema-search-field:focus-within");
+    const pill = css.indexOf(".noema-search-field-pill:focus-within");
+    expect(input, "search-field input opt-out missing").toBeGreaterThanOrEqual(0);
+    expect(row, "search-field focus state missing").toBeGreaterThanOrEqual(0);
+    expect(pill, "search-field pill focus state missing").toBeGreaterThanOrEqual(0);
+    expect(depthAt(input)).toBe(0);
+    expect(depthAt(row)).toBe(0);
+    expect(depthAt(pill)).toBe(0);
+    expect(ruleBody(".noema-search-field input:focus-visible")).toContain("outline: none");
+    expect(ruleBody(".noema-search-field:focus-within")).toContain(
+      "border-bottom-color: var(--focus)",
+    );
+    expect(ruleBody(".noema-search-field-pill:focus-within")).toContain(
+      "box-shadow: var(--shadow-focus)",
+    );
   });
 });

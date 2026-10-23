@@ -1038,7 +1038,7 @@ export function ImportSourceCard({
     >
       <span
         aria-hidden
-        className="grid size-8 place-items-center rounded-md bg-surface-2 text-accent u-colors group-hover:bg-accent-soft"
+        className="grid size-8 place-items-center rounded-md bg-surface-2 text-fg u-colors group-hover:bg-surface-3"
       >
         <Icon className="size-4" />
       </span>
@@ -1112,8 +1112,8 @@ export function ImportSteps({
               data-state={state}
               className={cn(
                 "grid size-5 shrink-0 place-items-center rounded-full border text-3xs font-medium",
-                state === "current" && "border-accent bg-accent text-accent-fg",
-                state === "done" && "border-accent bg-accent-soft text-accent",
+                state === "current" && "border-action bg-action text-action-fg",
+                state === "done" && "border-success bg-success-soft text-success",
                 state === "upcoming" && "border-border bg-surface-2 text-muted",
               )}
             >
@@ -1165,7 +1165,7 @@ export function ImportDropZone({
       }}
       className={cn(
         "flex flex-col items-center gap-2 rounded-lg border border-dashed p-6 text-center u-colors",
-        over ? "border-accent bg-accent-soft" : "border-border-strong bg-surface",
+        over ? "border-focus bg-selection-soft" : "border-border-strong bg-surface",
         disabled && "opacity-50",
       )}
     >
@@ -1200,7 +1200,7 @@ function ImportFileCard({ draft, onRemove }: { draft: ImportDraft; onRemove: () 
   return (
     <div
       data-testid="import-file-card"
-      className="flex items-start justify-between gap-3 rounded-md border border-border bg-surface-2 p-3"
+      className="flex items-start justify-between gap-3 rounded-card border border-border bg-surface-2 p-3"
     >
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
@@ -1227,7 +1227,7 @@ export function ImportMappingTable({
   onMappingChange: (index: number, choice: string) => void;
 }) {
   return (
-    <div data-testid="import-mapping" className="overflow-hidden rounded-md border border-border">
+    <div data-testid="import-mapping" className="overflow-hidden rounded-card border border-border">
       <table className="w-full text-sm">
         <thead className="bg-surface-2 text-left text-xs uppercase tracking-wide text-muted">
           <tr>
@@ -1289,7 +1289,7 @@ export function ImportPreviewTable({
 
   return (
     <div data-testid="import-preview">
-      <div className="scrollbar-thin overflow-auto rounded-md border border-border">
+      <div className="scrollbar-thin overflow-auto rounded-card border border-border">
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-surface-2 text-left text-xs uppercase tracking-wide text-muted">
             <tr>
@@ -1331,7 +1331,7 @@ export function ImportItemList({ draft }: { draft: ImportDraft }) {
   const preview = previewItems(draft.items);
   return (
     <div data-testid="import-preview">
-      <ul className="space-y-0.5 rounded-md border border-border p-3 text-sm">
+      <ul className="space-y-0.5 rounded-card border border-border p-3 text-sm">
         {preview.items.map((item) => (
           <li key={item.id} className="truncate text-muted" title={item.label}>
             {item.label}
@@ -1356,7 +1356,7 @@ export function ImportIssues({ issues }: { issues: readonly ImportIssue[] }) {
           key={issue.field}
           role={issue.severity === "error" ? "alert" : undefined}
           className={cn(
-            "rounded-md border p-2 text-xs",
+            "rounded-control border p-2 text-xs",
             issue.severity === "error"
               ? "border-danger bg-danger-soft text-danger"
               : "border-warning bg-warning-soft text-warning",
@@ -1451,7 +1451,7 @@ function ImportStepBody(props: ImportPanelProps) {
         <ImportDropZone source={source} onPickFile={onPickFile} disabled={pending} />
         {draft ? <ImportFileCard draft={draft} onRemove={onRemoveFile} /> : null}
         {error ? (
-          <p role="alert" className="rounded-md border border-danger bg-danger-soft p-2 text-sm text-danger">
+          <p role="alert" className="rounded-control border border-danger bg-danger-soft p-2 text-sm text-danger">
             {error}
           </p>
         ) : null}
@@ -1524,7 +1524,7 @@ function ImportStepBody(props: ImportPanelProps) {
         </>
       ) : null}
       {error ? (
-        <p role="alert" className="rounded-md border border-danger bg-danger-soft p-2 text-sm text-danger">
+        <p role="alert" className="rounded-control border border-danger bg-danger-soft p-2 text-sm text-danger">
           {error}
         </p>
       ) : null}
@@ -1743,7 +1743,7 @@ export function ImportSection({
       <button
         type="button"
         onClick={() => addPage(null, "DATABASE")}
-        className="focus-ring u-colors flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted hover:bg-surface-2"
+        className="focus-ring u-colors flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-sm text-muted hover:bg-surface-2"
       >
         <DatabaseIcon className="h-4 w-4" aria-hidden />
         {t(locale, "newDatabase")}

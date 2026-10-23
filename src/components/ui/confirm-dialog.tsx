@@ -89,7 +89,7 @@ export type ConfirmTone = "default" | "danger";
 
 /** Confirm-button classes per tone — colours straight from the token palette. */
 export const CONFIRM_TONE_CLASS: Record<ConfirmTone, string> = {
-  default: "bg-accent text-accent-fg hover:opacity-90",
+  default: "bg-action text-action-fg hover:opacity-90",
   danger: "bg-danger text-danger-fg hover:opacity-90",
 };
 
@@ -97,17 +97,17 @@ export function confirmToneClass(tone: ConfirmTone): string {
   return CONFIRM_TONE_CLASS[tone];
 }
 
-/** Icon-bubble classes per tone (`--danger-soft` / `--accent-soft`). */
+/** Icon-bubble classes per tone (`--danger-soft` / `--action-soft`). */
 export const CONFIRM_ICON_CLASS: Record<ConfirmTone, string> = {
-  default: "bg-accent-soft text-accent",
+  default: "bg-action-soft text-action",
   danger: "bg-danger-soft text-danger",
 };
 
-const CONFIRM_BUTTON_BASE = "focus-ring u-colors inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50";
+const CONFIRM_BUTTON_BASE = "focus-ring u-colors inline-flex h-9 items-center justify-center gap-2 rounded-control px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50";
 
-const CONFIRM_CANCEL_BASE = "focus-ring u-colors inline-flex h-9 items-center justify-center rounded-md border border-border bg-bg px-3 text-sm font-medium text-fg hover:bg-surface-2";
+const CONFIRM_CANCEL_BASE = "focus-ring u-colors inline-flex h-9 items-center justify-center rounded-control border border-border bg-bg px-3 text-sm font-medium text-fg hover:bg-surface-2";
 
-const CONFIRM_INPUT_CLASS = "mt-1 h-10 w-full rounded-md border border-border bg-bg px-3 text-sm text-fg outline-none placeholder:text-muted focus:border-accent";
+const CONFIRM_INPUT_CLASS = "mt-1 h-10 w-full rounded-control border border-control bg-bg px-3 text-sm text-fg outline-none placeholder:text-muted focus-ring";
 
 /* ------------------------------------------------------------------------- *
  * ConfirmDialog

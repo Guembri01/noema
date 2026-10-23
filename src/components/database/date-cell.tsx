@@ -63,7 +63,7 @@ export function DateCell({
             onKeyDown={(event) => {
               if (event.key === "Escape") onEditingChange(false);
             }}
-            className="focus-ring w-full rounded-sm border border-border-control bg-bg px-1 outline-none"
+            className="focus-ring w-full rounded-control border border-border-control bg-bg px-1 outline-none"
           />
         );
       }
@@ -73,7 +73,7 @@ export function DateCell({
           aria-label={property.name}
           title={text || undefined}
           onClick={() => onEditingChange(true)}
-          className="focus-ring w-full min-w-0 truncate rounded px-1 py-0.5 text-left hover:bg-surface-2"
+          className="focus-ring w-full min-w-0 truncate rounded-control px-1 py-0.5 text-left hover:bg-surface-2"
         >
           {text || <span className="text-muted">—</span>}
         </button>
@@ -87,7 +87,7 @@ export function DateCell({
         defaultValue={typeof record.start === "string" ? record.start.slice(0, 10) : ""}
         readOnly={!editable}
         onChange={(event) => onChange({ start: event.target.value })}
-        className="focus-ring w-full rounded-sm border border-border-control bg-bg px-1 outline-none"
+        className="focus-ring w-full rounded-control border border-border-control bg-bg px-1 outline-none"
       />
     );
   }
@@ -141,7 +141,7 @@ export function DateCell({
             aria-label={property.name}
             defaultValue={startText.slice(0, 10)}
             onChange={(event) => commitDate({ start: event.target.value })}
-            className="focus-ring min-w-0 rounded-sm border border-border-control bg-bg px-1 outline-none"
+            className="focus-ring min-w-0 rounded-control border border-border-control bg-bg px-1 outline-none"
           />
           {dateConfig.allowRange && (
             <>
@@ -151,7 +151,7 @@ export function DateCell({
                 aria-label={`${property.name} end`}
                 defaultValue={endText.slice(0, 10)}
                 onChange={(event) => commitDate({ end: event.target.value })}
-                className="focus-ring min-w-0 rounded-sm border border-border-control bg-bg px-1 outline-none"
+                className="focus-ring min-w-0 rounded-control border border-border-control bg-bg px-1 outline-none"
               />
             </>
           )}
@@ -182,7 +182,7 @@ export function DateCell({
       aria-label={property.name}
       title={label || undefined}
       onClick={() => onEditingChange(true)}
-      className="focus-ring w-full min-w-0 truncate rounded px-1 py-0.5 text-left hover:bg-surface-2"
+      className="focus-ring w-full min-w-0 truncate rounded-control px-1 py-0.5 text-left hover:bg-surface-2"
     >
       {label || <span className="text-muted">—</span>}
     </button>

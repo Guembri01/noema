@@ -68,7 +68,7 @@ vi.mock("@/lib/permissions", async (importOriginal) => {
   return { ...actual, getWorkspaceAccess: perms.getWorkspaceAccess };
 });
 
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 const call = (args: Record<string, unknown>, name = "create_page") =>
   POST(
@@ -419,5 +419,50 @@ describe("POST /api/mcp — append_blocks validates the blocks (B137)", () => {
     const result = await toolResult(response);
     expect(String(result.error ?? "")).toContain("too large");
     expect(db.pageUpdate).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("extended MCP transport gating", () => {
+  it("hides admin tools unless allowAdmin is set", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/mcp?workspaceId=ws-a&allowWrite=true", {
+        headers: { authorization: "Bearer token" },
+      }),
+    );
+    const body = (await response.json()) as { tools: { name: string }[] };
+    expect(body.tools.some((tool) => tool.name === "update_page")).toBe(true);
+    expect(body.tools.some((tool) => tool.name === "share_manage")).toBe(false);
+  });
+
+  it("lists admin tools when the caller opts in", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/mcp?workspaceId=ws-a&allowWrite=true&allowAdmin=true", {
+        headers: { authorization: "Bearer token" },
+      }),
+    );
+    const body = (await response.json()) as { tools: { name: string }[] };
+    expect(body.tools.some((tool) => tool.name === "share_manage")).toBe(true);
+  });
+
+  it("refuses an admin tool call without allowAdmin", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/mcp?workspaceId=ws-a&allowWrite=true", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer token" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "share_manage",
+            arguments: { action: "create_link", pageId: "page-a" },
+          },
+        }),
+      }),
+    );
+    const body = (await response.json()) as { error?: { code: number; message: string } };
+    expect(body.error?.code).toBe(-32004);
+    expect(body.error?.message).toContain("allowAdmin");
   });
 });

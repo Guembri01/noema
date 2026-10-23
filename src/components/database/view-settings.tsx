@@ -955,7 +955,9 @@ export function ViewSettings({
         </PopoverTrigger>
         <SettingsPopoverContent
           title={t(locale, "dbFilter")}
-          className="w-80"
+          // Keep the 20rem panel on normal phones but leave the overlay inset
+          // on a 320px viewport, where a fixed w-80 used to spill 8px offscreen.
+          className="w-80 max-w-[calc(100vw-1rem)]"
           data-testid="db-filter-popover"
           footer={
             <div data-testid="header-quick-filter">
@@ -1008,7 +1010,7 @@ export function ViewSettings({
                     filter.operator,
                   );
                   return (
-                    <div key={index} className="space-y-1 rounded border border-border p-2">
+                    <div key={index} className="space-y-1 rounded-control border border-border p-2">
                       <div className="flex items-center gap-1">
                         <span className="min-w-0 flex-1" data-testid="filter-property">
                           <Select
@@ -1288,7 +1290,7 @@ export function ViewSettings({
               <p className="text-xs text-muted">No color rules — cards stay plain.</p>
             )}
             {(config.colorRules ?? []).map((rule, index) => (
-              <div key={index} className="space-y-2 rounded border border-border p-2">
+              <div key={index} className="space-y-2 rounded-control border border-border p-2">
                 <div className="flex items-center gap-1">
                   <span className="min-w-0 flex-1">
                     <Select
@@ -1470,7 +1472,7 @@ export function ViewSettings({
               const sortName =
                 properties.find((p) => p.id === sort.propertyId)?.name ?? "";
               return (
-              <div key={`${sort.propertyId}-${index}`} className="space-y-1 rounded border border-border p-2">
+              <div key={`${sort.propertyId}-${index}`} className="space-y-1 rounded-control border border-border p-2">
                 <div className="flex items-center gap-1">
                   <span className="w-6 shrink-0 text-3xs text-muted" title={t(locale, "dbSort")}>
                     {index + 1}.
@@ -1816,7 +1818,7 @@ export function ViewSettings({
                 {groupColumns.map((group) => (
                   <li key={group.key}>
                     <div
-                      className="flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-surface-2"
+                      className="flex min-w-0 items-center gap-2 rounded-control px-1 py-0.5 text-sm hover:bg-surface-2"
                       data-testid={`group-visibility-${group.key}`}
                     >
                       <Checkbox
@@ -2103,7 +2105,7 @@ export function ViewSettings({
                 <li key={property.id} className="flex items-center gap-1">
                   <div
                     className={cn(
-                      "flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-surface-2",
+                      "flex min-w-0 flex-1 items-center gap-2 rounded-control px-1 py-0.5 text-sm hover:bg-surface-2",
                       isPrimary && "opacity-60",
                     )}
                   >
@@ -2281,7 +2283,7 @@ export function ViewSettings({
               onChange={(value) => setPageSize(value)}
             />
           </span>
-          <span className="w-20" data-testid="row-height">
+          <span className="w-24" data-testid="row-height">
             <Select
               size="sm"
               allowClear={false}
@@ -2485,7 +2487,7 @@ export function ViewSettings({
         <span
           data-testid="view-config-issues"
           title={configIssues.map((issue) => issue.message).join("\n")}
-          className="rounded px-1.5 py-0.5 text-xs text-warning"
+          className="rounded-chip px-1.5 py-0.5 text-xs text-warning"
         >
           {configIssues.length} config warning{configIssues.length === 1 ? "" : "s"}
         </span>

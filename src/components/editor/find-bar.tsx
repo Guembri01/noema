@@ -97,8 +97,8 @@ function ToolButton({
       onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
       className={cn(
-        "u-interactive focus-ring flex h-7 min-w-7 shrink-0 items-center justify-center gap-0.5 rounded-sm px-1 text-muted",
-        pressed ? "bg-accent-soft text-accent" : "hover:bg-surface-2",
+        "u-interactive focus-ring flex h-7 min-w-7 shrink-0 items-center justify-center gap-0.5 rounded-control px-1 text-muted",
+        pressed ? "bg-surface-2 text-fg" : "hover:bg-surface-2",
         disabled && "cursor-not-allowed opacity-50",
       )}
     >
@@ -214,7 +214,7 @@ export function FindBar({ blocks, initialQuery = "", onSelect, onClose }: FindBa
         autoComplete="off"
         spellCheck={false}
         className={cn(
-          "focus-ring h-7 min-w-0 flex-1 rounded-sm bg-surface-2 px-2 text-sm text-fg placeholder:text-muted",
+          "focus-ring h-7 min-w-0 flex-1 rounded-control bg-surface-2 px-2 text-sm text-fg placeholder:text-muted",
           !result.ok && "border border-danger",
         )}
       />

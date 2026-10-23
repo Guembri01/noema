@@ -2012,7 +2012,7 @@ export function DatabaseView({
           maxLength={500}
           rows={2}
           onBlur={(event) => saveDescription(event.target.value)}
-          className="focus-ring mb-3 w-full resize-y rounded-lg border border-transparent bg-transparent px-1 py-1 text-sm text-muted placeholder:text-muted hover:border-border focus:border-border focus:bg-surface"
+          className="focus-ring mb-3 w-full resize-y rounded-control border border-transparent bg-transparent px-1 py-1 text-sm text-muted placeholder:text-muted hover:border-border focus:border-border focus:bg-surface"
         />
       ) : (
         viewDescription !== "" && (

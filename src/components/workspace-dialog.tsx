@@ -323,8 +323,8 @@ export function WorkspaceDialog({
                     aria-pressed={icon === option}
                     onClick={() => setIcon(icon === option ? null : option)}
                     className={cn(
-                      "grid h-8 w-8 place-items-center rounded-sm text-lg u-colors focus-ring hover:bg-surface-2",
-                      icon === option && "bg-surface-2 ring-1 ring-accent",
+                      "grid h-8 w-8 place-items-center rounded-control text-lg u-colors focus-ring hover:bg-surface-2",
+                      icon === option && "bg-selection-soft ring-1 ring-focus/40",
                     )}
                   >
                     {option}
@@ -354,7 +354,7 @@ export function WorkspaceDialog({
             )}
 
             {canDelete && mode === "edit" ? (
-              <div className="rounded-md border border-border p-3">
+              <div className="rounded-card border border-border p-3">
                 <p className="text-sm font-medium text-danger">{t(locale, "dangerZone")}</p>
                 <p className="mt-1 text-xs text-muted">{t(locale, "dangerZoneBody")}</p>
                 <Button

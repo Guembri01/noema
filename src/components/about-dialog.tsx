@@ -39,13 +39,13 @@ export function AboutDialog({
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
       <DialogContent
-        className="w-full max-w-md rounded-xl border border-border bg-bg p-5 shadow-2xl"
+        className="w-full max-w-md rounded-overlay border border-border bg-bg p-5 shadow-2xl"
         aria-label={t(locale, "about")}
       >
         <div className="flex items-center gap-3">
           <span
             aria-hidden="true"
-            className="grid size-10 shrink-0 place-items-center rounded-lg bg-accent text-lg font-semibold text-accent-fg"
+            className="grid size-10 shrink-0 place-items-center rounded-lg bg-action text-lg font-semibold text-action-fg"
           >
             {PROJECT_NAME.slice(0, 1)}
           </span>
@@ -85,7 +85,7 @@ export function AboutDialog({
           <button
             type="button"
             onClick={onClose}
-            className="focus-ring u-interactive h-9 rounded border border-border px-3 text-sm text-muted hover:bg-surface-2"
+            className="focus-ring u-interactive h-9 rounded-control border border-border px-3 text-sm text-muted hover:bg-surface-2"
           >
             {t(locale, "close")}
           </button>

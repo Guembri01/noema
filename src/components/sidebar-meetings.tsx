@@ -126,7 +126,7 @@ export function SidebarMeetings({
             type="button"
             aria-label={t(locale, "connectACalendar")}
             onClick={() => setShowForm((value) => !value)}
-            className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface-2"
+            className="flex h-6 w-6 items-center justify-center rounded-control text-muted hover:bg-surface-2"
           >
             <Link2 className="h-3.5 w-3.5" />
           </button>
@@ -141,21 +141,21 @@ export function SidebarMeetings({
             aria-label={t(locale, "calendarName")}
             placeholder={t(locale, "calendarName")}
             onChange={(event) => setName(event.target.value)}
-            className="h-7 w-full rounded border border-border bg-bg px-1.5 text-sm outline-none focus:border-accent"
+            className="h-7 w-full rounded-control border-control bg-bg px-1.5 text-sm outline-none focus-ring"
           />
           <input
             value={url}
             aria-label={t(locale, "calendarIcsUrl")}
             placeholder={t(locale, "icsPlaceholder")}
             onChange={(event) => setUrl(event.target.value)}
-            className="h-7 w-full rounded border border-border bg-bg px-1.5 text-sm outline-none focus:border-accent"
+            className="h-7 w-full rounded-control border-control bg-bg px-1.5 text-sm outline-none focus-ring"
           />
           <button
             type="button"
             disabled={pending || !url.trim()}
             aria-label={t(locale, "connectCalendarButton")}
             onClick={connect}
-            className="focus-ring u-interactive h-7 w-full rounded bg-accent text-xs text-accent-fg disabled:opacity-50"
+            className="focus-ring u-interactive h-7 w-full rounded-control bg-action text-xs text-action-fg disabled:opacity-50"
           >
             {pending ? t(locale, "connecting") : t(locale, "connectCalendarButton")}
           </button>
@@ -185,7 +185,7 @@ export function SidebarMeetings({
                 return (
                   <li
                     key={event.id}
-                    className="group flex items-start gap-2 rounded-md px-1 py-1 hover:bg-surface-2"
+                    className="group flex items-start gap-2 rounded-control px-1 py-1 hover:bg-surface-2"
                   >
                     <CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
                     <div className="min-w-0 flex-1">
@@ -206,7 +206,7 @@ export function SidebarMeetings({
                     {event.notesPageId ? (
                       <Link
                         href={`/w/${slug}/${event.notesPageId}`}
-                        className="shrink-0 rounded px-1 text-2xs text-accent hover:underline"
+                        className="shrink-0 rounded-sm px-1 text-2xs text-accent hover:underline"
                       >
                         {t(locale, "eventNotes")}
                       </Link>
@@ -227,7 +227,7 @@ export function SidebarMeetings({
                             }
                           })
                         }
-                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted opacity-0 hover:bg-bg group-hover:opacity-100 focus:opacity-100"
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-control text-muted opacity-0 hover:bg-bg group-hover:opacity-100 focus:opacity-100"
                       >
                         <Sparkles className="h-3.5 w-3.5" />
                       </button>
@@ -260,7 +260,7 @@ export function SidebarMeetings({
                     router.refresh();
                   })
                 }
-                className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-surface-2"
+                className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-control hover:bg-surface-2"
               >
                 <Trash2 className="h-3 w-3" />
               </button>
@@ -281,7 +281,7 @@ export function SidebarMeetings({
                 router.refresh();
               })
             }
-            className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-xs text-muted hover:bg-surface-2"
+            className="flex w-full items-center gap-2 rounded-control px-1 py-1 text-xs text-muted hover:bg-surface-2"
           >
             <RefreshCw className="h-3 w-3" /> {t(locale, "refreshCalendars")}
           </button>

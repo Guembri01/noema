@@ -74,13 +74,13 @@ describe("route progress state machine", () => {
 });
 
 describe("RouteProgressBar", () => {
-  it("renders a 2px accent bar at Z.sticky with the current width", () => {
+  it("renders a 2px action bar at Z.sticky with the current width", () => {
     const html = render({ phase: "loading", value: 45 });
     expect(html).toContain('data-testid="route-progress"');
     expect(html).toContain('data-phase="loading"');
     expect(html).toContain('data-testid="route-progress-bar"');
     expect(html).toContain("transform:scaleX(0.45)");
-    expect(html).toContain("bg-accent");
+    expect(html).toContain("bg-action");
     expect(html).toContain("h-0.5");
     expect(html).toContain("pointer-events-none");
     expect(html).toContain("z-index:10");

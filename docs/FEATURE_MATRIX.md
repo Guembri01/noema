@@ -517,7 +517,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Figma integration | Preview design files. | ✅ | Planned; embed only. |
 | Google Drive integration | Link/preview Drive files. | ✅ | Planned. |
 | AI connectors | Connect model providers. | ✅ | Planned; BYO key. |
-| MCP server | Expose workspace to AI agents. | 🟡 | Planned; read-first, then write. |
+| MCP server | Expose workspace to AI agents. | ✅ | 43 token-scoped tools over `/api/mcp`; read-first, write/admin opt-in. See `docs/MCP.md`. |
 | Inbound webhooks | Accept events from outside. | 🟡 | Planned. |
 | Public embed oEmbed | Resolve third-party link metadata. | 🟡 | Basic title/favicon fetch. |
 

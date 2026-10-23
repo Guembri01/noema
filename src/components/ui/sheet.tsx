@@ -409,7 +409,7 @@ export function Sheet({
                 type="button"
                 aria-label={closeLabel}
                 onClick={() => onOpenChange(false)}
-                className="focus-ring u-colors flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-2 hover:text-fg"
+                className="focus-ring u-colors flex h-8 w-8 shrink-0 items-center justify-center rounded-control text-muted hover:bg-surface-2 hover:text-fg"
               >
                 <X className="h-4 w-4" aria-hidden />
               </button>

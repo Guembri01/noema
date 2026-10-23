@@ -95,6 +95,7 @@ This repository is a **working application plus a complete parity tracker**.
 | Import / Export | Export a page as **Markdown / JSON / HTML**, a database as **CSV**, the whole workspace as a **.zip**; import **Markdown** or **CSV** |
 | Sharing | **Share to web** — publish a page read-only at `/s/<token>` with optional **password + expiry**; unpublish; per-member share levels and **email invitations** (see [Permissions](#permissions-guests-teamspaces-page-shares)) |
 | Templates | **Template button** block + database templates with **recurrence** (daily/weekly/monthly) materialized by `POST /api/cron/templates` |
+| MCP | **`/api/mcp`** - 43 tools for pages, blocks, databases, comments, tickets, projects, cycles, templates, workspace admin and exports; token-scoped, read-first, write/admin opt-in (`allowWrite` / `allowAdmin`), resources for page/database reads. See [docs/MCP.md](docs/MCP.md) |
 | Public API | `GET/POST /api/v1/pages`, `GET /api/v1/pages/:id`, `GET /api/v1/search`, `GET /api/v1/workspaces` — authenticated with **Bearer API tokens** (hashed at rest, managed in workspace settings); the token's **scope grant is enforced** (`read:pages` for the read routes, `write:pages` for creating pages) |
 | Workspace settings | Rename, member list, API tokens, workspace export |
 | Home & templates | A greeting home with **Empty page / Empty database** cards, a **workflow template gallery** (Task tracking, Projects, Skills, Document center, Brainstorm, Meeting notes) with mini previews, and “Other templates”; `POST /api/templates` |

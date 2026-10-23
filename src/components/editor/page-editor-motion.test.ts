@@ -115,12 +115,13 @@ describe("EditorRowChrome (renderToStaticMarkup)", () => {
   const markup = (state?: RowChromeState) =>
     renderToStaticMarkup(createElement(EditorRowChrome, state ? { state } : {}));
 
-  it("renders the ⋮⋮ grip and the + affordance", () => {
+  it("renders the grip and add affordances as vector chrome", () => {
     const html = markup({ hovered: true });
-    expect(html).toContain("⋮⋮");
     expect(html).toContain("noema-drag-handle");
     expect(html).toContain("noema-row-add");
     expect(html).toContain("data-row-chrome");
+    expect(html).toContain("<svg");
+    expect(html).not.toContain("⋮⋮");
   });
 
   it("is visible in the hover state", () => {

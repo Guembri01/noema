@@ -45,7 +45,7 @@ export function UndoButton({
       aria-label={`${undoLabel} ${action}`}
       aria-keyshortcuts="Control+Z"
       data-testid="undo-action"
-      className="focus-ring u-interactive relative inline-flex items-center overflow-hidden rounded-sm px-2 py-1 text-sm font-medium text-accent"
+      className="focus-ring u-interactive relative inline-flex items-center overflow-hidden rounded-control px-2 py-1 text-sm font-medium text-action"
     >
       {undoLabel}
       <span
@@ -54,7 +54,7 @@ export function UndoButton({
       >
         <span
           data-testid="undo-countdown"
-          className="block h-full w-full origin-center bg-accent opacity-40"
+          className="block h-full w-full origin-center bg-action opacity-40"
           style={
             {
               // The window is data, not design: it rides a local custom property

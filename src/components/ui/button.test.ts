@@ -30,7 +30,7 @@ describe("button class maps", () => {
       [...VARIANTS].sort(),
     );
     // Colour comes from a token, never a raw palette class.
-    expect(BUTTON_VARIANTS.primary).toContain("bg-accent");
+    expect(BUTTON_VARIANTS.primary).toContain("bg-action");
     expect(BUTTON_VARIANTS.secondary).toContain("border-border");
     expect(BUTTON_VARIANTS.ghost).toContain("hover:bg-surface-2");
     expect(BUTTON_VARIANTS.subtle).toContain("bg-surface-2");

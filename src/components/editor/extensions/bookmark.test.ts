@@ -42,7 +42,7 @@ describe("BookmarkCardSurface — ready", () => {
     // Chrome comes from tokens: border / surface / radius.
     expect(html).toContain("border-border");
     expect(html).toContain("bg-surface");
-    expect(html).toContain("rounded-md");
+    expect(html).toContain("rounded-card");
     // Hover/press settle through the utilities, never a size change.
     expect(html).toContain("u-surface");
     expect(html).toContain("u-interactive");
