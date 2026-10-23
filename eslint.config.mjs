@@ -40,6 +40,9 @@ const eslintConfig = [
       // its own React and its own build; it is excluded from the app's
       // toolchain for the same reason src-tauri/server is.
       "video/**",
+      // Vendored browser WASM/layout asset for PlantUML; third-party build, not
+      // application source.
+      "public/vendor/**",
     ],
   },
 ];

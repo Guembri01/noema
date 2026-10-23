@@ -19,6 +19,8 @@ import { Button } from "@/components/ui/button";
 import { Select, filterOptions, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
 import { MermaidDiagram, isMermaidBlock } from "@/components/diagrams/mermaid-diagram";
+import { PlantUmlDiagram } from "@/components/diagrams/plantuml-diagram";
+import { isPlantUmlLanguage } from "@/lib/diagrams/plantuml-policy";
 
 /**
  * Syntax highlighting with highlight.js' *common* language set only, so the
@@ -234,6 +236,7 @@ export type CodeBlockChromeProps = {
   onToggleWrap?: () => void;
   /** Mermaid blocks get a source/preview switch. */
   isMermaid?: boolean;
+  isPlantUml?: boolean;
   preview?: boolean;
   onTogglePreview?: () => void;
 };
@@ -259,6 +262,7 @@ export function CodeBlockChrome({
   onToggleNumbers,
   onToggleWrap,
   isMermaid = false,
+  isPlantUml = false,
   preview = false,
   onTogglePreview,
 }: CodeBlockChromeProps) {
@@ -325,7 +329,7 @@ export function CodeBlockChrome({
           </Button>
         </Tooltip>
 
-        {editable && isMermaid && (
+        {editable && (isMermaid || isPlantUml) && (
           <Tooltip label={preview ? "Show source" : "Show diagram"} side="top">
             <Button
               type="button"
@@ -448,6 +452,8 @@ function CodeBlockView({
   const editable = editor.isEditable;
   const language = String(attrs.language ?? "");
   const isMermaid = isMermaidBlock(language);
+  const isPlantUml = isPlantUmlLanguage(language);
+  const isDiagram = isMermaid || isPlantUml;
   const blockColor = attrs.blockColor ? String(attrs.blockColor) : null;
   const showNumbers = Boolean(attrs.lineNumbers);
   const caption = String(attrs.caption ?? "");
@@ -474,14 +480,14 @@ function CodeBlockView({
   // user can still switch back to source at any time. The source itself stays
   // in the document, so collaboration/undo/redo/export all keep working.
   useEffect(() => {
-    if (!isMermaid) {
+    if (!isDiagram) {
       wasMermaid.current = false;
       setPreview(false);
       return;
     }
     if (!wasMermaid.current && node.textContent.trim().length > 0) setPreview(true);
     wasMermaid.current = true;
-  }, [isMermaid, node.textContent]);
+  }, [isDiagram, node.textContent]);
 
   const choose = (value: string) => {
     // Canonicalise through the shared registry so a stored fence alias (`js`)
@@ -532,6 +538,7 @@ function CodeBlockView({
         onToggleNumbers={() => updateAttributes({ lineNumbers: !showNumbers })}
         onToggleWrap={() => setWrap((current) => !current)}
         isMermaid={isMermaid}
+        isPlantUml={isPlantUml}
         preview={preview}
         onTogglePreview={() => setPreview((current) => !current)}
       />
@@ -556,6 +563,11 @@ function CodeBlockView({
       {isMermaid && preview && (
         <div contentEditable={false} className="noema-mermaid-preview">
           <MermaidDiagram source={node.textContent} />
+        </div>
+      )}
+      {isPlantUml && preview && (
+        <div contentEditable={false} className="noema-plantuml-preview">
+          <PlantUmlDiagram source={node.textContent} />
         </div>
       )}
 

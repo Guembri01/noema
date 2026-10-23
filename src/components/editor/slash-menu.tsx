@@ -49,6 +49,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { EQUATION_EVENT } from "@/lib/editor-events";
 import { MERMAID_TEMPLATES } from "@/lib/diagrams/mermaid-policy";
 import { starterUmlDiagram } from "@/lib/diagrams/uml";
+import { PLANTUML_TEMPLATES } from "@/lib/diagrams/plantuml-policy";
 import { t } from "@/lib/i18n";
 import { BLOCK_TYPES } from "@/lib/block-conversion";
 import {
@@ -213,6 +214,19 @@ const SLASH_ITEMS: SlashItem[] = [
           content: [{ type: "text", text: template.source }],
         })
         .run(),
+  })),
+  ...PLANTUML_TEMPLATES.map((template) => ({
+    label: `PlantUML ${template.label}`,
+    hint: "Server-free PlantUML",
+    icon: <Workflow className="h-4 w-4" />,
+    keywords: `plantuml puml uml ${template.id} ${template.label}`,
+    group: "advanced" as const,
+    run: (c: ReturnType<Editor["chain"]>) =>
+      c.insertContent({
+        type: "codeBlock",
+        attrs: { language: "plantuml" },
+        content: [{ type: "text", text: template.source }],
+      }).run(),
   })),
   { label: "Visual UML canvas", hint: "Drag-and-drop class, actor and use-case diagrams", icon: <Workflow className="h-4 w-4" />, keywords: "uml visual diagram class actor usecase canvas drag drop figma", group: "advanced", run: (c) => c.insertContent({ type: "umlDiagram", attrs: { data: starterUmlDiagram() } }).run() },
   { label: "Table", labelKey: "blockTable", hint: "3×3 table", hintKey: "tableHint", icon: <TableIcon className="h-4 w-4" />, keywords: "table grid rows", group: "basic", run: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },

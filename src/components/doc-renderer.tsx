@@ -2,6 +2,8 @@ import type { CSSProperties, ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MermaidDiagram } from "@/components/diagrams/mermaid-diagram";
 import { UmlDiagramView } from "@/components/diagrams/uml-diagram-view";
+import { PlantUmlDiagram } from "@/components/diagrams/plantuml-diagram";
+import { isPlantUmlLanguage } from "@/lib/diagrams/plantuml-policy";
 import { isMermaidLanguage } from "@/lib/diagrams/mermaid-policy";
 import { formatCaption, numberLines } from "@/lib/code-block";
 import { tagClass, tagStyle, type TagHue } from "@/lib/design-tokens";
@@ -749,6 +751,15 @@ function renderBlock(
       if (isMermaidLanguage(language)) {
         return (
           <MermaidDiagram
+            key={key}
+            source={nodeText(node)}
+            caption={formatCaption(typeof node.attrs?.caption === "string" ? node.attrs.caption : "")}
+          />
+        );
+      }
+      if (isPlantUmlLanguage(language)) {
+        return (
+          <PlantUmlDiagram
             key={key}
             source={nodeText(node)}
             caption={formatCaption(typeof node.attrs?.caption === "string" ? node.attrs.caption : "")}

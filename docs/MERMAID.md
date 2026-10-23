@@ -109,7 +109,11 @@ This implementation covers:
 
 - Mermaid text diagrams and UML templates
 - A self-hosted visual UML canvas
+- PlantUML diagrams through the bundled browser engine (`@plantuml/core` +
+  local `viz-global.js`; no Java, server or CDN)
 - Live source/canvas collaboration through the existing Yjs relay
 
-A local PlantUML renderer is not included; use Mermaid's class/sequence/state/ER
-syntax or the visual canvas instead.
+PlantUML templates included: UML class, sequence, use case, component and
+activity. PlantUML source is stored in a normal `codeBlock` with
+`language="plantuml"` and the same preview/source, read-only, import/export and
+collaboration paths as Mermaid.
