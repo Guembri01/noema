@@ -59,7 +59,7 @@ workflow-permission gate runs there as part of `npm test`.
 | `npm run check:use-server` | Every server action file is marked correctly |
 | `npm run check:target-blank` | Every link that opens a new tab carries `rel="noreferrer noopener"` |
 | `npm run check:powered-by` | The response does not name the framework: `next.config.ts` sets `poweredByHeader: false`, so no `X-Powered-By` header is sent |
-| `npm run check:hooks` | The pre-commit hook is documented as the optional local convenience it is, and CI still enforces the secret and authoring-window checks |
+| `npm run check:hooks` | The pre-commit hook is documented as the optional local convenience it is, and CI still enforces secret and identity checks |
 
 `npm run check:fast` is the inner loop: typecheck + lint + the unit tests that
 touch your changed files. It is the one to run while you work.
@@ -72,7 +72,7 @@ Playwright suite (`npm run e2e`, which expects the production server on `:3200`)
 ### The local pre-commit hook (optional)
 
 The repository ships `.githooks/pre-commit`: it runs the secret gate and the
-authoring-window check before a commit is made. It is a **convenience, not the
+commit identity check before a commit is made. It is a **convenience, not the
 check** — in a fresh clone it does not run at all, because `core.hooksPath` is
 a local Git setting that a repository cannot version, and
 `git commit --no-verify` skips it. Enable it once per clone if you want it:
@@ -83,7 +83,7 @@ git config core.hooksPath .githooks
 
 **CI runs the same two checks.** The `check` job in
 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs the secret gate
-and the authoring-window gate on every push and every pull request, and
+and the project-human identity gate on every push and every pull request, and
 neither step is allowed to fail silently. The hook only saves you the
 round-trip; whether a red CI run blocks the merge is the repository's
 branch-protection setting. `npm run check:hooks` reports whether the hook is
@@ -91,10 +91,9 @@ active in your clone and fails if CI ever stops enforcing the two checks.
 
 ### Commit metadata
 
-`npm run check:dates` (`scripts/check-commit-dates.mjs`) checks two things about
-every commit of the ref under review: that the author and the committer date
-fall into one of the authoring windows, and that the e-mail address belongs to
-a project human — the `HUMANS` map in that script.
+`npm run check:dates` (`scripts/check-commit-dates.mjs`) checks that the author
+and committer e-mail addresses of every commit belong to a project human — the
+`HUMANS` map in that script. Commit dates are unrestricted.
 
 **Registering an identity is a maintainer decision, not a side effect of a
 change.** The map is the only thing that lets a contributor's commits pass the
