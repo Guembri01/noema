@@ -1,5 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MermaidDiagram } from "@/components/diagrams/mermaid-diagram";
+import { isMermaidLanguage } from "@/lib/diagrams/mermaid-policy";
 import { formatCaption, numberLines } from "@/lib/code-block";
 import { tagClass, tagStyle, type TagHue } from "@/lib/design-tokens";
 import { embedMeta, resolveEmbed } from "@/lib/embeds";
@@ -738,9 +740,20 @@ function renderBlock(
       );
     }
     case "codeBlock": {
-      // Parity with the editor's code block: keep the language class so the
-      // same styles (and, later, any highlighting) apply in read-only views.
+      // Mermaid is stored as a normal code block; the source stays in the
+      // document, while the read side renders the SVG after hydration. Keeping
+      // this on the same node is what makes the existing collaboration,
+      // import/export and version-history paths work unchanged.
       const language = String(node.attrs?.language ?? "").trim();
+      if (isMermaidLanguage(language)) {
+        return (
+          <MermaidDiagram
+            key={key}
+            source={nodeText(node)}
+            caption={formatCaption(typeof node.attrs?.caption === "string" ? node.attrs.caption : "")}
+          />
+        );
+      }
       const codeClass = language ? `language-${language}` : undefined;
       const rawCaption = node.attrs?.caption;
       const caption = formatCaption(typeof rawCaption === "string" ? rawCaption : null);

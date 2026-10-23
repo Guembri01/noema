@@ -175,3 +175,18 @@ describe("CodeBlockChrome (renderToStaticMarkup)", () => {
     expect(html).not.toContain('data-testid="code-wrap"');
   });
 });
+
+
+describe("Mermaid code block chrome", () => {
+  it("offers a preview/source toggle when the language is Mermaid", () => {
+    const html = renderChrome({ state: { hovered: true }, language: "mermaid", isMermaid: true, preview: true });
+    expect(html).toContain('data-testid="code-mermaid-preview"');
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain("Show Mermaid source");
+  });
+
+  it("does not offer the diagram toggle on ordinary code", () => {
+    const html = renderChrome({ state: { hovered: true }, language: "typescript" });
+    expect(html).not.toContain('data-testid="code-mermaid-preview"');
+  });
+});

@@ -9,7 +9,7 @@ import {
 } from "@tiptap/react";
 import { CodeBlockLowlight, type CodeBlockLowlightOptions } from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
-import { Check, Copy, ListOrdered, WrapText } from "lucide-react";
+import { Check, Copy, Eye, ListOrdered, SquareCode, WrapText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CODE_LANGUAGES, codeLanguageLabel } from "@/lib/code-languages";
 import { formatCaption, normalizeLanguage, numberLines, validateCaption } from "@/lib/code-block";
@@ -18,6 +18,7 @@ import { Z } from "@/lib/design-tokens";
 import { Button } from "@/components/ui/button";
 import { Select, filterOptions, type SelectOption } from "@/components/ui/select";
 import { Tooltip } from "@/components/ui/tooltip";
+import { MermaidDiagram, isMermaidBlock } from "@/components/diagrams/mermaid-diagram";
 
 /**
  * Syntax highlighting with highlight.js' *common* language set only, so the
@@ -231,6 +232,10 @@ export type CodeBlockChromeProps = {
   onCopy?: () => void;
   onToggleNumbers?: () => void;
   onToggleWrap?: () => void;
+  /** Mermaid blocks get a source/preview switch. */
+  isMermaid?: boolean;
+  preview?: boolean;
+  onTogglePreview?: () => void;
 };
 
 /**
@@ -253,6 +258,9 @@ export function CodeBlockChrome({
   onCopy,
   onToggleNumbers,
   onToggleWrap,
+  isMermaid = false,
+  preview = false,
+  onTogglePreview,
 }: CodeBlockChromeProps) {
   const visible = codeChromeVisible(state);
   return (
@@ -316,6 +324,27 @@ export function CodeBlockChrome({
             )}
           </Button>
         </Tooltip>
+
+        {editable && isMermaid && (
+          <Tooltip label={preview ? "Show source" : "Show diagram"} side="top">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-pressed={preview}
+              aria-label={preview ? "Show Mermaid source" : "Preview Mermaid diagram"}
+              data-testid="code-mermaid-preview"
+              className={cn(preview && "bg-surface-2 text-fg")}
+              onClick={onTogglePreview}
+            >
+              {preview ? (
+                <SquareCode className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <Eye className="h-3.5 w-3.5" aria-hidden />
+              )}
+            </Button>
+          </Tooltip>
+        )}
 
         {editable && (
           <>
@@ -418,6 +447,7 @@ function CodeBlockView({
   };
   const editable = editor.isEditable;
   const language = String(attrs.language ?? "");
+  const isMermaid = isMermaidBlock(language);
   const blockColor = attrs.blockColor ? String(attrs.blockColor) : null;
   const showNumbers = Boolean(attrs.lineNumbers);
   const caption = String(attrs.caption ?? "");
@@ -425,6 +455,8 @@ function CodeBlockView({
   const [wrap, setWrap] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [preview, setPreview] = useState(false);
+  const wasMermaid = useRef(false);
   // Local caption draft: the box edits freely, the attribute only ever stores
   // the formatted caption, so collapsing whitespace can't fight the cursor.
   const [captionDraft, setCaptionDraft] = useState(caption);
@@ -437,6 +469,19 @@ function CodeBlockView({
     setCaptionDraft(caption);
     setCaptionError(null);
   }, [caption]);
+
+  // A freshly selected Mermaid block opens in preview once it has source; the
+  // user can still switch back to source at any time. The source itself stays
+  // in the document, so collaboration/undo/redo/export all keep working.
+  useEffect(() => {
+    if (!isMermaid) {
+      wasMermaid.current = false;
+      setPreview(false);
+      return;
+    }
+    if (!wasMermaid.current && node.textContent.trim().length > 0) setPreview(true);
+    wasMermaid.current = true;
+  }, [isMermaid, node.textContent]);
 
   const choose = (value: string) => {
     // Canonicalise through the shared registry so a stored fence alias (`js`)
@@ -458,7 +503,8 @@ function CodeBlockView({
 
   const gutter = showNumbers ? numberLines(node.textContent) : [];
   const preStyle: CSSProperties = {
-    ...(showNumbers ? { display: "flex", gap: CODE_GUTTER.gap, overflow: "visible" } : {}),
+    ...(preview ? { display: "none" } : {}),
+    ...(showNumbers && !preview ? { display: "flex", gap: CODE_GUTTER.gap, overflow: "visible" } : {}),
     ...codeWrapStyle(wrap),
   };
 
@@ -485,6 +531,9 @@ function CodeBlockView({
         onCopy={() => void copyCode(node.textContent)}
         onToggleNumbers={() => updateAttributes({ lineNumbers: !showNumbers })}
         onToggleWrap={() => setWrap((current) => !current)}
+        isMermaid={isMermaid}
+        preview={preview}
+        onTogglePreview={() => setPreview((current) => !current)}
       />
 
       <pre data-block-color={blockColor ?? undefined} style={preStyle}>
@@ -503,6 +552,12 @@ function CodeBlockView({
           <NodeViewContent<"span"> as="span" />
         </code>
       </pre>
+
+      {isMermaid && preview && (
+        <div contentEditable={false} className="noema-mermaid-preview">
+          <MermaidDiagram source={node.textContent} />
+        </div>
+      )}
 
       {editable ? (
         <div contentEditable={false}>

@@ -38,7 +38,8 @@ import {
   Sparkles,
   SquareCode,
   Table as TableIcon,
-  Video
+  Video,
+  Workflow
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Z } from "@/lib/design-tokens";
@@ -46,6 +47,7 @@ import { placeFloating } from "@/lib/floating";
 import { Kbd } from "@/components/ui/kbd";
 import { EmptyState } from "@/components/ui/empty-state";
 import { EQUATION_EVENT } from "@/lib/editor-events";
+import { MERMAID_TEMPLATES } from "@/lib/diagrams/mermaid-policy";
 import { t } from "@/lib/i18n";
 import { BLOCK_TYPES } from "@/lib/block-conversion";
 import {
@@ -192,6 +194,25 @@ const SLASH_ITEMS: SlashItem[] = [
   { label: "Columns · 4", hint: "Four side-by-side columns", icon: <Columns4 className="h-4 w-4" />, keywords: "columns layout grid four side by side", group: "advanced", run: (c) => c.setColumns(4).run() },
   blockItem("quote"),
   blockItem("code"),
+  ...MERMAID_TEMPLATES.map((template) => ({
+    label: template.id === "class" || template.id === "sequence" || template.id === "state"
+      ? `UML ${template.label}`
+      : template.id === "flowchart"
+        ? "Mermaid diagram"
+        : `Mermaid ${template.label} diagram`,
+    hint: template.description,
+    icon: <Workflow className="h-4 w-4" />,
+    keywords: `mermaid diagram uml ${template.id} ${template.label}`,
+    group: "advanced" as const,
+    run: (c: ReturnType<Editor["chain"]>) =>
+      c
+        .insertContent({
+          type: "codeBlock",
+          attrs: { language: "mermaid" },
+          content: [{ type: "text", text: template.source }],
+        })
+        .run(),
+  })),
   { label: "Table", labelKey: "blockTable", hint: "3×3 table", hintKey: "tableHint", icon: <TableIcon className="h-4 w-4" />, keywords: "table grid rows", group: "basic", run: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
   { label: "Image", labelKey: "blockImage", hint: "Upload or embed", hintKey: "imageHint", icon: <ImagePlus className="h-4 w-4" />, keywords: "image picture photo upload file", group: "media", action: () => {} },
   { label: "Bookmark", labelKey: "blockBookmark", hint: "Link preview card", hintKey: "bookmarkHint", icon: <BookmarkIcon className="h-4 w-4" />, keywords: "bookmark link card url", group: "media", run: (c) => c.setBookmark().run() },

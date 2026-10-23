@@ -24,6 +24,7 @@ export type CodeLanguage = {
 
 export const CODE_LANGUAGES: readonly CodeLanguage[] = [
   { value: "plaintext", label: "Plain text", lowlight: "plaintext", aliases: ["txt", "text"] },
+  { value: "mermaid", label: "Mermaid / UML", lowlight: "plaintext", aliases: ["mmd", "diagram", "uml"] },
   { value: "javascript", label: "JavaScript", lowlight: "javascript", aliases: ["js", "jsx", "mjs", "cjs", "node"] },
   { value: "typescript", label: "TypeScript", lowlight: "typescript", aliases: ["ts", "tsx"] },
   { value: "python", label: "Python", lowlight: "python", aliases: ["py", "python3", "ipython"] },

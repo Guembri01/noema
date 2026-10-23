@@ -81,6 +81,7 @@ This repository is a **working application plus a complete parity tracker**.
 | Auth | Email + password signup/login/logout, hashed passwords (bcrypt), signed JWT session cookie |
 | Workspaces | Create workspaces, memberships + roles (OWNER/ADMIN/MEMBER/GUEST), multi-workspace switcher |
 | Pages | Infinitely nested page tree, icons, favorites, soft-delete/trash, version snapshots |
+| Diagrams | **Mermaid / UML** code blocks: flowcharts, sequence, class, state, ER and gantt; source/preview switch, read-only rendering, `/mermaid` templates and live collaborative source editing. See [docs/MERMAID.md](docs/MERMAID.md) |
 | Editor | TipTap block editor: headings, lists, to-do lists, quote, code, divider, **callout**, **toggle**, **columns**, **table**, **table of contents**, **inline + block equations (KaTeX)**, **breadcrumb**, **bookmark & embed** (YouTube/Vimeo/Loom/Spotify/Figma…), **synced view** (page transclusion), **@-mentions** (pages/people/dates), **file & image uploads** (paste, drag-drop or picker), rich inline formatting via a **selection bubble menu**, a keyboard-driven `/` slash menu, and **pointer drag-and-drop** reordering |
 | Link previews | `GET /api/link-preview` fetches OpenGraph metadata with an SSRF guard (http(s) only, DNS-resolved hosts and every redirect hop must be public), size cap and timeout |
 | Backlinks | **Linked references** — pages that @-mention the current page |

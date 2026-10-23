@@ -167,3 +167,21 @@ describe("DocRenderer external images (B69)", () => {
     ]);
   });
 });
+
+
+describe("DocRenderer Mermaid blocks", () => {
+  it("routes Mermaid code to the client diagram renderer", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "codeBlock",
+          attrs: { language: "mermaid" },
+          content: [{ type: "text", text: "flowchart TD\n  A --> B" }],
+        },
+      ],
+    });
+    expect(html).toContain('data-mermaid-diagram="ready"');
+    expect(html).toContain("Rendering diagram");
+  });
+});

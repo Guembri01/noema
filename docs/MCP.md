@@ -100,6 +100,10 @@ Admin tools require both `allowAdmin=true` and an `admin:workspace` token.
 
 `delete_page`, `empty_trash`, teamspace/webhook deletes require `confirm: true`.
 
+## Diagrams
+
+Code blocks with `language: "mermaid"` render as Mermaid diagrams in the app. The MCP block tools can create/update them without a separate diagram tool; the source remains a normal code block and round-trips through Markdown.
+
 ## Resources
 
 - `notion://pages/{pageId}`
