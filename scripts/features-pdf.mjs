@@ -65,6 +65,7 @@ const CHAPTERS = [
       "A TipTap editor with Notion's block vocabulary, built for the keyboard: slash menu, drag handles, selection toolbar.",
     areas: [
       "Editor",
+      "Diagrams",
       "Editor blocks",
       "Block menu",
       "Undo / redo",
@@ -146,6 +147,7 @@ const CHAPTERS = [
       "An HTTP API, OAuth apps, signed webhooks, bring-your-own-model AI, importers, and the settings that hold it together.",
     areas: [
       "Public API",
+      "MCP",
       "OAuth apps",
       "Webhooks",
       "Webhook log",
