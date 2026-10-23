@@ -30,6 +30,13 @@ import { ACCEPTED_ADVISORIES } from "./npm-audit-baseline.mjs";
 import { advisoryId, analyzeAuditReport, collectAdvisories } from "./check-npm-audit.mjs";
 
 const GATE = join(dirname(fileURLToPath(import.meta.url)), "check-npm-audit.mjs");
+// Historical fixtures below still carry the braces advisory (the tree no longer
+// does after the dependency refresh). Keep a local accepted entry for those
+// assertions without putting a stale advisory back into the production list.
+const LEGACY_ACCEPTED = [
+  { id: "GHSA-vfj7-8cjw-p6xm", package: "braces", severity: "high", reason: "historical test fixture" },
+];
+
 
 const BEFORE_THE_FIX = JSON.parse(`{
   "vulnerabilities": {
@@ -380,7 +387,7 @@ describe("collectAdvisories", () => {
 
 describe("analyzeAuditReport", () => {
   it("flags the advisory the pin removes — the tree before the fix", () => {
-    const findings = analyzeAuditReport(BEFORE_THE_FIX);
+    const findings = analyzeAuditReport(BEFORE_THE_FIX, LEGACY_ACCEPTED);
 
     expect(findings.map((finding) => finding.rule)).toEqual(["unaccepted-advisory"]);
     expect(findings[0].message).toContain("GHSA-hp3w-g68c-fv3c");
@@ -392,7 +399,7 @@ describe("analyzeAuditReport", () => {
     // `braces` has no patched version upstream, so it stays on the list with
     // its reason. The gate must not fail on it — otherwise the step is dead
     // after the first week.
-    expect(analyzeAuditReport(AFTER_THE_FIX)).toEqual([]);
+    expect(analyzeAuditReport(AFTER_THE_FIX, LEGACY_ACCEPTED)).toEqual([]);
   });
 
   it("flags a new advisory, whatever its severity", () => {
@@ -418,7 +425,7 @@ describe("analyzeAuditReport", () => {
       fixAvailable: true,
     };
 
-    const findings = analyzeAuditReport(report);
+    const findings = analyzeAuditReport(report, LEGACY_ACCEPTED);
 
     expect(findings.map((finding) => finding.rule)).toEqual(["unaccepted-advisory"]);
     expect(findings[0].message).toContain("GHSA-0000-0000-0000");
@@ -435,7 +442,7 @@ describe("analyzeAuditReport", () => {
     delete report.vulnerabilities["@next/eslint-plugin-next"];
     delete report.vulnerabilities["eslint-config-next"];
 
-    const findings = analyzeAuditReport(report);
+    const findings = analyzeAuditReport(report, LEGACY_ACCEPTED);
 
     expect(findings.map((finding) => finding.rule)).toEqual(["stale-baseline"]);
     expect(findings[0].message).toContain("GHSA-vfj7-8cjw-p6xm");
@@ -478,9 +485,7 @@ describe("the accepted advisories", () => {
     }
   });
 
-  it("are the advisories the tree still carries", () => {
-    const reported = collectAdvisories(AFTER_THE_FIX).map((advisory) => advisory.id);
-
-    expect(reported).toEqual(ACCEPTED_ADVISORIES.map((entry) => entry.id));
+  it("has no stale production entry after the dependency refresh", () => {
+    expect(ACCEPTED_ADVISORIES).toEqual([]);
   });
 });

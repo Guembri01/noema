@@ -68,11 +68,4 @@
 
 /** @type {AcceptedAdvisory[]} */
 export const ACCEPTED_ADVISORIES = [
-  {
-    id: "GHSA-vfj7-8cjw-p6xm",
-    package: "braces",
-    severity: "high",
-    reason:
-      "`braces` expands the brace patterns of a glob; `micromatch` uses it, `fast-glob` uses `micromatch`, and `@next/eslint-plugin-next` uses `fast-glob` — so the chain is `eslint-config-next` (a direct devDependency) → `@next/eslint-plugin-next` → `fast-glob` → `micromatch` → `braces`. The advisory (a stack exhaustion through deeply nested patterns) affects `braces` <= 3.0.3 and lists **no patched version**: 3.0.3 is the latest release on the registry. There is no version of `micromatch` or `fast-glob` that drops the dependency either (micromatch 4.0.8 wants `braces` ^3.0.3), so no override can lift the tree out of the advisory. It is dev-only: the chain is reached through the lint tooling, the patterns come from this repository's own eslint configuration and not from a request, and `npm ci --omit=dev` does not install it. Delete this entry as soon as `braces` ships a release above 3.0.3 (or `micromatch` drops it) — the gate fails while a stale entry is left.",
-  },
 ];
