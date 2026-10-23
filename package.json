@@ -184,6 +184,7 @@
     "@tiptap/react": "^3.31.4",
     "@tiptap/starter-kit": "^3.31.4",
     "@tiptap/suggestion": "^3.31.4",
+    "@xyflow/react": "^12.8.6",
     "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

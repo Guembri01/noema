@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MermaidDiagram } from "@/components/diagrams/mermaid-diagram";
+import { UmlDiagramView } from "@/components/diagrams/uml-diagram-view";
 import { isMermaidLanguage } from "@/lib/diagrams/mermaid-policy";
 import { formatCaption, numberLines } from "@/lib/code-block";
 import { tagClass, tagStyle, type TagHue } from "@/lib/design-tokens";
@@ -811,6 +812,8 @@ function renderBlock(
         </div>
       );
     }
+    case "umlDiagram":
+      return <UmlDiagramView key={key} data={node.attrs?.data} diagramId={String(node.attrs?.id ?? key)} readOnly />;
     case "horizontalRule":
       return <hr key={key} className={docClasses("divider")} />;
     case "image": {

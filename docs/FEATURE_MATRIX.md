@@ -45,7 +45,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Mermaid / UML diagrams | Render diagrams from code blocks. | ? | `mermaid` language with preview/source switch, `/mermaid` templates for flowchart, UML class/sequence/state, ER and gantt; read-only/shared rendering; 50k source cap and strict SVG sanitisation. Live source collaboration uses the existing Yjs room. See `docs/MERMAID.md`. |
+| Mermaid / UML diagrams | Render and create diagrams. | ? | `mermaid` language with preview/source switch, `/mermaid` templates for flowchart, UML class/sequence/state, ER and gantt; visual React Flow UML canvas with class/actor/use-case/component/note nodes and UML relations; read-only/shared rendering; per-node collaborator presence; 50k source cap and strict SVG sanitisation. Live source/canvas collaboration uses the existing Yjs room. See `docs/MERMAID.md`. |
 | Code block | Monospaced block that preserves whitespace. | ✅ | Uses a code-highlighting extension. |
 | Code language selector | Set the language for highlighting. | ✅ | Notion-style searchable corner picker (35 languages via `src/lib/code-languages.ts`); language persists in document JSON and survives reload. |
 | Syntax highlighting | Tokenizes code by language. | ✅ | lowlight + highlight.js *common* grammars (~30) wired through `@tiptap/extension-code-block-lowlight`; token styles for light/dark themes; unknown fence languages fall back to auto-detect. |

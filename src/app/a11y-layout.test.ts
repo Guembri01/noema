@@ -11,6 +11,7 @@ vi.mock("@/lib/auth", () => ({
 
 // Vitest does not run the Next PostCSS pipeline; stub the stylesheet import.
 vi.mock("./globals.css", () => ({}));
+vi.mock("@xyflow/react/dist/style.css", () => ({}));
 
 // UI chrome is irrelevant to the document-shell contract (check:a11y audits
 // html lang/dir, skip link, landmarks) — pass children through, skip the rest.

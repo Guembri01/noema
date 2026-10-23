@@ -48,6 +48,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { EmptyState } from "@/components/ui/empty-state";
 import { EQUATION_EVENT } from "@/lib/editor-events";
 import { MERMAID_TEMPLATES } from "@/lib/diagrams/mermaid-policy";
+import { starterUmlDiagram } from "@/lib/diagrams/uml";
 import { t } from "@/lib/i18n";
 import { BLOCK_TYPES } from "@/lib/block-conversion";
 import {
@@ -213,6 +214,7 @@ const SLASH_ITEMS: SlashItem[] = [
         })
         .run(),
   })),
+  { label: "Visual UML canvas", hint: "Drag-and-drop class, actor and use-case diagrams", icon: <Workflow className="h-4 w-4" />, keywords: "uml visual diagram class actor usecase canvas drag drop figma", group: "advanced", run: (c) => c.insertContent({ type: "umlDiagram", attrs: { data: starterUmlDiagram() } }).run() },
   { label: "Table", labelKey: "blockTable", hint: "3×3 table", hintKey: "tableHint", icon: <TableIcon className="h-4 w-4" />, keywords: "table grid rows", group: "basic", run: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
   { label: "Image", labelKey: "blockImage", hint: "Upload or embed", hintKey: "imageHint", icon: <ImagePlus className="h-4 w-4" />, keywords: "image picture photo upload file", group: "media", action: () => {} },
   { label: "Bookmark", labelKey: "blockBookmark", hint: "Link preview card", hintKey: "bookmarkHint", icon: <BookmarkIcon className="h-4 w-4" />, keywords: "bookmark link card url", group: "media", run: (c) => c.setBookmark().run() },

@@ -185,3 +185,20 @@ describe("DocRenderer Mermaid blocks", () => {
     expect(html).toContain("Rendering diagram");
   });
 });
+
+
+describe("DocRenderer UML blocks", () => {
+  it("renders the visual UML client surface with a loading fallback", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "umlDiagram",
+          attrs: { data: { nodes: [{ id: "a", kind: "class", label: "Page" }], edges: [] } },
+        },
+      ],
+    });
+    expect(html).toContain('data-uml-diagram="loading"');
+    expect(html).toContain("UML diagram");
+  });
+});

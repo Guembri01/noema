@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "@xyflow/react/dist/style.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { DesktopThemeSync } from "@/components/desktop-theme-sync";
 import { DesktopShellBridge } from "@/components/desktop-shell-bridge";

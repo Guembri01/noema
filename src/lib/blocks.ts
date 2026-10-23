@@ -9,6 +9,7 @@
 import type { Node as PMNode } from "@tiptap/pm/model";
 
 import { safeHref } from "./markdown";
+import { diagramSearchText, diagramToMermaid } from "./diagrams/uml";
 
 export type Mark = { type: string; attrs?: Record<string, unknown> };
 
@@ -46,6 +47,7 @@ export function prosemirrorToText(doc: unknown): string {
   const out: string[] = [];
   const walk = (node: RichNode) => {
     if (node.text) out.push(node.text);
+    if (node.type === "umlDiagram") out.push(diagramSearchText(node.attrs?.data));
     node.content?.forEach(walk);
     if (node.type === "paragraph" || /^heading/.test(node.type ?? "")) {
       out.push("\n");
@@ -135,6 +137,8 @@ export function docToMarkdown(doc: unknown): string {
       else if (title) lines.push(title);
     } else if (type === "pageEmbed") {
       lines.push(`/w/…/${String(node.attrs?.pageId ?? "")} — ${String(node.attrs?.title ?? "")}`);
+    } else if (type === "umlDiagram") {
+      lines.push(`\`\`\`mermaid\n${diagramToMermaid(node.attrs?.data)}\n\`\`\``);
     } else if (type === "blockMath") {
       lines.push(`$$\n${String(node.attrs?.latex ?? "")}\n$$`);
     } else if (type === "table") {

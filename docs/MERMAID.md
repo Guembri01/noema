@@ -78,8 +78,38 @@ NEXT_PUBLIC_COLLAB_URL="ws://localhost:1234"
 - Source is capped at **50,000 characters** and **2,000 lines**.
 - A failed diagram never blocks the rest of the page.
 
+## Visual UML canvas
+
+The visual UML block is a separate, drag-and-drop canvas built on React Flow:
+
+- Class, interface, enum, actor, use-case, component and note shapes
+- Association, inheritance, realization, dependency, aggregation and
+  composition relations
+- Move nodes, resize the viewport, connect handles, edit labels and
+  compartments, and delete nodes/relations
+- Read-only/shared-page rendering
+- Markdown export as a Mermaid class diagram where possible
+- Presence badges and a remote outline for the node another collaborator has
+  selected
+
+Insert it with `/visual uml canvas` or the **UML canvas** slash row.
+
+### Collaboration semantics
+
+The canvas lives in the `umlDiagram` block's node data. The existing Yjs
+collaboration layer syncs that data and awareness between clients. Multiple
+users can edit the same note and canvas; node/edge changes are committed to the
+block as a JSON snapshot. This is live multi-user editing, but it is **not** a
+full operation-based CRDT canvas: simultaneous edits to the same node use the
+latest node snapshot, while awareness is used for selection presence.
+
 ## Current scope
 
-This implementation covers Mermaid text diagrams and UML templates that Mermaid
-can express. A visual UML canvas (drag/drop class or use-case shapes) and a
-local PlantUML renderer are separate features and are not part of this change.
+This implementation covers:
+
+- Mermaid text diagrams and UML templates
+- A self-hosted visual UML canvas
+- Live source/canvas collaboration through the existing Yjs relay
+
+A local PlantUML renderer is not included; use Mermaid's class/sequence/state/ER
+syntax or the visual canvas instead.

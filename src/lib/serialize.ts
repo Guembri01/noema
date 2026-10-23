@@ -7,6 +7,7 @@
 
 import { docToMarkdown, type BlockDoc, type RichNode } from "./blocks";
 import { formatCaption } from "./code-block";
+import { diagramToMermaid } from "./diagrams/uml";
 import { TAG_SEQUENCE } from "./palette";
 import { DEFAULT_PULL_QUOTE_SIZE, isPullQuoteSize } from "./pull-quote";
 import { sanitizeHref } from "./validation";
@@ -380,6 +381,8 @@ function blockHtml(node: RichNode): string {
       return `<th>${(node.content ?? []).map(blockHtml).join("")}</th>`;
     case "tableCell":
       return `<td>${(node.content ?? []).map(blockHtml).join("")}</td>`;
+    case "umlDiagram":
+      return `<pre data-uml-diagram="" data-uml-data="${escapeHtml(JSON.stringify(node.attrs?.data ?? {}))}"><code class="language-mermaid">${escapeHtml(diagramToMermaid(node.attrs?.data))}</code></pre>`;
     case "blockMath":
       return `<div class="math">${escapeHtml(String(node.attrs?.latex ?? ""))}</div>`;
     case "bookmark":

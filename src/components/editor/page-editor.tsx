@@ -25,6 +25,8 @@ import {
 } from "@/components/editor/extensions/image-block";
 import { BlockColors } from "@/components/editor/extensions/block-colors";
 import { CodeBlock } from "@/components/editor/extensions/code-block";
+import { UmlDiagram } from "@/components/editor/extensions/uml-diagram";
+import { DiagramPresenceProvider } from "@/components/editor/diagram-presence";
 import { TextStyle } from "@tiptap/extension-text-style";
 import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
@@ -1047,6 +1049,7 @@ function PageEditorBody({
       SyncedBlock.configure({ locale }),
       AnimatedImage.configure({ locale }),
       LinkedDatabase.configure({ workspaceId, workspaceSlug, locale }),
+      UmlDiagram,
       // B18: `1)` lists, `| a | b |` + Enter tables, `:smile:` emoji.
       InputRules,
       // Math engine guard: strips banned TeX commands from every equation node.
@@ -1525,9 +1528,11 @@ function PageEditorBody({
         </>
       )}
 
-      <BlockContextMenu editor={editor} editable={editable} workspaceId={workspaceId} locale={locale}>
-        <EditorContent editor={editor} />
-      </BlockContextMenu>
+      <DiagramPresenceProvider awareness={collab?.provider.awareness ?? null}>
+        <BlockContextMenu editor={editor} editable={editable} workspaceId={workspaceId} locale={locale}>
+          <EditorContent editor={editor} />
+        </BlockContextMenu>
+      </DiagramPresenceProvider>
 
       {dropRejection && (
         <div
