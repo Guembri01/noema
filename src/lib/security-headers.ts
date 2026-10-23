@@ -131,6 +131,9 @@ export function buildCsp(
     [
       "script-src",
       "'self'",
+      // PlantUML / Graphviz run as WebAssembly in the browser. This allows
+      // WASM compilation only; it does not re-enable JavaScript eval.
+      "'wasm-unsafe-eval'",
       nonce ? `'nonce-${nonce}'` : null,
       `'${THEME_SCRIPT_SHA256}'`,
       allowEval ? "'unsafe-eval'" : null,

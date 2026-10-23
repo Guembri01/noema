@@ -91,7 +91,7 @@ describe("security headers (next.config.ts)", () => {
       "object-src 'none'",
       "frame-ancestors 'none'",
       "form-action 'self'",
-      "script-src 'self'",
+      "script-src 'self' 'wasm-unsafe-eval'",
       "style-src 'self'",
       "connect-src 'self'",
       "img-src 'self' data: blob: https:",
@@ -107,9 +107,11 @@ describe("security headers (next.config.ts)", () => {
     // renders, so it looks fine, but nothing is interactive. That was measured in a
     // browser (a rendered node carried no React props, and the browser reported the
     // eval violation), not inferred.
-    expect(csp).not.toContain("unsafe-eval");
+    expect(csp).not.toContain("'unsafe-eval'");
+    expect(csp).toContain("'wasm-unsafe-eval'");
     expect(buildCsp(null, { dev: true })).toContain("'unsafe-eval'");
-    expect(buildCsp(null, { dev: false })).not.toContain("unsafe-eval");
+    expect(buildCsp(null, { dev: false })).not.toContain("'unsafe-eval'");
+    expect(buildCsp(null, { dev: false })).toContain("'wasm-unsafe-eval'");
     // B98: 'unsafe-inline' dropped from script-src - Next.js App Router
     // hydration scripts are nonced per response by src/middleware.ts (this
     // static map is the fallback for middleware-skipped paths). The pinned
@@ -117,7 +119,7 @@ describe("security headers (next.config.ts)", () => {
     // inline script React does not nonce). TipTap/React inline styles still
     // need style-src 'unsafe-inline', which stays.
     expect(csp.split(";").map((d) => d.trim()).find((d) => d.startsWith("script-src"))).toBe(
-      `script-src 'self' '${THEME_SCRIPT_SHA256}'`,
+      `script-src 'self' 'wasm-unsafe-eval' '${THEME_SCRIPT_SHA256}'`,
     );
     expect(csp).toContain("style-src 'self' 'unsafe-inline'");
     // Noema embeds OTHERS (embeds.ts allowlist) - it is never embedded itself,
@@ -241,7 +243,7 @@ describe("security headers (next.config.ts)", () => {
     expect(nonce, "no nonce CSP on /login (middleware not applied?)").toBeTruthy();
     expect(served).toBe(
       SECURITY_HEADERS["Content-Security-Policy"].replace(
-        "script-src 'self'",
+        "script-src 'self' 'wasm-unsafe-eval'",
         `script-src 'self' 'nonce-${nonce}'`,
       ),
     );
@@ -250,7 +252,7 @@ describe("security headers (next.config.ts)", () => {
       .map((d) => d.trim())
       .find((d) => d.startsWith("script-src"));
     expect(scriptSrc).toBe(
-      `script-src 'self' 'nonce-${nonce}' '${THEME_SCRIPT_SHA256}'`,
+      `script-src 'self' 'wasm-unsafe-eval' 'nonce-${nonce}' '${THEME_SCRIPT_SHA256}'`,
     );
     expect(scriptSrc).not.toContain("'unsafe-inline'");
 

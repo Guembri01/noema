@@ -63,22 +63,26 @@ const DEV_EVAL = process.env.NODE_ENV === "production" ? "" : " 'unsafe-eval'";
 describe("CSP builder (src/lib/security-headers.ts)", () => {
   it("static CSP: script-src is 'self' + pinned theme hash, no unsafe-inline", () => {
     const csp = buildCsp();
-    expect(scriptSrcOf(csp)).toBe(`script-src 'self' '${THEME_SCRIPT_SHA256}'`);
+    expect(scriptSrcOf(csp)).toBe(`script-src 'self' 'wasm-unsafe-eval' '${THEME_SCRIPT_SHA256}'`);
     expect(scriptSrcOf(csp)).not.toContain("'unsafe-inline'");
-    expect(csp).not.toContain("unsafe-eval");
+    expect(csp).not.toContain("'unsafe-eval'");
+    expect(csp).toContain("'wasm-unsafe-eval'");
   });
 
   it("nonce CSP: nonce injected into script-src, still no unsafe-inline", () => {
     const nonce = makeNonce();
     const csp = buildCsp(nonce);
     expect(scriptSrcOf(csp)).toBe(
-      `script-src 'self' 'nonce-${nonce}' '${THEME_SCRIPT_SHA256}'`,
+      `script-src 'self' 'wasm-unsafe-eval' 'nonce-${nonce}' '${THEME_SCRIPT_SHA256}'`,
     );
     expect(scriptSrcOf(csp)).not.toContain("'unsafe-inline'");
     // Nonce is an exact injection into the static policy - everything else
     // (B61 values minus unsafe-inline) is byte-identical.
     expect(csp).toBe(
-      buildCsp().replace("script-src 'self'", `script-src 'self' 'nonce-${nonce}'`),
+      buildCsp().replace(
+        "script-src 'self' 'wasm-unsafe-eval'",
+        `script-src 'self' 'wasm-unsafe-eval' 'nonce-${nonce}'`,
+      ),
     );
   });
 
@@ -165,7 +169,7 @@ describe("CSP nonce middleware (src/middleware.ts)", () => {
     expect(nonce, "response CSP carries no nonce Next can extract").toBeTruthy();
     expect(nonce).toMatch(/^[A-Za-z0-9+/]+={0,2}$/);
     expect(scriptSrcOf(served!)).toBe(
-      `script-src 'self' 'nonce-${nonce}' '${THEME_SCRIPT_SHA256}'${DEV_EVAL}`,
+      `script-src 'self' 'wasm-unsafe-eval' 'nonce-${nonce}' '${THEME_SCRIPT_SHA256}'${DEV_EVAL}`,
     );
     expect(scriptSrcOf(served!)).not.toContain("'unsafe-inline'");
     expect(styleSrcOf(served!)).toBe("style-src 'self' 'unsafe-inline'");

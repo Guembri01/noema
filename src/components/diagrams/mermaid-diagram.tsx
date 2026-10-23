@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { MermaidConfig } from "mermaid";
 import { cn } from "@/lib/utils";
 import {
@@ -96,6 +96,20 @@ export function MermaidDiagram({ source, caption = "", className }: MermaidDiagr
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const svgContainer = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const container = svgContainer.current;
+    if (!container) return;
+    if (!svg) {
+      container.replaceChildren();
+      return;
+    }
+    const parsed = new DOMParser().parseFromString(svg, "image/svg+xml");
+    if (parsed.documentElement && !parsed.querySelector("parsererror")) {
+      container.replaceChildren(parsed.documentElement);
+    }
+  }, [svg]);
 
   useEffect(() => {
     setDark(currentDarkMode());
@@ -178,11 +192,10 @@ export function MermaidDiagram({ source, caption = "", className }: MermaidDiagr
       ) : (
         svg && (
           <div
+            ref={svgContainer}
             role="img"
             aria-label={caption || "Mermaid diagram"}
             className="overflow-x-auto rounded-control border border-border bg-surface p-3"
-            // Sanitised above: scripts, event handlers and non-fragment links removed.
-            dangerouslySetInnerHTML={{ __html: svg }}
           />
         )
       )}

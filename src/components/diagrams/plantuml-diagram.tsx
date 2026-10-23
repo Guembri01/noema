@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { validatePlantUmlSource } from "@/lib/diagrams/plantuml-policy";
 
@@ -87,6 +87,20 @@ export function PlantUmlDiagram({ source, caption = "", className }: { source: s
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const svgContainer = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const container = svgContainer.current;
+    if (!container) return;
+    if (!svg) {
+      container.replaceChildren();
+      return;
+    }
+    const parsed = new DOMParser().parseFromString(svg, "image/svg+xml");
+    if (parsed.documentElement && !parsed.querySelector("parsererror")) {
+      container.replaceChildren(parsed.documentElement);
+    }
+  }, [svg]);
 
   useEffect(() => {
     let cancelled = false;
@@ -149,10 +163,10 @@ export function PlantUmlDiagram({ source, caption = "", className }: { source: s
         </div>
       ) : svg ? (
         <div
+          ref={svgContainer}
           role="img"
           aria-label={caption || "PlantUML diagram"}
           className="overflow-x-auto rounded-control border border-border bg-surface p-3"
-          dangerouslySetInnerHTML={{ __html: svg }}
         />
       ) : null}
       {caption && <p className="noema-image-caption-view">{caption}</p>}
