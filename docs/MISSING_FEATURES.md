@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 565 feature rows — 482 implemented · 61 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 565 feature rows — 484 implemented · 59 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **61** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **59** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -70,11 +70,10 @@ This file lists the **61** rows that are not finished, area by area, plus 22 int
 
 ### 6. Templates
 
-6 done · 3 partial · 0 planned · 1 out of scope
+7 done · 2 partial · 0 planned · 1 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Page templates | Duplicate a page for reuse. | 🟡 | Duplicate-page works; gallery UI missing. Spec: docs/specs/templates.md. |
 | Recurring templates | Scheduled row creation. | 🟡 | Planned; needs scheduler. Spec: docs/specs/templates.md. |
 | Template duplication | Clone a template into a page. | 🟡 | Planned. Spec: docs/specs/templates.md. |
 | Template from selection | Turn a block selection into a template. | ⛔ | Uncommon flow; skip initially. B80 blocked-row triage: docs/specs/templates.md:308 + docs/specs/workspaces-structure.md §4 (editor-slot dependency). |
@@ -203,11 +202,10 @@ This file lists the **61** rows that are not finished, area by area, plus 22 int
 
 ### 20. Projects, tickets & planning
 
-29 done · 3 partial · 0 planned
+30 done · 2 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Roadmap view | Timeline across projects. | 🟡 | Project Gantt exists; a cross-project roadmap view is pending. |
 | Recurring tickets | Repeat on a schedule. | 🟡 | Planned; template recurrence exists for page templates. Spec: docs/specs/automations.md. |
 | Per-project role editor | Fine-grained project roles. | 🟡 | Planned; workspace roles exist today. |
 

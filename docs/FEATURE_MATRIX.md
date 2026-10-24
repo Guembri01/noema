@@ -335,7 +335,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Page templates | Duplicate a page for reuse. | 🟡 | Duplicate-page works; gallery UI missing. Spec: docs/specs/templates.md. |
+| Page templates | Duplicate a page for reuse. | ✅ | The workspace home gallery lists saved workspace templates (`listWorkspaceTemplatesAction`), renders them with the pure `PageTemplate` projection/preview model, instantiates them into real pages and links quick-start templates. Template capture/use is covered by the template-gallery and home-gallery suites. |
 | Template gallery | Browse workspace templates. | ✅ | Home gallery: empty page/database + 6 workflow templates with previews and “Other templates”. |
 | Database templates | Pre-filled rows from a template. | ✅ | Planned. Spec: docs/specs/templates.md. |
 | Template button | Insert template content in a page. | ✅ | Planned. Spec: docs/specs/templates.md. |
@@ -736,7 +736,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Ticket API | Automate the tracker. | ✅ | `GET/POST /api/tickets` (create/update/label/relation/comment/archive/bulk/move/from-page/label-*). |
 | Cron endpoint hardening | Materialize recurring templates safely. | ✅ | `POST /api/cron/templates` **fails closed** (503) when `CRON_SECRET` is unset, returns 401 on a wrong `x-cron-secret`, and is rate limited; `check:share-cron` asserts all three cases. |
 | Sub-tickets | Nested parent → child issues. | ✅ | Create a sub-ticket from the drawer, see the parent link, the child list with per-child estimates and a child roll-up; the list shows a sub-count badge. |
-| Roadmap view | Timeline across projects. | 🟡 | Project Gantt exists; a cross-project roadmap view is pending. |
+| Roadmap view | Timeline across projects. | ✅ | `/w/<slug>/roadmap` folds project milestones and tickets into one UTC-deterministic timeline: shared axis, week/month/quarter zoom, non-overlapping lane packing, overdue/milestone markers, per-project rollups and summary counts. Layout is covered by the roadmap engine tests. |
 | Saved views | Reusable filter/sort presets. | ✅ | Ticket tracker: save the current filters, search and view type as a named workspace view, apply it from the Views menu, delete it inline (`TicketView`). |
 | Cycles / sprints | Time-boxed iterations. | ✅ | `/w/<slug>/cycles`: named cycles with dates + goal, tickets scheduled from the drawer, committed vs completed estimate, a burndown chart (actual over ideal) and average velocity. `Cycle` model + 4 actions. |
 | Velocity & burndown | Estimation trend charts. | ✅ | Per-cycle burndown (daily remaining vs the ideal line) and a 6-cycle velocity average, both computed by tested pure functions in `src/lib/cycles.ts`. |
@@ -776,7 +776,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 3. Databases | 51 | 2 | 0 | 0 | 53 |
 | 4. Properties | 34 | 1 | 0 | 1 | 36 |
 | 5. Formulas | 15 | 1 | 0 | 0 | 16 |
-| 6. Templates | 6 | 3 | 0 | 1 | 10 |
+| 6. Templates | 7 | 2 | 0 | 1 | 10 |
 | 7. Collaboration | 19 | 7 | 0 | 0 | 26 |
 | 8. Sharing & permissions | 21 | 1 | 0 | 0 | 22 |
 | 9. Workspaces & structure | 23 | 0 | 0 | 0 | 23 |
@@ -790,9 +790,9 @@ The table below summarizes how many feature rows fall into each status, per area
 | 17. Data model & platform | 26 | 11 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 8 | 6 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
-| 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
+| 20. Projects, tickets & planning | 30 | 2 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **482** | **61** | **0** | **22** | **565** |
+| **Total** | **484** | **59** | **0** | **22** | **565** |
 
 ## Deliberate divergences
 
