@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 565 feature rows — 503 implemented · 40 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 565 feature rows — 507 implemented · 36 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **40** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **36** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -63,7 +63,7 @@ This file lists the **40** rows that are not finished, area by area, plus 22 int
 
 ### 7. Collaboration
 
-19 done · 7 partial · 0 planned
+20 done · 6 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -71,7 +71,6 @@ This file lists the **40** rows that are not finished, area by area, plus 22 int
 | CRDT data model | Conflict-free replicated structures. | 🟡 | Planned (automerge/Yjs-style). Spec: docs/specs/realtime-collab.md. |
 | Presence | See who is viewing a page. | 🟡 | Planned. |
 | Live cursors | Remote carets and selections. | 🟡 | Planned; needs presence transport. |
-| Inline comments | Comments anchored to a text range. | 🟡 | The bubble toolbar and the block context menu both resolve the top-level block id (`blockIdAt` / `blockAnchorId`) and dispatch `{ quote, blockId }`; the panel keeps the anchor in composer state, forwards it to `addCommentAction` for roots only (replies inherit their thread), the page route projects `blockId`, and a stored anchor renders a **Jump to block** button that scrolls the editor to `[data-block-id]`. The persisted shape still has no selection `from`/`to` offsets and no inline highlight, so exact range rendering remains open. R79.3. |
 | Comment mentions | Mention people in comments. | 🟡 | `@Name`, `@first`, `@ada@example.com` notify matching workspace members (`page.mention`); matching is a tested pure helper. Targets are the current `workspaceMember` rows, the author is skipped, and a guest target is filtered through `guestReadablePageIds` so a guest outside the page read scope receives neither the notification nor its `pageId`. Still open: no cross-event coalescing, edits do not re-dispatch, and inline `@user` nodes in page content dispatch nothing. R79.4. |
 | Coarse edit locks | Prevent simultaneous structural edits. | 🟡 | Planned fallback before full CRDT. |
 
@@ -96,13 +95,11 @@ This file lists the **40** rows that are not finished, area by area, plus 22 int
 
 ### 14. AI
 
-13 done · 3 partial · 0 planned
+15 done · 1 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Local model support | Run models without a cloud. | 🟡 | Planned; aligns with self-hosting. Spec: docs/specs/ai-surface.md. |
 | AI cost controls | Token budgets per workspace. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
-| AI data boundaries | Guarantee no training on your data. | 🟡 | Planned; documented policy. Spec: docs/specs/ai-surface.md. |
 
 ### 15. Media & embeds
 
@@ -115,11 +112,10 @@ This file lists the **40** rows that are not finished, area by area, plus 22 int
 
 ### 16. Navigation & UX
 
-47 done · 1 partial · 0 planned · 2 out of scope
+48 done · 0 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Undo/redo (global) | App-wide undo beyond editor. | 🟡 | The global provider runs server effects attached to commands. Page rename, icon, cover, move, archive/restore, favorite, full-width, lock and database property edits now record invertible steps that persist through the server and refresh; rapid property edits coalesce into one step. Still open: bulk row actions and a visible history list. |
 | Actions menu: Turn into wiki | Convert page to a wiki. | ⛔ | Data model lacks wiki type; blocked pending spec. B11 ships the entry as a disabled menu item with tooltip "Wiki coming soon" — not faked. |
 | Open in desktop app | "Open in Windows app" entry. | ⛔ | No desktop app; N/A for web parity. |
 

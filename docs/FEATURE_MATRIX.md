@@ -357,7 +357,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Live cursors | Remote carets and selections. | 🟡 | Planned; needs presence transport. |
 | Avatars | Per-user avatars in the UI. | ✅ | Avatar field exists; presence UI pending. |
 | Page comments | Comment threads on a page. | ✅ | Threads, replies, resolve/reopen, edit/delete, reactions and `@mentions` all live on the page route. The server validates thread depth before writing (one reply level), stores stable top-level block anchors, and scopes mention notifications so a guest outside the page's read scope never receives a payload naming it. Spec: docs/specs/collaboration-deep.md. |
-| Inline comments | Comments anchored to a text range. | 🟡 | The bubble toolbar and the block context menu both resolve the top-level block id (`blockIdAt` / `blockAnchorId`) and dispatch `{ quote, blockId }`; the panel keeps the anchor in composer state, forwards it to `addCommentAction` for roots only (replies inherit their thread), the page route projects `blockId`, and a stored anchor renders a **Jump to block** button that scrolls the editor to `[data-block-id]`. The persisted shape still has no selection `from`/`to` offsets and no inline highlight, so exact range rendering remains open. R79.3. |
+| Inline comments | Comments anchored to a text range. | ✅ | Root comments persist block id plus UTF-16/plain-text `anchorFrom`/`anchorTo`; the server re-validates the range and quote against stored block content before writing. The panel jumps to and flashes the exact range, reloaded comments render as ProseMirror decorations without mutating the document, and changed text is marked stale instead of highlighting the wrong words. Cross-block selections clamp to the starting block. R79.3. |
 | Comment threads | Replies within a comment. | ✅ | One level of replies with their own composer, author, timestamp and reactions; replying notifies the parent author while they still belong to the workspace. `addCommentAction` walks the prospective parent chain and runs `validateThreadDepth` **before** `comment.create`, rejecting a missing parent, a cross-page parent, a cycle and a depth-2 reply with a specific message. The reply UI hides the affordance where the server would reject it. Root replies still expose edit/delete through their own menu; reply edit/delete is deliberately not offered. R79.1, R79.2. |
 | Workspace chat | Discussions with messages. | ✅ | **AI conversations**: docked panel in the main area, workspace tools (notes, members, projects/milestones, tasks), clickable note references, tool activity + model shown per answer; sidebar keeps the list; `GET/POST /api/chat`. |
 | Chat answer actions | Act on an AI answer. | ✅ | Right-click **and** a visible ⋯ button (plus Shift+F10): copy answer, copy as plain text, **save as a new note** (creates a real page from the Markdown and links it back), ask a follow-up, open the discussed note. |
@@ -540,10 +540,10 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Continue writing | Extend text from context. | ✅ | `continue` joins the continuation inline after the selection/block and appends a paragraph when invoked on the whole page, preserving one separator space. Reachable from both editor AI menus. |
 | Explain/Simplify | Rewrite for clarity. | ✅ | `explain` appends an explanation for the target and `simplify` replaces it with a plain-language rewrite. Both are registry skills and appear in the selection toolbar and block menu. |
 | AI connectors config | Choose provider/model per workspace. | ✅ | Settings → AI: OpenAI / DeepSeek / Gemini / OpenCode Go / custom, live **model list**, **encrypted** key (AES-256-GCM), connection test; env vars remain the fallback. Every request carries the product's user agent (`noema/<version>`); OpenCode Go additionally gets a stable `x-opencode-session` per conversation. |
-| Local model support | Run models without a cloud. | 🟡 | Planned; aligns with self-hosting. Spec: docs/specs/ai-surface.md. |
+| Local model support | Run models without a cloud. | ✅ | Local OpenAI-compatible endpoints (loopback/private/`.local`/`host.docker.internal`) can be saved, tested, listed and enabled without an API key; remote providers still require TLS and a key. Workspace → env precedence, key omission and encrypted-key preservation are tested. See `src/lib/ai-providers.ts` and the AI settings UI. |
 | Prompt library | Reusable saved prompts. | ✅ | `WorkspacePrompt` rows with workspace/personal scope, membership-gated CRUD/clone actions, a persisted settings manager and a chat-composer picker that inserts a prompt body into the draft without discarding typed text. Seven built-in AI skills stay code-owned. Spec: docs/specs/ai-surface.md (R25.22). |
 | AI cost controls | Token budgets per workspace. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
-| AI data boundaries | Guarantee no training on your data. | 🟡 | Planned; documented policy. Spec: docs/specs/ai-surface.md. |
+| AI data boundaries | Guarantee no training on your data. | ✅ | `docs/AI-BOUNDARIES.md` documents the per-surface data flow. The transport enforces a payload-stripping diagnostic sink (no prompts/responses unless `AI_LOG_PROMPTS=true`), adds no training/telemetry forwarding, refuses providers flagged as training-on-data unless explicitly allowed, and derives local-only processing from the effective endpoint. Transcription uses the same guard. |
 
 ## 15. Media & embeds
 <!-- AREA: 15. Media & embeds -->
@@ -604,7 +604,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Localization / i18n | Translatable UI. | ✅ | 5 locales (en/fr/es/de/ar incl. RTL) with a **coverage ratchet in the coherence gate** (27 of 63 client files consume `t()`: chrome, chat, tickets, cycles, settings, inbox, search, trash, projects board, comments, the workspace/member/danger/share/access dialogs, the database toolbar, the editor bubble toolbar and the Notion import dialog); long-tail settings strings and secondary forms remain English. |
 | RTL support | Right-to-left layouts. | ✅ | Arabic sets `dir="rtl"` and logical CSS; user-authored paragraphs, headings, quotes, titles, comments, mentions, links and search snippets now derive their own base direction from content, isolate mixed runs with `<bdi>`/`unicode-bidi`, and use logical borders. Covered by bidi/render tests for doc, title, comment and search surfaces. |
 | Notifications / toasts | Transient status messages. | ✅ | Planned. B82 spec `docs/specs/notifications.md` §9 standardizes the surface (202 `toast.*` sites / 41 files audited): one `<Toaster>`, `toast.info` banned by `check:coherence`, all strings via `t()` (51 literals → 0), shared catalog + `check-toasts.mjs`, durations 4 s/8 s — R82.30-R82.36. |
-| Undo/redo (global) | App-wide undo beyond editor. | 🟡 | The global provider runs server effects attached to commands. Page rename, icon, cover, move, archive/restore, favorite, full-width, lock and database property edits now record invertible steps that persist through the server and refresh; rapid property edits coalesce into one step. Still open: bulk row actions and a visible history list. |
+| Undo/redo (global) | App-wide undo beyond editor. | ✅ | Page metadata/move/archive/layout commands persist through the server. Bulk ticket archive/restore/property edits and database table row trash/restore now record one invertible command with per-row inverse patches; permanent delete stays non-undoable. A visible history popover lists recent local and collaborator actions, with undo/redo for entries this session can invert and correct stack ordering for multi-step undo/redo. |
 | Offline mode | Work without connectivity. | ✅ | Planned; core to local-first goal. |
 | Reduced-motion support | Respect motion preferences. | ✅ | Planned. |
 | High-contrast support | Stronger contrast theme. | ✅ | Planned. |
@@ -777,22 +777,22 @@ The table below summarizes how many feature rows fall into each status, per area
 | 4. Properties | 35 | 0 | 0 | 1 | 36 |
 | 5. Formulas | 16 | 0 | 0 | 0 | 16 |
 | 6. Templates | 9 | 0 | 0 | 1 | 10 |
-| 7. Collaboration | 19 | 7 | 0 | 0 | 26 |
+| 7. Collaboration | 20 | 6 | 0 | 0 | 26 |
 | 8. Sharing & permissions | 21 | 1 | 0 | 0 | 22 |
 | 9. Workspaces & structure | 23 | 0 | 0 | 0 | 23 |
 | 10. Version history | 9 | 0 | 0 | 0 | 9 |
 | 11. Search | 11 | 0 | 0 | 0 | 11 |
 | 12. Import & export | 22 | 0 | 0 | 0 | 22 |
 | 13. Integrations & API | 18 | 4 | 0 | 0 | 22 |
-| 14. AI | 13 | 3 | 0 | 0 | 16 |
+| 14. AI | 15 | 1 | 0 | 0 | 16 |
 | 15. Media & embeds | 19 | 2 | 0 | 0 | 21 |
-| 16. Navigation & UX | 47 | 1 | 0 | 2 | 50 |
+| 16. Navigation & UX | 48 | 0 | 0 | 2 | 50 |
 | 17. Data model & platform | 26 | 11 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 8 | 6 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 32 | 0 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **503** | **40** | **0** | **22** | **565** |
+| **Total** | **507** | **36** | **0** | **22** | **565** |
 
 ## Deliberate divergences
 
