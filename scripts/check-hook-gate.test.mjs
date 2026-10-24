@@ -46,7 +46,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Secret gate
         run: node scripts/check-secrets.mjs
-      - name: Authoring windows
+      - name: Identity gate
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-commit-dates.mjs
 `;
 
@@ -83,9 +83,9 @@ describe("the CI workflow enforces the checks the hook runs", () => {
     expect(problems[0].message).toContain("never runs scripts/check-secrets.mjs");
   });
 
-  it("fails when the authoring-window gate is not run at all", () => {
+  it("fails when the identity gate is not run at all", () => {
     const withoutWindows = WORKING.replace(
-      "      - name: Authoring windows\n        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-commit-dates.mjs\n",
+      "      - name: Identity gate\n        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-commit-dates.mjs\n",
       "",
     );
     const problems = auditWorkflow(withoutWindows);

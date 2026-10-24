@@ -6,11 +6,11 @@
 #   git config core.hooksPath .githooks
 # and remember that `git commit --no-verify` skips this hook. The check that is
 # enforced is the CI step (.github/workflows/ci.yml): the secret gate and the
-# authoring-window gate run there on every push and every pull request.
+# project identity gate run there on every push and every pull request.
 #
 # Two checks only, both fast and both about publishing:
-#   1. authoring-window policy — the pending commit must declare an in-window
-#      timestamp instead of silently stamping "now" (see docs/OPERATIONS.md).
+#   1. project identity policy — author and committer must use registered
+#      project-human e-mail addresses (see docs/OPERATIONS.md).
 #   2. secret gate — the repository is published as-is, so a credential
 #      committed once is public forever.
 #

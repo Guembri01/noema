@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # The authoring-window gate walks the whole history of the ref
+          # The commit-identity gate walks the whole history of the ref
           # under review, so a shallow checkout would make it vacuous.
           fetch-depth: 0
 
@@ -137,16 +137,10 @@ jobs:
       - name: Compose exposure
         run: node scripts/check-compose-exposure.mjs && node scripts/check-compose-exposure.test.mjs
 
-      # Every commit — author *and* committer date — must land inside a Noema
-      # authoring window (Wed–Sat evenings, Europe/Paris). See
-      # src/lib/dates-policy.ts for the rule and the tests that pin its edges.
-      # A commit GitHub itself created is exempt as a whole: the anchor is the
-      # committer (an App account, or the identity GitHub commits merges
-      # under), so neither field of it is checked. The merge commit GitHub
-      # synthesises for a pull request needs exactly that — it is dated when
-      # GitHub rebuilt the ref, and it carries the human's address in its
-      # author field.
-      - name: Authoring windows
+      # Every human-authored commit must use registered project identities.
+      # Commit dates are unrestricted. GitHub automation is exempt as a whole
+      # when its identity is the committer.
+      - name: Commit identities
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-commit-dates.mjs
 
       # The pre-commit hook is a convenience of the clone, not a check:

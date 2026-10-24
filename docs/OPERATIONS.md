@@ -774,23 +774,11 @@ predates B75 (§5.2).
 written*; §2 and §5 were re-read and re-verified against the post-landing
 versions. Re-check those two sections if either file changes again.
 
-## 11. Authoring-window policy
+## 11. Commit identity policy
 
-The project timeline follows a fixed rhythm: work lands only inside four
-overnight windows, in `Europe/Paris`:
-
-```
-Wed 19:00 → Thu 06:00
-Thu 19:00 → Fri 06:00
-Fri 19:00 → Sat 06:00
-Sat 19:00 → Sun 06:00
-```
-
-A window is **half-open**: `19:00:00` is inside it and `06:00:00` is outside
-it, so the last allowed instant of a night is `05:59:59`. Monday and Tuesday
-have no window. The offset is read from the platform ICU database (summer
-`+02:00`, winter `+01:00`), never hardcoded, so the two yearly transitions are
-handled automatically; both happen to fall inside a Saturday night.
+Commits may be made at any date and time. Author and committer e-mail addresses
+must belong to a project human registered in the `HUMANS` map in
+`scripts/check-commit-dates.mjs`.
 
 ### 8.2 Seal the stored two-factor seeds (B05)
 
@@ -1218,32 +1206,13 @@ predates B75 (§5.2).
 written*; §2 and §5 were re-read and re-verified against the post-landing
 versions. Re-check those two sections if either file changes again.
 
-## 11. Authoring-window policy
+## 11. Commit identity policy
 
-The project timeline follows a fixed rhythm: work lands only inside four
-overnight windows, in `Europe/Paris`:
+### 11.1 The policy
 
-```
-Wed 19:00 → Thu 06:00
-Thu 19:00 → Fri 06:00
-Fri 19:00 → Sat 06:00
-Sat 19:00 → Sun 06:00
-```
-
-A window is **half-open**: `19:00:00` is inside it and `06:00:00` is outside
-it, so the last allowed instant of a night is `05:59:59`. Monday and Tuesday
-have no window. The offset is read from the platform ICU database (summer
-`+02:00`, winter `+01:00`), never hardcoded, so the two yearly transitions are
-handled automatically; both happen to fall inside a Saturday night.
-
-### 11.1 The rule, in code
-
-`src/lib/dates-policy.ts` is the single source of truth — pure functions, no
-dependencies, total (invalid input returns `null`/`false`, never throws).
-`src/lib/dates-policy.test.ts` pins the edges: every opening and closing hour,
-the midnight rollover, weekday rejection, the two DST transitions, UTC
-conversion and malformed keys (`2026-02-30` stays invalid rather than rolling
-over to 2 March).
+Commits may be made at any date and time. Author and committer e-mail addresses
+must belong to a project human registered in the `HUMANS` map in
+`scripts/check-commit-dates.mjs`.
 
 ### 11.2 The gate
 
@@ -1252,25 +1221,22 @@ npm run check:dates          # the commits of the ref under review
 node scripts/check-commit-dates.mjs --pending   # the commit about to be made
 ```
 
-`check:dates` asserts that **both** the author and the committer date of every
-commit of the ref under review fall inside a window, and that both e-mail
-addresses belong to a project human. It runs in CI (`.github/workflows/ci.yml`,
-"Authoring windows") on a
-full-history checkout, so a rebase or an amend that moves a date out of a
-window fails the build rather than silently shipping.
+`check:dates` checks that both author and committer e-mail addresses on every
+commit of the ref under review belong to a project human. Commit dates are
+unrestricted. It runs in CI (`.github/workflows/ci.yml`, "Commit identities")
+on a full-history checkout.
 
 It walks the history of the ref under review — the merge commit in a pull
 request, the pushed tip in a push — and not every ref of the repository. A
 checkout fetches every branch, so walking every ref would have pulled the
 commits of the branches that merely happen to be open into the gate.
 
-A commit that GitHub itself created is exempt from both checks — as a whole,
-and the anchor is the **committer**: if the committer is GitHub's automation
+A commit that GitHub itself created is exempt from the identity check as a
+whole, and the anchor is the **committer**: if the committer is GitHub's automation
 (App accounts, which carry the reserved `[bot]` marker, and the
 `noreply@github.com` identity GitHub commits merges under), then neither the
-author field nor the committer field is checked, against either the date or
-the identity policy. A bot commit is not a human authoring decision, so
-neither its clock nor its identity is a project decision.
+author field nor the committer field is checked. Its date is unrestricted,
+like every other commit.
 
 The scope has to be the whole commit: the merge commit GitHub synthesises for
 a pull request is dated when GitHub rebuilt the ref, and it carries the
@@ -1287,23 +1253,15 @@ not a bot, and the policy applies to it like to any other human.
 
 ### 11.3 Making a commit
 
-The versioned hook `.githooks/pre-commit` refuses a commit that would be stamped
-with the current wall clock, and it runs the secret gate too. It is
+The versioned hook `.githooks/pre-commit` checks commit identities and runs the
+secret gate too. It is
 **optional**: `core.hooksPath` is a local Git setting, so the repository cannot
 switch it on for you — enable it once per clone with
 `git config core.hooksPath .githooks` — and `git commit --no-verify` skips it
 altogether. The check that is enforced is the CI step:
-`.github/workflows/ci.yml` runs the secret gate and the authoring-window gate
+`.github/workflows/ci.yml` runs the secret gate and the identity gate
 on every push and every pull request, and neither step is allowed to fail
 silently.
-
-Declare an in-window timestamp instead:
-
-```sh
-GIT_AUTHOR_DATE="2026-10-17T19:00:00+02:00" \
-GIT_COMMITTER_DATE="2026-10-17T19:00:00+02:00" \
-git commit -m "feat(scope): message"
-```
 
 The repository-local identity is `Bilel Guembri <bilel.guembri@outlook.fr>`;
 the second maintainer commits with an explicit override:
@@ -1316,14 +1274,13 @@ git commit -m "…"
 
 ### 11.4 What the policy covers
 
-**In scope** — every commit's author and committer date, and its author and
-committer identity; and the project's own records: `CHANGELOG.md`, `CITATION.cff`,
-`README.md`, the docs tree, release and installer metadata.
+**In scope** — every commit's author and committer identity; and the project's
+own records: `CHANGELOG.md`, `CITATION.cff`, `README.md`, the docs tree, release
+and installer metadata.
 
 **Out of scope, deliberately** — synthetic *test fixtures* and *demo workspace
-data* (they must exercise all seven weekdays to test calendar logic, and the
-demo is a fictional company's roadmap, not a record of our working hours);
+data* (they must exercise all seven weekdays to test calendar logic; the demo is
+a fictional company's roadmap, not a statement about project identities);
 *external references* (`PROTOCOL_VERSION = "2024-11-05"` is the real MCP
 revision, `NOTION_VERSION = "2022-06-28"` is the real API header); and
 *invalid-date sentinels* (`2026-02-30` exists to prove the parser rejects it).
-
