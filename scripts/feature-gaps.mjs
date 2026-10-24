@@ -40,7 +40,7 @@ const total = rows.length;
 
 /** The shortlist a maintainer should read first (kept in sync by hand). */
 const PRIORITY = [
-  ["Suggestions mode", "Propose edits for approval with a diff overlay.", "7. Collaboration"],
+  ["Suggestions mode persistence", "Block-level suggesting, decorations and accept/reject ship; persist the session and share it with collaborators, then add character-level diffs.", "7. Collaboration"],
   ["Pagination everywhere", "Databases, tickets and audit lists load bounded sets; cursor pagination is pending.", "17. Data model & platform"],
   ["Object storage & backups", "Uploads and scheduled backups to S3-compatible storage.", "17. Data model & platform"],
   ["SAML SSO", "OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer.", "8. Sharing & permissions"],

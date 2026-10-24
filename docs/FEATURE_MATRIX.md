@@ -367,8 +367,8 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Comment edit | Fix a typo in your comment. | ✅ | Authors (and admins) edit inline with Save/Cancel. |
 | Comment reactions | Emoji reactions on comments. | ✅ | 👍🎉❤️😄🙌👀❓ picker with optimistic chips, per-user counts and a `CommentReaction` row per person. The page query groups reactions for roots and replies, and `CommentNode.replies[].reactions` renders the same chip row under a reply. R79.2a. |
 | Comment mentions | Mention people in comments. | 🟡 | `@Name`, `@first`, `@ada@example.com` notify matching workspace members (`page.mention`); matching is a tested pure helper. Targets are the current `workspaceMember` rows, the author is skipped, and a guest target is filtered through `guestReadablePageIds` so a guest outside the page read scope receives neither the notification nor its `pageId`. Still open: no cross-event coalescing, edits do not re-dispatch, and inline `@user` nodes in page content dispatch nothing. R79.4. |
-| Suggestions mode | Propose edits for approval. | ✅ | Planned; diff overlay needed. |
-| Accept/reject suggestion | Resolve proposed changes. | ✅ | Planned. |
+| Suggestions mode | Propose edits for approval. | 🟡 | A block-level track-changes session ships: suggesting toggle, pending list, insert/replace decorations, deleted-block markers, and accept/reject one/all. It is session-local (not persisted across reloads or shared live), and the diff is block-level rather than character-level. |
+| Accept/reject suggestion | Resolve proposed changes. | 🟡 | Accept advances the base snapshot and reject rebuilds the affected block from it; structural blocks are decorated but not surgically revertible. Persistence/collaborative review remains. |
 | Following pages | Follow a page for updates. | ✅ | The page-follow bell toggles `PageFollow`; `notifyPageUpdated` is the consumer: it resolves followers, honours each follower's per-type `page.updated` preference and quiet hours, dedupes within 24 h, and writes one `page.updated` row per deliverable recipient. Covered by `notifications.test.ts`, `pages-follow-notify.test.ts` and `follow-cross-workspace.test.ts`; the cross-workspace cleanup tests pin the stale-follow case. |
 | Notification inbox | Central list of notifications. | ✅ | `/w/<slug>/inbox` reads the newest notifications, folds them into the pure inbox engine and renders day buckets, unread counts, page grouping, mark-read/mark-all-read, a quiet-hours banner and links to the page or ticket. Delivery preferences (`ALL`/`MENTIONS`/`NONE`, digest cadence, quiet hours) are applied in `buildInbox`; `page.updated` and `ticket.assigned` are both written. Comment notifications deep-link to `?comment=<id>#<blockId>` and the comment panel scrolls to and briefly highlights the exact thread. Covered by `notification-inbox.test.ts`, `comments-reply-notify.test.ts`, `labels.test.ts`, `notification-preferences-form.test.ts` and the digest route tests. |
 | Notification preferences | Control what triggers alerts. | ✅ | Settings → Notifications renders the per-user form for every notification type (ALL/MENTIONS/NONE), digest cadence and quiet hours, backed by `getNotificationPrefs`/`updateNotificationPrefs` and the validated `notification-prefs-engine` (page → workspace → user-default resolution, `NONE` cannot be bypassed). The digest cron reads the same blob. Covered by `prefs-view.test.ts`, `notification-prefs-engine.test.ts`, `notification-preferences-form.test.ts` and `digest/route.test.ts`. |
@@ -775,7 +775,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 4. Properties | 34 | 1 | 0 | 1 | 36 |
 | 5. Formulas | 15 | 1 | 0 | 0 | 16 |
 | 6. Templates | 6 | 3 | 0 | 1 | 10 |
-| 7. Collaboration | 19 | 7 | 0 | 0 | 26 |
+| 7. Collaboration | 17 | 9 | 0 | 0 | 26 |
 | 8. Sharing & permissions | 20 | 2 | 0 | 0 | 22 |
 | 9. Workspaces & structure | 20 | 3 | 0 | 0 | 23 |
 | 10. Version history | 9 | 0 | 0 | 0 | 9 |
@@ -790,7 +790,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **470** | **71** | **0** | **22** | **563** |
+| **Total** | **468** | **73** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 
