@@ -303,7 +303,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Button property | Trigger actions from a row. | ✅ | Planned. |
 | Place/location property | Address with map preview. | ✅ | Planned. |
 | Verification property | Verified-by-owner marker. | ✅ | Planned; wiki-oriented. |
-| AI autofill property | AI-generated value per row. | 🟡 | Planned; depends on AI layer. |
+| AI autofill property | AI-generated value per row. | ✅ | `AI_AUTOFILL` property config (prompt, max tokens, temperature) is edited in the property dialog, validated by `@/lib/ai-autofill`, and the table cell renders an Autofill button wired to `runAiAutofillAction`; the server checks workspace/page access, frames the row context and writes the generated value. |
 | Property reorder/hide | Arrange and hide properties. | ✅ | Hide per view; drag a column header onto another to reorder — positions persist server-side. |
 | Property delete | Remove a property and its data. | ✅ | Confirmation dialog names the property and warns about its values before deleting. |
 | Property type change | Convert a property's type. | ⛔ | Lossy conversions; only safe transforms planned later. |
@@ -530,7 +530,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | --- | --- | --- | --- |
 | AI writing assist | Draft, rewrite, and refine text. | ✅ | “Ask AI” skills submenu in the selection toolbar and block menu; BYO provider key. Spec: docs/specs/ai-surface.md. |
 | Q&A over workspace | Ask questions answered from your content. | ✅ | Prompt → keywords → relevance-scored pages feed the model (`src/lib/retrieval.ts`); verified against the live provider. |
-| AI autofill property | Generate row values. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
+| AI autofill property | Generate row values. | ✅ | The property editor exposes the prompt/sampling config, the row cell exposes Autofill, and `runAiAutofillAction` validates config, authorizes the row/property, frames other columns as context and writes the generated value. |
 | AI block | Prompt block that generates content. | ✅ | Planned. Spec: docs/specs/ai-surface.md. |
 | Summarization | Summarize a page or section. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | Translation | Translate selection or page. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
@@ -774,7 +774,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 1. Editor & blocks | 90 | 9 | 0 | 2 | 101 |
 | 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
 | 3. Databases | 51 | 2 | 0 | 0 | 53 |
-| 4. Properties | 34 | 1 | 0 | 1 | 36 |
+| 4. Properties | 35 | 0 | 0 | 1 | 36 |
 | 5. Formulas | 16 | 0 | 0 | 0 | 16 |
 | 6. Templates | 7 | 2 | 0 | 1 | 10 |
 | 7. Collaboration | 19 | 7 | 0 | 0 | 26 |
@@ -784,7 +784,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 11. Search | 11 | 0 | 0 | 0 | 11 |
 | 12. Import & export | 22 | 0 | 0 | 0 | 22 |
 | 13. Integrations & API | 18 | 4 | 0 | 0 | 22 |
-| 14. AI | 7 | 9 | 0 | 0 | 16 |
+| 14. AI | 8 | 8 | 0 | 0 | 16 |
 | 15. Media & embeds | 19 | 2 | 0 | 0 | 21 |
 | 16. Navigation & UX | 46 | 2 | 0 | 2 | 50 |
 | 17. Data model & platform | 26 | 11 | 0 | 0 | 37 |
@@ -792,7 +792,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 30 | 2 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **485** | **58** | **0** | **22** | **565** |
+| **Total** | **487** | **56** | **0** | **22** | **565** |
 
 ## Deliberate divergences
 

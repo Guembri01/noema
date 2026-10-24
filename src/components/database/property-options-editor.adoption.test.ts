@@ -128,6 +128,23 @@ describe("renderToStaticMarkup — property options editor (empty state)", () =>
   });
 });
 
+describe("renderToStaticMarkup — AI autofill config", () => {
+  const aiProperty = {
+    id: "ai",
+    name: "Summary",
+    type: "AI_AUTOFILL",
+    config: { prompt: "Summarize the row." },
+  } as unknown as DBProperty;
+  const html = render(aiProperty);
+
+  it("renders the prompt and sampling controls", () => {
+    expect(html).toContain('data-testid="ai-autofill-config"');
+    expect(html).toContain("Summarize the row.");
+    expect(html).toContain("Max tokens");
+    expect(html).toContain("Temperature");
+  });
+});
+
 describe("property-options-editor source", () => {
   const source = readFileSync(
     fileURLToPath(new URL("./property-options-editor.tsx", import.meta.url)),

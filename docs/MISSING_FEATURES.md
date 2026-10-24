@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 565 feature rows — 485 implemented · 58 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 565 feature rows — 487 implemented · 56 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **58** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **56** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -53,11 +53,10 @@ This file lists the **58** rows that are not finished, area by area, plus 22 int
 
 ### 4. Properties
 
-34 done · 1 partial · 0 planned · 1 out of scope
+35 done · 0 partial · 0 planned · 1 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| AI autofill property | AI-generated value per row. | 🟡 | Planned; depends on AI layer. |
 | Property type change | Convert a property's type. | ⛔ | Lossy conversions; only safe transforms planned later. |
 
 ### 6. Templates
@@ -105,11 +104,10 @@ This file lists the **58** rows that are not finished, area by area, plus 22 int
 
 ### 14. AI
 
-7 done · 9 partial · 0 planned
+8 done · 8 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| AI autofill property | Generate row values. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | Summarization | Summarize a page or section. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | Translation | Translate selection or page. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |
 | Continue writing | Extend text from context. | 🟡 | Planned. Spec: docs/specs/ai-surface.md. |

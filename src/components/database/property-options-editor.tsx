@@ -45,13 +45,18 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DialogContent } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { Input, Textarea } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Stepper } from "@/components/ui/stepper";
 import { Switch } from "@/components/ui/switch";
 import { Tag } from "@/components/ui/tag";
 import { Tooltip } from "@/components/ui/tooltip";
 import { FormulaEditor } from "@/components/editor/formula-editor";
+import {
+  normalizeAiAutofillConfig,
+  validateAiAutofillConfig,
+  type AiAutofillConfig,
+} from "@/lib/ai-autofill";
 import { Plus, X } from "lucide-react";
 
 type OptionDraft = { id: string; name: string; color: string; group?: string };
@@ -400,6 +405,7 @@ export function PropertyOptionsEditor({
   const isNumber = typeCode === "NUMBER";
   const isButton = typeCode === "BUTTON";
   const isFormula = typeCode === "FORMULA";
+  const isAiAutofill = typeCode === "AI_AUTOFILL";
 
   // --- Default value (config.default) --------------------------------------
   // Live option list (SELECT/MULTI_SELECT/STATUS edits are already reflected in
@@ -661,6 +667,20 @@ export function PropertyOptionsEditor({
     setExpression(next);
     persist({ ...(configRef.current ?? {}), expression: next } as PropertyConfig);
   };
+
+  // --- AI AUTOFILL: prompt + sampling (`@/lib/ai-autofill`) ------------------
+  const [aiDraft, setAiDraft] = useState<AiAutofillConfig>(() =>
+    normalizeAiAutofillConfig(property.config),
+  );
+
+  const commitAi = (patch: Partial<AiAutofillConfig>) => {
+    const next = normalizeAiAutofillConfig({ ...aiDraft, ...patch });
+    setAiDraft(next);
+    if (validateAiAutofillConfig(next).length === 0) {
+      persist({ ...(configRef.current ?? {}), ...next } as PropertyConfig);
+    }
+  };
+  const aiIssues = isAiAutofill ? validateAiAutofillConfig(aiDraft) : [];
 
   // --- Default value: validated through `defaultValueFor` ------------------
   const [defaultDraft, setDefaultDraft] = useState<unknown>(() => readDefault(property.config));
@@ -1328,6 +1348,66 @@ export function PropertyOptionsEditor({
             Reference other columns with prop(&quot;Name&quot;); functions,
             signature help and diagnostics appear as you type.
           </p>
+        </section>
+      )}
+
+      {isAiAutofill && (
+        <section className="mt-4 space-y-3" data-testid="ai-autofill-config">
+          <h3 className="text-sm font-medium">AI autofill</h3>
+          <label className="block text-xs text-muted">
+            Prompt
+            <Textarea
+              value={aiDraft.prompt}
+              onChange={(event) => setAiDraft({ ...aiDraft, prompt: event.target.value })}
+              onBlur={(event) => commitAi({ prompt: event.target.value })}
+              rows={4}
+              className="mt-1"
+              placeholder="Write a one-line summary of this row using the other columns."
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-xs text-muted">
+              Max tokens
+              <Input
+                type="number"
+                size="sm"
+                min={1}
+                max={2000}
+                value={aiDraft.maxTokens ?? ""}
+                onChange={(event) =>
+                  setAiDraft({ ...aiDraft, maxTokens: Number(event.target.value) })
+                }
+                onBlur={() => commitAi({ maxTokens: aiDraft.maxTokens })}
+              />
+            </label>
+            <label className="text-xs text-muted">
+              Temperature
+              <Input
+                type="number"
+                size="sm"
+                min={0}
+                max={2}
+                step={0.1}
+                value={aiDraft.temperature ?? ""}
+                onChange={(event) =>
+                  setAiDraft({ ...aiDraft, temperature: Number(event.target.value) })
+                }
+                onBlur={() => commitAi({ temperature: aiDraft.temperature })}
+              />
+            </label>
+          </div>
+          {aiIssues.length > 0 ? (
+            <ul className="space-y-1 text-xs text-danger">
+              {aiIssues.map((issue) => (
+                <li key={issue.code}>{issue.message}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted">
+              The row cell shows an Autofill button; generation uses the other
+              columns as context and writes here.
+            </p>
+          )}
         </section>
       )}
 
