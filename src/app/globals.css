@@ -770,6 +770,33 @@ body {
 .noema-editor .ProseMirror [data-type="block-math"] {
   margin: 6px 0;
 }
+.noema-math-node {
+  cursor: text;
+  border-radius: var(--radius-xs);
+}
+.noema-math-node:focus-visible,
+.noema-math-node.is-selected {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.noema-math-node[data-equation-state="error"] {
+  padding: 0 var(--space-1);
+  background: var(--surface-2);
+}
+.noema-math-source {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  white-space: pre-wrap;
+}
+.noema-math-error {
+  margin-inline-start: var(--space-1);
+  color: var(--danger);
+  font-size: 0.75em;
+  overflow-wrap: anywhere;
+}
+.noema-math-empty {
+  color: var(--muted);
+  font-size: 0.875em;
+}
 .noema-drag-handle:hover {
   background: var(--surface-2);
   opacity: 1;

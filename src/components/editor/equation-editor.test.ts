@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import katex from "katex";
+import { renderEquation } from "@/lib/math-tex";
 import {
   EQUATION_VIEW_OPTIONS,
   EquationDialogSurface,
@@ -70,15 +70,14 @@ function dialogProps(
   overrides: Partial<EquationDialogSurfaceProps> = {},
 ): EquationDialogSurfaceProps {
   const latex = overrides.latex ?? "\\frac{a}{b}";
-  const error = equationError(latex);
+  const rendered = renderEquation(latex, { displayMode: true });
+  const error = rendered.error;
   return {
     kind: "block",
     latex,
     view: "source",
     error,
-    preview: error
-      ? ""
-      : katex.renderToString(latex, { throwOnError: true, displayMode: true }),
+    preview: error ? "" : rendered.html,
     direction: equationDirection(latex),
     symbolQuery: "",
     symbolGroups: [],
@@ -91,6 +90,7 @@ function dialogProps(
     onInsertSymbol: () => {},
     onCommit: () => {},
     onClose: () => {},
+    onBlur: () => {},
     onKeyDown: () => {},
     ...overrides,
   };
@@ -153,16 +153,46 @@ describe("EquationDialogSurface — preview", () => {
   it("renders the KaTeX preview for valid LaTeX", () => {
     const html = renderDialog({ view: "preview", latex: "x^2 + y^2" });
     expect(html).toContain("katex");
-    // The preview pane owns the live region; the source box is not mounted.
     expect(html).toContain('aria-live="polite"');
-    expect(html).not.toContain('aria-label="LaTeX source"');
+    expect(html).toContain('data-equation-view="preview"');
+    // The source textarea stays mounted (hidden) so its caret/undo history
+    // survive a round-trip through Preview.
+    expect(html).toContain('aria-label="LaTeX source"');
+    expect(html).toContain("hidden");
     expect(html).not.toMatch(/#[0-9a-fA-F]{3,6}\b/);
   });
 
-  it("renders an empty preview pane when the LaTeX does not parse", () => {
+  it("renders an inline error in the preview pane when the LaTeX does not parse", () => {
     const html = renderDialog({ view: "preview", latex: "\\frac{1}{" });
     expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("text-danger");
     expect(html).not.toContain("katex");
+  });
+});
+
+describe("EquationDialogSurface — live editing", () => {
+  it("shows the live KaTeX preview while the source box is still editable", () => {
+    const html = renderDialog({ view: "source", latex: "\\RR" });
+    expect(html).toContain('data-testid="equation-live-preview"');
+    expect(html).toContain("katex");
+    expect(html).toContain('aria-label="LaTeX source"');
+    expect(html).not.toContain('aria-invalid="true"');
+  });
+
+  it("uses the shared macro table in the live preview", () => {
+    // `\RR` is part of the documented macro set, so the source is valid and
+    // renders rather than failing with "Undefined control sequence".
+    expect(equationError("\\RR")).toBeNull();
+    expect(equationError("\\abs{x}")).toBeNull();
+    expect(renderEquation("\\RR").html).toContain("katex");
+  });
+
+  it("keeps the error message in the source pane, not just the preview", () => {
+    const html = renderDialog({ view: "source", latex: "\\frac{1}{" });
+    expect(html).toContain('aria-invalid="true"');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain('aria-describedby="eq-error"');
   });
 });
 

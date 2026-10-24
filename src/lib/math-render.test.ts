@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MAX_MACRO_DEPTH,
+  DEFAULT_MAX_MACRO_LENGTH,
   describeMath,
   expandMacros,
   parseMath,
@@ -134,6 +135,17 @@ describe("expandMacros", () => {
 
   it("exposes a default depth bound", () => {
     expect(DEFAULT_MAX_MACRO_DEPTH).toBeGreaterThan(0);
+  });
+
+  it("stops output growth at the length bound", () => {
+    const result = expandMacros("\\a", {
+      macros: { a: "\\b\\b", b: "x".repeat(100) },
+      maxDepth: 20,
+      maxLength: 250,
+    });
+    expect(result.latex.length).toBeLessThanOrEqual(250);
+    expect(result.truncated).toBe(true);
+    expect(DEFAULT_MAX_MACRO_LENGTH).toBeGreaterThanOrEqual(250);
   });
 });
 

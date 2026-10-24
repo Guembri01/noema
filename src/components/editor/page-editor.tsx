@@ -32,7 +32,7 @@ import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
 import TextAlign from "@tiptap/extension-text-align";
 import { TableKit } from "@tiptap/extension-table/kit";
-import { Mathematics } from "@tiptap/extension-mathematics";
+import { Mathematics } from "@/components/editor/extensions/math-node";
 import "katex/dist/katex.min.css";
 import { toast } from "sonner";
 import { BlockContextMenu } from "@/components/editor/block-context-menu";
@@ -1045,8 +1045,8 @@ function PageEditorBody({
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       TableKit.configure({ table: { resizable: true } }),
       MathAutoDetect,
+      // Shared node views: bounded macros + inline errors (see math-tex.ts).
       Mathematics.configure({
-        katexOptions: { throwOnError: false },
         inlineOptions: { onClick: editEquation },
         blockOptions: { onClick: editEquation },
       }),

@@ -29,6 +29,9 @@ const BASELINE = {
 /** Injection sinks that are allowed, with the reason. */
 const DSI_ALLOW = [
   "src/components/editor/equation-editor.tsx",
+  // KaTeX node views inject only `renderEquation()`'s output, which is built
+  // with `trust: false`, bounded macros and escaped KaTeX markup (math-tex.ts).
+  "src/components/editor/extensions/math-node.tsx",
   "src/lib/markdown.ts",
   // HTML producers/sanitizers: these modules exist to build or clean HTML, so
   // they are the single audited place where raw HTML is constructed. Every

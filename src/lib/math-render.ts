@@ -9,8 +9,9 @@
  * string to KaTeX:
  *
  *  - {@link expandMacros} applies user-defined `\newcommand`-style macros with
- *    a bounded recursion depth and a cycle guard, so a malicious or fat-fingered
- *    definition such as `\a -> \a` (or a mutually recursive pair) terminates.
+ *    a bounded recursion depth, an output-length budget and a cycle guard, so a
+ *    malicious or fat-fingered definition such as `\a -> \a` (or a mutually
+ *    recursive pair) terminates without exponential growth.
  *  - {@link parseMath} builds a small structural tree (groups, commands,
  *    superscripts/subscripts, `\begin`/`\end` environments with matrix/align
  *    rows and cells) without evaluating anything.
@@ -39,6 +40,13 @@ export type ExpandMacrosOptions = {
   macros?: MathMacroMap;
   /** Maximum expansion depth before expansion stops; defaults to 20. */
   maxDepth?: number;
+  /**
+   * Maximum number of characters expansion may emit before it stops growing
+   * the result. Defaults to {@link DEFAULT_MAX_MACRO_LENGTH}. This is a
+   * defence against deeply-nested `\a -> \b\b` style definitions, which a pure
+   * depth bound permits to grow exponentially.
+   */
+  maxLength?: number;
 };
 
 /** Result of {@link expandMacros}. */
@@ -51,10 +59,15 @@ export type MacroExpansion = {
   cycles: string[];
   /** Whether expansion stopped early at the depth bound. */
   depthExceeded: boolean;
+  /** Whether expansion stopped early at the output-length bound. */
+  truncated?: boolean;
 };
 
 /** Default recursion bound used by {@link expandMacros}. */
 export const DEFAULT_MAX_MACRO_DEPTH = 20;
+
+/** Default output-length bound used by {@link expandMacros}. */
+export const DEFAULT_MAX_MACRO_LENGTH = 50_000;
 
 type MacroDef = { body: string; arity: number };
 
@@ -192,6 +205,11 @@ export function expandMacros(latex: string, options: ExpandMacrosOptions = {}): 
     typeof requested === "number" && Number.isFinite(requested) && requested > 0
       ? Math.floor(requested)
       : DEFAULT_MAX_MACRO_DEPTH;
+  const requestedLength = options.maxLength;
+  const maxLength =
+    typeof requestedLength === "number" && Number.isFinite(requestedLength) && requestedLength > 0
+      ? Math.floor(requestedLength)
+      : DEFAULT_MAX_MACRO_LENGTH;
 
   const table = new Map<string, MacroDef>();
   const provided = options.macros;
@@ -209,14 +227,36 @@ export function expandMacros(latex: string, options: ExpandMacrosOptions = {}): 
   const applied: string[] = [];
   const cycles: string[] = [];
   let depthExceeded = false;
+  let truncated = false;
+  let remaining = maxLength;
+
+  /** Append output while honouring the shared character budget. */
+  const append = (out: string, value: string): string => {
+    if (remaining <= 0) {
+      truncated = true;
+      return out;
+    }
+    if (value.length > remaining) {
+      truncated = true;
+      const clipped = out + value.slice(0, remaining);
+      remaining = 0;
+      return clipped;
+    }
+    remaining -= value.length;
+    return out + value;
+  };
 
   const expand = (input: string, depth: number, active: ReadonlySet<string>): string => {
     let out = "";
     let i = 0;
 
     while (i < input.length) {
+      if (remaining <= 0) {
+        truncated = true;
+        break;
+      }
       if (input.charAt(i) !== "\\") {
-        out += input.charAt(i);
+        out = append(out, input.charAt(i));
         i++;
         continue;
       }
@@ -224,19 +264,19 @@ export function expandMacros(latex: string, options: ExpandMacrosOptions = {}): 
       const cmd = readCommandAt(input, i);
       const def = table.get(cmd.name);
       if (def === undefined) {
-        out += input.slice(i, cmd.end);
+        out = append(out, input.slice(i, cmd.end));
         i = cmd.end;
         continue;
       }
       if (active.has(cmd.name)) {
         if (!cycles.includes(cmd.name)) cycles.push(cmd.name);
-        out += input.slice(i, cmd.end);
+        out = append(out, input.slice(i, cmd.end));
         i = cmd.end;
         continue;
       }
       if (depth >= maxDepth) {
         depthExceeded = true;
-        out += input.slice(i, cmd.end);
+        out = append(out, input.slice(i, cmd.end));
         i = cmd.end;
         continue;
       }
@@ -270,14 +310,21 @@ export function expandMacros(latex: string, options: ExpandMacrosOptions = {}): 
 
       const nextActive = new Set(active);
       nextActive.add(cmd.name);
-      out += expand(body, depth + 1, nextActive);
+      out = append(out, expand(body, depth + 1, nextActive));
       i = j;
     }
 
     return out;
   };
 
-  return { latex: expand(inline.rest, 0, new Set<string>()), applied, cycles, depthExceeded };
+  const result: MacroExpansion = {
+    latex: expand(inline.rest, 0, new Set<string>()),
+    applied,
+    cycles,
+    depthExceeded,
+  };
+  if (truncated) result.truncated = true;
+  return result;
 }
 
 /* -------------------------------------------------------------- structures */
@@ -336,7 +383,11 @@ export type MathParseResult = {
   nodes: MathNode[];
 };
 
-/** Environments the engine understands (matrix family + alignment + cases). */
+/**
+ * Environments the engine understands (the KaTeX matrix/alignment/cases
+ * families). Kept in sync with KaTeX's supported environments so the read-path
+ * validator never reports a valid environment as unknown.
+ */
 export const KNOWN_ENVIRONMENTS: readonly string[] = [
   "matrix",
   "pmatrix",
@@ -346,15 +397,26 @@ export const KNOWN_ENVIRONMENTS: readonly string[] = [
   "Vmatrix",
   "smallmatrix",
   "array",
+  "darray",
   "cases",
+  "dcases",
+  "rcases",
   "align",
   "align*",
   "aligned",
+  "alignat",
+  "alignat*",
   "gather",
+  "gather*",
   "gathered",
   "split",
   "equation",
   "equation*",
+  "eqnarray",
+  "eqnarray*",
+  "multline",
+  "multline*",
+  "CD",
 ];
 
 /** Commands that are never allowed through to a renderer. */
@@ -847,6 +909,8 @@ export type KatexInputOptions = {
   macros?: MathMacroMap;
   /** Maximum macro expansion depth. */
   maxDepth?: number;
+  /** Maximum expanded output length (characters). */
+  maxLength?: number;
 };
 
 /** The exact string and mode to hand to a KaTeX renderer. */
@@ -881,7 +945,11 @@ export function toKatexInput(latex: string, options: KatexInputOptions = {}): Ka
     body = source.slice(1, -1);
   }
 
-  const expanded = expandMacros(body, { macros: options.macros, maxDepth: options.maxDepth });
+  const expanded = expandMacros(body, {
+    macros: options.macros,
+    maxDepth: options.maxDepth,
+    maxLength: options.maxLength,
+  });
   return { latex: restrictCommands(expanded.latex).trim(), displayMode };
 }
 

@@ -23,6 +23,7 @@ import { buildTocItems, tocAnchorId, type TocHeading, type TocItem } from "@/lib
 import { truncateMiddle } from "@/lib/truncate";
 import { cn } from "@/lib/utils";
 import { styleColor } from "@/lib/serialize";
+import { validateLatex } from "@/lib/math-render";
 import { sanitizeHref } from "@/lib/validation";
 
 /**
@@ -144,15 +145,22 @@ function renderInline(nodes: PMNode[] = []): ReactNode {
       // rasterisation would need a raw-HTML injection sink, which this read path
       // deliberately does not have — tracked as a follow-up.
       const latex = String(node.attrs?.latex ?? "");
+      const issue = validateLatex(latex)[0];
       return (
         <span
           key={key}
           className="noema-math-inline"
           data-latex={latex}
+          data-math-error={issue?.message}
           role="math"
           aria-label={latex}
         >
           {latex}
+          {issue ? (
+            <span role="alert" className="noema-math-error">
+              {issue.message}
+            </span>
+          ) : null}
         </span>
       );
     }
@@ -928,17 +936,25 @@ function renderBlock(
       return renderTable(node, key, locale, ctx);
     case "blockMath": {
       // LaTeX preview, block form: centred, mono-styled (`.noema-math-block`),
-      // with the source mirrored onto `data-latex`/`aria-label`.
+      // with the source mirrored onto `data-latex`/`aria-label`. Structural
+      // errors are reported inline; this path never injects authored HTML.
       const latex = String(node.attrs?.latex ?? "");
+      const issue = validateLatex(latex)[0];
       return (
         <div
           key={key}
           className={cn("noema-math-block", DOC_PRINT_CLASS.block)}
           data-latex={latex}
+          data-math-error={issue?.message}
           role="math"
           aria-label={latex}
         >
           {latex}
+          {issue ? (
+            <p role="alert" className="noema-math-error">
+              {issue.message}
+            </p>
+          ) : null}
         </div>
       );
     }

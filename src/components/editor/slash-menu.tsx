@@ -241,7 +241,21 @@ const SLASH_ITEMS: SlashItem[] = [
   { label: "Linked database", labelKey: "blockLinkedDatabase", hint: "Embed a database", hintKey: "linkedDatabaseHint", icon: <Layers className="h-4 w-4" />, keywords: "linked database embed view", group: "database", run: (c) => c.setLinkedDatabase().run() },
   { label: "Template button", labelKey: "blockTemplateButton", hint: "Insert a template", hintKey: "templateButtonHint", icon: <Copy className="h-4 w-4" />, keywords: "template button snippet meeting tasks", group: "database", run: (c) => c.setTemplateButton({ templateId: "meeting" }).run() },
   { label: "Ask AI", labelKey: "askAI", hint: "Prompt the assistant", hintKey: "askAiHint", icon: <Sparkles className="h-4 w-4" />, keywords: "ai ask assistant generate", group: "advanced", run: (c) => c.setAskAi({}).run() },
-  { label: "Equation", labelKey: "blockEquation", hint: "Block math", hintKey: "equationHint", icon: <Sigma className="h-4 w-4" />, keywords: "equation math latex katex", group: "advanced", run: () => window.dispatchEvent(new CustomEvent(EQUATION_EVENT, { detail: { kind: "block" } })) },
+  {
+    label: "Equation",
+    labelKey: "blockEquation",
+    hint: "Block math",
+    hintKey: "equationHint",
+    icon: <Sigma className="h-4 w-4" />,
+    keywords: "equation math latex katex",
+    group: "advanced",
+    // Run the shared chain first: it deletes the `/equation` query and focuses
+    // the now-empty paragraph. The equation then replaces that paragraph.
+    run: (chain) => {
+      chain.run();
+      window.dispatchEvent(new CustomEvent(EQUATION_EVENT, { detail: { kind: "block" } }));
+    },
+  },
   { label: "Table of contents", labelKey: "blockTableOfContents", hint: "Outline of headings", hintKey: "tocHint", icon: <ListTree className="h-4 w-4" />, keywords: "toc outline contents", group: "basic", run: (c) => c.setTableOfContents().run() },
   { label: "Divider", labelKey: "blockDivider", hint: "Visual separator", hintKey: "dividerHint", icon: <Minus className="h-4 w-4" />, keywords: "divider hr separator", group: "basic", run: (c) => c.setHorizontalRule().run() },
 ];

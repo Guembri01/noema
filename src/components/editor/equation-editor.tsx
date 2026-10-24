@@ -2,9 +2,20 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import katex from "katex";
 import { EQUATION_EVENT, type EquationRequest } from "@/lib/editor-events";
 import type { Editor } from "@tiptap/react";
+import { equationError as mathEquationError, renderEquation } from "@/lib/math-tex";
+import {
+  beginEquationDraft,
+  equationCommitValue,
+  equationDismissFromScrim,
+  equationDismissOnBlur,
+  equationDraftReducer,
+  equationNodeMatches,
+  planBlockEquationInsertion,
+  type EquationDraft,
+  type EquationView,
+} from "@/lib/equation-editing";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Z } from "@/lib/design-tokens";
@@ -40,9 +51,10 @@ import {
  * The mathematics extension only exposes bare insert/update commands, so
  * inserting used to place a hard-coded `x` (or nothing at all) and look broken.
  * Instead anything that wants an equation dispatches `noema:equation` and this
- * editor opens: a LaTeX/Preview switch, a live KaTeX preview, Enter to apply,
- * Escape to cancel. Clicking an existing equation (configured via the
- * extension's `onClick`) reopens it for editing.
+ * editor opens: a non-destructive LaTeX/Preview switch, a live KaTeX preview
+ * that stays beside the source, Enter to apply, Escape/blur to cancel (the
+ * existing document source is never touched). Clicking an existing equation
+ * (configured via the extension's `onClick`) reopens it for editing.
  *
  * A browsable symbol palette (backed by `@/lib/math-symbols`) sits under the
  * source box: categorized glyph buttons plus a search filter. Picking a symbol
@@ -68,8 +80,7 @@ const CATEGORY_LABELS: Record<MathCategory, string> = {
    Pure model: LaTeX / Preview switch + error reporting
    ------------------------------------------------------------------------- */
 
-/** The two panes of the equation dialog. */
-export type EquationView = "source" | "preview";
+export type { EquationView } from "@/lib/equation-editing";
 
 /** Segments for the LaTeX / Preview switch, in order. */
 export const EQUATION_VIEW_OPTIONS: SegmentedOption<EquationView>[] = [
@@ -83,26 +94,16 @@ export function toggleEquationView(view: EquationView): EquationView {
 }
 
 /**
- * Validate the LaTeX with KaTeX. Returns `null` when it parses cleanly, or a
- * short human-readable message (KaTeX's "KaTeX parse error:" prefix stripped)
- * when it does not. Empty source is treated as valid (there is nothing to
- * render yet).
+ * Validate the LaTeX with KaTeX through the shared macro table. Returns `null`
+ * when it parses cleanly, or a short human-readable message (KaTeX's "KaTeX
+ * parse error:" prefix stripped) when it does not. Empty source is treated as
+ * valid (there is nothing to render yet).
+ *
+ * Kept as a re-export so callers/tests that imported it from this module keep
+ * working; the implementation and bounds live in `@/lib/math-tex`.
  */
 export function equationError(latex: string): string | null {
-  const source = latex.trim();
-  if (!source) return null;
-  try {
-    katex.renderToString(source, {
-      throwOnError: true,
-      displayMode: false,
-      strict: "ignore",
-    });
-    return null;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const cleaned = message.replace(/^KaTeX parse error:\s*/i, "").trim();
-    return cleaned || "Invalid LaTeX";
-  }
+  return mathEquationError(latex);
 }
 
 /**
@@ -158,7 +159,14 @@ function equationStops(root: HTMLElement): {
     disabled:
       element.hasAttribute("disabled") ||
       element.getAttribute("aria-disabled") === "true",
-    hidden: element.hidden || element.getAttribute("aria-hidden") === "true",
+    // A pane hidden with the `hidden` attribute is display:none, but the
+    // element itself usually carries neither `hidden` nor `aria-hidden` — the
+    // ancestor does. Check both so Preview mode never traps Tab in the
+    // invisible source pane.
+    hidden:
+      element.hidden ||
+      element.getAttribute("aria-hidden") === "true" ||
+      element.closest("[hidden]") !== null,
     tabIndex: element.tabIndex,
   }));
   return { stops, nodes };
@@ -207,6 +215,7 @@ export type EquationDialogSurfaceProps = {
   onInsertSymbol: (command: string) => void;
   onCommit: () => void;
   onClose: () => void;
+  onBlur: (event: React.FocusEvent<HTMLDivElement>) => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => void;
 };
 
@@ -233,6 +242,7 @@ export function EquationDialogSurface({
   onInsertSymbol,
   onCommit,
   onClose,
+  onBlur,
   onKeyDown,
 }: EquationDialogSurfaceProps) {
   return (
@@ -242,9 +252,12 @@ export function EquationDialogSurface({
       role="dialog"
       aria-modal="true"
       aria-label={t(locale, "equationTitle")}
+      data-equation-kind={kind}
+      data-equation-view={view}
       onKeyDown={onKeyDown}
+      onBlur={onBlur}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (equationDismissFromScrim(event.target, event.currentTarget)) onClose();
       }}
     >
       <div className="surface-raised-strong animate-scale-in w-full max-w-md p-4">
@@ -264,86 +277,122 @@ export function EquationDialogSurface({
           {t(locale, "latexSyntaxHint")} <code>{"c = \\sqrt{a^2 + b^2}"}</code>
         </p>
 
-        {view === "source" ? (
-          <>
-            <textarea
-              ref={inputRef}
-              rows={3}
-              value={latex}
-              dir={direction.dir}
-              aria-label={t(locale, "latexSourceAria")}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? errorId : undefined}
-              placeholder="\frac{a}{b}"
-              onChange={(event) => onLatexChange(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  onCommit();
-                }
-              }}
-              className={cn(
-                "focus-ring mt-3 w-full rounded-control border bg-bg px-3 py-2 font-mono text-sm text-fg",
-                error ? "border-danger" : "border-border",
-                direction.className,
-              )}
-            />
-            {error ? (
-              <p id={errorId} role="alert" className="mt-1 text-xs text-danger">
-                {error}
-              </p>
-            ) : null}
-            <div className="mt-3 rounded-card border border-border">
-              <div className="border-b border-border px-3 py-2">
-                <input
-                  type="search"
-                  value={symbolQuery}
-                  onChange={(event) => onSymbolQueryChange(event.target.value)}
-                  aria-label={t(locale, "search")}
-                  placeholder={t(locale, "searchSymbols")}
-                  className="focus-ring h-8 w-full rounded-control border-control bg-bg px-2 text-xs text-fg"
-                />
-              </div>
-              <div className="scrollbar-thin max-h-52 overflow-y-auto px-3 py-2">
-                {symbolGroups.length === 0 ? (
-                  <p className="py-2 text-center text-xs text-muted">No matching symbols</p>
-                ) : (
-                  symbolGroups.map((group) => (
-                    <div key={group.category} className="mb-2 last:mb-0">
-                      <p className="mb-1 text-xs font-medium text-muted">
-                        {CATEGORY_LABELS[group.category]}
-                      </p>
-                      <div className="flex flex-wrap gap-1">
-                        {group.symbols.map((symbol) => (
-                          <button
-                            key={symbol.latex}
-                            type="button"
-                            title={symbol.label}
-                            aria-label={`${symbol.label} (${symbol.latex})`}
-                            onClick={() => onInsertSymbol(symbol.latex)}
-                            className="focus-ring u-colors rounded-control border border-border px-1.5 py-1 font-mono text-xs text-fg hover:bg-surface-2"
-                          >
-                            {symbol.latex}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </>
-        ) : (
-          <div
+        {/*
+          The source pane is never unmounted when Preview is selected: the
+          textarea keeps its value, selectionStart/selectionEnd and undo stack.
+          The dialog restores focus/caret when the author switches back, so
+          inline editing never loses the cursor to a "split preview".
+        */}
+        <div hidden={view !== "source"} data-equation-pane="source">
+          <textarea
+            ref={inputRef}
+            rows={kind === "inline" ? 2 : 3}
+            value={latex}
             dir={direction.dir}
+            aria-label={t(locale, "latexSourceAria")}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
+            placeholder="\frac{a}{b}"
+            onChange={(event) => onLatexChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                onCommit();
+              }
+            }}
             className={cn(
-              "mt-3 min-h-32 overflow-x-auto rounded-card border border-border bg-surface px-3 py-6 text-center",
+              "focus-ring mt-3 w-full rounded-control border bg-bg px-3 py-2 font-mono text-sm text-fg",
+              error ? "border-danger" : "border-border",
               direction.className,
             )}
-            aria-live="polite"
-            dangerouslySetInnerHTML={{ __html: error ? "" : preview }}
           />
-        )}
+          {error ? (
+            <p id={errorId} role="alert" className="mt-1 text-xs text-danger">
+              {error}
+            </p>
+          ) : null}
+
+          {/* Live preview stays visible while editing: no mode switch needed. */}
+          <div
+            data-testid="equation-live-preview"
+            className="mt-2 rounded-card border border-border bg-surface px-3 py-2"
+          >
+            <p className="text-xs font-medium text-muted">{t(locale, "previewWord")}</p>
+            {error ? (
+              <p className="mt-1 text-xs text-muted">—</p>
+            ) : preview ? (
+              <div
+                dir={direction.dir}
+                className={cn("mt-1 overflow-x-auto text-center", direction.className)}
+                aria-live="polite"
+                dangerouslySetInnerHTML={{ __html: preview }}
+              />
+            ) : (
+              <p className="mt-1 text-xs text-muted">—</p>
+            )}
+          </div>
+
+          <div className="mt-3 rounded-card border border-border">
+            <div className="border-b border-border px-3 py-2">
+              <input
+                type="search"
+                value={symbolQuery}
+                onChange={(event) => onSymbolQueryChange(event.target.value)}
+                aria-label={t(locale, "search")}
+                placeholder={t(locale, "searchSymbols")}
+                className="focus-ring h-8 w-full rounded-control border-control bg-bg px-2 text-xs text-fg"
+              />
+            </div>
+            <div className="scrollbar-thin max-h-52 overflow-y-auto px-3 py-2">
+              {symbolGroups.length === 0 ? (
+                <p className="py-2 text-center text-xs text-muted">No matching symbols</p>
+              ) : (
+                symbolGroups.map((group) => (
+                  <div key={group.category} className="mb-2 last:mb-0">
+                    <p className="mb-1 text-xs font-medium text-muted">
+                      {CATEGORY_LABELS[group.category]}
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {group.symbols.map((symbol) => (
+                        <button
+                          key={symbol.latex}
+                          type="button"
+                          title={symbol.label}
+                          aria-label={`${symbol.label} (${symbol.latex})`}
+                          onClick={() => onInsertSymbol(symbol.latex)}
+                          className="focus-ring u-colors rounded-control border border-border px-1.5 py-1 font-mono text-xs text-fg hover:bg-surface-2"
+                        >
+                          {symbol.latex}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div
+          hidden={view !== "preview"}
+          data-equation-pane="preview"
+          data-testid="equation-preview"
+          dir={direction.dir}
+          className={cn(
+            "mt-3 min-h-32 overflow-x-auto rounded-card border border-border bg-surface px-3 py-6 text-center",
+            direction.className,
+          )}
+          aria-live="polite"
+        >
+          {error ? (
+            <p role="alert" className="text-xs text-danger">
+              {error}
+            </p>
+          ) : preview ? (
+            <div className="text-center" dangerouslySetInnerHTML={{ __html: preview }} />
+          ) : null}
+        </div>
 
         <div className="mt-4 flex justify-end gap-2">
           <button
@@ -369,33 +418,95 @@ export function EquationDialogSurface({
   );
 }
 
+/**
+ * Insert a new display equation after the block that owns the selection. A
+ * plain `insertBlockMath` at the caret would try to put a block node inside the
+ * current paragraph; replacing an empty paragraph (the `/equation` path) or
+ * inserting after a non-empty one keeps the document valid.
+ */
+export function insertBlockEquation(editor: Editor, latex: string): boolean {
+  const type = editor.schema.nodes.blockMath;
+  if (!type) return false;
+  const node = type.create({ latex });
+  const { $from } = editor.state.selection;
+  const tr = editor.state.tr;
+  const hasTextblock = $from.depth >= 1 && $from.parent.isTextblock;
+  const plan = planBlockEquationInsertion({
+    hasTextblock,
+    emptyTextblock: hasTextblock && $from.parent.content.size === 0,
+    before: hasTextblock ? $from.before($from.depth) : $from.pos,
+    after: hasTextblock ? $from.after($from.depth) : $from.pos,
+    pos: $from.pos,
+  });
+
+  if (plan.type === "replace") tr.replaceWith(plan.from, plan.to, node);
+  else tr.insert(plan.at, node);
+
+  editor.view.dispatch(tr.scrollIntoView());
+  editor.commands.focus();
+  return true;
+}
+
+/**
+ * Insert a new inline equation. When the bubble toolbar opened the dialog from
+ * a text selection, `range` replaces that selection (so `$x$` is not left
+ * duplicated beside the new node).
+ */
+export function insertInlineEquation(
+  editor: Editor,
+  latex: string,
+  range: { from: number; to: number } | null,
+): boolean {
+  if (!editor.schema.nodes.inlineMath) return false;
+  if (range) {
+    const node = editor.schema.nodes.inlineMath.create({ latex });
+    editor.chain().focus().insertContentAt(range, node).run();
+  } else {
+    editor.chain().focus().insertInlineMath({ latex }).run();
+  }
+  return true;
+}
+
 export function EquationEditor({ editor, locale = "en" }: { editor: Editor; locale?: string }) {
-  const [request, setRequest] = useState<EquationRequest | null>(null);
-  const [latex, setLatex] = useState("");
+  const [draft, setDraft] = useState<EquationDraft | null>(null);
   const [symbolQuery, setSymbolQuery] = useState("");
-  const [view, setView] = useState<EquationView>("source");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const invokerRef = useRef<HTMLElement | null>(null);
+  const selectionRef = useRef({ start: 0, end: 0 });
   const errorId = useId();
-  const open = request !== null;
+  const open = draft !== null;
 
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<EquationRequest>).detail;
-      const next: EquationRequest = {
-        kind: detail?.kind === "inline" ? "inline" : "block",
+      const kind = detail?.kind === "inline" ? "inline" : "block";
+      // The bubble toolbar sends the selected text as `latex` but no range.
+      // Capture the editor selection here (it is still intact while the dialog
+      // opens) so confirming replaces the selection instead of duplicating it.
+      const selection = editor.state.selection;
+      const captureRange = kind === "inline" && detail?.pos == null;
+      const next = beginEquationDraft({
+        kind,
         latex: detail?.latex ?? "",
         pos: detail?.pos ?? null,
-      };
-      setRequest(next);
-      setLatex(next.latex ?? "");
+        from: detail?.from ?? (captureRange ? selection.from : undefined),
+        to: detail?.to ?? (captureRange ? selection.to : undefined),
+      });
+      setDraft(next);
       setSymbolQuery("");
-      setView("source");
-      window.setTimeout(() => inputRef.current?.focus(), 30);
+      selectionRef.current = { start: next.latex.length, end: next.latex.length };
+      window.setTimeout(() => {
+        const input = inputRef.current;
+        if (!input) return;
+        input.focus();
+        const end = input.value.length;
+        input.setSelectionRange(end, end);
+        selectionRef.current = { start: end, end };
+      }, 30);
     };
     window.addEventListener(EQUATION_EVENT, handler);
     return () => window.removeEventListener(EQUATION_EVENT, handler);
-  }, []);
+  }, [editor]);
 
   // Record the invoking element on open and restore focus to it on close
   // (only while it is still connected).
@@ -417,6 +528,27 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
     };
   }, [open]);
 
+  const view = draft?.view ?? "source";
+
+  /**
+   * Switching back to the source pane restores focus *and* the saved caret.
+   * The textarea is never unmounted, so selectionStart/selectionEnd survive;
+   * this effect is what makes that invisible state visible again.
+   */
+  useEffect(() => {
+    if (!open || view !== "source") return;
+    const id = window.setTimeout(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      const max = input.value.length;
+      const start = Math.min(selectionRef.current.start, max);
+      const end = Math.min(selectionRef.current.end, max);
+      input.setSelectionRange(start, end);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [open, view]);
+
   /** Matched symbols bucketed into their sections; empty sections are dropped. */
   const symbolGroups = useMemo(() => {
     const matches = searchMathSymbols(symbolQuery);
@@ -435,18 +567,29 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
     const { text, cursor } = insertSnippet(command);
     const input = inputRef.current;
     if (!input) {
-      setLatex((previous) => previous + text);
+      setDraft((previous) =>
+        previous
+          ? equationDraftReducer(previous, { type: "edit", latex: previous.latex + text })
+          : previous,
+      );
       return;
     }
     const start = input.selectionStart ?? input.value.length;
     const end = input.selectionEnd ?? start;
-    setLatex(input.value.slice(0, start) + text + input.value.slice(end));
+    const next = input.value.slice(0, start) + text + input.value.slice(end);
+    setDraft((previous) =>
+      previous ? equationDraftReducer(previous, { type: "edit", latex: next }) : previous,
+    );
     const caret = start + cursor;
+    selectionRef.current = { start: caret, end: caret };
     window.setTimeout(() => {
       input.focus();
       input.setSelectionRange(caret, caret);
     }, 0);
   };
+
+  /** Cancel/Escape/scrim/blur all discard the draft; the document is untouched. */
+  const close = () => setDraft(null);
 
   // Tab / Shift+Tab cycles inside the dialog; Escape cancels from anywhere.
   const onDialogKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -470,53 +613,71 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
     target.focus();
   };
 
-  const close = () => setRequest(null);
-
-  if (!request) return null;
-
-  const error = equationError(latex);
-
-  let preview = "";
-  if (!error) {
-    try {
-      preview = katex.renderToString(latex.trim() || "\\text{preview}", {
-        throwOnError: true,
-        displayMode: request.kind === "block",
-      });
-    } catch {
-      preview = "";
+  const changeView = (next: EquationView) => {
+    const input = inputRef.current;
+    if (input) {
+      selectionRef.current = {
+        start: input.selectionStart ?? input.value.length,
+        end: input.selectionEnd ?? input.value.length,
+      };
     }
-  }
+    setDraft((previous) =>
+      previous ? equationDraftReducer(previous, { type: "view", view: next }) : previous,
+    );
+  };
+
+  const onDialogBlur = (event: React.FocusEvent<HTMLDivElement>) => {
+    if (equationDismissOnBlur(event.relatedTarget, event.currentTarget)) close();
+  };
+
+  if (!draft) return null;
+
+  const rendered = renderEquation(draft.latex, {
+    displayMode: draft.kind === "block",
+  });
+  const error = rendered.error;
+  const preview = rendered.html;
 
   // Per-block direction for the source and its preview, from the bidi engine.
-  const direction = equationDirection(latex);
+  const direction = equationDirection(draft.latex);
 
   const commit = () => {
-    const value = latex.trim();
-    if (!value) {
+    const value = equationCommitValue(draft);
+    if (value === null) {
       close();
       return;
     }
-    const { pos } = request;
-    if (pos !== null && pos !== undefined) {
-      const node = editor.state.doc.nodeAt(pos);
-      if (node) {
-        const tr = editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, latex: value });
+
+    if (draft.pos !== null) {
+      // Existing node: update only when the stale position still points at an
+      // equation of the same kind. Otherwise leave the document untouched.
+      const node = editor.state.doc.nodeAt(draft.pos);
+      if (node !== null && equationNodeMatches(draft.kind, node)) {
+        const tr = editor.state.tr.setNodeMarkup(draft.pos, undefined, {
+          ...node.attrs,
+          latex: value,
+        });
         editor.view.dispatch(tr);
       }
-    } else if (request.kind === "block") {
-      editor.chain().focus().insertBlockMath({ latex: value }).run();
+      editor.commands.focus();
+    } else if (draft.kind === "block") {
+      insertBlockEquation(editor, value);
     } else {
-      editor.chain().focus().insertInlineMath({ latex: value }).run();
+      insertInlineEquation(editor, value, draft.range);
     }
+
+    // Applying returns focus to the document, not to the toolbar button that
+    // opened the dialog (the close cleanup would otherwise re-focus it and
+    // steal focus from the freshly inserted equation).
+    invokerRef.current = null;
     close();
   };
 
   return createPortal(
     <EquationDialogSurface
-      kind={request.kind}
-      latex={latex}
-      view={view}
+      kind={draft.kind}
+      latex={draft.latex}
+      view={draft.view}
       error={error}
       preview={preview}
       direction={direction}
@@ -525,12 +686,17 @@ export function EquationEditor({ editor, locale = "en" }: { editor: Editor; loca
       locale={locale}
       errorId={errorId}
       inputRef={inputRef}
-      onLatexChange={setLatex}
-      onViewChange={setView}
+      onLatexChange={(value) =>
+        setDraft((previous) =>
+          previous ? equationDraftReducer(previous, { type: "edit", latex: value }) : previous,
+        )
+      }
+      onViewChange={changeView}
       onSymbolQueryChange={setSymbolQuery}
       onInsertSymbol={insertSymbol}
       onCommit={commit}
       onClose={close}
+      onBlur={onDialogBlur}
       onKeyDown={onDialogKeyDown}
     />,
     document.body,

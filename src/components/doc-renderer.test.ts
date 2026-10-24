@@ -20,6 +20,15 @@ const render = (doc: unknown): string =>
 const hrefsOf = (html: string): string[] =>
   [...html.matchAll(/href="([^"]*)"/g)].map((match) => match[1]);
 
+const mathDoc = (type: "inlineMath" | "blockMath", latex: string) => ({
+  type: "doc",
+  content: [
+    type === "inlineMath"
+      ? { type: "paragraph", content: [{ type, attrs: { latex } }] }
+      : { type, attrs: { latex } },
+  ],
+});
+
 const linkDoc = (href: string) => ({
   type: "doc",
   content: [
@@ -261,5 +270,34 @@ describe("DocRenderer UML blocks", () => {
     });
     expect(html).toContain('data-uml-diagram="loading"');
     expect(html).toContain("UML diagram");
+  });
+});
+
+describe("DocRenderer equations", () => {
+  it("keeps valid LaTeX as escaped source without injecting HTML", () => {
+    const html = render(mathDoc("inlineMath", "x^2 < y"));
+    expect(html).toContain('data-latex="x^2 &lt; y"');
+    expect(html).toContain("x^2 &lt; y");
+    expect(html).not.toContain('data-math-error');
+    expect(html).not.toContain("<script");
+  });
+
+  it("shows a structural error inline for broken LaTeX", () => {
+    const inline = render(mathDoc("inlineMath", "\\frac{1}{"));
+    expect(inline).toContain("data-math-error");
+    expect(inline).toContain('role="alert"');
+    expect(inline).toContain("Unclosed");
+
+    const block = render(mathDoc("blockMath", "\\begin{matrix} a & b"));
+    expect(block).toContain("data-math-error");
+    expect(block).toContain('role="alert"');
+    expect(block).toContain("Unclosed environment");
+  });
+
+  it("rejects banned commands inline instead of rendering them as valid math", () => {
+    const html = render(mathDoc("blockMath", "\\input{secret}"));
+    expect(html).toContain("data-math-error");
+    expect(html).toContain("not allowed");
+    expect(html).toContain("\\input{secret}");
   });
 });

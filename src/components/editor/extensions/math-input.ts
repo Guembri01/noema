@@ -38,9 +38,12 @@ export const MathAutoDetect = Extension.create({
 
             const blockMatch = BLOCK.exec(text);
             if (blockMatch && LOOKS_LIKE_MATH.test(blockMatch[1])) {
+              // The whole textblock is the display equation. Replace the
+              // paragraph itself: a `blockMath` node is a block, and putting
+              // one inside a paragraph would leave an invalid document.
               matches.push({
-                from: pos + 1,
-                to: pos + node.nodeSize - 1,
+                from: pos,
+                to: pos + node.nodeSize,
                 latex: blockMatch[1].trim(),
                 block: true,
               });
@@ -79,7 +82,9 @@ export const MathAutoDetect = Extension.create({
                 latex: blockMatch[1].trim(),
               });
               if (node) {
-                view.dispatch(view.state.tr.replaceSelectionWith(node));
+                const { $from } = view.state.selection;
+                const at = $from.depth >= 1 ? $from.after($from.depth) : $from.pos;
+                view.dispatch(view.state.tr.insert(at, node));
                 return true;
               }
             }
