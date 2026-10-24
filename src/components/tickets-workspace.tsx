@@ -27,6 +27,7 @@ import {
   type TicketSortSpec,
 } from "@/components/tickets/ticket-view-renderers";
 import { TicketDrawer, type TicketActivityRow } from "@/components/tickets/ticket-drawer";
+import { RecurringTicketsManager } from "@/components/recurring-tickets-manager";
 
 export type { LabelRow, TicketRow } from "@/components/tickets/ticket-types";
 
@@ -308,6 +309,15 @@ export function TicketsWorkspace({
       {view === "timeline" && <TicketTimeline tickets={filtered} onOpen={setSelected} />}
         </>
       )}
+
+      {/* Recurring tickets live on the tracker itself: create a cadence, list
+          the workspace's schedules, pause/resume and delete them. */}
+      <RecurringTicketsManager
+        workspaceId={workspaceId}
+        projects={projects.map((project) => ({ id: project.id, name: project.name }))}
+        labels={labels.map((label) => ({ id: label.id, name: label.name }))}
+        locale={locale}
+      />
 
       <PromptDialog
         open={labelDialog}

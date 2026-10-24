@@ -36,6 +36,7 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     workspaceMember: { findUnique: db.memberFindUnique },
     workspace: { findUnique: db.workspaceFindUnique },
+    automation: { findMany: vi.fn(async () => []) },
   },
 }));
 
@@ -43,8 +44,8 @@ vi.mock("@/lib/auth", () => ({ requireUser: vi.fn(async () => ({ id: "actor-1" }
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import {
-  commitRecurringRunAction,
   listDueAutomationsForCronAction,
+  materializeRecurringTicketRunAction,
 } from "./automations";
 
 const SECRET = "b30-action-secret";
@@ -109,11 +110,10 @@ describe("the cron action gate — the budget is spent before the secret is comp
       await listDueAutomationsForCronAction(guess(index));
     }
     await expect(
-      commitRecurringRunAction({
+      materializeRecurringTicketRunAction({
         secret: SECRET,
         id: "recur-1",
-        keys: [],
-        spawnedAt: new Date(0).toISOString(),
+        now: new Date(0).toISOString(),
       }),
     ).resolves.toEqual({ error: "Rate limit exceeded." });
   });

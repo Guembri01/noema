@@ -2,89 +2,64 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetRateLimits } from "@/lib/rate-limit";
 
 /**
- * `POST /api/cron/tickets` — recurring-ticket materialization + idempotency.
+ * `POST /api/cron/tickets` — guards and aggregation.
  *
- * The recurrence maths runs for real (`@/lib/recurring-tickets`); only the rule
- * store (`@/server/actions/automations`) and the database edge (`@/lib/db`) are
- * mocked. Pins: the fail-closed secret guard (503/401), one draft per due
- * occurrence, and that a retried tick after a crash — baseline rolled back but
- * keys already persisted — never double-creates.
+ * The durable/idempotent work lives in
+ * `materializeRecurringTicketRunAction` (proved in
+ * `src/server/actions/automations.test.ts`); this suite pins the route's own
+ * contract: fail closed without `CRON_SECRET`, materialize exactly the due
+ * schedules it was handed, aggregate created/skipped/failed, and report the
+ * next run. The action module is the transport edge mocked here.
  */
 
-type RecurringRow = {
+type DueRow = {
   id: string;
   workspaceId: string;
-  templateId: string;
-  title: string;
-  projectId: string | null;
-  priority: string | null;
-  labels: string[];
-  rule: unknown;
-  createdById: string;
-  lastSpawnedAt: number | null;
-  materializedKeys: string[];
+  nextRunAt: Date | null;
 };
 
+type RunResult =
+  | { ok: true; created: number; skipped: boolean; keys: string[]; nextRunAt: string | null }
+  | { error: string };
+
 const store = vi.hoisted(() => ({
-  records: [] as RecurringRow[],
-  commits: [] as { id: string; keys: string[]; spawnedAt: string }[],
+  due: [] as DueRow[],
+  scheduled: 0,
+  listError: null as string | null,
+  calls: [] as { secret: string; id: string; now: string }[],
+  results: new Map<string, RunResult>(),
 }));
 
 vi.mock("@/server/actions/automations", () => ({
-  listDueAutomationsForCronAction: vi.fn(async () => ({
-    ok: true,
-    scheduled: [],
-    recurring: store.records,
-  })),
-  commitRecurringRunAction: vi.fn(
-    async (input: { id: string; keys: string[]; spawnedAt: string }) => {
-      store.commits.push(input);
-      const record = store.records.find((row) => row.id === input.id);
-      if (record) {
-        record.materializedKeys = [...new Set([...record.materializedKeys, ...input.keys])];
-        record.lastSpawnedAt = new Date(input.spawnedAt).getTime();
-      }
-      return { ok: true };
+  listDueAutomationsForCronAction: vi.fn(async () =>
+    store.listError
+      ? { error: store.listError }
+      : {
+          ok: true,
+          scheduled: Array.from({ length: store.scheduled }, () => ({})),
+          recurring: store.due,
+        },
+  ),
+  materializeRecurringTicketRunAction: vi.fn(
+    async (input: { secret: string; id: string; now: string }) => {
+      store.calls.push(input);
+      return (
+        store.results.get(input.id) ?? {
+          ok: true,
+          created: 1,
+          skipped: false,
+          keys: [],
+          nextRunAt: null,
+        }
+      );
     },
   ),
-}));
-
-const db = vi.hoisted(() => ({
-  workspaceFindUnique: vi.fn(),
-  workspaceUpdate: vi.fn(),
-  ticketCreate: vi.fn(),
-}));
-
-vi.mock("@/lib/db", () => ({
-  prisma: {
-    workspace: { findUnique: db.workspaceFindUnique, update: db.workspaceUpdate },
-    ticket: { create: db.ticketCreate },
-  },
 }));
 
 import { POST } from "./route";
 
 const SECRET = "cron-test-secret";
 const NOW = "2026-01-03T12:00:00.000Z";
-const RULE = { freq: "daily", interval: 1, start: "2026-01-01T00:00:00.000Z" };
-
-let counter = 0;
-
-function seed(lastSpawnedAt: string | null, materializedKeys: string[] = []) {
-  store.records.push({
-    id: "r1",
-    workspaceId: "ws-1",
-    templateId: "tmpl-1",
-    title: "Daily standup",
-    projectId: "p1",
-    priority: "high",
-    labels: [],
-    rule: RULE,
-    createdById: "user-1",
-    lastSpawnedAt: lastSpawnedAt ? Date.parse(lastSpawnedAt) : null,
-    materializedKeys,
-  });
-}
 
 const call = (headers: Record<string, string> = {}) =>
   POST(
@@ -92,7 +67,7 @@ const call = (headers: Record<string, string> = {}) =>
       method: "POST",
       headers: {
         "x-cron-secret": SECRET,
-        "x-forwarded-for": "10.57.0.1",
+        "x-forwarded-for": "10.57.0.9",
         ...headers,
       },
     }),
@@ -102,18 +77,18 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date(NOW));
   process.env.CRON_SECRET = SECRET;
-  store.records = [];
-  store.commits = [];
-  counter = 0;
+  store.due = [];
+  store.scheduled = 0;
+  store.listError = null;
+  store.calls = [];
+  store.results = new Map();
   vi.clearAllMocks();
   resetRateLimits();
-  db.workspaceFindUnique.mockResolvedValue({ name: "Demo" });
-  db.workspaceUpdate.mockImplementation(async () => ({ ticketCounter: (counter += 1) }));
-  db.ticketCreate.mockResolvedValue({ id: "t" });
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  delete process.env.CRON_SECRET;
 });
 
 describe("POST /api/cron/tickets — guards", () => {
@@ -121,45 +96,89 @@ describe("POST /api/cron/tickets — guards", () => {
     delete process.env.CRON_SECRET;
     const response = await call();
     expect(response.status).toBe(503);
+    expect(store.calls).toHaveLength(0);
   });
 
-  it("rejects a wrong secret", async () => {
+  it("rejects a wrong secret before touching the store", async () => {
     const response = await call({ "x-cron-secret": "nope" });
     expect(response.status).toBe(401);
+    expect(store.calls).toHaveLength(0);
+  });
+
+  it("returns 403 when the durable rule read is refused", async () => {
+    store.listError = "Unauthorized";
+    const response = await call();
+    expect(response.status).toBe(403);
   });
 });
 
 describe("POST /api/cron/tickets — materialization", () => {
-  it("creates one ticket per due occurrence and records the idempotency keys", async () => {
-    seed("2026-01-01T12:00:00.000Z");
+  it("runs each due schedule once and aggregates the outcomes", async () => {
+    store.due = [
+      { id: "a", workspaceId: "ws-1", nextRunAt: new Date("2026-01-04T00:00:00.000Z") },
+      { id: "b", workspaceId: "ws-1", nextRunAt: null },
+    ];
+    store.scheduled = 2;
+    store.results.set("a", {
+      ok: true,
+      created: 2,
+      skipped: false,
+      keys: ["a:1", "a:2"],
+      nextRunAt: "2026-01-04T00:00:00.000Z",
+    });
+    store.results.set("b", {
+      ok: true,
+      created: 0,
+      skipped: true,
+      keys: [],
+      nextRunAt: null,
+    });
+
     const response = await call();
     const body = await response.json();
 
-    expect(body.recurring.created).toBe(2);
-    const starts = db.ticketCreate.mock.calls.map((call) =>
-      (call[0] as { data: { startDate: Date } }).data.startDate.toISOString(),
-    );
-    expect(starts).toEqual(["2026-01-02T00:00:00.000Z", "2026-01-03T00:00:00.000Z"]);
-    expect(store.commits[0].keys).toEqual([
-      "tmpl-1:2026-01-02T00:00:00.000Z",
-      "tmpl-1:2026-01-03T00:00:00.000Z",
+    expect(store.calls).toEqual([
+      { secret: SECRET, id: "a", now: NOW },
+      { secret: SECRET, id: "b", now: NOW },
     ]);
-    expect(store.records[0].lastSpawnedAt).toBe(Date.parse(NOW));
+    expect(body).toMatchObject({
+      scheduledAutomations: 2,
+      recurring: { due: 2, created: 2, skipped: 1, failed: [] },
+      upcoming: [
+        { id: "a", nextRunAt: "2026-01-04T00:00:00.000Z" },
+        { id: "b", nextRunAt: null },
+      ],
+    });
   });
 
-  it("does not duplicate a ticket after a crash (keys kept, baseline rolled back)", async () => {
-    seed("2026-01-01T12:00:00.000Z");
-    await call();
-    const created = db.ticketCreate.mock.calls.length;
+  it("reports a failed materialization without aborting the other schedules", async () => {
+    store.due = [
+      { id: "bad", workspaceId: "ws-1", nextRunAt: null },
+      { id: "good", workspaceId: "ws-1", nextRunAt: null },
+    ];
+    store.results.set("bad", { error: "Workspace not found." });
+    store.results.set("good", {
+      ok: true,
+      created: 1,
+      skipped: false,
+      keys: ["good:1"],
+      nextRunAt: null,
+    });
 
-    // Simulate a crash *after* the tickets were written but before the commit:
-    // the store still has the keys, but the baseline never advanced.
-    store.records[0].lastSpawnedAt = Date.parse("2026-01-01T12:00:00.000Z");
     const response = await call();
     const body = await response.json();
 
-    expect(body.recurring.created).toBe(0);
-    expect(body.recurring.skipped).toBe(1);
-    expect(db.ticketCreate.mock.calls.length).toBe(created);
+    expect(body.recurring.created).toBe(1);
+    expect(body.recurring.failed).toEqual([
+      { id: "bad", error: "Workspace not found." },
+    ]);
+  });
+
+  it("does nothing when no schedule is due", async () => {
+    const response = await call();
+    const body = await response.json();
+
+    expect(store.calls).toHaveLength(0);
+    expect(body.recurring).toEqual({ due: 0, created: 0, skipped: 0, failed: [] });
   });
 });

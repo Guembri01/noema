@@ -29,6 +29,7 @@ const h = vi.hoisted(() => ({
   workspaceMemberFindMany: vi.fn(),
   projectFindUnique: vi.fn(),
   projectMemberFindMany: vi.fn(),
+  automationFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -38,6 +39,7 @@ vi.mock("@/lib/db", () => ({
     workspaceMember: { findMany: h.workspaceMemberFindMany },
     project: { findUnique: h.projectFindUnique },
     projectMember: { findMany: h.projectMemberFindMany },
+    automation: { findMany: h.automationFindMany },
   },
 }));
 vi.mock("@/lib/auth", () => ({ requireUser: h.requireUser }));
@@ -62,6 +64,7 @@ beforeEach(() => {
   h.workspaceMemberFindMany.mockResolvedValue([]);
   h.projectFindUnique.mockResolvedValue({ id: "p1", workspaceId: "ws1", ownerId: "u2" });
   h.projectMemberFindMany.mockResolvedValue([]);
+  h.automationFindMany.mockResolvedValue([]);
 });
 
 describe("getEmailSummary", () => {

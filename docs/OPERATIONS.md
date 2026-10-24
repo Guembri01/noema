@@ -1080,7 +1080,7 @@ as everywhere else: the rate limit runs before the secret comparison, so a
 wrong secret is throttled (`429`) once the budget is spent.
 
 **Exception — the server actions** (`listDueAutomationsForCronAction`,
-`commitRecurringRunAction`): with no secret configured they answer
+`materializeRecurringTicketRunAction`): with no secret configured they answer
 **`{"error":"Unauthorized"}`**, not `503`. An action returns an **action
 result**, not an HTTP response — it has no status code to answer with, so it
 has no `503` contract at all. The gate is still **closed** there (fail closed,
@@ -1101,7 +1101,7 @@ spent before the secret is compared, so a wrong secret is answered
 | `GET /api/cron/backups` | `CRON_SECRET` | `x-cron-secret` | 12 / 60 s |
 | `GET`/`POST /api/ready` | `CRON_SECRET` **or** `READY_SECRET` | `x-cron-secret` **or** `x-ready-secret` | token bucket: burst 30, 1/s |
 | `GET /api/metrics` | `CRON_SECRET` (besides the session-based workspace-admin path) | `x-cron-secret` | 120 / 60 s — no secret configured ⇒ `401`, not `503` (the admin path stays open) |
-| `listDueAutomationsForCronAction`, `commitRecurringRunAction` (server actions — HTTP endpoints too) | `CRON_SECRET` | the action's `secret` argument | 120 / 60 s, deployment-wide — no secret configured ⇒ `{"error":"Unauthorized"}`, not `503` (an action result, not an HTTP status) |
+| `listDueAutomationsForCronAction`, `materializeRecurringTicketRunAction` (server actions — HTTP endpoints too) | `CRON_SECRET` | the action's `secret` argument | 120 / 60 s, deployment-wide — no secret configured ⇒ `{"error":"Unauthorized"}`, not `503` (an action result, not an HTTP status) |
 
 `READY_SECRET` is an **alternative name for the readiness probe only** — it is
 accepted *in addition to* `CRON_SECRET` there, and nowhere else.

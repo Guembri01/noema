@@ -102,7 +102,13 @@ vi.mock("@/server/actions/automations", () => ({
     scheduled: [],
     recurring: [],
   })),
-  commitRecurringRunAction: vi.fn(async () => ({ ok: true })),
+  materializeRecurringTicketRunAction: vi.fn(async () => ({
+    ok: true,
+    created: 0,
+    skipped: true,
+    keys: [],
+    nextRunAt: null,
+  })),
 }));
 
 // `/api/metrics` has a second, session-based admin path. No session here ⇒

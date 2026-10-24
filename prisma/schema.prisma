@@ -130,6 +130,7 @@ model User {
   chatThreads     ChatThread[]       @relation("ChatThreadCreatedBy")
   chatMessages    ChatMessage[]
   workspacePrompts WorkspacePrompt[]
+  automations     Automation[]
 
   @@index([email])
 }
@@ -169,6 +170,7 @@ model Workspace {
   ssoConnections SsoConnection[]
   verifiedDomains VerifiedDomain[]
   prompts        WorkspacePrompt[]
+  automations    Automation[]
 
   @@index([ownerId])
 }
@@ -1098,4 +1100,64 @@ model WebhookDelivery {
   webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
 
   @@index([webhookId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Automations (event rules + recurring ticket schedules) and their runs
+// ---------------------------------------------------------------------------
+
+/// One workspace-authored automation.
+///
+/// `kind = "rule"` stores a canonical trigger (`triggerConfig`) plus an ordered
+/// `action` list; `kind = "recurring_ticket"` stores a normalized
+/// `RecurrenceRule` in `triggerConfig.rule` and one `create_ticket` template in
+/// `action`. Keeping both in one table means a schedule is exactly the same
+/// rule shape as an event automation, and the cron query has one source.
+model Automation {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  createdById   String
+  /// Display name — a ticket title for a recurring schedule.
+  name          String
+  /// `"rule"` (event automation) or `"recurring_ticket"` (schedule).
+  kind          String    @default("rule")
+  enabled       Boolean   @default(true)
+  /// Trigger DSL for a rule, or `{ rule: RecurrenceRule }` for a schedule.
+  triggerConfig Json?
+  /// Ordered ButtonActions for a rule, or `{ kind: "create_ticket", template }`.
+  action        Json?
+  /// Baseline the next spawn is measured from (cron schedules).
+  lastRunAt     DateTime?
+  /// Where the schedule is headed; refreshed on save, pause, resume and each run.
+  nextRunAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User            @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  runs      AutomationRun[]
+
+  @@index([workspaceId, kind, enabled])
+  @@index([enabled, nextRunAt])
+  @@index([createdById])
+}
+
+/// Durable idempotency record for one `(automation, occurrence)` pair.
+///
+/// The unique key is what makes a cron retry safe: whichever transaction
+/// inserts the row first owns the occurrence, so a second tick can never
+/// create the same ticket twice. `createdTicketIds` records what that run
+/// materialized (a run may create more than one catch-up ticket).
+model AutomationRun {
+  id               String   @id @default(cuid())
+  automationId     String
+  /// Deterministic `templateId:occurrenceISO` key from `ticketKey`.
+  occurrenceKey    String
+  ranAt            DateTime @default(now())
+  createdTicketIds Json?
+
+  automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@unique([automationId, occurrenceKey])
+  @@index([automationId, ranAt])
 }
