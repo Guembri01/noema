@@ -71,8 +71,8 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Breadcrumb block | Shows the page's ancestor path. | ✅ | Renders path; deep-tree linking rough. |
 | Synced block | Mirror one block's content in many places. | ✅ | Same-page mirrors propagate live through a TipTap plugin; cross-page mirrors refresh on mount (and via the card's refresh action); detaching re-ids the copied subtree. |
 | Synced block source marker | Visual marker of the canonical source. | ✅ | Each mirror shows a "Synced" badge and a deep link to its source page/block; broken sources keep the last snapshot and show a warning. |
-| Template button block | Reusable set of blocks inserted on click. | 🟡 | Planned; depends on template subsystem. |
-| Button block | Interactive button triggering configured actions. | 🟡 | Planned; depends on automations. |
+| Template button block | Reusable set of blocks inserted on click. | ✅ | The node persists its chosen template id/label, lists built-ins plus workspace saved templates, and on click resolves the template server-side (workspace + page-edit + deletion checks), materializes variables and inserts fresh block ids after the button. Missing/foreign templates are disabled with an honest error. |
+| Button block | Interactive button triggering configured actions. | ✅ | Configurable label/style/confirm and the shared ButtonAction vocabulary (`open_url`, `set_property`, `insert_template`, `notify`). Server execution re-checks membership, page edit and lock; property writes delegate to the canonical `setPropertyValueAction`, template inserts re-authorize the template, links re-check the URL allowlist, and unsupported notifications fail explicitly. |
 | Ask-AI block | Prompt-driven AI block inside a page. | 🟡 | Planned; depends on AI layer and provider keys. |
 | Two-column page property layout | Place properties side by side. | 🟡 | Planned with property panel rework. |
 
@@ -261,7 +261,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Buttons in databases | Row actions via buttons. | ✅ | Planned; depends on automations. Property shell (label/style/config) spec'd: docs/specs/database-deep.md (R89.26); action execution owned by docs/specs/automations.md (R27.x). |
 | Database templates | Pre-filled row templates. | ✅ | Planned. Minimal CRUD shipped (save row as template / instantiate / recurrence, database.ts:464-588); depth (default, preview, edit) integration spec'd: docs/specs/database-deep.md (R89.16) with docs/specs/templates.md (R31.x). |
 | Default template | Auto-apply a template to new rows. | ✅ | Planned. Flag + semantics owned by docs/specs/templates.md (R31.13); createRowAction application + New-row split button spec'd: docs/specs/database-deep.md (R89.16). |
-| Recurring templates | Create rows on a schedule. | 🟡 | Planned; depends on a scheduler. Core (resolver/nextRun/cron driver) owned by docs/specs/templates.md (R31.18-R31.23); database-side surfacing + system-actor materialization spec'd: docs/specs/database-deep.md (R89.17). |
+| Recurring templates | Create rows on a schedule. | ✅ | Row templates store recurrence/nextRunAt/lastRunAt/paused and a durable `TemplateRun` occurrence claim. The cron route materializes due rows through the same shared planner as manual template application, with system-actor attribution, variable resolution at run time, pause/resume and idempotent retries. The Templates menu exposes the schedule editor. Specs: docs/specs/templates.md (R31.18-R31.23), docs/specs/database-deep.md (R89.17). |
 | CSV import | Import rows from CSV. | ✅ | Planned; header mapping UI. Mapping step + create-database import owned by docs/specs/import-export.md (R23.1, R23.2); database-toolbar wiring spec'd: docs/specs/database-deep.md (R89.20). |
 | CSV export | Export rows to CSV. | ✅ | Planned. Toolbar entry + GET /api/export/database/:id already exist; round-trip contract owned by docs/specs/import-export.md (R23.5); wiring spec'd: docs/specs/database-deep.md (R89.20). |
 | Unique ID property | Human-readable per-row id. | ✅ | Planned; see Properties. Today derived as row.id.slice(-8) (database-view.tsx:424); monotonic Property.seq + prefix/pad spec'd: docs/specs/database-deep.md (R89.25). |
@@ -340,7 +340,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Database templates | Pre-filled rows from a template. | ✅ | Planned. Spec: docs/specs/templates.md. |
 | Template button | Insert template content in a page. | ✅ | Planned. Spec: docs/specs/templates.md. |
 | Default template | Auto-apply to new rows. | ✅ | Planned. Spec: docs/specs/templates.md. |
-| Recurring templates | Scheduled row creation. | 🟡 | Planned; needs scheduler. Spec: docs/specs/templates.md. |
+| Recurring templates | Scheduled row creation. | ✅ | Same durable schedule/materializer as above: a scheduled tick creates one row per announced occurrence (catch-up bounded per tick), records a `TemplateRun` claim so replays lose the unique insert, and advances the stored next run transactionally. |
 | Save page as template | Convert a page into a template. | ✅ | Planned. Spec: docs/specs/templates.md. |
 | Template duplication | Clone a template into a page. | ✅ | `duplicateWorkspaceTemplateAction` clones a row template in its source database (fresh id/position, same content/config, no recurrence/default inheritance), checks workspace + page edit access, and the home gallery exposes a Duplicate button. Covered by the action suite. |
 | Template locking | Keep templates read-only. | ✅ | Planned. Spec: docs/specs/templates.md. |
@@ -655,7 +655,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Session management | Expire and revoke sessions. | 🟡 | Sessions stored; revocation partial. Spec: docs/specs/engineering-hardening.md. |
 | Password hashing | Secure credential storage. | ✅ | Strong hashing used. |
 | Two-factor auth (2FA) | TOTP second factor. | ✅ | Planned. |
-| SSO / SAML | Enterprise single sign-on. | 🟡 | OIDC authorization-code + JWKS verification, and an **env-level SAML 2.0 connection** (`AUTH_SAML_*`): start/ACS/metadata/SLO routes, `@node-saml/node-saml` signature/audience/destination/condition validation with 120 s skew, a Postgres assertion replay cache, signed RelayState (no SameSite-cookie dependency on the cross-site POST), JIT users and verified-only account linking (B07). Both refuse an unverified local account with `?error=sso_email_taken`. Env-level directory auto-join maps `AUTH_SAML_GROUPS_ATTRIBUTE` through `AUTH_SAML_ROLE_RULES` into `AUTH_SAML_WORKSPACE_ID` (highest rule wins, OWNER is never granted, an existing owner is never demoted). Per-workspace `SsoConnection` rows, admin CRUD actions, `?connection=` start/metadata/ACS resolution and `VerifiedDomain` DNS verification are implemented; a verified email domain auto-joins its workspace when the env connection has no fixed workspace. Metadata-URL refresh parses the IdP document and rotates the signing certificate with a 24-hour previous-certificate overlap. SLO validates POST/redirect logout messages while always ending the local session. The **SSO settings section** manages connections, metadata refresh and verified domains (admin-only). SCIM **Users** endpoints are implemented with hashed bearer tokens, JIT user/membership creation, pagination, lookup, active=false deprovisioning and owner protection. SCIM **Groups** map to teamspaces (list/get/create/add/remove/replace members/delete), and group membership recomputes the mapped workspace role from the connection's `roleRules` (OWNER is never demoted). Login email-domain chooser, invite precedence for JIT users and the recent-SSO activity view are implemented. Remaining polish: a dry “Test connection” action and split per-IdP setup pages (docs/specs/saml-sso.md). Setup: docs/integrations/saml.md. |
+| SSO / SAML | Enterprise single sign-on. | 🟡 | OIDC authorization-code + JWKS verification, and an **env-level SAML 2.0 connection** (`AUTH_SAML_*`): start/ACS/metadata/SLO routes, `@node-saml/node-saml` signature/audience/destination/condition validation with 120 s skew, a Postgres assertion replay cache, signed RelayState (no SameSite-cookie dependency on the cross-site POST), JIT users and verified-only account linking (B07). Both refuse an unverified local account with `?error=sso_email_taken`. Env-level directory auto-join maps `AUTH_SAML_GROUPS_ATTRIBUTE` through `AUTH_SAML_ROLE_RULES` into `AUTH_SAML_WORKSPACE_ID` (highest rule wins, OWNER is never granted, an existing owner is never demoted). Per-workspace `SsoConnection` rows, admin CRUD actions, `?connection=` start/metadata/ACS resolution and `VerifiedDomain` DNS verification are implemented; a verified email domain auto-joins its workspace when the env connection has no fixed workspace. Metadata-URL refresh parses the IdP document and rotates the signing certificate with a 24-hour previous-certificate overlap. SLO validates POST/redirect logout messages while always ending the local session. The **SSO settings section** manages connections, metadata refresh and verified domains (admin-only). SCIM **Users** endpoints are implemented with hashed bearer tokens, JIT user/membership creation, pagination, lookup, active=false deprovisioning and owner protection. SCIM **Groups** map to teamspaces (list/get/create/add/remove/replace members/delete), and group membership recomputes the mapped workspace role from the connection's `roleRules` (OWNER is never demoted). Login email-domain chooser, invite precedence for JIT users and the recent-SSO activity view are implemented. Each connection has a dedicated setup page with copyable SP entity/ACS/metadata/SLO URLs and an admin-only dry **Test connection** report (required fields, certificate parse/validity, SP origin consistency, SSRF-guarded metadata reachability/entity/SSO/certificate checks); it never sends an AuthnRequest. Setup: docs/integrations/saml.md. |
 | OIDC support | OpenID Connect providers. | ✅ | Planned. |
 | Encryption at rest | Encrypt stored data. | ✅ | Planned; DB/disk encryption. |
 | Encryption in transit | TLS everywhere. | ✅ | Planned; reverse-proxy TLS. |
@@ -771,12 +771,12 @@ The table below summarizes how many feature rows fall into each status, per area
 
 | Area | ✅ Implemented | 🟡 Partial | 🧭 Planned | ⛔ Out of scope | Total |
 | --- | --- | --- | --- | --- | --- |
-| 1. Editor & blocks | 93 | 6 | 0 | 2 | 101 |
+| 1. Editor & blocks | 95 | 4 | 0 | 2 | 101 |
 | 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
-| 3. Databases | 51 | 2 | 0 | 0 | 53 |
+| 3. Databases | 52 | 1 | 0 | 0 | 53 |
 | 4. Properties | 35 | 0 | 0 | 1 | 36 |
 | 5. Formulas | 16 | 0 | 0 | 0 | 16 |
-| 6. Templates | 8 | 1 | 0 | 1 | 10 |
+| 6. Templates | 9 | 0 | 0 | 1 | 10 |
 | 7. Collaboration | 19 | 7 | 0 | 0 | 26 |
 | 8. Sharing & permissions | 21 | 1 | 0 | 0 | 22 |
 | 9. Workspaces & structure | 23 | 0 | 0 | 0 | 23 |
@@ -792,7 +792,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 32 | 0 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **499** | **44** | **0** | **22** | **565** |
+| **Total** | **503** | **40** | **0** | **22** | **565** |
 
 ## Deliberate divergences
 

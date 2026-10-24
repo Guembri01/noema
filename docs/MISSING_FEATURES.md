@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 565 feature rows — 499 implemented · 44 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 565 feature rows — 503 implemented · 40 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **44** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **40** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -18,12 +18,10 @@ This file lists the **44** rows that are not finished, area by area, plus 22 int
 
 ### 1. Editor & blocks
 
-93 done · 6 partial · 0 planned · 2 out of scope
+95 done · 4 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Template button block | Reusable set of blocks inserted on click. | 🟡 | Planned; depends on template subsystem. |
-| Button block | Interactive button triggering configured actions. | 🟡 | Planned; depends on automations. |
 | Ask-AI block | Prompt-driven AI block inside a page. | 🟡 | Planned; depends on AI layer and provider keys. |
 | Two-column page property layout | Place properties side by side. | 🟡 | Planned with property panel rework. |
 | Inline database block | A database rendered inside a page. | 🟡 | Renders a collection view inline; view config incomplete. |
@@ -41,12 +39,11 @@ This file lists the **44** rows that are not finished, area by area, plus 22 int
 
 ### 3. Databases
 
-51 done · 2 partial · 0 planned
+52 done · 1 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Form view | Public/Internal form that creates rows. | 🟡 | The internal FORM view is wired end-to-end: ViewType.FORM (schema, canonical type list, view menu and action guards), the respondent renderer, validation, an inline builder (title/description/questions/required/order/accepting/submit copy) and atomic row creation through submitFormAction (server re-authorization, stored-schema revalidation, per-user/per-address throttles, row + cells in one transaction). Public forms publish one view through ShareLink.viewId at /s/<token>: the builder creates/copies/revokes the link and shows response count, the route handles password/expiry/unlock, and submitPublicFormAction applies per-address/link throttles plus stored-schema revalidation and an atomic row+cells write. Public links intentionally hide PEOPLE/FILES/VERIFICATION questions because those editors need a signed-in session; internal forms keep them. |
-| Recurring templates | Create rows on a schedule. | 🟡 | Planned; depends on a scheduler. Core (resolver/nextRun/cron driver) owned by docs/specs/templates.md (R31.18-R31.23); database-side surfacing + system-actor materialization spec'd: docs/specs/database-deep.md (R89.17). |
 
 ### 4. Properties
 
@@ -58,11 +55,10 @@ This file lists the **44** rows that are not finished, area by area, plus 22 int
 
 ### 6. Templates
 
-8 done · 1 partial · 0 planned · 1 out of scope
+9 done · 0 partial · 0 planned · 1 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Recurring templates | Scheduled row creation. | 🟡 | Planned; needs scheduler. Spec: docs/specs/templates.md. |
 | Template from selection | Turn a block selection into a template. | ⛔ | Uncommon flow; skip initially. B80 blocked-row triage: docs/specs/templates.md:308 + docs/specs/workspaces-structure.md §4 (editor-slot dependency). |
 
 ### 7. Collaboration
@@ -142,7 +138,7 @@ This file lists the **44** rows that are not finished, area by area, plus 22 int
 | Error tracking | Capture and triage errors. | 🟡 | Planned. |
 | Authentication | Sign-up and sign-in. | 🟡 | Session auth; providers limited. |
 | Session management | Expire and revoke sessions. | 🟡 | Sessions stored; revocation partial. Spec: docs/specs/engineering-hardening.md. |
-| SSO / SAML | Enterprise single sign-on. | 🟡 | OIDC authorization-code + JWKS verification, and an **env-level SAML 2.0 connection** (`AUTH_SAML_*`): start/ACS/metadata/SLO routes, `@node-saml/node-saml` signature/audience/destination/condition validation with 120 s skew, a Postgres assertion replay cache, signed RelayState (no SameSite-cookie dependency on the cross-site POST), JIT users and verified-only account linking (B07). Both refuse an unverified local account with `?error=sso_email_taken`. Env-level directory auto-join maps `AUTH_SAML_GROUPS_ATTRIBUTE` through `AUTH_SAML_ROLE_RULES` into `AUTH_SAML_WORKSPACE_ID` (highest rule wins, OWNER is never granted, an existing owner is never demoted). Per-workspace `SsoConnection` rows, admin CRUD actions, `?connection=` start/metadata/ACS resolution and `VerifiedDomain` DNS verification are implemented; a verified email domain auto-joins its workspace when the env connection has no fixed workspace. Metadata-URL refresh parses the IdP document and rotates the signing certificate with a 24-hour previous-certificate overlap. SLO validates POST/redirect logout messages while always ending the local session. The **SSO settings section** manages connections, metadata refresh and verified domains (admin-only). SCIM **Users** endpoints are implemented with hashed bearer tokens, JIT user/membership creation, pagination, lookup, active=false deprovisioning and owner protection. SCIM **Groups** map to teamspaces (list/get/create/add/remove/replace members/delete), and group membership recomputes the mapped workspace role from the connection's `roleRules` (OWNER is never demoted). Login email-domain chooser, invite precedence for JIT users and the recent-SSO activity view are implemented. Remaining polish: a dry “Test connection” action and split per-IdP setup pages (docs/specs/saml-sso.md). Setup: docs/integrations/saml.md. |
+| SSO / SAML | Enterprise single sign-on. | 🟡 | OIDC authorization-code + JWKS verification, and an **env-level SAML 2.0 connection** (`AUTH_SAML_*`): start/ACS/metadata/SLO routes, `@node-saml/node-saml` signature/audience/destination/condition validation with 120 s skew, a Postgres assertion replay cache, signed RelayState (no SameSite-cookie dependency on the cross-site POST), JIT users and verified-only account linking (B07). Both refuse an unverified local account with `?error=sso_email_taken`. Env-level directory auto-join maps `AUTH_SAML_GROUPS_ATTRIBUTE` through `AUTH_SAML_ROLE_RULES` into `AUTH_SAML_WORKSPACE_ID` (highest rule wins, OWNER is never granted, an existing owner is never demoted). Per-workspace `SsoConnection` rows, admin CRUD actions, `?connection=` start/metadata/ACS resolution and `VerifiedDomain` DNS verification are implemented; a verified email domain auto-joins its workspace when the env connection has no fixed workspace. Metadata-URL refresh parses the IdP document and rotates the signing certificate with a 24-hour previous-certificate overlap. SLO validates POST/redirect logout messages while always ending the local session. The **SSO settings section** manages connections, metadata refresh and verified domains (admin-only). SCIM **Users** endpoints are implemented with hashed bearer tokens, JIT user/membership creation, pagination, lookup, active=false deprovisioning and owner protection. SCIM **Groups** map to teamspaces (list/get/create/add/remove/replace members/delete), and group membership recomputes the mapped workspace role from the connection's `roleRules` (OWNER is never demoted). Login email-domain chooser, invite precedence for JIT users and the recent-SSO activity view are implemented. Each connection has a dedicated setup page with copyable SP entity/ACS/metadata/SLO URLs and an admin-only dry **Test connection** report (required fields, certificate parse/validity, SP origin consistency, SSRF-guarded metadata reachability/entity/SSO/certificate checks); it never sends an AuthnRequest. Setup: docs/integrations/saml.md. |
 | Self-hosting | Run on your own server. | 🟡 | Local dev works; packaging pending. Spec: docs/specs/engineering-hardening.md. |
 
 ### 18. Pricing & plan-gated features
