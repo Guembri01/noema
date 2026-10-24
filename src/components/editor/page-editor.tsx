@@ -36,7 +36,24 @@ import { Mathematics } from "@/components/editor/extensions/math-node";
 import "katex/dist/katex.min.css";
 import { toast } from "sonner";
 import { BlockContextMenu } from "@/components/editor/block-context-menu";
-import { EQUATION_EVENT } from "@/lib/editor-events";
+import {
+  COMMENT_ANCHOR_STATE_EVENT,
+  COMMENT_JUMP_EVENT,
+  EQUATION_EVENT,
+  type CommentAnchorStateRequest,
+  type CommentJumpRequest,
+} from "@/lib/editor-events";
+import {
+  CommentHighlights,
+  setActiveCommentHighlight,
+  setCommentHighlightAnchors,
+  type CommentHighlightAnchor,
+} from "@/components/editor/extensions/comment-highlights";
+import {
+  blockContentStart,
+  rangeFromAnchor,
+  staleAnchorIds,
+} from "@/components/editor/comment-anchor";
 import { MathAutoDetect } from "@/components/editor/extensions/math-input";
 import { Fragment, Slice, type Node as PMNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, Selection } from "@tiptap/pm/state";
@@ -480,12 +497,16 @@ const SuggestionsControls = dynamic(
   { ssr: false },
 );
 
+const EMPTY_COMMENT_ANCHORS: CommentHighlightAnchor[] = [];
+
 export type PageEditorProps = {
   pageId: string;
   workspaceId: string;
   workspaceSlug: string;
   breadcrumbTrail?: BreadcrumbCrumb[];
   initialContent: unknown;
+  /** Persisted exact-range comment anchors for the decoration layer. */
+  commentAnchors?: CommentHighlightAnchor[];
   editorPlaceholder?: string;
   locale?: string;
   editable?: boolean;
@@ -565,6 +586,7 @@ function PageEditorBody({
   breadcrumbTrail = [],
   /** Localised empty-paragraph hint. */
   initialContent,
+  commentAnchors = EMPTY_COMMENT_ANCHORS,
   editable = true,
   collab,
 }: PageEditorProps & { collab: CollaborationSession | null }) {
@@ -1076,6 +1098,9 @@ function PageEditorBody({
       // Presentation: block enter/leave motion + a 2px accent drop indicator.
       BlockMotion,
       DropIndicator,
+      // Inline comment ranges, projected from persisted anchors as
+      // decorations (never document marks).
+      CommentHighlights.configure({ anchors: commentAnchors }),
       ...(collab?.extensions ?? []),
     ],
     content: (initialContent as object) ?? {
@@ -1444,6 +1469,82 @@ function PageEditorBody({
     return () => {
       editor.off("focus", onFocus);
       editor.off("blur", onBlur);
+    };
+  }, [editor]);
+
+  // Keep the decoration layer in step with a refreshed comment list. The
+  // extension filters stale ranges against the live doc, so a local edit cannot
+  // repaint text that no longer matches the persisted quote.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    setCommentHighlightAnchors(editor.view, commentAnchors);
+  }, [editor, commentAnchors]);
+
+  /**
+   * Tell the panel when a local edit invalidates a persisted range. The quote is
+   * kept; only the "exact range" claim is withdrawn. Reporting on every editor
+   * update (not just mount) keeps the badge honest while typing, before the
+   * next server refresh.
+   */
+  useEffect(() => {
+    if (!editor || typeof window === "undefined") return;
+    const report = () => {
+      if (editor.isDestroyed) return;
+      const detail: CommentAnchorStateRequest = {
+        staleIds: staleAnchorIds(editor.state.doc, commentAnchors),
+      };
+      window.dispatchEvent(
+        new CustomEvent(COMMENT_ANCHOR_STATE_EVENT, { detail }),
+      );
+    };
+    report();
+    editor.on("update", report);
+    return () => {
+      editor.off("update", report);
+    };
+  }, [editor, commentAnchors]);
+
+  /**
+   * Panel → editor jump. A valid range selects and scrolls to the exact words
+   * and flashes its decoration; a stale/legacy anchor still lands on the block
+   * (jumping stays useful without pretending the range is intact).
+   */
+  useEffect(() => {
+    if (!editor) return;
+    let timer: number | null = null;
+    const onJump = (event: Event) => {
+      const detail = (event as CustomEvent<CommentJumpRequest>).detail;
+      if (!detail || typeof detail.blockId !== "string") return;
+      const doc = editor.state.doc;
+      const range =
+        detail.from !== undefined &&
+        detail.from !== null &&
+        detail.to !== undefined &&
+        detail.to !== null
+          ? rangeFromAnchor(doc, {
+              blockId: detail.blockId,
+              from: detail.from,
+              to: detail.to,
+              quote: detail.quote,
+            })
+          : null;
+      if (range !== null) {
+        editor.chain().focus().setTextSelection(range).scrollIntoView().run();
+      } else {
+        const start = blockContentStart(doc, detail.blockId);
+        if (start === null) return;
+        editor.chain().focus().setTextSelection(start).scrollIntoView().run();
+      }
+      setActiveCommentHighlight(editor.view, detail.commentId);
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (!editor.isDestroyed) setActiveCommentHighlight(editor.view, null);
+      }, 2400);
+    };
+    window.addEventListener(COMMENT_JUMP_EVENT, onJump);
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      window.removeEventListener(COMMENT_JUMP_EVENT, onJump);
     };
   }, [editor]);
 

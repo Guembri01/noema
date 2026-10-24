@@ -623,6 +623,18 @@ body {
   background: var(--selection-soft);
 }
 
+/* Persisted inline-comment range (decoration only, no document mark). */
+.noema-editor .ProseMirror .noema-comment-highlight {
+  background: var(--selection-soft);
+  border-bottom: 1px solid var(--selection-strong);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+.noema-editor .ProseMirror .noema-comment-highlight-active {
+  background: var(--selection);
+  box-shadow: 0 0 0 2px var(--selection-strong);
+}
+
 /* Highlight mark default. */
 .noema-editor .ProseMirror mark {
   background: var(--mark-bg);

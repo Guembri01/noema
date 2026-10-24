@@ -7,6 +7,10 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { groupReactions } from "@/lib/comments";
+import {
+  blockTextById,
+  commentAnchorState,
+} from "@/lib/comment-anchors";
 import { getWorkspaceAccess, canPerformWorkspaceAction } from "@/lib/permissions";
 import { pageCapabilities } from "@/lib/page-access";
 import { viewerScopeFor, guestReadablePageIds } from "@/lib/guest-access";
@@ -192,6 +196,15 @@ export default async function PageRoute({
     body: c.body,
     quote: c.quote,
     blockId: c.blockId,
+    anchorFrom: c.anchorFrom,
+    anchorTo: c.anchorTo,
+    anchorState: commentAnchorState({
+      blockId: c.blockId,
+      blockText: c.blockId ? blockTextById(page.content, c.blockId) : null,
+      from: c.anchorFrom,
+      to: c.anchorTo,
+      quote: c.quote,
+    }),
     resolved: c.resolved,
     createdAt: c.createdAt.toISOString(),
     author: c.author,
@@ -204,6 +217,29 @@ export default async function PageRoute({
       reactions: groupReactions(r.reactions, user.id),
     })),
   }));
+
+  /**
+   * Persisted exact ranges for the editor's decoration layer. Only `valid`
+   * anchors are passed: a stale quote must not paint the wrong sentence. The
+   * editor re-checks each range against the live document anyway, so a local
+   * edit between render and mount cannot resurrect a stale highlight.
+   */
+  const commentAnchors = comments.flatMap((comment) =>
+    comment.anchorState === "valid" &&
+    comment.blockId &&
+    comment.anchorFrom !== null &&
+    comment.anchorTo !== null
+      ? [
+          {
+            commentId: comment.id,
+            blockId: comment.blockId,
+            from: comment.anchorFrom,
+            to: comment.anchorTo,
+            quote: comment.quote,
+          },
+        ]
+      : [],
+  );
 
   let surface: ReactNode;
   if (database) {
@@ -268,6 +304,7 @@ export default async function PageRoute({
         workspaceSlug={workspace.slug}
         breadcrumbTrail={breadcrumbTrail}
         initialContent={page.content}
+        commentAnchors={commentAnchors}
         editable={editable}
       />
     );

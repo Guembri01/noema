@@ -26,6 +26,8 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const {
   CommentPanel,
   commentAvatar,
+  commentComposerAnchor,
+  commentJumpTarget,
   mentionHints,
   relativeTimestamp,
   resolveState,
@@ -91,6 +93,72 @@ describe("relativeTimestamp", () => {
   });
 });
 
+describe("commentComposerAnchor", () => {
+  it("keeps the exact captured range and quote", () => {
+    expect(
+      commentComposerAnchor({
+        quote: "selected words",
+        blockId: "b1",
+        from: 4,
+        to: 18,
+      }),
+    ).toEqual({
+      quote: "selected words",
+      blockId: "b1",
+      from: 4,
+      to: 18,
+    });
+  });
+
+  it("drops a half or inverted range instead of guessing", () => {
+    expect(
+      commentComposerAnchor({ quote: "x", blockId: "b1", from: 4 }),
+    ).toMatchObject({ from: null, to: null });
+    expect(
+      commentComposerAnchor({ quote: "x", blockId: "b1", from: 9, to: 4 }),
+    ).toMatchObject({ from: null, to: null });
+  });
+
+  it("keeps a block-only or page-level hand-off usable", () => {
+    expect(commentComposerAnchor({ quote: "whole block", blockId: "b1" })).toEqual({
+      quote: "whole block",
+      blockId: "b1",
+      from: null,
+      to: null,
+    });
+    expect(commentComposerAnchor(undefined)).toEqual({
+      quote: "",
+      blockId: null,
+      from: null,
+      to: null,
+    });
+  });
+});
+
+describe("commentJumpTarget", () => {
+  it("carries the persisted range to the editor", () => {
+    expect(
+      commentJumpTarget({
+        id: "c1",
+        blockId: "b1",
+        quote: "selected words",
+        anchorFrom: 4,
+        anchorTo: 18,
+      }),
+    ).toEqual({
+      commentId: "c1",
+      blockId: "b1",
+      quote: "selected words",
+      from: 4,
+      to: 18,
+    });
+  });
+
+  it("is null for an unanchored comment", () => {
+    expect(commentJumpTarget({ id: "c1", blockId: null })).toBeNull();
+  });
+});
+
 /* ------------------------------------------------------------- markup ---- */
 
 type Comment = Parameters<typeof CommentPanel>[0]["comments"][number];
@@ -150,6 +218,43 @@ describe("CommentPanel markup", () => {
     expect(html).toContain('data-comment-block-id="block-42"');
     expect(html).toContain("Jump to block");
     expect(html).toContain('aria-label="Jump to block: block-42"');
+  });
+
+  it("offers a jump to a live exact range", () => {
+    const html = render({
+      comments: [
+        makeComment({
+          blockId: "block-42",
+          anchorFrom: 4,
+          anchorTo: 18,
+          anchorState: "valid",
+        }),
+      ],
+    });
+    expect(html).toContain('data-testid="comment-jump-c1"');
+    expect(html).toContain('data-comment-anchor-state="valid"');
+    expect(html).toContain("Jump to text");
+    expect(html).toContain('aria-label="Jump to text: block-42"');
+    expect(html).not.toContain('data-testid="comment-anchor-stale"');
+  });
+
+  it("keeps the quote but marks a stale range instead of implying it is intact", () => {
+    const html = render({
+      comments: [
+        makeComment({
+          blockId: "block-42",
+          anchorFrom: 4,
+          anchorTo: 18,
+          anchorState: "stale",
+        }),
+      ],
+    });
+    // The quote is still shown, and the jump still lands on the block.
+    expect(html).toContain("the anchored words");
+    expect(html).toContain('data-testid="comment-anchor-stale"');
+    expect(html).toContain("Text changed");
+    expect(html).toContain('data-comment-anchor-state="stale"');
+    expect(html).toContain("Jump to block");
   });
 
   it("renders a resolved thread muted with a Resolved tag", () => {

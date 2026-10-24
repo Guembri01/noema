@@ -27,8 +27,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { COMMENT_EVENT, EQUATION_EVENT } from "@/lib/editor-events";
-import { blockIdAt } from "@/components/editor/page-editor-blockrefs";
+import {
+  COMMENT_EVENT,
+  EQUATION_EVENT,
+  type CommentRequest,
+} from "@/lib/editor-events";
+import { anchorFromSelection } from "@/components/editor/comment-anchor";
 import { AI_SKILLS, type AiSkillId } from "@/lib/ai-skills";
 import { aiSkillMenuEntries } from "@/lib/ai-skill-menu";
 import { runAiSkill, type AiSkillRunOptions } from "@/lib/ai-client";
@@ -604,11 +608,24 @@ export function BubbleToolbar({
         label={t(locale, "comment")}
         onClick={() => {
           const { from, to } = editor.state.selection;
-          const quote = editor.state.doc.textBetween(from, to, " ").trim().slice(0, 300);
-          const blockId = blockIdAt(editor.state.doc, from) ?? undefined;
-          window.dispatchEvent(
-            new CustomEvent(COMMENT_EVENT, { detail: { quote, blockId } }),
-          );
+          // Capture the real range, not just the block: the composer sends
+          // block-relative offsets so the exact words can be re-highlighted on
+          // reload. The plain quote is only the cross-block fallback.
+          const anchor = anchorFromSelection(editor.state.doc, from, to);
+          const detail: CommentRequest = anchor
+            ? {
+                quote: anchor.quote,
+                blockId: anchor.blockId,
+                from: anchor.from,
+                to: anchor.to,
+              }
+            : {
+                quote: editor.state.doc
+                  .textBetween(from, to, " ")
+                  .trim()
+                  .slice(0, 300),
+              };
+          window.dispatchEvent(new CustomEvent(COMMENT_EVENT, { detail }));
         }}
       >
         <MessageSquare className="h-4 w-4" />

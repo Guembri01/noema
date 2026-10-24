@@ -204,6 +204,12 @@ export const commentSchema = z.object({
   parentId: z.string().cuid().nullable().optional(),
   blockId: z.string().max(200).optional(),
   quote: z.string().max(500).optional(),
+  // Offsets are UTF-16 positions inside the anchored block's plain text. They
+  // are re-validated against the page's stored content by the action; this
+  // schema only pins the transport shape so a string/negative value fails
+  // before any read.
+  anchorFrom: z.number().int().min(0).optional(),
+  anchorTo: z.number().int().min(0).optional(),
 });
 
 /**

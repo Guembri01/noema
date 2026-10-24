@@ -53,7 +53,15 @@ import { cn } from "@/lib/utils";
 import { contentDirProps } from "@/lib/bidi";
 import { parseCommentBody, toPlainText, type CommentSegment } from "@/lib/comment-body";
 import { extractMentions } from "@/lib/comments";
-import { COMMENT_EVENT } from "@/lib/editor-events";
+import { type CommentAnchorState } from "@/lib/comment-anchors";
+import {
+  COMMENT_ANCHOR_STATE_EVENT,
+  COMMENT_EVENT,
+  COMMENT_JUMP_EVENT,
+  type CommentAnchorStateRequest,
+  type CommentJumpRequest,
+  type CommentRequest,
+} from "@/lib/editor-events";
 import { t } from "@/lib/i18n";
 import { formatRelativeTime } from "@/lib/i18n-format";
 import { stableTime } from "@/lib/time";
@@ -95,6 +103,12 @@ export type CommentNode = {
   quote: string | null;
   /** Stable top-level block id the selection was anchored to, when known. */
   blockId: string | null;
+  /** Exact range start inside `blockId`'s plain text (root comments). */
+  anchorFrom?: number | null;
+  /** Exact range end inside `blockId`'s plain text (root comments). */
+  anchorTo?: number | null;
+  /** Whether the stored range still matches the current block text. */
+  anchorState?: CommentAnchorState;
   resolved: boolean;
   reactions: ReactionRow[];
   createdAt: string;
@@ -110,6 +124,55 @@ export type CommentNode = {
 
 /** Custom event the editor fires when "Comment" is pressed. */
 export { COMMENT_EVENT } from "@/lib/editor-events";
+
+/** Pure: validate the editor's hand-off before it reaches composer state. */
+export function commentComposerAnchor(
+  detail: CommentRequest | undefined,
+): {
+  quote: string;
+  blockId: string | null;
+  from: number | null;
+  to: number | null;
+} {
+  const quote = (detail?.quote ?? "").slice(0, 500);
+  const blockId =
+    typeof detail?.blockId === "string" && detail.blockId.trim() !== ""
+      ? detail.blockId
+      : null;
+  const from = detail?.from;
+  const to = detail?.to;
+  const hasRange =
+    typeof from === "number" &&
+    Number.isInteger(from) &&
+    from >= 0 &&
+    typeof to === "number" &&
+    Number.isInteger(to) &&
+    to > from;
+  return {
+    quote,
+    blockId,
+    from: hasRange ? (from as number) : null,
+    to: hasRange ? (to as number) : null,
+  };
+}
+
+/** Pure: the panel's jump request for a stored root-comment anchor, or null. */
+export function commentJumpTarget(comment: {
+  id: string;
+  blockId: string | null;
+  quote?: string | null;
+  anchorFrom?: number | null;
+  anchorTo?: number | null;
+}): CommentJumpRequest | null {
+  if (!comment.blockId || comment.blockId.trim() === "") return null;
+  return {
+    commentId: comment.id,
+    blockId: comment.blockId,
+    quote: comment.quote ?? null,
+    from: comment.anchorFrom ?? null,
+    to: comment.anchorTo ?? null,
+  };
+}
 
 /**
  * How long the composer keeps its accent flash after the editor hands it a
@@ -399,6 +462,8 @@ export function CommentPanel({
   const [body, setBody] = useState("");
   const [quote, setQuote] = useState("");
   const [anchorBlockId, setAnchorBlockId] = useState<string | null>(null);
+  const [anchorFrom, setAnchorFrom] = useState<number | null>(null);
+  const [anchorTo, setAnchorTo] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [replyTo, setReplyTo] = useState<string | null>(null);
@@ -406,6 +471,11 @@ export function CommentPanel({
   const [pending, startTransition] = useTransition();
   const [flash, setFlash] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
+  /**
+   * Ranges the live editor has reported as no longer matching their quote.
+   * Server state starts the badge; this keeps it accurate while the user types.
+   */
+  const [liveStale, setLiveStale] = useState<ReadonlySet<string>>(new Set());
   // Resolved/open filter; `all` keeps every thread visible by default.
   const [resolvedFilter, setResolvedFilter] = useState<ResolvedFilter>("all");
   const composerRef = useRef<HTMLDivElement | null>(null);
@@ -488,14 +558,14 @@ export function CommentPanel({
   // The editor's "Comment" action hands the selection to us here.
   useEffect(() => {
     const onComment = (event: Event) => {
-      const detail = (event as CustomEvent<{ quote?: string; blockId?: string }>)
-        .detail;
-      setQuote((detail?.quote ?? "").slice(0, 500));
-      setAnchorBlockId(
-        typeof detail?.blockId === "string" && detail.blockId.trim() !== ""
-          ? detail.blockId
-          : null,
-      );
+      const detail = (event as CustomEvent<CommentRequest>).detail;
+      const anchor = commentComposerAnchor(detail);
+      setQuote(anchor.quote);
+      setAnchorBlockId(anchor.blockId);
+      // The editor's real selection, when it captured one. Both offsets must be
+      // present; a half range is dropped rather than guessed.
+      setAnchorFrom(anchor.from);
+      setAnchorTo(anchor.to);
       setReplyTo(null);
       composerRef.current?.scrollIntoView({
         block: "center",
@@ -509,6 +579,19 @@ export function CommentPanel({
     return () => window.removeEventListener(COMMENT_EVENT, onComment);
   }, [inputRef]);
 
+  // The live editor reports ranges whose text changed. Only the exact-range
+  // claim is withdrawn; the quote stays visible.
+  useEffect(() => {
+    const onAnchorState = (event: Event) => {
+      const detail = (event as CustomEvent<CommentAnchorStateRequest>).detail;
+      const ids = Array.isArray(detail?.staleIds) ? detail.staleIds : [];
+      setLiveStale(new Set(ids.filter((id) => typeof id === "string")));
+    };
+    window.addEventListener(COMMENT_ANCHOR_STATE_EVENT, onAnchorState);
+    return () =>
+      window.removeEventListener(COMMENT_ANCHOR_STATE_EVENT, onAnchorState);
+  }, []);
+
   const submit = (text: string, parentId: string | null) => {
     if (!text.trim()) return;
     setComposerError(null);
@@ -520,6 +603,8 @@ export function CommentPanel({
           parentId,
           quote: parentId ? undefined : quote.trim() || undefined,
           blockId: parentId ? undefined : anchorBlockId ?? undefined,
+          anchorFrom: parentId ? undefined : anchorFrom ?? undefined,
+          anchorTo: parentId ? undefined : anchorTo ?? undefined,
         }),
       );
       if (!outcome.ok) {
@@ -538,6 +623,8 @@ export function CommentPanel({
       setReplyTo(null);
       setQuote("");
       setAnchorBlockId(null);
+      setAnchorFrom(null);
+      setAnchorTo(null);
       toast.success(parentId ? "Reply added" : "Comment added");
       router.refresh();
     });
@@ -646,6 +733,13 @@ export function CommentPanel({
                 const resolved = resolveState(comment.resolved) === "resolved";
                 const canReplyToThis = replyableIds.has(comment.id);
                 const commentBlockId = comment.blockId;
+                const jumpTarget = commentJumpTarget(comment);
+                const anchorStale =
+                  comment.anchorState === "stale" ||
+                  liveStale.has(comment.id);
+                const anchorValid =
+                  comment.anchorState === "valid" && !liveStale.has(comment.id);
+                const jumpLabel = anchorValid ? "Jump to text" : t(locale, "jumpToBlock");
                 // Quoted page text is user-authored too: isolate it so a mixed
                 // quote never reorders the comment header around it.
                 const quoteDirection = contentDirProps(comment.quote ?? "");
@@ -691,25 +785,49 @@ export function CommentPanel({
                       </div>
 
                       {comment.quote && (
-                        <blockquote
-                          data-testid="comment-quote"
-                          dir={quoteDirection.dir}
-                          className={cn(
-                            "mt-2 rounded-md border-s-2 border-s-accent bg-surface-2 px-2.5 py-1.5 text-xs italic text-muted",
-                            quoteDirection.className,
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <blockquote
+                            data-testid="comment-quote"
+                            dir={quoteDirection.dir}
+                            className={cn(
+                              "rounded-md border-s-2 border-s-accent bg-surface-2 px-2.5 py-1.5 text-xs italic text-muted",
+                              quoteDirection.className,
+                            )}
+                          >
+                            {comment.quote}
+                          </blockquote>
+                          {anchorStale && (
+                            // The quote is kept, but the persisted range no
+                            // longer matches the block: say so instead of
+                            // highlighting the wrong words.
+                            <Tag
+                              hue="orange"
+                              size="sm"
+                              data-testid="comment-anchor-stale"
+                              title="The text this comment quoted has changed."
+                            >
+                              Text changed
+                            </Tag>
                           )}
-                        >
-                          {comment.quote}
-                        </blockquote>
+                        </div>
                       )}
 
-                      {commentBlockId && (
+                      {commentBlockId && jumpTarget && (
                         <button
                           type="button"
                           data-testid={`comment-jump-${comment.id}`}
                           data-comment-block-id={commentBlockId}
-                          aria-label={`${t(locale, "jumpToBlock")}: ${commentBlockId}`}
+                          data-comment-anchor-state={comment.anchorState ?? "block"}
+                          aria-label={`${jumpLabel}: ${commentBlockId}`}
                           onClick={() => {
+                            // The editor listens for the exact range and paints
+                            // it; the DOM scroll is the fallback for a block the
+                            // editor no longer renders (deleted/other page).
+                            window.dispatchEvent(
+                              new CustomEvent(COMMENT_JUMP_EVENT, {
+                                detail: jumpTarget,
+                              }),
+                            );
                             if (!scrollToBlock(commentBlockId)) {
                               toast.error(t(locale, "nothingToWorkWith"));
                             }
@@ -717,7 +835,7 @@ export function CommentPanel({
                           className="focus-ring u-colors mt-2 flex items-center gap-1 rounded-xs text-xs text-accent hover:underline"
                         >
                           <CornerDownRight className="h-3 w-3" />
-                          {t(locale, "jumpToBlock")}
+                          {jumpLabel}
                         </button>
                       )}
 
@@ -963,7 +1081,13 @@ export function CommentPanel({
           )}
         >
           {quote && (
-            <div className="flex items-start gap-2 rounded-control bg-surface px-2 py-1.5 text-xs text-muted">
+            <div
+              data-testid="comment-composer-quote"
+              data-anchor-block-id={anchorBlockId ?? undefined}
+              data-anchor-from={anchorFrom ?? undefined}
+              data-anchor-to={anchorTo ?? undefined}
+              className="flex items-start gap-2 rounded-control bg-surface px-2 py-1.5 text-xs text-muted"
+            >
               <Quote className="mt-0.5 h-3 w-3 shrink-0" />
               <bdi className="min-w-0 flex-1 truncate">{quote}</bdi>
               <button
@@ -972,6 +1096,8 @@ export function CommentPanel({
                 onClick={() => {
                   setQuote("");
                   setAnchorBlockId(null);
+                  setAnchorFrom(null);
+                  setAnchorTo(null);
                 }}
                 className="focus-ring shrink-0 rounded-xs u-colors hover:text-fg"
               >
@@ -1033,6 +1159,8 @@ export function CommentPanel({
                   setBody("");
                   setQuote("");
                   setAnchorBlockId(null);
+                  setAnchorFrom(null);
+                  setAnchorTo(null);
                   setComposerError(null);
                 }}
               >

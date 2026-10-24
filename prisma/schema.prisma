@@ -506,6 +506,10 @@ model Comment {
   body      String
   blockId   String?
   quote     String?
+  /// Exact selection range inside `blockId`'s plain text (UTF-16 offsets).
+  /// Root comments only; replies resolve the anchor through their parent.
+  anchorFrom Int?
+  anchorTo   Int?
   resolved  Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

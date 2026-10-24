@@ -39,7 +39,12 @@ import {
   blockSkillTarget,
   pageSkillTarget,
 } from "@/components/editor/ai-skill-actions";
-import { COMMENT_EVENT, EQUATION_EVENT } from "@/lib/editor-events";
+import {
+  COMMENT_EVENT,
+  EQUATION_EVENT,
+  type CommentRequest,
+} from "@/lib/editor-events";
+import { wholeBlockAnchor } from "@/components/editor/comment-anchor";
 import {
   BLOCK_COLOR_CATALOGUE,
   BLOCK_COLOR_TYPES,
@@ -766,11 +771,22 @@ export function BlockContextMenu({
 
   const comment = () => {
     const node = pos === null ? null : editor.state.doc.nodeAt(pos);
-    const quote = (node?.textContent ?? "").trim().slice(0, 300);
     const blockId = pos === null ? undefined : blockAnchorId(editor.state.doc, pos);
-    window.dispatchEvent(
-      new CustomEvent(COMMENT_EVENT, { detail: { quote, blockId } }),
-    );
+    // A block-menu comment anchors the whole block as an exact range, so it is
+    // still jumpable/highlightable on reload rather than a block-only anchor.
+    const anchor = blockId ? wholeBlockAnchor(editor.state.doc, blockId) : null;
+    const detail: CommentRequest = anchor
+      ? {
+          quote: anchor.quote,
+          blockId: anchor.blockId,
+          from: anchor.from,
+          to: anchor.to,
+        }
+      : {
+          quote: (node?.textContent ?? "").trim().slice(0, 300),
+          blockId,
+        };
+    window.dispatchEvent(new CustomEvent(COMMENT_EVENT, { detail }));
   };
 
   const selectedNode = pos === null ? null : editor.state.doc.nodeAt(pos);
