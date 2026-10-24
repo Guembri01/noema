@@ -69,6 +69,7 @@ function parentRow(authorId: string) {
     pageId: PAGE_ID,
     authorId,
     body: "the original comment",
+    blockId: "block-1",
     createdAt: new Date("2026-10-21T10:00:00.000Z"),
   };
 }
@@ -114,7 +115,12 @@ describe("addCommentAction → reply dispatch", () => {
       {
         userId: MEMBER,
         type: "comment.reply",
-        payload: { workspaceId: "ws-1", pageId: PAGE_ID, commentId: REPLY_ID },
+        payload: {
+          workspaceId: "ws-1",
+          pageId: PAGE_ID,
+          commentId: REPLY_ID,
+          blockId: "block-1",
+        },
       },
     ]);
   });
@@ -133,6 +139,28 @@ describe("addCommentAction → reply dispatch", () => {
       userId: MEMBER,
       type: "page.mention",
       payload: { workspaceId: "ws-1", pageId: PAGE_ID, commentId: REPLY_ID },
+    });
+  });
+
+  it("carries the thread's block anchor into a reply mention", async () => {
+    db.memberFindMany.mockResolvedValue([
+      { userId: MEMBER, user: { name: "Ada", email: "ada@example.test" } },
+    ]);
+
+    await addCommentAction({
+      pageId: PAGE_ID,
+      body: "@Ada reply",
+      parentId: PARENT_ID,
+    });
+
+    const rows = db.notificationCreateMany.mock.calls.map(
+      (call) => call[0].data as { userId: string; type: string; payload: unknown }[],
+    );
+    expect(rows[0][0].payload).toEqual({
+      workspaceId: "ws-1",
+      pageId: PAGE_ID,
+      commentId: REPLY_ID,
+      blockId: "block-1",
     });
   });
 

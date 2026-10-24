@@ -5,6 +5,7 @@ import {
   isInDigest,
   markAllRead,
   markRead,
+  notificationHref,
   sortRecency,
   unreadCount,
 } from "./notification-inbox";
@@ -280,5 +281,33 @@ describe("isInDigest", () => {
     expect(isInDigest(edit, prefsWith("DAILY", { "page.updated": "ALL" }))).toBe(
       true,
     );
+  });
+});
+
+describe("notificationHref", () => {
+  it("opens a comment thread with its block anchor", () => {
+    expect(
+      notificationHref(
+        { pageId: "p1", commentId: "c1", blockId: "b1" },
+        "acme",
+      ),
+    ).toBe("/w/acme/p1?comment=c1#b1");
+  });
+
+  it("encodes ids and keeps a comment without an anchor clean", () => {
+    expect(
+      notificationHref({ pageId: "p 1", commentId: "c/1" }, "acme team"),
+    ).toBe("/w/acme%20team/p%201?comment=c%2F1");
+  });
+
+  it("keeps the ticket drawer contract", () => {
+    expect(notificationHref({ ticketId: "t1" }, "acme")).toBe(
+      "/w/acme/tickets?ticket=t1",
+    );
+  });
+
+  it("returns null without a page, ticket or slug", () => {
+    expect(notificationHref({}, "acme")).toBeNull();
+    expect(notificationHref({ pageId: "p1" }, "  ")).toBeNull();
   });
 });

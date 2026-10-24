@@ -37,9 +37,50 @@ export type InboxNotification = {
   readonly read: boolean;
   readonly pageId?: string;
   readonly actorId?: string;
+  /** `comment.reply` / `page.mention`: the exact comment to open. */
+  readonly commentId?: string;
+  /** Inline comment anchor to scroll to on the page. */
+  readonly blockId?: string;
   /** Defaults to `true`; set `false` for a broadcast that is not a mention. */
   readonly mentions?: boolean;
 };
+
+/** A notification's link target; tickets are opened from the tracker drawer. */
+export type NotificationTarget = {
+  readonly pageId?: string;
+  readonly ticketId?: string;
+  readonly commentId?: string;
+  readonly blockId?: string;
+};
+
+/**
+ * Canonical inbox deep link.
+ *
+ * A comment notification opens the page at `?comment=<id>` (the comment panel
+ * scrolls to and briefly highlights it) and appends `#<blockId>` when the thread
+ * has an inline anchor. Ticket assignments keep the tracker's `?ticket=` drawer
+ * contract. Everything else is the page path.
+ */
+export function notificationHref(
+  target: NotificationTarget,
+  workspaceSlug: string,
+): string | null {
+  const slug = workspaceSlug.trim();
+  if (slug === "") return null;
+  if (target.pageId) {
+    const params = target.commentId
+      ? `?comment=${encodeURIComponent(target.commentId)}`
+      : "";
+    const hash = target.blockId
+      ? `#${encodeURIComponent(target.blockId)}`
+      : "";
+    return `/w/${encodeURIComponent(slug)}/${encodeURIComponent(target.pageId)}${params}${hash}`;
+  }
+  if (target.ticketId) {
+    return `/w/${encodeURIComponent(slug)}/tickets?ticket=${encodeURIComponent(target.ticketId)}`;
+  }
+  return null;
+}
 
 /** Calendar bucket used to section the inbox list. */
 export type InboxBucket = "today" | "yesterday" | "earlier";

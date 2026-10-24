@@ -15,6 +15,7 @@ import {
   isInDigest,
   markAllRead,
   markRead,
+  notificationHref,
   unreadCount,
 } from "@/lib/notification-inbox";
 import type { InboxBucket, InboxNotification } from "@/lib/notification-inbox";
@@ -89,6 +90,10 @@ function toInboxNotification(row: RawNotification): InboxItem {
   const pageId = typeof payload.pageId === "string" ? payload.pageId : undefined;
   const actorId =
     typeof payload.actorId === "string" ? payload.actorId : undefined;
+  const commentId =
+    typeof payload.commentId === "string" ? payload.commentId : undefined;
+  const blockId =
+    typeof payload.blockId === "string" ? payload.blockId : undefined;
   const ticketId =
     typeof payload.ticketId === "string" ? payload.ticketId : undefined;
   const ticketTitle =
@@ -104,6 +109,8 @@ function toInboxNotification(row: RawNotification): InboxItem {
     read: row.read,
     pageId,
     actorId,
+    commentId,
+    blockId,
     ticketId,
     ticketTitle,
     ticketCount,
@@ -173,14 +180,9 @@ export default async function InboxPage({
   const resumeAt = isQuiet ? nextDeliveryTime(now, quiet) : null;
 
   const renderNotification = (notification: InboxItem) => {
-    // Pages link to the page; an assignment links to the ticket it names, which
-    // the tickets page opens as a drawer from `?ticket=` (there is no ticket
-    // route of its own - the tracker is one page with an open row).
-    const href = notification.pageId
-      ? `/w/${workspace.slug}/${notification.pageId}`
-      : notification.ticketId
-        ? `/w/${workspace.slug}/tickets?ticket=${notification.ticketId}`
-        : null;
+    // A comment opens the exact thread (and block anchor); an assignment links
+    // to the ticket it names, which the tickets page opens as a drawer.
+    const href = notificationHref(notification, workspace.slug);
     // Same contract as the bulk control: the engine decides what is markable.
     const markable =
       markRead([notification], [notification.id])[0] !== notification;

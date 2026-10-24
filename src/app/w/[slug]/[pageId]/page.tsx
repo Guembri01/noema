@@ -35,10 +35,15 @@ import type {
 
 export default async function PageRoute({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string; pageId: string }>;
+  searchParams?: Promise<{ comment?: string | string[] }>;
 }) {
   const { slug, pageId } = await params;
+  const query = (await searchParams) ?? {};
+  const focusCommentId =
+    typeof query.comment === "string" && query.comment !== "" ? query.comment : undefined;
   const user = await requireUser();
   const locale = user.locale ?? "en";
   const workspace = await getWorkspaceBySlug(slug);
@@ -365,6 +370,7 @@ export default async function PageRoute({
         comments={comments}
         currentUserId={user.id}
         canComment={canComment}
+        focusCommentId={focusCommentId}
       />
     </div>
   );

@@ -102,6 +102,12 @@ export async function addCommentAction(input: {
   // parent's ancestor chain, add the pending reply, and let the pure thread model
   // (`validateThreadDepth`, maxDepth 1) flag it. Done before `create` so a bad
   // target never reaches the database.
+  //
+  // The notification deep-link target: the block anchor belongs to the thread
+  // root, so a reply reuses the parent's anchor instead of the reply's own
+  // (null) one.
+  let threadBlockId: string | undefined = parsed.data.blockId;
+
   if (parsed.data.parentId) {
     const parentId = parsed.data.parentId;
     const ancestors: ThreadComment[] = [];
@@ -178,8 +184,9 @@ export async function addCommentAction(input: {
   if (parsed.data.parentId) {
     const parent = await prisma.comment.findUnique({
       where: { id: parsed.data.parentId },
-      select: { authorId: true },
+      select: { authorId: true, blockId: true },
     });
+    threadBlockId = parent?.blockId ?? undefined;
     if (parent && parent.authorId !== user.id) {
       // The reply reaches the author of the parent comment only while they
       // still are a member of the workspace — the mention path below resolves
@@ -198,6 +205,7 @@ export async function addCommentAction(input: {
               workspaceId: page.workspaceId,
               pageId: parsed.data.pageId,
               commentId: comment.id,
+              ...(threadBlockId ? { blockId: threadBlockId } : {}),
             },
           },
         });
@@ -251,6 +259,7 @@ export async function addCommentAction(input: {
             workspaceId: page.workspaceId,
             pageId: parsed.data.pageId,
             commentId: comment.id,
+            ...(threadBlockId ? { blockId: threadBlockId } : {}),
           },
         })),
       });

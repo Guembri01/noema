@@ -378,6 +378,7 @@ export function CommentPanel({
   loading = false,
   loadError = null,
   onRetry,
+  focusCommentId,
 }: {
   pageId: string;
   comments: CommentNode[];
@@ -390,6 +391,8 @@ export function CommentPanel({
   loadError?: string | null;
   /** Retry hook for the error state; defaults to `router.refresh()`. */
   onRetry?: () => void;
+  /** A deep link target: scroll to and briefly highlight this comment. */
+  focusCommentId?: string;
 }) {
   const router = useRouter();
   const [body, setBody] = useState("");
@@ -443,6 +446,24 @@ export function CommentPanel({
     () => comments.filter((comment) => visibleThreadIds.has(comment.id)),
     [comments, visibleThreadIds],
   );
+
+  const [focusedComment, setFocusedComment] = useState<string | null>(null);
+
+  // Deep link from the inbox (`?comment=<id>`): scroll the exact thread into
+  // view and flash it briefly. The block anchor in `#<blockId>` is handled by
+  // the browser when the editor renders the block.
+  useEffect(() => {
+    if (!focusCommentId) return;
+    const element = document.getElementById(`comment-${focusCommentId}`);
+    if (!element) return;
+    element.scrollIntoView({
+      block: "center",
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+    });
+    setFocusedComment(focusCommentId);
+    const timer = window.setTimeout(() => setFocusedComment(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [focusCommentId]);
 
   const filterCounts: Record<ResolvedFilter, number> = {
     all: counts.threads,
@@ -627,13 +648,17 @@ export function CommentPanel({
                 return (
                   <li
                     key={comment.id}
+                    id={`comment-${comment.id}`}
                     data-testid={`comment-${comment.id}`}
+                    data-focused={focusedComment === comment.id ? "true" : undefined}
                     data-resolved={resolved ? "true" : undefined}
                     className={cn(
                       "group u-surface flex gap-3 rounded-card border p-3",
                       resolved
                         ? "border-border bg-surface-2/50"
                         : "border-border bg-bg",
+                      focusedComment === comment.id &&
+                        "ring-2 ring-focus ring-offset-2 ring-offset-bg",
                     )}
                   >
                     <Avatar
