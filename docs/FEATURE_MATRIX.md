@@ -34,6 +34,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | To-do list | Checkbox list with checked state. | ✅ | Click-to-toggle; state persisted as node attribute. |
 | Collapsible list item | List item that can hold nested children and collapse. | ✅ | Notion's collapsible item IS the toggle block; its state persists in the document (covered by the toggle e2e). |
 | Toggle block | Header line that reveals/hides child blocks. | ✅ | Open/closed is a node attribute, saved with the document; an e2e test collapses a toggle and reloads to prove it persists. |
+| Draft recovery | Recover unsaved work after a refresh or crash. | ✅ | The editor mirrors every debounced payload into `localStorage` (`noema:draft:<pageId>`, 7-day TTL); a valid draft is offered — never auto-applied — with Restore/Cancel. Successful server saves clear it. |
 | Toggle heading | Heading that doubles as a toggle. | ✅ | Composite of heading + toggle planned. |
 | Quote block | Styled quotation block. | ✅ | Left rule styling; supports nested blocks. |
 | Callout block | Emphasized box with icon and background. | ✅ | Renders with icon + background colour; the in-block emoji picker ships (the earlier "picker pending" note was stale). |
@@ -770,7 +771,7 @@ The table below summarizes how many feature rows fall into each status, per area
 
 | Area | ✅ Implemented | 🟡 Partial | 🧭 Planned | ⛔ Out of scope | Total |
 | --- | --- | --- | --- | --- | --- |
-| 1. Editor & blocks | 89 | 9 | 0 | 2 | 100 |
+| 1. Editor & blocks | 90 | 9 | 0 | 2 | 101 |
 | 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
 | 3. Databases | 51 | 2 | 0 | 0 | 53 |
 | 4. Properties | 34 | 1 | 0 | 1 | 36 |
@@ -791,7 +792,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **471** | **71** | **0** | **22** | **564** |
+| **Total** | **472** | **71** | **0** | **22** | **565** |
 
 ## Deliberate divergences
 

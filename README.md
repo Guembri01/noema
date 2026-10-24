@@ -68,8 +68,8 @@ This repository is a **working application plus a complete parity tracker**.
   well beyond it: tickets, projects and cycles, workspace chat, AI, sharing and
   SSO, signed webhooks, and the desktop build.
 - Every feature area is tracked in **[`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md)**
-  - 564 rows, each with a status and a note explaining the current state. Today:
-  **471 implemented · 71 partial · 0 planned · 22 deliberately out of scope**.
+  - 565 rows, each with a status and a note explaining the current state. Today:
+  **472 implemented · 71 partial · 0 planned · 22 deliberately out of scope**.
 - Nothing is dropped silently. What is unfinished is enumerated in
   **[`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md)**, generated from the
   matrix by `npm run docs:gaps`, so the two cannot disagree.
@@ -350,7 +350,7 @@ dark variants under `.dark`).
 | Feedback | Optimistic sends, skeleton "thinking" row, auto-scroll to the newest exchange, `notion-empty` / `notion-skeleton` helpers |
 
 **Remaining work** is enumerated in [`docs/MISSING_FEATURES.md`](docs/MISSING_FEATURES.md)
-(generated from the feature matrix by `npm run docs:gaps`): of 564 tracked rows,
+(generated from the feature matrix by `npm run docs:gaps`): of 565 tracked rows,
 71 are still partial and 22 are deliberately out of scope — the rest are
 implemented — with a priority shortlist at the top.
 
@@ -550,7 +550,7 @@ noema/
 │     └─ queries.ts        # read model used by server components
 ├─ docs/
 │  ├─ ARCHITECTURE.md
-│  ├─ FEATURE_MATRIX.md    # Notion parity tracker (564 feature rows)
+│  ├─ FEATURE_MATRIX.md    # Notion parity tracker (565 feature rows)
 │  ├─ specs/               # design specs (saml-sso, relations-rollups, realtime-collab)
 │  └─ ROADMAP.md
 ├─ scripts/
@@ -600,7 +600,7 @@ Found a vulnerability? Please **do not open a public issue** — follow
 | --- | --- |
 | [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | The exhaustive spec/UX/UI test matrix — including right-click, keyboard, offline and permission cases — and the definition of done |
 | [`docs/MISSING_FEATURES.md`](docs/MISSING_FEATURES.md) | Every unfinished feature row, grouped by area |
-| [`docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md) | The 564-row Notion parity tracker behind all of the above |
+| [`docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md) | The 565-row Notion parity tracker behind all of the above |
 | [`docs/specs/`](docs/specs/) | Design specs for the big builds — `saml-sso.md`, `relations-rollups.md`, `realtime-collab.md` |
 
 Conversations are addressable: `/w/<slug>?chat=<threadId>` opens that discussion in the docked panel.

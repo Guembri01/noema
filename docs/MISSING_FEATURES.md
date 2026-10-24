@@ -2,7 +2,7 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 564 feature rows — 471 implemented · 71 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 565 feature rows — 472 implemented · 71 partial · 0 planned · 22 deliberately out of scope.
 
 This file lists the **71** rows that are not finished, area by area, plus 22 intentional divergences.
 
@@ -18,7 +18,7 @@ This file lists the **71** rows that are not finished, area by area, plus 22 int
 
 ### 1. Editor & blocks
 
-89 done · 9 partial · 0 planned · 2 out of scope
+90 done · 9 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |

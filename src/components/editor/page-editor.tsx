@@ -108,6 +108,12 @@ const editEquation = (node: { type: { name: string }; attrs: { latex?: string } 
   );
 };
 import { actionError, safeAction } from "@/lib/actions-client";
+import {
+  clearDraft,
+  readDraft,
+  writeDraft,
+  type RecoverableDraft,
+} from "@/lib/draft-store";
 import { updatePageAction } from "@/server/actions/pages";
 import { uploadFile } from "@/lib/upload-client";
 import { DUR, EASE, Z } from "@/lib/design-tokens";
@@ -563,6 +569,9 @@ function PageEditorBody({
   collab,
 }: PageEditorProps & { collab: CollaborationSession | null }) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [recoverableDraft, setRecoverableDraft] =
+    useState<RecoverableDraft | null>(null);
+  const draftCheckedRef = useRef(false);
   const [bubblePanelOpen, setBubblePanelOpen] = useState(false);
   const [snapshotDepth, setSnapshotDepth] = useState({ undoable: 0, redoable: 0 });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -719,12 +728,22 @@ function PageEditorBody({
     }
     lastSavedRef.current = payload;
     pendingPayloadRef.current = null;
+    try {
+      clearDraft(window.localStorage, pageId);
+    } catch {
+      // storage unavailable
+    }
     setSaveState("saved");
   }, [pageId, bufferSave, collab]);
 
   const persist = useCallback(
     (payload: string) => {
       pendingPayloadRef.current = payload;
+      try {
+        writeDraft(window.localStorage, pageId, payload);
+      } catch {
+        // storage unavailable
+      }
       if (saveTimer.current) clearTimeout(saveTimer.current);
       setSaveState("saving");
       saveTimer.current = setTimeout(() => {
@@ -1339,6 +1358,21 @@ function PageEditorBody({
     editorRef.current = editor;
   }, [editor]);
 
+  // Recover a crash/refresh draft once per page. We offer it, never apply it
+  // silently: the server copy may be newer than the local one.
+  useEffect(() => {
+    if (!editor || draftCheckedRef.current) return;
+    draftCheckedRef.current = true;
+    try {
+      const draft = readDraft(window.localStorage, pageId);
+      if (draft && draft.payload !== JSON.stringify(editor.getJSON())) {
+        setRecoverableDraft(draft);
+      }
+    } catch {
+      // storage unavailable
+    }
+  }, [editor, pageId]);
+
   // Mirror each top-level block's stable id onto `data-flip-id`, and feed the
   // ordered ids to the shared FLIP hook. The mirror runs synchronously in the
   // transaction handler — before React commits — so when the hook measures, the
@@ -1471,6 +1505,26 @@ function PageEditorBody({
     return <div className="h-40 animate-pulse rounded-card bg-surface" />;
   }
 
+  const restoreDraft = () => {
+    if (!recoverableDraft) return;
+    try {
+      editor.commands.setContent(JSON.parse(recoverableDraft.payload));
+      persist(recoverableDraft.payload);
+      setRecoverableDraft(null);
+    } catch {
+      setRecoverableDraft(null);
+    }
+  };
+
+  const discardDraft = () => {
+    try {
+      clearDraft(window.localStorage, pageId);
+    } catch {
+      // storage unavailable
+    }
+    setRecoverableDraft(null);
+  };
+
   // The bottom breathing room (30vh) belongs to the editable area itself — see
   // `.noema-page-canvas .ProseMirror` in globals.css — so a click in it is a click
   // in the document and `clickUnderContent` can start the paragraph there. The
@@ -1533,6 +1587,29 @@ function PageEditorBody({
           <EditorContent editor={editor} />
         </BlockContextMenu>
       </DiagramPresenceProvider>
+
+      {recoverableDraft && (
+        <div
+          role="status"
+          className="mt-3 flex flex-wrap items-center gap-2 rounded-control border border-border bg-surface px-3 py-2 text-sm"
+        >
+          <span>Unsaved changes from a previous session were recovered.</span>
+          <button
+            type="button"
+            onClick={restoreDraft}
+            className="focus-ring rounded-control bg-action px-2 py-1 text-xs text-action-fg"
+          >
+            {t(locale, "restore")}
+          </button>
+          <button
+            type="button"
+            onClick={discardDraft}
+            className="focus-ring rounded-control border border-border px-2 py-1 text-xs"
+          >
+            {t(locale, "cancel")}
+          </button>
+        </div>
+      )}
 
       {dropRejection && (
         <div
