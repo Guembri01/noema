@@ -241,6 +241,8 @@ export function DatabasePeek({
   rollupText,
   isNested,
   onPromote,
+  nestTargetTitle,
+  onNest,
   mutualRelations,
   properties,
   primaryId,
@@ -267,6 +269,9 @@ export function DatabasePeek({
   rollupText: string | null;
   isNested: boolean;
   onPromote: () => void;
+  /** Preceding top-level row offered as the new parent, when there is one. */
+  nestTargetTitle: string | null;
+  onNest: () => void;
   mutualRelations: number;
   properties: DBProperty[];
   primaryId: string | null;
@@ -375,6 +380,17 @@ export function DatabasePeek({
             className="focus-ring u-colors mb-2 flex items-center gap-1.5 rounded-sm text-xs text-accent hover:underline"
           >
             ↥
+          </button>
+        )}
+        {!isNested && nestTargetTitle !== null && (
+          <button
+            type="button"
+            aria-label={`${t(locale, "subticketsHeading")}: ${nestTargetTitle}`}
+            title={`${t(locale, "subticketsHeading")}: ${nestTargetTitle}`}
+            onClick={onNest}
+            className="focus-ring u-colors mb-2 flex items-center gap-1.5 rounded-sm text-xs text-accent hover:underline"
+          >
+            ↳
           </button>
         )}
         {mutualRelations > 0 && (

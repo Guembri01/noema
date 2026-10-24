@@ -855,6 +855,94 @@ export async function deleteRowAction(rowId: string): Promise<Result> {
   return { ok: true };
 }
 
+/**
+ * Nest a row under another row of the same database, or promote it back to the
+ * top level with `parentRowId = null`.
+ *
+ * `Page.parentId` is the database itself and never changes here; the optional
+ * `Page.subOfId` is the sub-item edge. The tree is deliberately one level deep:
+ * a parent that is itself nested and a row that already has children are both
+ * rejected, so a malformed client cannot build an unbounded chain (and the
+ * read/query path never needs a recursive walk). A row carries its own
+ * page-level restriction, so the same workspace/row edit checks as a property
+ * write apply before the move is committed.
+ */
+export async function setSubItemParentAction(
+  rowId: string,
+  parentRowId: string | null,
+): Promise<Result> {
+  const row = await prisma.page.findUnique({
+    where: { id: rowId },
+    select: {
+      parentId: true,
+      workspaceId: true,
+      permissions: { select: { userId: true, level: true } },
+    },
+  });
+  if (!row?.parentId) return { error: "Row not found." };
+  const auth = await authorizeDatabase(row.parentId);
+  if ("error" in auth) return auth;
+  if (row.workspaceId !== auth.page.workspaceId) {
+    return { error: "Row not found." };
+  }
+  if (!auth.capabilities.edit) return { error: "No permission." };
+  const rowPermissions = (row.permissions ?? []).filter(
+    (permission) => permission.userId === auth.user.id,
+  );
+  if (!pageCapabilitiesFromRelation(auth.access.role, rowPermissions).edit) {
+    return { error: "No permission." };
+  }
+  if (parentRowId === rowId) return { error: "A row cannot be its own parent." };
+
+  if (parentRowId !== null) {
+    const parent = await prisma.page.findUnique({
+      where: { id: parentRowId },
+      select: {
+        parentId: true,
+        workspaceId: true,
+        subOfId: true,
+        deletedAt: true,
+      },
+    });
+    if (
+      !parent ||
+      parent.parentId !== auth.page.id ||
+      parent.workspaceId !== auth.page.workspaceId ||
+      parent.deletedAt !== null
+    ) {
+      return { error: "Parent row not found." };
+    }
+    if (parent.subOfId !== null) {
+      return { error: "Sub-items can only be one level deep." };
+    }
+    const childCount = await prisma.page.count({
+      where: {
+        subOfId: rowId,
+        workspaceId: auth.page.workspaceId,
+        deletedAt: null,
+      },
+    });
+    if (childCount > 0) {
+      return { error: "Move this row's sub-items out first." };
+    }
+  }
+
+  await prisma.page.update({
+    where: { id: rowId },
+    data: { subOfId: parentRowId },
+  });
+  await logActivity({
+    workspaceId: auth.page.workspaceId,
+    actorId: auth.user.id,
+    action: "row.edited",
+    targetType: "page",
+    targetId: rowId,
+    meta: { subOfId: parentRowId },
+  });
+  revalidateDatabase(auth.page.workspaceId);
+  return { ok: true };
+}
+
 /** Soft-deleted rows of one database, most recently deleted first. */
 export async function listDeletedRowsAction(
   databasePageId: string,

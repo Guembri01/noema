@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 // never reaches prisma or a Next router context.
 vi.mock("@/server/actions/database", () => ({
   setPropertyValueAction: vi.fn(),
+  setSubItemParentAction: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),

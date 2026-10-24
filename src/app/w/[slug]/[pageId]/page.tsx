@@ -233,6 +233,8 @@ export default async function PageRoute({
             updatedAt: r.updatedAt.toISOString(),
             createdByName: r.createdBy?.name ?? null,
             lastEditedByName: database.lastEditedBy[r.id] ?? r.createdBy?.name ?? null,
+            subOfId: r.subOfId,
+            position: r.position,
             propertyValues: r.propertyValues.map((pv) => ({
               propertyId: pv.propertyId,
               value: pv.value,

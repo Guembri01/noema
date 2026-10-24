@@ -41,6 +41,7 @@ import {
   reorderPropertiesAction,
   saveRowAsTemplateAction,
   setPropertyValueAction,
+  setSubItemParentAction,
   submitFormAction,
   updatePropertyAction,
   updateViewAction } from "@/server/actions/database";
@@ -482,12 +483,11 @@ const DEPENDENCY_COLUMN_ID = "__dependencies__";
 
 /**
  * The additive fields the sub-items engine (`@/lib/sub-items`) reads off a
- * row. `DBRow` does not carry them yet, so they are read defensively: an
- * absent `parentId` keeps a row at the top level and the tree renders exactly
- * like today's flat list.
+ * row. `subOfId` is persisted on `Page`, `position` is the sibling order; the
+ * engine's own vocabulary stays `parentId`/`order`.
  */
-type SubItemFields = { parentId?: string | null; order?: number };
-type SubItemDisplayRow = QueryRow & SubItemFields;
+type SubItemFields = { subOfId?: string | null; position?: number };
+type SubItemDisplayRow = QueryRow & { parentId: string | null; order?: number };
 
 /**
  * fix04 — additive bridges onto the newer sub-issue / relation / rollup engines
@@ -496,8 +496,8 @@ type SubItemDisplayRow = QueryRow & SubItemFields;
  * shapes is node-testable without a DOM; `DatabaseView` is the only caller.
  */
 
-/** Nested sub-issue depth cap. Deeper rows surface as flat orphans, never lost. */
-export const SUB_ISSUE_MAX_DEPTH = 4;
+/** Persisted sub-items are one level deep; deeper rows surface as orphans. */
+export const SUB_ISSUE_MAX_DEPTH = 1;
 
 /** `@/lib/dependencies` edges (`from` blocks `to`) → sub-issues blocking edges. */
 export function toSubIssueEdges(edges: readonly DependencyEdge[]): SubIssueDependencyEdge[] {
@@ -1033,7 +1033,11 @@ export function DatabaseView({
     () =>
       viewRows.map((row) => {
         const fields = row as QueryRow & SubItemFields;
-        return { ...row, parentId: fields.parentId ?? null, order: fields.order };
+        return {
+          ...row,
+          parentId: fields.subOfId ?? null,
+          order: fields.position,
+        };
       }),
     [viewRows],
   );
@@ -1060,12 +1064,46 @@ export function DatabaseView({
       return { ...previous, [activeView.id]: next };
     });
   };
-  /** Promote a nested row to the top level through `@/lib/sub-issues`. */
-  const promoteSubIssue = (id: string) => {
+  /**
+   * Move a row through the pure sub-issue engine for immediate feedback, then
+   * persist the same edge. A rejected move (self/cycle/depth) never reaches the
+   * server; a server refusal rolls the optimistic tree back.
+   */
+  const moveSubIssueRow = async (id: string, parentId: string | null) => {
     if (!activeView) return;
-    if (!canMoveSubIssue(effectiveSubItemRows, id, { toParentId: null }).ok) return;
-    const moved = moveSubIssue(effectiveSubItemRows, id, { toParentId: null });
+    const options = { toParentId: parentId, maxDepth: SUB_ISSUE_MAX_DEPTH };
+    if (!canMoveSubIssue(effectiveSubItemRows, id, options).ok) return;
+    const previousRows = effectiveSubItemRows;
+    const moved = moveSubIssue(effectiveSubItemRows, id, options);
     setSubIssueRowsByView((previous) => ({ ...previous, [activeView.id]: moved }));
+    const result = await setSubItemParentAction(id, parentId);
+    if ("error" in result) {
+      setSubIssueRowsByView((previous) => ({
+        ...previous,
+        [activeView.id]: previousRows,
+      }));
+      toast.error(result.error);
+      return;
+    }
+    router.refresh();
+  };
+  /** Promote a nested row to the top level. */
+  const promoteSubIssue = (id: string) => {
+    void moveSubIssueRow(id, null);
+  };
+  /**
+   * The row a visible row would nest under: the preceding top-level row in the
+   * current view order. A row that is already nested, or the first row, has no
+   * target.
+   */
+  const nestTargetFor = (id: string): DBRow | null => {
+    const current = effectiveSubItemRows.find((row) => row.id === id);
+    if (!current || current.parentId !== null) return null;
+    const index = viewRows.findIndex((row) => row.id === id);
+    if (index <= 0) return null;
+    const previous = viewRows[index - 1] as DBRow;
+    if (previous.subOfId) return null;
+    return previous;
   };
   /** The roll-up summary for a sub-issue parent, or `null` for a leaf. */
   const subIssueRollupText = (id: string): string | null => {
@@ -2280,6 +2318,11 @@ export function DatabaseView({
             effectiveSubItemRows.find((entry) => entry.id === shownPeek.id)?.parentId != null
           }
           onPromote={() => promoteSubIssue(shownPeek.id)}
+          nestTargetTitle={nestTargetFor(shownPeek.id)?.title ?? null}
+          onNest={() => {
+            const target = nestTargetFor(shownPeek.id);
+            if (target) void moveSubIssueRow(shownPeek.id, target.id);
+          }}
           mutualRelations={mutualRelationsFor(shownPeek.id)}
           properties={properties}
           primaryId={primary?.id ?? null}

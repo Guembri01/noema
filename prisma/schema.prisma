@@ -212,6 +212,9 @@ model Page {
   id          String   @id @default(cuid())
   workspaceId String
   parentId    String?
+  /// Optional sub-item parent inside the same database. Distinct from
+  /// `parentId`, which is the database page a row belongs to.
+  subOfId     String?
   teamspaceId String?
   projectId   String?
   type        PageType @default(PAGE)
@@ -239,6 +242,8 @@ model Page {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   parent    Page?     @relation("PageChildren", fields: [parentId], references: [id], onDelete: Cascade)
   children  Page[]    @relation("PageChildren")
+  subOf     Page?     @relation("PageSubItems", fields: [subOfId], references: [id], onDelete: SetNull)
+  subItems  Page[]    @relation("PageSubItems")
   teamspace Teamspace? @relation(fields: [teamspaceId], references: [id], onDelete: SetNull)
   project   Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
   chatThreads ChatThread[]
@@ -258,6 +263,7 @@ model Page {
 
   @@index([workspaceId])
   @@index([parentId])
+  @@index([subOfId])
   @@index([deletedAt])
   @@index([type])
 }

@@ -251,7 +251,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Sub-items / sub-tasks | Parent-child rows inside a database. | 🟡 | Planned; tree ordering needed. Page.subOfId (depth cap 1) spec'd independent of relations: docs/specs/database-deep.md (R89.30). |
+| Sub-items / sub-tasks | Parent-child rows inside a database. | ✅ | `Page.subOfId` (a self-relation distinct from the database `parentId`) persists a one-level row tree, with a migration and index. `setSubItemParentAction` checks the row/database workspace, page-level edit rights, same-database parent, deleted parents, self-parenting and the one-level cap; it logs `row.edited`. The database query/`DBRow` projection carries `subOfId` and `position`; the "Sub-tickets" toggle lays rows out through the `@/lib/sub-issues` engine, the peek can nest a row under the preceding top-level row and promote it back, and every move is optimistic with a server rollback. Covered by `database-subitems.test.ts`, `database-view.fix04.test.ts`, `sub-issues.test.ts` and `sub-ticket-rollup.test.ts`. |
 | Dependencies | Blocking/blocked-by between rows. | 🟡 | Planned; mainly for timeline. RowDependency join model with cycle guard spec'd: docs/specs/database-deep.md (R89.31). |
 | Timeline dependencies | Draw dependency arrows on timeline. | 🟡 | Planned. Arrow rendering inside the gantt depth spec: docs/specs/database-deep.md (R89.31 with R89.11). |
 | Calendar multi-day events | Span events across days. | ✅ | Planned. Span-day expansion replaces today's single-day match (view-renderers.tsx:624-634): docs/specs/database-deep.md (R89.10). |
@@ -771,7 +771,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | --- | --- | --- | --- | --- | --- |
 | 1. Editor & blocks | 86 | 12 | 0 | 2 | 100 |
 | 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
-| 3. Databases | 48 | 5 | 0 | 0 | 53 |
+| 3. Databases | 49 | 4 | 0 | 0 | 53 |
 | 4. Properties | 28 | 7 | 0 | 1 | 36 |
 | 5. Formulas | 15 | 1 | 0 | 0 | 16 |
 | 6. Templates | 6 | 3 | 0 | 1 | 10 |
@@ -790,7 +790,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **460** | **81** | **0** | **22** | **563** |
+| **Total** | **461** | **80** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 

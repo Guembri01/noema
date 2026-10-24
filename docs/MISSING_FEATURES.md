@@ -2,15 +2,15 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 563 feature rows — 460 implemented · 81 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 563 feature rows — 461 implemented · 80 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **81** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **80** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
 | # | Gap | Why it matters | Area |
 | --- | --- | --- | --- |
-| 1 | **Sub-items & dependencies** | The pure tree/graph engines ship; persisted parent links, dependency edges and timeline arrows are still missing. | 3. Databases |
+| 1 | **Dependencies & timeline arrows** | Sub-items now persist; blocking edges, the RowDependency join model and timeline arrows are still missing. | 3. Databases |
 | 2 | **Relations & rollups depth** | Single/multi relation editing and rollup evaluation ship; two-way pairing, value validation and picker paging are not wired end-to-end. | 4. Properties |
 | 3 | **Synced blocks** | Mirror one block's content in many places with a canonical source marker. | 1. Editor & blocks |
 | 4 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
@@ -54,12 +54,11 @@ This file lists the **81** rows that are not finished, area by area, plus 22 int
 
 ### 3. Databases
 
-48 done · 5 partial · 0 planned
+49 done · 4 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Form view | Public/Internal form that creates rows. | 🟡 | The internal FORM view is wired end-to-end: ViewType.FORM (schema, canonical type list, view menu and action guards), the respondent renderer, validation, an inline builder (title/description/questions/required/order/accepting/submit copy) and atomic row creation through submitFormAction (server re-authorization, stored-schema revalidation, per-user/per-address throttles, row + cells in one transaction). Public forms publish one view through ShareLink.viewId at /s/<token>: the builder creates/copies/revokes the link and shows response count, the route handles password/expiry/unlock, and submitPublicFormAction applies per-address/link throttles plus stored-schema revalidation and an atomic row+cells write. Public links intentionally hide PEOPLE/FILES/VERIFICATION questions because those editors need a signed-in session; internal forms keep them. |
-| Sub-items / sub-tasks | Parent-child rows inside a database. | 🟡 | Planned; tree ordering needed. Page.subOfId (depth cap 1) spec'd independent of relations: docs/specs/database-deep.md (R89.30). |
 | Dependencies | Blocking/blocked-by between rows. | 🟡 | Planned; mainly for timeline. RowDependency join model with cycle guard spec'd: docs/specs/database-deep.md (R89.31). |
 | Timeline dependencies | Draw dependency arrows on timeline. | 🟡 | Planned. Arrow rendering inside the gantt depth spec: docs/specs/database-deep.md (R89.31 with R89.11). |
 | Recurring templates | Create rows on a schedule. | 🟡 | Planned; depends on a scheduler. Core (resolver/nextRun/cron driver) owned by docs/specs/templates.md (R31.18-R31.23); database-side surfacing + system-actor materialization spec'd: docs/specs/database-deep.md (R89.17). |

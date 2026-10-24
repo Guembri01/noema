@@ -61,6 +61,10 @@ export type DBRow = {
   createdByName?: string | null;
   /** Latest actor of a recorded row edit; falls back to the creator. */
   lastEditedByName?: string | null;
+  /** Optional persisted sub-item parent (another row in the same database). */
+  subOfId?: string | null;
+  /** Sibling order, shared with the page tree position. */
+  position?: number;
   propertyValues: { propertyId: string; value: unknown }[];
 };
 

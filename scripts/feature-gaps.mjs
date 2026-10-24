@@ -40,7 +40,7 @@ const total = rows.length;
 
 /** The shortlist a maintainer should read first (kept in sync by hand). */
 const PRIORITY = [
-  ["Sub-items & dependencies", "The pure tree/graph engines ship; persisted parent links, dependency edges and timeline arrows are still missing.", "3. Databases"],
+  ["Dependencies & timeline arrows", "Sub-items now persist; blocking edges, the RowDependency join model and timeline arrows are still missing.", "3. Databases"],
   ["Relations & rollups depth", "Single/multi relation editing and rollup evaluation ship; two-way pairing, value validation and picker paging are not wired end-to-end.", "4. Properties"],
   ["Synced blocks", "Mirror one block's content in many places with a canonical source marker.", "1. Editor & blocks"],
   ["Suggestions mode", "Propose edits for approval with a diff overlay.", "7. Collaboration"],

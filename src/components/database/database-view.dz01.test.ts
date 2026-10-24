@@ -48,6 +48,7 @@ vi.mock("@/server/actions/database", () => {
     "reorderPropertiesAction",
     "saveRowAsTemplateAction",
     "setPropertyValueAction",
+    "setSubItemParentAction",
     "setTemplateRecurrenceAction",
     "updatePropertyAction",
     "updateViewAction",
