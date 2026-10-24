@@ -449,15 +449,49 @@ model Template {
   content        Json?
   config         Json?
   recurrence     String?
+  /// A paused schedule keeps its cadence and next run for display, but the
+  /// cron materializer never selects it (R31.22 pause/resume).
+  paused         Boolean   @default(false)
   isDefault      Boolean   @default(false)
   position       Float     @default(0)
   nextRunAt      DateTime?
+  /// When the scheduler last materialized a row for this template.
+  lastRunAt      DateTime?
+  /// Attribution for rows the scheduler creates; falls back to the database
+  /// creator when absent (R31.1/R89.17).
+  createdById    String?
   createdAt      DateTime  @default(now())
 
-  databasePage Page @relation(fields: [databasePageId], references: [id], onDelete: Cascade)
+  databasePage Page          @relation(fields: [databasePageId], references: [id], onDelete: Cascade)
+  runs         TemplateRun[]
 
   @@index([databasePageId])
   @@index([nextRunAt])
+  @@index([paused, nextRunAt])
+}
+
+/// Durable idempotency record for one `(template, scheduled occurrence)` pair.
+///
+/// The unique key is what makes a retried cron tick safe: whichever
+/// transaction inserts the row first owns the occurrence, so a concurrent or
+/// replayed tick can never materialize the same scheduled row twice. The row
+/// is written in the same transaction as the page, its values and the
+/// `nextRunAt` advance, so a crash rolls all four back together.
+model TemplateRun {
+  id            String   @id @default(cuid())
+  templateId    String
+  /// `${templateId}:${scheduledFor.toISOString()}`.
+  occurrenceKey String
+  /// The schedule instant this run materializes.
+  scheduledFor  DateTime
+  /// The row this run created; `null` when the claim is mid-transaction.
+  pageId        String?
+  ranAt         DateTime @default(now())
+
+  template Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, occurrenceKey])
+  @@index([templateId, ranAt])
 }
 
 // ---------------------------------------------------------------------------

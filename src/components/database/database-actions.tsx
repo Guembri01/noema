@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Ban,
+  CalendarClock,
   ChevronRight,
   Copy,
   Download,
@@ -17,11 +18,12 @@ import {
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
-import {
-  deleteTemplateAction,
-  setTemplateRecurrenceAction,
-} from "@/server/actions/database";
+import { deleteTemplateAction } from "@/server/actions/database";
 import { cn } from "@/lib/utils";
+import { formatTemplateNextRun, isTemplateRecurrence } from "@/lib/template-schedule";
+import {
+  TemplateScheduleDialog,
+} from "@/components/database/template-schedule-dialog";
 
 import { t } from "@/lib/i18n";
 import {
@@ -36,13 +38,30 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 /** The template shape the action row needs; the screen's richer type fits. */
-type ActionTemplate = {
+export type ActionTemplate = {
   id: string;
   name: string;
   icon: string | null;
   recurrence?: string | null;
+  nextRunAt?: string | Date | null;
+  lastRunAt?: string | Date | null;
+  paused?: boolean;
   isDefault?: boolean;
 };
+
+/**
+ * The schedule chip rendered in the template submenu (R89.17): the next run
+ * when active, "Paused" when a schedule is paused, and nothing for a manual
+ * template. Exported so the UI wiring is unit-testable without a DOM.
+ */
+export function templateScheduleMenuStatus(
+  template: Pick<ActionTemplate, "recurrence" | "nextRunAt" | "paused">,
+  locale: string,
+): string | null {
+  if (!isTemplateRecurrence(template.recurrence)) return null;
+  if (template.paused) return t(locale, "templatePaused");
+  return formatTemplateNextRun(template.nextRunAt, locale) ?? template.recurrence;
+}
 
 /**
  * The database's row/schema action row.
@@ -97,6 +116,10 @@ export function DatabaseActions({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const csvInputRef = useRef<HTMLInputElement | null>(null);
+  /** The template whose schedule editor is open (R89.17/R31.22). */
+  const [scheduleTemplateId, setScheduleTemplateId] = useState<string | null>(null);
+  const scheduleTemplate =
+    templates.find((template) => template.id === scheduleTemplateId) ?? null;
 
   return (
     <div className="flex flex-wrap items-center gap-1">
@@ -192,72 +215,58 @@ export function DatabaseActions({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent>
-            {templates.map((template) => (
-              <DropdownMenuSub key={template.id}>
-                <DropdownMenuSubTrigger>
-                  <span>{template.icon ?? "📄"}</span>
-                  <span className="flex-1 truncate">{template.name}</span>
-                  {template.isDefault && (
-                    <span aria-hidden title={t(locale, "templates")}>
-                      ★
-                    </span>
-                  )}
-                  {template.recurrence && (
-                    <span className="text-3xs text-muted">{template.recurrence}</span>
-                  )}
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent>
-                  <DropdownMenuItem onSelect={() => onAddRowFromTemplate(template)}>
-                    {t(locale, "newRow")}
-                  </DropdownMenuItem>
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger>{t(locale, "repeatLabel")}</DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent>
-                      {(["daily", "weekly", "monthly"] as const).map((recurrence) => (
-                        <DropdownMenuItem
-                          key={recurrence}
-                          onSelect={() =>
-                            startTransition(async () => {
-                              await setTemplateRecurrenceAction(template.id, recurrence);
-                              toast.success(`${t(locale, "repeatsPrefix")} ${recurrence}`);
-                              router.refresh();
-                            })
-                          }
-                        >
-                          {recurrence}
-                        </DropdownMenuItem>
-                      ))}
-                      <DropdownMenuItem
-                        onSelect={() =>
-                          startTransition(async () => {
-                            await setTemplateRecurrenceAction(template.id, null);
-                            toast.success(t(locale, "repeatDisabled"));
-                            router.refresh();
-                          })
-                        }
+            {templates.map((template) => {
+              const scheduled = isTemplateRecurrence(template.recurrence);
+              const scheduleStatus = templateScheduleMenuStatus(template, locale);
+              return (
+                <DropdownMenuSub key={template.id}>
+                  <DropdownMenuSubTrigger>
+                    <span>{template.icon ?? "📄"}</span>
+                    <span className="flex-1 truncate">{template.name}</span>
+                    {template.isDefault && (
+                      <span aria-hidden title={t(locale, "templates")}>
+                        ★
+                      </span>
+                    )}
+                    {scheduled && (
+                      <span
+                        className="text-3xs text-muted"
+                        data-testid={`template-schedule-status-${template.id}`}
                       >
-                        {t(locale, "offWord")}
-                      </DropdownMenuItem>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-danger"
-                    onSelect={() =>
-                      startTransition(async () => {
-                        const result = await deleteTemplateAction(template.id);
+                        {scheduleStatus}
+                      </span>
+                    )}
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuItem onSelect={() => onAddRowFromTemplate(template)}>
+                      {t(locale, "newRow")}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      data-testid={`template-schedule-open-${template.id}`}
+                      onSelect={() => setScheduleTemplateId(template.id)}
+                    >
+                      <CalendarClock className="h-4 w-4 text-muted" />
+                      {t(locale, "templateSchedule")}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-danger"
+                      onSelect={() =>
+                        startTransition(async () => {
+                          const result = await deleteTemplateAction(template.id);
 
-                        if ("error" in result) toast.error(result.error);
-                        else toast.success(`${t(locale, "deletedPrefix")} “${template.name}”`);
-                        router.refresh();
-                      })
-                    }
-                  >
-                    <Trash2 className="h-4 w-4 text-muted" /> {t(locale, "deleteTemplate")}
-                  </DropdownMenuItem>
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-            ))}
+                          if ("error" in result) toast.error(result.error);
+                          else toast.success(`${t(locale, "deletedPrefix")} “${template.name}”`);
+                          router.refresh();
+                        })
+                      }
+                    >
+                      <Trash2 className="h-4 w-4 text-muted" /> {t(locale, "deleteTemplate")}
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              );
+            })}
           </DropdownMenuContent>
         </DropdownMenu>
       )}
@@ -325,6 +334,14 @@ export function DatabaseActions({
           }}
         />
       )}
+      <TemplateScheduleDialog
+        locale={locale}
+        template={scheduleTemplate}
+        open={scheduleTemplate !== null}
+        onOpenChange={(next) => {
+          if (!next) setScheduleTemplateId(null);
+        }}
+      />
     </div>
   );
 }

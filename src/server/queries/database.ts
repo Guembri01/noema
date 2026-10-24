@@ -106,6 +106,12 @@ export async function getDatabase(
         content: true,
         isDefault: true,
         position: true,
+        // Recurring-template panel (R89.17): the next run, pause state and the
+        // scheduler's last run are displayed in the database Templates menu.
+        nextRunAt: true,
+        lastRunAt: true,
+        paused: true,
+        createdAt: true,
       },
     }),
   ]);

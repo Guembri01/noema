@@ -175,13 +175,6 @@ const ALLOW_LIST = [
   },
   {
     file: "src/server/actions/database.ts",
-    fn: "createRowFromTemplateAction",
-    value: "databasePageId",
-    proof: ["authorizeDatabase(databasePageId)"],
-    reason: "the parent is the authorized database the row template belongs to",
-  },
-  {
-    file: "src/server/actions/database.ts",
     fn: "importCsvAction",
     value: "databasePageId",
     proof: ["authorizeDatabase(databasePageId)"],
@@ -208,6 +201,14 @@ const ALLOW_LIST = [
     proof: ["database.workspaceId !== input.workspaceId"],
     reason:
       "the parent is the template's database page, whose workspace was checked against the request workspace",
+  },
+  {
+    file: "src/server/template-materialization.ts",
+    fn: "materializeTemplateRow",
+    value: "template.databasePageId",
+    proof: ["workspaceId: database.workspaceId"],
+    reason:
+      "the parent is the template's own database page; every caller loads the template and its database together, and the workspace id comes from that database page",
   },
   {
     file: "src/server/actions/import.ts",
@@ -237,13 +238,6 @@ const ALLOW_LIST = [
     callers: "checked",
     reason:
       "the move planner remaps the parent into the moved set (or drops it to null); `validateMove` rejects an orphaned parent",
-  },
-  {
-    file: "src/app/api/cron/templates/route.ts",
-    fn: "POST",
-    value: "template.databasePageId",
-    proof: ["id: template.databasePageId", "workspaceId: database.workspaceId"],
-    reason: "the parent is the template's own database page, read by id in the same request",
   },
 ];
 

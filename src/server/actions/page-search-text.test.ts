@@ -198,9 +198,9 @@ describe("database.ts create paths", () => {
     const result = await createRowFromTemplateAction("db-1", "t-1");
     expect(result).toMatchObject({ ok: true, id: "created" });
 
-    expect(db.pageCreate).toHaveBeenCalledTimes(1);
+    expect(db.tx.page.create).toHaveBeenCalledTimes(1);
     expectIndexed(
-      dataOf(db.pageCreate, 0),
+      dataOf(db.tx.page.create, 0),
       pageSearchText("Weekly review", doc("body from the template")),
     );
   });

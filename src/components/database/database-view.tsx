@@ -270,6 +270,12 @@ type ViewTemplate = {
   name: string;
   icon: string | null;
   recurrence?: string | null;
+  /** `Template.nextRunAt` — the scheduler's next due instant (R89.17). */
+  nextRunAt?: string | Date | null;
+  /** `Template.lastRunAt` — when the scheduler last materialized a row. */
+  lastRunAt?: string | Date | null;
+  /** `Template.paused` — keeps the cadence but stops the cron (R31.22). */
+  paused?: boolean;
   /** `Template.config`, the saved `{ values }` property defaults. */
   config?: { values?: { propertyId: string; value: unknown }[] } | null;
   /** `Template.content` (a ProseMirror doc once the query exposes it). */

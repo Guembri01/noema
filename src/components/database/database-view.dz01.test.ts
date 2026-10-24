@@ -53,6 +53,7 @@ vi.mock("@/server/actions/database", () => {
     "setSubItemParentAction",
     "submitFormAction",
     "setTemplateRecurrenceAction",
+    "setTemplatePausedAction",
     "updatePropertyAction",
     "updateViewAction",
     "reorderRowsAction",

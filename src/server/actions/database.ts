@@ -28,7 +28,15 @@ import {
   type DatabaseStructure,
 } from "@/lib/database-copy";
 import { dispatchWebhooks } from "@/lib/webhooks";
-import { nextRunFor } from "@/lib/recurrence";
+import {
+  nextRunForSchedule,
+  normalizeTemplateRecurrence,
+  templateAnchorFromConfig,
+  templateScheduleAnchor,
+  validateTemplateScheduleInput,
+} from "@/lib/template-schedule";
+import type { TemplateRecurrence } from "@/lib/recurrence";
+import { materializeTemplateRow } from "@/server/template-materialization";
 import { ORDER_STEP } from "@/lib/row-order";
 import { createRowCellsInTransaction } from "@/server/row-cells";
 import { fileUrlsAreAppOwned } from "@/lib/validation";
@@ -2182,6 +2190,7 @@ export async function duplicateDatabaseAction(
         icon: template.icon,
         recurrence: template.recurrence,
         nextRunAt: template.nextRunAt,
+        createdById: auth.user.id,
         ...(content !== undefined ? { content } : {}),
         ...(config !== undefined ? { config } : {}),
       };
@@ -2254,6 +2263,7 @@ export async function saveRowAsTemplateAction(
       name: name.trim().slice(0, 80) || "Template",
       icon: row.icon,
       content: (row.content ?? undefined) as Prisma.InputJsonValue | undefined,
+      createdById: auth.user.id,
       config: {
         values: row.propertyValues.map((value) => ({
           propertyId: value.propertyId,
@@ -2283,58 +2293,34 @@ export async function createRowFromTemplateAction(
   const template = await prisma.template.findUnique({
     where: { id: templateId },
     select: {
+      id: true,
       databasePageId: true,
       content: true,
       config: true,
       name: true,
       icon: true,
+      createdById: true,
     },
   });
   if (!template || template.databasePageId !== databasePageId) {
     return { error: "Template not found." };
   }
 
-  const last = await prisma.page.findFirst({
-    where: { parentId: databasePageId },
-    orderBy: { position: "desc" },
-    select: { position: true },
+  // One materializer for manual and scheduled rows (R31.4/R31.5/R89.17): the
+  // pure planner drops stale property ids, the body/title variables resolve at
+  // this instant, and row + values commit together.
+  const materialized = await materializeTemplateRow({
+    template,
+    database: { id: databasePageId, workspaceId: auth.page.workspaceId },
+    actorId: auth.user.id,
+    now: new Date(),
   });
-  const row = await prisma.page.create({
-    data: {
-      workspaceId: auth.page.workspaceId,
-      // The parent is the database page `authorizeDatabase` just checked and
-      // the row is written into that very page's workspace — parent and row
-      // share one workspace by construction (B08: `assertScopedParent` would
-      // be redundant here).
-      parentId: databasePageId,
-      title: template.name,
-      icon: template.icon,
-      createdById: auth.user.id,
-      position: (last?.position ?? 0) + 1000,
-      content: (template.content ?? undefined) as Prisma.InputJsonValue | undefined,
-      // A row materialized from a template carries that template's body, so
-      // index title and body together from the first write.
-      searchText: pageSearchText(template.name, template.content),
-    },
-    select: { id: true },
-  });
-
-  const configured = (template.config ?? {}) as {
-    values?: { propertyId: string; value: unknown }[];
-  };
-  const values = configured.values ?? [];
-  if (values.length > 0) {
-    await prisma.propertyValue.createMany({
-      data: values.map((entry) => ({
-        propertyId: entry.propertyId,
-        pageId: row.id,
-        value: entry.value as Prisma.InputJsonValue,
-      })),
-    });
+  if (materialized.status !== "created") {
+    return { error: "Template not found." };
   }
 
   revalidateDatabase(auth.page.workspaceId);
-  return { ok: true, id: row.id };
+  return { ok: true, id: materialized.pageId };
 }
 
 export async function deleteTemplateAction(
@@ -2355,16 +2341,40 @@ export async function deleteTemplateAction(
   return { ok: true };
 }
 
-export type TemplateRecurrence = "daily" | "weekly" | "monthly";
+export type { TemplateRecurrence };
 
-/** Set or clear a template's recurrence (drives the cron materializer). */
+export type TemplateScheduleOptions = {
+  /** Optional wall-clock time the schedule is pinned to (R31.20). */
+  hour?: number | null;
+  minute?: number | null;
+  /** Injectable clock for tests; defaults to `new Date()`. */
+  now?: Date;
+};
+
+/** A JSON object copy of `Template.config` (arrays/null become `{}`). */
+function templateConfigObject(config: unknown): Record<string, unknown> {
+  return typeof config === "object" && config !== null && !Array.isArray(config)
+    ? { ...(config as Record<string, unknown>) }
+    : {};
+}
+
+/**
+ * Set, edit or clear a template's recurrence (drives the cron materializer).
+ *
+ * Durable state is `Template.recurrence` + `nextRunAt` + `config.anchorAt`;
+ * the anchor pins the wall clock so a 09:00 schedule stays 09:00 however late
+ * the tick fires (R31.20). Setting a schedule clears a previous pause.
+ * Passing "off"/`null` clears all three and leaves unrelated config (such as
+ * saved `values`) untouched.
+ */
 export async function setTemplateRecurrenceAction(
   templateId: string,
-  recurrence: TemplateRecurrence | null,
-): Promise<Result> {
+  recurrence: TemplateRecurrence | string | null,
+  options: TemplateScheduleOptions = {},
+): Promise<Result<{ nextRunAt: string | null; paused: boolean }>> {
   const template = await prisma.template.findUnique({
     where: { id: templateId },
-    select: { databasePageId: true },
+    select: { databasePageId: true, config: true },
   });
   if (!template) return { error: "Template not found." };
   const auth = await authorizeDatabase(template.databasePageId);
@@ -2372,15 +2382,91 @@ export async function setTemplateRecurrenceAction(
   if (!auth.capabilities.edit) return { error: "No permission." };
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
+
+  const validation = validateTemplateScheduleInput({
+    recurrence,
+    hour: options.hour,
+    minute: options.minute,
+  });
+  if (!validation.ok) return { error: validation.error };
+
+  const now =
+    options.now instanceof Date && Number.isFinite(options.now.getTime())
+      ? options.now
+      : new Date();
+  const config = templateConfigObject(template.config);
+  let nextRunAt: Date | null = null;
+
+  if (validation.recurrence) {
+    const anchor = templateScheduleAnchor(now, validation.hour, validation.minute);
+    nextRunAt = nextRunForSchedule(validation.recurrence, now, anchor);
+    config.anchorAt = anchor.toISOString();
+  } else {
+    delete config.anchorAt;
+  }
+
   await prisma.template.update({
     where: { id: templateId },
     data: {
-      recurrence: recurrence ?? null,
-      nextRunAt: recurrence ? nextRunFor(recurrence) : null,
+      recurrence: validation.recurrence,
+      nextRunAt,
+      paused: false,
+      config: config as Prisma.InputJsonValue,
     },
   });
   revalidateDatabase(auth.page.workspaceId);
-  return { ok: true };
+  return {
+    ok: true,
+    nextRunAt: nextRunAt?.toISOString() ?? null,
+    paused: false,
+  };
+}
+
+/**
+ * Pause or resume a template schedule.
+ *
+ * Pausing keeps the cadence (and the displayed next run) but the cron query
+ * excludes paused rows. Resuming re-derives `nextRunAt` from `now` + the
+ * stored anchor, so a long pause never back-fills the pause window (R31.22).
+ */
+export async function setTemplatePausedAction(
+  templateId: string,
+  paused: boolean,
+  options: { now?: Date } = {},
+): Promise<Result<{ paused: boolean; nextRunAt: string | null }>> {
+  const template = await prisma.template.findUnique({
+    where: { id: templateId },
+    select: { databasePageId: true, recurrence: true, config: true },
+  });
+  if (!template) return { error: "Template not found." };
+  const auth = await authorizeDatabase(template.databasePageId);
+  if ("error" in auth) return auth;
+  if (!auth.capabilities.edit) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
+
+  const recurrence = normalizeTemplateRecurrence(template.recurrence);
+  if (!recurrence) return { error: "Template has no schedule." };
+
+  const now =
+    options.now instanceof Date && Number.isFinite(options.now.getTime())
+      ? options.now
+      : new Date();
+  const nextRunAt = paused
+    ? null
+    : nextRunForSchedule(recurrence, now, templateAnchorFromConfig(template.config));
+
+  await prisma.template.update({
+    where: { id: templateId },
+    data: {
+      paused,
+      // On pause keep the last projected run for display; on resume replace it
+      // with the freshly computed one.
+      ...(paused ? {} : { nextRunAt }),
+    },
+  });
+  revalidateDatabase(auth.page.workspaceId);
+  return { ok: true, paused, nextRunAt: nextRunAt?.toISOString() ?? null };
 }
 
 /**

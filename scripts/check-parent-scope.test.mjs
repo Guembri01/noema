@@ -729,15 +729,6 @@ const ALLOW_LIST_CASES = [
       "the allow-list entry duplicateDatabaseAction() requires `id: newPageId, workspaceId: auth.page.workspaceId` in the function",
   },
   {
-    name: "the allow-list entry for createRowFromTemplateAction() holds only while the parent is authorized",
-    file: "src/server/actions/database.ts",
-    fn: "createRowFromTemplateAction",
-    from: "authorizeDatabase(databasePageId)",
-    to: "authorizeDatabase(otherPageId)",
-    expect:
-      "the allow-list entry createRowFromTemplateAction() requires `authorizeDatabase(databasePageId)` in the function",
-  },
-  {
     name: "the allow-list entry for importCsvAction() holds only while the parent is authorized",
     file: "src/server/actions/database.ts",
     fn: "importCsvAction",
@@ -826,14 +817,6 @@ const ALLOW_LIST_CASES = [
     to: "  const o = { ...input };\n  const databasePageId = o?.parentId;\n  const auth = await authorizeDatabase(databasePageId);",
     expect:
       "the allow-list entry createRowAction() does not hold any more — `databasePageId` is not a proved value (the local `databasePageId` takes the value from `o`, whose origin the gate cannot see)",
-  },
-  {
-    name: "the allow-list entry for POST() holds only while the template's database is read by id",
-    file: "src/app/api/cron/templates/route.ts",
-    fn: "POST",
-    from: "where: { id: template.databasePageId }",
-    to: "where: { id: otherPageId }",
-    expect: "the allow-list entry POST() requires `id: template.databasePageId` in the function",
   },
 ];
 

@@ -29,11 +29,13 @@ const db = vi.hoisted(() => ({
   pageCreate: vi.fn(),
   propertyFindMany: vi.fn(),
   propertyValueCreateMany: vi.fn(),
+  activityCreate: vi.fn(),
   transaction: vi.fn(),
   tx: {
     page: { findFirst: vi.fn(), create: vi.fn() },
     propertyValue: { createMany: vi.fn() },
     template: { update: vi.fn() },
+    templateRun: { create: vi.fn(), update: vi.fn() },
   },
 }));
 
@@ -47,6 +49,7 @@ vi.mock("@/lib/db", () => ({
     },
     property: { findMany: db.propertyFindMany },
     propertyValue: { createMany: db.propertyValueCreateMany },
+    activity: { create: db.activityCreate },
     $transaction: db.transaction,
   },
 }));
@@ -98,6 +101,9 @@ beforeEach(() => {
   db.tx.page.create.mockResolvedValue({ id: "row-1" });
   db.tx.propertyValue.createMany.mockResolvedValue({ count: 0 });
   db.tx.template.update.mockResolvedValue({});
+  db.tx.templateRun.create.mockResolvedValue({});
+  db.tx.templateRun.update.mockResolvedValue({});
+  db.activityCreate.mockResolvedValue({});
 });
 
 afterEach(() => {
@@ -145,7 +151,7 @@ describe("D3 — per-template isolation", () => {
     expect(db.transaction).toHaveBeenCalledTimes(2);
     expect(db.tx.template.update).toHaveBeenCalledWith({
       where: { id: "t-ok" },
-      data: { nextRunAt: expect.any(Date) },
+      data: { nextRunAt: expect.any(Date), lastRunAt: expect.any(Date) },
     });
     // …while the poison template never advanced (retried next tick) and was
     // never advanced outside the transaction either.
@@ -225,7 +231,7 @@ describe("D4 — the cron advances from the stored schedule", () => {
     expect(body).toMatchObject({ created: 1 });
     expect(db.tx.template.update).toHaveBeenCalledWith({
       where: { id: "t-drift" },
-      data: { nextRunAt: new Date(2026, 0, 2, 9, 0) }, // NOT 09:37
+      data: { nextRunAt: new Date(2026, 0, 2, 9, 0), lastRunAt: expect.any(Date) }, // NOT 09:37
     });
   });
 
@@ -265,7 +271,7 @@ describe("D4 — the cron advances from the stored schedule", () => {
     expect(res.status).toBe(200);
     expect(db.tx.template.update).toHaveBeenCalledWith({
       where: { id: "t-monthly" },
-      data: { nextRunAt: new Date(2026, 2, 31, 9, 0) }, // Mar 31 — Feb was not skipped
+      data: { nextRunAt: new Date(2026, 2, 31, 9, 0), lastRunAt: expect.any(Date) }, // Mar 31 — Feb was not skipped
     });
   });
 });
@@ -288,7 +294,106 @@ describe("D3 — preserved skip semantics", () => {
     });
     expect(db.tx.template.update).toHaveBeenCalledWith({
       where: { id: "t-ok" },
+      data: { nextRunAt: expect.any(Date), lastRunAt: expect.any(Date) },
+    });
+  });
+});
+
+describe("R31.22 — durable idempotency and pause", () => {
+  it("queries only unpaused schedules", async () => {
+    db.templateFindMany.mockResolvedValue([]);
+    await call();
+    expect(db.templateFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ paused: false, recurrence: { not: null } }),
+      }),
+    );
+  });
+
+  it("a concurrent/replayed tick loses the unique occurrence claim without creating a row", async () => {
+    db.templateFindMany.mockResolvedValue([template({ id: "t-claim" })]);
+    db.tx.templateRun.create.mockRejectedValue({ code: "P2002" });
+
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ due: 1, created: 0, skipped: 1, failed: [] });
+    expect(db.tx.page.create).not.toHaveBeenCalled();
+    expect(db.tx.template.update).not.toHaveBeenCalled();
+    expect(db.templateUpdate).toHaveBeenCalledWith({
+      where: { id: "t-claim" },
       data: { nextRunAt: expect.any(Date) },
     });
+  });
+
+  it("claims the stored scheduled instant, not the execution time", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 0, 1, 9, 37));
+    db.templateFindMany.mockResolvedValue([
+      template({ id: "t-claim", nextRunAt: new Date(2026, 0, 1, 9, 0) }),
+    ]);
+
+    await call();
+    expect(db.tx.templateRun.create).toHaveBeenCalledWith({
+      data: {
+        templateId: "t-claim",
+        occurrenceKey: `t-claim:${new Date(2026, 0, 1, 9, 0).toISOString()}`,
+        scheduledFor: new Date(2026, 0, 1, 9, 0),
+        ranAt: new Date(2026, 0, 1, 9, 37),
+      },
+    });
+  });
+
+  it("attributes the row to the template creator and records a system activity actor", async () => {
+    db.templateFindMany.mockResolvedValue([
+      template({ id: "t-actor", createdById: "template-author" }),
+    ]);
+
+    await call();
+    const row = db.tx.page.create.mock.calls[0]?.[0] as {
+      data: { createdById: string };
+    };
+    expect(row.data.createdById).toBe("template-author");
+    expect(db.activityCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        actorId: null,
+        action: "page.created",
+        meta: expect.objectContaining({
+          source: "template-schedule",
+          templateId: "t-actor",
+          attributedTo: "template-author",
+        }),
+      }),
+    });
+  });
+
+  it("resolves template variables against the run time (R31.18)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 0, 5, 9, 30));
+    db.templateFindMany.mockResolvedValue([
+      template({
+        id: "t-vars",
+        name: "Weekly report {{date}}",
+        content: {
+          type: "doc",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "Run on {{date}}" }] },
+          ],
+        },
+        nextRunAt: new Date(2026, 0, 5, 9, 0),
+      }),
+    ]);
+
+    await call();
+    const row = db.tx.page.create.mock.calls[0]?.[0] as {
+      data: {
+        title: string;
+        searchText: string;
+        content: { content: { content: { text: string }[] }[] };
+      };
+    };
+    expect(row.data.title).toBe("Weekly report 2026-01-05");
+    expect(row.data.searchText).toContain("Run on 2026-01-05");
+    expect(row.data.content.content[0].content[0].text).toBe("Run on 2026-01-05");
   });
 });

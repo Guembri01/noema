@@ -1,13 +1,18 @@
 import { NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { nextRunFor, type TemplateRecurrence } from "@/lib/recurrence";
+import { logActivity } from "@/lib/activity";
+import {
+  advanceTemplateSchedule,
+  normalizeTemplateRecurrence,
+  resolveTemplateActorId,
+  templateAnchorFromConfig,
+} from "@/lib/template-schedule";
+import type { TemplateRecurrence } from "@/lib/recurrence";
 import { rateLimit } from "@/lib/api-guard";
 import { guardOpsSecret } from "@/lib/ops-guard";
+import { materializeTemplateRow } from "@/server/template-materialization";
 
 export const runtime = "nodejs";
-
-type ConfiguredValue = { propertyId: string; value: unknown };
 
 /**
  * Normalize the stored `Template.recurrence` before it ever reaches the
@@ -18,7 +23,8 @@ type ConfiguredValue = { propertyId: string; value: unknown };
  * (`daily`), reported once so a bad row is observable in the cron log.
  */
 function normalizeRecurrence(id: string, value: unknown): TemplateRecurrence {
-  if (value === "daily" || value === "weekly" || value === "monthly") return value;
+  const known = normalizeTemplateRecurrence(value);
+  if (known) return known;
   if (value !== null && value !== undefined) {
     console.warn(
       `[cron/templates] template ${id}: invalid recurrence ${String(value)}; using "daily"`,
@@ -28,41 +34,22 @@ function normalizeRecurrence(id: string, value: unknown): TemplateRecurrence {
 }
 
 /**
- * Advance the schedule (D4): compute from the *stored* `nextRunAt` so
- * execution jitter never drifts the schedule, pinned to the schedule's own
- * wall clock (`config.anchorAt` when set, else the stored nextRunAt). A
- * schedule stale by more than one period (service down) catches up with a
- * single row and jumps past now — never one row per missed tick.
- */
-function advanceOf(
-  recurrence: TemplateRecurrence,
-  scheduled: Date,
-  anchor: Date,
-  now: Date,
-): Date {
-  const next = nextRunFor(recurrence, scheduled, anchor);
-  return next > now ? next : nextRunFor(recurrence, now, anchor);
-}
-
-/** R31.20 anchor (`config.anchorAt`, ISO in JSON) — fall back to the schedule itself. */
-function anchorOf(config: unknown, scheduled: Date): Date {
-  const anchorAt = (config as { anchorAt?: unknown } | null | undefined)?.anchorAt;
-  const parsed =
-    typeof anchorAt === "string" || typeof anchorAt === "number"
-      ? new Date(anchorAt)
-      : null;
-  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : scheduled;
-}
-
-/**
  * Materialize due recurring database templates. Point a scheduler (cron, Vercel
  * Cron, GitHub Actions, Task Scheduler) at this endpoint. Protect it by setting
  * CRON_SECRET and sending `x-cron-secret: <value>`.
  *
- * D3: each due template is isolated in its own try/catch and materializes in a
- * single transaction (row + property values + nextRunAt advance) — one poison
- * template yields `{ id, error }` in `failed[]`, does not advance its own
- * schedule (retried next tick), and never blocks later due templates.
+ * The endpoint is a **system actor**: it holds no user session, so it is
+ * authorized only by the ops secret. Rows are attributed server-side to
+ * `template.createdById ?? database.createdById`, and the activity line records
+ * the scheduler as an actorless/system event (R31.1/R89.17).
+ *
+ * D3/D4/R31.22: each due template is isolated in its own try/catch and
+ * materializes through `materializeTemplateRow` — one transaction containing the
+ * `TemplateRun` idempotency claim, the row, its values and the `nextRunAt`
+ * advance. A poison template yields `{ id, error }` in `failed[]`, keeps its
+ * schedule (retried next tick) and never blocks later due templates. A
+ * concurrent/replayed tick loses the unique occurrence claim and is reported as
+ * `skipped`, never as a duplicate row.
  */
 export async function POST(request: Request) {
   // Fail closed: materializing recurring templates mutates the workspace, so an
@@ -78,7 +65,12 @@ export async function POST(request: Request) {
 
   const now = new Date();
   const due = await prisma.template.findMany({
-    where: { recurrence: { not: null }, nextRunAt: { lte: now } },
+    where: {
+      recurrence: { not: null },
+      // A paused schedule keeps its cadence for display but is never selected.
+      paused: false,
+      nextRunAt: { lte: now },
+    },
     select: {
       id: true,
       databasePageId: true,
@@ -88,6 +80,7 @@ export async function POST(request: Request) {
       config: true,
       recurrence: true,
       nextRunAt: true,
+      createdById: true,
     },
   });
 
@@ -100,19 +93,26 @@ export async function POST(request: Request) {
     try {
       const recurrence = normalizeRecurrence(template.id, template.recurrence);
       const scheduled = template.nextRunAt ?? now;
-      const next = advanceOf(recurrence, scheduled, anchorOf(template.config, scheduled), now);
-      // Report the next run the schedule advanced to, so the cron log records
-      // both the fire and the cadence it was normalized against.
+      const anchor = templateAnchorFromConfig(template.config) ?? scheduled;
+      // Catch-up policy (R31.22): at most one row per tick, then jump past now.
+      const next = advanceTemplateSchedule(recurrence, scheduled, anchor, now);
       console.info(
         `[cron/templates] template ${template.id} (${recurrence}) next run ${next.toISOString()}`,
       );
 
       const database = await prisma.page.findUnique({
         where: { id: template.databasePageId },
-        select: { workspaceId: true, createdById: true, deletedAt: true },
+        select: {
+          id: true,
+          workspaceId: true,
+          createdById: true,
+          deletedAt: true,
+        },
       });
 
       if (!database || database.deletedAt) {
+        // Preserved skip semantics: a missing/trashed database advances rather
+        // than retrying forever, so restore resumes on a future tick.
         await prisma.template.update({
           where: { id: template.id },
           data: { nextRunAt: next },
@@ -121,76 +121,57 @@ export async function POST(request: Request) {
         continue;
       }
 
-      const configured = (template.config ?? {}) as { values?: ConfiguredValue[] };
-      const raw = configured.values ?? [];
-      const values: ConfiguredValue[] = [];
-      let stale = 0;
-      if (raw.length > 0) {
-        // R31.5: values whose propertyId no longer exists on this database are
-        // skipped and counted, never thrown (they used to poison the loop with
-        // an FK violation inside createMany). Duplicate propertyIds collapse to
-        // the last entry (PropertyValue is unique on propertyId+pageId).
-        const valid = new Set(
-          (
-            await prisma.property.findMany({
-              where: { databasePageId: template.databasePageId },
-              select: { id: true },
-            })
-          ).map((property) => property.id),
-        );
-        const seen = new Set<string>();
-        for (const entry of raw) {
-          if (!valid.has(entry.propertyId) || seen.has(entry.propertyId)) {
-            stale += 1;
-            continue;
-          }
-          seen.add(entry.propertyId);
-          values.push(entry);
-        }
-      }
+      const actorId = resolveTemplateActorId(template, database);
+      if (!actorId) throw new Error("Template has no attributable creator.");
 
-      // Atomic unit of work: a crash anywhere leaves neither a row without an
-      // advanced schedule (double-create on the next tick) nor an advanced
-      // schedule without a row.
-      await prisma.$transaction(async (tx) => {
-        const last = await tx.page.findFirst({
-          where: { parentId: template.databasePageId },
-          orderBy: { position: "desc" },
-          select: { position: true },
-        });
-        const row = await tx.page.create({
-          data: {
-            workspaceId: database.workspaceId,
-            // The parent is the database page this row is materialized into —
-            // `database` is that very page, so parent and row share one
-            // workspace by construction (B08: `assertScopedParent` would be
-            // redundant here).
-            parentId: template.databasePageId,
-            title: template.name,
-            icon: template.icon,
-            createdById: database.createdById,
-            position: (last?.position ?? 0) + 1000,
-            content: (template.content ?? undefined) as Prisma.InputJsonValue | undefined,
-          },
-          select: { id: true },
-        });
-        if (values.length > 0) {
-          await tx.propertyValue.createMany({
-            data: values.map((entry) => ({
-              propertyId: entry.propertyId,
-              pageId: row.id,
-              value: entry.value as Prisma.InputJsonValue,
-            })),
-          });
-        }
-        await tx.template.update({
+      const materialized = await materializeTemplateRow({
+        template,
+        database,
+        actorId,
+        now,
+        occurrence: { scheduledFor: scheduled, nextRunAt: next },
+      });
+
+      if (materialized.status === "duplicate") {
+        // Another tick already owns this occurrence; the transaction rolled
+        // back without writing a row. Advance the schedule anyway so a ledger
+        // row left behind by a manual rewind can never wedge the queue.
+        await prisma.template.update({
           where: { id: template.id },
           data: { nextRunAt: next },
         });
-      });
+        skipped += 1;
+        continue;
+      }
+      if (materialized.status === "unavailable") {
+        await prisma.template.update({
+          where: { id: template.id },
+          data: { nextRunAt: next },
+        });
+        skipped += 1;
+        continue;
+      }
 
-      skipped += stale;
+      skipped += materialized.skippedValues;
       created += 1;
+
+      // The row is attributed to the template/database author, but the event is
+      // recorded as the scheduler (no user actor) so the audit log can tell a
+      // system materialization apart from a person clicking "New row".
+      await logActivity({
+        workspaceId: database.workspaceId,
+        actorId: null,
+        action: "page.created",
+        targetType: "page",
+        targetId: materialized.pageId,
+        meta: {
+          source: "template-schedule",
+          templateId: template.id,
+          scheduledFor: scheduled.toISOString(),
+          occurrenceKey: materialized.occurrenceKey,
+          attributedTo: actorId,
+        },
+      });
     } catch (error) {
       failed.push({
         id: template.id,

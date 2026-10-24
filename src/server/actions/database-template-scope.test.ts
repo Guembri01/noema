@@ -203,7 +203,15 @@ const db = vi.hoisted(() => ({
   pageCreate: vi.fn(),
   templateFindUnique: vi.fn(),
   templateCreate: vi.fn(),
+  propertyFindMany: vi.fn(),
   propertyValueCreateMany: vi.fn(),
+  transaction: vi.fn(),
+  tx: {
+    page: { findFirst: vi.fn(), create: vi.fn() },
+    propertyValue: { createMany: vi.fn() },
+    templateRun: { create: vi.fn(), update: vi.fn() },
+    template: { update: vi.fn() },
+  },
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -217,7 +225,9 @@ vi.mock("@/lib/db", () => ({
       findUnique: db.templateFindUnique,
       create: db.templateCreate,
     },
+    property: { findMany: db.propertyFindMany },
     propertyValue: { createMany: db.propertyValueCreateMany },
+    $transaction: db.transaction,
   },
 }));
 
@@ -257,7 +267,7 @@ function createdRow(): {
   title?: string;
   content?: unknown;
 } {
-  const call = db.pageCreate.mock.calls[0];
+  const call = db.tx.page.create.mock.calls[0];
   return (call?.[0] as { data: Record<string, unknown> })?.data ?? {};
 }
 
@@ -267,7 +277,7 @@ function createdCellValues(): {
   pageId?: string;
   value: unknown;
 }[] {
-  const call = db.propertyValueCreateMany.mock.calls[0];
+  const call = db.tx.propertyValue.createMany.mock.calls[0];
   const data = (call?.[0] as { data?: { propertyId: string; value: unknown }[] })?.data;
   return data ?? [];
 }
@@ -328,6 +338,16 @@ beforeEach(() => {
   db.pageCreate.mockResolvedValue({ id: "row-created" });
   db.templateCreate.mockResolvedValue({ id: "template-created" });
   db.propertyValueCreateMany.mockResolvedValue({ count: 1 });
+  db.propertyFindMany.mockResolvedValue([{ id: "prop-a" }]);
+  db.transaction.mockImplementation(async (fn: (tx: typeof db.tx) => Promise<unknown>) =>
+    fn(db.tx),
+  );
+  db.tx.page.findFirst.mockResolvedValue({ position: 1000 });
+  db.tx.page.create.mockResolvedValue({ id: "row-created" });
+  db.tx.propertyValue.createMany.mockResolvedValue({ count: 1 });
+  db.tx.templateRun.create.mockResolvedValue({});
+  db.tx.templateRun.update.mockResolvedValue({});
+  db.tx.template.update.mockResolvedValue({});
 
   db.templateFindUnique.mockImplementation(
     async (args: { where: { id?: string }; select?: Record<string, boolean> }) => {
@@ -403,8 +423,8 @@ describe("createRowFromTemplateAction — the template must belong to the author
     const result = (await createRowFromTemplateAction(DATABASE_A, "template-in-b")) as ActionResult;
 
     expect(result.error).toBe("Template not found.");
-    expect(db.pageCreate).not.toHaveBeenCalled();
-    expect(db.propertyValueCreateMany).not.toHaveBeenCalled();
+    expect(db.tx.page.create).not.toHaveBeenCalled();
+    expect(db.tx.propertyValue.createMany).not.toHaveBeenCalled();
   });
 
   it("answers a foreign template exactly like an unknown template", async () => {
@@ -419,15 +439,15 @@ describe("createRowFromTemplateAction — the template must belong to the author
     const result = (await createRowFromTemplateAction(DATABASE_A, "template-in-c")) as ActionResult;
 
     expect(result.error).toBe("Template not found.");
-    expect(db.pageCreate).not.toHaveBeenCalled();
-    expect(db.propertyValueCreateMany).not.toHaveBeenCalled();
+    expect(db.tx.page.create).not.toHaveBeenCalled();
+    expect(db.tx.propertyValue.createMany).not.toHaveBeenCalled();
   });
 
   it("materializes a template of the authorized database", async () => {
     const result = (await createRowFromTemplateAction(DATABASE_A, "template-in-a")) as ActionResult;
 
     expect(result).toMatchObject({ ok: true, id: "row-created" });
-    expect(db.pageCreate).toHaveBeenCalledTimes(1);
+    expect(db.tx.page.create).toHaveBeenCalledTimes(1);
     const row = createdRow();
     expect(row.parentId).toBe(DATABASE_A);
     expect(row.workspaceId).toBe(WORKSPACE_A);
