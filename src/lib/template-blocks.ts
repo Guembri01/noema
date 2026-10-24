@@ -1,18 +1,29 @@
-import { sanitizeHref } from "@/lib/validation";
+import {
+  BUTTON_ACTION_KINDS,
+  BUTTON_NOTIFY_LEVELS,
+  isSafeButtonUrl,
+  resolveButtonAction,
+  validateButton,
+  type ButtonAction,
+  type ButtonActionKind,
+  type ButtonNotifyLevel,
+  type ButtonRow,
+} from "@/lib/row-buttons";
 
 /**
  * Template button + Button block engine (docs/MISSING_FEATURES.md §1 "Template
- * button block" / "Button block"; §6 "Template button"). This is the pure core
- * behind the editor's template atom and the interactive Button block: strict
- * parsers, a semantic validator, a side-effect-free click planner and a
- * deterministic template-insert resolver.
+ * button block" / "Button block"; docs/specs/templates.md R31.10 and
+ * docs/specs/automations.md R27.x).
  *
- * Nothing here performs I/O. `planButtonClick` turns a stored button into a
- * declarative **action plan** a renderer executes (navigate, stage a property
- * patch, resolve a template insert, call a webhook, duplicate source blocks),
- * and `resolveTemplateInsert` mints a fresh block list so two insertions never
- * share ids. Webhook URLs pass through the shared `sanitizeHref` allowlist, so
- * `javascript:`/`data:`/`vbscript:` payloads can never reach a plan.
+ * This module is the pure seam between stored node attributes and the shared
+ * **Button action** vocabulary in `src/lib/row-buttons.ts` — the same actions
+ * automations execute. There is no second action language here: a Button block
+ * stores a `ButtonAction`, `validateButtonBlock` delegates to `validateButton`,
+ * and `planButtonClick` delegates to `resolveButtonAction`. The only additional
+ * job of this module is template resolution: an `insert_template` action is
+ * turned into a fresh, id-minted block list via `resolveTemplateInsert`.
+ *
+ * Nothing here performs I/O, reads the clock, or throws.
  */
 
 /* ---------------------------------------------------------------------------
@@ -27,60 +38,16 @@ export type TemplateButtonBlock = {
   icon?: string;
 };
 
-/** Every method a `webhook` action may use. */
-export const WEBHOOK_METHODS = ["POST", "PUT", "PATCH"] as const;
-export type WebhookMethod = (typeof WEBHOOK_METHODS)[number];
-export const DEFAULT_WEBHOOK_METHOD: WebhookMethod = "POST";
+/** Presentation styles a Button block may use. */
+export const BUTTON_BLOCK_STYLES = ["default", "primary", "danger"] as const;
+export type ButtonBlockStyle = (typeof BUTTON_BLOCK_STYLES)[number];
 
-export type InsertTemplateButtonAction = {
-  type: "insertTemplate";
-  templateId: string;
-};
+/** Every action a Button block may carry, in catalogue order. */
+export const BUTTON_BLOCK_ACTIONS: readonly ButtonActionKind[] = BUTTON_ACTION_KINDS;
+export type ButtonBlockAction = ButtonAction;
+export type ButtonBlockActionType = ButtonActionKind;
 
-export type OpenPageButtonAction = {
-  type: "openPage";
-  pageId: string;
-};
-
-/** A property patch: property id → value to write. */
-export type SetPropsButtonAction = {
-  type: "setProps";
-  props: Record<string, unknown>;
-};
-
-export type WebhookButtonAction = {
-  type: "webhook";
-  url: string;
-  method?: WebhookMethod;
-  body?: unknown;
-};
-
-/** Duplicate the listed source blocks in place. */
-export type DuplicateButtonAction = {
-  type: "duplicate";
-  sourceIds: string[];
-};
-
-/** A Button block's declarative action; discriminated on `type`. */
-export type ButtonBlockAction =
-  | InsertTemplateButtonAction
-  | OpenPageButtonAction
-  | SetPropsButtonAction
-  | WebhookButtonAction
-  | DuplicateButtonAction;
-
-export type ButtonBlockActionType = ButtonBlockAction["type"];
-
-/** The known action types, in catalogue order. */
-export const BUTTON_BLOCK_ACTIONS: readonly ButtonBlockActionType[] = [
-  "insertTemplate",
-  "openPage",
-  "setProps",
-  "webhook",
-  "duplicate",
-];
-
-/** A configured Button block. `icon`/`confirm` are optional. */
+/** A configured Button block. `icon`/`confirm`/`style` are optional. */
 export type ButtonBlock = {
   id: string;
   label: string;
@@ -88,6 +55,8 @@ export type ButtonBlock = {
   action: ButtonBlockAction;
   /** When true a renderer asks before running the action. */
   confirm?: boolean;
+  /** Visual style; defaults to `"default"`. */
+  style?: ButtonBlockStyle;
 };
 
 /* ---------------------------------------------------------------------------
@@ -159,6 +128,20 @@ function optionalBoolean(value: unknown): boolean | undefined | null {
   return typeof value === "boolean" ? value : null;
 }
 
+function asNotifyLevel(value: unknown): ButtonNotifyLevel | null {
+  return typeof value === "string" &&
+    (BUTTON_NOTIFY_LEVELS as readonly string[]).includes(value)
+    ? (value as ButtonNotifyLevel)
+    : null;
+}
+
+function asButtonStyle(value: unknown): ButtonBlockStyle | null {
+  return typeof value === "string" &&
+    (BUTTON_BLOCK_STYLES as readonly string[]).includes(value)
+    ? (value as ButtonBlockStyle)
+    : null;
+}
+
 /** Parse an untrusted value into a `TemplateButtonBlock`, or `null`. */
 export function parseTemplateButton(input: unknown): TemplateButtonBlock | null {
   if (!isRecord(input)) return null;
@@ -170,45 +153,36 @@ export function parseTemplateButton(input: unknown): TemplateButtonBlock | null 
   return { id, templateId, label, ...(icon === undefined ? {} : { icon }) };
 }
 
-/** Parse an untrusted value into a `ButtonBlockAction`, or `null`. */
+/** Parse an untrusted value into the shared `ButtonAction`, or `null`. */
 export function parseButtonAction(input: unknown): ButtonBlockAction | null {
   if (!isRecord(input)) return null;
-  switch (input.type) {
-    case "insertTemplate": {
-      const templateId = nonEmptyString(input.templateId);
-      return templateId === null ? null : { type: "insertTemplate", templateId };
-    }
-    case "openPage": {
-      const pageId = nonEmptyString(input.pageId);
-      return pageId === null ? null : { type: "openPage", pageId };
-    }
-    case "setProps": {
-      if (!isRecord(input.props)) return null;
-      return { type: "setProps", props: { ...input.props } };
-    }
-    case "webhook": {
+  switch (input.kind) {
+    case "open_url": {
       const url = nonEmptyString(input.url);
       if (url === null) return null;
-      const method = optionalString(input.method);
-      if (method !== undefined && !(WEBHOOK_METHODS as readonly string[]).includes(method ?? "")) {
-        return null;
-      }
+      const openInNewTab = optionalBoolean(input.openInNewTab);
+      if (openInNewTab === null) return null;
       return {
-        type: "webhook",
+        kind: "open_url",
         url,
-        ...(method === undefined ? {} : { method: method as WebhookMethod }),
-        ...(input.body === undefined ? {} : { body: input.body }),
+        ...(openInNewTab === undefined ? {} : { openInNewTab }),
       };
     }
-    case "duplicate": {
-      if (!Array.isArray(input.sourceIds)) return null;
-      const sourceIds: string[] = [];
-      for (const id of input.sourceIds) {
-        const value = nonEmptyString(id);
-        if (value === null) return null;
-        sourceIds.push(value);
-      }
-      return { type: "duplicate", sourceIds };
+    case "set_property": {
+      const propertyId = nonEmptyString(input.propertyId);
+      if (propertyId === null || !("value" in input)) return null;
+      return { kind: "set_property", propertyId, value: input.value };
+    }
+    case "insert_template": {
+      const templateId = nonEmptyString(input.templateId);
+      return templateId === null ? null : { kind: "insert_template", templateId };
+    }
+    case "notify": {
+      const message = nonEmptyString(input.message);
+      if (message === null) return null;
+      const level = input.level === undefined ? undefined : asNotifyLevel(input.level);
+      if (level === null) return null;
+      return { kind: "notify", message, ...(level === undefined ? {} : { level }) };
     }
     default:
       return null;
@@ -222,7 +196,10 @@ export function parseButtonBlock(input: unknown): ButtonBlock | null {
   const label = nonEmptyString(input.label);
   const icon = optionalString(input.icon);
   const confirm = optionalBoolean(input.confirm);
-  if (id === null || label === null || icon === null || confirm === null) return null;
+  const style = input.style === undefined ? undefined : asButtonStyle(input.style);
+  if (id === null || label === null || icon === null || confirm === null || style === null) {
+    return null;
+  }
   const action = parseButtonAction(input.action);
   if (action === null) return null;
   return {
@@ -231,6 +208,7 @@ export function parseButtonBlock(input: unknown): ButtonBlock | null {
     action,
     ...(icon === undefined ? {} : { icon }),
     ...(confirm === undefined ? {} : { confirm }),
+    ...(style === undefined ? {} : { style }),
   };
 }
 
@@ -245,8 +223,7 @@ export type ButtonIssueCode =
   | "unknown_action"
   | "unknown_template"
   | "unknown_property"
-  | "unsafe_url"
-  | "invalid_method";
+  | "unsafe_url";
 
 /** A single semantic problem, addressable by `path` in a config editor. */
 export type ButtonIssue = {
@@ -259,9 +236,9 @@ export type ButtonIssue = {
 export type KnownRef = string | { id: string };
 
 export type ButtonValidationContext = {
-  /** Known template ids; unknown `insertTemplate` ids are flagged when set. */
+  /** Known template ids; unknown `insert_template` ids are flagged when set. */
   templates?: readonly KnownRef[];
-  /** Known property ids; unknown `setProps` keys are flagged when set. */
+  /** Known property ids; unknown `set_property` ids are flagged when set. */
   properties?: readonly KnownRef[];
 };
 
@@ -286,9 +263,10 @@ function missing(path: string, field: string): ButtonIssue {
 
 /**
  * Validate a Button block (typically straight from stored JSON) and return
- * every issue found. An empty array means the block is semantically sound.
- * Never throws: a non-object collapses to a single `not_an_object` issue, and
- * membership checks are skipped when the caller omits `templates`/`properties`.
+ * every issue found. Shape validation is delegated to the shared
+ * `validateButton` so the block and automations cannot drift; this module only
+ * adds the editor-level `style` field and the optional template/property
+ * membership checks.
  */
 export function validateButtonBlock(
   block: unknown,
@@ -307,117 +285,50 @@ export function validateButtonBlock(
   if (block.confirm !== undefined && typeof block.confirm !== "boolean") {
     issues.push({ path: "confirm", code: "wrong_type", message: '"confirm" must be a boolean.' });
   }
+  if (block.style !== undefined && asButtonStyle(block.style) === null) {
+    issues.push({
+      path: "style",
+      code: "wrong_type",
+      message: `"style" must be one of ${BUTTON_BLOCK_STYLES.join(", ")}.`,
+    });
+  }
 
   if (!isRecord(block.action)) {
     issues.push(missing("action", "action"));
     return issues;
   }
   const action = block.action;
-  if (typeof action.type !== "string") {
-    issues.push(missing("action.type", "type"));
-    return issues;
-  }
-  if (!(BUTTON_BLOCK_ACTIONS as readonly string[]).includes(action.type)) {
+
+  // Shared validator: unknown actions, missing fields and unsafe URLs all come
+  // from the automation ButtonAction vocabulary.
+  for (const issue of validateButton({ id: "button", label: "Button", action })) {
+    if (issue.path === "id" || issue.path === "label") continue;
     issues.push({
-      path: "action.type",
-      code: "unknown_action",
-      message: `"${action.type}" is not a supported action type.`,
+      path: issue.path,
+      code: issue.code === "unknown_kind" ? "unknown_action" : issue.code,
+      message: issue.message,
     });
-    return issues;
   }
 
   const templates = toIdSet(context.templates);
   const properties = toIdSet(context.properties);
-
-  switch (action.type) {
-    case "insertTemplate": {
-      if (isBlank(action.templateId)) {
-        issues.push(missing("action.templateId", "templateId"));
-      } else if (templates && !templates.has(String(action.templateId))) {
-        issues.push({
-          path: "action.templateId",
-          code: "unknown_template",
-          message: `Template "${String(action.templateId)}" does not exist.`,
-        });
-      }
-      break;
+  if (action.kind === "insert_template" && typeof action.templateId === "string") {
+    if (templates && !templates.has(action.templateId)) {
+      issues.push({
+        path: "action.templateId",
+        code: "unknown_template",
+        message: `Template "${action.templateId}" does not exist.`,
+      });
     }
-    case "openPage": {
-      if (isBlank(action.pageId)) issues.push(missing("action.pageId", "pageId"));
-      break;
+  }
+  if (action.kind === "set_property" && typeof action.propertyId === "string") {
+    if (properties && !properties.has(action.propertyId)) {
+      issues.push({
+        path: "action.propertyId",
+        code: "unknown_property",
+        message: `Property "${action.propertyId}" does not exist.`,
+      });
     }
-    case "setProps": {
-      if (!isRecord(action.props)) {
-        issues.push({ path: "action.props", code: "wrong_type", message: '"props" must be an object.' });
-        break;
-      }
-      const keys = Object.keys(action.props);
-      if (keys.length === 0) {
-        issues.push({
-          path: "action.props",
-          code: "missing_field",
-          message: '"props" must set at least one property.',
-        });
-      }
-      if (properties) {
-        for (const key of keys) {
-          if (!properties.has(key)) {
-            issues.push({
-              path: `action.props.${key}`,
-              code: "unknown_property",
-              message: `Property "${key}" does not exist.`,
-            });
-          }
-        }
-      }
-      break;
-    }
-    case "webhook": {
-      if (isBlank(action.url)) {
-        issues.push(missing("action.url", "url"));
-      } else if (sanitizeHref(action.url) === null) {
-        issues.push({
-          path: "action.url",
-          code: "unsafe_url",
-          message: "The webhook URL is not a safe http(s) link.",
-        });
-      }
-      if (
-        action.method !== undefined &&
-        !(WEBHOOK_METHODS as readonly unknown[]).includes(action.method)
-      ) {
-        issues.push({
-          path: "action.method",
-          code: "invalid_method",
-          message: `"method" must be one of ${WEBHOOK_METHODS.join(", ")}.`,
-        });
-      }
-      break;
-    }
-    case "duplicate": {
-      if (!Array.isArray(action.sourceIds)) {
-        issues.push({
-          path: "action.sourceIds",
-          code: "wrong_type",
-          message: '"sourceIds" must be an array.',
-        });
-      } else if (action.sourceIds.length === 0) {
-        issues.push({
-          path: "action.sourceIds",
-          code: "missing_field",
-          message: '"sourceIds" needs at least one block id.',
-        });
-      } else if (!action.sourceIds.every((id) => typeof id === "string" && id.trim() !== "")) {
-        issues.push({
-          path: "action.sourceIds",
-          code: "wrong_type",
-          message: '"sourceIds" must contain non-empty strings.',
-        });
-      }
-      break;
-    }
-    default:
-      break;
   }
 
   return issues;
@@ -497,26 +408,22 @@ export type InsertTemplateClickPlan = PlanCommon & {
   insert: TemplateInsertResult;
 };
 
-export type OpenPageClickPlan = PlanCommon & {
-  kind: "openPage";
-  pageId: string;
+export type OpenUrlClickPlan = PlanCommon & {
+  kind: "openUrl";
+  href: string;
+  openInNewTab: boolean;
 };
 
-export type SetPropsClickPlan = PlanCommon & {
-  kind: "setProps";
-  patch: Record<string, unknown>;
+export type SetPropertyClickPlan = PlanCommon & {
+  kind: "setProperty";
+  propertyId: string;
+  value: unknown;
 };
 
-export type WebhookClickPlan = PlanCommon & {
-  kind: "webhook";
-  url: string;
-  method: WebhookMethod;
-  body?: unknown;
-};
-
-export type DuplicateClickPlan = PlanCommon & {
-  kind: "duplicate";
-  sourceIds: string[];
+export type NotifyClickPlan = PlanCommon & {
+  kind: "notify";
+  message: string;
+  level: ButtonNotifyLevel;
 };
 
 /** An invalid block: never executable, carries the full issue list. */
@@ -528,20 +435,21 @@ export type InvalidClickPlan = PlanCommon & {
 /** A declarative, side-effect-free description of what clicking would do. */
 export type ButtonClickPlan =
   | InsertTemplateClickPlan
-  | OpenPageClickPlan
-  | SetPropsClickPlan
-  | WebhookClickPlan
-  | DuplicateClickPlan
+  | OpenUrlClickPlan
+  | SetPropertyClickPlan
+  | NotifyClickPlan
   | InvalidClickPlan;
 
 export type ButtonClickContext = {
-  /** Full template sources, used to resolve `insertTemplate`. */
+  /** Full template sources, used to resolve `insert_template`. */
   templates?: readonly TemplateInsertSource[];
-  /** Known property ids, used to validate a `setProps` patch. */
+  /** Known property ids, used to validate a `set_property` patch. */
   properties?: readonly KnownRef[];
-  /** ISO timestamp stamped on an `insertTemplate` plan. */
+  /** Interpolation tokens available to `open_url`/`notify` text. */
+  variables?: Record<string, string>;
+  /** ISO timestamp stamped on an `insert_template` plan. */
   now?: string;
-  /** Actor stamped on an `insertTemplate` plan. */
+  /** Actor stamped on an `insert_template` plan. */
   actorId?: string;
 };
 
@@ -552,12 +460,16 @@ function findTemplate(
   return templates?.find((template) => template.id === id);
 }
 
+function invalid(common: PlanCommon, issues: ButtonIssue[]): InvalidClickPlan {
+  return { ...common, kind: "invalid", issues };
+}
+
 /**
  * Resolve a Button block against its ambient context into an action plan.
  * Never throws: an invalid block yields an `invalid`, disabled plan carrying
- * every issue. `insertTemplate` resolves the template's blocks through
- * {@link resolveTemplateInsert}; `duplicate` returns the source ids untouched;
- * `setProps` returns the property patch.
+ * every issue. Non-template actions are planned by the shared
+ * `resolveButtonAction`; `insert_template` additionally resolves the template
+ * into fresh blocks.
  */
 export function planButtonClick(
   block: ButtonBlock,
@@ -573,63 +485,93 @@ export function planButtonClick(
     templates: context.templates,
     properties: context.properties,
   });
-  if (issues.length > 0) {
-    return { ...common, kind: "invalid", issues };
-  }
+  if (issues.length > 0) return invalid(common, issues);
 
   const action = block.action;
-  switch (action.type) {
-    case "insertTemplate": {
-      const source = findTemplate(context.templates, action.templateId);
-      if (source === undefined) {
-        return {
-          ...common,
-          kind: "invalid",
-          issues: [
-            {
-              path: "action.templateId",
-              code: "unknown_template",
-              message: `Template "${action.templateId}" does not exist.`,
-            },
-          ],
-        };
+  if (action.kind === "insert_template") {
+    const source = findTemplate(context.templates, action.templateId);
+    if (source === undefined) {
+      return invalid(common, [
+        {
+          path: "action.templateId",
+          code: "unknown_template",
+          message: `Template "${action.templateId}" does not exist.`,
+        },
+      ]);
+    }
+    return {
+      ...common,
+      kind: "insertTemplate",
+      templateId: action.templateId,
+      insert: resolveTemplateInsert(source, {
+        now: context.now,
+        actorId: context.actorId,
+      }),
+    };
+  }
+
+  const row: ButtonRow = { id: "" };
+  const plan = resolveButtonAction(
+    { id: block.id, label: block.label, action },
+    row,
+    {
+      ...(context.variables === undefined ? {} : { variables: context.variables }),
+      ...(context.now === undefined ? {} : { now: context.now }),
+    },
+  );
+
+  switch (plan.kind) {
+    case "open_url": {
+      // The shared engine validates the authored URL; variables can still be
+      // substituted afterwards, so the interpolated href is re-checked rather
+      // than trusting a `{{token}}` to stay on the allowlist.
+      if (!isSafeButtonUrl(plan.href)) {
+        return invalid(common, [
+          {
+            path: "action.url",
+            code: "unsafe_url",
+            message: "The URL is not a safe http(s) link.",
+          },
+        ]);
       }
       return {
         ...common,
-        kind: "insertTemplate",
-        templateId: action.templateId,
-        insert: resolveTemplateInsert(source, {
-          now: context.now,
-          actorId: context.actorId,
-        }),
+        kind: "openUrl",
+        href: plan.href,
+        openInNewTab: plan.openInNewTab,
       };
     }
-    case "openPage":
-      return { ...common, kind: "openPage", pageId: action.pageId };
-    case "setProps":
-      return { ...common, kind: "setProps", patch: { ...action.props } };
-    case "webhook":
+    case "set_property":
       return {
         ...common,
-        kind: "webhook",
-        url: action.url,
-        method: action.method ?? DEFAULT_WEBHOOK_METHOD,
-        ...(action.body === undefined ? {} : { body: action.body }),
+        kind: "setProperty",
+        propertyId: plan.propertyId,
+        value: plan.value,
       };
-    case "duplicate":
-      return { ...common, kind: "duplicate", sourceIds: [...action.sourceIds] };
-    default:
+    case "notify":
       return {
         ...common,
-        kind: "invalid",
-        issues: [
-          {
-            path: "action.type",
-            code: "unknown_action",
-            message: "Unknown action type.",
-          },
-        ],
+        kind: "notify",
+        message: plan.message,
+        level: plan.level,
       };
+    case "invalid":
+      return invalid(
+        common,
+        plan.issues.map((issue) => ({
+          path: issue.path,
+          code: issue.code === "unknown_kind" ? "unknown_action" : issue.code,
+          message: issue.message,
+        })),
+      );
+    case "insert_template":
+      return invalid(common, [
+        {
+          path: "action.templateId",
+          code: "unknown_template",
+          message: `Template "${plan.templateId}" does not exist.`,
+        },
+      ]);
   }
 }
 
@@ -646,10 +588,43 @@ export function planTemplateButtonClick(
       id: block.id,
       label: block.label,
       ...(block.icon === undefined ? {} : { icon: block.icon }),
-      action: { type: "insertTemplate", templateId: block.templateId },
+      action: { kind: "insert_template", templateId: block.templateId },
     },
     context,
   );
+}
+
+/* ---------------------------------------------------------------------------
+   Executability
+   --------------------------------------------------------------------------- */
+
+/** Why a notification action is disabled in the editor. */
+export const BUTTON_NOTIFY_REASON =
+  "This block has no recipient list, so notifications are disabled.";
+
+/**
+ * Whether a plan can execute from the editor, and (if not) why. `open_url`,
+ * `insert_template` and `set_property` are executable; the server re-checks
+ * workspace/page permissions and the database context for the latter two.
+ * `notify` is explicitly disabled rather than silently no-op: the shared
+ * notification vocabulary needs a recipient list the block does not carry.
+ */
+export function buttonPlanExecutability(
+  plan: ButtonClickPlan,
+): { executable: boolean; reason?: string } {
+  switch (plan.kind) {
+    case "openUrl":
+    case "insertTemplate":
+    case "setProperty":
+      return { executable: true };
+    case "notify":
+      return { executable: false, reason: BUTTON_NOTIFY_REASON };
+    case "invalid":
+      return {
+        executable: false,
+        reason: plan.issues.map((issue) => issue.message).join("; ") || "Invalid button.",
+      };
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -657,22 +632,16 @@ export function planTemplateButtonClick(
    --------------------------------------------------------------------------- */
 
 function describeAction(action: ButtonBlockAction): string {
-  switch (action.type) {
-    case "insertTemplate":
+  switch (action.kind) {
+    case "open_url":
+      return `Open "${action.url}"`;
+    case "set_property":
+      return `Set property "${action.propertyId}"`;
+    case "insert_template":
       return `Insert template "${action.templateId}"`;
-    case "openPage":
-      return `Open page "${action.pageId}"`;
-    case "setProps": {
-      const count = Object.keys(action.props).length;
-      return `Set ${count} ${count === 1 ? "property" : "properties"}`;
-    }
-    case "webhook": {
-      const method = action.method ?? DEFAULT_WEBHOOK_METHOD;
-      return `${method} ${action.url}`;
-    }
-    case "duplicate": {
-      const count = action.sourceIds.length;
-      return `Duplicate ${count} ${count === 1 ? "block" : "blocks"}`;
+    case "notify": {
+      const level = action.level ?? "info";
+      return `Notify (${level}) "${action.message}"`;
     }
   }
 }
@@ -680,7 +649,7 @@ function describeAction(action: ButtonBlockAction): string {
 /** A one-line, human-readable summary of a Template/Button block. */
 export function describeButton(block: ButtonBlock | TemplateButtonBlock): string {
   const action: ButtonBlockAction =
-    "action" in block ? block.action : { type: "insertTemplate", templateId: block.templateId };
+    "action" in block ? block.action : { kind: "insert_template", templateId: block.templateId };
   const base = describeAction(action);
   return "confirm" in block && block.confirm === true ? `${base} (confirm)` : base;
 }

@@ -128,6 +128,40 @@ function blockPos(doc: PMNode, text: string, type = "paragraph"): number {
   return found;
 }
 
+describe("template button / Button atoms", () => {
+  const atoms = {
+    type: "doc",
+    content: [
+      {
+        type: "templateButton",
+        attrs: { id: "tb1", templateId: "meeting", label: "Meeting notes" },
+      },
+      {
+        type: "button",
+        attrs: {
+          id: "b1",
+          label: "Open report",
+          action: { kind: "open_url", url: "https://example.com/report" },
+        },
+      },
+    ],
+  };
+
+  it("indexes the visible labels for search", () => {
+    const text = prosemirrorToText(atoms);
+    expect(text).toContain("Meeting notes");
+    expect(text).toContain("Open report");
+  });
+
+  it("round-trips the JSON shape and exports a readable Markdown line", () => {
+    const cloned = JSON.parse(JSON.stringify(atoms));
+    expect(cloned).toEqual(atoms);
+    const md = docToMarkdown(cloned);
+    expect(md).toContain("[Meeting notes] (template: meeting)");
+    expect(md).toContain('[Open report] (open https://example.com/report)');
+  });
+});
+
 describe("block deletion snapshot/restore", () => {
   it("captures the child path and JSON of a top-level block", () => {
     const doc = pmDoc(pmP("one"), pmP("two"), pmP("three"));

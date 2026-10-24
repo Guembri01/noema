@@ -24,6 +24,8 @@ import { truncateMiddle } from "@/lib/truncate";
 import { cn } from "@/lib/utils";
 import { styleColor } from "@/lib/serialize";
 import { validateLatex } from "@/lib/math-render";
+import { describeButton, parseButtonBlock, parseTemplateButton } from "@/lib/template-blocks";
+import { templateDefinition, type TemplateId } from "@/lib/templates";
 import { sanitizeHref } from "@/lib/validation";
 
 /**
@@ -964,6 +966,66 @@ function renderBlock(
       const attrsCrumbs = crumbsFromAttrs(node);
       const crumbs = attrsCrumbs.length > 0 ? attrsCrumbs : ctx.breadcrumb.trail;
       return renderBreadcrumb(crumbs, ctx.breadcrumb.workspaceSlug, locale, key);
+    }
+    case "templateButton": {
+      // Read-only twin of the editor atom. There is no editor to insert into
+      // here, so the card shows what the button would insert instead of
+      // pretending to be clickable.
+      const parsed = parseTemplateButton({
+        id: String(node.attrs?.id ?? "templateButton"),
+        templateId: String(node.attrs?.templateId ?? ""),
+        label: String(node.attrs?.label ?? ""),
+      });
+      const templateId = parsed?.templateId ?? String(node.attrs?.templateId ?? "");
+      const label =
+        parsed?.label?.trim() ||
+        templateDefinition(templateId as TemplateId)?.label ||
+        t(locale, "blockTemplateButton");
+      return (
+        <div
+          key={key}
+          className={cn(
+            DOC_PRINT_CLASS.block,
+            "my-2 inline-flex items-center gap-2 rounded-control border border-border bg-surface px-3 py-1.5 text-sm text-fg",
+          )}
+          data-template-button=""
+          data-template-id={parsed?.templateId}
+          aria-label={t(locale, "blockTemplateButton")}
+        >
+          <span aria-hidden="true">📄</span>
+          <span>{label}</span>
+        </div>
+      );
+    }
+    case "button": {
+      // A Button block is interactive in the editor only. The read path renders
+      // its label and configured action as a disabled, honest summary.
+      const parsed = parseButtonBlock({
+        id: String(node.attrs?.id ?? "button"),
+        label: String(node.attrs?.label ?? ""),
+        style: node.attrs?.style,
+        confirm: node.attrs?.confirm,
+        action: node.attrs?.action,
+      });
+      const label = parsed?.label?.trim() || t(locale, "blockButton");
+      const description = parsed ? describeButton(parsed) : t(locale, "configureButtonFirst");
+      return (
+        <div
+          key={key}
+          className={cn(DOC_PRINT_CLASS.block, "my-2 flex flex-wrap items-center gap-2 text-sm")}
+          data-button-block=""
+        >
+          <button
+            type="button"
+            disabled
+            aria-label={`${label}: ${description}`}
+            className="rounded-control border border-border bg-surface px-3 py-1.5 text-sm text-fg opacity-70"
+          >
+            {label}
+          </button>
+          <span className="text-xs text-muted">{description}</span>
+        </div>
+      );
     }
     case "bookmark": {
       const url = String(node.attrs?.url ?? "");

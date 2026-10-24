@@ -239,6 +239,54 @@ describe("DocRenderer external images (B69)", () => {
 });
 
 
+describe("DocRenderer template button / Button atoms", () => {
+  it("renders a template button as a labelled, read-only card", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "templateButton",
+          attrs: { id: "tb1", templateId: "meeting", label: "Meeting notes" },
+        },
+      ],
+    });
+    expect(html).toContain('data-template-button=""');
+    expect(html).toContain('data-template-id="meeting"');
+    expect(html).toContain("Meeting notes");
+  });
+
+  it("renders a Button block as a disabled labelled action summary", () => {
+    const html = render({
+      type: "doc",
+      content: [
+        {
+          type: "button",
+          attrs: {
+            id: "b1",
+            label: "Open report",
+            style: "primary",
+            action: { kind: "open_url", url: "https://example.com/report" },
+          },
+        },
+      ],
+    });
+    expect(html).toContain('data-button-block=""');
+    expect(html).toContain("Open report");
+    expect(html).toContain("disabled");
+    expect(html).toContain("Open &quot;https://example.com/report&quot;");
+  });
+
+  it("renders an unconfigured Button honestly instead of a silent no-op", () => {
+    const html = render({
+      type: "doc",
+      content: [{ type: "button", attrs: { id: "b2", label: "" } }],
+    });
+    expect(html).toContain("Button");
+    expect(html).toContain("disabled");
+    expect(html).toContain("Configure the button first");
+  });
+});
+
 describe("DocRenderer Mermaid blocks", () => {
   it("routes Mermaid code to the client diagram renderer", () => {
     const html = render({

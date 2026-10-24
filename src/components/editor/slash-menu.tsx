@@ -31,6 +31,7 @@ import {
   ListTree,
   Map as MapIcon,
   Minus,
+  MousePointerClick,
   Pilcrow,
   Quote,
   SearchX,
@@ -240,6 +241,7 @@ const SLASH_ITEMS: SlashItem[] = [
   { label: "Synced view", labelKey: "blockSyncedView", hint: "Mirror another page", hintKey: "syncedViewHint", icon: <Layers className="h-4 w-4" />, keywords: "synced view transclusion mirror page", group: "database", run: (c) => c.setPageEmbed().run() },
   { label: "Linked database", labelKey: "blockLinkedDatabase", hint: "Embed a database", hintKey: "linkedDatabaseHint", icon: <Layers className="h-4 w-4" />, keywords: "linked database embed view", group: "database", run: (c) => c.setLinkedDatabase().run() },
   { label: "Template button", labelKey: "blockTemplateButton", hint: "Insert a template", hintKey: "templateButtonHint", icon: <Copy className="h-4 w-4" />, keywords: "template button snippet meeting tasks", group: "database", run: (c) => c.setTemplateButton({ templateId: "meeting" }).run() },
+  { label: "Button", labelKey: "blockButton", hint: "Run an action on click", hintKey: "buttonHint", icon: <MousePointerClick className="h-4 w-4" />, keywords: "button action click run open link template notify", group: "advanced", run: (c) => c.setButton({}).run() },
   { label: "Ask AI", labelKey: "askAI", hint: "Prompt the assistant", hintKey: "askAiHint", icon: <Sparkles className="h-4 w-4" />, keywords: "ai ask assistant generate", group: "advanced", run: (c) => c.setAskAi({}).run() },
   {
     label: "Equation",

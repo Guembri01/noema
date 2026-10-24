@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_WEBHOOK_METHOD,
-  WEBHOOK_METHODS,
+  BUTTON_NOTIFY_REASON,
+  BUTTON_BLOCK_ACTIONS,
   describeButton,
   isValidButtonBlock,
   parseButtonBlock,
@@ -17,10 +17,11 @@ import {
 
 /*
  * Template button + Button block engine (docs/MISSING_FEATURES.md §1 "Template
- * button block" / "Button block", §6 "Template button"). These tests pin the
- * strict parsers, the semantic validator (unknown template/action, missing
- * action args, the webhook URL allowlist), the side-effect-free click plans and
- * the pure template-insert resolver that mints fresh block ids.
+ * button block" / "Button block"). These tests pin the strict parsers, the
+ * semantic validator (unknown template/action, missing action args, the shared
+ * webhook/link allowlist), the side-effect-free click plans and the pure
+ * template-insert resolver that mints fresh block ids. The action vocabulary is
+ * the same `ButtonAction` automations execute.
  */
 
 const meetingSource: TemplateInsertSource = {
@@ -72,80 +73,84 @@ describe("parseTemplateButton", () => {
 });
 
 describe("parseButtonBlock", () => {
-  it("parses every action type", () => {
+  it("parses every shared ButtonAction kind", () => {
     expect(
       parseButtonBlock({
         id: "b1",
         label: "Insert",
-        action: { type: "insertTemplate", templateId: "meeting" },
+        action: { kind: "insert_template", templateId: "meeting" },
       }),
-    ).toEqual({ id: "b1", label: "Insert", action: { type: "insertTemplate", templateId: "meeting" } });
+    ).toEqual({ id: "b1", label: "Insert", action: { kind: "insert_template", templateId: "meeting" } });
 
     expect(
-      parseButtonBlock({ id: "b2", label: "Go", action: { type: "openPage", pageId: "p9" } }),
-    ).toEqual({ id: "b2", label: "Go", action: { type: "openPage", pageId: "p9" } });
+      parseButtonBlock({ id: "b2", label: "Go", action: { kind: "open_url", url: "https://example.com" } })
+        ?.action,
+    ).toEqual({ kind: "open_url", url: "https://example.com" });
 
     expect(
       parseButtonBlock({
         id: "b3",
         label: "Set",
-        action: { type: "setProps", props: { status: "done" } },
+        action: { kind: "set_property", propertyId: "status", value: "done" },
       })?.action,
-    ).toEqual({ type: "setProps", props: { status: "done" } });
+    ).toEqual({ kind: "set_property", propertyId: "status", value: "done" });
 
     expect(
       parseButtonBlock({
         id: "b4",
         label: "Ping",
-        action: { type: "webhook", url: "https://example.com/hook" },
+        action: { kind: "notify", message: "Ping", level: "warning" },
       })?.action,
-    ).toEqual({ type: "webhook", url: "https://example.com/hook" });
-
-    expect(
-      parseButtonBlock({
-        id: "b5",
-        label: "Copy",
-        action: { type: "duplicate", sourceIds: ["x", "y"] },
-      })?.action,
-    ).toEqual({ type: "duplicate", sourceIds: ["x", "y"] });
+    ).toEqual({ kind: "notify", message: "Ping", level: "warning" });
   });
 
-  it("preserves the confirm flag and icon", () => {
+  it("preserves the confirm flag, icon and style", () => {
     const parsed = parseButtonBlock({
       id: "b1",
       label: "⚠️ Delete",
       icon: "🗑",
       confirm: true,
-      action: { type: "openPage", pageId: "p1" },
+      style: "danger",
+      action: { kind: "open_url", url: "https://example.com" },
     });
     expect(parsed?.confirm).toBe(true);
     expect(parsed?.icon).toBe("🗑");
+    expect(parsed?.style).toBe("danger");
   });
 
-  it("rejects an unknown action type", () => {
-    expect(parseButtonBlock({ id: "b", label: "x", action: { type: "explode" } })).toBeNull();
+  it("rejects an unknown action kind", () => {
+    expect(parseButtonBlock({ id: "b", label: "x", action: { kind: "explode" } })).toBeNull();
+    // A legacy `type` discriminator is not a second language.
+    expect(
+      parseButtonBlock({ id: "b", label: "x", action: { type: "openPage", pageId: "p" } }),
+    ).toBeNull();
   });
 
   it("rejects missing ids/labels and malformed actions", () => {
-    expect(parseButtonBlock({ label: "x", action: { type: "openPage", pageId: "p" } })).toBeNull();
-    expect(parseButtonBlock({ id: "b", action: { type: "openPage", pageId: "p" } })).toBeNull();
+    expect(parseButtonBlock({ label: "x", action: { kind: "open_url", url: "https://e.com" } })).toBeNull();
+    expect(parseButtonBlock({ id: "b", action: { kind: "open_url", url: "https://e.com" } })).toBeNull();
     expect(parseButtonBlock({ id: "b", label: "x" })).toBeNull();
-    expect(parseButtonBlock({ id: "b", label: "x", action: { type: "webhook" } })).toBeNull();
+    expect(parseButtonBlock({ id: "b", label: "x", action: { kind: "notify" } })).toBeNull();
     expect(
-      parseButtonBlock({ id: "b", label: "x", action: { type: "duplicate", sourceIds: "x" } }),
-    ).toBeNull();
-    expect(
-      parseButtonBlock({ id: "b", label: "x", action: { type: "webhook", url: "https://e.com", method: "DELETE" } }),
+      parseButtonBlock({ id: "b", label: "x", action: { kind: "set_property", propertyId: "p" } }),
     ).toBeNull();
   });
 
-  it("rejects a non-boolean confirm", () => {
+  it("rejects a non-boolean confirm and an unknown style", () => {
     expect(
       parseButtonBlock({
         id: "b",
         label: "x",
         confirm: "yes",
-        action: { type: "openPage", pageId: "p" },
+        action: { kind: "open_url", url: "https://e.com" },
+      }),
+    ).toBeNull();
+    expect(
+      parseButtonBlock({
+        id: "b",
+        label: "x",
+        style: "neon",
+        action: { kind: "open_url", url: "https://e.com" },
       }),
     ).toBeNull();
   });
@@ -154,11 +159,10 @@ describe("parseButtonBlock", () => {
 describe("validateButtonBlock", () => {
   it("passes a well-formed block of every action type", () => {
     const blocks: ButtonBlock[] = [
-      { id: "b1", label: "Insert", action: { type: "insertTemplate", templateId: "meeting" } },
-      { id: "b2", label: "Go", action: { type: "openPage", pageId: "p9" } },
-      { id: "b3", label: "Set", action: { type: "setProps", props: { status: "done" } } },
-      { id: "b4", label: "Ping", action: { type: "webhook", url: "https://example.com/hook" } },
-      { id: "b5", label: "Copy", action: { type: "duplicate", sourceIds: ["x"] } },
+      { id: "b1", label: "Insert", action: { kind: "insert_template", templateId: "meeting" } },
+      { id: "b2", label: "Go", action: { kind: "open_url", url: "https://example.com" } },
+      { id: "b3", label: "Set", action: { kind: "set_property", propertyId: "status", value: "done" } },
+      { id: "b4", label: "Ping", action: { kind: "notify", message: "Ping" } },
     ];
     for (const block of blocks) expect(validateButtonBlock(block, knownContext)).toEqual([]);
     expect(isValidButtonBlock(blocks[0], knownContext)).toBe(true);
@@ -172,25 +176,25 @@ describe("validateButtonBlock", () => {
 
   it("flags missing id and label", () => {
     const issues = validateButtonBlock(
-      { action: { type: "openPage", pageId: "p" } },
+      { action: { kind: "open_url", url: "https://e.com" } },
       knownContext,
     );
     expect(issues.some((i) => i.code === "missing_field" && i.path === "id")).toBe(true);
     expect(issues.some((i) => i.code === "missing_field" && i.path === "label")).toBe(true);
   });
 
-  it("flags an unknown action type", () => {
+  it("flags an unknown action kind", () => {
     const issues = validateButtonBlock(
-      { id: "b", label: "x", action: { type: "explode" } },
+      { id: "b", label: "x", action: { kind: "explode" } },
       knownContext,
     );
     expect(issues[0].code).toBe("unknown_action");
-    expect(issues[0].path).toBe("action.type");
+    expect(issues[0].path).toBe("action.kind");
   });
 
   it("flags an unknown template against the known set", () => {
     const issues = validateButtonBlock(
-      { id: "b", label: "x", action: { type: "insertTemplate", templateId: "ghost" } },
+      { id: "b", label: "x", action: { kind: "insert_template", templateId: "ghost" } },
       knownContext,
     );
     expect(issues.some((i) => i.code === "unknown_template" && i.path === "action.templateId")).toBe(
@@ -200,7 +204,7 @@ describe("validateButtonBlock", () => {
 
   it("flags a missing templateId", () => {
     const issues = validateButtonBlock(
-      { id: "b", label: "x", action: { type: "insertTemplate" } },
+      { id: "b", label: "x", action: { kind: "insert_template" } },
       knownContext,
     );
     expect(issues.some((i) => i.code === "missing_field" && i.path === "action.templateId")).toBe(
@@ -208,54 +212,45 @@ describe("validateButtonBlock", () => {
     );
   });
 
-  it("flags a missing pageId", () => {
+  it("flags an unknown property", () => {
     const issues = validateButtonBlock(
-      { id: "b", label: "x", action: { type: "openPage" } },
+      { id: "b", label: "x", action: { kind: "set_property", propertyId: "ghost", value: 1 } },
       knownContext,
     );
-    expect(issues.some((i) => i.code === "missing_field" && i.path === "action.pageId")).toBe(true);
-  });
-
-  it("flags an unknown property and an empty patch", () => {
-    const unknown = validateButtonBlock(
-      { id: "b", label: "x", action: { type: "setProps", props: { ghost: 1 } } },
-      knownContext,
-    );
-    expect(unknown.some((i) => i.code === "unknown_property" && i.path === "action.props.ghost")).toBe(
+    expect(issues.some((i) => i.code === "unknown_property" && i.path === "action.propertyId")).toBe(
       true,
     );
-
-    const empty = validateButtonBlock(
-      { id: "b", label: "x", action: { type: "setProps", props: {} } },
-      knownContext,
-    );
-    expect(empty.some((i) => i.code === "missing_field" && i.path === "action.props")).toBe(true);
   });
 
-  it("flags an unsafe webhook url and an invalid method", () => {
+  it("flags an unsafe open_url and a missing notify message", () => {
     const unsafe = validateButtonBlock(
-      { id: "b", label: "x", action: { type: "webhook", url: "javascript:alert(1)" } },
+      { id: "b", label: "x", action: { kind: "open_url", url: "javascript:alert(1)" } },
       knownContext,
     );
     expect(unsafe.some((i) => i.code === "unsafe_url" && i.path === "action.url")).toBe(true);
 
-    const badMethod = validateButtonBlock(
-      { id: "b", label: "x", action: { type: "webhook", url: "https://e.com", method: "DELETE" } },
+    const notify = validateButtonBlock(
+      { id: "b", label: "x", action: { kind: "notify", message: "" } },
       knownContext,
     );
-    expect(badMethod.some((i) => i.code === "invalid_method" && i.path === "action.method")).toBe(
-      true,
-    );
+    expect(notify.some((i) => i.code === "missing_field" && i.path === "action.message")).toBe(true);
   });
 
-  it("flags an empty duplicate source list", () => {
+  it("flags an unknown style", () => {
     const issues = validateButtonBlock(
-      { id: "b", label: "x", action: { type: "duplicate", sourceIds: [] } },
+      {
+        id: "b",
+        label: "x",
+        style: "neon",
+        action: { kind: "open_url", url: "https://e.com" },
+      },
       knownContext,
     );
-    expect(issues.some((i) => i.code === "missing_field" && i.path === "action.sourceIds")).toBe(
-      true,
-    );
+    expect(issues.some((i) => i.code === "wrong_type" && i.path === "style")).toBe(true);
+  });
+
+  it("exposes exactly the shared ButtonAction vocabulary", () => {
+    expect(BUTTON_BLOCK_ACTIONS).toEqual(["open_url", "set_property", "insert_template", "notify"]);
   });
 });
 
@@ -318,11 +313,11 @@ describe("resolveTemplateInsert", () => {
 });
 
 describe("planButtonClick", () => {
-  it("resolves an insertTemplate plan with fresh blocks", () => {
+  it("resolves an insert_template plan with fresh blocks", () => {
     const block: ButtonBlock = {
       id: "b1",
       label: "Insert notes",
-      action: { type: "insertTemplate", templateId: "meeting" },
+      action: { kind: "insert_template", templateId: "meeting" },
     };
     const plan = planButtonClick(block, { templates: [meetingSource], now: "n", actorId: "u1" });
     expect(plan.kind).toBe("insertTemplate");
@@ -339,57 +334,55 @@ describe("planButtonClick", () => {
       id: "b1",
       label: "Danger",
       confirm: true,
-      action: { type: "openPage", pageId: "p1" },
+      action: { kind: "open_url", url: "https://example.com" },
     };
     const plan = planButtonClick(block, {});
-    expect(plan.kind).toBe("openPage");
+    expect(plan.kind).toBe("openUrl");
     expect(plan.confirm).toBe(true);
   });
 
-  it("plans an openPage navigation", () => {
-    const plan = planButtonClick(
-      { id: "b2", label: "Go", action: { type: "openPage", pageId: "p9" } },
+  it("plans the shared open_url, set_property and notify actions", () => {
+    const open = planButtonClick(
+      { id: "b2", label: "Go", action: { kind: "open_url", url: "https://example.com/x" } },
       {},
     );
-    expect(plan.kind).toBe("openPage");
-    if (plan.kind !== "openPage") throw new Error("wrong kind");
-    expect(plan.pageId).toBe("p9");
+    expect(open.kind).toBe("openUrl");
+    if (open.kind !== "openUrl") throw new Error("wrong kind");
+    expect(open.href).toBe("https://example.com/x");
+    expect(open.openInNewTab).toBe(true);
+
+    const set = planButtonClick(
+      { id: "b3", label: "Set", action: { kind: "set_property", propertyId: "status", value: "done" } },
+      {},
+    );
+    expect(set.kind).toBe("setProperty");
+    if (set.kind !== "setProperty") throw new Error("wrong kind");
+    expect(set.propertyId).toBe("status");
+    expect(set.value).toBe("done");
+
+    const notify = planButtonClick(
+      { id: "b4", label: "Notify", action: { kind: "notify", message: "Ping" } },
+      {},
+    );
+    expect(notify.kind).toBe("notify");
+    if (notify.kind !== "notify") throw new Error("wrong kind");
+    expect(notify.message).toBe("Ping");
+    expect(notify.level).toBe("info");
   });
 
-  it("plans a setProps patch", () => {
+  it("interpolates the caller's variables into the plan", () => {
     const plan = planButtonClick(
-      { id: "b3", label: "Set", action: { type: "setProps", props: { status: "done", owner: "u1" } } },
-      {},
+      { id: "b", label: "Go", action: { kind: "open_url", url: "https://example.com/{{slug}}" } },
+      { variables: { slug: "weekly" } },
     );
-    expect(plan.kind).toBe("setProps");
-    if (plan.kind !== "setProps") throw new Error("wrong kind");
-    expect(plan.patch).toEqual({ status: "done", owner: "u1" });
-  });
-
-  it("plans a webhook with a defaulted method", () => {
-    const plan = planButtonClick(
-      { id: "b4", label: "Ping", action: { type: "webhook", url: "https://example.com/hook" } },
-      {},
-    );
-    expect(plan.kind).toBe("webhook");
-    if (plan.kind !== "webhook") throw new Error("wrong kind");
-    expect(plan.url).toBe("https://example.com/hook");
-    expect(plan.method).toBe(DEFAULT_WEBHOOK_METHOD);
-  });
-
-  it("plans a duplicate that returns the source ids", () => {
-    const plan = planButtonClick(
-      { id: "b5", label: "Copy", action: { type: "duplicate", sourceIds: ["x", "y"] } },
-      {},
-    );
-    expect(plan.kind).toBe("duplicate");
-    if (plan.kind !== "duplicate") throw new Error("wrong kind");
-    expect(plan.sourceIds).toEqual(["x", "y"]);
+    expect(plan.kind).toBe("openUrl");
+    if (plan.kind !== "openUrl") throw new Error("wrong kind");
+    expect(plan.href).toBe("https://example.com/weekly");
   });
 
   it("returns an invalid plan for an unknown template", () => {
     const plan = planButtonClick(
-      { id: "b1", label: "Insert", action: { type: "insertTemplate", templateId: "ghost" } },
+      { id: "b1", label: "Insert", action: { kind: "insert_template", templateId: "ghost" } },
       { templates: [meetingSource] },
     );
     expect(plan.kind).toBe("invalid");
@@ -397,19 +390,29 @@ describe("planButtonClick", () => {
     expect(plan.issues.some((issue) => issue.code === "unknown_template")).toBe(true);
   });
 
-  it("returns an invalid plan for an unsafe webhook url", () => {
+  it("returns an invalid plan for an unsafe link", () => {
     const plan = planButtonClick(
-      { id: "b4", label: "Ping", action: { type: "webhook", url: "javascript:alert(1)" } },
+      { id: "b4", label: "Ping", action: { kind: "open_url", url: "javascript:alert(1)" } },
       {},
     );
     expect(plan.kind).toBe("invalid");
+  });
+
+  it("re-checks a URL after variable interpolation", () => {
+    const plan = planButtonClick(
+      { id: "b5", label: "Ping", action: { kind: "open_url", url: "{{target}}" } },
+      { variables: { target: "javascript:alert(1)" } },
+    );
+    expect(plan.kind).toBe("invalid");
+    if (plan.kind !== "invalid") throw new Error("wrong kind");
+    expect(plan.issues.some((issue) => issue.code === "unsafe_url")).toBe(true);
   });
 
   it("does not mutate the block it plans", () => {
     const block: ButtonBlock = {
       id: "b4",
       label: "Ping",
-      action: { type: "webhook", url: "https://example.com/hook" },
+      action: { kind: "open_url", url: "https://example.com/hook" },
     };
     const snapshot = JSON.stringify(block);
     planButtonClick(block, {});
@@ -441,31 +444,16 @@ describe("describeButton", () => {
     );
   });
 
-  it("describes an insertTemplate block", () => {
+  it("describes each shared action kind", () => {
     expect(
-      describeButton({ id: "b", label: "x", action: { type: "insertTemplate", templateId: "tasks" } }),
-    ).toBe('Insert template "tasks"');
-  });
-
-  it("describes openPage, webhook and duplicate", () => {
-    expect(describeButton({ id: "b", label: "x", action: { type: "openPage", pageId: "p9" } })).toBe(
-      'Open page "p9"',
-    );
+      describeButton({ id: "b", label: "x", action: { kind: "open_url", url: "https://example.com/hook" } }),
+    ).toBe('Open "https://example.com/hook"');
     expect(
-      describeButton({ id: "b", label: "x", action: { type: "webhook", url: "https://example.com/hook" } }),
-    ).toBe("POST https://example.com/hook");
+      describeButton({ id: "b", label: "x", action: { kind: "set_property", propertyId: "status", value: 1 } }),
+    ).toBe('Set property "status"');
     expect(
-      describeButton({ id: "b", label: "x", action: { type: "duplicate", sourceIds: ["a", "b"] } }),
-    ).toBe("Duplicate 2 blocks");
-  });
-
-  it("counts setProps properties with correct singular/plural", () => {
-    expect(
-      describeButton({ id: "b", label: "x", action: { type: "setProps", props: { a: 1 } } }),
-    ).toBe("Set 1 property");
-    expect(
-      describeButton({ id: "b", label: "x", action: { type: "setProps", props: { a: 1, b: 2 } } }),
-    ).toBe("Set 2 properties");
+      describeButton({ id: "b", label: "x", action: { kind: "notify", message: "Ping" } }),
+    ).toBe('Notify (info) "Ping"');
   });
 
   it("appends a confirm suffix when confirmation is required", () => {
@@ -474,15 +462,14 @@ describe("describeButton", () => {
         id: "b",
         label: "x",
         confirm: true,
-        action: { type: "openPage", pageId: "p9" },
+        action: { kind: "open_url", url: "https://example.com" },
       }),
-    ).toBe('Open page "p9" (confirm)');
+    ).toBe('Open "https://example.com" (confirm)');
   });
 });
 
-describe("webhook method catalogue", () => {
-  it("exposes POST/PUT/PATCH with POST as the default", () => {
-    expect(WEBHOOK_METHODS).toEqual(["POST", "PUT", "PATCH"]);
-    expect(DEFAULT_WEBHOOK_METHOD).toBe("POST");
+describe("notification executability", () => {
+  it("explains why a notify action is disabled", () => {
+    expect(BUTTON_NOTIFY_REASON).toContain("recipient");
   });
 });
