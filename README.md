@@ -109,7 +109,7 @@ This repository is a **working application plus a complete parity tracker**.
 | AI skills | Selection-toolbar **Ask AI**: Improve writing, Proofread, Reformat, Make shorter, Explain, Summarize, Translate |
 | Undo / redo | Floating undo/redo controls in the editor |
 | Inbox | Notification inbox with unread badge and “mark all read” |
-| Realtime | **Optional Yjs collaboration** (`npm run collab` + `NEXT_PUBLIC_COLLAB_URL`) with awareness/live cursors and a “Live · N” indicator |
+| Realtime | **Optional Yjs collaboration** (`npm run collab` + `NEXT_PUBLIC_COLLAB_URL`) for page bodies, diagram sources/canvases and ticket descriptions, with awareness/live cursors and a “Live · N” indicator |
 | Webhooks | **HMAC-SHA256-signed** POST deliveries on `page.created`, `page.updated`, `row.created`, `comment.created`; managed in workspace settings |
 | AI | `POST /api/ai` (OpenAI-compatible: OpenAI, **DeepSeek**, Groq, Ollama…) + an **Ask AI** block (ask + summarize) + a database **AI autofill** property + **AI skills** (`POST /api/ai/skills`); degrades to 503 guidance when unconfigured |
 | AI grounding | Ask answers are grounded in your workspace: prompts are reduced to keywords and pages scored by relevance (`src/lib/retrieval.ts`) |

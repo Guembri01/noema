@@ -39,9 +39,19 @@ export type RichTextOptions = {
   locale: string;
   /** Hint shown in the first empty block. */
   placeholder: string;
+  /**
+   * Disable the local undo history when a Yjs collaboration extension owns the
+   * document. Two history providers on one transaction stack corrupt undo and
+   * make remote updates locally undoable.
+   */
+  collaboration?: boolean;
 };
 
-export function richTextExtensions({ locale, placeholder }: RichTextOptions): Extensions {
+export function richTextExtensions({
+  locale,
+  placeholder,
+  collaboration = false,
+}: RichTextOptions): Extensions {
   return [
     StarterKit.configure({
       // Three heading levels: enough structure for a description, no room for a
@@ -51,6 +61,7 @@ export function richTextExtensions({ locale, placeholder }: RichTextOptions): Ex
       // The lowlight-backed code block below replaces the stock one, so the
       // syntax-highlighted node is the only `codeBlock` in the schema.
       codeBlock: false,
+      ...(collaboration ? { undoRedo: false } : {}),
     }),
     CodeBlock.configure({ locale }),
     Placeholder.configure({ placeholder }),

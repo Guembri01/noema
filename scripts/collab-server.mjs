@@ -370,12 +370,13 @@ export function isOriginAllowed(originHeader, allowedOrigins) {
  * ------------------------------------------------------------------ */
 
 /**
- * Extract the page id from the upgrade URL. Accepts both client spellings
- * (`<pageId>` from `page-editor.tsx`, `page:<pageId>` from the spec contract)
- * and normalize to the same id; anything that is not a plausible id — empty,
- * traversal, oversized, control characters — is refused (null -> 4403).
+ * Extract the room target from the upgrade URL. Pages accept both client
+ * spellings (`<pageId>` from `page-editor.tsx`, `page:<pageId>` from the spec
+ * contract). Ticket descriptions use `ticket:<ticketId>`. Anything that is not
+ * a plausible id - empty, traversal, oversized, control characters - is refused
+ * (null -> 4403).
  */
-export function parseRoomPageId(url) {
+export function parseRoomTarget(url) {
   if (typeof url !== "string") return null;
   const path = url.split("?")[0].split("#")[0];
   let decoded;
@@ -384,14 +385,24 @@ export function parseRoomPageId(url) {
   } catch {
     return null; // malformed percent-encoding
   }
+  if (decoded.startsWith("ticket:")) {
+    const ticketId = decoded.slice("ticket:".length);
+    return ROOM_ID_PATTERN.test(ticketId) ? { kind: "ticket", id: ticketId } : null;
+  }
   const pageId = decoded.startsWith("page:") ? decoded.slice("page:".length) : decoded;
   if (!ROOM_ID_PATTERN.test(pageId)) return null;
-  return pageId;
+  return { kind: "page", id: pageId };
 }
 
-/** The single internal room key — clients cannot choose their own namespace. */
-function roomKey(pageId) {
-  return `page:${pageId}`;
+/** Backwards-compatible page-only parser used by the B53 callers/tests. */
+export function parseRoomPageId(url) {
+  const target = parseRoomTarget(url);
+  return target?.kind === "page" ? target.id : null;
+}
+
+/** The internal room key - clients cannot choose their own namespace. */
+function roomKey(target) {
+  return `${target.kind}:${target.id}`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -523,6 +534,32 @@ export async function authorizePageAccess(userId, pageId) {
       : Promise.resolve(null),
   ]);
   return decideAccess({ pageId, page, role, pagePermission, guestVisibleIds });
+}
+
+/**
+ * Ticket rooms use the tracker's rule, not the page rule: the tracker itself
+ * refuses guests (`/w/[slug]/tickets` calls `canEditContent`), and a ticket has
+ * no page permission or lock of its own. Any non-guest member may read and
+ * write the shared description. A missing/archived ticket is denied with the
+ * same opaque 4403 as a missing page.
+ */
+export function decideTicketAccess({ ticketId, ticket, role }) {
+  if (!ticket || ticket.id !== ticketId || ticket.archived) return null;
+  if (typeof role !== "string" || !KNOWN_ROLES.has(role)) return null;
+  if (role === "GUEST") return null;
+  return { read: true, write: true };
+}
+
+/** Production ticket authorizer (Prisma-backed), mirroring ticket actions. */
+export async function authorizeTicketAccess(userId, ticketId) {
+  const prisma = getPrisma();
+  const ticket = await prisma.ticket.findUnique({
+    where: { id: ticketId },
+    select: { id: true, workspaceId: true, archived: true },
+  });
+  if (!ticket) return null;
+  const role = await resolveWorkspaceRole(prisma, userId, ticket.workspaceId);
+  return decideTicketAccess({ ticketId, ticket, role });
 }
 
 /* ------------------------------------------------------------------ *
@@ -735,17 +772,19 @@ async function handleConnection(conn, request, deps) {
 
   // 3. Room name, normalized — junk names are indistinguishable from a
   //    forbidden page (R9.5/R9.7).
-  const pageId = parseRoomPageId(request.url);
-  if (!pageId) return deny(conn, CLOSE_FORBIDDEN, "forbidden");
+  const target = parseRoomTarget(request.url);
+  if (!target) return deny(conn, CLOSE_FORBIDDEN, "forbidden");
 
   // 4. Page authorization — one 4403 for nonexistent / cross-workspace /
   //    out-of-scope guest alike (R9.2, R9.7).
   let grant = null;
   try {
     grant = await withTimeout(
-      deps.authorize(userId, pageId),
+      target.kind === "ticket"
+        ? deps.authorizeTicket(userId, target.id)
+        : deps.authorize(userId, target.id),
       AUTH_TIMEOUT_MS,
-      "page authorization",
+      "room authorization",
     );
   } catch {
     grant = null; // fail closed (DB down, query error, timeout)
@@ -781,7 +820,7 @@ async function handleConnection(conn, request, deps) {
   if (conn.readyState !== WebSocket.OPEN) return; // went away while deciding
 
   // 6. Authorized — only now does the room exist.
-  const { doc, awareness, conns } = getRoom(deps.rooms, roomKey(pageId));
+  const { doc, awareness, conns } = getRoom(deps.rooms, roomKey(target));
   const controlledIds = new Set();
   const canWrite = grant.write === true;
   conns.set(conn, controlledIds);
@@ -874,6 +913,7 @@ async function handleConnection(conn, request, deps) {
 export function createCollabServer({
   verifySession = verifySessionCookie,
   authorize = authorizePageAccess,
+  authorizeTicket = authorizeTicketAccess,
   resolveIdentity = resolveUserIdentity,
   host = HOST,
   port = PORT,
@@ -897,6 +937,7 @@ export function createCollabServer({
     handleConnection(conn, request, {
       verifySession,
       authorize,
+      authorizeTicket,
       resolveIdentity,
       rooms,
       limiter,
@@ -924,7 +965,7 @@ function start() {
         ? `origin allow-list: ${origins.length} entr${origins.length === 1 ? "y" : "ies"} (fail closed)`
         : "origin policy: APP_ORIGINS unset (loopback origins only — a networked deployment must set APP_ORIGINS)";
     console.log(
-      `Noema collaboration server listening on ws://${HOST}:${PORT} (auth: session cookie + page authz; identity: DB-bound; rate: ${MAX_CONNECTIONS_PER_USER} conns/user, ${MESSAGE_LIMIT} msg/${MESSAGE_WINDOW_MS / 1000}s; payload: max ${MAX_PAYLOAD_BYTES} B/msg; ${originNote})`,
+      `Noema collaboration server listening on ws://${HOST}:${PORT} (auth: session cookie + page/ticket authz; identity: DB-bound; rate: ${MAX_CONNECTIONS_PER_USER} conns/user, ${MESSAGE_LIMIT} msg/${MESSAGE_WINDOW_MS / 1000}s; payload: max ${MAX_PAYLOAD_BYTES} B/msg; ${originNote})`,
     );
   });
   wss.on("error", (error) => {

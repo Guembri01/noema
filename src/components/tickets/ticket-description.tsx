@@ -25,6 +25,11 @@ import {
   swatchChoices,
 } from "@/components/editor/bubble-toolbar";
 import { richTextExtensions } from "@/components/editor/rich-text-extensions";
+import {
+  collaborationUrl,
+  loadCollaborationSession,
+  type CollaborationSession,
+} from "@/components/editor/collaboration-session";
 import { Button } from "@/components/ui/button";
 import { FloatingLayer } from "@/components/ui/floating-layer";
 import { Input } from "@/components/ui/input";
@@ -182,6 +187,10 @@ export type TicketDescriptionProps = {
   /** The same description as plain text — the fallback and the "has content" test. */
   text: string;
   locale: string;
+  /** The ticket whose description this editor owns, for the collaboration room. */
+  ticketId?: string;
+  /** Display name advertised to remote collaborators. */
+  userName?: string;
   /**
    * Persist a freshly typed description doc, serialised as JSON text. Text
    * rather than the object: ProseMirror shares one `attrs` object between every
@@ -190,6 +199,72 @@ export type TicketDescriptionProps = {
    */
   onSave: (docJson: string) => void;
 };
+
+/** Resolve the accent token to the concrete hex y-prosemirror requires. */
+function caretColor(): string {
+  if (typeof window === "undefined" || typeof document === "undefined") return "";
+  try {
+    return getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Enable live ticket-description collaboration only when the deployment has a
+ * relay URL and the caller supplied a ticket id. Without either, the plain
+ * autosave editor remains the fallback and no Yjs code is downloaded.
+ */
+export function TicketDescription(props: TicketDescriptionProps) {
+  const url = collaborationUrl();
+  if (!url || !props.ticketId) return <TicketDescriptionBody {...props} collab={null} />;
+  return <CollaborativeTicketDescription {...props} url={url} ticketId={props.ticketId} />;
+}
+
+function CollaborativeTicketDescription({
+  url,
+  ticketId,
+  ...props
+}: TicketDescriptionProps & { url: string; ticketId: string }) {
+  const [session, setSession] = useState<CollaborationSession | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSession(null);
+    setFailed(false);
+    loadCollaborationSession(url, `ticket:${ticketId}`, {
+      name: props.userName?.trim() || "You",
+      color: caretColor(),
+    })
+      .then((next) => {
+        if (cancelled) {
+          next?.provider.destroy();
+          next?.ydoc.destroy();
+          return;
+        }
+        setSession(next);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [url, ticketId, props.userName]);
+
+  // A failed transport falls back to the normal autosave path. The editor does
+  // not disappear just because the relay does.
+  if (failed) return <TicketDescriptionBody {...props} ticketId={ticketId} collab={null} />;
+  return (
+    <TicketDescriptionBody
+      {...props}
+      key={session ? "collaborative" : "local"}
+      ticketId={ticketId}
+      collab={session}
+    />
+  );
+}
 
 /**
  * The ticket description as a real rich-text field.
@@ -208,8 +283,18 @@ export type TicketDescriptionProps = {
  * The component is keyed by ticket id at the call site, so switching tickets
  * builds a fresh editor instead of syncing one imperatively.
  */
-export function TicketDescription({ doc, text, locale, onSave }: TicketDescriptionProps) {
+function TicketDescriptionBody({
+  doc,
+  text,
+  locale,
+  onSave,
+  collab,
+}: TicketDescriptionProps & { collab: CollaborationSession | null }) {
   const [focused, setFocused] = useState(false);
+  const [peers, setPeers] = useState(0);
+  const [collabStatus, setCollabStatus] = useState<"connecting" | "connected" | "disconnected">(
+    "connecting",
+  );
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Last payload handed to the server, serialised: a re-save of it is a no-op. */
   const saved = useRef(JSON.stringify(doc ?? null));
@@ -235,17 +320,48 @@ export function TicketDescription({ doc, text, locale, onSave }: TicketDescripti
   // the last edit — the debounce is a network courtesy, not a data-loss window.
   useEffect(() => flush, [flush]);
 
+  // Transport lifecycle for the ticket room. The provider is created by the
+  // wrapper (connect: false), so this effect owns opening, presence tracking and
+  // teardown; without a session it is a no-op and autosave remains the path.
+  useEffect(() => {
+    if (!collab) return;
+    const { provider, ydoc } = collab;
+    const onStatus = (event: { status: "connecting" | "connected" | "disconnected" }) =>
+      setCollabStatus(event.status);
+    const updatePeers = () => setPeers(provider.awareness.getStates().size);
+    provider.on("status", onStatus);
+    provider.on("sync", updatePeers);
+    provider.awareness.on("change", updatePeers);
+    updatePeers();
+    provider.connect();
+    return () => {
+      provider.off("status", onStatus);
+      provider.off("sync", updatePeers);
+      provider.awareness.off("change", updatePeers);
+      provider.disconnect();
+      provider.destroy();
+      ydoc.destroy();
+    };
+  }, [collab]);
+
   const extensions = useMemo(
-    () => richTextExtensions({ locale, placeholder: t(locale, "addDescription") }),
-    [locale],
+    () =>
+      richTextExtensions({
+        locale,
+        placeholder: t(locale, "addDescription"),
+        collaboration: Boolean(collab),
+      }),
+    [locale, collab],
   );
   const editor = useEditor({
     immediatelyRender: false,
-    extensions,
+    extensions: collab ? [...extensions, ...collab.extensions] : extensions,
     // The stored value is untrusted JSON (`unknown`); TipTap's schema parses it
     // and drops anything it does not know, which is the same contract the page
-    // editor has with `Page.content`.
-    content: descriptionEntryDoc(doc, text) as JSONContent,
+    // editor has with `Page.content`. A collaborative editor starts empty and
+    // seeds only after the provider has synced, so two clients do not both
+    // write the stored doc into the room.
+    content: collab ? undefined : (descriptionEntryDoc(doc, text) as JSONContent),
     editorProps: {
       // The contenteditable keeps TipTap's `role="textbox"`, so the description
       // is announced (and reachable by label) exactly as the textarea was.
@@ -265,6 +381,21 @@ export function TicketDescription({ doc, text, locale, onSave }: TicketDescripti
       timer.current = setTimeout(flush, DESCRIPTION_AUTOSAVE_MS);
     },
   });
+
+  // Seed the room from the stored ticket description only when the shared
+  // fragment is still empty. The provider syncs before we write, so a second
+  // client that joins an existing room never replays stale server content over
+  // what the team has already typed.
+  useEffect(() => {
+    if (!editor || !collab) return;
+    const seed = () => {
+      if (collab.ydoc.getXmlFragment("default").length > 0) return;
+      editor.commands.setContent(descriptionEntryDoc(doc, text) as JSONContent);
+    };
+    if (collab.provider.synced) seed();
+    else collab.provider.once("sync", seed);
+    return () => collab.provider.off("sync", seed);
+  }, [editor, collab, doc, text]);
 
   const choice = editor ? blockChoice(blockFlags(editor)) : "paragraph";
   const hasContent = editor ? !editor.isEmpty : text.trim().length > 0;
@@ -527,6 +658,27 @@ export function TicketDescription({ doc, text, locale, onSave }: TicketDescripti
         >
           <Eraser className="h-4 w-4" aria-hidden />
         </ToolButton>
+        {collab && (
+          <span
+            data-testid="ticket-live"
+            data-collab-status={collabStatus}
+            className="ml-auto flex items-center gap-1 rounded-chip bg-surface px-1.5 py-0.5 text-2xs text-muted"
+            title={
+              collabStatus === "connected"
+                ? "Live collaboration connected"
+                : "Live collaboration reconnecting"
+            }
+          >
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                collabStatus === "connected" ? "bg-success" : "bg-warning",
+              )}
+              aria-hidden
+            />
+            {t(locale, "liveWord")} · {peers}
+          </span>
+        )}
       </div>
 
       <EditorContent editor={editor} />

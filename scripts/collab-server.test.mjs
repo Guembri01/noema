@@ -41,11 +41,13 @@ import {
   WEAK_AUTH_SECRETS,
   createCollabServer,
   decideAccess,
+  decideTicketAccess,
   isLoopbackOrigin,
   isOriginAllowed,
   isUsableAuthSecret,
   parseAppOrigins,
   parseRoomPageId,
+  parseRoomTarget,
   resolveHost,
   verifySessionCookie,
 } from "./collab-server.mjs";
@@ -1028,5 +1030,60 @@ describe("isOriginAllowed (fail closed, B64)", () => {
     expect(isLoopbackOrigin("http://localhost.evil.example")).toBe(false);
     expect(isLoopbackOrigin("")).toBe(false);
     expect(isLoopbackOrigin(undefined)).toBe(false);
+  });
+});
+
+describe("ticket description rooms", () => {
+  const TICKETS = {
+    t1: { id: "t1", workspaceId: "wsA", archived: false },
+    tArchived: { id: "tArchived", workspaceId: "wsA", archived: true },
+  };
+
+  function fakeAuthorizeTicket(userId, ticketId) {
+    const ticket = Object.hasOwn(TICKETS, ticketId) ? TICKETS[ticketId] : null;
+    const role = ticket ? MEMBERSHIPS[userId]?.[ticket.workspaceId] ?? null : null;
+    return decideTicketAccess({ ticketId, ticket, role });
+  }
+
+  it("parses ticket rooms separately from pages", () => {
+    expect(parseRoomTarget("/ticket:t1")).toEqual({ kind: "ticket", id: "t1" });
+    expect(parseRoomTarget("/page:pageA")).toEqual({ kind: "page", id: "pageA" });
+    expect(parseRoomTarget("/pageA")).toEqual({ kind: "page", id: "pageA" });
+    expect(parseRoomPageId("/ticket:t1")).toBeNull();
+    expect(parseRoomTarget("/ticket:../escape")).toBeNull();
+  });
+
+  it("allows members but refuses guests and archived tickets", () => {
+    expect(decideTicketAccess({ ticketId: "t1", ticket: TICKETS.t1, role: "MEMBER" })).toEqual({
+      read: true,
+      write: true,
+    });
+    expect(decideTicketAccess({ ticketId: "t1", ticket: TICKETS.t1, role: "GUEST" })).toBeNull();
+    expect(
+      decideTicketAccess({
+        ticketId: "tArchived",
+        ticket: TICKETS.tArchived,
+        role: "MEMBER",
+      }),
+    ).toBeNull();
+    expect(decideTicketAccess({ ticketId: "t1", ticket: null, role: "MEMBER" })).toBeNull();
+  });
+
+  it("relays a ticket room between two members", async () => {
+    const server = await startServer({ authorizeTicket: fakeAuthorizeTicket });
+    const alice = connectDoc(server.url, "ticket:t1", "user=alice");
+    const carol = connectDoc(server.url, "ticket:t1", "user=carol");
+    await Promise.all([alice.opened, carol.opened]);
+
+    expect(server.rooms.has("ticket:t1")).toBe(true);
+    alice.doc.getMap("description").set("text", "from Alice");
+    await waitFor(() => carol.doc.getMap("description").get("text") === "from Alice");
+  });
+
+  it("closes a ticket room for a guest with 4403 and creates no room", async () => {
+    const server = await startServer({ authorizeTicket: fakeAuthorizeTicket });
+    const denied = await waitClose(connectRaw(server.url, "ticket:t1", "user=gina"));
+    expect(denied.code).toBe(CLOSE_FORBIDDEN);
+    expect(server.rooms.has("ticket:t1")).toBe(false);
   });
 });

@@ -583,6 +583,7 @@ export function TicketDrawerBody({
           doc={ticket.descriptionDoc}
           text={ticket.description ?? ""}
           locale={locale}
+          ticketId={ticket.id}
           onSave={(next) => onPatch({ descriptionDoc: next })}
         />
       </DrawerSection>
