@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 565 feature rows — 484 implemented · 59 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 565 feature rows — 485 implemented · 58 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **59** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **58** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -59,14 +59,6 @@ This file lists the **59** rows that are not finished, area by area, plus 22 int
 | --- | --- | --- | --- |
 | AI autofill property | AI-generated value per row. | 🟡 | Planned; depends on AI layer. |
 | Property type change | Convert a property's type. | ⛔ | Lossy conversions; only safe transforms planned later. |
-
-### 5. Formulas
-
-15 done · 1 partial · 0 planned
-
-| Feature | What it should do | Status | Notes |
-| --- | --- | --- | --- |
-| Formula editor | Author expressions with autocomplete. | 🟡 | Planned; expression parser first. Spec: docs/specs/formula-engine.md. |
 
 ### 6. Templates
 

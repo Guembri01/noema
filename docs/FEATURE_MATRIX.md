@@ -313,7 +313,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
-| Formula editor | Author expressions with autocomplete. | 🟡 | Planned; expression parser first. Spec: docs/specs/formula-engine.md. |
+| Formula editor | Author expressions with autocomplete. | ✅ | `src/components/editor/formula-editor.tsx` + `src/lib/formula-editor.ts` provide a monospace source box, ranked function/property completions, signature help, live syntax/unknown-name diagnostics, Apply/Format and keyboard handling; persisted through the property editor after parse validation. Covered by the formula-editor and property-option suites. |
 | Arithmetic operators | `+ - * / %` and precedence. | ✅ | Planned. Spec: docs/specs/formula-engine.md. |
 | Comparison operators | `== != < <= > >=`. | ✅ | Planned. Spec: docs/specs/formula-engine.md. |
 | Boolean operators | `and`, `or`, `not`. | ✅ | Planned. Spec: docs/specs/formula-engine.md. |
@@ -775,7 +775,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
 | 3. Databases | 51 | 2 | 0 | 0 | 53 |
 | 4. Properties | 34 | 1 | 0 | 1 | 36 |
-| 5. Formulas | 15 | 1 | 0 | 0 | 16 |
+| 5. Formulas | 16 | 0 | 0 | 0 | 16 |
 | 6. Templates | 7 | 2 | 0 | 1 | 10 |
 | 7. Collaboration | 19 | 7 | 0 | 0 | 26 |
 | 8. Sharing & permissions | 21 | 1 | 0 | 0 | 22 |
@@ -792,7 +792,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 30 | 2 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **484** | **59** | **0** | **22** | **565** |
+| **Total** | **485** | **58** | **0** | **22** | **565** |
 
 ## Deliberate divergences
 
