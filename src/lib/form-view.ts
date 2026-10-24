@@ -42,6 +42,15 @@ const COMPUTED_PROPERTY_TYPES: ReadonlySet<string> = new Set([
   "AI_AUTOFILL",
 ]);
 
+/**
+ * Whether a property can be a form question. The server re-checks this on
+ * submission so a hand-crafted `config.form` cannot write a computed cell
+ * (formula, rollup, generated id, audit timestamp/actor, button or AI output).
+ */
+export function isAnswerablePropertyType(type: unknown): boolean {
+  return typeof type === "string" && !COMPUTED_PROPERTY_TYPES.has(type);
+}
+
 /** Default submit button label when the config does not provide one. */
 export const DEFAULT_SUBMIT_LABEL = "Submit";
 

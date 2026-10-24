@@ -158,6 +158,15 @@ const ALLOW_LIST = [
   },
   {
     file: "src/server/actions/database.ts",
+    fn: "submitFormAction",
+    value: "view.databasePageId",
+    proof: ["authorizeDatabase(view.databasePageId)"],
+    vouches: true,
+    reason:
+      "the parent is the FORM view's own database page, authorized before the row is written",
+  },
+  {
+    file: "src/server/actions/database.ts",
     fn: "duplicateDatabaseAction",
     value: "newPageId",
     proof: ["id: newPageId, workspaceId: auth.page.workspaceId"],

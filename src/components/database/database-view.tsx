@@ -41,6 +41,7 @@ import {
   reorderPropertiesAction,
   saveRowAsTemplateAction,
   setPropertyValueAction,
+  submitFormAction,
   updatePropertyAction,
   updateViewAction } from "@/server/actions/database";
 import {
@@ -1699,35 +1700,26 @@ export function DatabaseView({
     });
 
   /**
-   * Submit a FORM view. The row is created through the same `createRowAction`
-   * path the table's "New row" uses — the submitted title (the primary column,
-   * when it is a question) seeds the row so its cell is not written twice —
-   * then every other accepted answer is written with `setPropertyValueAction`,
-   * exactly as a cell edit would. `FormView` owns validation, so only accepted
-   * answers reach here.
+   * Submit a FORM view through the atomic server action.
+   *
+   * `FormView` has already run the same validation for immediate feedback; the
+   * action re-reads the stored schema and re-validates against the live
+   * database before creating the row and every cell in one transaction. The
+   * returned result lets the form keep its success state off until the write
+   * really committed.
    */
-  const submitForm = (values: { propertyId: string; value: unknown }[]) => {
-    startTransition(async () => {
-      const primaryAnswer = primary
-        ? values.find((cell) => cell.propertyId === primary.id)
-        : undefined;
-      const submittedTitle = (primaryAnswer?.value as { text?: unknown } | undefined)?.text;
-      const created = await createRowAction(
-        databasePageId,
-        typeof submittedTitle === "string" ? submittedTitle : "",
-      );
-      if (!("ok" in created)) {
-        toast.error(created.error);
-        return;
-      }
-      for (const cell of values) {
-        // `createRowAction` already seeded the primary cell from the title.
-        if (cell.propertyId === primary?.id) continue;
-        await setPropertyValueAction(created.id, cell.propertyId, cell.value);
-      }
-      toast.success(t(locale, "done"));
-      router.refresh();
-    });
+  const submitForm = async (values: { propertyId: string; value: unknown }[]) => {
+    const answers = Object.fromEntries(
+      values.map((cell) => [cell.propertyId, cell.value]),
+    );
+    const result = await submitFormAction(activeView.id, answers);
+    if ("error" in result) {
+      toast.error(result.error);
+      return { error: result.error };
+    }
+    toast.success(t(locale, "done"));
+    router.refresh();
+    return { ok: true as const };
   };
 
   const onSaveTemplate = (row: DBRow) =>

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { randomUUID } from "node:crypto";
 import type { Prisma, PropertyType } from "@prisma/client";
 import { prisma } from "@/lib/db";
@@ -30,6 +31,22 @@ import { nextRunFor } from "@/lib/recurrence";
 import { ORDER_STEP } from "@/lib/row-order";
 import { formatUniqueId, nextNumbers, type UniqueIdConfig } from "@/lib/unique-id";
 import { fileUrlsAreAppOwned } from "@/lib/validation";
+import { validateCell } from "@/lib/cell-validation";
+import {
+  buildFormSchema,
+  isAnswerablePropertyType,
+  parseFormSchema,
+  toRowValues,
+  validateFormSchema,
+  validateSubmission,
+  type FormSchema,
+} from "@/lib/form-view";
+import {
+  checkRateLimit,
+  checkUserRateLimit,
+  clientKeyFromHeaders,
+  userKey,
+} from "@/lib/rate-limit";
 
 type Result<T = unknown> = ({ ok: true } & T) | { error: string };
 
@@ -667,6 +684,86 @@ export async function setPropertyValueAction(
   return { ok: true };
 }
 
+/**
+ * Seed the cells of a row that was created in the caller's transaction.
+ *
+ * This is the shared value path for a blank row (`createRowAction`) and an
+ * accepted form (`submitFormAction`). The caller owns the guarded page write
+ * (`Page.parentId`) and has already authorized the database; this helper only
+ * touches that database's own columns. `submitted` answers are overlaid after
+ * the primary cell, UNIQUE_ID allocations and authored defaults, so an accepted
+ * answer always wins over a seed value while the whole row remains one atomic
+ * write.
+ */
+async function createRowCellsInTransaction(
+  tx: Prisma.TransactionClient,
+  databasePageId: string,
+  pageId: string,
+  title: string,
+  submitted?: ReadonlyMap<string, Prisma.InputJsonValue>,
+): Promise<void> {
+  const properties = await tx.property.findMany({
+    where: { databasePageId },
+    orderBy: { position: "asc" },
+    select: { id: true, type: true, config: true },
+  });
+
+  // One cell per property: the primary text cell yields to a Unique ID
+  // allocation when the primary column is itself a UNIQUE_ID property, and
+  // every UNIQUE_ID column gets a fresh id derived from its own stored
+  // values (multiple Unique ID properties number independently).
+  const values = new Map<string, Prisma.InputJsonValue>();
+  const primary = properties[0];
+  if (primary && primary.type !== "UNIQUE_ID") {
+    values.set(primary.id, { text: title || "" });
+  }
+  for (const property of properties) {
+    if (property.type !== "UNIQUE_ID") continue;
+    values.set(
+      property.id,
+      await allocateUniqueIdValue(
+        tx,
+        property.id,
+        readUniqueIdConfig(property.config),
+      ),
+    );
+  }
+
+  // An authored `config.default` seeds the fresh row (e.g. a Status, Number or
+  // Date starting value), unless the primary text cell or a UNIQUE_ID
+  // allocation already owns that column - the same override order the read-only
+  // grid uses. `initializeRowValues` validates each stored config and omits
+  // computed types, so a malformed config can never break row creation.
+  for (const seeded of initializeRowValues(
+    properties.filter(
+      (property) =>
+        !values.has(property.id) && hasConfiguredDefault(property.config),
+    ),
+  )) {
+    values.set(seeded.propertyId, seeded.value as Prisma.InputJsonValue);
+  }
+
+  if (submitted) {
+    // The action validated every id against this database before opening the
+    // transaction; the known-set guard keeps the helper safe for any caller,
+    // including a stale property deleted between validation and commit.
+    const known = new Set(properties.map((property) => property.id));
+    for (const [propertyId, value] of submitted) {
+      if (known.has(propertyId)) values.set(propertyId, value);
+    }
+  }
+
+  if (values.size > 0) {
+    await tx.propertyValue.createMany({
+      data: [...values].map(([propertyId, value]) => ({
+        propertyId,
+        pageId,
+        value,
+      })),
+    });
+  }
+}
+
 export async function createRowAction(
   databasePageId: string,
   title = "",
@@ -688,7 +785,7 @@ export async function createRowAction(
       data: {
         workspaceId: auth.page.workspaceId,
         // The parent is the database page `authorizeDatabase` just checked and
-        // the row is written into that very page's workspace — parent and row
+        // the row is written into that very page's workspace - parent and row
         // share one workspace by construction, so no second lookup is needed
         // (B08: `assertScopedParent` would be redundant here).
         parentId: databasePageId,
@@ -701,62 +798,192 @@ export async function createRowAction(
       },
       select: { id: true },
     });
-
-    const properties = await tx.property.findMany({
-      where: { databasePageId },
-      orderBy: { position: "asc" },
-      select: { id: true, type: true, config: true },
-    });
-
-    // One cell per property: the primary text cell yields to a Unique ID
-    // allocation when the primary column is itself a UNIQUE_ID property, and
-    // every UNIQUE_ID column gets a fresh id derived from its own stored
-    // values (multiple Unique ID properties number independently).
-    const values = new Map<string, Prisma.InputJsonValue>();
-    const primary = properties[0];
-    if (primary && primary.type !== "UNIQUE_ID") {
-      values.set(primary.id, { text: title || "" });
-    }
-    for (const property of properties) {
-      if (property.type !== "UNIQUE_ID") continue;
-      values.set(
-        property.id,
-        await allocateUniqueIdValue(
-          tx,
-          property.id,
-          readUniqueIdConfig(property.config),
-        ),
-      );
-    }
-
-    // An authored `config.default` seeds the fresh row (e.g. a Status, Number or
-    // Date starting value), unless the primary text cell or a UNIQUE_ID
-    // allocation already owns that column — the same override order the read-only
-    // grid uses. `initializeRowValues` validates each stored config and omits
-    // computed types, so a malformed config can never break row creation.
-    for (const seeded of initializeRowValues(
-      properties.filter(
-        (property) =>
-          !values.has(property.id) && hasConfiguredDefault(property.config),
-      ),
-    )) {
-      values.set(seeded.propertyId, seeded.value as Prisma.InputJsonValue);
-    }
-    if (values.size > 0) {
-      await tx.propertyValue.createMany({
-        data: [...values].map(([propertyId, value]) => ({
-          propertyId,
-          pageId: row.id,
-          value,
-        })),
-      });
-    }
+    await createRowCellsInTransaction(tx, databasePageId, row.id, title);
     return row.id;
   });
 
   await dispatchWebhooks(auth.page.workspaceId, "row.created", {
     rowId,
     databasePageId,
+  });
+  revalidateDatabase(auth.page.workspaceId);
+  return { ok: true, id: rowId };
+}
+
+/**
+ * Submit an internal FORM view.
+ *
+ * The browser validates the same schema before it calls this action, but that
+ * is only a UX shortcut: this action re-authorizes the view's database, reads
+ * the view's *stored* `config.form`, re-validates every answer with the shared
+ * cell rules, and creates the row plus all cells in one transaction. A
+ * hand-crafted client call therefore cannot write an unknown column, a computed
+ * cell, an unowned file URL, or a row that only partially commits.
+ */
+export async function submitFormAction(
+  viewId: string,
+  answers: unknown,
+): Promise<Result<{ id: string }>> {
+  const view = await prisma.databaseView.findUnique({
+    where: { id: viewId },
+    select: {
+      id: true,
+      databasePageId: true,
+      name: true,
+      type: true,
+      config: true,
+    },
+  });
+  if (!view || view.type !== "FORM") return { error: "Form not found." };
+
+  const auth = await authorizeDatabase(view.databasePageId);
+  if ("error" in auth) return auth;
+  if (!auth.capabilities.edit) return { error: "No permission." };
+
+  const config = (view.config ?? {}) as { form?: unknown };
+  const parsed = parseFormSchema(config.form);
+  const properties = await prisma.property.findMany({
+    where: { databasePageId: view.databasePageId },
+    orderBy: { position: "asc" },
+    select: { id: true, name: true, type: true, config: true },
+  });
+  const propertyById = new Map(properties.map((property) => [property.id, property]));
+
+  // A stored FormSchema is authoritative. A legacy `fieldIds` config (or no
+  // config at all) is resolved against the live properties exactly like the
+  // renderer does, so an old form keeps accepting its answers.
+  const storedFields =
+    parsed.fields.length > 0
+      ? parsed.fields
+      : buildFormSchema(properties, config.form);
+  const schema: FormSchema = {
+    ...parsed,
+    id: view.id,
+    databaseId: view.databasePageId,
+    title: parsed.title.trim() || view.name || "Form",
+    fields: storedFields.map((field) => {
+      const property = propertyById.get(field.propertyId);
+      return property
+        ? {
+            ...field,
+            type: property.type,
+            config: (property.config ?? {}) as Record<string, unknown>,
+          }
+        : field;
+    }),
+  };
+
+  const formCheck = validateFormSchema(schema, { properties });
+  if (!formCheck.ok) return { error: "This form has an invalid configuration." };
+  if (schema.accepting !== true) {
+    return { error: "This form is not accepting responses." };
+  }
+
+  // Per-user fixed window. It is deliberately charged before the row write, so
+  // even a script that keeps malformed submissions coming cannot use this
+  // action as an unthrottled database writer.
+  const userLimit = checkUserRateLimit(
+    userKey(`form-submit:${view.id}`, auth.user.id),
+    20,
+    60_000,
+  );
+  const addressLimit = checkRateLimit(
+    clientKeyFromHeaders(await headers(), `form-submit:${view.id}`),
+    60,
+    60_000,
+  );
+  if (!userLimit.ok || !addressLimit.ok) {
+    return { error: "Too many submissions. Try again shortly." };
+  }
+
+  const validation = validateSubmission(schema, answers);
+  if (!validation.ok) {
+    return { error: "Please check the answers and try again." };
+  }
+  const cells = toRowValues(schema, answers);
+  const submitted = new Map<string, Prisma.InputJsonValue>();
+  for (const cell of cells) {
+    const property = propertyById.get(cell.propertyId);
+    if (!property || !isAnswerablePropertyType(property.type)) {
+      return { error: "This form has an invalid question." };
+    }
+    if (!fileUrlsAreAppOwned(cell.value)) {
+      return { error: "That file link is not allowed." };
+    }
+    submitted.set(cell.propertyId, cell.value as Prisma.InputJsonValue);
+  }
+
+  // Re-check the *mapped* cells, including defaults that were never in the
+  // answer map. `validateSubmission` already checks the answers, but validating
+  // the final values here means a stored default cannot bypass the shared cell
+  // rules and a fail-open validation edge cannot reach the writer.
+  for (const field of schema.fields) {
+    if (field.hidden === true) continue;
+    const property = propertyById.get(field.propertyId);
+    if (!property || !isAnswerablePropertyType(property.type)) {
+      return { error: "This form has an invalid question." };
+    }
+    const result = validateCell(
+      {
+        id: property.id,
+        name: field.label,
+        type: property.type,
+        required: field.required === true,
+        config: (property.config ?? {}) as Record<string, unknown>,
+      },
+      submitted.get(field.propertyId),
+    );
+    if (!result.ok) {
+      return { error: "Please check the answers and try again." };
+    }
+  }
+
+  // The primary text answer also becomes the row title, matching the table's
+  // blank-row path. `createRowCellsInTransaction` seeds that same cell from the
+  // title, so the answer is written once.
+  const primary = properties[0];
+  const primaryCell = primary
+    ? cells.find((cell) => cell.propertyId === primary.id)
+    : undefined;
+  const primaryText =
+    primaryCell && primaryCell.value && typeof primaryCell.value === "object"
+      ? (primaryCell.value as { text?: unknown }).text
+      : undefined;
+  const title = typeof primaryText === "string" ? primaryText : "";
+
+  const rowId = await prisma.$transaction(async (tx) => {
+    const last = await tx.page.findFirst({
+      where: { parentId: view.databasePageId },
+      orderBy: { position: "desc" },
+      select: { position: true },
+    });
+    const rowTitle = title || "Untitled";
+    const row = await tx.page.create({
+      data: {
+        workspaceId: auth.page.workspaceId,
+        // `authorizeDatabase(view.databasePageId)` proved this parent above and
+        // the row is written into that very page's workspace.
+        parentId: view.databasePageId,
+        title: rowTitle,
+        createdById: auth.user.id,
+        position: (last?.position ?? 0) + 1000,
+        searchText: pageSearchText(rowTitle, null),
+      },
+      select: { id: true },
+    });
+    await createRowCellsInTransaction(
+      tx,
+      view.databasePageId,
+      row.id,
+      title,
+      submitted,
+    );
+    return row.id;
+  });
+
+  await dispatchWebhooks(auth.page.workspaceId, "row.created", {
+    rowId,
+    databasePageId: view.databasePageId,
   });
   revalidateDatabase(auth.page.workspaceId);
   return { ok: true, id: rowId };

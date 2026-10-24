@@ -12,7 +12,7 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 | --- | --- | --- | --- |
 | 1 | **Filter tree UI** | The AND/OR filter tree already evaluates; the nested group builder UI is not exposed. | 3. Databases |
 | 2 | **Conditional formatting** | ColorRule is modelled and evaluated; the rule-authoring and render path are partial. | 3. Databases |
-| 3 | **Form view (public + atomic submit)** | The internal FORM view and builder are wired; the public share-token route and a server-side atomic submit action still need shipping. | 3. Databases |
+| 3 | **Form view (public share)** | The internal FORM view, builder and atomic server-side submit are wired; the public share-token route still needs shipping. | 3. Databases |
 | 4 | **Linked database writes** | View identity, filters/sorts and overrides shipped; write-through and the in-block override editor are pending. | 3. Databases |
 | 5 | **Synced blocks** | Mirror one block's content in many places with a canonical source marker. | 1. Editor & blocks |
 | 6 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
@@ -62,7 +62,7 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Form view | Public/Internal form that creates rows. | 🟡 | The internal `FORM` view is wired end-to-end: `ViewType.FORM` (schema, canonical type list, view menu and action guards), the respondent renderer, validation, an inline builder (title/description/questions/required/order/accepting/submit copy) and row creation through `createRowAction` + `setPropertyValueAction`. The public share-token route and a server-side atomic `submitFormAction` remain (R89.29). |
+| Form view | Public/Internal form that creates rows. | 🟡 | The internal `FORM` view is wired end-to-end: `ViewType.FORM` (schema, canonical type list, view menu and action guards), the respondent renderer, validation, an inline builder (title/description/questions/required/order/accepting/submit copy) and atomic row creation through `submitFormAction` (server re-authorization, stored-schema revalidation, per-user/per-address throttles, row + cells in one transaction). The public share-token route remains (R89.29). |
 | AND/OR filter groups | Boolean combination of filters. | 🟡 | Planned as a filter tree. FilterNode tree already evaluates (database-query.ts:66); tree UI spec'd: docs/specs/database-deep.md (R89.2). |
 | Nested filter groups | Arbitrary-depth boolean nesting. | 🟡 | Planned after flat groups. Spec'd with the tree UI: docs/specs/database-deep.md (R89.2). |
 | Conditional formatting | Color rows/cells by rule. | 🟡 | Planned. ColorRule already modelled in view config (database-query.ts:68); rule editor + evaluation spec'd: docs/specs/database-deep.md (R89.5). |

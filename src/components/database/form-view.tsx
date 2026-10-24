@@ -235,7 +235,9 @@ export function FormView({
    * Persist an accepted submission: receives the mapped property values for a
    * new row, in field order. Absent → the form renders read-only.
    */
-  onSubmit?: (values: { propertyId: string; value: unknown }[]) => void;
+  onSubmit?: (
+    values: { propertyId: string; value: unknown }[],
+  ) => void | Promise<{ ok: true } | { error: string }>;
   /** Render the loading skeleton (matching the final layout) instead of fields. */
   loading?: boolean;
 }) {
@@ -248,6 +250,8 @@ export function FormView({
   );
   const [issues, setIssues] = useState<FormIssue[]>([]);
   const [submitted, setSubmitted] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const editable = onSubmit !== undefined;
 
   if (loading) {
@@ -297,11 +301,12 @@ export function FormView({
         ? current.filter((issue) => issue.propertyId !== propertyId)
         : current,
     );
+    setSubmitError(null);
   };
 
   const submit = () => {
-    if (!onSubmit) return;
-    // Client-side validation through the same engine a server action would use,
+    if (!onSubmit || pending) return;
+    // Client-side validation through the same engine the server action uses,
     // so only an acceptable submission is handed to the create-row seam.
     const validation = validateSubmission(schema, answers);
     if (!validation.ok) {
@@ -309,11 +314,24 @@ export function FormView({
       return;
     }
     setIssues([]);
-    // Hand the mapped cells to the parent before clearing, so the success
-    // state can offer "Add another" without resubmitting the same answers.
-    onSubmit(toRowValues(schema, answers));
-    setAnswers(defaultAnswers(schema));
-    setSubmitted(true);
+    setSubmitError(null);
+    const values = toRowValues(schema, answers);
+    const submitValues = onSubmit;
+    // Promise.resolve() also turns a synchronous throw from an older parent
+    // into the same error path, so the form never gets stuck in `pending`.
+    setPending(true);
+    void Promise.resolve()
+      .then(async () => submitValues(values))
+      .then((result) => {
+        if (result && "error" in result) {
+          setSubmitError(result.error);
+          return;
+        }
+        setAnswers(defaultAnswers(schema));
+        setSubmitted(true);
+      })
+      .catch(() => setSubmitError("Could not submit the form. Try again."))
+      .finally(() => setPending(false));
   };
 
   // After a successful submit the form becomes a small confirmation with an
@@ -393,14 +411,25 @@ export function FormView({
           </div>
         );
       })}
+      {submitError && (
+        <p
+          role="alert"
+          data-testid="form-submit-error"
+          className="text-sm text-danger"
+        >
+          {submitError}
+        </p>
+      )}
       {editable && (
         <button
           type="submit"
           data-testid="form-submit"
           aria-label={meta.submitLabel}
-          className="focus-ring u-interactive rounded-control bg-action px-4 py-1.5 text-sm text-action-fg hover:opacity-90"
+          disabled={pending}
+          aria-busy={pending}
+          className="focus-ring u-interactive rounded-control bg-action px-4 py-1.5 text-sm text-action-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {meta.submitLabel}
+          {pending ? t(locale, "saving") : meta.submitLabel}
         </button>
       )}
     </form>
