@@ -6,7 +6,9 @@ import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { DocRenderer } from "@/components/doc-renderer";
+import { PublicForm } from "@/components/database/public-form";
 import { CopyLinkButton } from "@/components/share-dialog";
+import type { DBProperty } from "@/components/database/database-types";
 import {
   coverBannerStyle,
   isSharedPageUnavailable,
@@ -34,6 +36,9 @@ export async function generateMetadata({
       passwordHash: true,
       expiresAt: true,
       page: { select: { title: true, deletedAt: true } },
+      view: {
+        select: { type: true, name: true, databasePageId: true },
+      },
     },
   });
   // A page's title is content: it may only be disclosed once the reader may
@@ -44,11 +49,20 @@ export async function generateMetadata({
     token,
     (await cookies()).get(shareUnlockCookieName(token))?.value,
   );
+  const formVisible = !link?.passwordHash || unlocked;
+  const formTitle =
+    link?.view?.type === "FORM" && formVisible ? link.view.name.trim() : "";
   return {
-    title: sharedPageTitle(link, link?.page, { unlocked }),
-    // Honour the publisher's indexing choice; a page that is not indexed is
-    // still discoverable over its link, just never crawled.
-    robots: link && link.indexing === false ? { index: false, follow: false } : undefined,
+    title: link?.view
+      ? formTitle || sharedPageTitle(link, link.page, { unlocked })
+      : sharedPageTitle(link, link?.page, { unlocked }),
+    // A public form is an input surface, not a page to crawl. Page links keep
+    // the publisher's indexing choice; a page that is not indexed is still
+    // discoverable over its link, just never crawled.
+    robots:
+      link?.view || (link && link.indexing === false)
+        ? { index: false, follow: false }
+        : undefined,
   };
 }
 
@@ -94,12 +108,22 @@ export default async function PublicSharedPage({
     include: {
       page: {
         select: {
+          id: true,
           title: true,
           icon: true,
           coverUrl: true,
           content: true,
           deletedAt: true,
           type: true,
+        },
+      },
+      view: {
+        select: {
+          id: true,
+          type: true,
+          name: true,
+          databasePageId: true,
+          config: true,
         },
       },
     },
@@ -152,6 +176,57 @@ export default async function PublicSharedPage({
           </button>
         </form>
       </main>
+    );
+  }
+
+  if (link.view) {
+    // A form link is valid only while the view still belongs to the shared
+    // database page. A deleted view takes the link with it (the FK cascades),
+    // and a non-FORM view is treated as a broken link rather than rendered.
+    if (
+      link.view.type !== "FORM" ||
+      link.view.databasePageId !== link.page.id ||
+      link.page.type !== "DATABASE"
+    ) {
+      return <UnavailableState />;
+    }
+    const properties = await prisma.property.findMany({
+      where: { databasePageId: link.page.id },
+      orderBy: { position: "asc" },
+      select: { id: true, name: true, type: true, config: true },
+    });
+    const formConfig = (link.view.config ?? {}) as { form?: unknown };
+    return (
+      <div className="min-h-screen bg-bg">
+        <header
+          className="sticky top-0 border-b border-border bg-bg/85 backdrop-blur print:hidden"
+          style={{ zIndex: Z.sticky }}
+        >
+          <div className="mx-auto flex h-12 w-full max-w-[1100px] items-center gap-3 px-4 sm:px-6">
+            <span className="min-w-0 truncate text-sm font-medium">
+              {link.view.name || link.page.title || "Form"}
+            </span>
+            <span className="flex-1" />
+            <span className="hidden text-xs text-muted sm:block">
+              Made with <span className="font-medium text-fg">Noema</span>
+            </span>
+            <CopyLinkButton
+              value={`/s/${token}`}
+              label="Copy form link"
+              iconOnly
+              className="h-8 w-8"
+            />
+          </div>
+        </header>
+        <main className="mx-auto w-full px-4 py-10 sm:px-6">
+          <PublicForm
+            token={token}
+            locale={locale}
+            properties={properties as DBProperty[]}
+            config={formConfig.form}
+          />
+        </main>
+      </div>
     );
   }
 

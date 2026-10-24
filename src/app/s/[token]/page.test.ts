@@ -30,9 +30,15 @@ vi.mock("next/headers", () => ({
   }),
 }));
 
-const db = vi.hoisted(() => ({ shareLinkFindUnique: vi.fn() }));
+const db = vi.hoisted(() => ({
+  shareLinkFindUnique: vi.fn(),
+  propertyFindMany: vi.fn(),
+}));
 vi.mock("@/lib/db", () => ({
-  prisma: { shareLink: { findUnique: db.shareLinkFindUnique } },
+  prisma: {
+    shareLink: { findUnique: db.shareLinkFindUnique },
+    property: { findMany: db.propertyFindMany },
+  },
 }));
 
 const auth = vi.hoisted(() => ({ getCurrentUser: vi.fn() }));
@@ -51,6 +57,29 @@ vi.mock("next/link", async () => {
 vi.mock("@/components/share-dialog", () => ({
   CopyLinkButton: () => null,
 }));
+
+// The public form wrapper is a client component that imports a server action;
+// the route test only needs to prove the page picked the form branch and passed
+// the resolved properties/config through.
+vi.mock("@/components/database/public-form", async () => {
+  const { createElement: h } = await import("react");
+  return {
+    PublicForm: ({
+      token,
+      properties,
+      config,
+    }: {
+      token: string;
+      properties: unknown[];
+      config?: unknown;
+    }) =>
+      h(
+        "div",
+        { "data-testid": "public-form" },
+        `${token}:${properties.length}:${JSON.stringify(config)}`,
+      ),
+  };
+});
 
 import PublicSharedPage, { generateMetadata } from "./page";
 import { createShareUnlockToken, shareUnlockCookieName } from "@/lib/secrets";
@@ -83,12 +112,39 @@ const link = (passwordHash: string | null, title = "Locked page") => ({
   page: page(title),
 });
 
+const formLink = (overrides: Record<string, unknown> = {}) => {
+  const base = link(null, "Requests database");
+  return {
+    ...base,
+    page: { ...base.page, id: "db-1", type: "DATABASE" },
+    view: {
+      id: "view-1",
+      type: "FORM",
+      name: "Requests",
+      databasePageId: "db-1",
+      config: {
+        form: {
+          id: "view-1",
+          databaseId: "db-1",
+          title: "Requests",
+          accepting: true,
+          fields: [{ propertyId: "title", label: "Name", type: "TEXT" }],
+        },
+      },
+    },
+    ...overrides,
+  };
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   jar.clear();
   process.env.AUTH_SECRET = "test-secret-for-share-page-tests";
   auth.getCurrentUser.mockResolvedValue(null);
   db.shareLinkFindUnique.mockResolvedValue(link("$2a$12$notarealhashnotarealhashnotareal"));
+  db.propertyFindMany.mockResolvedValue([
+    { id: "title", name: "Name", type: "TEXT", config: { primary: true } },
+  ]);
 });
 
 afterEach(() => {
@@ -257,5 +313,59 @@ describe("the share page metadata (B36)", () => {
 
     expect(meta.title).toBe("Open page");
     expect(meta.robots).toEqual({ index: false, follow: false });
+  });
+});
+
+describe("the public form route (R89.29 / O89.1)", () => {
+  it("renders the form branch with live properties for a FORM view", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(formLink());
+
+    const html = await render();
+
+    expect(html).toContain('data-testid="public-form"');
+    expect(html).toContain(TOKEN);
+    expect(html).toContain("Requests");
+    expect(html).not.toContain(MARKER);
+    expect(db.propertyFindMany).toHaveBeenCalledWith({
+      where: { databasePageId: "db-1" },
+      orderBy: { position: "asc" },
+      select: { id: true, name: true, type: true, config: true },
+    });
+  });
+
+  it("rejects a non-FORM view even with a valid token", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(
+      formLink({ view: { ...formLink().view, type: "TABLE" } }),
+    );
+
+    expect(await render()).toContain("This link is no longer available");
+  });
+
+  it("rejects a FORM view whose database page is not the shared page", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(
+      formLink({ view: { ...formLink().view, databasePageId: "db-2" } }),
+    );
+
+    expect(await render()).toContain("This link is no longer available");
+  });
+
+  it("uses the form name in metadata and always noindexes the link", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(formLink());
+
+    const meta = await generateMetadata({ params: Promise.resolve({ token: TOKEN }) });
+
+    expect(meta.title).toBe("Requests");
+    expect(meta.robots).toEqual({ index: false, follow: false });
+  });
+
+  it("keeps a password-protected form behind the unlock prompt", async () => {
+    db.shareLinkFindUnique.mockResolvedValue(
+      formLink({ passwordHash: "$2a$12$notarealhashnotarealhashnotareal" }),
+    );
+
+    const html = await render();
+
+    expect(html).toContain("Password required");
+    expect(html).not.toContain('data-testid="public-form"');
   });
 });

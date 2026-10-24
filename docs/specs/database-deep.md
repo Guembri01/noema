@@ -126,7 +126,7 @@ requirement already owned by a sibling spec (§2.4).
 | AI autofill property | `ai-surface.md` | **R25.x** | Nothing (matrix `:304` points there). |
 | Per-page permission inheritance, share-link toggles, publish-to-web (matrix §8) | *no spec owns yet* (row-level grants ship in `plans-licensing.md` R26.x gating and `PagePermission` is read by relations R21.4/R21.20) | — | R89.23/R89.24 define the **database-scoped** capability split only; §8 inheritance stays open (O89.3). |
 | Collab on database-row pages | `realtime-collab.md` (B09) | **R9.x**, open question O9.2 | Nothing. |
-| Public form sharing | — (share links exist: `schema.prisma:393` `model ShareLink`) | — | R89.29 specifies internal forms; public publishing is O89.1. |
+| Public form sharing | `ShareLink.viewId` + `/s/[token]` (R89.29 / O89.1) | R89.29 (internal forms), O89.1 (public publishing) | The tokenized route, builder link management, per-address/link throttles and atomic public row+cells are implemented; public links hide authenticated-only pickers (people/files/verification). |
 
 ## 3. Decisions
 

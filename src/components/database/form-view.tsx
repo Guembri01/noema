@@ -106,6 +106,7 @@ import {
   buildFormSchema,
   defaultAnswers,
   describeForm,
+  publicFormFields,
   parseFormSchema,
   toRowValues,
   validateSubmission,
@@ -179,22 +180,27 @@ export type FormPlan = {
   meta: FormDescription;
 };
 
-export function resolveFormPlan(properties: DBProperty[], config: unknown): FormPlan {
+export function resolveFormPlan(
+  properties: DBProperty[],
+  config: unknown,
+  options: { publicMode?: boolean } = {},
+): FormPlan {
   const parsed = parseFormSchema(config);
   const propertyById = new Map(properties.map((property) => [property.id, property]));
   const resolvedFields =
     parsed.fields.length > 0 ? parsed.fields : buildFormSchema(properties, config);
+  const fields = resolvedFields.map((field) => {
+    const property = propertyById.get(field.propertyId);
+    if (!property) return field;
+    return {
+      ...field,
+      type: property.type,
+      config: (property.config ?? {}) as Record<string, unknown>,
+    };
+  });
   const schema: FormSchema = {
     ...parsed,
-    fields: resolvedFields.map((field) => {
-      const property = propertyById.get(field.propertyId);
-      if (!property) return field;
-      return {
-        ...field,
-        type: property.type,
-        config: (property.config ?? {}) as Record<string, unknown>,
-      };
-    }),
+    fields: options.publicMode === true ? publicFormFields(fields) : fields,
   };
   return {
     schema,
@@ -226,6 +232,7 @@ export function FormView({
   config,
   onSubmit,
   loading = false,
+  publicMode = false,
 }: {
   locale: string;
   properties: DBProperty[];
@@ -240,8 +247,12 @@ export function FormView({
   ) => void | Promise<{ ok: true } | { error: string }>;
   /** Render the loading skeleton (matching the final layout) instead of fields. */
   loading?: boolean;
+  /** Anonymous public link: hide pickers/uploads that need a signed-in user. */
+  publicMode?: boolean;
 }) {
-  const { schema, fields, meta } = resolveFormPlan(properties, config);
+  const { schema, fields, meta } = resolveFormPlan(properties, config, {
+    publicMode,
+  });
   const propertyById = new Map(properties.map((property) => [property.id, property]));
   // Pre-fill any stored field defaults so a fresh respondent starts where the
   // form config says; a form with no defaults is exactly as empty as before.

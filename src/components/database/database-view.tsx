@@ -2170,6 +2170,7 @@ export function DatabaseView({
               viewId={activeView.id}
               databaseId={databasePageId}
               defaultTitle={activeView.name}
+              responseCount={rows.length}
               onSave={(form) => setViewConfig({ form })}
             />
           )}

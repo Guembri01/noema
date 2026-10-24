@@ -12,18 +12,17 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 | --- | --- | --- | --- |
 | 1 | **Filter tree UI** | The AND/OR filter tree already evaluates; the nested group builder UI is not exposed. | 3. Databases |
 | 2 | **Conditional formatting** | ColorRule is modelled and evaluated; the rule-authoring and render path are partial. | 3. Databases |
-| 3 | **Form view (public share)** | The internal FORM view, builder and atomic server-side submit are wired; the public share-token route still needs shipping. | 3. Databases |
-| 4 | **Linked database writes** | View identity, filters/sorts and overrides shipped; write-through and the in-block override editor are pending. | 3. Databases |
-| 5 | **Synced blocks** | Mirror one block's content in many places with a canonical source marker. | 1. Editor & blocks |
-| 6 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
-| 7 | **Comment depth** | Server-side depth validation, block anchors and dispatch scoping on page threads. | 7. Collaboration |
-| 8 | **Notification inbox & preferences** | Per-user delivery preferences, digests and PageFollow dispatch are missing. | 7. Collaboration |
-| 9 | **Pagination everywhere** | Databases, tickets and audit lists load bounded sets; cursor pagination is pending. | 17. Data model & platform |
-| 10 | **Audit log UI** | Activity is recorded per ticket/page; a workspace-wide, filterable audit view is missing. | 8. Sharing & permissions |
-| 11 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
-| 12 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
-| 13 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
-| 14 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
+| 3 | **Linked database writes** | View identity, filters/sorts and overrides shipped; write-through and the in-block override editor are pending. | 3. Databases |
+| 4 | **Synced blocks** | Mirror one block's content in many places with a canonical source marker. | 1. Editor & blocks |
+| 5 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
+| 6 | **Comment depth** | Server-side depth validation, block anchors and dispatch scoping on page threads. | 7. Collaboration |
+| 7 | **Notification inbox & preferences** | Per-user delivery preferences, digests and PageFollow dispatch are missing. | 7. Collaboration |
+| 8 | **Pagination everywhere** | Databases, tickets and audit lists load bounded sets; cursor pagination is pending. | 17. Data model & platform |
+| 9 | **Audit log UI** | Activity is recorded per ticket/page; a workspace-wide, filterable audit view is missing. | 8. Sharing & permissions |
+| 10 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
+| 11 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
+| 12 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
+| 13 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
 
 ## By area
 
@@ -62,7 +61,7 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Form view | Public/Internal form that creates rows. | 🟡 | The internal `FORM` view is wired end-to-end: `ViewType.FORM` (schema, canonical type list, view menu and action guards), the respondent renderer, validation, an inline builder (title/description/questions/required/order/accepting/submit copy) and atomic row creation through `submitFormAction` (server re-authorization, stored-schema revalidation, per-user/per-address throttles, row + cells in one transaction). The public share-token route remains (R89.29). |
+| Form view | Public/Internal form that creates rows. | 🟡 | The internal FORM view is wired end-to-end: ViewType.FORM (schema, canonical type list, view menu and action guards), the respondent renderer, validation, an inline builder (title/description/questions/required/order/accepting/submit copy) and atomic row creation through submitFormAction (server re-authorization, stored-schema revalidation, per-user/per-address throttles, row + cells in one transaction). Public forms publish one view through ShareLink.viewId at /s/<token>: the builder creates/copies/revokes the link and shows response count, the route handles password/expiry/unlock, and submitPublicFormAction applies per-address/link throttles plus stored-schema revalidation and an atomic row+cells write. Public links intentionally hide PEOPLE/FILES/VERIFICATION questions because those editors need a signed-in session; internal forms keep them. |
 | AND/OR filter groups | Boolean combination of filters. | 🟡 | Planned as a filter tree. FilterNode tree already evaluates (database-query.ts:66); tree UI spec'd: docs/specs/database-deep.md (R89.2). |
 | Nested filter groups | Arbitrary-depth boolean nesting. | 🟡 | Planned after flat groups. Spec'd with the tree UI: docs/specs/database-deep.md (R89.2). |
 | Conditional formatting | Color rows/cells by rule. | 🟡 | Planned. ColorRule already modelled in view config (database-query.ts:68); rule editor + evaluation spec'd: docs/specs/database-deep.md (R89.5). |

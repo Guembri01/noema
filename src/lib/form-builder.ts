@@ -17,6 +17,7 @@
 import {
   FORM_TITLE_MAX_LENGTH,
   buildFormSchema,
+  isPublicFormType,
   parseFormSchema,
   validateFormSchema,
   type FormField,
@@ -248,6 +249,29 @@ export function finalizeFormSchema(schema: FormSchema): FormSchema {
     ...(submitLabel ? { submitLabel } : {}),
     ...(successMessage ? { successMessage } : {}),
   };
+}
+
+/**
+ * What a public link can actually ask: visible questions whose picker does not
+ * need a signed-in user, plus the visible questions it has to hide. The builder
+ * uses this to warn before publishing and to refuse a link with no usable
+ * question; `submitPublicFormAction` applies the same filter server-side.
+ */
+export function publicQuestionAvailability(
+  fields: readonly FormField[],
+  properties: readonly BuilderProperty[],
+): { unsupported: number; hasPublic: boolean } {
+  const byId = new Map(properties.map((property) => [property.id, property]));
+  let unsupported = 0;
+  let hasPublic = false;
+  for (const field of fields) {
+    if (field.hidden === true) continue;
+    const property = byId.get(field.propertyId);
+    if (!property) continue;
+    if (isPublicFormType(property.type)) hasPublic = true;
+    else unsupported += 1;
+  }
+  return { unsupported, hasPublic };
 }
 
 /**

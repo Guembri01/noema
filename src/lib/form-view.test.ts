@@ -8,7 +8,9 @@ import {
   defaultAnswers,
   describeForm,
   fieldOrder,
+  isPublicFormType,
   parseFormSchema,
+  publicFormFields,
   resolveFormMeta,
   toRowValues,
   toggleAccepting,
@@ -72,7 +74,61 @@ const ids = (fields: FormField[]): string[] => fields.map((field) => field.prope
 const byId = (fields: FormField[], id: string): FormField =>
   fields.find((field) => field.propertyId === id) as FormField;
 
-describe("buildFormSchema — selection and order", () => {
+describe("public form fields", () => {
+  it("keeps scalar questions that need no session", () => {
+    for (const type of [
+      "TEXT",
+      "NUMBER",
+      "SELECT",
+      "MULTI_SELECT",
+      "STATUS",
+      "DATE",
+      "CHECKBOX",
+      "URL",
+      "EMAIL",
+      "PHONE",
+      "PLACE",
+    ]) {
+      expect(isPublicFormType(type)).toBe(true);
+    }
+  });
+
+  it("drops pickers, uploads and computed types", () => {
+    for (const type of [
+      "PEOPLE",
+      "FILES",
+      "VERIFICATION",
+      "RELATION",
+      "FORMULA",
+      "UNIQUE_ID",
+      "BUTTON",
+    ]) {
+      expect(isPublicFormType(type)).toBe(false);
+    }
+  });
+
+  it("filters the field list without mutating the stored order", () => {
+    const fields: FormField[] = [
+      { propertyId: "title", label: "Title", type: "TEXT" },
+      { propertyId: "people", label: "People", type: "PEOPLE" },
+      { propertyId: "files", label: "Files", type: "FILES" },
+      { propertyId: "status", label: "Status", type: "STATUS" },
+    ];
+
+    expect(publicFormFields(fields).map((field) => field.propertyId)).toEqual([
+      "title",
+      "status",
+    ]);
+    expect(fields.map((field) => field.propertyId)).toEqual([
+      "title",
+      "people",
+      "files",
+      "status",
+    ]);
+  });
+});
+
+describe("buildFormSchema - selection and order", () => {
   it("defaults to every non-computed property in schema order", () => {
     expect(ids(buildFormSchema(props, {}))).toEqual(["title", "status", "tags", "estimate"]);
     expect(ids(buildFormSchema(props, null))).toEqual(["title", "status", "tags", "estimate"]);

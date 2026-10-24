@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { ArrowDown, ArrowUp, Settings2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowDown, ArrowUp, Check, Copy, Link2, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -12,12 +12,18 @@ import {
   finalizeFormSchema,
   formDraftIssues,
   moveFormField,
+  publicQuestionAvailability,
   setFormFieldIncluded,
   setFormFieldLabel,
   setFormFieldRequired,
   updateFormSettings,
 } from "@/lib/form-builder";
 import type { FormSchema } from "@/lib/form-view";
+import {
+  createFormShareLinkAction,
+  getFormShareLinkStateAction,
+  revokeFormShareLinkAction,
+} from "@/server/actions/share";
 import type { DBProperty } from "./database-types";
 
 /**
@@ -36,6 +42,7 @@ export function FormBuilder({
   viewId,
   databaseId,
   defaultTitle,
+  responseCount = 0,
   onSave,
 }: {
   locale: string;
@@ -44,12 +51,19 @@ export function FormBuilder({
   viewId: string;
   databaseId: string;
   defaultTitle: string;
+  /** Rows currently stored in the database, shown with the public link. */
+  responseCount?: number;
   onSave: (schema: FormSchema) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<FormSchema>(() =>
     createFormDraft(properties, config, { id: viewId, databaseId, title: defaultTitle }),
   );
+  const [publicUrl, setPublicUrl] = useState<string | null>(null);
+  const [publicBusy, setPublicBusy] = useState(false);
+  const [publicError, setPublicError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const publicStateSeq = useRef(0);
 
   const toggle = () => {
     if (!open) {
@@ -61,14 +75,63 @@ export function FormBuilder({
     setOpen((value) => !value);
   };
 
+  // Show the link that is actually published. The builder state starts empty,
+  // so without this a refresh would offer "Create public link" for a view that
+  // already has one and hide the revoke action.
+  useEffect(() => {
+    if (!open) return;
+    const seq = ++publicStateSeq.current;
+    void getFormShareLinkStateAction(viewId).then((result) => {
+      if (publicStateSeq.current !== seq) return;
+      setPublicUrl(result.published ? result.url : null);
+      setCopied(false);
+    });
+  }, [open, viewId]);
+
   const issues = formDraftIssues(draft, properties);
   const canSave = issues.length === 0;
+  const publicQuestions = publicQuestionAvailability(draft.fields, properties);
+  const publicUnsupported = publicQuestions.unsupported;
+  const hasPublicQuestions = publicQuestions.hasPublic;
 
   const save = () => {
     const next = finalizeFormSchema(draft);
     if (formDraftIssues(next, properties).length > 0) return;
     onSave(next);
     setOpen(false);
+  };
+
+  const createPublicLink = async () => {
+    publicStateSeq.current += 1;
+    setPublicBusy(true);
+    setPublicError(null);
+    const result = await createFormShareLinkAction(viewId);
+    if ("error" in result) setPublicError(result.error);
+    else setPublicUrl(result.url);
+    setPublicBusy(false);
+  };
+
+  const revokePublicLink = async () => {
+    publicStateSeq.current += 1;
+    setPublicBusy(true);
+    setPublicError(null);
+    const result = await revokeFormShareLinkAction(viewId);
+    if ("error" in result) setPublicError(result.error);
+    else {
+      setPublicUrl(null);
+      setCopied(false);
+    }
+    setPublicBusy(false);
+  };
+
+  const copyPublicLink = () => {
+    if (!publicUrl) return;
+    const absolute =
+      typeof window === "undefined"
+        ? publicUrl
+        : `${window.location.origin}${publicUrl}`;
+    void navigator?.clipboard?.writeText(absolute).catch(() => {});
+    setCopied(true);
   };
 
   return (
@@ -165,6 +228,86 @@ export function FormBuilder({
                 }
               />
             </span>
+          </div>
+
+          <div
+            className="space-y-2 border-t border-border pt-2"
+            data-testid="form-builder-public"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
+                <Link2 className="h-3.5 w-3.5" aria-hidden />
+                <span>
+                  {responseCount} response{responseCount === 1 ? "" : "s"} · Public
+                  link
+                </span>
+              </span>
+              {publicUrl ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={publicBusy}
+                  onClick={() => void revokePublicLink()}
+                >
+                  Remove public link
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  loading={publicBusy}
+                  disabled={!hasPublicQuestions}
+                  onClick={() => void createPublicLink()}
+                >
+                  Create public link
+                </Button>
+              )}
+            </div>
+            {publicUnsupported > 0 && (
+              <p className="text-xs text-muted">
+                {publicUnsupported} question
+                {publicUnsupported === 1 ? "" : "s"} need a signed-in respondent
+                (people, files or verification) and stay hidden on the public
+                link.
+              </p>
+            )}
+            {!hasPublicQuestions && (
+              <p className="text-xs text-muted">
+                Add at least one text, number, choice, date or checkbox question
+                before publishing a public link.
+              </p>
+            )}
+            {publicUrl && (
+              <div className="flex items-center gap-2">
+                <Input
+                  size="sm"
+                  readOnly
+                  value={publicUrl}
+                  aria-label="Public form link"
+                  className="min-w-0 flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={copyPublicLink}
+                >
+                  {copied ? (
+                    <Check className="h-3.5 w-3.5" aria-hidden />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                  {copied ? "Copied" : "Copy"}
+                </Button>
+              </div>
+            )}
+            {publicError && (
+              <p role="alert" className="text-xs text-danger">
+                {publicError}
+              </p>
+            )}
           </div>
 
           <ul className="space-y-1" data-testid="form-builder-fields">

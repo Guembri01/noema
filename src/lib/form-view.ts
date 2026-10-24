@@ -51,6 +51,34 @@ export function isAnswerablePropertyType(type: unknown): boolean {
   return typeof type === "string" && !COMPUTED_PROPERTY_TYPES.has(type);
 }
 
+/**
+ * Types an anonymous respondent cannot answer: the picker/editor needs a
+ * signed-in session (workspace members, the authenticated upload API, the
+ * verification actor) or would leak directory data to the public link. A public
+ * form drops these questions; internal forms keep them.
+ */
+const PUBLIC_FORM_UNSAFE_TYPES: ReadonlySet<string> = new Set([
+  "PEOPLE",
+  "FILES",
+  "VERIFICATION",
+]);
+
+/** Whether a property type can be answered through a public form link. */
+export function isPublicFormType(type: unknown): boolean {
+  return isAnswerablePropertyType(type) && !PUBLIC_FORM_UNSAFE_TYPES.has(type as string);
+}
+
+/**
+ * Drop questions a public respondent cannot answer. `resolveFormPlan` and
+ * `submitPublicFormAction` both call this so the rendered fields and the fields
+ * the server accepts always agree.
+ */
+export function publicFormFields(
+  fields: readonly FormField[],
+): FormField[] {
+  return fields.filter((field) => isPublicFormType(field.type));
+}
+
 /** Default submit button label when the config does not provide one. */
 export const DEFAULT_SUBMIT_LABEL = "Submit";
 

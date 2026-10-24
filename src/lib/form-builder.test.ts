@@ -4,6 +4,7 @@ import {
   finalizeFormSchema,
   formDraftIssues,
   moveFormField,
+  publicQuestionAvailability,
   setFormFieldIncluded,
   setFormFieldLabel,
   setFormFieldRequired,
@@ -169,6 +170,48 @@ describe("finalizeFormSchema", () => {
       { propertyId: "title", label: "Value" },
       { propertyId: "status", label: "State" },
     ]);
+  });
+});
+
+describe("publicQuestionAvailability", () => {
+  const fields = [
+    { propertyId: "title", label: "Title", type: "TEXT" },
+    { propertyId: "people", label: "People", type: "PEOPLE" },
+    { propertyId: "files", label: "Files", type: "FILES" },
+    { propertyId: "note", label: "Note", type: "TEXT", hidden: true },
+    { propertyId: "gone", label: "Gone", type: "TEXT" },
+  ];
+  const props = [
+    ...properties,
+    { id: "people", name: "People", type: "PEOPLE" },
+    { id: "files", name: "Files", type: "FILES" },
+  ];
+
+  it("counts visible questions a public link must hide", () => {
+    expect(publicQuestionAvailability(fields, props)).toEqual({
+      unsupported: 2,
+      hasPublic: true,
+    });
+  });
+
+  it("does not count hidden or stale questions", () => {
+    const hiddenOnly = fields.map((field) => ({ ...field, hidden: true }));
+    expect(publicQuestionAvailability(hiddenOnly, props)).toEqual({
+      unsupported: 0,
+      hasPublic: false,
+    });
+  });
+
+  it("reports no usable question when only pickers remain", () => {
+    expect(
+      publicQuestionAvailability(
+        [
+          { propertyId: "people", label: "People", type: "PEOPLE" },
+          { propertyId: "files", label: "Files", type: "FILES" },
+        ],
+        props,
+      ),
+    ).toEqual({ unsupported: 2, hasPublic: false });
   });
 });
 

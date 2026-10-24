@@ -64,7 +64,9 @@ export async function getShareLinkStateAction(pageId: string): Promise<ShareLink
   if (!canPerformWorkspaceAction(access?.role ?? null, "sharePage")) return empty;
   if (!pageCapabilitiesFromRelation(access?.role, page.permissions).share) return empty;
 
-  const link = await prisma.shareLink.findFirst({ where: { pageId } });
+  // A published form is a separate public surface; the page share panel only
+  // reflects the page-level link (`viewId: null`).
+  const link = await prisma.shareLink.findFirst({ where: { pageId, viewId: null } });
   if (!link) return empty;
   return {
     published: true,
@@ -110,7 +112,9 @@ export async function createShareLinkAction(
   const requested: SharePermission | undefined =
     options.allowEditing === undefined ? undefined : options.allowEditing ? "EDIT" : "READ";
 
-  const existing = await prisma.shareLink.findFirst({ where: { pageId } });
+  const existing = await prisma.shareLink.findFirst({
+    where: { pageId, viewId: null },
+  });
   if (existing) {
     await prisma.shareLink.update({
       where: { id: existing.id },
@@ -139,6 +143,130 @@ export async function createShareLinkAction(
   await logActivity({ workspaceId: page.workspaceId, actorId: user.id, action: "page.shared", targetType: "page", targetId: pageId });
   revalidatePath("/w", "layout");
   return { url: `/s/${link.token}` };
+}
+
+/** A form view the caller may publish, with its database page. */
+async function loadShareableForm(
+  viewId: string,
+  userId: string,
+): Promise<
+  | {
+      view: { id: string; databasePageId: string };
+      page: { id: string; workspaceId: string };
+    }
+  | { error: string }
+> {
+  const view = await prisma.databaseView.findUnique({
+    where: { id: viewId },
+    select: { id: true, type: true, databasePageId: true },
+  });
+  if (!view || view.type !== "FORM") return { error: "Form not found." };
+
+  const page = await prisma.page.findUnique({
+    where: { id: view.databasePageId },
+    select: {
+      id: true,
+      workspaceId: true,
+      type: true,
+      deletedAt: true,
+      permissions: {
+        where: { userId },
+        select: { level: true },
+        take: 1,
+      },
+    },
+  });
+  if (!page || page.type !== "DATABASE" || page.deletedAt) {
+    return { error: "Form not found." };
+  }
+  const access = await getWorkspaceAccess(userId, page.workspaceId);
+  if (!canPerformWorkspaceAction(access?.role ?? null, "sharePage")) {
+    return { error: "You do not have permission to share this form." };
+  }
+  if (!pageCapabilitiesFromRelation(access?.role, page.permissions).share) {
+    return { error: "You do not have permission to share this form." };
+  }
+  return { view, page };
+}
+
+export type FormShareLinkState = {
+  published: boolean;
+  url: string | null;
+};
+
+/** Current public-link state of one FORM view (fail-closed). */
+export async function getFormShareLinkStateAction(
+  viewId: string,
+): Promise<FormShareLinkState> {
+  const user = await requireUser();
+  const target = await loadShareableForm(viewId, user.id);
+  if ("error" in target) return { published: false, url: null };
+  const link = await prisma.shareLink.findFirst({
+    where: { pageId: target.page.id, viewId: target.view.id },
+    select: { token: true },
+  });
+  return link
+    ? { published: true, url: `/s/${link.token}` }
+    : { published: false, url: null };
+}
+
+/** Publish one FORM view to the web (idempotent) and return its public path. */
+export async function createFormShareLinkAction(
+  viewId: string,
+): Promise<{ url: string } | { error: string }> {
+  const user = await requireUser();
+  const target = await loadShareableForm(viewId, user.id);
+  if ("error" in target) return target;
+
+  const existing = await prisma.shareLink.findFirst({
+    where: { pageId: target.page.id, viewId: target.view.id },
+    select: { token: true },
+  });
+  if (existing) return { url: `/s/${existing.token}` };
+
+  const link = await prisma.shareLink.create({
+    data: {
+      pageId: target.page.id,
+      viewId: target.view.id,
+      token: randomToken(24),
+      permission: "READ",
+      // A public form is an input surface, not a page to crawl.
+      indexing: false,
+    },
+    select: { token: true },
+  });
+  await logActivity({
+    workspaceId: target.page.workspaceId,
+    actorId: user.id,
+    action: "page.shared",
+    targetType: "page",
+    targetId: target.page.id,
+    meta: { formViewId: target.view.id },
+  });
+  revalidatePath("/w", "layout");
+  return { url: `/s/${link.token}` };
+}
+
+/** Remove the public link of one FORM view. */
+export async function revokeFormShareLinkAction(
+  viewId: string,
+): Promise<{ ok: true } | { error: string }> {
+  const user = await requireUser();
+  const target = await loadShareableForm(viewId, user.id);
+  if ("error" in target) return target;
+  await prisma.shareLink.deleteMany({
+    where: { pageId: target.page.id, viewId: target.view.id },
+  });
+  await logActivity({
+    workspaceId: target.page.workspaceId,
+    actorId: user.id,
+    action: "page.unshared",
+    targetType: "page",
+    targetId: target.page.id,
+    meta: { formViewId: target.view.id },
+  });
+  revalidatePath("/w", "layout");
+  return { ok: true };
 }
 
 /* ------------------------------------------------------------------ *
@@ -274,7 +402,7 @@ export async function attemptShareUnlock(
   return { status: "unlocked" };
 }
 
-/** Remove every public link for a page. */
+/** Remove the page-level public link (form links are revoked per view). */
 export async function revokeShareLinkAction(
   pageId: string,
 ): Promise<{ ok: true } | { error: string }> {
@@ -298,7 +426,7 @@ export async function revokeShareLinkAction(
   if (!pageCapabilitiesFromRelation(access?.role, page.permissions).share) {
     return { error: "You do not have permission to change sharing." };
   }
-  await prisma.shareLink.deleteMany({ where: { pageId } });
+  await prisma.shareLink.deleteMany({ where: { pageId, viewId: null } });
   await logActivity({ workspaceId: page.workspaceId, actorId: user.id, action: "page.unshared", targetType: "page", targetId: pageId });
   revalidatePath("/w", "layout");
   return { ok: true };
