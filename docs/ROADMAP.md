@@ -197,9 +197,12 @@ Ordered by dependency and impact. Every item maps to rows in
   server-side room-join authz in `collab-server.mjs` (session + workspace membership +
   guest page scoping, fail-closed, no existence oracle) per `realtime-collab.md` §M1 and
   the audit's C1 critical. Gates the matrix's multiplayer/presence/cursor rows.
-- [ ] **SAML T10.1** (`saml-sso.md` §M1 first slice, next to charter now that every spec
-  exists): `@node-saml/node-saml`, `SsoConnection`/`SamlAssertionSeen` schema
-  (`prisma db push`, Tier HEAVY), ACS + JIT login against the mock-IdP plan [R10.1, R10.5].
+- [x] **SAML T10.1 (env-level slice)** — `@node-saml/node-saml`, start/ACS/metadata/SLO,
+  signed RelayState, `SamlAssertionSeen` replay cache, JIT/linking and real signed-fixture
+  tests [R10.1, R10.2, R10.3, R10.4, R10.5, R10.6, R10.14, R10.16].
+- [ ] **SAML T10.2–T10.8** — `SsoConnection`/`VerifiedDomain` persistence, per-workspace
+  connections + settings UI, group→role mapping, domain auto-join, metadata-URL rotation,
+  SLO validation and SCIM.
 - [ ] CRDT M2 — persisted documents + text CRDT; M3 — cursors/awareness UX. Honest scope:
   M2/M3 only if M1 lands clean this year — otherwise multiplayer rows stay 🧭 into 2027.
 

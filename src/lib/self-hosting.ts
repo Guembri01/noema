@@ -265,6 +265,30 @@ export const REQUIRED_ENV: readonly EnvDescriptor[] = [
     description: "OIDC redirect URI registered with the provider.",
   },
   {
+    name: "AUTH_SAML_SSO_URL",
+    required: false,
+    scope: "sso",
+    secret: false,
+    example: "https://idp.example.com/app/noema/sso/saml",
+    description: "SAML IdP single-sign-on endpoint (env-level SAML connection).",
+  },
+  {
+    name: "AUTH_SAML_ENTITY_ID",
+    required: false,
+    scope: "sso",
+    secret: false,
+    example: "https://idp.example.com/metadata",
+    description: "SAML IdP entity id / expected assertion issuer.",
+  },
+  {
+    name: "AUTH_SAML_CERT",
+    required: false,
+    scope: "sso",
+    secret: false,
+    example: "-----BEGIN CERTIFICATE-----\\n...\\n-----END CERTIFICATE-----",
+    description: "IdP signing certificate/public key (PEM).",
+  },
+  {
     name: "SMTP_HOST",
     required: false,
     scope: "email",
@@ -857,7 +881,7 @@ export const EDITION_FEATURES: readonly EditionFeature[] = [
   { key: "managed-upgrades", label: "Managed upgrades", editions: ["cloud"] },
   { key: "collaboration", label: "Realtime collaboration", editions: ["self-hosted", "cloud"] },
   { key: "ai", label: "AI assistance", editions: ["self-hosted", "cloud"] },
-  { key: "sso", label: "SSO / OIDC", editions: ["self-hosted", "cloud"] },
+  { key: "sso", label: "SSO / OIDC / SAML", editions: ["self-hosted", "cloud"] },
   { key: "backup-restore", label: "Backup & restore", editions: ["self-hosted", "cloud"] },
 ];
 

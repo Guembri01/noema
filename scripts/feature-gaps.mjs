@@ -40,7 +40,7 @@ const total = rows.length;
 
 /** The shortlist a maintainer should read first (kept in sync by hand). */
 const PRIORITY = [
-  ["SAML SSO", "OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer.", "8. Sharing & permissions"],
+  ["SAML SSO", "Env-level SAML login is implemented; per-workspace connections, group→role mapping, domain auto-join and the settings UI remain.", "8. Sharing & permissions"],
   ["Undo/redo (global)", "App-wide undo beyond the editor's local history.", "16. Navigation & UX"],
   ["Self-hosting & auth", "Packaging, provider-agnostic sign-in and documented deployment remain.", "17. Data model & platform"],
 ];

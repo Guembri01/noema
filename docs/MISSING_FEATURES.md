@@ -2,15 +2,15 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 563 feature rows — 471 implemented · 70 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 563 feature rows — 470 implemented · 71 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **70** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **71** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
 | # | Gap | Why it matters | Area |
 | --- | --- | --- | --- |
-| 1 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
+| 1 | **SAML SSO** | Env-level SAML login is implemented; per-workspace connections, group→role mapping, domain auto-join and the settings UI remain. | 8. Sharing & permissions |
 | 2 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
 | 3 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
 
@@ -164,7 +164,7 @@ This file lists the **70** rows that are not finished, area by area, plus 22 int
 
 ### 17. Data model & platform
 
-24 done · 13 partial · 0 planned
+23 done · 14 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -178,6 +178,7 @@ This file lists the **70** rows that are not finished, area by area, plus 22 int
 | Error tracking | Capture and triage errors. | 🟡 | Planned. |
 | Authentication | Sign-up and sign-in. | 🟡 | Session auth; providers limited. |
 | Session management | Expire and revoke sessions. | 🟡 | Sessions stored; revocation partial. Spec: docs/specs/engineering-hardening.md. |
+| SSO / SAML | Enterprise single sign-on. | 🟡 | OIDC authorization-code + JWKS verification, and an **env-level SAML 2.0 connection** (`AUTH_SAML_*`): start/ACS/metadata/SLO routes, `@node-saml/node-saml` signature/audience/destination/condition validation with 120 s skew, a Postgres assertion replay cache, signed RelayState (no SameSite-cookie dependency on the cross-site POST), JIT users and verified-only account linking (B07). Both refuse an unverified local account with `?error=sso_email_taken`. Still missing: per-workspace `SsoConnection`/settings UI, group→role mapping, verified-domain auto-join, metadata-URL rotation and SCIM (docs/specs/saml-sso.md). Setup: docs/integrations/saml.md. |
 | Self-hosting | Run on your own server. | 🟡 | Local dev works; packaging pending. Spec: docs/specs/engineering-hardening.md. |
 | Background jobs | Async task runner. | 🟡 | Planned; queue for imports/AI. |
 | GDPR data controls | Delete/export personal data. | 🟡 | Planned; admin tooling. |

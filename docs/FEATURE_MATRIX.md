@@ -653,7 +653,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Session management | Expire and revoke sessions. | 🟡 | Sessions stored; revocation partial. Spec: docs/specs/engineering-hardening.md. |
 | Password hashing | Secure credential storage. | ✅ | Strong hashing used. |
 | Two-factor auth (2FA) | TOTP second factor. | ✅ | Planned. |
-| SSO / SAML | Enterprise single sign-on. | ✅ | OIDC authorization-code + JWKS verification; JIT provisioning (`SSO_*` env). A provider sign-in links an existing account only when that account proved its address (`User.emailVerified`) — an unverified local account is refused with `?error=sso_email_taken`. Spec for the SAML half: docs/specs/saml-sso.md. |
+| SSO / SAML | Enterprise single sign-on. | 🟡 | OIDC authorization-code + JWKS verification, and an **env-level SAML 2.0 connection** (`AUTH_SAML_*`): start/ACS/metadata/SLO routes, `@node-saml/node-saml` signature/audience/destination/condition validation with 120 s skew, a Postgres assertion replay cache, signed RelayState (no SameSite-cookie dependency on the cross-site POST), JIT users and verified-only account linking (B07). Both refuse an unverified local account with `?error=sso_email_taken`. Still missing: per-workspace `SsoConnection`/settings UI, group→role mapping, verified-domain auto-join, metadata-URL rotation and SCIM (docs/specs/saml-sso.md). Setup: docs/integrations/saml.md. |
 | OIDC support | OpenID Connect providers. | ✅ | Planned. |
 | Encryption at rest | Encrypt stored data. | ✅ | Planned; DB/disk encryption. |
 | Encryption in transit | TLS everywhere. | ✅ | Planned; reverse-proxy TLS. |
@@ -785,12 +785,12 @@ The table below summarizes how many feature rows fall into each status, per area
 | 14. AI | 7 | 9 | 0 | 0 | 16 |
 | 15. Media & embeds | 19 | 2 | 0 | 0 | 21 |
 | 16. Navigation & UX | 44 | 3 | 0 | 2 | 49 |
-| 17. Data model & platform | 24 | 13 | 0 | 0 | 37 |
+| 17. Data model & platform | 23 | 14 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 8 | 6 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **471** | **70** | **0** | **22** | **563** |
+| **Total** | **470** | **71** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 

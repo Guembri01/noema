@@ -69,7 +69,7 @@ This repository is a **working application plus a complete parity tracker**.
   SSO, signed webhooks, and the desktop build.
 - Every feature area is tracked in **[`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md)**
   — 563 rows, each with a status and a note explaining the current state. Today:
-  **471 implemented · 70 partial · 0 planned · 22 deliberately out of scope**.
+  **470 implemented · 71 partial · 0 planned · 22 deliberately out of scope**.
 - Nothing is dropped silently. What is unfinished is enumerated in
   **[`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md)**, generated from the
   matrix by `npm run docs:gaps`, so the two cannot disagree.
@@ -351,7 +351,7 @@ dark variants under `.dark`).
 
 **Remaining work** is enumerated in [`docs/MISSING_FEATURES.md`](docs/MISSING_FEATURES.md)
 (generated from the feature matrix by `npm run docs:gaps`): of 563 tracked rows,
-70 are still partial and 22 are deliberately out of scope — the rest are
+71 are still partial and 22 are deliberately out of scope — the rest are
 implemented — with a priority shortlist at the top.
 
 
@@ -396,7 +396,8 @@ A workspace's own endpoint and key are used only for requests from members of th
 
 | Capability | Detail |
 | --- | --- |
-| **SSO (OIDC)** | Set `SSO_ISSUER` / `SSO_CLIENT_ID` / `SSO_CLIENT_SECRET` (optionally `SSO_REDIRECT_URI`); a **Sign in with SSO** link appears on `/login`. `/api/auth/sso/start` redirects to the provider and `/api/auth/sso/callback` verifies the `id_token` (JWKS, issuer + audience + nonce) and provisions the user just-in-time. For an SSO-only deployment set `AUTH_PASSWORD=disabled` — the local email + password sign-in and sign-up then refuse every request. |
+| **SSO (OIDC)** | Set `SSO_ISSUER` / `SSO_CLIENT_ID` / `SSO_CLIENT_SECRET` (optionally `SSO_REDIRECT_URI`); a **Sign in with SSO** link appears on `/login`. `/api/auth/sso/start` redirects to the provider and `/api/auth/sso/callback` verifies the `id_token` (JWKS, issuer + audience + nonce) and provisions the user just-in-time. For an SSO-only deployment set `AUTH_PASSWORD=disabled` - the local email + password sign-in and sign-up then refuse every request. |
+| **SSO (SAML 2.0)** | Set `AUTH_SAML_SSO_URL` / `AUTH_SAML_ENTITY_ID` / `AUTH_SAML_CERT`; the IdP consumes `/api/auth/saml/metadata`. `/api/auth/saml/start` builds the AuthnRequest, `/api/auth/saml/acs` validates the signed assertion through `@node-saml/node-saml` (issuer, audience, destination, conditions, 120 s skew), rejects replays via `SamlAssertionSeen`, and runs the same verified-only account linking as OIDC. RelayState is a signed 10-minute token, so the cross-site POST needs no SameSite cookie. Provider steps: [`docs/integrations/saml.md`](./docs/integrations/saml.md). |
 | **Teamspaces** | Create teamspaces in **Workspace settings** with per-teamspace membership; root pages assigned to a teamspace (page menu → *Move to teamspace*) are grouped under it in the sidebar. |
 | **Transcription** | `POST /api/ai/transcribe` forwards audio to a speech-to-text provider (`AI_TRANSCRIBE_API_KEY`, optional `AI_TRANSCRIBE_BASE_URL` / `AI_TRANSCRIBE_MODEL`); the sidebar **Transcribe audio** action turns a recording into a page. |
 | **Comments** | Select text in a page → **Comment** in the selection toolbar or block menu anchors the quote to the composer; quotes render above each comment. |
@@ -432,7 +433,8 @@ npm run dev                 # http://localhost:3000 (Next.js default port)
 | --- | --- | --- |
 | Required | `DATABASE_URL`, `AUTH_SECRET` | `DATABASE_URL` must match the docker mapping (`localhost:5433`, user/db `noema`); `AUTH_SECRET` must be at least 32 characters, and the shipped placeholders and well-known weak values are refused |
 | AI (optional) | `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_TRANSCRIBE_*` | any OpenAI-compatible provider; see [AI configuration](#ai-configuration) |
-| SSO (optional) | `SSO_ISSUER`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`, `SSO_REDIRECT_URI` | enables *Sign in with SSO*; the local mock IdP used by `npm run check:sso` is pointed at with these |
+| SSO — OIDC (optional) | `SSO_ISSUER`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`, `SSO_REDIRECT_URI` | enables *Sign in with SSO*; the local mock IdP used by `npm run check:sso` is pointed at with these |
+| SSO — SAML (optional) | `AUTH_SAML_SSO_URL`, `AUTH_SAML_ENTITY_ID`, `AUTH_SAML_CERT` (+ optional `AUTH_SAML_*` overrides) | env-level SAML 2.0 login with SP metadata at `/api/auth/saml/metadata`; setup for Okta, Entra ID and Google Workspace: [`docs/integrations/saml.md`](./docs/integrations/saml.md) |
 | Sign-in strategies (optional) | `AUTH_PASSWORD`, `AUTH_STRATEGIES` | `AUTH_PASSWORD=disabled` turns the local email + password sign-in and sign-up off (single-sign-on only); `AUTH_STRATEGIES` is a comma-separated allow-list (`password,google,saml`) and every strategy outside it is off |
 | SMTP (optional) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, … | invitation emails; without it the invite link is still shown in the UI |
 | Notion importer (optional) | `NOTION_API_BASE` | defaults to `https://api.notion.com/v1`; checks point it at a local mock (`http://localhost:4322/v1`) |
@@ -508,6 +510,7 @@ password: password123
 | `npm run backup` | Database dump with a core-table verification and retention (`-- --keep N`); uploads an offsite copy when `BACKUP_S3_BUCKET` is set |
 | `npm run check:a11y` | WCAG structural + contrast audit of the rendered shell |
 | `npm run check:sso` | OIDC SSO + teamspaces + transcription checks (uses a local mock IdP) |
+| `npm run check:saml` | SAML unit + route suite: real signed assertions, tampering/audience/expiry, JIT/linking, replay, signed RelayState, metadata/start/ACS/SLO |
 | `npm run check:ui` | Home gallery, sidebar tabs, discussions and calendar checks (uses a local mock ICS feed) |
 | `npm run check:public-ui` | Landing, auth and 404 at 390/1440 light/dark: HTTP, overflow, h1, accessible names, text and control-border contrast (no DB needed) |
 | `npm run check:ai` | Full AI suite against the configured provider (ask, grounded ask, summarize, autofill, all 7 skills) |

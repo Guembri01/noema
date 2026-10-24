@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
+import { samlEnabled } from "@/lib/sso/saml";
 import { AuthForm } from "@/components/auth-form";
 import { AuthShell } from "@/components/auth-shell";
 
@@ -13,6 +14,7 @@ export default async function LoginPage({
 }) {
   if (await getCurrentUser()) redirect("/app");
   const { error, next } = await searchParams;
+  const saml = samlEnabled(process.env) && Boolean(process.env.AUTH_SAML_CERT?.trim());
   return (
     <AuthShell
       title="Welcome back"
@@ -37,6 +39,14 @@ export default async function LoginPage({
           className="mt-4 block text-center text-sm text-accent hover:underline"
         >
           Sign in with SSO
+        </a>
+      )}
+      {saml && (
+        <a
+          href="/api/auth/saml/start"
+          className="mt-2 block text-center text-sm text-accent hover:underline"
+        >
+          Sign in with SAML SSO
         </a>
       )}
     </AuthShell>

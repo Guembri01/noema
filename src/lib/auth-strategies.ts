@@ -135,7 +135,7 @@ export const STRATEGIES: readonly StrategyDefinition[] = [
     label: "SAML SSO",
     kind: "saml",
     enabled: true,
-    config: { callbackPath: "/api/auth/saml/callback" },
+    config: { callbackPath: "/api/auth/saml/acs" },
   },
   {
     id: "magic-link",

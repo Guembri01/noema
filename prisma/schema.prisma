@@ -199,6 +199,17 @@ model Invite {
   @@index([email])
 }
 
+/// SAML assertion replay cache (R10.4/R10.16). The id is a stable digest of
+/// the signed response (or the assertion id when the library exposes one), so
+/// a byte-for-byte resubmission is rejected across restarts and instances.
+model SamlAssertionSeen {
+  id        String   @id
+  expiresAt DateTime
+  seenAt    DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
 // ---------------------------------------------------------------------------
 // Pages & blocks
 //
