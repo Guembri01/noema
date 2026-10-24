@@ -127,6 +127,7 @@ import {
 import { DatabaseViewToolbar } from "@/components/database/view-toolbar";
 import { DatabasePeek } from "@/components/database/database-peek";
 import { DatabaseActions } from "@/components/database/database-actions";
+import { FormBuilder } from "@/components/database/form-builder";
 import { Dialog } from "@/components/ui/dialog";
 import { t } from "@/lib/i18n";
 import {
@@ -2168,15 +2169,28 @@ export function DatabaseView({
           aggregateFn={chartAggregate}
         />
       ) : activeView.type === "FORM" ? (
-        <LazyFormView
-          locale={locale}
-          properties={properties}
-          config={formConfig}
-          // A read-only database shows the questions without a submit seam,
-          // matching how every other view omits its editors when not editable.
-          onSubmit={editable ? submitForm : undefined}
-          loading={loading}
-        />
+        <div className="space-y-3">
+          {editable && (
+            <FormBuilder
+              locale={locale}
+              properties={properties}
+              config={formConfig}
+              viewId={activeView.id}
+              databaseId={databasePageId}
+              defaultTitle={activeView.name}
+              onSave={(form) => setViewConfig({ form })}
+            />
+          )}
+          <LazyFormView
+            locale={locale}
+            properties={properties}
+            config={formConfig}
+            // A read-only database shows the questions without a submit seam,
+            // matching how every other view omits its editors when not editable.
+            onSubmit={editable ? submitForm : undefined}
+            loading={loading}
+          />
+        </div>
       ) : activeView.type === "TABLE" ? (
         <TableView
           locale={locale}
