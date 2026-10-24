@@ -603,7 +603,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Localization / i18n | Translatable UI. | ✅ | 5 locales (en/fr/es/de/ar incl. RTL) with a **coverage ratchet in the coherence gate** (27 of 63 client files consume `t()`: chrome, chat, tickets, cycles, settings, inbox, search, trash, projects board, comments, the workspace/member/danger/share/access dialogs, the database toolbar, the editor bubble toolbar and the Notion import dialog); long-tail settings strings and secondary forms remain English. |
 | RTL support | Right-to-left layouts. | 🟡 | Arabic sets `dir="rtl"` and logical CSS; mixed-direction blocks untested. |
 | Notifications / toasts | Transient status messages. | ✅ | Planned. B82 spec `docs/specs/notifications.md` §9 standardizes the surface (202 `toast.*` sites / 41 files audited): one `<Toaster>`, `toast.info` banned by `check:coherence`, all strings via `t()` (51 literals → 0), shared catalog + `check-toasts.mjs`, durations 4 s/8 s — R82.30-R82.36. |
-| Undo/redo (global) | App-wide undo beyond editor. | 🟡 | Planned. |
+| Undo/redo (global) | App-wide undo beyond editor. | 🟡 | The global provider now runs server effects attached to commands; page rename, icon and cover changes record invertible steps that persist through `updatePageAction` and refresh. Still open: move/archive/property/bulk actions, favorites and a visible history list. |
 | Offline mode | Work without connectivity. | ✅ | Planned; core to local-first goal. |
 | Reduced-motion support | Respect motion preferences. | ✅ | Planned. |
 | High-contrast support | Stronger contrast theme. | ✅ | Planned. |

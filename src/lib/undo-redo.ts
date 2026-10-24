@@ -80,6 +80,10 @@ export type Command<S> = {
   coalesceKey?: string;
   /** Caller-supplied instant used for coalescing; defaults to `0`. */
   at?: number;
+  /** Optional server effect run once after this command is undone. */
+  onUndo?: () => void | Promise<void>;
+  /** Optional server effect run once after this command is redone. */
+  onRedo?: () => void | Promise<void>;
 };
 
 /** One recorded command plus the flags that make it undoable or not. */
@@ -370,6 +374,23 @@ export function group<S>(label: string, commands: readonly Command<S>[]): Comman
     children,
     { groupKey: label },
   );
+}
+
+/** The command the next local `undo` would invert, or `null`. */
+export function nextUndoCommand<S>(stack: UndoStack<S>): Command<S> | null {
+  for (let index = stack.entries.length - 1; index >= 0; index -= 1) {
+    const entry = stack.entries[index];
+    if (!entry.remote && !entry.undone) return entry.command;
+  }
+  return null;
+}
+
+/** The command the next local `redo` would re-apply, or `null`. */
+export function nextRedoCommand<S>(stack: UndoStack<S>): Command<S> | null {
+  for (const entry of stack.entries) {
+    if (!entry.remote && entry.undone) return entry.command;
+  }
+  return null;
 }
 
 /** Whether a local command can be undone. */

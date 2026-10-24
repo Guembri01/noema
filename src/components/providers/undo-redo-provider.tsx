@@ -29,6 +29,8 @@ import {
   clear as engineClear,
   createUndoStack,
   mergeRemote as engineMergeRemote,
+  nextRedoCommand,
+  nextUndoCommand,
   push as enginePush,
   redo as engineRedo,
   undo as engineUndo,
@@ -124,8 +126,20 @@ export function UndoRedoProvider({
     createUndoStack<GlobalUndoState>({ state: {}, limit }),
   );
 
-  const undo = useCallback(() => setStack((current) => engineUndo(current)), []);
-  const redo = useCallback(() => setStack((current) => engineRedo(current)), []);
+  const undo = useCallback(() => {
+    const command = nextUndoCommand(stack);
+    setStack((current) => engineUndo(current));
+    if (command?.onUndo) {
+      void Promise.resolve(command.onUndo()).catch(() => undefined);
+    }
+  }, [stack]);
+  const redo = useCallback(() => {
+    const command = nextRedoCommand(stack);
+    setStack((current) => engineRedo(current));
+    if (command?.onRedo) {
+      void Promise.resolve(command.onRedo()).catch(() => undefined);
+    }
+  }, [stack]);
   const push = useCallback(
     (command: GlobalCommand) => setStack((current) => enginePush(current, command)),
     [],

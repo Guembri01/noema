@@ -689,7 +689,14 @@ export function PageTitle({
   const font = appearance.font;
 
   // Global undo/redo (mounted by the root layout) drives the topbar controls.
-  const { canUndo, canRedo, undo: undoGlobal, redo: redoGlobal } = useUndoRedo();
+  const {
+    canUndo,
+    canRedo,
+    undo: undoGlobal,
+    redo: redoGlobal,
+    push: pushGlobal,
+  } = useUndoRedo();
+
   // Workspace members → the presence/avatar stack model (src/lib/avatars.ts).
   const avatarUsers = useMemo(() => toAvatarUsers(members), [members]);
 
@@ -837,31 +844,66 @@ export function PageTitle({
   // appearance state above; no localStorage layer remains. A server
   // `initialAppearance` still wins when present.
 
-  const save = (patch: Record<string, unknown>, revalidate = true) =>
+  const recordPageUndo = (
+    label: string,
+    undoPatch: Record<string, unknown>,
+    redoPatch: Record<string, unknown>,
+  ) =>
+    pushGlobal({
+      id: crypto.randomUUID(),
+      label,
+      apply: (state) => state,
+      invert: (state) => state,
+      onUndo: async () => {
+        await updatePageAction(pageId, undoPatch);
+        router.refresh();
+      },
+      onRedo: async () => {
+        await updatePageAction(pageId, redoPatch);
+        router.refresh();
+      },
+    });
+
+  const save = (
+    patch: Record<string, unknown>,
+    revalidate = true,
+    after?: () => void,
+  ) =>
     startTransition(async () => {
-      await updatePageAction(pageId, patch);
+      const result = await updatePageAction(pageId, patch);
+      if (!("error" in result)) after?.();
       if (revalidate) router.refresh();
     });
 
   const saveTitle = () => {
-    if (!canEdit || title === initialTitle) return;
+    const previous = initialTitle === t(locale, "untitled") ? "" : initialTitle;
+    if (!canEdit || title === previous) return;
     // A page is never nameless: abandoning the field leaves the placeholder (and
     // the stored name) alone rather than writing an empty title, which would also
     // mark the page as edited for a keystroke that never happened.
     if (!title.trim()) return;
-    save({ title });
+    const next = title;
+    save({ title: next }, true, () =>
+      recordPageUndo("Rename page", { title: previous }, { title: next }),
+    );
   };
 
   const pickIcon = (emoji: string) => {
+    const previous = icon;
     setIcon(emoji);
     setShowEmoji(false);
-    save({ icon: emoji });
+    save({ icon: emoji }, true, () =>
+      recordPageUndo("Change page icon", { icon: previous }, { icon: emoji }),
+    );
   };
 
   const pickCover = (value: string | null) => {
+    const previous = cover;
     setCover(value);
     setShowCover(false);
-    save({ coverUrl: value });
+    save({ coverUrl: value }, true, () =>
+      recordPageUndo("Change page cover", { coverUrl: previous }, { coverUrl: value }),
+    );
   };
 
   /**
