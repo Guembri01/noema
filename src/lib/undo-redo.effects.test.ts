@@ -35,4 +35,30 @@ describe("undo/redo effect commands", () => {
     expect(nextUndoCommand(stack)).toBeNull();
     expect(nextRedoCommand(stack)).toBeNull();
   });
+
+  it("chains effects when rapid edits coalesce", async () => {
+    const calls: string[] = [];
+    const effect = (name: string) => ({
+      id: name,
+      label: name,
+      apply: <S>(state: S) => state,
+      invert: <S>(state: S) => state,
+      coalesceKey: "cell",
+      at: 1,
+      onUndo: () => {
+        calls.push(`undo:${name}`);
+      },
+      onRedo: () => {
+        calls.push(`redo:${name}`);
+      },
+    });
+    const stack = push(
+      push(createUndoStack<Record<string, unknown>>({ state: {} }), effect("a")),
+      effect("b"),
+    );
+    const command = nextUndoCommand(stack);
+    await command?.onUndo?.();
+    await command?.onRedo?.();
+    expect(calls).toEqual(["undo:b", "undo:a", "redo:a", "redo:b"]);
+  });
 });

@@ -195,6 +195,8 @@ function composeCommand<S>(
   children: readonly Command<S>[],
   meta: { groupKey?: string; coalesceKey?: string; at?: number },
 ): Command<S> {
+  const hasUndo = children.some((child) => child.onUndo !== undefined);
+  const hasRedo = children.some((child) => child.onRedo !== undefined);
   return {
     id,
     label,
@@ -204,6 +206,20 @@ function composeCommand<S>(
     groupKey: meta.groupKey,
     coalesceKey: meta.coalesceKey,
     at: meta.at,
+    ...(hasUndo
+      ? {
+          onUndo: async () => {
+            for (const child of [...children].reverse()) await child.onUndo?.();
+          },
+        }
+      : {}),
+    ...(hasRedo
+      ? {
+          onRedo: async () => {
+            for (const child of children) await child.onRedo?.();
+          },
+        }
+      : {}),
   };
 }
 

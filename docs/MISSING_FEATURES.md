@@ -11,7 +11,7 @@ This file lists the **71** rows that are not finished, area by area, plus 22 int
 | # | Gap | Why it matters | Area |
 | --- | --- | --- | --- |
 | 1 | **SAML SSO** | Login, per-workspace connections, domain auto-join, metadata rotation, SLO, settings/activity UI, invite precedence and SCIM Users/Groups→teamspaces+roles are implemented; a dry test-connection action and split per-IdP pages remain. | 8. Sharing & permissions |
-| 2 | **Undo/redo (global)** | Page rename/icon/cover/move/archive/favorite/layout are undoable; database property and bulk actions plus a history list remain. | 16. Navigation & UX |
+| 2 | **Undo/redo (global)** | Page rename/icon/cover/move/archive/favorite/layout and property edits are undoable; bulk row actions and a history list remain. | 16. Navigation & UX |
 | 3 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
 
 ## By area
@@ -158,7 +158,7 @@ This file lists the **71** rows that are not finished, area by area, plus 22 int
 | --- | --- | --- | --- |
 | Focus management | Visible focus and traps. | 🟡 | Global `:focus-visible` ring everywhere; B45 hardened `ui/dialog` — Tab/Shift+Tab cycle inside with wrap, explicit `aria-modal="true"`, initial focus in-dialog, and focus restored to the invoker even for trigger-less controlled dialogs — plus `ui/dropdown-menu` (Escape → focus back to its trigger); both locked by `e2e/focus.spec.ts`. Still partial: hand-rolled feature overlays bypass the primitive entirely — `topbar/actions-menu`, `who-has-access`, `version-history`, `tickets/ticket-drawer`, `editor/equation-editor` have no Tab trap, Escape only works in the actions menu and equation editor, and `version-history` / `ticket-drawer` also lack `aria-modal` → feature-level follow-up (feature components are off-limits to B45). |
 | RTL support | Right-to-left layouts. | 🟡 | Arabic sets `dir="rtl"` and logical CSS; mixed-direction blocks untested. |
-| Undo/redo (global) | App-wide undo beyond editor. | 🟡 | The global provider runs server effects attached to commands. Page rename, icon, cover, move, archive/restore, favorite, full-width and lock now record invertible steps that persist through the server and refresh. Still open: database property/bulk actions and a visible history list. |
+| Undo/redo (global) | App-wide undo beyond editor. | 🟡 | The global provider runs server effects attached to commands. Page rename, icon, cover, move, archive/restore, favorite, full-width, lock and database property edits now record invertible steps that persist through the server and refresh; rapid property edits coalesce into one step. Still open: bulk row actions and a visible history list. |
 | Actions menu: Turn into wiki | Convert page to a wiki. | ⛔ | Data model lacks wiki type; blocked pending spec. B11 ships the entry as a disabled menu item with tooltip "Wiki coming soon" — not faked. |
 | Open in desktop app | "Open in Windows app" entry. | ⛔ | No desktop app; N/A for web parity. |
 

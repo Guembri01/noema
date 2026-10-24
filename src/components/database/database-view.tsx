@@ -12,6 +12,7 @@ import {
 } from "react";
 import { PromptDialog } from "@/components/prompt-dialog";
 import { useAction } from "@/lib/actions-client";
+import { useUndoRedo } from "@/components/providers/undo-redo-provider";
 import { useRouter } from "next/navigation";
 import {
   Ban,
@@ -852,6 +853,7 @@ export function DatabaseView({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const { run: runAction } = useAction(locale);
+  const { push: pushGlobal } = useUndoRedo();
   const [extraRows, setExtraRows] = useState<DBRow[]>([]);
   const [extraDependencyEdges, setExtraDependencyEdges] = useState<DependencyEdge[]>([]);
   const [rowCursor, setRowCursor] = useState<string | null>(nextRowCursor);
@@ -1736,8 +1738,31 @@ export function DatabaseView({
     // target ids and updates the configured reciprocal cell in the same
     // transaction. Sending the source write once avoids a double reciprocal
     // write from the old client-side planner.
+    const previous = rows
+      .find((row) => row.id === rowId)
+      ?.propertyValues.find((entry) => entry.propertyId === propertyId)?.value;
     runAction(() => setPropertyValueAction(rowId, propertyId, value), {
-      onSuccess: () => router.refresh(),
+      onSuccess: () => {
+        if (JSON.stringify(previous) !== JSON.stringify(value)) {
+          pushGlobal({
+            id: crypto.randomUUID(),
+            label: `Edit ${properties.find((property) => property.id === propertyId)?.name ?? "property"}`,
+            apply: (state) => state,
+            invert: (state) => state,
+            coalesceKey: `${rowId}:${propertyId}`,
+            at: Date.now(),
+            onUndo: async () => {
+              await setPropertyValueAction(rowId, propertyId, previous ?? null);
+              router.refresh();
+            },
+            onRedo: async () => {
+              await setPropertyValueAction(rowId, propertyId, value);
+              router.refresh();
+            },
+          });
+        }
+        router.refresh();
+      },
     });
   };
 
