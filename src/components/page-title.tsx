@@ -30,6 +30,7 @@ import {
   archivePageAction,
   getPageContentAction,
   movePageAction,
+  restorePageAction,
   toggleFavoriteAction,
   toggleFollowAction,
   transferPageAction,
@@ -844,25 +845,36 @@ export function PageTitle({
   // appearance state above; no localStorage layer remains. A server
   // `initialAppearance` still wins when present.
 
-  const recordPageUndo = (
+  const recordEffectUndo = (
     label: string,
-    undoPatch: Record<string, unknown>,
-    redoPatch: Record<string, unknown>,
+    onUndo: () => void | Promise<void>,
+    onRedo: () => void | Promise<void>,
   ) =>
     pushGlobal({
       id: crypto.randomUUID(),
       label,
       apply: (state) => state,
       invert: (state) => state,
-      onUndo: async () => {
+      onUndo,
+      onRedo,
+    });
+
+  const recordPageUndo = (
+    label: string,
+    undoPatch: Record<string, unknown>,
+    redoPatch: Record<string, unknown>,
+  ) =>
+    recordEffectUndo(
+      label,
+      async () => {
         await updatePageAction(pageId, undoPatch);
         router.refresh();
       },
-      onRedo: async () => {
+      async () => {
         await updatePageAction(pageId, redoPatch);
         router.refresh();
       },
-    });
+    );
 
   const save = (
     patch: Record<string, unknown>,
@@ -977,8 +989,20 @@ export function PageTitle({
     window.setTimeout(() => setStarPopped(false), DUR.slow);
     startTransition(async () => {
       const result = await toggleFavoriteAction(workspaceId, pageId);
-      if ("ok" in result) setFavorite(result.favorite);
-      else toast.error(result.error);
+      if ("ok" in result) {
+        setFavorite(result.favorite);
+        recordEffectUndo(
+          "Favorite page",
+          async () => {
+            await toggleFavoriteAction(workspaceId, pageId);
+            router.refresh();
+          },
+          async () => {
+            await toggleFavoriteAction(workspaceId, pageId);
+            router.refresh();
+          },
+        );
+      } else toast.error(result.error);
       router.refresh();
     });
   };
@@ -1075,8 +1099,20 @@ export function PageTitle({
 
   const moveTo = (targetId: string | null) =>
     startTransition(async () => {
+      const previousParent = breadcrumbTrail.at(-1)?.id ?? null;
       const result = await movePageAction(pageId, targetId);
       if ("ok" in result) {
+        recordEffectUndo(
+          "Move page",
+          async () => {
+            await movePageAction(pageId, previousParent);
+            router.refresh();
+          },
+          async () => {
+            await movePageAction(pageId, targetId);
+            router.refresh();
+          },
+        );
         toast.success("Page moved");
         router.refresh();
       } else {
@@ -1086,7 +1122,20 @@ export function PageTitle({
 
   const trash = () =>
     startTransition(async () => {
-      await archivePageAction(pageId);
+      const result = await archivePageAction(pageId);
+      if (!("error" in result)) {
+        recordEffectUndo(
+          "Move page to trash",
+          async () => {
+            await restorePageAction(pageId);
+            router.refresh();
+          },
+          async () => {
+            await archivePageAction(pageId);
+            router.refresh();
+          },
+        );
+      }
       toast.success("Moved to trash");
       router.push(`/w/${workspaceSlug}`);
       router.refresh();
@@ -1167,11 +1216,15 @@ export function PageTitle({
     } else if (key === "fullWidth") {
       const next = !fullWidth;
       setFullWidth(next);
-      save({ fullWidth: next });
+      save({ fullWidth: next }, true, () =>
+        recordPageUndo("Page width", { fullWidth }, { fullWidth: next }),
+      );
     } else {
       const next = !locked;
       setLocked(next);
-      save({ locked: next });
+      save({ locked: next }, true, () =>
+        recordPageUndo("Page lock", { locked }, { locked: next }),
+      );
     }
   };
 

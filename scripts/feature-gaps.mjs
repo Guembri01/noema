@@ -41,7 +41,7 @@ const total = rows.length;
 /** The shortlist a maintainer should read first (kept in sync by hand). */
 const PRIORITY = [
   ["SAML SSO", "Login, per-workspace connections, domain auto-join, metadata rotation, SLO, settings/activity UI, invite precedence and SCIM Users/Groups→teamspaces+roles are implemented; a dry test-connection action and split per-IdP pages remain.", "8. Sharing & permissions"],
-  ["Undo/redo (global)", "Page rename/icon/cover are undoable; move, archive, property and bulk actions still need server-effect commands.", "16. Navigation & UX"],
+  ["Undo/redo (global)", "Page rename/icon/cover/move/archive/favorite/layout are undoable; database property and bulk actions plus a history list remain.", "16. Navigation & UX"],
   ["Self-hosting & auth", "Packaging, provider-agnostic sign-in and documented deployment remain.", "17. Data model & platform"],
 ];
 
