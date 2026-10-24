@@ -88,6 +88,8 @@ const headerConfig: HeaderConfig = {
   relationData: {},
   onLinkDatabase: () => {},
   onConfigureRollup: () => {},
+  onSetRelationMulti: () => {},
+  onToggleTwoWay: () => {},
 };
 
 const noop = () => {};

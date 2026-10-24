@@ -69,7 +69,7 @@ This repository is a **working application plus a complete parity tracker**.
   SSO, signed webhooks, and the desktop build.
 - Every feature area is tracked in **[`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md)**
   — 563 rows, each with a status and a note explaining the current state. Today:
-  **454 implemented · 87 partial · 0 planned · 22 deliberately out of scope**.
+  **468 implemented · 73 partial · 0 planned · 22 deliberately out of scope**.
 - Nothing is dropped silently. What is unfinished is enumerated in
   **[`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md)**, generated from the
   matrix by `npm run docs:gaps`, so the two cannot disagree.
@@ -88,7 +88,7 @@ This repository is a **working application plus a complete parity tracker**.
 | Databases | Full-page databases with typed properties, **Table / Board / List / Gallery / Calendar / Timeline / Chart / Form** views, **AND/OR + nested filters, sorts, grouping, conditional colors** (saved per view), view tabs with an “add view” menu, per-property menus (rename/duplicate/delete/formula), inline cell editing, templates, CSV import/export, open-row-as-page |
 | Page chrome | Emoji icons, cover images (presets), breadcrumbs, page options menu (copy link, cover, export, move to workspace, lock, trash), favorites, **follow** |
 | Navigation | **Row side-peek**, **responsive mobile shell** (drawer sidebar), ⌘K quick find, breadcrumbs, following/favorites |
-| Properties | TEXT, NUMBER, SELECT, MULTI_SELECT, STATUS, DATE, CHECKBOX, URL/EMAIL/PHONE, PEOPLE, FILES, **FORMULA** (expression engine), **RELATION** (link to another database), **ROLLUP** (14 aggregates over related rows), and computed system fields (**CREATED_TIME/BY, LAST_EDITED_TIME/BY, UNIQUE_ID**) |
+| Properties | TEXT, NUMBER, SELECT, MULTI_SELECT, STATUS, DATE, CHECKBOX, URL/EMAIL/PHONE, PEOPLE, FILES, **FORMULA** (expression engine, parsed on save), **RELATION** (single/multi, searchable paged picker, **two-way** reciprocal column), **ROLLUP** (15 aggregates over related rows), and computed system fields (**CREATED_TIME/BY, LAST_EDITED_TIME/BY, UNIQUE_ID**) |
 | Search | Full-text search across page titles and body content |
 | Comments | Page comments, threaded replies, resolve, delete, notifications on reply |
 | UX | **Notion-white default theme** (light) with a dark toggle, **⌘K quick-find command palette**, toast notifications, tooltips, responsive sidebar, accessible primitives (Radix) |
@@ -349,7 +349,7 @@ dark variants under `.dark`).
 
 **Remaining work** is enumerated in [`docs/MISSING_FEATURES.md`](docs/MISSING_FEATURES.md)
 (generated from the feature matrix by `npm run docs:gaps`): of 563 tracked rows,
-87 are still partial and 22 are deliberately out of scope — the rest are
+73 are still partial and 22 are deliberately out of scope — the rest are
 implemented — with a priority shortlist at the top.
 
 

@@ -34,6 +34,14 @@ import { createRowCellsInTransaction } from "@/server/row-cells";
 import { fileUrlsAreAppOwned } from "@/lib/validation";
 import { validateCell } from "@/lib/cell-validation";
 import {
+  buildInverseBackfill,
+  normalizeRelationConfig,
+  normalizeRelationPageIds,
+  nextInversePageIds,
+} from "@/lib/relation-config";
+import { normalizeRollupConfig, validateRollupConfig } from "@/lib/rollup-config";
+import { parseFormula } from "@/lib/formula";
+import {
   buildFormSchema,
   isAnswerablePropertyType,
   parseFormSchema,
@@ -320,7 +328,7 @@ export async function createPropertyAction(
         : type === "FORMULA"
           ? { expression: "" }
           : type === "RELATION"
-            ? { targetDatabaseId: null }
+            ? { targetDatabaseId: null, multi: true, inversePropertyId: null }
             : type === "ROLLUP"
               ? { relationPropertyId: null, targetPropertyId: null, function: "count" }
               : {};
@@ -345,7 +353,7 @@ export async function updatePropertyAction(
 ): Promise<Result> {
   const property = await prisma.property.findUnique({
     where: { id: propertyId },
-    select: { databasePageId: true },
+    select: { databasePageId: true, type: true, config: true },
   });
   if (!property) return { error: "Property not found." };
   const auth = await authorizeDatabase(property.databasePageId);
@@ -354,25 +362,154 @@ export async function updatePropertyAction(
   const schemaDenied = schemaLockDenied(auth);
   if (schemaDenied) return schemaDenied;
 
-  // B98 — the relation target must be a database of this workspace. The id is
-  // normalized once (in `relationTargetOf`), so the id that is checked here is
-  // the id that is stored below.
-  const { target, config: relationConfig } = relationTargetOf(patch.config);
-  if (target !== undefined) {
-    const allowed =
-      target !== null && (await relationTargetAllowed(target, auth.page.workspaceId));
-    if (!allowed) return { error: "Database not found." };
+  let nextConfig = patch.config;
+  let inverseSync: { id: string; config: Prisma.InputJsonValue } | null = null;
+
+  if (patch.config !== undefined) {
+    if (property.type === "RELATION") {
+      // R21.1/R21.2 - store the canonical relation shape and refuse a target
+      // that is not a live database of this workspace. The trimmed id that is
+      // checked is the id that is stored.
+      const normalized = normalizeRelationConfig(patch.config);
+      if (normalized.targetDatabaseId !== null) {
+        const allowed = await relationTargetAllowed(
+          normalized.targetDatabaseId,
+          auth.page.workspaceId,
+        );
+        if (!allowed) return { error: "Database not found." };
+      }
+
+      // A reciprocal id is only meaningful while it names a RELATION property
+      // of this relation's target database that points back here. A stale id
+      // is refused rather than persisted (the pair action clears/creates it).
+      if (normalized.inversePropertyId !== null) {
+        const target = normalized.targetDatabaseId;
+        if (target === null) return { error: "Configure the relation first." };
+        const inverse = await prisma.property.findFirst({
+          where: {
+            id: normalized.inversePropertyId,
+            databasePageId: target,
+            type: "RELATION",
+          },
+          select: { id: true, config: true },
+        });
+        const inverseConfig = normalizeRelationConfig(inverse?.config);
+        if (!inverse || inverseConfig.targetDatabaseId !== property.databasePageId) {
+          return { error: "Relation pair not found." };
+        }
+        if (
+          inverseConfig.inversePropertyId !== null &&
+          inverseConfig.inversePropertyId !== propertyId
+        ) {
+          return { error: "Relation pair not found." };
+        }
+        // Repair a half-pair and keep cardinality coherent: changing one side
+        // must not leave the reciprocal column pointing elsewhere or on a
+        // different setting.
+        if (
+          inverseConfig.inversePropertyId !== propertyId ||
+          inverseConfig.multi !== normalized.multi
+        ) {
+          inverseSync = {
+            id: inverse.id,
+            config: {
+              ...inverseConfig,
+              inversePropertyId: propertyId,
+              multi: normalized.multi,
+            } as Prisma.InputJsonValue,
+          };
+        }
+      }
+      nextConfig = normalized;
+    } else if (property.type === "ROLLUP") {
+      // R21.10 - validate the triple against the live schema before storing it.
+      const normalized = normalizeRollupConfig(patch.config);
+      const relation = normalized.relationPropertyId
+        ? await prisma.property.findFirst({
+            where: {
+              id: normalized.relationPropertyId,
+              databasePageId: property.databasePageId,
+              type: "RELATION",
+            },
+            select: { id: true, name: true, type: true, config: true },
+          })
+        : null;
+      const targetDatabaseId = normalizeRelationConfig(relation?.config)
+        .targetDatabaseId;
+      if (targetDatabaseId) {
+        const targetDatabase = await prisma.page.findFirst({
+          where: {
+            id: targetDatabaseId,
+            workspaceId: auth.page.workspaceId,
+            type: "DATABASE",
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+        if (!targetDatabase) return { error: "Database not found." };
+      }
+      const targetProperties = targetDatabaseId
+        ? await prisma.property.findMany({
+            where: { databasePageId: targetDatabaseId },
+            select: { id: true, name: true, type: true, config: true },
+          })
+        : [];
+      const properties = [
+        ...(relation
+          ? [{ ...relation, databaseId: property.databasePageId }]
+          : []),
+        ...targetProperties.map((candidate) => ({
+          ...candidate,
+          databaseId: targetDatabaseId ?? undefined,
+        })),
+      ];
+      const issues = validateRollupConfig(normalized, properties);
+      if (issues.length > 0) return { error: issues[0].message };
+      const raw = (patch.config ?? {}) as Record<string, unknown>;
+      nextConfig = {
+        relationPropertyId: normalized.relationPropertyId,
+        targetPropertyId: normalized.targetPropertyId,
+        function: normalized.aggregateFn,
+        ...(typeof raw.separator === "string" ? { separator: raw.separator } : {}),
+      };
+    } else if (property.type === "FORMULA") {
+      // R21.15 - an unparseable expression is never persisted. The editor uses
+      // the same parser for its live error line.
+      const raw = (patch.config ?? {}) as Record<string, unknown>;
+      const expression = typeof raw.expression === "string" ? raw.expression : "";
+      const parsed = parseFormula(expression);
+      if (!parsed.ok) return { error: parsed.error };
+      nextConfig = { ...raw, expression };
+    }
   }
 
-  await prisma.property.update({
-    where: { id: propertyId },
-    data: {
-      ...(patch.name !== undefined ? { name: patch.name.slice(0, 80) } : {}),
-      ...(patch.config !== undefined
-        ? { config: relationConfig as Prisma.InputJsonValue }
-        : {}),
-    },
-  });
+  if (inverseSync) {
+    await prisma.$transaction(async (tx) => {
+      await tx.property.update({
+        where: { id: propertyId },
+        data: {
+          ...(patch.name !== undefined ? { name: patch.name.slice(0, 80) } : {}),
+          ...(nextConfig !== undefined
+            ? { config: nextConfig as Prisma.InputJsonValue }
+            : {}),
+        },
+      });
+      await tx.property.update({
+        where: { id: inverseSync.id },
+        data: { config: inverseSync.config },
+      });
+    });
+  } else {
+    await prisma.property.update({
+      where: { id: propertyId },
+      data: {
+        ...(patch.name !== undefined ? { name: patch.name.slice(0, 80) } : {}),
+        ...(nextConfig !== undefined
+          ? { config: nextConfig as Prisma.InputJsonValue }
+          : {}),
+      },
+    });
+  }
   revalidateDatabase(auth.page.workspaceId);
   return { ok: true };
 }
@@ -564,9 +701,205 @@ export async function setPropertyValueAction(
   // id — no existence oracle.
   const property = await prisma.property.findFirst({
     where: { id: propertyId, databasePageId: auth.page.id },
-    select: { id: true },
+    select: { id: true, type: true, config: true },
   });
   if (!property) return { error: "Property not found." };
+
+  if (property.type === "RELATION") {
+    // R21.3 - a relation value is not an arbitrary id list. The target must be
+    // configured, every id must resolve to a live row of that target database
+    // in this workspace, and a single relation is clamped to its first id.
+    const config = normalizeRelationConfig(property.config);
+    if (!config.targetDatabaseId) return { error: "Configure the relation first." };
+    const target = await prisma.page.findFirst({
+      where: {
+        id: config.targetDatabaseId,
+        workspaceId: row.workspaceId,
+        type: "DATABASE",
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    if (!target) return { error: "Database not found." };
+
+    const requested = normalizeRelationPageIds(value, true);
+    if (requested === null) return { error: "Relation value is not valid." };
+    // A row can never link itself, even in a self-relation.
+    const candidates = requested.filter((id) => id !== rowPageId);
+    const rows = candidates.length
+      ? await prisma.page.findMany({
+          where: {
+            id: { in: candidates },
+            parentId: target.id,
+            workspaceId: row.workspaceId,
+            deletedAt: null,
+          },
+          select: { id: true },
+        })
+      : [];
+    const valid = new Set(rows.map((entry) => entry.id));
+    const nextIds = candidates.filter((id) => valid.has(id));
+    const clamped = config.multi ? nextIds : nextIds.slice(0, 1);
+
+    const touched = await prisma.$transaction(async (tx) => {
+      const current = await tx.propertyValue.findUnique({
+        where: { propertyId_pageId: { propertyId, pageId: rowPageId } },
+        select: { value: true },
+      });
+      const currentIds = normalizeRelationPageIds(current?.value, true) ?? [];
+      await tx.propertyValue.upsert({
+        where: { propertyId_pageId: { propertyId, pageId: rowPageId } },
+        create: {
+          propertyId,
+          pageId: rowPageId,
+          value: { pageIds: clamped } as Prisma.InputJsonValue,
+        },
+        update: { value: { pageIds: clamped } as Prisma.InputJsonValue },
+      });
+
+      const affected = new Set<string>([rowPageId]);
+      if (config.inversePropertyId) {
+        const inverse = await tx.property.findFirst({
+          where: {
+            id: config.inversePropertyId,
+            databasePageId: target.id,
+            type: "RELATION",
+          },
+          select: { id: true, config: true },
+        });
+        if (inverse) {
+          const inverseConfig = normalizeRelationConfig(inverse.config);
+          if (
+            inverseConfig.targetDatabaseId !== auth.page.id ||
+            (inverseConfig.inversePropertyId !== null &&
+              inverseConfig.inversePropertyId !== property.id)
+          ) {
+            // A stale half-pair must not receive reciprocal writes. The source
+            // write still lands; the pair can be repaired from the header.
+            return [...affected];
+          }
+          const inverseMulti = inverseConfig.multi;
+          const added = clamped.filter((id) => !currentIds.includes(id));
+          const removed = currentIds.filter((id) => !clamped.includes(id));
+
+          for (const targetRowId of added) {
+            const existing = await tx.propertyValue.findUnique({
+              where: {
+                propertyId_pageId: { propertyId: inverse.id, pageId: targetRowId },
+              },
+              select: { value: true },
+            });
+            const previousSources =
+              normalizeRelationPageIds(existing?.value, true) ?? [];
+
+            // A single reciprocal keeps one source. Detach the target from any
+            // other source row first, so both stored sides stay symmetric.
+            if (!inverseMulti) {
+              for (const otherSource of previousSources) {
+                if (otherSource === rowPageId || otherSource === targetRowId) continue;
+                const otherRow = await tx.page.findFirst({
+                  where: {
+                    id: otherSource,
+                    parentId: auth.page.id,
+                    workspaceId: row.workspaceId,
+                    deletedAt: null,
+                  },
+                  select: { id: true },
+                });
+                if (!otherRow) continue;
+                const otherCell = await tx.propertyValue.findUnique({
+                  where: {
+                    propertyId_pageId: { propertyId, pageId: otherSource },
+                  },
+                  select: { value: true },
+                });
+                if (!otherCell) continue;
+                const otherIds = normalizeRelationPageIds(otherCell.value, true) ?? [];
+                await tx.propertyValue.upsert({
+                  where: {
+                    propertyId_pageId: { propertyId, pageId: otherSource },
+                  },
+                  create: {
+                    propertyId,
+                    pageId: otherSource,
+                    value: { pageIds: otherIds } as Prisma.InputJsonValue,
+                  },
+                  update: {
+                    value: {
+                      pageIds: otherIds.filter((id) => id !== targetRowId),
+                    } as Prisma.InputJsonValue,
+                  },
+                });
+                affected.add(otherSource);
+              }
+            }
+
+            const inverseNext = nextInversePageIds(
+              existing?.value,
+              rowPageId,
+              "add",
+              inverseMulti,
+            );
+            await tx.propertyValue.upsert({
+              where: {
+                propertyId_pageId: { propertyId: inverse.id, pageId: targetRowId },
+              },
+              create: {
+                propertyId: inverse.id,
+                pageId: targetRowId,
+                value: { pageIds: inverseNext } as Prisma.InputJsonValue,
+              },
+              update: { value: { pageIds: inverseNext } as Prisma.InputJsonValue },
+            });
+            affected.add(targetRowId);
+          }
+
+          for (const targetRowId of removed) {
+            const existing = await tx.propertyValue.findUnique({
+              where: {
+                propertyId_pageId: { propertyId: inverse.id, pageId: targetRowId },
+              },
+              select: { value: true },
+            });
+            if (!existing) continue;
+            const inverseNext = nextInversePageIds(
+              existing.value,
+              rowPageId,
+              "remove",
+              inverseMulti,
+            );
+            await tx.propertyValue.upsert({
+              where: {
+                propertyId_pageId: { propertyId: inverse.id, pageId: targetRowId },
+              },
+              create: {
+                propertyId: inverse.id,
+                pageId: targetRowId,
+                value: { pageIds: inverseNext } as Prisma.InputJsonValue,
+              },
+              update: { value: { pageIds: inverseNext } as Prisma.InputJsonValue },
+            });
+            affected.add(targetRowId);
+          }
+        }
+      }
+      return [...affected];
+    });
+
+    // One activity line per row a two-way write changed, so both sides surface
+    // the edit in LAST_EDITED_BY. The write above is already atomic.
+    for (const targetId of touched) {
+      await logActivity({
+        workspaceId: row.workspaceId,
+        actorId: auth.user.id,
+        action: "row.edited",
+        targetType: "page",
+        targetId,
+      });
+    }
+    revalidateDatabase(row.workspaceId);
+    return { ok: true };
+  }
 
   await prisma.propertyValue.upsert({
     where: { propertyId_pageId: { propertyId, pageId: rowPageId } },
@@ -591,6 +924,350 @@ export async function setPropertyValueAction(
 
   revalidateDatabase(row.workspaceId);
   return { ok: true };
+}
+
+/**
+ * Cursor-paginated page search for a relation cell (R21.5).
+ *
+ * The picker no longer has to receive every target row: 20 rows are returned
+ * per call, ordered by id, with `nextCursor` pointing at the last id. The
+ * property id is the authorization anchor - the viewer must be able to read the
+ * source database, the target must be a live database of the same workspace,
+ * and a guest's row results are further limited to their read scope.
+ */
+export async function searchRelationTargetsAction(
+  propertyId: string,
+  query = "",
+  cursor: string | null = null,
+): Promise<
+  Result<{
+    items: { id: string; title: string; icon: string | null }[];
+    nextCursor: string | null;
+  }>
+> {
+  const property = await prisma.property.findUnique({
+    where: { id: propertyId },
+    select: { databasePageId: true, type: true, config: true },
+  });
+  if (!property || property.type !== "RELATION") {
+    return { error: "Property not found." };
+  }
+  const auth = await authorizeDatabase(property.databasePageId);
+  if ("error" in auth) return auth;
+
+  const config = normalizeRelationConfig(property.config);
+  if (!config.targetDatabaseId) return { error: "Configure the relation first." };
+  const target = await prisma.page.findFirst({
+    where: {
+      id: config.targetDatabaseId,
+      workspaceId: auth.page.workspaceId,
+      type: "DATABASE",
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  if (!target) return { error: "Database not found." };
+
+  let readable: Set<string> | null = null;
+  if (auth.access.role === "GUEST") {
+    readable = await guestReadablePageIds(auth.user.id, auth.page.workspaceId);
+    // A guest outside the target's read scope gets the same empty answer as a
+    // search with no matches: a refusal must not confirm the target exists.
+    if (!readable.has(target.id)) {
+      return { ok: true, items: [], nextCursor: null };
+    }
+  }
+
+  const search = query.trim().slice(0, 80);
+  const after = typeof cursor === "string" ? cursor.trim() : "";
+  const conditions: Prisma.PageWhereInput[] = [
+    { parentId: target.id },
+    { workspaceId: auth.page.workspaceId },
+    { deletedAt: null },
+  ];
+  if (search) {
+    conditions.push({ title: { contains: search, mode: "insensitive" } });
+  }
+  if (after) conditions.push({ id: { gt: after } });
+  if (readable) conditions.push({ id: { in: [...readable] } });
+
+  const rows = await prisma.page.findMany({
+    where: { AND: conditions },
+    orderBy: { id: "asc" },
+    take: 21,
+    select: { id: true, title: true, icon: true },
+  });
+  const items = rows.slice(0, 20);
+  return {
+    ok: true,
+    items,
+    nextCursor: rows.length > 20 ? items[items.length - 1].id : null,
+  };
+}
+
+/**
+ * Enable or disable the reciprocal half of a relation (R21.7).
+ *
+ * Enabling creates (or reuses) a RELATION property on the target database in
+ * one transaction, cross-references both configs and backfills every existing
+ * link. A self-relation uses the same property on both sides. Disabling clears
+ * the `inversePropertyId` on both properties and leaves the columns (and their
+ * values) in place, so no data disappears by toggling a setting.
+ */
+export async function setRelationTwoWayAction(
+  propertyId: string,
+  enabled: boolean,
+): Promise<Result<{ inversePropertyId: string | null }>> {
+  const property = await prisma.property.findUnique({
+    where: { id: propertyId },
+    select: {
+      id: true,
+      databasePageId: true,
+      name: true,
+      type: true,
+      config: true,
+    },
+  });
+  if (!property || property.type !== "RELATION") {
+    return { error: "Property not found." };
+  }
+  const auth = await authorizeDatabase(property.databasePageId);
+  if ("error" in auth) return auth;
+  if (!auth.capabilities.edit) return { error: "No permission." };
+  const schemaDenied = schemaLockDenied(auth);
+  if (schemaDenied) return schemaDenied;
+
+  const config = normalizeRelationConfig(property.config);
+  if (!enabled) {
+    const inverseId = config.inversePropertyId;
+    await prisma.$transaction(async (tx) => {
+      await tx.property.update({
+        where: { id: property.id },
+        data: {
+          config: {
+            ...config,
+            inversePropertyId: null,
+          } as Prisma.InputJsonValue,
+        },
+      });
+      if (!inverseId || !config.targetDatabaseId) return;
+      const inverse = await tx.property.findFirst({
+        where: {
+          id: inverseId,
+          databasePageId: config.targetDatabaseId,
+          type: "RELATION",
+        },
+        select: { id: true, config: true },
+      });
+      if (!inverse) return;
+      await tx.property.update({
+        where: { id: inverse.id },
+        data: {
+          config: {
+            ...normalizeRelationConfig(inverse.config),
+            inversePropertyId: null,
+          } as Prisma.InputJsonValue,
+        },
+      });
+    });
+    revalidateDatabase(auth.page.workspaceId);
+    return { ok: true, inversePropertyId: null };
+  }
+
+  if (!config.targetDatabaseId) return { error: "Configure the relation first." };
+  const target = await prisma.page.findFirst({
+    where: {
+      id: config.targetDatabaseId,
+      workspaceId: auth.page.workspaceId,
+      type: "DATABASE",
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  if (!target) return { error: "Database not found." };
+
+  const inversePropertyId = await prisma.$transaction(async (tx) => {
+    let inverseId: string;
+
+    if (target.id === property.databasePageId) {
+      // A self-relation can be its own inverse: a link stored on one row is
+      // the reciprocal link stored on the other row of the same column.
+      inverseId = property.id;
+    } else {
+      const existing = await tx.property.findFirst({
+        where: {
+          id: config.inversePropertyId ?? "",
+          databasePageId: target.id,
+          type: "RELATION",
+        },
+        select: { id: true, config: true },
+      });
+      const existingConfig = normalizeRelationConfig(existing?.config);
+      const existingPointsBack =
+        existingConfig.targetDatabaseId === property.databasePageId &&
+        (existingConfig.inversePropertyId === null ||
+          existingConfig.inversePropertyId === property.id);
+      if (existing && existingPointsBack) {
+        inverseId = existing.id;
+      } else {
+        // Reuse an unpaired relation that already points back at this database
+        // (a previous toggle-off followed by a toggle-on), so repeated toggles
+        // do not multiply columns.
+        const candidates = await tx.property.findMany({
+          where: { databasePageId: target.id, type: "RELATION" },
+          orderBy: { position: "asc" },
+          select: { id: true, name: true, config: true },
+        });
+        const reusable = candidates.find((candidate) => {
+          const candidateConfig = normalizeRelationConfig(candidate.config);
+          return (
+            candidateConfig.targetDatabaseId === property.databasePageId &&
+            candidateConfig.inversePropertyId === null &&
+            candidate.name === property.name
+          );
+        });
+        if (reusable) {
+          inverseId = reusable.id;
+        } else {
+          const last = await tx.property.findFirst({
+            where: { databasePageId: target.id },
+            orderBy: { position: "desc" },
+            select: { position: true },
+          });
+          const created = await tx.property.create({
+            data: {
+              databasePageId: target.id,
+              name: property.name,
+              type: "RELATION",
+              position: (last?.position ?? 0) + 1000,
+              config: {
+                targetDatabaseId: property.databasePageId,
+                multi: config.multi,
+                inversePropertyId: property.id,
+              } as Prisma.InputJsonValue,
+            },
+            select: { id: true },
+          });
+          inverseId = created.id;
+        }
+      }
+    }
+
+    await tx.property.update({
+      where: { id: property.id },
+      data: {
+        config: {
+          targetDatabaseId: target.id,
+          multi: config.multi,
+          inversePropertyId: inverseId,
+        } as Prisma.InputJsonValue,
+      },
+    });
+    if (inverseId !== property.id) {
+      await tx.property.update({
+        where: { id: inverseId },
+        data: {
+          config: {
+            targetDatabaseId: property.databasePageId,
+            multi: config.multi,
+            inversePropertyId: property.id,
+          } as Prisma.InputJsonValue,
+        },
+      });
+    }
+
+    // Backfill every existing source link. Only target rows that still resolve
+    // inside the configured target database are written.
+    const sourceValues = await tx.propertyValue.findMany({
+      where: { propertyId: property.id },
+      select: { pageId: true, value: true },
+    });
+    const links: { sourceRowId: string; targetRowId: string }[] = [];
+    const sourceById = new Map<string, string[]>();
+    for (const entry of sourceValues) {
+      const ids = normalizeRelationPageIds(entry.value, true) ?? [];
+      sourceById.set(entry.pageId, ids);
+      for (const targetRowId of ids) {
+        links.push({ sourceRowId: entry.pageId, targetRowId });
+      }
+    }
+    const targetIds = [...new Set(links.map((link) => link.targetRowId))];
+    const targetRows = targetIds.length
+      ? await tx.page.findMany({
+          where: {
+            id: { in: targetIds },
+            parentId: target.id,
+            workspaceId: auth.page.workspaceId,
+            deletedAt: null,
+          },
+          select: { id: true },
+        })
+      : [];
+    const validTargets = new Set(targetRows.map((row) => row.id));
+    const validLinks = links.filter((link) => validTargets.has(link.targetRowId));
+
+    const existingValues = await tx.propertyValue.findMany({
+      where: { propertyId: inverseId },
+      select: { pageId: true, value: true },
+    });
+    const existingByTarget: Record<string, string[]> = {};
+    for (const entry of existingValues) {
+      if (!validTargets.has(entry.pageId) && inverseId === property.id) continue;
+      const ids = normalizeRelationPageIds(entry.value, true) ?? [];
+      if (ids.length > 0) existingByTarget[entry.pageId] = ids;
+    }
+    const backfill = buildInverseBackfill({
+      links: validLinks,
+      existing: existingByTarget,
+      multi: config.multi,
+    });
+    for (const [targetRowId, pageIds] of Object.entries(backfill)) {
+      await tx.propertyValue.upsert({
+        where: {
+          propertyId_pageId: { propertyId: inverseId, pageId: targetRowId },
+        },
+        create: {
+          propertyId: inverseId,
+          pageId: targetRowId,
+          value: { pageIds } as Prisma.InputJsonValue,
+        },
+        update: { value: { pageIds } as Prisma.InputJsonValue },
+      });
+    }
+
+    // A single reciprocal can keep only one source per target. Make the source
+    // cells agree with the chosen backfill instead of storing asymmetry.
+    if (!config.multi) {
+      for (const [targetRowId, pageIds] of Object.entries(backfill)) {
+        const chosen = pageIds[0];
+        for (const [sourceRowId, ids] of sourceById) {
+          if (sourceRowId === chosen || !ids.includes(targetRowId)) continue;
+          await tx.propertyValue.upsert({
+            where: {
+              propertyId_pageId: { propertyId: property.id, pageId: sourceRowId },
+            },
+            create: {
+              propertyId: property.id,
+              pageId: sourceRowId,
+              value: {
+                pageIds: ids.filter((id) => id !== targetRowId),
+              } as Prisma.InputJsonValue,
+            },
+            update: {
+              value: {
+                pageIds: ids.filter((id) => id !== targetRowId),
+              } as Prisma.InputJsonValue,
+            },
+          });
+        }
+      }
+    }
+
+    return inverseId;
+  });
+
+  revalidateDatabase(auth.page.workspaceId);
+  return { ok: true, inversePropertyId };
 }
 
 export async function createRowAction(

@@ -24,6 +24,12 @@ describe("rollup aggregation", () => {
     expect(aggregate([true, false, true, true], "percent_checked")).toBe("75%");
   });
 
+  it("computes percent empty over every slot, including empty ones", () => {
+    expect(aggregate([], "percent_empty")).toBe("—");
+    expect(aggregate([1, null, ""], "percent_empty")).toBe("67%");
+    expect(aggregate(["a", "b", "c"], "percent_empty")).toBe("0%");
+  });
+
   it("handles dates", () => {
     expect(aggregate(["2026-03-01", "2026-01-15"], "earliest")).toBe("2026-01-15");
     expect(aggregate(["2026-03-01", "2026-01-15"], "latest")).toBe("2026-03-01");
@@ -32,6 +38,9 @@ describe("rollup aggregation", () => {
   it("handles uniqueness and originals", () => {
     expect(aggregate(["a", "b", "a"], "unique")).toBe("2");
     expect(aggregate(["a", "b"], "show_original")).toBe("a, b");
+    expect(aggregate(["a", "b"], "show_original", { separator: " · " })).toBe(
+      "a · b",
+    );
   });
 
   it("returns a dash when there is nothing to aggregate", () => {
@@ -43,7 +52,7 @@ describe("rollup aggregation", () => {
     expect(ROLLUP_FUNCTIONS.length).toBeGreaterThan(10);
   });
 
-  it("exposes exactly the 14 rollup functions with unique ids", () => {
+  it("exposes exactly the 15 rollup functions with unique ids", () => {
     expect(ROLLUP_FUNCTIONS.map((fn) => fn.id)).toEqual([
       "count",
       "count_empty",
@@ -57,10 +66,11 @@ describe("rollup aggregation", () => {
       "latest",
       "checked",
       "percent_checked",
+      "percent_empty",
       "unique",
       "show_original",
     ]);
-    expect(new Set(ROLLUP_FUNCTIONS.map((fn) => fn.id)).size).toBe(14);
+    expect(new Set(ROLLUP_FUNCTIONS.map((fn) => fn.id)).size).toBe(15);
   });
 
   it("returns a safe sentinel for every function over an empty group", () => {

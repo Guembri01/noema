@@ -323,6 +323,8 @@ describe("row motion wiring (data-flip-id + group reveal)", () => {
     relationData: {},
     onLinkDatabase: () => {},
     onConfigureRollup: () => {},
+    onSetRelationMulti: () => {},
+    onToggleTwoWay: () => {},
   };
   const noop = () => {};
 

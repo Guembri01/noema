@@ -43,6 +43,17 @@ export type PropertyConfig = {
     /** Default IANA time zone, e.g. "Europe/Paris". See `isValidTimeZone`. */
     timeZone?: string;
   };
+  /** RELATION: target database, cardinality and optional reciprocal column. */
+  targetDatabaseId?: string | null;
+  multi?: boolean;
+  inversePropertyId?: string | null;
+  /** ROLLUP: the relation to read through, the target column and function. */
+  relationPropertyId?: string | null;
+  targetPropertyId?: string | null;
+  function?: string;
+  separator?: string;
+  /** FORMULA: the stored expression. */
+  expression?: string;
 } | null;
 
 export type DBProperty = {
@@ -81,6 +92,8 @@ export type HeaderConfig = {
   relationData: Record<string, RelationData>;
   onLinkDatabase: (property: DBProperty, targetDatabaseId: string) => void;
   onConfigureRollup: (property: DBProperty, config: Record<string, unknown>) => void;
+  onSetRelationMulti: (property: DBProperty, multi: boolean) => void;
+  onToggleTwoWay: (property: DBProperty, enabled: boolean) => void;
 };
 
 export const COLOR_CHOICES = [

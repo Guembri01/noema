@@ -38,4 +38,22 @@ describe("RelationCell", () => {
     expect(html).toContain("—");
     expect(html).not.toContain('aria-label="Add relation"');
   });
+
+  it("disables the add control until a target database is configured", () => {
+    const html = renderToStaticMarkup(
+      createElement(RelationCell, {
+        propertyName: "Related",
+        propertyId: "rel",
+        value: { pageIds: [] },
+        editable: true,
+        locale: "en",
+        options,
+        configured: false,
+        onChange: () => {},
+      }),
+    );
+    expect(html).toContain('aria-label="Add relation"');
+    expect(html).toContain("disabled");
+    expect(html).toContain("Choose a target database first");
+  });
 });

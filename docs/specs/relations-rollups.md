@@ -1,10 +1,13 @@
 # Spec — Relations, rollups & the formula property
 
-> **Status: spec complete, implementation pending.** This document is the
-> deliverable; no production code was changed. Every claim about the current state cites a file that was
-> opened for this spec. Requirement IDs (`R21.x`) are the traceability anchors:
-> §10 lists milestones/tasks 1:1 against them, and tests must cite the IDs they
-> cover.
+> **Status: core implementation shipped; two follow-ups remain.** Relations now
+> have validated targets/values, single/multi editing, a paged picker and
+> two-way pairs; rollups validate their config and expose the full function set;
+> formulas are parsed before they are saved. The read path still resolves
+> relation target rows eagerly (server-side rollup projection is future work),
+> and the formula editor remains a prompt without autocomplete. Requirement IDs
+> (`R21.x`) are the traceability anchors: §10 lists milestones/tasks 1:1 against
+> them, and tests cite the IDs they cover.
 
 ---
 

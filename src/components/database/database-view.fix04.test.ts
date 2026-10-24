@@ -4,7 +4,6 @@ import {
   buildRelationState,
   layoutSubIssues,
   mutualRelationCount,
-  planRelationWrite,
   rollupCellFromPairs,
   toSubIssueEdges,
   toTimelineEdges,
@@ -192,73 +191,22 @@ describe("relation state + rollup cell — config → value", () => {
   });
 });
 
-describe("planRelationWrite — two-way link/unlink", () => {
-  const properties = [property("rel", "RELATION", { targetDatabaseId: "db-target" })];
-  const rows = [row("a1", [{ propertyId: "rel", value: { pageIds: ["b1"] } }])];
-
-  it("reconciles the source side and reports the plain single write", () => {
-    const relationData: Record<string, RelationData> = {
-      rel: {
-        options: [],
-        valuesByRow: { b1: {}, b2: {} },
-        properties: [{ id: "points", name: "Points", type: "NUMBER" }],
-      },
-    };
-    const built = buildRelationState({ databaseId: "db-a", properties, rows, relationData });
-    const plan = planRelationWrite(built.state, built.pairs, properties[0], "a1", {
-      pageIds: ["b2"],
-    });
-    expect(plan).not.toBeNull();
-    expect(plan?.writes).toEqual([
-      { rowId: "a1", propertyId: "rel", value: { pageIds: ["b2"] } },
-    ]);
-  });
-
-  it("emits the far-side write when a real inverse relation exists", () => {
-    const relationData: Record<string, RelationData> = {
-      rel: {
-        options: [],
-        valuesByRow: { b1: {} },
-        properties: [{ id: "back", name: "Back", type: "RELATION" }],
-      },
-    };
-    const built = buildRelationState({
-      databaseId: "db-a",
-      properties,
-      rows: [row("a1", [{ propertyId: "rel", value: { pageIds: [] } }])],
-      relationData,
-    });
-    const plan = planRelationWrite(built.state, built.pairs, properties[0], "a1", {
-      pageIds: ["b1"],
-    });
-    expect(plan?.writes).toContainEqual({
-      rowId: "b1",
-      propertyId: "back",
-      value: { pageIds: ["a1"] },
-    });
-    expect(plan?.writes[0]).toEqual({
-      rowId: "a1",
-      propertyId: "rel",
-      value: { pageIds: ["b1"] },
-    });
-  });
-
-  it("returns null for an unpaired property so the caller keeps the plain write", () => {
-    const relationData: Record<string, RelationData> = {};
-    const built = buildRelationState({ databaseId: "db-a", properties, rows, relationData });
-    const other = property("other", "TEXT");
-    expect(planRelationWrite(built.state, built.pairs, other, "a1", {})).toBeNull();
-  });
-});
-
 describe("mutualRelationCount — reciprocal edges stored on both sides", () => {
-  const properties = [property("rel", "RELATION", { targetDatabaseId: "db-target" })];
+  const properties = [
+    property("rel", "RELATION", {
+      targetDatabaseId: "db-target",
+      inversePropertyId: "back",
+    }),
+  ];
   const rows = [row("a1", [{ propertyId: "rel", value: { pageIds: ["b1"] } }])];
   const relationData: Record<string, RelationData> = {
     rel: {
       options: [],
       valuesByRow: { b1: { back: { pageIds: ["a1"] } } },
-      properties: [{ id: "back", name: "Back", type: "RELATION" }],
+      properties: [
+        { id: "other", name: "Other", type: "RELATION" },
+        { id: "back", name: "Back", type: "RELATION" },
+      ],
     },
   };
 

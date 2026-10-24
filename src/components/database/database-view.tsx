@@ -11,6 +11,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { PromptDialog } from "@/components/prompt-dialog";
+import { useAction } from "@/lib/actions-client";
 import { useRouter } from "next/navigation";
 import {
   Ban,
@@ -28,27 +29,67 @@ import {
   Upload,
   X } from "lucide-react";
 import {
-  createPropertyAction,
-  createRowAction,
-  createViewAction,
-  deletePropertyAction,
-  deleteRowAction,
-  duplicateDatabaseAction,
-  duplicateViewAction,
-  importCsvAction,
-  createRowFromTemplateAction,
-  listDeletedRowsAction,
-  reorderPropertiesAction,
-  saveRowAsTemplateAction,
-  setPropertyValueAction,
-  setSubItemParentAction,
-  submitFormAction,
-  updatePropertyAction,
-  updateViewAction } from "@/server/actions/database";
+  createPropertyAction as rawCreatePropertyAction,
+  createRowAction as rawCreateRowAction,
+  createViewAction as rawCreateViewAction,
+  deletePropertyAction as rawDeletePropertyAction,
+  deleteRowAction as rawDeleteRowAction,
+  duplicateDatabaseAction as rawDuplicateDatabaseAction,
+  duplicateViewAction as rawDuplicateViewAction,
+  importCsvAction as rawImportCsvAction,
+  createRowFromTemplateAction as rawCreateRowFromTemplateAction,
+  listDeletedRowsAction as rawListDeletedRowsAction,
+  reorderPropertiesAction as rawReorderPropertiesAction,
+  saveRowAsTemplateAction as rawSaveRowAsTemplateAction,
+  setPropertyValueAction as rawSetPropertyValueAction,
+  setRelationTwoWayAction as rawSetRelationTwoWayAction,
+  setSubItemParentAction as rawSetSubItemParentAction,
+  submitFormAction as rawSubmitFormAction,
+  updatePropertyAction as rawUpdatePropertyAction,
+  updateViewAction as rawUpdateViewAction } from "@/server/actions/database";
 import {
-  restorePageAction,
-  toggleSchemaLockAction,
-  updatePageAction } from "@/server/actions/pages";
+  restorePageAction as rawRestorePageAction,
+  toggleSchemaLockAction as rawToggleSchemaLockAction,
+  updatePageAction as rawUpdatePageAction } from "@/server/actions/pages";
+import { guarded } from "@/lib/actions-client";
+
+// Every action call in this screen goes through the transport guard, so a
+// dropped connection becomes a `{ error }` result instead of an unhandled
+// rejection. `useAction` (inside the component) adds the toast/refresh wrapper
+// for the relation controls; these aliases keep the other call sites safe.
+const createPropertyAction = guarded(rawCreatePropertyAction) as typeof rawCreatePropertyAction;
+const createRowAction = guarded(rawCreateRowAction) as typeof rawCreateRowAction;
+const createViewAction = guarded(rawCreateViewAction) as typeof rawCreateViewAction;
+const deletePropertyAction =
+  guarded(rawDeletePropertyAction) as typeof rawDeletePropertyAction;
+const deleteRowAction = guarded(rawDeleteRowAction) as typeof rawDeleteRowAction;
+const duplicateDatabaseAction =
+  guarded(rawDuplicateDatabaseAction) as typeof rawDuplicateDatabaseAction;
+const duplicateViewAction =
+  guarded(rawDuplicateViewAction) as typeof rawDuplicateViewAction;
+const importCsvAction = guarded(rawImportCsvAction) as typeof rawImportCsvAction;
+const createRowFromTemplateAction =
+  guarded(rawCreateRowFromTemplateAction) as typeof rawCreateRowFromTemplateAction;
+const listDeletedRowsAction =
+  guarded(rawListDeletedRowsAction) as typeof rawListDeletedRowsAction;
+const reorderPropertiesAction =
+  guarded(rawReorderPropertiesAction) as typeof rawReorderPropertiesAction;
+const saveRowAsTemplateAction =
+  guarded(rawSaveRowAsTemplateAction) as typeof rawSaveRowAsTemplateAction;
+const setPropertyValueAction =
+  guarded(rawSetPropertyValueAction) as typeof rawSetPropertyValueAction;
+const setRelationTwoWayAction =
+  guarded(rawSetRelationTwoWayAction) as typeof rawSetRelationTwoWayAction;
+const setSubItemParentAction =
+  guarded(rawSetSubItemParentAction) as typeof rawSetSubItemParentAction;
+const submitFormAction = guarded(rawSubmitFormAction) as typeof rawSubmitFormAction;
+const updatePropertyAction =
+  guarded(rawUpdatePropertyAction) as typeof rawUpdatePropertyAction;
+const updateViewAction = guarded(rawUpdateViewAction) as typeof rawUpdateViewAction;
+const restorePageAction = guarded(rawRestorePageAction) as typeof rawRestorePageAction;
+const toggleSchemaLockAction =
+  guarded(rawToggleSchemaLockAction) as typeof rawToggleSchemaLockAction;
+const updatePageAction = guarded(rawUpdatePageAction) as typeof rawUpdatePageAction;
 import { DUR } from "@/lib/design-tokens";
 import { toast } from "sonner";
 import {
@@ -81,15 +122,13 @@ import {
   computeRollup as computeRelationRollup,
   createRelationPair,
   createRelationState,
-  linkRows,
   setRollupConfig,
   symmetricPairs,
-  unlinkRows,
-  type InverseLink,
   type RelationState,
   type RollupFn as RelationRollupFn,
 } from "@/lib/relation-pairs";
 import { normalizeRollupConfig } from "@/lib/rollup-config";
+import { normalizeRelationConfig } from "@/lib/relation-config";
 import {
   canEditSchema,
   describeLock,
@@ -578,11 +617,6 @@ const pageIdsOf = (value: unknown): string[] => {
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
 };
 
-const relationIdsIn = (state: RelationState, propertyId: string, rowId: string): string[] => {
-  const ids = state.links[propertyId]?.[rowId];
-  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
-};
-
 /** Project a stored property value onto the primitive the rollup aggregates. */
 function projectRelationValue(raw: unknown, type: string): unknown {
   const value = (raw ?? {}) as Record<string, unknown>;
@@ -603,10 +637,11 @@ function projectRelationValue(raw: unknown, type: string): unknown {
 /**
  * Build a `@/lib/relation-pairs` state from the view's own rows and the related
  * rows the query already resolved (`relationData`). RELATION properties become
- * cross-referencing pairs (the inverse property is picked out of the target
- * database's schema when it is a relation, otherwise a synthetic id keeps the
- * pair well-formed without ever being persisted); both stored sides are
- * projected so `symmetricPairs` sees real reciprocal edges.
+ * cross-referencing pairs. The pair's inverse is the configured
+ * `config.inversePropertyId` when that property still exists on the target;
+ * otherwise a synthetic id keeps the pair well-formed without ever being
+ * persisted. Both stored sides are projected so `symmetricPairs` sees real
+ * reciprocal edges.
  */
 export function buildRelationState(input: {
   databaseId: string;
@@ -616,8 +651,7 @@ export function buildRelationState(input: {
 }): BuiltRelationState {
   const relationProperties = input.properties.filter((property) => {
     if (property.type !== "RELATION") return false;
-    const config = property.config as { targetDatabaseId?: unknown } | null;
-    return typeof config?.targetDatabaseId === "string" && config.targetDatabaseId !== "";
+    return normalizeRelationConfig(property.config).targetDatabaseId !== null;
   });
 
   const valueOf = (row: DBRow, propertyId: string): unknown =>
@@ -638,35 +672,44 @@ export function buildRelationState(input: {
   const seenTargets = new Set<string>();
 
   for (const property of relationProperties) {
-    const config = property.config as { targetDatabaseId: string; multi?: boolean };
+    const config = normalizeRelationConfig(property.config);
+    const targetDatabaseId = config.targetDatabaseId;
+    if (!targetDatabaseId) continue;
     const target = input.relationData[property.id];
+    const configuredInverse = config.inversePropertyId;
     const inversePropertyId =
-      target?.properties.find((candidate) => candidate.type === "RELATION")?.id ?? null;
+      configuredInverse &&
+      target?.properties.some(
+        (candidate) =>
+          candidate.id === configuredInverse && candidate.type === "RELATION",
+      )
+        ? configuredInverse
+        : null;
     const definition = createRelationPair({
       a: { databaseId: input.databaseId, propertyId: property.id },
       b: {
-        databaseId: config.targetDatabaseId,
+        databaseId: targetDatabaseId,
         propertyId: inversePropertyId ?? `${property.id}::inverse`,
       },
-      cardinality: config.multi === false ? "one" : "many",
+      cardinality: config.multi ? "many" : "one",
     });
     definitions.push(definition);
     pairs[property.id] = {
       pairId: definition.id,
       inversePropertyId,
-      targetDatabaseId: config.targetDatabaseId,
+      targetDatabaseId,
     };
 
     if (target) {
       const types = new Map(target.properties.map((entry) => [entry.id, entry.type]));
       for (const [targetRowId, rawById] of Object.entries(target.valuesByRow)) {
-        if (!seenTargets.has(`${config.targetDatabaseId}\u0000${targetRowId}`)) {
-          seenTargets.add(`${config.targetDatabaseId}\u0000${targetRowId}`);
+        if (!seenTargets.has(`${targetDatabaseId}\u0000${targetRowId}`)) {
+          seenTargets.add(`${targetDatabaseId}\u0000${targetRowId}`);
           const values: Record<string, unknown> = {};
           for (const [propertyId, raw] of Object.entries(rawById)) {
             values[propertyId] = projectRelationValue(raw, types.get(propertyId) ?? "TEXT");
           }
-          rows.push({ id: targetRowId, databaseId: config.targetDatabaseId, values });
+          rows.push({ id: targetRowId, databaseId: targetDatabaseId, values });
         }
         if (inversePropertyId) {
           const stored = pageIdsOf(rawById[inversePropertyId]);
@@ -736,7 +779,10 @@ export function rollupCellFromPairs(
       relationPropertyId: normalized.relationPropertyId,
       targetPropertyId: normalized.targetPropertyId,
       fn,
-      separator: ", ",
+      separator:
+        typeof (storedConfig as { separator?: unknown } | null)?.separator === "string"
+          ? (storedConfig as { separator: string }).separator
+          : ", ",
     }),
   );
   if (result.value === null) return "—";
@@ -749,64 +795,6 @@ export function rollupCellFromPairs(
 /** A related row's reciprocal-edge count for `rowId` across every relation. */
 export function mutualRelationCount(state: RelationState, pairId: string, rowId: string): number {
   return symmetricPairs(state, pairId).filter((edge) => edge.aRowId === rowId).length;
-}
-
-/** One property write the relation planner wants persisted. */
-export type RelationWrite = {
-  rowId: string;
-  propertyId: string;
-  value: { pageIds: string[] };
-};
-
-/**
- * Plan a relation edit as a two-way write: reconcile `rowId` to `value`'s
- * `pageIds` through `linkRows`/`unlinkRows` (single-cardinality replacement and
- * dedupe are the engine's job), then emit the source write plus every far-side
- * write the engine reports for a *real* inverse property. Returns `null` when
- * the property is not a paired relation, so the caller keeps the plain write.
- */
-export function planRelationWrite(
-  state: RelationState,
-  pairs: RelationPairIndex,
-  property: DBProperty,
-  rowId: string,
-  value: unknown,
-): { writes: RelationWrite[] } | null {
-  const entry = pairs[property.id];
-  if (!entry) return null;
-
-  const next = pageIdsOf(value);
-  const current = relationIdsIn(state, property.id, rowId);
-  const added = next.filter((id) => !current.includes(id));
-  const removed = current.filter((id) => !next.includes(id));
-
-  const linked = added.length
-    ? linkRows(state, { fromId: rowId, toIds: added, pairId: entry.pairId })
-    : { state, inverseLinks: [] as InverseLink[] };
-  const unlinked = removed.length
-    ? unlinkRows(linked.state, { fromId: rowId, toIds: removed, pairId: entry.pairId })
-    : { state: linked.state, inverseLinks: [] as InverseLink[] };
-
-  const writes: RelationWrite[] = [
-    {
-      rowId,
-      propertyId: property.id,
-      value: { pageIds: relationIdsIn(unlinked.state, property.id, rowId) },
-    },
-  ];
-
-  if (entry.inversePropertyId) {
-    for (const inverse of [...linked.inverseLinks, ...unlinked.inverseLinks]) {
-      if (inverse.propertyId !== entry.inversePropertyId) continue;
-      writes.push({
-        rowId: inverse.rowId,
-        propertyId: inverse.propertyId,
-        value: { pageIds: inverse.targetIds },
-      });
-    }
-  }
-
-  return { writes };
 }
 
 export function DatabaseView({
@@ -857,6 +845,7 @@ export function DatabaseView({
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
+  const { run: runAction } = useAction(locale);
   /**
    * R89.24 — the schema lock is optimistic while the server write is in
    * flight: the toolbar flips immediately, and a refused write (e.g. a member
@@ -1426,14 +1415,48 @@ export function DatabaseView({
     }));
   };
 
-  const onLinkDatabase = (property: DBProperty, targetDatabaseId: string) =>
-    startTransition(async () => {
-      await updatePropertyAction(property.id, {
-        config: { ...(property.config ?? {}), targetDatabaseId },
-      });
-      toast.success(t(locale, "relationLinked"));
-      router.refresh();
+  const onLinkDatabase = (property: DBProperty, targetDatabaseId: string) => {
+    const previous = normalizeRelationConfig(property.config);
+    runAction(
+      async () => {
+        if (previous.inversePropertyId && previous.targetDatabaseId !== targetDatabaseId) {
+          // Changing the target invalidates the old reciprocal column. Clear
+          // the pair first so the old target property keeps no stale backlink.
+          const cleared = await setRelationTwoWayAction(property.id, false);
+          if ("error" in cleared) return cleared;
+        }
+        return updatePropertyAction(property.id, {
+          config: {
+            ...(property.config ?? {}),
+            targetDatabaseId,
+            inversePropertyId:
+              previous.targetDatabaseId === targetDatabaseId
+                ? previous.inversePropertyId
+                : null,
+          },
+        });
+      },
+      {
+        success: t(locale, "relationLinked"),
+        onSuccess: () => router.refresh(),
+      },
+    );
+  };
+
+  const onSetRelationMulti = (property: DBProperty, multi: boolean) => {
+    const config = normalizeRelationConfig(property.config);
+    runAction(
+      () => updatePropertyAction(property.id, { config: { ...config, multi } }),
+      { onSuccess: () => router.refresh() },
+    );
+  };
+
+  const onToggleTwoWay = (property: DBProperty, enabled: boolean) => {
+    runAction(() => setRelationTwoWayAction(property.id, enabled), {
+      success: t(locale, enabled ? "twoWayEnabled" : "twoWayDisabled"),
+      onSuccess: () => router.refresh(),
     });
+  };
 
   const onConfigureRollup = (
     property: DBProperty,
@@ -1552,6 +1575,8 @@ export function DatabaseView({
     relationData,
     onLinkDatabase,
     onConfigureRollup,
+    onSetRelationMulti,
+    onToggleTwoWay,
   };
 
   const valueFor = (row: DBRow, propertyId: string): unknown =>
@@ -1614,6 +1639,7 @@ export function DatabaseView({
       relationPropertyId?: string;
       targetPropertyId?: string;
       function?: RollupFunction;
+      separator?: string;
     };
     const relationPropertyId = config.relationPropertyId ?? "";
     const targetPropertyId = config.targetPropertyId ?? "";
@@ -1646,7 +1672,9 @@ export function DatabaseView({
       }
       return formatCell(raw, targetProperty) || null;
     });
-    return aggregate(values, fn);
+    return aggregate(values, fn, {
+      separator: typeof config.separator === "string" ? config.separator : ", ",
+    });
   };
 
   /** Computed value for FORMULA, ROLLUP and system properties. */
@@ -1676,32 +1704,12 @@ export function DatabaseView({
   };
 
   const setValue = (rowId: string, propertyId: string, value: unknown) => {
-    // RELATION edits are maintained on both sides through the relation-pairs
-    // engine: reconcile the source row, then persist every far-side write the
-    // engine reports for a real inverse property. Other properties keep the
-    // plain single-value write.
-    const property = properties.find((candidate) => candidate.id === propertyId);
-    if (property?.type === "RELATION") {
-      const plan = planRelationWrite(
-        relationState.state,
-        relationState.pairs,
-        property,
-        rowId,
-        value,
-      );
-      if (plan) {
-        startTransition(async () => {
-          for (const write of plan.writes) {
-            await setPropertyValueAction(write.rowId, write.propertyId, write.value);
-          }
-          router.refresh();
-        });
-        return;
-      }
-    }
-    startTransition(async () => {
-      await setPropertyValueAction(rowId, propertyId, value);
-      router.refresh();
+    // The server owns relation propagation now: a RELATION write validates the
+    // target ids and updates the configured reciprocal cell in the same
+    // transaction. Sending the source write once avoids a double reciprocal
+    // write from the old client-side planner.
+    runAction(() => setPropertyValueAction(rowId, propertyId, value), {
+      onSuccess: () => router.refresh(),
     });
   };
 

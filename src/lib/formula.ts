@@ -1378,6 +1378,31 @@ export function invalidateFormulaCacheByProperty(property: string): void {
 }
 
 /**
+ * Parse an expression without evaluating it, for save-time validation.
+ *
+ * Uses the same tokenizer and parser as {@link evaluateFormula}, with an empty
+ * scope: unknown property names parse as empty strings (the runtime behaviour),
+ * while syntax errors, unknown functions and the length/depth bounds fail.
+ * Never throws.
+ */
+export function parseFormula(expression: string): { ok: true } | { ok: false; error: string } {
+  const source = (expression ?? "").trim();
+  if (!source) return { ok: false, error: "empty formula" };
+  if (source.length > MAX_FORMULA_LENGTH) {
+    return { ok: false, error: "formula exceeds maximum length" };
+  }
+  try {
+    new Parser(tokenize(source), {}, effectiveConstants(undefined), {}, 0).parse();
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: errorValue(error instanceof Error ? error.message : String(error)).message,
+    };
+  }
+}
+
+/**
  * Evaluates `expression` against row values (`scope`, read via `prop()`),
  * optional workspace `constants` (read by bare name) and typed rollup results
  * (`options.rollups`, read via `rollup("Name")`). Never throws: bad

@@ -102,7 +102,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
 | Inline database block | A database rendered inside a page. | 🟡 | Renders a collection view inline; view config incomplete. |
-| Linked view of a database | Re-display an existing database elsewhere. | 🟡 | The editor node binds to a chosen source view, applies that view’s filters/sorts, and persists synced/detached overrides per node; a stale view id falls back to the source’s first view. Per-instance filter/sort editing and write-through are still pending. |
+| Linked view of a database | Re-display an existing database elsewhere. | ✅ | The editor node binds to a chosen source view, applies that view’s filters/sorts, and persists synced/detached overrides per node; a stale view id falls back to the source’s first view. A detached instance has an in-block filter/sort editor, and row create/edit/delete writes through the source database’s authz. |
 | Page link mention | Inline link to another page. | ✅ | `@` picker inserts a page link node. |
 | Block reference / mention | Inline reference to a specific block. | ✅ | Planned; block-id resolution needed. |
 | Date mention | Inline date chip. | ✅ | Mention menu inserts weekday-style chips; `dateMention` supports short/long/weekday styles + explicit locale, id stays ISO (unit-tested). |
@@ -287,13 +287,13 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | URL property | Link value. | ✅ | Stored; click-to-open. |
 | Email property | Email value. | ✅ | Stored; `mailto:` link. |
 | Phone property | Phone number value. | ✅ | Stored; `tel:` link. |
-| Formula property | Computed value from an expression. | ✅ | Planned; see Formulas. |
-| Relation property | Link rows across databases. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
-| Relation (single) | One linked row. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
-| Relation (multi) | Many linked rows. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
-| Two-way relation | Reciprocal relation property. | 🟡 | Planned; requires pair metadata. Spec: docs/specs/relations-rollups.md. |
-| Rollup property | Aggregate across a relation. | 🟡 | Planned; depends on relations. Spec: docs/specs/relations-rollups.md. |
-| Rollup functions | Count, sum, average, min/max, join, etc. | 🟡 | Planned function set. Spec: docs/specs/relations-rollups.md. |
+| Formula property | Computed value from an expression. | ✅ | Expression is parsed on save; see Formulas. |
+| Relation property | Link rows across databases. | ✅ | Target and target rows are validated server-side; the picker searches with cursor paging. |
+| Relation (single) | One linked row. | ✅ | The column stores `multi: false` and clamps every write to one id. |
+| Relation (multi) | Many linked rows. | ✅ | De-duplicated, validated and capped by the target database. |
+| Two-way relation | Reciprocal relation property. | ✅ | Pair metadata, create/reuse, backfill, disable and atomic source/inverse writes. |
+| Rollup property | Aggregate across a relation. | ✅ | Config is validated; computed in table and side peek. Target rows are still loaded eagerly (server projection remains future work). |
+| Rollup functions | Count, sum, average, min/max, join, etc. | ✅ | 15 functions including percent empty and show-original with a custom separator. |
 | Created time | Row creation timestamp. | ✅ | Stored automatically; surfaced in table, side peek, board cards and gallery. |
 | Created by | Row creator. | ✅ | Stored; surfaced with the same coverage as Created time. |
 | Last edited time | Last modification timestamp. | ✅ | Stored (updatedAt); surfaced with the same coverage as Created time. |
@@ -769,10 +769,10 @@ The table below summarizes how many feature rows fall into each status, per area
 
 | Area | ✅ Implemented | 🟡 Partial | 🧭 Planned | ⛔ Out of scope | Total |
 | --- | --- | --- | --- | --- | --- |
-| 1. Editor & blocks | 86 | 12 | 0 | 2 | 100 |
+| 1. Editor & blocks | 87 | 11 | 0 | 2 | 100 |
 | 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
 | 3. Databases | 51 | 2 | 0 | 0 | 53 |
-| 4. Properties | 28 | 7 | 0 | 1 | 36 |
+| 4. Properties | 34 | 1 | 0 | 1 | 36 |
 | 5. Formulas | 15 | 1 | 0 | 0 | 16 |
 | 6. Templates | 6 | 3 | 0 | 1 | 10 |
 | 7. Collaboration | 19 | 7 | 0 | 0 | 26 |
@@ -790,7 +790,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **461** | **80** | **0** | **22** | **563** |
+| **Total** | **468** | **73** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 

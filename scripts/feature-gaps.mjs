@@ -40,7 +40,6 @@ const total = rows.length;
 
 /** The shortlist a maintainer should read first (kept in sync by hand). */
 const PRIORITY = [
-  ["Relations & rollups depth", "Single/multi relation editing and rollup evaluation ship; two-way pairing, value validation and picker paging are not wired end-to-end.", "4. Properties"],
   ["Synced blocks", "Mirror one block's content in many places with a canonical source marker.", "1. Editor & blocks"],
   ["Suggestions mode", "Propose edits for approval with a diff overlay.", "7. Collaboration"],
   ["Comment notification deep links", "Thread depth, block anchors and guest mention scoping now ship; notification payloads still open the page rather than the exact comment or block.", "7. Collaboration"],

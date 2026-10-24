@@ -15,6 +15,7 @@ export type RollupFunction =
   | "latest"
   | "checked"
   | "percent_checked"
+  | "percent_empty"
   | "unique"
   | "show_original";
 
@@ -31,6 +32,7 @@ export const ROLLUP_FUNCTIONS: { id: RollupFunction; label: string }[] = [
   { id: "latest", label: "Latest date" },
   { id: "checked", label: "Checked" },
   { id: "percent_checked", label: "Percent checked" },
+  { id: "percent_empty", label: "Percent empty" },
   { id: "unique", label: "Unique values" },
   { id: "show_original", label: "Show original" },
 ];
@@ -74,7 +76,11 @@ function aggregateNumeric(values: RollupValue[], fn: RollupFunction): number | n
   }
 }
 
-export function aggregate(values: RollupValue[], fn: RollupFunction): string {
+export function aggregate(
+  values: RollupValue[],
+  fn: RollupFunction,
+  options: { separator?: string } = {},
+): string {
   const present = values.filter((value) => !isEmpty(value));
   switch (fn) {
     case "count":
@@ -89,6 +95,11 @@ export function aggregate(values: RollupValue[], fn: RollupFunction): string {
       const done = values.filter((value) => value === true).length;
       return `${Math.round((done / total) * 100)}%`;
     }
+    case "percent_empty": {
+      if (values.length === 0) return "—";
+      const empty = values.filter(isEmpty).length;
+      return `${Math.round((empty / values.length) * 100)}%`;
+    }
     case "unique":
       return String(new Set(present.map((value) => String(value))).size);
     case "earliest":
@@ -101,7 +112,7 @@ export function aggregate(values: RollupValue[], fn: RollupFunction): string {
       return new Date(pick).toISOString().slice(0, 10);
     }
     case "show_original":
-      return present.map((value) => String(value)).join(", ") || "—";
+      return present.map((value) => String(value)).join(options.separator ?? ", ") || "—";
     default: {
       const result = aggregateNumeric(present, fn);
       if (result === null) return "—";

@@ -37,7 +37,7 @@ import {
   type CellTone,
   type LegacyVerificationCell,
 } from "@/lib/verification-cell";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   avatarHue,
   optionTagHue,
@@ -437,23 +437,42 @@ export function PropertyHeader({
               </DropdownMenuItem>
             )}
             {property.type === "RELATION" && (
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>{t(locale, "linkToDatabase")}</DropdownMenuSubTrigger>
-                <DropdownMenuSubContent>
-                  {headerConfig.databases.length === 0 ? (
-                    <DropdownMenuItem disabled>{t(locale, "noOtherDatabases")}</DropdownMenuItem>
-                  ) : (
-                    headerConfig.databases.map((database) => (
-                      <DropdownMenuItem
-                        key={database.id}
-                        onSelect={() => headerConfig.onLinkDatabase(property, database.id)}
-                      >
-                        {database.icon ?? "🗂️"} {database.title || t(locale, "untitled")}
-                      </DropdownMenuItem>
-                    ))
-                  )}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
+              <>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>{t(locale, "linkToDatabase")}</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {headerConfig.databases.length === 0 ? (
+                      <DropdownMenuItem disabled>{t(locale, "noOtherDatabases")}</DropdownMenuItem>
+                    ) : (
+                      headerConfig.databases.map((database) => (
+                        <DropdownMenuItem
+                          key={database.id}
+                          onSelect={() => headerConfig.onLinkDatabase(property, database.id)}
+                        >
+                          {database.icon ?? "🗂️"} {database.title || t(locale, "untitled")}
+                        </DropdownMenuItem>
+                      ))
+                    )}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuCheckboxItem
+                  checked={property.config?.multi !== false}
+                  onCheckedChange={(checked) =>
+                    headerConfig.onSetRelationMulti(property, checked === true)
+                  }
+                >
+                  {t(locale, "allowMultipleRelations")}
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={Boolean(property.config?.inversePropertyId)}
+                  disabled={!property.config?.targetDatabaseId}
+                  onCheckedChange={(checked) =>
+                    headerConfig.onToggleTwoWay(property, checked === true)
+                  }
+                >
+                  {t(locale, "twoWayRelation")}
+                </DropdownMenuCheckboxItem>
+              </>
             )}
             {property.type === "ROLLUP" && (
               <DropdownMenuSub>
@@ -1225,11 +1244,14 @@ export function Cell({
       return (
         <RelationCell
           propertyName={property.name}
+          propertyId={property.id}
           value={value}
           editable={editable}
           locale={locale}
           options={relationOptions ?? []}
           rowId={row?.id}
+          multi={property.config?.multi !== false}
+          configured={Boolean(property.config?.targetDatabaseId)}
           onChange={onChange}
         />
       );

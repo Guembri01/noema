@@ -2,29 +2,28 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 563 feature rows — 461 implemented · 80 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 563 feature rows — 468 implemented · 73 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **80** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **73** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
 | # | Gap | Why it matters | Area |
 | --- | --- | --- | --- |
-| 1 | **Relations & rollups depth** | Single/multi relation editing and rollup evaluation ship; two-way pairing, value validation and picker paging are not wired end-to-end. | 4. Properties |
-| 2 | **Synced blocks** | Mirror one block's content in many places with a canonical source marker. | 1. Editor & blocks |
-| 3 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
-| 4 | **Comment notification deep links** | Thread depth, block anchors and guest mention scoping now ship; notification payloads still open the page rather than the exact comment or block. | 7. Collaboration |
-| 5 | **Pagination everywhere** | Databases, tickets and audit lists load bounded sets; cursor pagination is pending. | 17. Data model & platform |
-| 6 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
-| 7 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
-| 8 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
-| 9 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
+| 1 | **Synced blocks** | Mirror one block's content in many places with a canonical source marker. | 1. Editor & blocks |
+| 2 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
+| 3 | **Comment notification deep links** | Thread depth, block anchors and guest mention scoping now ship; notification payloads still open the page rather than the exact comment or block. | 7. Collaboration |
+| 4 | **Pagination everywhere** | Databases, tickets and audit lists load bounded sets; cursor pagination is pending. | 17. Data model & platform |
+| 5 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
+| 6 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
+| 7 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
+| 8 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
 
 ## By area
 
 ### 1. Editor & blocks
 
-86 done · 12 partial · 0 planned · 2 out of scope
+87 done · 11 partial · 0 planned · 2 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -38,7 +37,6 @@ This file lists the **80** rows that are not finished, area by area, plus 22 int
 | Ask-AI block | Prompt-driven AI block inside a page. | 🟡 | Planned; depends on AI layer and provider keys. |
 | Two-column page property layout | Place properties side by side. | 🟡 | Planned with property panel rework. |
 | Inline database block | A database rendered inside a page. | 🟡 | Renders a collection view inline; view config incomplete. |
-| Linked view of a database | Re-display an existing database elsewhere. | 🟡 | The editor node binds to a chosen source view, applies that view’s filters/sorts, and persists synced/detached overrides per node; a stale view id falls back to the source’s first view. Per-instance filter/sort editing and write-through are still pending. |
 | Drag to another page | Move a block into a different page. | 🟡 | Planned. |
 | Comment block (doc annotation) | Pulls comments conceptually into flow. | ⛔ | Superseded by the inline comment model; not a block. |
 | Table merge/split cells | Combine or split cells. | ⛔ | High complexity for low demand; revisit if requested. |
@@ -62,16 +60,10 @@ This file lists the **80** rows that are not finished, area by area, plus 22 int
 
 ### 4. Properties
 
-28 done · 7 partial · 0 planned · 1 out of scope
+34 done · 1 partial · 0 planned · 1 out of scope
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
-| Relation property | Link rows across databases. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
-| Relation (single) | One linked row. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
-| Relation (multi) | Many linked rows. | 🟡 | Planned. Spec: docs/specs/relations-rollups.md. |
-| Two-way relation | Reciprocal relation property. | 🟡 | Planned; requires pair metadata. Spec: docs/specs/relations-rollups.md. |
-| Rollup property | Aggregate across a relation. | 🟡 | Planned; depends on relations. Spec: docs/specs/relations-rollups.md. |
-| Rollup functions | Count, sum, average, min/max, join, etc. | 🟡 | Planned function set. Spec: docs/specs/relations-rollups.md. |
 | AI autofill property | AI-generated value per row. | 🟡 | Planned; depends on AI layer. |
 | Property type change | Convert a property's type. | ⛔ | Lossy conversions; only safe transforms planned later. |
 
