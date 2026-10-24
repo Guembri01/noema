@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { authenticateScim } from "@/server/scim/auth";
+import { syncScimGroupRoles } from "@/server/scim/roles";
 import {
   parseScimGroup,
   parseScimGroupPatch,
@@ -73,6 +74,7 @@ export async function POST(request: Request) {
       members: { select: { user: { select: { id: true, email: true } } } },
     },
   });
+  await syncScimGroupRoles(context.workspaceId, context.connectionId, parsed.userIds);
   return scimResponse(
     scimGroupResource({
       id: group.id,

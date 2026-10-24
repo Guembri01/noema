@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { authenticateScim } from "@/server/scim/auth";
+import { syncScimGroupRoles } from "@/server/scim/roles";
 import { parseScimGroupPatch, scimGroupResource } from "@/lib/scim/groups";
 import { scimError } from "@/lib/scim/users";
 
@@ -67,7 +68,9 @@ export async function PATCH(
     return scimError(400, "Every member must belong to the workspace.", "invalidValue");
   }
 
+  const affected = new Set(row.members.map((member) => member.user.id));
   for (const patch of patches) {
+    for (const userId of patch.userIds) affected.add(userId);
     if (patch.op === "replace") {
       await prisma.$transaction([
         prisma.teamspaceMember.deleteMany({ where: { teamspaceId: id } }),
@@ -91,6 +94,7 @@ export async function PATCH(
       });
     }
   }
+  await syncScimGroupRoles(context.workspaceId, context.connectionId, [...affected]);
   return new Response(null, { status: 204 });
 }
 
@@ -104,6 +108,8 @@ export async function DELETE(
   const { id } = await params;
   const row = await group(context.workspaceId, id);
   if (!row) return scimError(404, "Group not found.");
+  const affected = row.members.map((member) => member.user.id);
   await prisma.teamspace.delete({ where: { id } });
+  await syncScimGroupRoles(context.workspaceId, context.connectionId, affected);
   return new Response(null, { status: 204 });
 }

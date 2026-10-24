@@ -40,7 +40,7 @@ const total = rows.length;
 
 /** The shortlist a maintainer should read first (kept in sync by hand). */
 const PRIORITY = [
-  ["SAML SSO", "Env-level SAML login, group→role mapping, per-workspace connections, domain auto-join, metadata rotation, SLO, settings UI and SCIM Users/Groups→teamspaces are implemented; SCIM workspace-role mapping remains.", "8. Sharing & permissions"],
+  ["SAML SSO", "Login, per-workspace connections, domain auto-join, metadata rotation, SLO, settings UI and SCIM Users/Groups→teamspaces+roles are implemented; login-page domain chooser, invite precedence and a connection activity view remain.", "8. Sharing & permissions"],
   ["Undo/redo (global)", "App-wide undo beyond the editor's local history.", "16. Navigation & UX"],
   ["Self-hosting & auth", "Packaging, provider-agnostic sign-in and documented deployment remain.", "17. Data model & platform"],
 ];

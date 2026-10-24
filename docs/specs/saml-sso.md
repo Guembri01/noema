@@ -8,8 +8,9 @@
 > resolution, `VerifiedDomain` DNS TXT verification/auto-join, and metadata-URL
 > certificate rotation with a 24-hour overlap (see
 > `docs/integrations/saml.md`), an admin SSO settings section and SCIM 2.0
-> **Users + Groups→teamspaces** provisioning. Not yet built: workspace-role
-> mapping from SCIM groups. Requirement IDs
+> **Users + Groups→teamspaces/roles** provisioning. Remaining polish:
+> login-page domain chooser, invite precedence for JIT users and a per-connection
+> activity view. Requirement IDs
 > (`R10.x`) remain the traceability anchors; §12's task list references them
 > 1:1 and every test cites the IDs it covers.
 

@@ -99,8 +99,9 @@ SCIM **Groups** map to workspace teamspaces:
   workspace);
 - `DELETE /Groups/:id` deletes the teamspace.
 
-SCIM group membership currently controls teamspace membership, not the
-workspace role. Workspace role mapping from SCIM groups remains open.
+SCIM group membership also feeds the connection's `roleRules`: a teamspace
+name is the group name, `ADMIN` wins over `MEMBER`, and every affected member's
+workspace role is recomputed. The workspace owner is never demoted.
 
 ### Metadata rotation (backend, R10.17)
 

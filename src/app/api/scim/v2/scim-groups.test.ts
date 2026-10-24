@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = vi.hoisted(() => ({ authenticateScim: vi.fn() }));
+const roleSync = vi.hoisted(() => ({ syncScimGroupRoles: vi.fn() }));
 const db = vi.hoisted(() => ({
   teamspaceFindMany: vi.fn(),
   teamspaceFindFirst: vi.fn(),
@@ -13,6 +14,7 @@ const db = vi.hoisted(() => ({
 }));
 
 vi.mock("@/server/scim/auth", () => auth);
+vi.mock("@/server/scim/roles", () => roleSync);
 vi.mock("@/lib/db", () => ({
   prisma: {
     teamspace: {
@@ -51,6 +53,7 @@ beforeEach(() => {
   db.memberDeleteMany.mockResolvedValue({ count: 1 });
   db.workspaceMemberFindMany.mockResolvedValue([{ userId: "u1" }]);
   db.transaction.mockImplementation(async (ops: Promise<unknown>[]) => Promise.all(ops));
+  roleSync.syncScimGroupRoles.mockResolvedValue(undefined);
 });
 
 function request(url: string, init?: RequestInit) {
@@ -108,6 +111,7 @@ describe("SCIM Groups", () => {
       data: [{ teamspaceId: "g1", userId: "u1", role: "MEMBER" }],
       skipDuplicates: true,
     });
+    expect(roleSync.syncScimGroupRoles).toHaveBeenCalledWith("ws-1", "conn-1", ["u1"]);
 
     const replace = await PATCH(
       request("/api/scim/v2/Groups/g1", {
