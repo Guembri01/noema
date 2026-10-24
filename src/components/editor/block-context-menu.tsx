@@ -661,7 +661,10 @@ export function BlockContextMenu({
   const comment = () => {
     const node = pos === null ? null : editor.state.doc.nodeAt(pos);
     const quote = (node?.textContent ?? "").trim().slice(0, 300);
-    window.dispatchEvent(new CustomEvent(COMMENT_EVENT, { detail: { quote } }));
+    const blockId = pos === null ? undefined : blockAnchorId(editor.state.doc, pos);
+    window.dispatchEvent(
+      new CustomEvent(COMMENT_EVENT, { detail: { quote, blockId } }),
+    );
   };
 
   const selectedNode = pos === null ? null : editor.state.doc.nodeAt(pos);

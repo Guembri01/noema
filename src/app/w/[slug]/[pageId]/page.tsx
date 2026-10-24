@@ -186,6 +186,7 @@ export default async function PageRoute({
     id: c.id,
     body: c.body,
     quote: c.quote,
+    blockId: c.blockId,
     resolved: c.resolved,
     createdAt: c.createdAt.toISOString(),
     author: c.author,

@@ -44,7 +44,7 @@ const PRIORITY = [
   ["Relations & rollups depth", "Single/multi relation editing and rollup evaluation ship; two-way pairing, value validation and picker paging are not wired end-to-end.", "4. Properties"],
   ["Synced blocks", "Mirror one block's content in many places with a canonical source marker.", "1. Editor & blocks"],
   ["Suggestions mode", "Propose edits for approval with a diff overlay.", "7. Collaboration"],
-  ["Comment depth", "Server-side depth validation, block anchors and dispatch scoping on page threads.", "7. Collaboration"],
+  ["Comment notification deep links", "Thread depth, block anchors and guest mention scoping now ship; notification payloads still open the page rather than the exact comment or block.", "7. Collaboration"],
   ["Pagination everywhere", "Databases, tickets and audit lists load bounded sets; cursor pagination is pending.", "17. Data model & platform"],
   ["Object storage & backups", "Uploads and scheduled backups to S3-compatible storage.", "17. Data model & platform"],
   ["SAML SSO", "OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer.", "8. Sharing & permissions"],

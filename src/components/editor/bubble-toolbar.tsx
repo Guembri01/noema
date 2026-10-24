@@ -28,6 +28,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { COMMENT_EVENT, EQUATION_EVENT } from "@/lib/editor-events";
+import { blockIdAt } from "@/components/editor/page-editor-blockrefs";
 import { AI_SKILLS, type AiSkillId } from "@/lib/ai-skills";
 import { runAiSkill } from "@/lib/ai-client";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -599,8 +600,9 @@ export function BubbleToolbar({
         onClick={() => {
           const { from, to } = editor.state.selection;
           const quote = editor.state.doc.textBetween(from, to, " ").trim().slice(0, 300);
+          const blockId = blockIdAt(editor.state.doc, from) ?? undefined;
           window.dispatchEvent(
-            new CustomEvent(COMMENT_EVENT, { detail: { quote } }),
+            new CustomEvent(COMMENT_EVENT, { detail: { quote, blockId } }),
           );
         }}
       >

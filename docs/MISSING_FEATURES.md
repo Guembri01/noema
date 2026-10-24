@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 563 feature rows — 461 implemented · 80 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 563 feature rows — 459 implemented · 82 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **80** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **82** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -14,7 +14,7 @@ This file lists the **80** rows that are not finished, area by area, plus 22 int
 | 2 | **Relations & rollups depth** | Single/multi relation editing and rollup evaluation ship; two-way pairing, value validation and picker paging are not wired end-to-end. | 4. Properties |
 | 3 | **Synced blocks** | Mirror one block's content in many places with a canonical source marker. | 1. Editor & blocks |
 | 4 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
-| 5 | **Comment depth** | Server-side depth validation, block anchors and dispatch scoping on page threads. | 7. Collaboration |
+| 5 | **Comment notification deep links** | Thread depth, block anchors and guest mention scoping now ship; notification payloads still open the page rather than the exact comment or block. | 7. Collaboration |
 | 6 | **Pagination everywhere** | Databases, tickets and audit lists load bounded sets; cursor pagination is pending. | 17. Data model & platform |
 | 7 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
 | 8 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
@@ -99,7 +99,7 @@ This file lists the **80** rows that are not finished, area by area, plus 22 int
 
 ### 7. Collaboration
 
-21 done · 5 partial · 0 planned
+19 done · 7 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -107,6 +107,8 @@ This file lists the **80** rows that are not finished, area by area, plus 22 int
 | CRDT data model | Conflict-free replicated structures. | 🟡 | Planned (automerge/Yjs-style). Spec: docs/specs/realtime-collab.md. |
 | Presence | See who is viewing a page. | 🟡 | Planned. |
 | Live cursors | Remote carets and selections. | 🟡 | Planned; needs presence transport. |
+| Inline comments | Comments anchored to a text range. | 🟡 | The bubble toolbar and the block context menu both resolve the top-level block id (`blockIdAt` / `blockAnchorId`) and dispatch `{ quote, blockId }`; the panel keeps the anchor in composer state, forwards it to `addCommentAction` for roots only (replies inherit their thread), the page route projects `blockId`, and a stored anchor renders a **Jump to block** button that scrolls the editor to `[data-block-id]`. The persisted shape still has no selection `from`/`to` offsets and no inline highlight, so exact range rendering remains open. R79.3. |
+| Comment mentions | Mention people in comments. | 🟡 | `@Name`, `@first`, `@ada@example.com` notify matching workspace members (`page.mention`); matching is a tested pure helper. Targets are the current `workspaceMember` rows, the author is skipped, and a guest target is filtered through `guestReadablePageIds` so a guest outside the page read scope receives neither the notification nor its `pageId`. Still open: no cross-event coalescing, edits do not re-dispatch, and inline `@user` nodes in page content dispatch nothing. R79.4. |
 | Coarse edit locks | Prevent simultaneous structural edits. | 🟡 | Planned fallback before full CRDT. |
 
 ### 8. Sharing & permissions

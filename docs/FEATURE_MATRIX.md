@@ -355,18 +355,18 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Presence | See who is viewing a page. | 🟡 | Planned. |
 | Live cursors | Remote carets and selections. | 🟡 | Planned; needs presence transport. |
 | Avatars | Per-user avatars in the UI. | ✅ | Avatar field exists; presence UI pending. |
-| Page comments | Comment threads on a page. | ✅ | Data model basic; UI minimal. B79 audit: threads/resolve/reactions/mentions all live; deepest gaps are server-side depth validation, block anchors and dispatch scoping (see rows below). Spec: docs/specs/collaboration-deep.md. |
-| Inline comments | Comments anchored to a text range. | ✅ | Selecting text and commenting stores the quote (`blockId` + `quote`) and renders it above the thread. B79 audit: quote-only in practice — both entry points dispatch `{ quote }` only (`bubble-toolbar.tsx:276`, `block-context-menu.tsx:348`), the panel never forwards `blockId` and no stable block id exists, so `Comment.blockId` stays NULL; no scroll-to-block, no notification deep link. R79.3. |
-| Comment threads | Replies within a comment. | ✅ | One level of replies with their own composer, author and timestamp; replying notifies the parent author. B79 audit: depth 1 is enforced only by the UI and the read query (`queries.ts:121` `parentId: null`); the server writes before validating the parent (`comments.ts:43-59`) so a depth-2 or cross-page `parentId` creates a silently unreachable row, and replies render author+time+body only (no reactions/edit/delete). R79.1, R79.2. |
+| Page comments | Comment threads on a page. | ✅ | Threads, replies, resolve/reopen, edit/delete, reactions and `@mentions` all live on the page route. The server validates thread depth before writing (one reply level), stores stable top-level block anchors, and scopes mention notifications so a guest outside the page's read scope never receives a payload naming it. Spec: docs/specs/collaboration-deep.md. |
+| Inline comments | Comments anchored to a text range. | 🟡 | The bubble toolbar and the block context menu both resolve the top-level block id (`blockIdAt` / `blockAnchorId`) and dispatch `{ quote, blockId }`; the panel keeps the anchor in composer state, forwards it to `addCommentAction` for roots only (replies inherit their thread), the page route projects `blockId`, and a stored anchor renders a **Jump to block** button that scrolls the editor to `[data-block-id]`. The persisted shape still has no selection `from`/`to` offsets and no inline highlight, so exact range rendering remains open. R79.3. |
+| Comment threads | Replies within a comment. | ✅ | One level of replies with their own composer, author, timestamp and reactions; replying notifies the parent author while they still belong to the workspace. `addCommentAction` walks the prospective parent chain and runs `validateThreadDepth` **before** `comment.create`, rejecting a missing parent, a cross-page parent, a cycle and a depth-2 reply with a specific message. The reply UI hides the affordance where the server would reject it. Root replies still expose edit/delete through their own menu; reply edit/delete is deliberately not offered. R79.1, R79.2. |
 | Workspace chat | Discussions with messages. | ✅ | **AI conversations**: docked panel in the main area, workspace tools (notes, members, projects/milestones, tasks), clickable note references, tool activity + model shown per answer; sidebar keeps the list; `GET/POST /api/chat`. |
 | Chat answer actions | Act on an AI answer. | ✅ | Right-click **and** a visible ⋯ button (plus Shift+F10): copy answer, copy as plain text, **save as a new note** (creates a real page from the Markdown and links it back), ask a follow-up, open the discussed note. |
 | Notification read state | Clear a notification. | ✅ | Per-item *Mark read* in the inbox plus *Mark all read*; the sidebar badge follows. |
 | Page re-parenting | Move a page in the tree. | ✅ | Sidebar context menu → **Move to** (top level or any page), with descendant filtering in the UI and cycle guards in the action. |
 | Trash and restore | Recover deleted pages. | ✅ | `/w/<slug>/trash`: every archived page with *Restore*, *Delete forever* (inline confirm) and *Empty trash*; restoring a child whose parent is still trashed re-attaches it at the root. |
-| Resolve comment | Mark a thread resolved. | ✅ | Resolve/Reopen per thread, with a "Resolved" marker. B79 audit: flips `resolved` on the one row (`comments.ts:173-192`) with no `logActivity` — `comment.resolved` is in the `ActivityAction` union with zero writers and no Settings label, and resolved threads stay in the default list (`queries.ts:121` has no filter). R79.2d, R79.6. |
+| Resolve comment | Mark a thread resolved. | ✅ | Resolve/Reopen per thread, with a "Resolved" marker and an All/Open/Resolved filter in the panel. The action flips the root row and writes `comment.resolved` through `logActivity`; the audit feed labels it. Root replies inherit the thread state. R79.2d, R79.6. |
 | Comment edit | Fix a typo in your comment. | ✅ | Authors (and admins) edit inline with Save/Cancel. |
-| Comment reactions | Emoji reactions on comments. | ✅ | 👍🎉❤️😄🙌👀❓ picker with optimistic chips, per-user counts and a `CommentReaction` row per person. B79 audit: reply reactions are accepted by the action and computed at render (`page.tsx:106`) but `CommentNode.replies` has no `reactions` field, so chips never show on replies. R79.2a. |
-| Comment mentions | Mention people in comments. | ✅ | `@Name`, `@first`, `@ada@example.com` notify matching workspace members (`page.mention`); matching is a tested pure helper. B79 audit: dispatch runs only in `addCommentAction` (edits never notify), targets are every `workspaceMember` with no page-visibility check (guests/revoked members get a payload leaking `pageId`), no coalescing, and inline `@user` nodes in page content dispatch nothing. R79.4. |
+| Comment reactions | Emoji reactions on comments. | ✅ | 👍🎉❤️😄🙌👀❓ picker with optimistic chips, per-user counts and a `CommentReaction` row per person. The page query groups reactions for roots and replies, and `CommentNode.replies[].reactions` renders the same chip row under a reply. R79.2a. |
+| Comment mentions | Mention people in comments. | 🟡 | `@Name`, `@first`, `@ada@example.com` notify matching workspace members (`page.mention`); matching is a tested pure helper. Targets are the current `workspaceMember` rows, the author is skipped, and a guest target is filtered through `guestReadablePageIds` so a guest outside the page read scope receives neither the notification nor its `pageId`. Still open: no cross-event coalescing, edits do not re-dispatch, and inline `@user` nodes in page content dispatch nothing. R79.4. |
 | Suggestions mode | Propose edits for approval. | ✅ | Planned; diff overlay needed. |
 | Accept/reject suggestion | Resolve proposed changes. | ✅ | Planned. |
 | Following pages | Follow a page for updates. | ✅ | The page-follow bell toggles `PageFollow`; `notifyPageUpdated` is the consumer: it resolves followers, honours each follower's per-type `page.updated` preference and quiet hours, dedupes within 24 h, and writes one `page.updated` row per deliverable recipient. Covered by `notifications.test.ts`, `pages-follow-notify.test.ts` and `follow-cross-workspace.test.ts`; the cross-workspace cleanup tests pin the stale-follow case. |
@@ -775,7 +775,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 4. Properties | 28 | 7 | 0 | 1 | 36 |
 | 5. Formulas | 15 | 1 | 0 | 0 | 16 |
 | 6. Templates | 6 | 3 | 0 | 1 | 10 |
-| 7. Collaboration | 21 | 5 | 0 | 0 | 26 |
+| 7. Collaboration | 19 | 7 | 0 | 0 | 26 |
 | 8. Sharing & permissions | 20 | 2 | 0 | 0 | 22 |
 | 9. Workspaces & structure | 20 | 3 | 0 | 0 | 23 |
 | 10. Version history | 9 | 0 | 0 | 0 | 9 |
@@ -790,7 +790,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **461** | **80** | **0** | **22** | **563** |
+| **Total** | **459** | **82** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 

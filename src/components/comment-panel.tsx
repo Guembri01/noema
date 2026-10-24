@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   Check,
+  CornerDownRight,
   MessageSquare,
   MoreHorizontal,
   Pencil,
@@ -91,6 +92,8 @@ export type CommentNode = {
   id: string;
   body: string;
   quote: string | null;
+  /** Stable top-level block id the selection was anchored to, when known. */
+  blockId: string | null;
   resolved: boolean;
   reactions: ReactionRow[];
   createdAt: string;
@@ -263,6 +266,27 @@ function useAutoGrowTextarea(maxHeightPx: number): {
   return { ref, resize };
 }
 
+/**
+ * Scroll the editor to a persisted block anchor. The editor stamps
+ * `data-block-id` on every top-level block, so this works from the comment
+ * panel below the editor without threading an editor instance through the
+ * panel. Returns `false` when the block is gone (deleted, or a different page),
+ * letting the caller explain why nothing moved.
+ */
+function scrollToBlock(blockId: string): boolean {
+  if (typeof document === "undefined" || blockId.trim() === "") return false;
+  const blocks = document.querySelectorAll<HTMLElement>("[data-block-id]");
+  for (const block of blocks) {
+    if (block.getAttribute("data-block-id") !== blockId) continue;
+    block.scrollIntoView({
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+      block: "center",
+    });
+    return true;
+  }
+  return false;
+}
+
 /** Honour the user's motion preference for the panel-triggered scroll. */
 function prefersReducedMotion(): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -370,6 +394,7 @@ export function CommentPanel({
   const router = useRouter();
   const [body, setBody] = useState("");
   const [quote, setQuote] = useState("");
+  const [anchorBlockId, setAnchorBlockId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [replyTo, setReplyTo] = useState<string | null>(null);
@@ -441,8 +466,14 @@ export function CommentPanel({
   // The editor's "Comment" action hands the selection to us here.
   useEffect(() => {
     const onComment = (event: Event) => {
-      const detail = (event as CustomEvent<{ quote?: string }>).detail;
+      const detail = (event as CustomEvent<{ quote?: string; blockId?: string }>)
+        .detail;
       setQuote((detail?.quote ?? "").slice(0, 500));
+      setAnchorBlockId(
+        typeof detail?.blockId === "string" && detail.blockId.trim() !== ""
+          ? detail.blockId
+          : null,
+      );
       setReplyTo(null);
       composerRef.current?.scrollIntoView({
         block: "center",
@@ -466,6 +497,7 @@ export function CommentPanel({
           body: text,
           parentId,
           quote: parentId ? undefined : quote.trim() || undefined,
+          blockId: parentId ? undefined : anchorBlockId ?? undefined,
         }),
       );
       if (!outcome.ok) {
@@ -483,6 +515,7 @@ export function CommentPanel({
       setReplyBody("");
       setReplyTo(null);
       setQuote("");
+      setAnchorBlockId(null);
       toast.success(parentId ? "Reply added" : "Comment added");
       router.refresh();
     });
@@ -590,6 +623,7 @@ export function CommentPanel({
                 const isAuthor = comment.author.id === currentUserId;
                 const resolved = resolveState(comment.resolved) === "resolved";
                 const canReplyToThis = replyableIds.has(comment.id);
+                const commentBlockId = comment.blockId;
                 return (
                   <li
                     key={comment.id}
@@ -634,6 +668,24 @@ export function CommentPanel({
                         >
                           {comment.quote}
                         </blockquote>
+                      )}
+
+                      {commentBlockId && (
+                        <button
+                          type="button"
+                          data-testid={`comment-jump-${comment.id}`}
+                          data-comment-block-id={commentBlockId}
+                          aria-label={`${t(locale, "jumpToBlock")}: ${commentBlockId}`}
+                          onClick={() => {
+                            if (!scrollToBlock(commentBlockId)) {
+                              toast.error(t(locale, "nothingToWorkWith"));
+                            }
+                          }}
+                          className="focus-ring u-colors mt-2 flex items-center gap-1 rounded-xs text-xs text-accent hover:underline"
+                        >
+                          <CornerDownRight className="h-3 w-3" />
+                          {t(locale, "jumpToBlock")}
+                        </button>
                       )}
 
                       {editingId === comment.id ? (
@@ -882,7 +934,10 @@ export function CommentPanel({
               <button
                 type="button"
                 aria-label={t(locale, "removeQuote")}
-                onClick={() => setQuote("")}
+                onClick={() => {
+                  setQuote("");
+                  setAnchorBlockId(null);
+                }}
                 className="focus-ring shrink-0 rounded-xs u-colors hover:text-fg"
               >
                 ×
@@ -941,6 +996,7 @@ export function CommentPanel({
                 onClick={() => {
                   setBody("");
                   setQuote("");
+                  setAnchorBlockId(null);
                   setComposerError(null);
                 }}
               >

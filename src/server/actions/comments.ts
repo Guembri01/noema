@@ -164,8 +164,11 @@ export async function addCommentAction(input: {
     data: {
       pageId: parsed.data.pageId,
       parentId: parsed.data.parentId ?? null,
-      blockId: parsed.data.blockId,
-      quote: parsed.data.quote?.trim() || null,
+      // Anchors belong to the thread root: a reply is rendered inside its
+      // parent's thread, so storing a second anchor would only create a jump
+      // target that the thread UI never shows.
+      blockId: parsed.data.parentId ? undefined : parsed.data.blockId,
+      quote: parsed.data.parentId ? null : parsed.data.quote?.trim() || null,
       authorId: user.id,
       body: parsed.data.body,
     },
@@ -208,16 +211,37 @@ export async function addCommentAction(input: {
   if (mentions.length > 0) {
     const members = await prisma.workspaceMember.findMany({
       where: { workspaceId: page.workspaceId },
-      select: { userId: true, user: { select: { name: true, email: true } } },
+      select: {
+        userId: true,
+        role: true,
+        user: { select: { name: true, email: true } },
+      },
     });
     const targets = members.filter(
       (member) =>
         member.userId !== user.id &&
         mentions.some((mention) => mentionMatches(mention, member.user)),
     );
-    if (targets.length > 0) {
+    // A guest only reaches the pages in their read scope. A mention is a
+    // notification carrying the page id, so a guest outside that scope must
+    // not receive it (and must not learn that the page exists) even though
+    // they are a workspace member. Members and admins reach the whole
+    // workspace, and an explicit page READ row still lets them open the page.
+    const deliverable: typeof targets = [];
+    for (const target of targets) {
+      if (target.role !== "GUEST") {
+        deliverable.push(target);
+        continue;
+      }
+      const readable = await guestReadablePageIds(
+        target.userId,
+        page.workspaceId,
+      );
+      if (readable.has(parsed.data.pageId)) deliverable.push(target);
+    }
+    if (deliverable.length > 0) {
       await prisma.notification.createMany({
-        data: targets.map((target) => ({
+        data: deliverable.map((target) => ({
           userId: target.userId,
           type: "page.mention",
           // B136: the payload names the workspace, like the other two

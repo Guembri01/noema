@@ -100,6 +100,7 @@ function makeComment(overrides: Partial<Comment> = {}): Comment {
     id: "c1",
     body: "First!",
     quote: "the anchored words",
+    blockId: null,
     resolved: false,
     reactions: [{ emoji: "👍", count: 2, mine: false }],
     createdAt: "2026-03-16T00:00:00.000Z",
@@ -139,6 +140,16 @@ describe("CommentPanel markup", () => {
     expect(html).toContain('data-testid="reaction-chip-👍"');
     expect(html).toContain("Reply");
     expect(html).toContain("Resolve");
+    // No block anchor was stored, so there is no jump affordance.
+    expect(html).not.toContain('data-testid="comment-jump-c1"');
+  });
+
+  it("offers a jump to a persisted block anchor", () => {
+    const html = render({ comments: [makeComment({ blockId: "block-42" })] });
+    expect(html).toContain('data-testid="comment-jump-c1"');
+    expect(html).toContain('data-comment-block-id="block-42"');
+    expect(html).toContain("Jump to block");
+    expect(html).toContain('aria-label="Jump to block: block-42"');
   });
 
   it("renders a resolved thread muted with a Resolved tag", () => {

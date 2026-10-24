@@ -15,6 +15,7 @@ import {
   pmDocToReferenceBlocks,
   resolveBlockReference,
 } from "@/components/editor/page-editor";
+import { blockIdAt } from "@/components/editor/page-editor-blockrefs";
 
 /*
  * `block-refs.ts` wired into the editor's block-id path: the live document is
@@ -56,6 +57,15 @@ describe("pmDocToReferenceBlocks (collectBlocks)", () => {
     const index = blockReferenceIndex(doc);
     expect([...index.byId.keys()]).toEqual(["src", "mirror", "multi"]);
     expect(index.byId.get("src")?.type).toBe("paragraph");
+  });
+});
+
+describe("blockIdAt", () => {
+  it("resolves the top-level block around a text position", () => {
+    const secondStart = doc.child(0).nodeSize;
+    expect(blockIdAt(doc, 1)).toBe("src");
+    expect(blockIdAt(doc, secondStart + 1)).toBe("mirror");
+    expect(blockIdAt(doc, doc.content.size - 1)).toBe("multi");
   });
 });
 
