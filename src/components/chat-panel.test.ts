@@ -19,6 +19,13 @@ vi.mock("@/server/actions/chat", () => ({
   postChatMessageAction: vi.fn(),
   regenerateChatAnswerAction: vi.fn(),
 }));
+vi.mock("@/server/actions/prompts", () => ({
+  listPromptsAction: vi.fn(),
+  createPromptAction: vi.fn(),
+  updatePromptAction: vi.fn(),
+  deletePromptAction: vi.fn(),
+  clonePromptAction: vi.fn(),
+}));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 }));
@@ -31,6 +38,7 @@ import {
   STREAM_INITIAL,
   TypingIndicator,
   answerChips,
+  appendPromptToDraft,
   autoscrollDecision,
   citationChips,
   citationHue,
@@ -250,6 +258,14 @@ describe("composer controls", () => {
     expect(composerHeight(80)).toBe(80);
     expect(composerHeight(1000)).toBe(160);
     expect(composerHeight(Number.NaN)).toBe(32);
+  });
+
+  it("inserts a saved prompt without losing the current draft", () => {
+    expect(appendPromptToDraft("", "Summarize {{notes}}.")).toBe("Summarize {{notes}}.");
+    expect(appendPromptToDraft("Ask this:  ", "Summarize {{notes}}.")).toBe(
+      "Ask this:\n\nSummarize {{notes}}.",
+    );
+    expect(appendPromptToDraft("Keep me", "")).toBe("Keep me");
   });
 });
 

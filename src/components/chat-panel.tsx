@@ -15,6 +15,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowDown,
+  BookOpen,
   Check,
   CheckCircle2,
   Copy,
@@ -37,11 +38,14 @@ import {
   postChatMessageAction,
   regenerateChatAnswerAction,
 } from "@/server/actions/chat";
+import { listPromptsAction } from "@/server/actions/prompts";
+import type { PromptTemplate } from "@/lib/ai-prompt-library";
 import type { ChatActionProposal } from "@/lib/chat-actions";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -527,6 +531,118 @@ export function composerControls({
     sendDisabled: draft.trim().length === 0 || busy,
     showCancel: phase !== "idle",
   };
+}
+
+/**
+ * Append a saved prompt to a composer draft, separated by a blank line so the
+ * user's own text is never swallowed. An empty draft becomes the prompt alone.
+ * Pure so the insertion rule is pinned without a browser.
+ */
+export function appendPromptToDraft(draft: string, body: string): string {
+  const prompt = typeof body === "string" ? body.trim() : "";
+  if (prompt.length === 0) return draft;
+  const current = typeof draft === "string" ? draft.trimEnd() : "";
+  return current.length === 0 ? prompt : `${current}\n\n${prompt}`;
+}
+
+/**
+ * The saved-prompt picker in the chat composer (R25.22).
+ *
+ * The prompt library is loaded lazily the first time the menu opens, so the
+ * chat panel does not pay for a query nobody used. Selecting a row inserts the
+ * prompt body into the draft instead of sending it: variables still need to be
+ * filled in by the author before the question is asked.
+ */
+function ChatPromptPicker({
+  workspaceId,
+  slug,
+  onInsert,
+}: {
+  workspaceId: string;
+  slug: string;
+  onInsert: (body: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [prompts, setPrompts] = useState<PromptTemplate[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    if (prompts !== null || loading) return;
+    setLoading(true);
+    const wrapped = await safeAction(() => listPromptsAction({ workspaceId }));
+    setLoading(false);
+    if (!wrapped.ok) {
+      setError(wrapped.error);
+      return;
+    }
+    const result = wrapped.value;
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setError(null);
+    setPrompts(result.prompts);
+  };
+
+  return (
+    <DropdownMenu
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) void load();
+      }}
+    >
+      <DropdownMenuTrigger asChild>
+        <Button
+          size="icon"
+          variant="ghost"
+          aria-label="Saved prompts"
+          title="Saved prompts"
+          data-testid="chat-prompt-picker"
+        >
+          <BookOpen className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" align="start" className="w-72 p-1">
+        <DropdownMenuLabel>Saved prompts</DropdownMenuLabel>
+        {loading ? (
+          <p className="px-2 py-2 text-xs text-muted">Loading prompts…</p>
+        ) : error ? (
+          <p role="alert" className="px-2 py-2 text-xs text-danger">
+            {error}
+          </p>
+        ) : prompts !== null && prompts.length === 0 ? (
+          <p className="px-2 py-2 text-xs text-muted">
+            No saved prompts yet. Create one from settings.
+          </p>
+        ) : (
+          (prompts ?? []).slice(0, 8).map((prompt) => (
+            <DropdownMenuItem
+              key={prompt.id}
+              onSelect={() => {
+                onInsert(prompt.body);
+                setOpen(false);
+              }}
+              className="flex items-start gap-2"
+            >
+              <span className="min-w-0 flex-1 truncate">{prompt.name}</span>
+              <Tag size="sm" hue={prompt.scope === "personal" ? "gray" : "blue"}>
+                {prompt.scope === "personal" ? "Personal" : "Shared"}
+              </Tag>
+            </DropdownMenuItem>
+          ))
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href={`/w/${slug}/settings/prompts`}>
+            <BookOpen className="h-4 w-4 text-muted" aria-hidden />
+            Manage prompt library
+          </Link>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 /* -------------------------------------------------------------------------- *
@@ -1502,6 +1618,14 @@ export function ChatPanel({
                 {modelLabel}
               </Tag>
             )}
+            <ChatPromptPicker
+              workspaceId={workspaceId}
+              slug={slug}
+              onInsert={(body) => {
+                setDraft((current) => appendPromptToDraft(current, body));
+                requestAnimationFrame(() => composerRef.current?.focus());
+              }}
+            />
             <span className="hidden items-center gap-1 text-2xs text-muted sm:flex">
               <Kbd size="xs">↵</Kbd> send
               <span className="mx-0.5">·</span>

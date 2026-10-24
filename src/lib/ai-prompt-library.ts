@@ -8,9 +8,9 @@
  * `WorkspacePrompt` row, the chat composer picker and the settings manage-list
  * all share: token extraction, validation, strict rendering and the
  * create/update/delete/list/clone reducers. It deliberately has no React, no
- * Prisma and no network — the DB row (R25.22's `{id, workspaceId, title,
- * prompt, createdById, shared, createdAt}`) and the server actions are a later
- * slice; everything here round-trips as plain values.
+ * Prisma and no network — the `WorkspacePrompt` row and its server actions
+ * (`@/server/actions/prompts`) map to and from these plain values; everything
+ * here round-trips as plain values.
  *
  * The built-in skills in `ai-skills.ts` stay code-owned and are **not**
  * editable through this engine (spec §4 R25.22): they are prompts as functions

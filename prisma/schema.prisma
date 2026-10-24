@@ -129,6 +129,7 @@ model User {
   ticketViews      TicketView[]
   chatThreads     ChatThread[]       @relation("ChatThreadCreatedBy")
   chatMessages    ChatMessage[]
+  workspacePrompts WorkspacePrompt[]
 
   @@index([email])
 }
@@ -167,6 +168,7 @@ model Workspace {
   calendarEvents CalendarEvent[]
   ssoConnections SsoConnection[]
   verifiedDomains VerifiedDomain[]
+  prompts        WorkspacePrompt[]
 
   @@index([ownerId])
 }
@@ -699,6 +701,28 @@ model AiProviderConfig {
   updatedAt       DateTime @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+/// A reusable prompt template (R25.22). `scope = "workspace"` rows are shared
+/// with every member; `scope = "personal"` rows are visible only to their
+/// creator. The body may carry `{{variable}}` tokens; run-time rendering stays
+/// in `@/lib/ai-prompt-library` (the pure engine this table stores data for).
+model WorkspacePrompt {
+  id          String   @id @default(cuid())
+  workspaceId String
+  createdById String
+  name        String
+  body        String
+  scope       String   @default("workspace")
+  tags        Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, scope])
+  @@index([createdById])
 }
 
 // ---------------------------------------------------------------------------
