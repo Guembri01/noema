@@ -1,6 +1,7 @@
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SignedXml } from "xml-crypto";
+import { settingsFromSsoConnection } from "./connection";
 import { createSamlClient, samlMetadata } from "./saml-client";
 import { createSamlRelayState, readSamlRelayState } from "./saml-relay";
 import {
@@ -233,6 +234,58 @@ describe("identity mapping and replay key", () => {
         "re-encoded-copy",
       ),
     ).toBe("saml:assert-9");
+  });
+});
+
+describe("connection settings", () => {
+  const row = {
+    id: "conn-1",
+    workspaceId: "ws-1",
+    name: "Acme Okta",
+    protocol: "saml",
+    idpEntityId: IDP_ENTITY,
+    ssoUrl: "https://idp.example.com/sso",
+    certificate: IDP_CERT,
+    prevCertificate: IDP_CERT,
+    prevCertificateExpiresAt: null,
+    metadataUrl: "https://idp.example.com/metadata",
+    metadataFetchedAt: null,
+    spEntityId: null,
+    callbackUrl: null,
+    emailAttribute: null,
+    nameAttribute: null,
+    groupsAttribute: null,
+    roleRules: null,
+    enabled: true,
+  };
+
+  it("includes a previous certificate during the rotation overlap", () => {
+    const resolved = settingsFromSsoConnection(
+      { ...row, prevCertificateExpiresAt: new Date(Date.now() + 60_000) },
+      "https://app.example.com",
+    );
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) {
+      expect(Array.isArray(resolved.settings.idpCertificate)).toBe(true);
+      expect(resolved.settings.idpCertificate).toHaveLength(2);
+      expect(resolved.settings.workspaceId).toBe("ws-1");
+    }
+  });
+
+  it("drops an expired previous certificate", () => {
+    const resolved = settingsFromSsoConnection(
+      { ...row, prevCertificateExpiresAt: new Date(Date.now() - 60_000) },
+      "https://app.example.com",
+    );
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) {
+      expect(resolved.settings.idpCertificate).toBe(IDP_CERT.trim());
+    }
+  });
+
+  it("refuses a disabled/incomplete connection", () => {
+    expect(settingsFromSsoConnection({ ...row, enabled: false }, "https://app.example.com").ok).toBe(false);
+    expect(settingsFromSsoConnection({ ...row, ssoUrl: "" }, "https://app.example.com").ok).toBe(false);
   });
 });
 

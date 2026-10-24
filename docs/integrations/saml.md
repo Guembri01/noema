@@ -78,6 +78,14 @@ login whose email domain matches a verified row auto-joins that workspace. The
 role still comes from `AUTH_SAML_ROLE_RULES`/`MEMBER`, and an existing owner is
 never demoted.
 
+### Metadata rotation (backend, R10.17)
+
+A connection may carry an `metadataUrl`. `refreshSsoConnectionMetadataAction`
+fetches it through the outbound SSRF guard (https only, 5 s timeout), parses the
+IdP entity id, SSO URL and signing certificate, and rotates the certificate
+while keeping the previous one for a **24-hour overlap**. Logins accept both
+certificates during that window, so an IdP rotation does not lock anyone out.
+
 ## 2. Provider notes
 
 ### Okta

@@ -26,6 +26,10 @@ export type SsoConnectionRow = {
   idpEntityId: string;
   ssoUrl: string;
   certificate: string;
+  prevCertificate: string | null;
+  prevCertificateExpiresAt: Date | null;
+  metadataUrl: string | null;
+  metadataFetchedAt: Date | null;
   spEntityId: string | null;
   callbackUrl: string | null;
   emailAttribute: string | null;
@@ -68,6 +72,13 @@ export function settingsFromSsoConnection(
   if (!rules.ok) return { ok: false, reason: rules.reason };
 
   const cleanOrigin = origin.replace(/\/+$/, "");
+  const certificates = [normalizePem(row.certificate)];
+  if (
+    row.prevCertificate &&
+    (!row.prevCertificateExpiresAt || row.prevCertificateExpiresAt.getTime() > Date.now())
+  ) {
+    certificates.push(normalizePem(row.prevCertificate));
+  }
   return {
     ok: true,
     connectionId: row.id,
@@ -75,7 +86,7 @@ export function settingsFromSsoConnection(
     settings: {
       idpEntityId: row.idpEntityId.trim(),
       ssoUrl: row.ssoUrl.trim(),
-      idpCertificate: normalizePem(row.certificate),
+      idpCertificate: certificates.length === 1 ? certificates[0] : certificates,
       spEntityId: row.spEntityId?.trim() || `${cleanOrigin}${SAML_METADATA_PATH}`,
       callbackUrl: row.callbackUrl?.trim() || `${cleanOrigin}${SAML_ACS_PATH}`,
       logoutCallbackUrl: `${cleanOrigin}${SAML_SLO_PATH}`,

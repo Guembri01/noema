@@ -10,6 +10,7 @@ const db = vi.hoisted(() => ({
   delete: vi.fn(),
 }));
 const activity = vi.hoisted(() => ({ logActivity: vi.fn() }));
+const guard = vi.hoisted(() => ({ safeFetchGuarded: vi.fn() }));
 
 vi.mock("@/lib/auth", () => ({ requireUser: auth.requireUser }));
 vi.mock("@/lib/permissions", async (importOriginal) => {
@@ -18,14 +19,18 @@ vi.mock("@/lib/permissions", async (importOriginal) => {
 });
 vi.mock("@/lib/db", () => ({ prisma: { ssoConnection: db } }));
 vi.mock("@/lib/activity", () => activity);
+vi.mock("@/lib/feed-guard", () => guard);
 
 import {
   createSsoConnectionAction,
   deleteSsoConnectionAction,
   listSsoConnectionsAction,
+  refreshSsoConnectionMetadataAction,
   updateSsoConnectionAction,
   type SsoConnectionInput,
 } from "./sso-connections";
+
+const metadataXml = `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com/new-metadata"><IDPSSODescriptor><KeyDescriptor use="signing"><KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><X509Data><X509Certificate>${Buffer.from("new-cert").toString("base64")}</X509Certificate></X509Data></KeyInfo></KeyDescriptor><SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.com/new-sso"/></IDPSSODescriptor></EntityDescriptor>`;
 
 const INPUT: SsoConnectionInput = {
   name: "Acme Okta",
@@ -147,5 +152,81 @@ describe("create / update / delete", () => {
     expect(activity.logActivity).toHaveBeenCalledWith(
       expect.objectContaining({ action: "sso.connection_deleted" }),
     );
+  });
+});
+
+describe("metadata rotation", () => {
+  it("rotates the certificate and keeps the previous one for 24 hours", async () => {
+    db.findFirst.mockResolvedValue({
+      id: "conn-1",
+      metadataUrl: "https://idp.example.com/metadata",
+      certificate: "-----BEGIN CERTIFICATE-----\nold\n-----END CERTIFICATE-----",
+    });
+    guard.safeFetchGuarded.mockResolvedValue({
+      ok: true,
+      response: new Response(metadataXml, { status: 200 }),
+      finalUrl: "https://idp.example.com/metadata",
+    });
+    db.update.mockResolvedValue({
+      id: "conn-1",
+      name: "Acme Okta",
+      idpEntityId: "https://idp.example.com/new-metadata",
+      ssoUrl: "https://idp.example.com/new-sso",
+      metadataUrl: "https://idp.example.com/metadata",
+      metadataFetchedAt: new Date("2026-01-01T00:00:00Z"),
+      spEntityId: null,
+      callbackUrl: null,
+      emailAttribute: null,
+      nameAttribute: null,
+      groupsAttribute: null,
+      roleRules: null,
+      enabled: true,
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      updatedAt: new Date("2026-01-01T00:00:00Z"),
+    });
+
+    await expect(
+      refreshSsoConnectionMetadataAction("ws-1", "conn-1"),
+    ).resolves.toMatchObject({ ok: true, connection: { metadataUrl: "https://idp.example.com/metadata" } });
+    expect(db.update).toHaveBeenCalledWith({
+      where: { id: "conn-1" },
+      data: expect.objectContaining({
+        idpEntityId: "https://idp.example.com/new-metadata",
+        ssoUrl: "https://idp.example.com/new-sso",
+        certificate: expect.stringContaining("bmV3LWNlcnQ="),
+        prevCertificate: expect.stringContaining("old"),
+        prevCertificateExpiresAt: expect.any(Date),
+      }),
+      select: expect.any(Object),
+    });
+    expect(activity.logActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "sso.metadata_refreshed", meta: expect.objectContaining({ rotated: true }) }),
+    );
+  });
+
+  it("fails closed when the URL is missing, blocked or malformed", async () => {
+    await expect(
+      refreshSsoConnectionMetadataAction("ws-1", "conn-1"),
+    ).resolves.toEqual({ error: "Set an https metadata URL on this connection first." });
+
+    db.findFirst.mockResolvedValue({
+      id: "conn-1",
+      metadataUrl: "https://idp.example.com/metadata",
+      certificate: "old",
+    });
+    guard.safeFetchGuarded.mockResolvedValue({ ok: false, reason: "blocked" });
+    await expect(
+      refreshSsoConnectionMetadataAction("ws-1", "conn-1"),
+    ).resolves.toEqual({ error: "The metadata URL was refused by the outbound network guard." });
+
+    guard.safeFetchGuarded.mockResolvedValue({
+      ok: true,
+      response: new Response("not xml", { status: 200 }),
+      finalUrl: "https://idp.example.com/metadata",
+    });
+    await expect(
+      refreshSsoConnectionMetadataAction("ws-1", "conn-1"),
+    ).resolves.toEqual({ error: "The IdP metadata is not valid XML." });
+    expect(db.update).not.toHaveBeenCalled();
   });
 });

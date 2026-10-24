@@ -8,6 +8,8 @@ import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/activity";
 import { canPerformWorkspaceAction, getWorkspaceAccess } from "@/lib/permissions";
 import { parseSamlRoleRules } from "@/lib/sso/saml";
+import { parseIdpMetadata } from "@/lib/sso/metadata";
+import { safeFetchGuarded } from "@/lib/feed-guard";
 
 export type SsoConnectionResult<T = unknown> =
   | ({ ok: true } & T)
@@ -19,6 +21,7 @@ export type SsoConnectionInput = {
   idpEntityId: string;
   ssoUrl: string;
   certificate: string;
+  metadataUrl?: string;
   spEntityId?: string;
   callbackUrl?: string;
   emailAttribute?: string;
@@ -35,6 +38,8 @@ export type SsoConnectionView = {
   name: string;
   idpEntityId: string;
   ssoUrl: string;
+  metadataUrl: string | null;
+  metadataFetchedAt: string | null;
   spEntityId: string | null;
   callbackUrl: string | null;
   emailAttribute: string | null;
@@ -51,6 +56,8 @@ const SELECT = {
   name: true,
   idpEntityId: true,
   ssoUrl: true,
+  metadataUrl: true,
+  metadataFetchedAt: true,
   spEntityId: true,
   callbackUrl: true,
   emailAttribute: true,
@@ -81,6 +88,10 @@ function validateInput(input: SsoConnectionInput):
   if (!certificate.includes("-----BEGIN ")) {
     return { ok: false, error: "The IdP certificate must be PEM text." };
   }
+  const metadataUrl = text(input.metadataUrl);
+  if (metadataUrl && !/^https:\/\//i.test(metadataUrl)) {
+    return { ok: false, error: "The metadata URL must be an https URL." };
+  }
   const spEntityId = text(input.spEntityId);
   const callbackUrl = text(input.callbackUrl);
   if (spEntityId && !/^https?:\/\//i.test(spEntityId)) {
@@ -100,6 +111,7 @@ function validateInput(input: SsoConnectionInput):
       idpEntityId,
       ssoUrl,
       certificate,
+      metadataUrl: metadataUrl || null,
       spEntityId: spEntityId || null,
       callbackUrl: callbackUrl || null,
       emailAttribute: text(input.emailAttribute) || null,
@@ -136,6 +148,8 @@ function toView(row: {
   name: string;
   idpEntityId: string;
   ssoUrl: string;
+  metadataUrl: string | null;
+  metadataFetchedAt: Date | null;
   spEntityId: string | null;
   callbackUrl: string | null;
   emailAttribute: string | null;
@@ -151,6 +165,8 @@ function toView(row: {
     name: row.name,
     idpEntityId: row.idpEntityId,
     ssoUrl: row.ssoUrl,
+    metadataUrl: row.metadataUrl,
+    metadataFetchedAt: row.metadataFetchedAt?.toISOString() ?? null,
     spEntityId: row.spEntityId,
     callbackUrl: row.callbackUrl,
     emailAttribute: row.emailAttribute,
@@ -234,6 +250,74 @@ export async function updateSsoConnectionAction(
     meta: { connectionId, name: text(input.name) },
   });
   return { ok: true };
+}
+
+/**
+ * Re-fetch an IdP metadata URL (R10.17). The new signing certificate replaces
+ * the current one while the previous certificate remains valid for a 24-hour
+ * overlap, so an in-flight rotation never locks users out.
+ */
+export async function refreshSsoConnectionMetadataAction(
+  workspaceId: string,
+  connectionId: string,
+): Promise<SsoConnectionResult<{ connection: SsoConnectionView }>> {
+  const auth = await authorize(workspaceId);
+  if ("error" in auth) return auth;
+  const row = await prisma.ssoConnection.findFirst({
+    where: { id: connectionId, workspaceId },
+    select: { id: true, metadataUrl: true, certificate: true },
+  });
+  if (!row) return { error: "That SAML connection does not exist in this workspace." };
+  if (!row.metadataUrl || !/^https:\/\//i.test(row.metadataUrl)) {
+    return { error: "Set an https metadata URL on this connection first." };
+  }
+
+  const fetched = await safeFetchGuarded(row.metadataUrl, {
+    headers: { accept: "application/samlmetadata+xml, application/xml, text/xml" },
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!fetched.ok) {
+    return {
+      error:
+        fetched.reason === "blocked"
+          ? "The metadata URL was refused by the outbound network guard."
+          : "The metadata URL could not be fetched.",
+    };
+  }
+  if (!fetched.response.ok) {
+    return { error: `The metadata URL answered ${fetched.response.status}.` };
+  }
+  const parsed = await parseIdpMetadata(await fetched.response.text());
+  if (!parsed.ok) return { error: parsed.reason };
+
+  const now = new Date();
+  const nextCertificate = parsed.metadata.certificates[0];
+  const rotated = nextCertificate.trim() !== row.certificate.trim();
+  const updated = await prisma.ssoConnection.update({
+    where: { id: connectionId },
+    data: {
+      idpEntityId: parsed.metadata.entityId,
+      ssoUrl: parsed.metadata.ssoUrl,
+      certificate: nextCertificate,
+      metadataFetchedAt: now,
+      ...(rotated
+        ? {
+            prevCertificate: row.certificate,
+            prevCertificateExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+          }
+        : {}),
+    },
+    select: SELECT,
+  });
+  await logActivity({
+    workspaceId,
+    actorId: auth.user.id,
+    action: "sso.metadata_refreshed",
+    targetType: "workspace",
+    targetId: workspaceId,
+    meta: { connectionId, rotated },
+  });
+  return { ok: true, connection: toView(updated) };
 }
 
 /** Delete one of the workspace's connections. */

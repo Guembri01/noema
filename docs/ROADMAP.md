@@ -205,8 +205,9 @@ Ordered by dependency and impact. Every item maps to rows in
   workspace auto-join.
 - [x] **SAML T10.9 (domain half)** — `VerifiedDomain` persistence, DNS TXT add/verify/delete
   actions and verified-domain auto-join.
-- [ ] **SAML T10.5–T10.8** — rendered settings UI, metadata-URL rotation, SLO validation and
-  SCIM.
+- [x] **SAML T10.7 (rotation half)** — guarded metadata-URL refresh, IdP metadata parsing and
+  24-hour previous-certificate overlap.
+- [ ] **SAML T10.5/T10.8** — rendered settings UI, full SLO validation and SCIM.
 - [ ] CRDT M2 — persisted documents + text CRDT; M3 — cursors/awareness UX. Honest scope:
   M2/M3 only if M1 lands clean this year — otherwise multiplayer rows stay 🧭 into 2027.
 

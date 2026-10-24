@@ -48,8 +48,8 @@ export type SamlSettings = {
   idpEntityId: string;
   /** The IdP SSO endpoint (HTTP-Redirect binding). */
   ssoUrl: string;
-  /** The IdP signing certificate/public key, PEM (newlines normalised). */
-  idpCertificate: string;
+  /** IdP signing certificate(s)/public key(s), PEM (rotation overlap). */
+  idpCertificate: string | string[];
   /** Our entity id. */
   spEntityId: string;
   /** Our ACS URL. */

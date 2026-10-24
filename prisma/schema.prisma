@@ -180,6 +180,11 @@ model SsoConnection {
   idpEntityId     String
   ssoUrl          String
   certificate     String
+  metadataUrl     String?
+  metadataFetchedAt DateTime?
+  /// Previous IdP certificate during a rotation overlap window (R10.17).
+  prevCertificate String?
+  prevCertificateExpiresAt DateTime?
   spEntityId      String?
   callbackUrl     String?
   emailAttribute  String?
