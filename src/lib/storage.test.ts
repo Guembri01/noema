@@ -1,4 +1,6 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,6 +12,7 @@ import {
   contentTypeFor,
   isValidAssetKey,
   localDriver,
+  s3Driver,
   signS3Request,
   type StorageDriver,
 } from "./storage";
@@ -148,5 +151,93 @@ describe("localDriver", () => {
     expect(file.mode & 0o777).toBe(0o600);
     const dir = await stat(path.join(root, "ws1"));
     expect(dir.mode & 0o777).toBe(0o700);
+  });
+});
+
+describe("s3Driver", () => {
+  let server: ReturnType<typeof createServer>;
+  let base = "";
+  let store: Map<string, Uint8Array>;
+  let requests: { method: string; path: string; authorization?: string }[];
+
+  beforeEach(async () => {
+    store = new Map();
+    requests = [];
+    server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on("end", () => {
+        const key = decodeURIComponent((request.url ?? "/").split("?")[0]);
+        requests.push({
+          method: request.method ?? "",
+          path: key,
+          authorization: request.headers.authorization,
+        });
+        if (request.method === "PUT") {
+          store.set(key, new Uint8Array(Buffer.concat(chunks)));
+          response.statusCode = 200;
+          response.end();
+        } else if (request.method === "GET") {
+          const body = store.get(key);
+          if (!body) {
+            response.statusCode = 404;
+            response.end();
+          } else {
+            response.setHeader("content-type", "image/png");
+            response.end(Buffer.from(body));
+          }
+        } else if (request.method === "DELETE") {
+          store.delete(key);
+          response.statusCode = 204;
+          response.end();
+        } else {
+          response.statusCode = 405;
+          response.end();
+        }
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    base = typeof address === "object" && address ? `http://127.0.0.1:${address.port}` : "";
+  });
+
+  afterEach(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  it("round-trips uploads through a prefixed S3 bucket with signed requests", async () => {
+    const driver = s3Driver({
+      endpoint: base,
+      bucket: "assets",
+      region: "eu-west-3",
+      accessKeyId: "AKIAEXAMPLE",
+      secretAccessKey: "very-secret",
+      prefix: "uploads",
+    });
+    const body = new Uint8Array([5, 4, 3, 2, 1]);
+
+    await driver.put("ws1/file.png", body, "image/png");
+    const stored = await driver.get("ws1/file.png");
+    expect(Array.from(stored?.body ?? [])).toEqual([5, 4, 3, 2, 1]);
+    expect(stored?.contentType).toBe("image/png");
+    expect(store.has("/assets/uploads/ws1/file.png")).toBe(true);
+    expect(requests.every((entry) => entry.authorization?.startsWith("AWS4-HMAC-SHA256"))).toBe(
+      true,
+    );
+
+    await driver.remove("ws1/file.png");
+    expect(await driver.get("ws1/file.png")).toBeNull();
+  });
+
+  it("returns null for a missing S3 object", async () => {
+    const driver = s3Driver({
+      endpoint: base,
+      bucket: "assets",
+      region: "us-east-1",
+      accessKeyId: "AKIAEXAMPLE",
+      secretAccessKey: "very-secret",
+    });
+    expect(await driver.get("ws1/missing.png")).toBeNull();
   });
 });

@@ -568,7 +568,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | YouTube/Vimeo embeds | Video embeds by URL. | ✅ | Provider-specific path in `src/lib/embeds.ts`: `EMBED_HOST_ALLOWLIST` gates `detectEmbed()`, which canonicalises every YouTube/Vimeo URL shape (incl. start times) and `embedMeta()` feeds the editor iframe and the read-only renderer (title, aspect ratio, `allow`, provider badge). |
 | Figma embeds | Live design embed. | ✅ | Planned. |
 | Animated GIF/devices | Play GIFs and device previews. | 🟡 | Planned. |
-| Media storage backend | Pluggable object storage. | ✅ | `src/lib/storage.ts`: **local filesystem** (default) or any **S3-compatible** endpoint (AWS, MinIO, R2, Garage) signed with Signature V4 over `fetch` — no SDK. Selected by `S3_BUCKET`; `npm run check:storage` proves the round trip. |
+| Media storage backend | Pluggable object storage. | ✅ | `src/lib/storage.ts`: **local filesystem** (default) or any **S3-compatible** endpoint (AWS, MinIO, R2, Garage) signed with Signature V4 over `fetch` — no SDK. Selected by `S3_BUCKET`; `npm run check:storage` proves the live round trip and `storage.test.ts` proves the signed S3 driver against a fake endpoint. |
 | Media garbage collection | Remove orphaned assets. | ✅ | Planned. |
 
 ## 16. Navigation & UX
@@ -644,8 +644,8 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Rate limiting | Throttle API/site traffic. | ✅ | Planned; middleware. The sign-in, sign-up and 2FA actions carry their own budgets and a temporary account lockout. |
 | Pagination | Bounded list responses. | ✅ | The tracker paginates server-side (100/page, no full-workspace scans); export and AI-context queries stay bounded by explicit `take` limits. |
 | Multi-tenancy | Isolate workspaces. | 🟡 | Workspace scoping modeled. |
-| Backups | Scheduled data backups. | ✅ | `npm run backup` dumps the database (via the `noema-db` container or a local `pg_dump`), **seals it with AES-256-GCM** under `BACKUP_ENCRYPTION_KEY` (mode `0600`, fail closed without a passphrase), **verifies every core table is present**, prunes to the last 5 and prints the restore command. |
-| Restore from backup | Recover data. | 🟡 | Planned. |
+| Backups | Scheduled data backups. | ✅ | `npm run backup` dumps the database (via the `noema-db` container or a local `pg_dump`) into `BACKUP_DIR`, **seals it with AES-256-GCM** under `BACKUP_ENCRYPTION_KEY` (mode `0600`, fail closed without a passphrase), **verifies every core table is present**, prunes to the last 5 and prints the restore command. Set `BACKUP_S3_BUCKET` (+ endpoint/keys) to upload the sealed dump and manifest to any S3-compatible endpoint, **read both back byte-for-byte**, and apply the same newest-N retention remotely; `/api/cron/backups` applies the GFS policy to local dumps. Run it from the host scheduler; a misconfigured offsite destination exits 1 instead of passing as a local-only backup. |
+| Restore from backup | Recover data. | ✅ | `npm run backup:restore -- <dump>` decrypts with the same `BACKUP_ENCRYPTION_KEY` and streams plain SQL to stdout (or `--out` at mode `0600`). A wrong key, tampered payload or plain dump is refused. `--remote <key>` / `--remote s3://bucket/key` downloads from the configured `BACKUP_S3_*` destination first. Covered by `scripts/backup.test.mjs` and the fake-S3 suite `scripts/backup-s3.test.mjs`. |
 | Schema migrations | Versioned DB changes. | ✅ | Prisma migrations. Spec: docs/specs/engineering-hardening.md. |
 | Observability | Logs, metrics, traces. | 🟡 | Planned; OpenTelemetry. |
 | Error tracking | Capture and triage errors. | 🟡 | Planned. |
@@ -785,12 +785,12 @@ The table below summarizes how many feature rows fall into each status, per area
 | 14. AI | 7 | 9 | 0 | 0 | 16 |
 | 15. Media & embeds | 19 | 2 | 0 | 0 | 21 |
 | 16. Navigation & UX | 44 | 3 | 0 | 2 | 49 |
-| 17. Data model & platform | 23 | 14 | 0 | 0 | 37 |
+| 17. Data model & platform | 24 | 13 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 8 | 6 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **470** | **71** | **0** | **22** | **563** |
+| **Total** | **471** | **70** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 

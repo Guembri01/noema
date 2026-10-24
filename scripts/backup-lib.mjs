@@ -9,7 +9,7 @@
 // So it is sealed (AES-256-GCM, passphrase from BACKUP_ENCRYPTION_KEY) and only
 // ever written with mode 0600 — the helpers below are the pure core of that:
 // the passphrase policy, the envelope and the artifact names.
-import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync } from "node:crypto";
 import path from "node:path";
 
 /** Default number of dumps retained when `--keep` is absent or invalid. */
@@ -266,6 +266,337 @@ export function decryptBackup(envelope, passphrase) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Offsite copies — S3-compatible storage (Signature V4 over fetch)
+ * ------------------------------------------------------------------ */
+
+/** Default key prefix for offsite backup objects. */
+export const DEFAULT_BACKUP_S3_PREFIX = "backups";
+
+/** The empty-payload digest every S3 request has to declare. */
+const EMPTY_SHA256 = createHash("sha256").update("").digest("hex");
+
+/** SHA-256 of a body, as lowercase hex (S3's `x-amz-content-sha256`). */
+export function sha256Hex(body) {
+  return createHash("sha256")
+    .update(Buffer.isBuffer(body) ? body : Buffer.from(body ?? ""))
+    .digest("hex");
+}
+
+/** AWS's URI encoding rules (not `encodeURIComponent`). */
+function encodeAws(value) {
+  return encodeURIComponent(String(value)).replace(
+    /[!'()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+/** URL-safe key prefix: no leading/trailing slash, no empty segment. */
+export function normalizeBackupPrefix(prefix) {
+  return String(prefix ?? "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\/{2,}/g, "/");
+}
+
+/** The object key of a backup artifact under the configured prefix. */
+export function remoteBackupKey(name, prefix = DEFAULT_BACKUP_S3_PREFIX) {
+  const cleanPrefix = normalizeBackupPrefix(prefix);
+  return cleanPrefix ? `${cleanPrefix}/${name}` : name;
+}
+
+/**
+ * Resolve the offsite backup destination from the environment.
+ *
+ * Offsite is opt-in: without `BACKUP_S3_BUCKET` the script stays local. Once a
+ * bucket is named, the credentials must be complete — a half-configured
+ * destination fails closed instead of silently taking a local-only backup.
+ */
+export function resolveBackupS3Config(env) {
+  const bucket = typeof env?.BACKUP_S3_BUCKET === "string" ? env.BACKUP_S3_BUCKET.trim() : "";
+  if (bucket === "") return { ok: true, config: null };
+
+  const endpoint = (
+    (typeof env?.BACKUP_S3_ENDPOINT === "string" && env.BACKUP_S3_ENDPOINT.trim()) ||
+    "https://s3.amazonaws.com"
+  ).replace(/\/+$/, "");
+  let parsedEndpoint;
+  try {
+    parsedEndpoint = new URL(endpoint);
+  } catch {
+    return {
+      ok: false,
+      reason: `BACKUP_S3_ENDPOINT is not a valid URL (${endpoint}).`,
+    };
+  }
+  if (parsedEndpoint.protocol !== "https:" && parsedEndpoint.protocol !== "http:") {
+    return {
+      ok: false,
+      reason: "BACKUP_S3_ENDPOINT must be an http(s) URL.",
+    };
+  }
+
+  const accessKeyId =
+    typeof env?.BACKUP_S3_ACCESS_KEY_ID === "string" ? env.BACKUP_S3_ACCESS_KEY_ID.trim() : "";
+  const secretAccessKey =
+    typeof env?.BACKUP_S3_SECRET_ACCESS_KEY === "string"
+      ? env.BACKUP_S3_SECRET_ACCESS_KEY.trim()
+      : "";
+  if (accessKeyId === "" || secretAccessKey === "") {
+    return {
+      ok: false,
+      reason:
+        "BACKUP_S3_BUCKET is set but BACKUP_S3_ACCESS_KEY_ID / BACKUP_S3_SECRET_ACCESS_KEY are missing — refusing to take a local-only backup that looks offsite.",
+    };
+  }
+
+  return {
+    ok: true,
+    config: {
+      endpoint,
+      bucket,
+      region:
+        (typeof env?.BACKUP_S3_REGION === "string" && env.BACKUP_S3_REGION.trim()) ||
+        "us-east-1",
+      accessKeyId,
+      secretAccessKey,
+      prefix: normalizeBackupPrefix(
+        typeof env?.BACKUP_S3_PREFIX === "string"
+          ? env.BACKUP_S3_PREFIX
+          : DEFAULT_BACKUP_S3_PREFIX,
+      ),
+    },
+  };
+}
+
+/**
+ * Sign one S3 request with AWS Signature V4.
+ *
+ * `key` is relative to the bucket (empty for a bucket-level list); `query` is
+ * the canonical query object. The returned headers include `content-type` when
+ * a body type is supplied, and that header is part of the signature.
+ */
+export function signBackupS3Request(input) {
+  const now = input.now ?? new Date();
+  const amzDate = `${now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 15)}Z`;
+  const dateStamp = amzDate.slice(0, 8);
+  const endpointUrl = new URL(input.endpoint);
+  const host = endpointUrl.host;
+  const endpointPath = endpointUrl.pathname.replace(/\/+$/, "");
+  const encodedKey = String(input.key ?? "")
+    .split("/")
+    .filter((segment) => segment !== "")
+    .map(encodeAws)
+    .join("/");
+  const canonicalUri = `${endpointPath}/${encodeAws(input.bucket)}${encodedKey ? `/${encodedKey}` : "/"}`;
+
+  const query = Object.entries(input.query ?? {})
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([name, value]) => [encodeAws(name), encodeAws(value)])
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  const canonicalQuery = query.map(([name, value]) => `${name}=${value}`).join("&");
+
+  const headers = {
+    host,
+    "x-amz-content-sha256": input.payloadHash ?? EMPTY_SHA256,
+    "x-amz-date": amzDate,
+  };
+  if (input.contentType) headers["content-type"] = input.contentType;
+
+  const signedHeaderNames = Object.keys(headers).sort();
+  const canonicalHeaders = signedHeaderNames.map((name) => `${name}:${headers[name]}`).join("\n");
+  const canonicalRequest = [
+    input.method,
+    canonicalUri,
+    canonicalQuery,
+    `${canonicalHeaders}\n`,
+    signedHeaderNames.join(";"),
+    headers["x-amz-content-sha256"],
+  ].join("\n");
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    `${dateStamp}/${input.region}/s3/aws4_request`,
+    createHash("sha256").update(canonicalRequest).digest("hex"),
+  ].join("\n");
+  const signingKey = createHmac("sha256", `AWS4${input.secretAccessKey}`)
+    .update(dateStamp)
+    .digest();
+  const regionKey = createHmac("sha256", signingKey).update(input.region).digest();
+  const serviceKey = createHmac("sha256", regionKey).update("s3").digest();
+  const requestKey = createHmac("sha256", serviceKey).update("aws4_request").digest();
+  const signature = createHmac("sha256", requestKey).update(stringToSign).digest("hex");
+
+  return {
+    url: `${input.endpoint}${canonicalUri}${canonicalQuery ? `?${canonicalQuery}` : ""}`,
+    headers: {
+      ...headers,
+      authorization:
+        `AWS4-HMAC-SHA256 Credential=${input.accessKeyId}/${dateStamp}/${input.region}/s3/aws4_request, ` +
+        `SignedHeaders=${signedHeaderNames.join(";")}, Signature=${signature}`,
+    },
+  };
+}
+
+/** One object returned by an S3 ListObjectsV2 response. */
+export function parseS3ListXml(xml) {
+  const decode = (value) =>
+    value
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&amp;/g, "&");
+  const tag = (block, name) => {
+    const match = new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(block);
+    return match ? decode(match[1]) : null;
+  };
+
+  const objects = (xml.match(/<Contents>[\s\S]*?<\/Contents>/g) ?? [])
+    .map((block) => {
+      const key = tag(block, "Key");
+      if (key === null) return null;
+      const size = Number(tag(block, "Size") ?? "0");
+      return {
+        key,
+        size: Number.isFinite(size) ? size : 0,
+        lastModified: tag(block, "LastModified"),
+      };
+    })
+    .filter(Boolean);
+  const token = tag(xml, "NextContinuationToken");
+  return {
+    objects,
+    nextContinuationToken: token === null || token === "" ? null : token,
+    isTruncated: /<IsTruncated>\s*true\s*<\/IsTruncated>/i.test(xml),
+  };
+}
+
+/**
+ * Move one object through the configured S3-compatible endpoint.
+ * `body` is only sent for PUT; a missing GET response is `null`.
+ */
+export async function s3Object(config, { method, key = "", query, body, contentType }, fetchImpl = fetch) {
+  const payload = body === undefined ? "" : body;
+  const signed = signBackupS3Request({
+    method,
+    endpoint: config.endpoint,
+    bucket: config.bucket,
+    key,
+    query,
+    region: config.region,
+    accessKeyId: config.accessKeyId,
+    secretAccessKey: config.secretAccessKey,
+    payloadHash: body === undefined ? EMPTY_SHA256 : sha256Hex(body),
+    ...(contentType ? { contentType } : {}),
+  });
+  return fetchImpl(signed.url, {
+    method,
+    headers: signed.headers,
+    ...(body === undefined ? {} : { body: payload }),
+  });
+}
+
+/** Upload bytes to the offsite backup destination. */
+export async function s3PutBackup(config, key, body, contentType, fetchImpl = fetch) {
+  const response = await s3Object(
+    config,
+    { method: "PUT", key, body, contentType },
+    fetchImpl,
+  );
+  if (!response.ok) {
+    throw new Error(`Offsite storage rejected ${key} (${response.status}).`);
+  }
+}
+
+/** Read an offsite backup object, or `null` when it is absent. */
+export async function s3GetBackup(config, key, fetchImpl = fetch) {
+  const response = await s3Object(config, { method: "GET", key }, fetchImpl);
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`Offsite storage could not read ${key} (${response.status}).`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+/** Delete one offsite object; a missing object is already gone. */
+export async function s3DeleteBackup(config, key, fetchImpl = fetch) {
+  const response = await s3Object(config, { method: "DELETE", key }, fetchImpl);
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Offsite storage could not delete ${key} (${response.status}).`);
+  }
+}
+
+/**
+ * List every key under one prefix, following `NextContinuationToken` until the
+ * bucket says the listing is complete. Returns bare keys (prefix included).
+ */
+export async function listBackupObjects(config, prefix, fetchImpl = fetch) {
+  const keys = [];
+  let continuationToken = null;
+  for (let page = 0; page < 10_000; page += 1) {
+    const query = {
+      "list-type": "2",
+      prefix,
+      "max-keys": "1000",
+      ...(continuationToken ? { "continuation-token": continuationToken } : {}),
+    };
+    const response = await s3Object(config, { method: "GET", query }, fetchImpl);
+    if (!response.ok) {
+      throw new Error(`Offsite storage could not list s3://${config.bucket}/${prefix} (${response.status}).`);
+    }
+    const parsed = parseS3ListXml(await response.text());
+    keys.push(...parsed.objects.map((object) => object.key));
+    if (!parsed.isTruncated || !parsed.nextContinuationToken) return keys;
+    if (parsed.nextContinuationToken === continuationToken) {
+      throw new Error("Offsite storage returned the same continuation token twice.");
+    }
+    continuationToken = parsed.nextContinuationToken;
+  }
+  throw new Error("Offsite storage listing did not terminate.");
+}
+
+/**
+ * Prune the offsite copies with the same newest-N rule as the local directory.
+ * Only `noema-*.sql` / `noema-*.sql.enc` objects are candidates; a pruned dump
+ * takes its manifest. The newest dump is never deleted. Per-key failures are
+ * reported, never thrown, so one locked object does not block the sweep.
+ */
+export async function pruneOffsiteBackups(config, keep, fetchImpl = fetch) {
+  const prefix = config.prefix ? `${config.prefix}/` : "";
+  const keys = await listBackupObjects(config, prefix, fetchImpl);
+  const names = keys
+    .filter((key) => key.startsWith(prefix) && !key.slice(prefix.length).includes("/"))
+    .map((key) => key.slice(prefix.length))
+    .filter(isBackupDump);
+  const plan = planRetention(names, keep);
+  const deleted = [];
+  const failed = [];
+  for (const name of plan.prunable) {
+    try {
+      await s3DeleteBackup(config, remoteBackupKey(name, config.prefix), fetchImpl);
+      await s3DeleteBackup(
+        config,
+        remoteBackupKey(manifestNameFor(name), config.prefix),
+        fetchImpl,
+      ).catch((error) => {
+        failed.push({
+          key: remoteBackupKey(manifestNameFor(name), config.prefix),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      deleted.push(name);
+    } catch (error) {
+      failed.push({
+        key: remoteBackupKey(name, config.prefix),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return { ...plan, deleted, failed };
+}
+
 /** Human-readable `--dry-run` plan. Pure: prints nothing, returns the text. */
 export function formatDryRunPlan({
   root,
@@ -278,6 +609,7 @@ export function formatDryRunPlan({
   retained,
   prunable,
   encryption,
+  offsite,
 }) {
   const rel = (file) => path.relative(root, file).split(path.sep).join("/");
   const dumpPath = rel(target);
@@ -294,6 +626,15 @@ export function formatDryRunPlan({
   ];
   if (dumper === null) {
     lines.push("would FAIL: no pg_dump available (start the database container or install postgresql-client).");
+  }
+  if (offsite?.ok === false) {
+    lines.push(`Offsite:     would FAIL — ${offsite.reason}`);
+  } else if (offsite?.config) {
+    lines.push(
+      `Offsite:     s3://${offsite.config.bucket}/${offsite.config.prefix || ""} (${offsite.config.endpoint})`,
+    );
+  } else if (offsite?.ok === true) {
+    lines.push("Offsite:     disabled (set BACKUP_S3_BUCKET to upload a copy)");
   }
   lines.push(
     `Target:      ${dumpPath}`,

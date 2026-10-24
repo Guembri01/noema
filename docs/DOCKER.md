@@ -76,9 +76,11 @@ is empty until you sign up.
 | `HOSTNAME` | no | `0.0.0.0` | Listen address. |
 | `NOEMA_SKIP_MIGRATE` | no | — | Set to `1` to skip `prisma migrate deploy` (use with an external migration job). |
 | `NOEMA_NO_EMBEDDED_DB` | no | — | Set to `1` to disable the embedded-Postgres fallback; with `DATABASE_URL` set it is never used. |
-| `STORAGE_DIR` | no | `/data/uploads` | Uploaded files. |
+| `STORAGE_DIR` | no | `/data/uploads` | Uploaded files (local driver). |
+| `S3_BUCKET` | no | — | Store uploads in an S3-compatible bucket instead of `STORAGE_DIR`; pair with `S3_ENDPOINT` / `S3_REGION` / `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `S3_PREFIX`. |
 | `SESSION_STORE_PATH` | no | `/data/sessions.json` | Session store. |
 | `BACKUP_DIR` | no | `/data/backups` | Backup output directory. |
+| `BACKUP_S3_BUCKET` | no | — | Offsite sealed-backup destination; pair with `BACKUP_S3_ENDPOINT` / `BACKUP_S3_REGION` / `BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY` / `BACKUP_S3_PREFIX`. |
 
 AI, SSO, SMTP and the other optional integrations read the same variables as a
 source checkout — see [`.env.example`](../.env.example) and

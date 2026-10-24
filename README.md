@@ -69,7 +69,7 @@ This repository is a **working application plus a complete parity tracker**.
   SSO, signed webhooks, and the desktop build.
 - Every feature area is tracked in **[`docs/FEATURE_MATRIX.md`](./docs/FEATURE_MATRIX.md)**
   — 563 rows, each with a status and a note explaining the current state. Today:
-  **470 implemented · 71 partial · 0 planned · 22 deliberately out of scope**.
+  **471 implemented · 70 partial · 0 planned · 22 deliberately out of scope**.
 - Nothing is dropped silently. What is unfinished is enumerated in
   **[`docs/MISSING_FEATURES.md`](./docs/MISSING_FEATURES.md)**, generated from the
   matrix by `npm run docs:gaps`, so the two cannot disagree.
@@ -245,7 +245,9 @@ Storage & backups
 | **No SDK** | The S3 driver signs requests with **Signature V4** (`signS3Request`, unit-tested for determinism, key encoding and presigned GETs) over `fetch` |
 | **Authorised reads** | Files are never public: `/api/files/<workspace>/<name>` re-checks the session, the workspace membership and the caller's role (a guest is refused with `403`), validates the key (no traversal) and streams from whichever driver holds the bytes |
 | **Uploads** | Type allow-list + 10 MB cap + `Asset` row; `npm run check:storage` asserts the byte-for-byte round trip, the content type, the 404 for a missing key, the traversal refusal, the anonymous refusal and the 415 for a bad type |
-| **Backups** | `npm run backup` writes `backups/noema-<timestamp>.sql.enc` (via the database container or a local `pg_dump`), **sealed with AES-256-GCM** under `BACKUP_ENCRYPTION_KEY` and with mode `0600` (the script fails closed — without a passphrase it writes no dump at all), refuses to keep a suspiciously small file, verifies the core tables are in the dump, keeps the newest 5 and prints the restore command (`npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"`)
+| **Backups** | `npm run backup` writes `BACKUP_DIR/noema-<timestamp>.sql.enc` (via the database container or a local `pg_dump`), **sealed with AES-256-GCM** under `BACKUP_ENCRYPTION_KEY` and with mode `0600` (the script fails closed — without a passphrase it writes no dump at all), refuses to keep a suspiciously small file, verifies the core tables are in the dump, keeps the newest 5 and prints the restore command (`npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"`) |
+| **Offsite backups** | Set `BACKUP_S3_BUCKET` (+ `BACKUP_S3_ENDPOINT`, `BACKUP_S3_REGION`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY`, optional `BACKUP_S3_PREFIX`) to upload the sealed dump and manifest to any S3-compatible endpoint. Both are read back and compared byte-for-byte, the same newest-N retention runs remotely, and `npm run backup:restore -- --remote <key>` restores from there. A bucket without keys fails closed |
+| **Scheduled backups** | Run `npm run backup` from the host scheduler (cron, systemd timer, container job) and `GET /api/cron/backups` with `x-cron-secret` for the GFS retention sweep. The app never takes a database dump implicitly |
 
 Cycles (sprints)
 
@@ -349,7 +351,7 @@ dark variants under `.dark`).
 
 **Remaining work** is enumerated in [`docs/MISSING_FEATURES.md`](docs/MISSING_FEATURES.md)
 (generated from the feature matrix by `npm run docs:gaps`): of 563 tracked rows,
-71 are still partial and 22 are deliberately out of scope — the rest are
+70 are still partial and 22 are deliberately out of scope — the rest are
 implemented — with a priority shortlist at the top.
 
 
@@ -503,7 +505,7 @@ password: password123
 | `npm run db:seed` | Seed demo data |
 | `npm run db:studio` | Prisma Studio |
 | `npm run setup:search` | Creates the full-text GIN index and backfills the `Page.searchText` mirror (safe to re-run) |
-| `npm run backup` | Database dump with a core-table verification and retention (`-- --keep N`) |
+| `npm run backup` | Database dump with a core-table verification and retention (`-- --keep N`); uploads an offsite copy when `BACKUP_S3_BUCKET` is set |
 | `npm run check:a11y` | WCAG structural + contrast audit of the rendered shell |
 | `npm run check:sso` | OIDC SSO + teamspaces + transcription checks (uses a local mock IdP) |
 | `npm run check:ui` | Home gallery, sidebar tabs, discussions and calendar checks (uses a local mock ICS feed) |

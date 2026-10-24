@@ -2,7 +2,12 @@
 //
 //   node scripts/backup-restore.mjs backups/noema-<timestamp>.sql.enc             # → stdout
 //   node scripts/backup-restore.mjs backups/<file>.sql.enc --out dump.sql         # → file (mode 0600)
+//   node scripts/backup-restore.mjs --remote noema-<timestamp>.sql.enc            # from BACKUP_S3_*
 //   node scripts/backup-restore.mjs backups/<file>.sql.enc | psql "$DATABASE_URL"
+//
+// `--remote` reads the sealed object from the S3-compatible backup destination
+// (the same BACKUP_S3_* variables backup.mjs uploaded with) before opening it.
+// A full `s3://bucket/key` URL is accepted too; the path is then used verbatim.
 //
 // The passphrase comes from BACKUP_ENCRYPTION_KEY — the very variable the
 // backup was sealed with. Fail closed: without it nothing is decrypted, and a
@@ -16,18 +21,32 @@ import {
   BACKUP_FILE_MODE,
   BackupDecryptError,
   decryptBackup,
+  remoteBackupKey,
   resolveBackupPassphrase,
+  resolveBackupS3Config,
+  s3GetBackup,
 } from "./backup-lib.mjs";
 
 const args = process.argv.slice(2);
 const outIndex = args.indexOf("--out");
 const out = outIndex === -1 ? null : args[outIndex + 1];
+const remoteIndex = args.indexOf("--remote");
+const remote = remoteIndex === -1 ? null : args[remoteIndex + 1];
 const file = args.find(
-  (arg, index) => !arg.startsWith("--") && !(outIndex !== -1 && index === outIndex + 1),
+  (arg, index) =>
+    !arg.startsWith("--") &&
+    !(outIndex !== -1 && index === outIndex + 1) &&
+    !(remoteIndex !== -1 && index === remoteIndex + 1),
 );
 
-if (!file) {
-  console.error("Usage: node scripts/backup-restore.mjs <dump> [--out <file>]");
+if ((!file && !remote) || (file && remote)) {
+  console.error(
+    "Usage: node scripts/backup-restore.mjs <dump> [--out <file>] | --remote <key|s3://bucket/key>",
+  );
+  process.exit(1);
+}
+if (remote !== null && (remote === "" || remote.startsWith("--"))) {
+  console.error("Usage: node scripts/backup-restore.mjs --remote <key|s3://bucket/key>");
   process.exit(1);
 }
 
@@ -37,15 +56,58 @@ if (!passphrase.ok) {
   process.exit(1);
 }
 
+let envelope;
+if (remote !== null) {
+  const resolved = resolveBackupS3Config(process.env);
+  if (!resolved.ok) {
+    console.error(resolved.reason);
+    process.exit(1);
+  }
+  if (!resolved.config) {
+    console.error(
+      "Offsite restore needs BACKUP_S3_BUCKET (and BACKUP_S3_ENDPOINT / keys) in the environment.",
+    );
+    process.exit(1);
+  }
+  let config = resolved.config;
+  let key;
+  if (remote.startsWith("s3://")) {
+    const url = new URL(remote);
+    if (!url.hostname) {
+      console.error(`Not an S3 object URL: ${remote}`);
+      process.exit(1);
+    }
+    config = { ...config, bucket: url.hostname };
+    key = decodeURIComponent(url.pathname.replace(/^\//, ""));
+  } else {
+    key = remote.startsWith(`${config.prefix}/`) || config.prefix === ""
+      ? remote
+      : remoteBackupKey(remote, config.prefix);
+  }
+  try {
+    console.error(`Reading s3://${config.bucket}/${key} …`);
+    envelope = await s3GetBackup(config, key);
+  } catch (error) {
+    console.error(`Could not read the offsite backup: ${error.message}`);
+    process.exit(1);
+  }
+  if (!envelope) {
+    console.error(`Offsite backup not found: s3://${config.bucket}/${key}`);
+    process.exit(1);
+  }
+} else {
+  envelope = readFileSync(file);
+}
+
 let plaintext;
 try {
-  plaintext = decryptBackup(readFileSync(file), passphrase.passphrase);
+  plaintext = decryptBackup(envelope, passphrase.passphrase);
 } catch (error) {
   if (error instanceof BackupDecryptError) {
     console.error(error.message);
     process.exit(1);
   }
-  console.error(`Could not read ${file}: ${error.message}`);
+  console.error(`Could not read the backup: ${error.message}`);
   process.exit(1);
 }
 

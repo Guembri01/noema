@@ -207,14 +207,54 @@ in `scripts/backup-lib.test.mjs`, the whole path end-to-end (with a stub
 > The retention still prunes them, but they are readable by every local user:
 > delete them once a sealed backup exists.
 
+### 2.1.1 Offsite copies (S3-compatible)
+
+Set the offsite destination to upload every sealed dump and its manifest:
+
+```bash
+BACKUP_S3_BUCKET=noema-backups
+BACKUP_S3_ENDPOINT=https://s3.eu-west-3.amazonaws.com   # MinIO/R2/Garage URL also works
+BACKUP_S3_REGION=eu-west-3
+BACKUP_S3_ACCESS_KEY_ID=...
+BACKUP_S3_SECRET_ACCESS_KEY=...
+BACKUP_S3_PREFIX=backups                                # default
+```
+
+`npm run backup` then:
+
+1. uploads the **sealed** dump (`application/octet-stream`) and manifest;
+2. reads both objects back and compares them **byte-for-byte** before reporting
+   success;
+3. applies the same newest-N retention remotely (the newest dump is never
+   pruned), deleting an old dump with its manifest.
+
+A bucket set without `BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY`
+fails closed before the dump: the run exits 1 instead of quietly taking a
+local-only backup. If an upload fails after the local seal, the complete local
+backup is kept, the error is printed and the run exits 1.
+
+Schedule creation from the host (the app does not run `pg_dump` on a timer):
+
+```cron
+# every day at 02:30, keep seven local/offsite dumps
+30 2 * * * cd /srv/noema && /usr/bin/npm run backup -- --keep 7
+# hourly GFS retention sweep (optional; the backup command already prunes)
+15 * * * * curl -fsS -H "x-cron-secret: $CRON_SECRET" https://noema.example/api/cron/backups
+```
+
 ### 2.2 Restore drill
 
 ```bash
 # 1. Stop writers (app / dockerized app), keep the db container running.
-# 2. Restore — the command the script itself prints at the end of every run:
+# 2. Restore - the command the script itself prints at the end of every run:
 npm run backup:restore -- backups/noema-<timestamp>.sql.enc | psql "$DATABASE_URL"
 
-# Container-only hosts (no psql on PATH) — same dump, psql inside noema-db:
+# From the offsite copy (uses the same BACKUP_S3_* configuration):
+npm run backup:restore -- --remote noema-<timestamp>.sql.enc | psql "$DATABASE_URL"
+# A full s3:// URL is accepted too, with the bucket taken from the URL:
+npm run backup:restore -- --remote s3://noema-backups/backups/noema-<timestamp>.sql.enc | psql "$DATABASE_URL"
+
+# Container-only hosts (no psql on PATH) - same dump, psql inside noema-db:
 npm run backup:restore -- backups/noema-<timestamp>.sql.enc \
   | docker exec -i noema-db psql -U noema -d noema
 
@@ -235,7 +275,8 @@ sealed with and **refuses** a wrong one (*“The backup could not be opened: wro
 BACKUP_ENCRYPTION_KEY or a tampered file.”*) instead of restoring garbage. It
 writes the plain SQL to **stdout** (pipe it into `psql`); with
 `--out <file>` it writes a file with mode 0600 — delete it once the restore
-succeeded.
+succeeded. `--remote <key>` (or a full `s3://bucket/key` URL) downloads the
+sealed object from the configured `BACKUP_S3_*` destination first.
 
 Steps 2–3 come from `backup.mjs`’s own header/exit output (the restore +
 row-count verification hook); the `docker exec -i` variant is the same psql
@@ -739,8 +780,8 @@ nothing was executed against live servers):
 
 | Section | Command / fact | Source of truth |
 | --- | --- | --- |
-| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL”, the seal (AES-256-GCM, `BACKUP_ENCRYPTION_KEY`, fail closed) and the 0600/0700 modes | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 37 tests · `backup.test.mjs`, 8 tests) |
-| 2.2 | `npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) · `scripts/backup-restore.mjs` |
+| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL”, the seal (AES-256-GCM, `BACKUP_ENCRYPTION_KEY`, fail closed) and the 0600/0700 modes | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 38 tests · `backup.test.mjs`, 8 tests) · offsite S3 round-trip/retention/restore in `backup-s3.test.mjs`, 18 tests |
+| 2.2 | `npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"`, `--remote <key>` / `s3://bucket/key`, the fake-S3 restore tests, plus `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) · `scripts/backup-restore.mjs` · `scripts/backup-s3.test.mjs` |
 | 3 | `POST /api/cron/templates`, `x-cron-secret`, 503/401, `12/60_000` limit, `{due,created,skipped,failed}`, fail-closed order | `src/app/api/cron/templates/route.ts` |
 | 3.1 | `CRON_SECRET` key + secret generator one-liner | `.env.example:8,50` |
 | 3.4 | `node --env-file=.env scripts/check-share-cron.mjs [baseUrl]` (no npm alias) | `scripts/check-share-cron.mjs:2` · absent from `package.json` |
@@ -1156,8 +1197,8 @@ nothing was executed against live servers):
 | --- | --- | --- |
 | 1.1 | `TRUSTED_PROXY_HOPS`, the hop arithmetic (last / Nth-from-last), the `X-Real-IP` fallback for a chain shorter than N and the `scope:local` fallback, the rejected hop counts above 16, the `ADMIN_IP_ALLOWLIST` fail-closed gate, the Edge-runtime build-time freeze | `src/lib/tenant-guard.ts` (`parseTrustedProxyHops`, `resolveClientIp`) · `src/lib/rate-limit.ts` (`clientKey`, `userKey`) · `src/lib/api-guard.ts` (`rateLimit`) · `src/middleware.ts` (`ipGate`) · `.env.example` |
 | 1.2 | `HSTS_MAX_AGE` / `HSTS_INCLUDE_SUBDOMAINS`, the default (one year), the way out (`0`), the refused values, the build-time freeze of the header list | `src/lib/security-headers.ts` (`parseHstsMaxAge`, `hstsHeader`) · `next.config.ts` (`headers()`) · `scripts/check-hsts.mjs` · `.env.example` |
-| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL”, the seal (AES-256-GCM, `BACKUP_ENCRYPTION_KEY`, fail closed) and the 0600/0700 modes | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 37 tests · `backup.test.mjs`, 8 tests) |
-| 2.2 | `npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"` + `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) · `scripts/backup-restore.mjs` |
+| 2.1 | `npm run backup`, `--keep N` (default 5), `--dry-run`, manifest, retention “never the newest”, verification rules, `pg_dump` docker/path choice, “local DATABASE_URL”, the seal (AES-256-GCM, `BACKUP_ENCRYPTION_KEY`, fail closed) and the 0600/0700 modes | `package.json` scripts · `scripts/backup.mjs` · `scripts/backup-lib.mjs` (+ `backup-lib.test.mjs`, 38 tests · `backup.test.mjs`, 8 tests) · offsite S3 round-trip/retention/restore in `backup-s3.test.mjs`, 18 tests |
+| 2.2 | `npm run backup:restore -- backups/<file>.sql.enc \| psql "$DATABASE_URL"`, `--remote <key>` / `s3://bucket/key`, the fake-S3 restore tests, plus `createdb noema-restore-check` row-count verification hook | printed by `scripts/backup.mjs` (header + exit output) · `scripts/backup-restore.mjs` · `scripts/backup-s3.test.mjs` |
 | 3 | `POST /api/cron/templates`, `x-cron-secret`, 503/401, `12/60_000` limit, `{due,created,skipped,failed}`, fail-closed order | `src/app/api/cron/templates/route.ts` |
 | 3.1 | `CRON_SECRET` key + secret generator one-liner | `.env.example:8,50` |
 | 3.4 | `node --env-file=.env scripts/check-share-cron.mjs [baseUrl]` (no npm alias) | `scripts/check-share-cron.mjs:2` · absent from `package.json` |

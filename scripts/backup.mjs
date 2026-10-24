@@ -1,8 +1,14 @@
 // Database backup: writes an encrypted, restorable dump and verifies it.
 //
-//   npm run backup                 # backups/noema-<timestamp>.sql.enc + sibling manifest
+//   npm run backup                 # $BACKUP_DIR (default ./backups) + sibling manifest
 //   npm run backup -- --keep 7     # retention: keep the newest 7 dumps
 //   npm run backup -- --dry-run    # print the plan, touch nothing
+//
+// Set `BACKUP_S3_BUCKET` (+ endpoint/region/keys, optional `BACKUP_S3_PREFIX`)
+// to also upload the sealed dump and its manifest to an S3-compatible endpoint.
+// Both objects are read back byte-for-byte before the offsite copy is accepted;
+// the same keep-N rule prunes the remote prefix. A half-configured destination
+// fails closed (exit 1) rather than passing as a local-only backup.
 //
 // Every successful backup writes a sibling `noema-<timestamp>.manifest.json`
 // (timestamp, per-table row counts parsed from the dump, prisma schema
@@ -49,12 +55,21 @@ import {
   manifestNameFor,
   parseRowCounts,
   planRetention,
+  pruneOffsiteBackups,
+  remoteBackupKey,
   resolveBackupPassphrase,
+  resolveBackupS3Config,
+  s3GetBackup,
+  s3PutBackup,
   schemaFingerprint,
 } from "./backup-lib.mjs";
 
 const root = process.cwd();
-const directory = path.join(root, "backups");
+const configuredDirectory = process.env.BACKUP_DIR?.trim();
+const directory = configuredDirectory
+  ? path.resolve(root, configuredDirectory)
+  : path.join(root, "backups");
+const remote = resolveBackupS3Config(process.env);
 
 const url = new URL(process.env.DATABASE_URL ?? "");
 const database = url.pathname.replace(/^\//, "");
@@ -111,9 +126,15 @@ if (dryRun) {
       retained: plan.retained,
       prunable: plan.prunable,
       encryption: resolveBackupPassphrase(process.env),
+      offsite: remote,
     }),
   );
   process.exit(0);
+}
+
+if (!remote.ok) {
+  console.error(remote.reason);
+  process.exit(1);
 }
 
 /* ------------------------------------------------------------------ *
@@ -237,18 +258,90 @@ console.log(
   `Wrote ${path.relative(root, manifestTarget)} (${Object.keys(rowCounts).length} tables, ${manifest.rowCountTotal} rows, schema ${manifest.schemaVersion}, app ${manifest.appVersion}).`,
 );
 
+// Offsite copy (optional). The sealed bytes are uploaded, read back and
+// compared before the offsite copy is called a backup. The manifest follows.
+// A failed offsite copy does not delete the local backup: the run exits 1 so
+// the operator sees the failure, but the verified local artifact stays.
+let offsiteFailed = false;
+if (remote.config) {
+  const dumpName = path.basename(target);
+  const manifestName = path.basename(manifestTarget);
+  const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  try {
+    console.log(
+      `Uploading offsite copy to s3://${remote.config.bucket}/${remote.config.prefix || ""} …`,
+    );
+    await s3PutBackup(
+      remote.config,
+      remoteBackupKey(dumpName, remote.config.prefix),
+      sealed,
+      "application/octet-stream",
+    );
+    const reopenedRemote = await s3GetBackup(
+      remote.config,
+      remoteBackupKey(dumpName, remote.config.prefix),
+    );
+    if (!reopenedRemote || !Buffer.from(reopenedRemote).equals(sealed)) {
+      throw new Error("The offsite copy did not read back byte-for-byte.");
+    }
+    await s3PutBackup(
+      remote.config,
+      remoteBackupKey(manifestName, remote.config.prefix),
+      manifestBytes,
+      "application/json",
+    );
+    const reopenedManifest = await s3GetBackup(
+      remote.config,
+      remoteBackupKey(manifestName, remote.config.prefix),
+    );
+    if (!reopenedManifest || !Buffer.from(reopenedManifest).equals(manifestBytes)) {
+      throw new Error("The offsite manifest did not read back byte-for-byte.");
+    }
+    console.log(`Verified offsite copy ${remoteBackupKey(dumpName, remote.config.prefix)}.`);
+
+    const remotePlan = await pruneOffsiteBackups(remote.config, keep);
+    for (const stale of remotePlan.deleted) console.log(`Removed old offsite backup ${stale}`);
+    for (const failure of remotePlan.failed) {
+      console.error(`Could not prune offsite object ${failure.key}: ${failure.error}`);
+      offsiteFailed = true;
+    }
+    console.log(
+      `Kept ${remotePlan.retained.length} offsite backup(s) (keep ${remotePlan.keep}).`,
+    );
+  } catch (error) {
+    offsiteFailed = true;
+    console.error(
+      `Offsite copy failed: ${error instanceof Error ? error.message : String(error)} — the verified local backup is intact.`,
+    );
+  }
+}
+
 // Retention: keep the newest N dumps (never the newest) + their manifests.
-const plan = planRetention(readdirSync(directory), keep);
-for (const stale of plan.prunable) {
+const localPlan = planRetention(readdirSync(directory), keep);
+for (const stale of localPlan.prunable) {
   rmSync(path.join(directory, stale), { force: true });
   rmSync(path.join(directory, manifestNameFor(stale)), { force: true });
   console.log(`Removed old backup ${stale}`);
 }
-console.log(`Kept ${plan.retained.length} backup(s) in ./backups (keep ${plan.keep})`);
+const relativeDirectory = path.relative(root, directory).split(path.sep).join("/") || ".";
+const relativeTarget = path.relative(root, target).split(path.sep).join("/");
+const relativeManifest = path.relative(root, manifestTarget).split(path.sep).join("/");
 console.log(
-  `\nRestore with:  node scripts/backup-restore.mjs backups/${path.basename(target)} | psql "$DATABASE_URL"`,
+  `Kept ${localPlan.retained.length} backup(s) in ${relativeDirectory} (keep ${localPlan.keep})`,
 );
 console.log(
-  "Verify restore: createdb noema-restore-check && node scripts/backup-restore.mjs backups/<file>.sql.enc | psql -d noema-restore-check",
+  `\nRestore with:  npm run backup:restore -- ${relativeTarget} | psql "$DATABASE_URL"`,
 );
-console.log(`  then compare row counts against backups/${path.basename(manifestTarget)} and dropdb noema-restore-check`);
+if (remote.config) {
+  console.log(
+    `Offsite:       npm run backup:restore -- --remote ${path.basename(target)} | psql "$DATABASE_URL"`,
+  );
+}
+console.log(
+  "Verify restore: createdb noema-restore-check && npm run backup:restore -- <dump> | psql -d noema-restore-check",
+);
+console.log(`  then compare row counts against ${relativeManifest} and dropdb noema-restore-check`);
+if (offsiteFailed) {
+  console.error("OFFSITE COPY FAILED — the local backup is complete, but the offsite copy is not.");
+  process.exitCode = 1;
+}

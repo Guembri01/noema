@@ -2,19 +2,17 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 563 feature rows — 470 implemented · 71 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 563 feature rows — 471 implemented · 70 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **71** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **70** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
 | # | Gap | Why it matters | Area |
 | --- | --- | --- | --- |
-| 1 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
-| 2 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
-| 3 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
-| 4 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
-| 5 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
+| 1 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
+| 2 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
+| 3 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
 
 ## By area
 
@@ -166,7 +164,7 @@ This file lists the **71** rows that are not finished, area by area, plus 22 int
 
 ### 17. Data model & platform
 
-23 done · 14 partial · 0 planned
+24 done · 13 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -176,7 +174,6 @@ This file lists the **71** rows that are not finished, area by area, plus 22 int
 | Sync conflict handling | Merge concurrent edits. | 🟡 | Planned; CRDT. |
 | Transactions / atomic writes | All-or-nothing updates. | 🟡 | Planned; Prisma transactions. Spec: docs/specs/engineering-hardening.md. |
 | Multi-tenancy | Isolate workspaces. | 🟡 | Workspace scoping modeled. |
-| Restore from backup | Recover data. | 🟡 | Planned. |
 | Observability | Logs, metrics, traces. | 🟡 | Planned; OpenTelemetry. |
 | Error tracking | Capture and triage errors. | 🟡 | Planned. |
 | Authentication | Sign-up and sign-in. | 🟡 | Session auth; providers limited. |

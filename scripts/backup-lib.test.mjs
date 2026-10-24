@@ -307,6 +307,46 @@ describe("formatDryRunPlan", () => {
     expect(failing).toContain("would FAIL");
   });
 
+  it("shows the offsite destination and a misconfigured one as a failure", () => {
+    const offsite = formatDryRunPlan({
+      root: "C:/app",
+      database: "noema",
+      host: "localhost",
+      port: "5432",
+      dumper: { kind: "path" },
+      target: "C:/app/backups/noema-x.sql.enc",
+      keep: 5,
+      retained: [],
+      prunable: [],
+      encryption: { ok: true },
+      offsite: {
+        ok: true,
+        config: {
+          bucket: "noema-backups",
+          prefix: "backups",
+          endpoint: "https://s3.example.com",
+        },
+      },
+    });
+    expect(offsite).toContain("s3://noema-backups/backups");
+
+    const broken = formatDryRunPlan({
+      root: "C:/app",
+      database: "noema",
+      host: "localhost",
+      port: "5432",
+      dumper: { kind: "path" },
+      target: "C:/app/backups/noema-x.sql.enc",
+      keep: 5,
+      retained: [],
+      prunable: [],
+      encryption: { ok: true },
+      offsite: { ok: false, reason: "BACKUP_S3_ACCESS_KEY_ID is missing." },
+    });
+    expect(broken).toContain("would FAIL");
+    expect(broken).toContain("BACKUP_S3_ACCESS_KEY_ID");
+  });
+
   it("reports a missing passphrase as a would-fail condition", () => {
     const failing = formatDryRunPlan({
       root: "C:/app",
