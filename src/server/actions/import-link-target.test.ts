@@ -137,10 +137,14 @@ async function zipForm(files: Record<string, string>): Promise<FormData> {
 }
 
 /** A .docx upload (the converter itself is mocked). */
-function docxForm(): FormData {
+async function docxForm(): Promise<FormData> {
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  zip.file("word/document.xml", "<w:document></w:document>");
+  const bytes = await zip.generateAsync({ type: "uint8array" });
   const form = new FormData();
   form.set("workspaceId", WORKSPACE);
-  form.set("file", new File([new Uint8Array([1, 2, 3])], "notes.docx"));
+  form.set("file", new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], "notes.docx"));
   return form;
 }
 
@@ -217,7 +221,7 @@ describe("B110 — the Markdown import applies the href allowlist", () => {
   });
 
   it("importDocxAction drops a target the allowlist refuses", async () => {
-    const result = await importDocxAction(docxForm());
+    const result = await importDocxAction(await docxForm());
 
     expect(result).toMatchObject({ ok: true });
     // The mocked converter returns a plain heading — the point of this case is
