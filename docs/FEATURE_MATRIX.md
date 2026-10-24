@@ -598,6 +598,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Custom fonts | Choose font pairing. | ✅ | Planned. |
 | Coherent timestamps | Dates that survive hydration. | ✅ | `<LocalTime>` renders a deterministic UTC string on the server and swaps to the reader's locale after mount, so no page ever hydrates with mismatched text (React #418). |
 | Accessibility (WCAG) | Keyboard and screen-reader support. | ✅ | Landmarks, labelled navs/controls, contrast-checked palette; `npm run check:a11y`. |
+| First-run onboarding | Guided path to a useful workspace. | ✅ | The workspace home shows a dismissible checklist for first page, first database, teammate invite and first file, derived from real workspace counts; `User.onboardingDismissedAt` persists dismissal. |
 | Focus management | Visible focus and traps. | 🟡 | Global `:focus-visible` ring everywhere; B45 hardened `ui/dialog` — Tab/Shift+Tab cycle inside with wrap, explicit `aria-modal="true"`, initial focus in-dialog, and focus restored to the invoker even for trigger-less controlled dialogs — plus `ui/dropdown-menu` (Escape → focus back to its trigger); both locked by `e2e/focus.spec.ts`. Still partial: hand-rolled feature overlays bypass the primitive entirely — `topbar/actions-menu`, `who-has-access`, `version-history`, `tickets/ticket-drawer`, `editor/equation-editor` have no Tab trap, Escape only works in the actions menu and equation editor, and `version-history` / `ticket-drawer` also lack `aria-modal` → feature-level follow-up (feature components are off-limits to B45). |
 | Localization / i18n | Translatable UI. | ✅ | 5 locales (en/fr/es/de/ar incl. RTL) with a **coverage ratchet in the coherence gate** (27 of 63 client files consume `t()`: chrome, chat, tickets, cycles, settings, inbox, search, trash, projects board, comments, the workspace/member/danger/share/access dialogs, the database toolbar, the editor bubble toolbar and the Notion import dialog); long-tail settings strings and secondary forms remain English. |
 | RTL support | Right-to-left layouts. | 🟡 | Arabic sets `dir="rtl"` and logical CSS; mixed-direction blocks untested. |
@@ -784,13 +785,13 @@ The table below summarizes how many feature rows fall into each status, per area
 | 13. Integrations & API | 16 | 6 | 0 | 0 | 22 |
 | 14. AI | 7 | 9 | 0 | 0 | 16 |
 | 15. Media & embeds | 19 | 2 | 0 | 0 | 21 |
-| 16. Navigation & UX | 44 | 3 | 0 | 2 | 49 |
+| 16. Navigation & UX | 45 | 3 | 0 | 2 | 50 |
 | 17. Data model & platform | 23 | 14 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 8 | 6 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **470** | **71** | **0** | **22** | **563** |
+| **Total** | **471** | **71** | **0** | **22** | **564** |
 
 ## Deliberate divergences
 

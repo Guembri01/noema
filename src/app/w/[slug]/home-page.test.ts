@@ -17,15 +17,22 @@ const h = vi.hoisted(() => ({
   getTrash: vi.fn(),
   getWorkspaceBySlug: vi.fn(),
   pageFindMany: vi.fn(),
+  pageCount: vi.fn(),
   pagePermissionFindMany: vi.fn(),
   teamspaceMemberFindMany: vi.fn(),
+  workspaceMemberCount: vi.fn(),
+  assetCount: vi.fn(),
+  userFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    page: { findMany: h.pageFindMany },
+    page: { findMany: h.pageFindMany, count: h.pageCount },
     pagePermission: { findMany: h.pagePermissionFindMany },
     teamspaceMember: { findMany: h.teamspaceMemberFindMany },
+    workspaceMember: { count: h.workspaceMemberCount },
+    asset: { count: h.assetCount },
+    user: { findUnique: h.userFindUnique },
   },
 }));
 vi.mock("@/lib/auth", () => ({ requireUser: h.requireUser }));
@@ -53,6 +60,10 @@ beforeEach(() => {
   h.getTrash.mockResolvedValue([]);
   h.pagePermissionFindMany.mockResolvedValue([{ pageId: "page-shared" }]);
   h.teamspaceMemberFindMany.mockResolvedValue([]);
+  h.userFindUnique.mockResolvedValue({ onboardingDismissedAt: new Date() });
+  h.pageCount.mockResolvedValue(0);
+  h.workspaceMemberCount.mockResolvedValue(1);
+  h.assetCount.mockResolvedValue(0);
   h.pageFindMany.mockImplementation((args: { where?: { createdById?: string } }) =>
     args?.where?.createdById
       ? []

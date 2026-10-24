@@ -92,6 +92,8 @@ model User {
   avatarUrl    String?
   locale       String   @default("en")
   theme        String   @default("system")
+  /// When the user dismissed the first-run workspace checklist.
+  onboardingDismissedAt DateTime?
   notificationPrefs Json?
   // B05: a sealed `v1:` envelope (AES-256-GCM), never the raw base32 seed.
   twoFactorSecret  String?
