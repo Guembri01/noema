@@ -214,16 +214,16 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Feature | What it does | Status | Notes |
 | --- | --- | --- | --- |
 | Filters | Restrict rows by property conditions. | ✅ | Multiple flat conditions per view with *Match all/any* (the nested AND/OR tree is unit-tested and ready for the groups UI), operator catalogue per property type, each filter row persisted in the view config. e2e: *filters with a long-tail operator (starts with)*. |
-| AND/OR filter groups | Boolean combination of filters. | 🟡 | Planned as a filter tree. FilterNode tree already evaluates (database-query.ts:66); tree UI spec'd: docs/specs/database-deep.md (R89.2). |
-| Nested filter groups | Arbitrary-depth boolean nesting. | 🟡 | Planned after flat groups. Spec'd with the tree UI: docs/specs/database-deep.md (R89.2). |
+| AND/OR filter groups | Boolean combination of filters. | ✅ | The `filter-tree-ui` builder is exposed from the view toolbar (Builder) and persisted as `config.filterBuilder`; `applyView` gives it precedence and lowers it through `toQueryExpr`, so a saved group really filters. The editor adds conditions/groups, switches each group's AND/OR, moves nodes between groups, validates and normalizes the tree; ids stay stable across edits. Unit-tested in `filter-tree-ui.test.ts`, `view-settings.*.test.ts` and `database-query.test.ts`. |
+| Nested filter groups | Arbitrary-depth boolean nesting. | ✅ | Nested `FilterGroup` nodes are edited recursively (`BuilderGroupRows`), with add-group/add-condition, drag-to-group, normalize and depth/unknown-property validation. A root group can mix leaves and groups at any depth; `applyView` evaluates the whole tree. Covered by the same builder tests plus the pure tree suite. |
 | Filter operators | Equals, contains, before, is empty, etc. | ✅ | Text: contains / does not contain / starts with / ends with / is / is not / is empty / is not empty. Number: > ≥ < ≤ + the text set. Date: is before / is after + the numeric set, target parsed chronologically. Checkbox: is checked / is unchecked. Unparseable targets never match (unit-tested). |
 | Sorts | Order rows by one or more properties. | ✅ | Any number of sort keys in priority order with ↑/↓ reordering, one key per property, and rows without a value always sorted last in both directions. e2e: *applies two sorts and shows the order both keys produce*; unit tests for `compareBySorts`/`moveSort`. |
 | Sort ascending/descending | Direction per sort key. | ✅ | Direction toggle works. |
 | Groups | Bucket rows by a property. | ✅ | Planned; mainly for board/list. groupRows() exists (database-query.ts:580); generalized grouping + order/collapse spec'd: docs/specs/database-deep.md (R89.3). |
 | Group aggregation | Show a summary per group. | ✅ | Planned. Spec'd over rollup aggregate(): docs/specs/database-deep.md (R89.4). |
 | Hidden groups | Collapse or hide groups. | ✅ | Planned. Persisted collapse spec'd: docs/specs/database-deep.md (R89.3). |
-| Conditional formatting | Color rows/cells by rule. | 🟡 | Planned. ColorRule already modelled in view config (database-query.ts:68); rule editor + evaluation spec'd: docs/specs/database-deep.md (R89.5). |
-| Row color rules | Two-tone row backgrounds. | 🟡 | Planned subset of conditional formatting. Spec'd: docs/specs/database-deep.md (R89.5). |
+| Conditional formatting | Color rows/cells by rule. | ✅ | Colour rules are authored in the view toolbar (property, operator, value, palette colour, row vs cell target, optional text colour, reorder/remove) and persisted in `ViewConfig.colorRules`; `evaluateRowColors`/`cellColorFor` reuse the flat filter engine so rule semantics match view filters. The render path paints Table, List, Board, Gallery and Peek; malformed/deleted-property rules stay inert and are reported by `validateRules`. Unit-tested in `conditional-format.test.ts`, `row-color-rules.test.ts` and the view-settings suites. |
+| Row color rules | Two-tone row backgrounds. | ✅ | A `target: "row"` rule applies `backgroundColor` plus optional `textColor` to the whole row; cell rules paint only their property cell. Rules are priority-ordered (first match wins for the background, all matches reported) and edited from the same Colour popover. Covered by `row-color-rules.test.ts` and the database render tests. |
 | Quick filter from header | Filter directly from a column header. | ✅ | Planned. Spec'd as an entry point into the filter panel: docs/specs/database-deep.md (R89.6). |
 
 ### Rows, opening & layout
@@ -297,7 +297,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Created time | Row creation timestamp. | ✅ | Stored automatically; surfaced in table, side peek, board cards and gallery. |
 | Created by | Row creator. | ✅ | Stored; surfaced with the same coverage as Created time. |
 | Last edited time | Last modification timestamp. | ✅ | Stored (updatedAt); surfaced with the same coverage as Created time. |
-| Last edited by | Last editor. | 🟡 | Tracked from property/table edits via the activity log (falls back to creator); content/title edits outside the database view not yet recorded. |
+| Last edited by | Last editor. | ✅ | `row.edited` activity lines are written by both property-cell writes (`setPropertyValueAction`) and real title/body edits of database-row pages (`updatePageAction`, when the page's parent is `DATABASE`); the database query resolves the newest actor per row and falls back to the creator when no edit is recorded. Covered by `pages-follow-notify.test.ts` and the database query tests. |
 | Unique ID property | Monotonic per-database id. | ✅ | Planned. |
 | Button property | Trigger actions from a row. | ✅ | Planned. |
 | Place/location property | Address with map preview. | ✅ | Planned. |
@@ -369,11 +369,11 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Comment mentions | Mention people in comments. | ✅ | `@Name`, `@first`, `@ada@example.com` notify matching workspace members (`page.mention`); matching is a tested pure helper. B79 audit: dispatch runs only in `addCommentAction` (edits never notify), targets are every `workspaceMember` with no page-visibility check (guests/revoked members get a payload leaking `pageId`), no coalescing, and inline `@user` nodes in page content dispatch nothing. R79.4. |
 | Suggestions mode | Propose edits for approval. | ✅ | Planned; diff overlay needed. |
 | Accept/reject suggestion | Resolve proposed changes. | ✅ | Planned. |
-| Following pages | Follow a page for updates. | ✅ | Planned. B79 audit: the page-follow bell already ships (row state from `PageFollow` via `page-title.tsx:338-356`, toggle `pages.ts:463-481`, read `page.tsx:58-61`) but no mutation ever consults `PageFollow` — following dispatches zero notifications (see Notification inbox). R79.5. |
-| Notification inbox | Central list of notifications. | ✅ | Planned. B79 audit: route already exists at `/w/<slug>/inbox` (`inbox/page.tsx:17-99`, newest-first `take 50`, unread dot, sidebar badge) fed by `comment.reply`/`page.mention`; the `page.shared` label has no writer, labels are hardcoded English, and links stop at the page (no `commentId`/anchor). Glyph left as-is (Notes-only) — a manual re-baseline candidate (O79.5). R79.3e, R79.4f-g. B82 spec `docs/specs/notifications.md` owns delivery: rows gain `workspaceId`/`actorId`/payload actor+title (D2/D9), inbox gets workspace filter + cursor paging + `t()` labels (D3), badge semantics frozen — R82.2, R82.21-R82.26. |
-| Notification preferences | Control what triggers alerts. | ✅ | Planned. B82 spec `docs/specs/notifications.md`: `NotificationPreference` rows resolved page → workspace → user default, gate enforced inside the dispatcher itself (`none` cannot be bypassed, `always`-class exceptions documented) — R82.15-R82.20. |
+| Following pages | Follow a page for updates. | ✅ | The page-follow bell toggles `PageFollow`; `notifyPageUpdated` is the consumer: it resolves followers, honours each follower's per-type `page.updated` preference and quiet hours, dedupes within 24 h, and writes one `page.updated` row per deliverable recipient. Covered by `notifications.test.ts`, `pages-follow-notify.test.ts` and `follow-cross-workspace.test.ts`; the cross-workspace cleanup tests pin the stale-follow case. |
+| Notification inbox | Central list of notifications. | ✅ | `/w/<slug>/inbox` reads the newest notifications, folds them into the pure inbox engine and renders day buckets, unread counts, page grouping, mark-read/mark-all-read, a quiet-hours banner and links to the page or ticket. Delivery preferences (`ALL`/`MENTIONS`/`NONE`, digest cadence, quiet hours) are applied in `buildInbox`; `page.updated` and `ticket.assigned` are both written. Remaining polish: some labels are still hardcoded English and page links do not deep-link to a comment anchor. Covered by `notification-inbox.test.ts`, `labels.test.ts`, `notification-preferences-form.test.ts` and the digest route tests. |
+| Notification preferences | Control what triggers alerts. | ✅ | Settings → Notifications renders the per-user form for every notification type (ALL/MENTIONS/NONE), digest cadence and quiet hours, backed by `getNotificationPrefs`/`updateNotificationPrefs` and the validated `notification-prefs-engine` (page → workspace → user-default resolution, `NONE` cannot be bypassed). The digest cron reads the same blob. Covered by `prefs-view.test.ts`, `notification-prefs-engine.test.ts`, `notification-preferences-form.test.ts` and `digest/route.test.ts`. |
 | Lock editing | Freeze a page while editing. | ✅ | Planned; permission-linked. |
-| Activity trail (audit log) | Who changed what, workspace-wide. | ✅ | The `Activity` model is written by workspace, member, page, share and comment mutations and rendered in Settings → Activity with human labels. B79 audit: comment coverage stops at creation — resolve/edit/delete log nothing (`comment.resolved` union member has zero writers), `row.edited` writes directly outside the `ActivityAction` union (`database.ts:206-215`), and `ACTIVITY_KEYS` (`settings/page.tsx:41-54`) is missing entries for several union members. R79.6. |
+| Activity trail (audit log) | Who changed what, workspace-wide. | ✅ | `/w/<slug>/audit` is a manager-gated workspace feed over the real `Activity` rows, with actor/action/category/target/search/date filters, flat or day-grouped views, keyset paging, a redacted payload for non-owners and a CSV export that uses the same query. `audit-log-engine` supplies human action labels, categories/severity and the filter/sort/page model. Comment create/edit/resolve/delete and database-row property edits now all log through `logActivity` (the comment lifecycle has a dedicated audit test). Covered by `audit-log.test.ts`, `audit-log-engine.test.ts`, `audit-feed.test.ts`, `comments-audit.test.ts` and the route tests. |
 | Guests | Limited external collaborators. | ✅ | A `GUEST` is scoped to the pages shared with them: the sidebar tree, search results and **the page route itself** all filter through the guest scope (`guestScope` in `src/lib/guest-access.ts`: explicit `PagePermission`, their teamspaces, their own pages, plus ancestors so the tree still renders). The workspace shell's workspace-wide datasets — the chat log, the calendar subscriptions and their events, the projects, the open-ticket count — are not shared page by page, so a guest receives none of them: `getWorkspaceShellDatasets` (`src/server/workspace-shell.ts`) hands a guest empty sets and never runs the queries behind them. The teamspace names are scoped instead of withheld: a guest sees the teamspaces their own pages live in (the sidebar draws a branch under that name and would drop a shared page otherwise) and not the workspace's other teamspaces — in the shell and in the page route alike. The private calendar feed URL (`icsUrl`) never leaves the server. The sidebar offers a guest no action the server refuses (no new discussion, no calendar subscription). Guests cannot edit, invite or upload. Proven by an e2e that signs in as a guest: the shared page opens, the private one is a 404 and never appears in search. |
 | Coarse edit locks | Prevent simultaneous structural edits. | 🟡 | Planned fallback before full CRDT. |
 
@@ -638,7 +638,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Offline cache | Local store for offline use. | 🟡 | Planned (IndexedDB/SQLite). |
 | Sync conflict handling | Merge concurrent edits. | 🟡 | Planned; CRDT. |
 | Transactions / atomic writes | All-or-nothing updates. | 🟡 | Planned; Prisma transactions. Spec: docs/specs/engineering-hardening.md. |
-| Audit log | Record sensitive actions. | ✅ | Planned. |
+| Audit log | Record sensitive actions. | ✅ | `Activity` rows are written by workspace/member/page/share/comment/ticket mutations, and the workspace audit route filters, groups, paginates, redacts and exports them (see Activity trail). |
 | Soft delete | Mark-deleted rather than purge. | ✅ | `deletedAt` columns used. |
 | Trash retention | Auto-purge after a window. | ✅ | Planned; scheduled job. |
 | Rate limiting | Throttle API/site traffic. | ✅ | Planned; middleware. The sign-in, sign-up and 2FA actions carry their own budgets and a temporary account lockout. |
@@ -771,8 +771,8 @@ The table below summarizes how many feature rows fall into each status, per area
 | --- | --- | --- | --- | --- | --- |
 | 1. Editor & blocks | 86 | 12 | 0 | 2 | 100 |
 | 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
-| 3. Databases | 44 | 9 | 0 | 0 | 53 |
-| 4. Properties | 27 | 8 | 0 | 1 | 36 |
+| 3. Databases | 48 | 5 | 0 | 0 | 53 |
+| 4. Properties | 28 | 7 | 0 | 1 | 36 |
 | 5. Formulas | 15 | 1 | 0 | 0 | 16 |
 | 6. Templates | 6 | 3 | 0 | 1 | 10 |
 | 7. Collaboration | 21 | 5 | 0 | 0 | 26 |
@@ -790,7 +790,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **455** | **86** | **0** | **22** | **563** |
+| **Total** | **460** | **81** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 

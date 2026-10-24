@@ -348,6 +348,14 @@ export async function editCommentAction(
   }
 
   await prisma.comment.update({ where: { id: commentId }, data: { body: text } });
+  await logActivity({
+    workspaceId: comment.page.workspaceId,
+    actorId: user.id,
+    action: "comment.edited",
+    targetType: "comment",
+    targetId: commentId,
+    meta: { pageId: comment.pageId },
+  });
   revalidatePath("/w", "layout");
   return { ok: true, edited: true };
 }
@@ -388,6 +396,14 @@ export async function resolveCommentAction(
   await prisma.comment.update({
     where: { id: commentId },
     data: { resolved },
+  });
+  await logActivity({
+    workspaceId: comment.page.workspaceId,
+    actorId: user.id,
+    action: "comment.resolved",
+    targetType: "comment",
+    targetId: commentId,
+    meta: { pageId: comment.pageId, resolved },
   });
   revalidatePath(`/w`, "layout");
   return { ok: true };
@@ -434,6 +450,14 @@ export async function deleteCommentAction(
     return { error: "You can only delete your own comments." };
   }
   await prisma.comment.delete({ where: { id: commentId } });
+  await logActivity({
+    workspaceId: comment.page.workspaceId,
+    actorId: user.id,
+    action: "comment.deleted",
+    targetType: "comment",
+    targetId: commentId,
+    meta: { pageId: comment.pageId },
+  });
   revalidatePath(`/w`, "layout");
   return { ok: true };
 }

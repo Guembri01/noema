@@ -44,7 +44,8 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/webhooks", () => ({
   dispatchWebhooks: vi.fn(async () => undefined),
 }));
-vi.mock("@/lib/activity", () => ({ logActivity: vi.fn(async () => undefined) }));
+const activity = vi.hoisted(() => ({ logActivity: vi.fn(async () => undefined) }));
+vi.mock("@/lib/activity", () => ({ logActivity: activity.logActivity }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const perms = vi.hoisted(() => ({ getWorkspaceAccess: vi.fn() }));
@@ -169,5 +170,33 @@ describe("updatePageAction → follow dispatch (R82.12)", () => {
     });
     expect(db.pageUpdate).not.toHaveBeenCalled();
     expect(db.notificationCreateMany).not.toHaveBeenCalled();
+  });
+
+  it("records a row.edited audit line when a database row is renamed", async () => {
+    db.pageFindUnique.mockResolvedValue({
+      id: PAGE_ID,
+      workspaceId: "ws-1",
+      parentId: "db-1",
+      parent: { type: "DATABASE" },
+      deletedAt: null,
+      title: "Original",
+      content: DOC_OLD,
+      locked: false,
+    });
+
+    await updatePageAction(PAGE_ID, { title: "Renamed" });
+
+    expect(activity.logActivity).toHaveBeenCalledWith({
+      workspaceId: "ws-1",
+      actorId: ACTOR,
+      action: "row.edited",
+      targetType: "page",
+      targetId: PAGE_ID,
+    });
+  });
+
+  it("does not write row.edited for an ordinary page edit", async () => {
+    await updatePageAction(PAGE_ID, { title: "Renamed" });
+    expect(activity.logActivity).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { randomUUID } from "node:crypto";
 import type { Prisma, PropertyType } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { logActivity } from "@/lib/activity";
 import { pageSearchText } from "@/lib/search";
 import { requireUser, type SessionUser } from "@/lib/auth";
 import {
@@ -577,21 +578,15 @@ export async function setPropertyValueAction(
   });
 
   // One activity line per property write: this is what the LAST_EDITED_BY
-  // property surfaces as the row's last editor. An audit line must never
-  // break the write it records, so failures are swallowed.
-  try {
-    await prisma.activity.create({
-      data: {
-        workspaceId: row.workspaceId,
-        actorId: auth.user.id,
-        action: "row.edited",
-        targetType: "page",
-        targetId: rowPageId,
-      },
-    });
-  } catch {
-    /* see above */
-  }
+  // property surfaces as the row's last editor. `logActivity` already swallows
+  // transport failures, so an audit line can never break the write it records.
+  await logActivity({
+    workspaceId: row.workspaceId,
+    actorId: auth.user.id,
+    action: "row.edited",
+    targetType: "page",
+    targetId: rowPageId,
+  });
 
   revalidateDatabase(row.workspaceId);
   return { ok: true };

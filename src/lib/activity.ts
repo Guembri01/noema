@@ -29,7 +29,10 @@ export type ActivityAction =
   | "cycle.created"
   | "cycle.deleted"
   | "comment.created"
-  | "comment.resolved";
+  | "comment.edited"
+  | "comment.resolved"
+  | "comment.deleted"
+  | "row.edited";
 
 export async function logActivity(input: {
   workspaceId: string;

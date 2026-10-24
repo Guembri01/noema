@@ -40,14 +40,12 @@ const total = rows.length;
 
 /** The shortlist a maintainer should read first (kept in sync by hand). */
 const PRIORITY = [
-  ["Filter tree UI", "The AND/OR filter tree already evaluates; the nested group builder UI is not exposed.", "3. Databases"],
-  ["Conditional formatting", "ColorRule is modelled and evaluated; the rule-authoring and render path are partial.", "3. Databases"],
+  ["Sub-items & dependencies", "The pure tree/graph engines ship; persisted parent links, dependency edges and timeline arrows are still missing.", "3. Databases"],
+  ["Relations & rollups depth", "Single/multi relation editing and rollup evaluation ship; two-way pairing, value validation and picker paging are not wired end-to-end.", "4. Properties"],
   ["Synced blocks", "Mirror one block's content in many places with a canonical source marker.", "1. Editor & blocks"],
   ["Suggestions mode", "Propose edits for approval with a diff overlay.", "7. Collaboration"],
   ["Comment depth", "Server-side depth validation, block anchors and dispatch scoping on page threads.", "7. Collaboration"],
-  ["Notification inbox & preferences", "Per-user delivery preferences, digests and PageFollow dispatch are missing.", "7. Collaboration"],
   ["Pagination everywhere", "Databases, tickets and audit lists load bounded sets; cursor pagination is pending.", "17. Data model & platform"],
-  ["Audit log UI", "Activity is recorded per ticket/page; a workspace-wide, filterable audit view is missing.", "8. Sharing & permissions"],
   ["Object storage & backups", "Uploads and scheduled backups to S3-compatible storage.", "17. Data model & platform"],
   ["SAML SSO", "OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer.", "8. Sharing & permissions"],
   ["Undo/redo (global)", "App-wide undo beyond the editor's local history.", "16. Navigation & UX"],

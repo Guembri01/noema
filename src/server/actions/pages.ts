@@ -35,7 +35,14 @@ async function authorizePage(
   | {
       /** The caller, so a caller-scoped check (the guest page scope) can run. */
       userId: string;
-      page: { id: string; workspaceId: string; parentId: string | null; deletedAt: Date | null };
+      page: {
+        id: string;
+        workspaceId: string;
+        parentId: string | null;
+        deletedAt: Date | null;
+        /** Parent kind, so a database row can be audited as a row edit. */
+        parent: { type: string } | null;
+      };
       access: NonNullable<WorkspaceAccess>;
       /** Effective page rights after the page-level restriction row. */
       capabilities: PageCapabilities;
@@ -49,6 +56,7 @@ async function authorizePage(
       workspaceId: true,
       parentId: true,
       deletedAt: true,
+      parent: { select: { type: true } },
       permissions: {
         where: { userId: user.id },
         select: { level: true },
@@ -364,6 +372,18 @@ export async function updatePageAction(
     },
   });
   await dispatchWebhooks(auth.page.workspaceId, "page.updated", { pageId });
+  // A database row is a Page whose parent is the database. Record real title or
+  // body edits here too, not only property-cell writes, so LAST_EDITED_BY names
+  // the author of the latest edit wherever it was made.
+  if (materiallyChanged && auth.page.parent?.type === "DATABASE") {
+    await logActivity({
+      workspaceId: auth.page.workspaceId,
+      actorId: author.id,
+      action: "row.edited",
+      targetType: "page",
+      targetId: pageId,
+    });
+  }
   // R82.12 — a material edit reaches the page's followers. `notifyPageUpdated`
   // is best-effort and never throws, so the edit's success is unaffected.
   if (materiallyChanged) {
