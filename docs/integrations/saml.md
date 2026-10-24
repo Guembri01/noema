@@ -89,8 +89,18 @@ Generate a SCIM token from a connection card in **Settings → Single sign-on**
 - `PATCH /api/scim/v2/Users/:id` — `active: false` removes membership;
 - `DELETE /api/scim/v2/Users/:id` — deprovision by removing membership.
 
-The workspace owner cannot be deactivated through SCIM. Groups, teamspace sync
-and SCIM group→role mapping are not implemented yet.
+The workspace owner cannot be deactivated through SCIM.
+
+SCIM **Groups** map to workspace teamspaces:
+
+- `GET /api/scim/v2/Groups` / `GET /Groups/:id`;
+- `POST /Groups` creates a teamspace;
+- `PATCH /Groups/:id` adds, removes or replaces members (all must belong to the
+  workspace);
+- `DELETE /Groups/:id` deletes the teamspace.
+
+SCIM group membership currently controls teamspace membership, not the
+workspace role. Workspace role mapping from SCIM groups remains open.
 
 ### Metadata rotation (backend, R10.17)
 

@@ -213,7 +213,9 @@ Ordered by dependency and impact. Every item maps to rows in
   verified-domain TXT workflow.
 - [x] **SAML T10.8 (Users half)** — SCIM 2.0 Users endpoints with one-time hashed tokens,
   pagination, JIT membership, deprovisioning and owner protection.
-- [ ] **SAML T10.8 (Groups half)** — SCIM Groups and teamspace/role sync.
+- [x] **SAML T10.8 (Groups half)** — SCIM Groups map to teamspaces (list/get/create/member
+  add/remove/replace/delete).
+- [ ] **SAML post-M3** — map SCIM group membership onto workspace roles.
 - [ ] CRDT M2 — persisted documents + text CRDT; M3 — cursors/awareness UX. Honest scope:
   M2/M3 only if M1 lands clean this year — otherwise multiplayer rows stay 🧭 into 2027.
 
