@@ -323,6 +323,23 @@ export function validateProviderConfig(
     errors.push(validationError("invalid_url", "Base URL must be an absolute http(s) URL."));
   } else if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     errors.push(validationError("invalid_url", "Base URL must use the http or https scheme."));
+  } else if (parsed.username || parsed.password) {
+    // A credential in the endpoint would be stored and logged as part of the
+    // URL; the transport sends the configured key separately.
+    errors.push(
+      validationError("invalid_url", "Base URL must not embed a username or password."),
+    );
+  } else if (
+    [...parsed.searchParams.keys()].some((name) =>
+      /^(api[_-]?key|key|token|access[_-]?token|auth|authorization|secret|password)$/i.test(name),
+    )
+  ) {
+    errors.push(
+      validationError(
+        "invalid_url",
+        "Base URL must not carry an API key or token in its query string.",
+      ),
+    );
   } else if (parsed.protocol === "http:" && !isLocalHost(baseUrl)) {
     errors.push(
       validationError(

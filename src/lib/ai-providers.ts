@@ -193,9 +193,119 @@ export function providerModelsUrl(
   return `${normalizeBaseUrl(baseUrl)}/models`;
 }
 
-/** Normalise a user-typed base URL (no trailing slash, https by default). */
+/**
+ * Normalise a user-typed base URL (no trailing slash, https by default).
+ *
+ * A value that already carries a scheme is returned untouched — including a
+ * non-http one such as `file:` or `ftp:`. Silently rewriting those to `https:`
+ * would hide an unsafe endpoint from validation; `classifyAiBaseUrl` is what
+ * rejects them.
+ */
 export function normalizeBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/+$/, "");
   if (!trimmed) return "";
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  // Any other explicit scheme stays as typed so the validator can refuse it
+  // instead of turning `file:///etc/passwd` into `https://file:///etc/passwd`.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+/** Hostnames that always mean "the operator's own machine". */
+const LOCAL_AI_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "0.0.0.0",
+  "::1",
+  "[::1]",
+  "host.docker.internal",
+]);
+
+/**
+ * True when a hostname is loopback, a `.local` name, `host.docker.internal`
+ * or an RFC1918 private address. These endpoints are allowed to use plain
+ * `http:` and may be keyless: the traffic never leaves the operator's network.
+ */
+export function isLocalAiHost(hostname: string | null | undefined): boolean {
+  const host = (hostname ?? "").trim().toLowerCase();
+  if (!host) return false;
+  if (LOCAL_AI_HOSTS.has(host)) return true;
+  if (host.endsWith(".local") || host.endsWith(".localhost")) return true;
+  if (host.startsWith("10.")) return true;
+  if (host.startsWith("192.168.")) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+  if (host.startsWith("169.254.")) return true;
+  return false;
+}
+
+/** True when an absolute URL points at a loopback/private host. */
+export function isLocalAiBaseUrl(value: string | null | undefined): boolean {
+  const raw = (value ?? "").trim();
+  if (!raw) return false;
+  try {
+    return isLocalAiHost(new URL(normalizeBaseUrl(raw)).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** The verdict of {@link classifyAiBaseUrl}. */
+export type AiBaseUrlCheck =
+  | { ok: true; url: string; local: boolean }
+  | { ok: false; error: string; url: string; local: boolean };
+
+/** Query-parameter names that would smuggle a credential into a base URL. */
+const CREDENTIAL_QUERY_PARAM =
+  /^(api[_-]?key|key|token|access[_-]?token|auth|authorization|secret|password)$/i;
+
+/**
+ * Validate a provider base URL.
+ *
+ * The endpoint is user input, so it is checked before it is stored or called:
+ *
+ * - only absolute `http(s)` URLs are accepted (no `file:`, `ftp:`, `data:`…);
+ * - a URL may not embed a credential in its user info
+ *   (`https://user:secret@host/v1`) or in a query parameter (`?api_key=…`) —
+ *   those would be stored and logged as part of the endpoint;
+ * - plain `http:` is allowed only for loopback/private hosts; a remote
+ *   provider must use TLS;
+ * - a local (loopback/private) endpoint is reported as `local` so callers can
+ *   allow it to be keyless.
+ */
+export function classifyAiBaseUrl(value: string | null | undefined): AiBaseUrlCheck {
+  const raw = (value ?? "").trim();
+  if (!raw) {
+    return { ok: false, error: "A base URL is required.", url: "", local: false };
+  }
+  const url = normalizeBaseUrl(raw);
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, error: "Base URL must be an absolute http(s) URL.", url, local: false };
+  }
+
+  const local = isLocalAiHost(parsed.hostname);
+  const fail = (error: string): AiBaseUrlCheck => ({ ok: false, error, url, local });
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return fail("Base URL must use the http or https scheme.");
+  }
+  if (!parsed.hostname) {
+    return fail("Base URL must name a host.");
+  }
+  if (parsed.username || parsed.password) {
+    return fail("Base URL must not embed a username or password.");
+  }
+  for (const [name] of parsed.searchParams) {
+    if (CREDENTIAL_QUERY_PARAM.test(name)) {
+      return fail("Base URL must not carry an API key or token in its query string.");
+    }
+  }
+  if (parsed.protocol === "http:" && !local) {
+    return fail("Plain http is only allowed for loopback or private endpoints.");
+  }
+
+  return { ok: true, url, local };
 }

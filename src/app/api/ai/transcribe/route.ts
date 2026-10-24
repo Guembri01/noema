@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/api-guard";
 import { logProviderFailure, providerFailure, transportFailure } from "@/lib/ai-provider";
+import { assertAiDataBoundary } from "@/lib/ai-boundary";
 import { bodyReadError, readFormDataBody } from "@/lib/body-limit";
 
 export const runtime = "nodejs";
@@ -35,6 +36,17 @@ export async function POST(request: Request) {
           "Transcription is not configured. Set AI_TRANSCRIBE_API_KEY (speech-to-text provider).",
       },
       { status: 503 },
+    );
+  }
+
+  // Audio is workspace content too: the same training boundary that guards the
+  // chat transport applies before the file is read.
+  try {
+    assertAiDataBoundary("transcribe");
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "AI data boundary refused the call." },
+      { status: 403 },
     );
   }
 

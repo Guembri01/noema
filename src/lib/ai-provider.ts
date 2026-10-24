@@ -10,10 +10,16 @@
 
 import { prisma } from "./db";
 import { decryptSecret } from "./secrets";
-import { isOpenCodeGoEndpoint, providerDefaultBaseUrl, normalizeBaseUrl } from "./ai-providers";
+import {
+  isLocalAiBaseUrl,
+  isOpenCodeGoEndpoint,
+  providerDefaultBaseUrl,
+  normalizeBaseUrl,
+} from "./ai-providers";
 import { serverAppVersion } from "./app-version";
 import { DEPLOYMENT_SESSION_ID, workspaceSessionId } from "./ai-session";
 import { checkBudget, estimateTokens, recordUsage, type BudgetRecord } from "./ai-cost";
+import { assertAiDataBoundary, logAiDiagnostic } from "./ai-boundary";
 import { z } from "zod";
 import { getWorkspaceAccess } from "./permissions";
 import { redactSecrets } from "./error-reporting";
@@ -313,7 +319,7 @@ export function logProviderFailure(
   failure: ProviderFailure,
   context?: ProviderAttribution,
 ): void {
-  console.error("ai provider error", {
+  logAiDiagnostic("ai provider error", {
     status: failure.status,
     code: failure.code,
     ...logContext(context),
@@ -387,7 +393,7 @@ function isProviderClassError(error: unknown): error is Error {
  * several workspaces.
  */
 export function transportFailure(context?: ProviderAttribution): string {
-  console.error("ai provider error", {
+  logAiDiagnostic("ai provider error", {
     code: TRANSPORT_ERROR,
     ...logContext(context),
   });
@@ -451,9 +457,12 @@ export function providerRequestHeaders(
   options: { json?: boolean } = {},
 ): Record<string, string> {
   const headers: Record<string, string> = {
-    authorization: `Bearer ${config.apiKey}`,
     "user-agent": providerUserAgent(),
   };
+  // A keyless local runtime (Ollama, vLLM, llama.cpp) must not receive an
+  // empty `Authorization: Bearer ` header: some reject the malformed value,
+  // and sending a credential-shaped header to a keyless endpoint is noise.
+  if (config.apiKey) headers.authorization = `Bearer ${config.apiKey}`;
   if (options.json) headers["content-type"] = "application/json";
   if (isOpenCodeGoEndpoint(config.baseUrl)) {
     headers["x-opencode-session"] = config.sessionId ?? DEPLOYMENT_SESSION_ID;
@@ -585,11 +594,18 @@ export type ChatResult =
 function envConfig(): AiRuntimeConfig | null {
   const apiKey =
     process.env.AI_API_KEY ?? process.env.OPENAI_API_KEY ?? process.env.GEMINI_API_KEY ?? "";
-  if (!apiKey) return null;
+  const baseUrl = normalizeBaseUrl(
+    process.env.AI_BASE_URL ?? "https://api.openai.com/v1",
+  );
+  const model = process.env.AI_MODEL ?? "gpt-4o-mini";
+  // A remote provider needs a key. A loopback/private endpoint may be keyless
+  // (Ollama, vLLM), so the env defaults support the same local story as the
+  // workspace configuration.
+  if (!apiKey && !isLocalAiBaseUrl(baseUrl)) return null;
   return {
     provider: "env",
-    baseUrl: normalizeBaseUrl(process.env.AI_BASE_URL ?? "https://api.openai.com/v1"),
-    model: process.env.AI_MODEL ?? "gpt-4o-mini",
+    baseUrl,
+    model,
     apiKey,
     source: "env",
     sessionId: DEPLOYMENT_SESSION_ID,
@@ -609,9 +625,15 @@ export async function resolveAiConfig(
       .findUnique({ where: { workspaceId }, select: { provider: true, baseUrl: true, model: true, apiKeyEncrypted: true, enabled: true } })
       .catch(() => null);
     if (stored?.enabled) {
-      const apiKey = decryptSecret(stored.apiKeyEncrypted);
+      // `decryptSecret` returns null for an absent envelope; the runtime config
+      // uses an empty string for "keyless", which the header builder omits.
+      const apiKey = decryptSecret(stored.apiKeyEncrypted) ?? "";
       const baseUrl = normalizeBaseUrl(stored.baseUrl ?? providerDefaultBaseUrl(stored.provider));
-      if (apiKey && baseUrl && stored.model) {
+      // A keyless config is valid only when the endpoint is local: a remote
+      // provider without a key would fail at the provider anyway, and falling
+      // through to the env defaults keeps a broken workspace row from
+      // shadowing a working deployment config.
+      if (baseUrl && stored.model && (apiKey || isLocalAiBaseUrl(baseUrl))) {
         return {
           provider: stored.provider,
           baseUrl,
@@ -670,6 +692,16 @@ export async function chatComplete(
   },
   config: AiRuntimeConfig,
 ): Promise<ChatResult> {
+  // The training boundary is checked before any content is serialised: a
+  // provider the operator declared as training is refused unless they also
+  // opted in.
+  try {
+    assertAiDataBoundary(config.provider);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "AI data boundary refused the call.";
+    return { ok: false, status: 403, error: message };
+  }
+
   const messages: ChatMessage[] = [{ role: "system", content: input.system }];
   if (input.context) {
     messages.push({ role: "user", content: `Context:\n${input.context}` });
@@ -760,6 +792,13 @@ export async function* chatCompleteStream(
   },
   config: AiRuntimeConfig,
 ): AsyncGenerator<string, void, unknown> {
+  try {
+    assertAiDataBoundary(config.provider);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "AI data boundary refused the call.";
+    throw new ProviderClassError("data_boundary", message);
+  }
+
   const messages: ChatMessage[] = [{ role: "system", content: input.system }];
   if (input.context) messages.push({ role: "user", content: `Context:\n${input.context}` });
   if (input.user) messages.push({ role: "user", content: input.user });

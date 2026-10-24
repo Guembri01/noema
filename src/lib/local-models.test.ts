@@ -308,6 +308,22 @@ describe("validateProviderConfig", () => {
     expect(result.errors.map((e) => e.code)).toContain("invalid_url");
   });
 
+  it("rejects credentials embedded in the base URL", () => {
+    const userInfo = validateProviderConfig({
+      providerId: "ollama",
+      baseUrl: "http://user:secret@localhost:11434",
+      model: "llama3.1",
+    });
+    expect(userInfo.errors.map((e) => e.code)).toContain("invalid_url");
+
+    const query = validateProviderConfig({
+      providerId: "ollama",
+      baseUrl: "http://localhost:11434?api_key=secret",
+      model: "llama3.1",
+    });
+    expect(query.errors.map((e) => e.code)).toContain("invalid_url");
+  });
+
   it("rejects a missing model", () => {
     const result = validateProviderConfig({
       providerId: "ollama",
