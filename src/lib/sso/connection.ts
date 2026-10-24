@@ -89,7 +89,7 @@ export function settingsFromSsoConnection(
       idpCertificate: certificates.length === 1 ? certificates[0] : certificates,
       spEntityId: row.spEntityId?.trim() || `${cleanOrigin}${SAML_METADATA_PATH}`,
       callbackUrl: row.callbackUrl?.trim() || `${cleanOrigin}${SAML_ACS_PATH}`,
-      logoutCallbackUrl: `${cleanOrigin}${SAML_SLO_PATH}`,
+      logoutCallbackUrl: `${cleanOrigin}${SAML_SLO_PATH}?connection=${encodeURIComponent(row.id)}`,
       identifierFormat: DEFAULT_SAML_NAME_ID_FORMAT,
       emailAttribute: row.emailAttribute?.trim() || DEFAULT_SAML_EMAIL_ATTRIBUTE,
       nameAttribute: row.nameAttribute?.trim() || DEFAULT_SAML_NAME_ATTRIBUTE,

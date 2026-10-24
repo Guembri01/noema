@@ -20,6 +20,9 @@ vi.mock("@/lib/permissions", async (importOriginal) => {
 vi.mock("@/lib/db", () => ({ prisma: { ssoConnection: db } }));
 vi.mock("@/lib/activity", () => activity);
 vi.mock("@/lib/feed-guard", () => guard);
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => new Headers({ host: "localhost:3000", "x-forwarded-proto": "https" })),
+}));
 
 import {
   createSsoConnectionAction,
@@ -28,6 +31,7 @@ import {
   listSsoConnectionsAction,
   refreshSsoConnectionMetadataAction,
   revokeScimTokenAction,
+  testSsoConnectionAction,
   updateSsoConnectionAction,
   type SsoConnectionInput,
 } from "./sso-connections";
@@ -42,6 +46,29 @@ const INPUT: SsoConnectionInput = {
   emailAttribute: "email",
   roleRules: "eng:ADMIN",
 };
+
+/** A real self-signed test certificate (CN=noema-test-idp) so X509 parsing runs. */
+const CERT_BASE64 =
+  "MIIDKDCCAhCgAwIBAgIQMGT0HvlPoZRAxt9z7wRYcTANBgkqhkiG9w0BAQsFADAZMRcwFQYDVQQDDA5ub2VtYS10ZXN0LWlkcDAeFw0xOTEyMzEyMjAwMDBaFw0zOTEyMzEyMjAwMDBaMBkxFzAVBgNVBAMMDm5vZW1hLXRlc3QtaWRwMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvpeo+jeVRoAGIzb9CgpLUEWb25pBQ8kWe9IyH6jxzYcGk4Xl74fICQfYYNF11vTTO0i8rZ8WieI36fxOyF5WWnbojB4IrPuaFHzqCh9VUsnURXDmXmBgb8nTLixb8auL7FFZPmWsTcvQl080m8zw84HyFRQak1aPY1nn+YGJLjLfDx6CNmMvxRrtNt3AoueJBjpEfRp1UDTtdukvTc4fhLJ16f5Fe7EhqfWloAoCD5mFB/Uj7NgQnBUU7P5SAkYKSYtzw8EJX7fRwCeprbOycDnfSmn2lX5XKp2s1rQwjqZK8EW37UaV31mRyviSziRF8T8V/qpkUE/EzkfnanFNrQIDAQABo2wwajAOBgNVHQ8BAf8EBAMCBaAwHQYDVR0lBBYwFAYIKwYBBQUHAwIGCCsGAQUFBwMBMBoGA1UdEQQTMBGCD2lkcC5leGFtcGxlLmNvbTAdBgNVHQ4EFgQUpcF16JACCSCLQqcBGZ9mvzKWhF4wDQYJKoZIhvcNAQELBQADggEBAKjTcfUld5sKWTQPMImZefNE0Rg9P4fvjWjKbWBDeGzbDbZBucFoyRst9OYVI/KvliMBLPZFwF1v40K3E6n+vGfmLDE5hwWN1o/XWZxeDnVXy4XH/2W9RLs+mUsCdV5xOZYlIK5+OkwBHgxZeapRrf6xEMTsSiuvmX32CyY5J4K1I7Z5gqdKt3Pb0/rdn6Gnh2rtJOaeGNVOTX2Q5lpixLiazAEURM8+l2GdQcI4adPHbU7KBJ4CtgYkUedOubKS6ptLzmfHknqSTgMiHkdhLMyelEHdJlQ55YY6Msnq5n6ncW8UCi3hNfzSM/l270xeHUghw8E2B7lp9YdqUaJynOU=";
+
+const CERT_PEM = `-----BEGIN CERTIFICATE-----\n${(CERT_BASE64.match(/.{1,64}/g) ?? []).join("\n")}\n-----END CERTIFICATE-----`;
+
+const CONNECTION_ROW = {
+  id: "conn-1",
+  protocol: "saml",
+  idpEntityId: "https://idp.example.com/metadata",
+  ssoUrl: "https://idp.example.com/sso",
+  certificate: CERT_PEM,
+  metadataUrl: null,
+  spEntityId: null,
+  callbackUrl: null,
+  emailAttribute: "email",
+  groupsAttribute: "groups",
+};
+
+function metadataWithCertificate(entityId = "https://idp.example.com/metadata", ssoUrl = "https://idp.example.com/sso"): string {
+  return `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="${entityId}"><IDPSSODescriptor><KeyDescriptor use="signing"><KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><X509Data><X509Certificate>${CERT_BASE64}</X509Certificate></X509Data></KeyInfo></KeyDescriptor><SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="${ssoUrl}"/></IDPSSODescriptor></EntityDescriptor>`;
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -251,6 +278,134 @@ describe("metadata rotation", () => {
     await expect(
       refreshSsoConnectionMetadataAction("ws-1", "conn-1"),
     ).resolves.toEqual({ error: "The IdP metadata is not valid XML." });
+    expect(db.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("testSsoConnectionAction", () => {
+  it("fails closed for a non-admin without reading the connection", async () => {
+    access.getWorkspaceAccess.mockResolvedValue({ role: "MEMBER" });
+
+    await expect(testSsoConnectionAction("ws-1", "conn-1")).resolves.toEqual({
+      error: "You do not have permission to manage single sign-on.",
+    });
+    expect(db.findFirst).not.toHaveBeenCalled();
+    expect(guard.safeFetchGuarded).not.toHaveBeenCalled();
+  });
+
+  it("rejects a connection outside the workspace and never mutates or fetches", async () => {
+    db.findFirst.mockResolvedValue(null);
+
+    await expect(testSsoConnectionAction("ws-1", "other")).resolves.toEqual({
+      error: "That SAML connection does not exist in this workspace.",
+    });
+    expect(db.update).not.toHaveBeenCalled();
+    expect(activity.logActivity).not.toHaveBeenCalled();
+    expect(guard.safeFetchGuarded).not.toHaveBeenCalled();
+  });
+
+  it("passes a complete stored connection without writing anything or leaking the PEM", async () => {
+    db.findFirst.mockResolvedValue(CONNECTION_ROW);
+
+    const result = await testSsoConnectionAction("ws-1", "conn-1");
+
+    expect(result).toMatchObject({
+      ok: true,
+      report: { passed: true },
+    });
+    if (!("ok" in result)) throw new Error(result.error);
+    expect(result.report.checks.every((entry) => entry.status === "pass")).toBe(true);
+    expect(
+      result.report.checks.some((entry) => entry.id === "certificate" && entry.detail.includes("valid until")),
+    ).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("BEGIN CERTIFICATE");
+    expect(JSON.stringify(result)).not.toContain(CERT_BASE64);
+    expect(db.update).not.toHaveBeenCalled();
+    expect(activity.logActivity).not.toHaveBeenCalled();
+    expect(guard.safeFetchGuarded).not.toHaveBeenCalled();
+  });
+
+  it("reports invalid required fields, certificate and SP consistency as failures", async () => {
+    db.findFirst.mockResolvedValue({
+      ...CONNECTION_ROW,
+      idpEntityId: "",
+      ssoUrl: "javascript:alert(1)",
+      certificate: "not-a-pem",
+      spEntityId: "https://sp.example.com/metadata",
+      callbackUrl: "https://other.example.com/acs",
+    });
+
+    const result = await testSsoConnectionAction("ws-1", "conn-1");
+
+    if (!("ok" in result)) throw new Error(result.error);
+    expect(result.report.passed).toBe(false);
+    const failed = new Set(
+      result.report.checks.filter((entry) => entry.status === "fail").map((entry) => entry.id),
+    );
+    expect(failed).toEqual(
+      new Set([
+        "idp-entity-id",
+        "sso-url",
+        "sp-origin-consistency",
+        "certificate",
+      ]),
+    );
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("fetches and validates a configured metadata URL", async () => {
+    db.findFirst.mockResolvedValue({
+      ...CONNECTION_ROW,
+      metadataUrl: "https://idp.example.com/metadata.xml",
+    });
+    guard.safeFetchGuarded.mockResolvedValue({
+      ok: true,
+      response: new Response(metadataWithCertificate(), { status: 200 }),
+      finalUrl: "https://idp.example.com/metadata.xml",
+    });
+
+    const result = await testSsoConnectionAction("ws-1", "conn-1");
+
+    if (!("ok" in result)) throw new Error(result.error);
+    expect(result.report.passed).toBe(true);
+    expect(result.report.checks.map((entry) => entry.id)).toEqual(
+      expect.arrayContaining(["metadata-url", "metadata-entity-id", "metadata-sso-url", "metadata-certificate"]),
+    );
+    expect(guard.safeFetchGuarded).toHaveBeenCalledWith(
+      "https://idp.example.com/metadata.xml",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("fails the metadata check when the URL is blocked or disagrees with the stored fields", async () => {
+    db.findFirst.mockResolvedValue({
+      ...CONNECTION_ROW,
+      metadataUrl: "https://idp.example.com/metadata.xml",
+    });
+    guard.safeFetchGuarded.mockResolvedValue({ ok: false, reason: "blocked" });
+
+    const blocked = await testSsoConnectionAction("ws-1", "conn-1");
+    if (!("ok" in blocked)) throw new Error(blocked.error);
+    expect(blocked.report.passed).toBe(false);
+    expect(
+      blocked.report.checks.find((entry) => entry.id === "metadata-url"),
+    ).toMatchObject({ status: "fail" });
+
+    guard.safeFetchGuarded.mockResolvedValue({
+      ok: true,
+      response: new Response(
+        metadataWithCertificate("https://other.example.com/metadata", "https://other.example.com/sso"),
+        { status: 200 },
+      ),
+      finalUrl: "https://idp.example.com/metadata.xml",
+    });
+    const mismatched = await testSsoConnectionAction("ws-1", "conn-1");
+    if (!("ok" in mismatched)) throw new Error(mismatched.error);
+    expect(mismatched.report.passed).toBe(false);
+    const byId = new Map(mismatched.report.checks.map((entry) => [entry.id, entry]));
+    expect(byId.get("metadata-entity-id")?.status).toBe("fail");
+    expect(byId.get("metadata-sso-url")?.status).toBe("fail");
     expect(db.update).not.toHaveBeenCalled();
   });
 });

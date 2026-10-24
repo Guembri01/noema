@@ -5,6 +5,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 }));
+vi.mock("next/link", async () => {
+  const { createElement: h } = await import("react");
+  return {
+    default: ({ href, children, ...rest }: { href: string; children?: unknown }) =>
+      h("a", { href, ...rest }, children as never),
+  };
+});
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
@@ -45,6 +52,7 @@ describe("SsoSettings", () => {
     const html = renderToStaticMarkup(
       createElement(SsoSettings, {
         workspaceId: "ws-1",
+        slug: "acme",
         locale: "en",
         connections: [connection],
         domains: [
@@ -70,6 +78,7 @@ describe("SsoSettings", () => {
     expect(html).toContain("Single sign-on");
     expect(html).toContain("Acme Okta");
     expect(html).toContain("https://idp.example.com/sso");
+    expect(html).toContain('href="/w/acme/settings/sso/conn-1"');
     expect(html).toContain("_noema-verification.acme.com");
     expect(html).toContain("token-1");
     expect(html).toContain("verified");
@@ -80,6 +89,7 @@ describe("SsoSettings", () => {
     const html = renderToStaticMarkup(
       createElement(SsoSettings, {
         workspaceId: "ws-1",
+        slug: "acme",
         locale: "en",
         connections: [],
         domains: [],

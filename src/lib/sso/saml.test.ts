@@ -269,6 +269,11 @@ describe("connection settings", () => {
       expect(Array.isArray(resolved.settings.idpCertificate)).toBe(true);
       expect(resolved.settings.idpCertificate).toHaveLength(2);
       expect(resolved.settings.workspaceId).toBe("ws-1");
+      // IdP-initiated SLO has no RelayState: the connection must travel in the
+      // advertised SLO URL or the route falls back to the env connection.
+      expect(resolved.settings.logoutCallbackUrl).toBe(
+        "https://app.example.com/api/auth/saml/slo?connection=conn-1",
+      );
     }
   });
 

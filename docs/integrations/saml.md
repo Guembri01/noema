@@ -58,8 +58,15 @@ A workspace login starts at:
 The same `?connection=` selects the connection's SP metadata at
 `/api/auth/saml/metadata`. The RelayState is signed with the connection id, so
 the ACS loads the same row; an unknown/disabled row fails closed. Workspace admins manage connections and verified domains in
-**Settings → Single sign-on** (`src/components/sso-settings.tsx`): create/edit,
-refresh metadata, delete, add a domain and publish/verify its TXT token.
+**Settings → Single sign-on** (`src/components/sso-settings.tsx`): the list
+creates new connections, opens a per-connection page and manages verified
+domains. Each connection page
+(`/w/<slug>/settings/sso/<connectionId>`) shows the connection-specific ACS,
+SP-entity and metadata URLs with copy controls, the certificate/metadata
+status, the edit form and a dry **Test connection** button. The test only reads
+the stored row (required fields, PEM parse, SP URL consistency, metadata-URL
+reachability/consistency); it never writes the connection or sends a sign-in
+request.
 
 ### Verified domains (backend, R10.9)
 

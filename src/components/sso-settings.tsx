@@ -1,21 +1,20 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { SsoConnectionForm } from "@/components/sso-connection-form";
 import { useAction } from "@/lib/actions-client";
 import { t } from "@/lib/i18n";
 import {
-  createSsoConnectionAction,
   deleteSsoConnectionAction,
   generateScimTokenAction,
   refreshSsoConnectionMetadataAction,
   revokeScimTokenAction,
-  updateSsoConnectionAction,
-  type SsoConnectionInput,
 } from "@/server/actions/sso-connections";
 import {
   addVerifiedDomainAction,
@@ -50,30 +49,17 @@ export type VerifiedDomainRow = {
   connectionId: string | null;
 };
 
-const EMPTY: SsoConnectionInput = {
-  name: "",
-  idpEntityId: "",
-  ssoUrl: "",
-  certificate: "",
-  metadataUrl: "",
-  spEntityId: "",
-  callbackUrl: "",
-  emailAttribute: "",
-  nameAttribute: "",
-  groupsAttribute: "",
-  roleRules: "",
-  enabled: true,
-};
-
-/** Render one connection/domain editor; all rules are re-checked server-side. */
+/** Render the connection list; the full editor lives on each connection page. */
 export function SsoSettings({
   workspaceId,
+  slug,
   locale,
   connections,
   domains,
   activity = [],
 }: {
   workspaceId: string;
+  slug: string;
   locale: string;
   connections: SsoConnectionRow[];
   domains: VerifiedDomainRow[];
@@ -81,48 +67,14 @@ export function SsoSettings({
 }) {
   const router = useRouter();
   const { run, pending } = useAction(locale);
-  const [draft, setDraft] = useState<SsoConnectionInput>(EMPTY);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const [domain, setDomain] = useState("");
   const [domainConnection, setDomainConnection] = useState("");
   const [scimToken, setScimToken] = useState<string | null>(null);
 
   const refresh = () => router.refresh();
-  const edit = (row: SsoConnectionRow) => {
-    setEditingId(row.id);
-    setDraft({
-      name: row.name,
-      idpEntityId: row.idpEntityId,
-      ssoUrl: row.ssoUrl,
-      certificate: row.certificate,
-      metadataUrl: row.metadataUrl ?? "",
-      spEntityId: row.spEntityId ?? "",
-      callbackUrl: row.callbackUrl ?? "",
-      emailAttribute: row.emailAttribute ?? "",
-      nameAttribute: row.nameAttribute ?? "",
-      groupsAttribute: row.groupsAttribute ?? "",
-      roleRules: row.roleRules,
-      enabled: row.enabled,
-    });
-  };
   const reset = () => {
-    setEditingId(null);
-    setDraft(EMPTY);
-  };
-  const save = () => {
-    run(
-      () =>
-        editingId
-          ? updateSsoConnectionAction(workspaceId, editingId, draft)
-          : createSsoConnectionAction(workspaceId, draft),
-      {
-        success: editingId ? "SAML connection updated" : "SAML connection created",
-        onSuccess: () => {
-          reset();
-          refresh();
-        },
-      },
-    );
+    setAdding(false);
   };
 
   return (
@@ -137,8 +89,13 @@ export function SsoSettings({
             <code>/api/auth/saml/metadata?connection=&lt;id&gt;</code>.
           </p>
         </div>
-        <Button type="button" size="sm" onClick={reset} leftIcon={<Plus className="h-4 w-4" />}>
-          {t(locale, "add")}
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => setAdding((value) => !value)}
+          leftIcon={<Plus className="h-4 w-4" />}
+        >
+          {adding ? t(locale, "cancel") : t(locale, "add")}
         </Button>
       </div>
 
@@ -165,8 +122,8 @@ export function SsoSettings({
                 )}
               </div>
               <div className="flex flex-wrap gap-1">
-                <Button type="button" size="sm" variant="ghost" onClick={() => edit(row)}>
-                  {t(locale, "edit")}
+                <Button type="button" size="sm" variant="ghost" asChild>
+                  <Link href={`/w/${slug}/settings/sso/${row.id}`}>Manage</Link>
                 </Button>
                 {row.metadataUrl && (
                   <Button
@@ -243,115 +200,16 @@ export function SsoSettings({
         ))}
       </div>
 
-      <Card variant="flat" padding="md" className="mt-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-sm">
-            Name
-            <Input
-              value={draft.name}
-              onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-              placeholder="Acme Okta"
-            />
-          </label>
-          <label className="text-sm">
-            IdP entity id
-            <Input
-              value={draft.idpEntityId}
-              onChange={(event) => setDraft({ ...draft, idpEntityId: event.target.value })}
-              placeholder="https://idp.example.com/metadata"
-            />
-          </label>
-          <label className="text-sm">
-            IdP SSO URL
-            <Input
-              value={draft.ssoUrl}
-              onChange={(event) => setDraft({ ...draft, ssoUrl: event.target.value })}
-              placeholder="https://idp.example.com/sso"
-            />
-          </label>
-          <label className="text-sm">
-            Metadata URL (optional)
-            <Input
-              value={draft.metadataUrl}
-              onChange={(event) => setDraft({ ...draft, metadataUrl: event.target.value })}
-              placeholder="https://idp.example.com/metadata"
-            />
-          </label>
-          <label className="text-sm sm:col-span-2">
-            IdP certificate (PEM)
-            <textarea
-              value={draft.certificate}
-              onChange={(event) => setDraft({ ...draft, certificate: event.target.value })}
-              rows={3}
-              className="focus-ring w-full rounded-control border border-border bg-bg px-3 py-2 font-mono text-xs"
-              placeholder="-----BEGIN CERTIFICATE-----"
-            />
-
-          </label>
-          <label className="text-sm">
-            SP entity id (optional)
-            <Input
-              value={draft.spEntityId}
-              onChange={(event) => setDraft({ ...draft, spEntityId: event.target.value })}
-            />
-          </label>
-          <label className="text-sm">
-            ACS URL (optional)
-            <Input
-              value={draft.callbackUrl}
-              onChange={(event) => setDraft({ ...draft, callbackUrl: event.target.value })}
-            />
-          </label>
-          <label className="text-sm">
-            Email attribute
-            <Input
-              value={draft.emailAttribute}
-              onChange={(event) => setDraft({ ...draft, emailAttribute: event.target.value })}
-              placeholder="email"
-            />
-          </label>
-          <label className="text-sm">
-            Groups attribute
-            <Input
-              value={draft.groupsAttribute}
-              onChange={(event) => setDraft({ ...draft, groupsAttribute: event.target.value })}
-              placeholder="groups"
-            />
-          </label>
-          <label className="text-sm">
-            Name attribute
-            <Input
-              value={draft.nameAttribute}
-              onChange={(event) => setDraft({ ...draft, nameAttribute: event.target.value })}
-              placeholder="name"
-            />
-          </label>
-          <label className="text-sm">
-            Role rules
-            <Input
-              value={draft.roleRules}
-              onChange={(event) => setDraft({ ...draft, roleRules: event.target.value })}
-              placeholder="eng:ADMIN,ops:MEMBER"
-            />
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={draft.enabled}
-              onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })}
-            />
-            Enabled
-          </label>
-        </div>
-        <div className="mt-3 flex gap-2">
-          <Button type="button" size="sm" disabled={pending} onClick={save}>
-            {t(locale, "save")}
-          </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={reset}>
-            {t(locale, "cancel")}
-          </Button>
-        </div>
-      </Card>
+      {adding && (
+        <Card variant="flat" padding="md" className="mt-4">
+          <h3 className="mb-3 text-sm font-semibold">New SAML connection</h3>
+          <SsoConnectionForm
+            workspaceId={workspaceId}
+            locale={locale}
+            onCancel={reset}
+          />
+        </Card>
+      )}
 
       {activity.length > 0 && (
         <div className="mt-8">

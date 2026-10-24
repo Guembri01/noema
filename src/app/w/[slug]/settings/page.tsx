@@ -622,6 +622,7 @@ export default async function SettingsPage({
       {manage && (
         <SsoSettings
           workspaceId={workspace.id}
+          slug={workspace.slug}
           locale={locale}
           connections={ssoConnections}
           domains={verifiedDomains}

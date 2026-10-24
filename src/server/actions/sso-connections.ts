@@ -10,6 +10,11 @@ import { logActivity } from "@/lib/activity";
 import { canPerformWorkspaceAction, getWorkspaceAccess } from "@/lib/permissions";
 import { parseSamlRoleRules } from "@/lib/sso/saml";
 import { parseIdpMetadata } from "@/lib/sso/metadata";
+import { requestOrigin } from "@/lib/sso/request-origin";
+import {
+  testSsoConnection,
+  type SsoConnectionTestReport,
+} from "@/lib/sso/test-connection";
 import { hashScimToken } from "@/lib/scim/users";
 import { safeFetchGuarded } from "@/lib/feed-guard";
 
@@ -204,6 +209,39 @@ export async function listSsoConnectionsAction(
     select: SELECT,
   });
   return { ok: true, connections: rows.map(toView) };
+}
+
+/**
+ * Dry-run "Test connection": inspect the stored row without writing anything.
+ * It validates the public configuration (required fields, certificate, SP URLs
+ * and — when configured — the metadata document) and returns a structured
+ * pass/fail report. Administrators only; the report never contains the PEM.
+ */
+export async function testSsoConnectionAction(
+  workspaceId: string,
+  connectionId: string,
+): Promise<SsoConnectionResult<{ report: SsoConnectionTestReport }>> {
+  const auth = await authorize(workspaceId);
+  if ("error" in auth) return auth;
+  const row = await prisma.ssoConnection.findFirst({
+    where: { id: connectionId, workspaceId },
+    select: {
+      id: true,
+      protocol: true,
+      idpEntityId: true,
+      ssoUrl: true,
+      certificate: true,
+      metadataUrl: true,
+      spEntityId: true,
+      callbackUrl: true,
+      emailAttribute: true,
+      groupsAttribute: true,
+    },
+  });
+  if (!row) return { error: "That SAML connection does not exist in this workspace." };
+
+  const report = await testSsoConnection(row, await requestOrigin());
+  return { ok: true, report };
 }
 
 /** Create a SAML connection for the workspace. */
