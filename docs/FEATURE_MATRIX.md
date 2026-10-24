@@ -748,7 +748,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Milestone description | Note on a checkpoint. | ✅ | Editable in project detail. |
 | Recurring tickets | Repeat on a schedule. | 🟡 | Planned; template recurrence exists for page templates. Spec: docs/specs/automations.md. |
 | Workload & capacity | Per-person load planning. | ✅ | Planned; assignee + estimate data is available. |
-| Per-project role editor | Fine-grained project roles. | 🟡 | Planned; workspace roles exist today. |
+| Per-project role editor | Fine-grained project roles. | ✅ | `ProjectRoleEditor` on the project detail loads the workspace roster projected onto the project-role engine, lets managers re-role/remove members, and every change is re-checked server-side for the role ceiling and last-owner guard (`setProjectRoleAction` / `removeProjectRoleAction`). |
 
 ## 21. Workspace lifecycle
 <!-- AREA: 21. Workspace lifecycle -->
@@ -790,9 +790,9 @@ The table below summarizes how many feature rows fall into each status, per area
 | 17. Data model & platform | 26 | 11 | 0 | 0 | 37 |
 | 18. Pricing & plan-gated features | 8 | 6 | 0 | 0 | 14 |
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
-| 20. Projects, tickets & planning | 30 | 2 | 0 | 0 | 32 |
+| 20. Projects, tickets & planning | 31 | 1 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **488** | **55** | **0** | **22** | **565** |
+| **Total** | **489** | **54** | **0** | **22** | **565** |
 
 ## Deliberate divergences
 

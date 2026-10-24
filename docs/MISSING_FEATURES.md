@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 565 feature rows — 488 implemented · 55 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 565 feature rows — 489 implemented · 54 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **55** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **54** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -191,10 +191,9 @@ This file lists the **55** rows that are not finished, area by area, plus 22 int
 
 ### 20. Projects, tickets & planning
 
-30 done · 2 partial · 0 planned
+31 done · 1 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
 | Recurring tickets | Repeat on a schedule. | 🟡 | Planned; template recurrence exists for page templates. Spec: docs/specs/automations.md. |
-| Per-project role editor | Fine-grained project roles. | 🟡 | Planned; workspace roles exist today. |
 
