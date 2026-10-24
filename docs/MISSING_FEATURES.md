@@ -2,9 +2,9 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 563 feature rows — 454 implemented · 87 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 563 feature rows — 455 implemented · 86 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **87** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **86** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
@@ -12,17 +12,16 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 | --- | --- | --- | --- |
 | 1 | **Filter tree UI** | The AND/OR filter tree already evaluates; the nested group builder UI is not exposed. | 3. Databases |
 | 2 | **Conditional formatting** | ColorRule is modelled and evaluated; the rule-authoring and render path are partial. | 3. Databases |
-| 3 | **Linked database writes** | View identity, filters/sorts and overrides shipped; write-through and the in-block override editor are pending. | 3. Databases |
-| 4 | **Synced blocks** | Mirror one block's content in many places with a canonical source marker. | 1. Editor & blocks |
-| 5 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
-| 6 | **Comment depth** | Server-side depth validation, block anchors and dispatch scoping on page threads. | 7. Collaboration |
-| 7 | **Notification inbox & preferences** | Per-user delivery preferences, digests and PageFollow dispatch are missing. | 7. Collaboration |
-| 8 | **Pagination everywhere** | Databases, tickets and audit lists load bounded sets; cursor pagination is pending. | 17. Data model & platform |
-| 9 | **Audit log UI** | Activity is recorded per ticket/page; a workspace-wide, filterable audit view is missing. | 8. Sharing & permissions |
-| 10 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
-| 11 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
-| 12 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
-| 13 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
+| 3 | **Synced blocks** | Mirror one block's content in many places with a canonical source marker. | 1. Editor & blocks |
+| 4 | **Suggestions mode** | Propose edits for approval with a diff overlay. | 7. Collaboration |
+| 5 | **Comment depth** | Server-side depth validation, block anchors and dispatch scoping on page threads. | 7. Collaboration |
+| 6 | **Notification inbox & preferences** | Per-user delivery preferences, digests and PageFollow dispatch are missing. | 7. Collaboration |
+| 7 | **Pagination everywhere** | Databases, tickets and audit lists load bounded sets; cursor pagination is pending. | 17. Data model & platform |
+| 8 | **Audit log UI** | Activity is recorded per ticket/page; a workspace-wide, filterable audit view is missing. | 8. Sharing & permissions |
+| 9 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
+| 10 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
+| 11 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
+| 12 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
 
 ## By area
 
@@ -57,7 +56,7 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 
 ### 3. Databases
 
-43 done · 10 partial · 0 planned
+44 done · 9 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -66,7 +65,6 @@ This file lists the **87** rows that are not finished, area by area, plus 22 int
 | Nested filter groups | Arbitrary-depth boolean nesting. | 🟡 | Planned after flat groups. Spec'd with the tree UI: docs/specs/database-deep.md (R89.2). |
 | Conditional formatting | Color rows/cells by rule. | 🟡 | Planned. ColorRule already modelled in view config (database-query.ts:68); rule editor + evaluation spec'd: docs/specs/database-deep.md (R89.5). |
 | Row color rules | Two-tone row backgrounds. | 🟡 | Planned subset of conditional formatting. Spec'd: docs/specs/database-deep.md (R89.5). |
-| Linked database | Reuse a database elsewhere. | 🟡 | Source-view binding, filters/sorts, view picker, synced/detached overrides and stale-id fallback shipped; linked-mode row writes and the in-block override editor remain (R89.14/R89.15). Covered by `linked-database.fix04.test.ts` and the guest-scope action test. |
 | Sub-items / sub-tasks | Parent-child rows inside a database. | 🟡 | Planned; tree ordering needed. Page.subOfId (depth cap 1) spec'd independent of relations: docs/specs/database-deep.md (R89.30). |
 | Dependencies | Blocking/blocked-by between rows. | 🟡 | Planned; mainly for timeline. RowDependency join model with cycle guard spec'd: docs/specs/database-deep.md (R89.31). |
 | Timeline dependencies | Draw dependency arrows on timeline. | 🟡 | Planned. Arrow rendering inside the gantt depth spec: docs/specs/database-deep.md (R89.31 with R89.11). |

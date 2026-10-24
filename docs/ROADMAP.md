@@ -77,8 +77,9 @@ Ordered by dependency and impact. Every item maps to rows in
 - [x] Row side-peek (labelled property panel with inline editors) · [ ] sub-items,
   dependencies, calculations footer
 - [~] Database templates (create-from-template + template manager wired) — matrix 🧭
-- [~] Linked databases (source-view binding, filters/sorts, per-node synced/detached
-  overrides, stale-id fallback; write-through and in-block override editing pending)
+- [x] Linked databases (source-view binding, filters/sorts, per-node synced/detached
+  overrides, stale-id fallback, detached-only in-block filter/sort editing, and
+  create/edit/delete rows through the existing database actions + authz)
   · [~] recurring templates (`POST /api/cron/templates`, fail-closed materializer;
   matrix 🧭 pending scheduler rows) · [x] view config (above)
 - [~] CSV import/export (Export/Import CSV live in the full-page database toolbar +

@@ -20,8 +20,14 @@ const db = vi.hoisted(() => ({
   teamspaceMemberFindMany: vi.fn(),
 }));
 const auth = vi.hoisted(() => ({ requireUser: vi.fn() }));
-const perm = vi.hoisted(() => ({ getWorkspaceAccess: vi.fn() }));
-const queries = vi.hoisted(() => ({ getDatabase: vi.fn() }));
+const perm = vi.hoisted(() => ({
+  getWorkspaceAccess: vi.fn(),
+  canPerformWorkspaceAction: vi.fn(() => true),
+}));
+const queries = vi.hoisted(() => ({
+  getDatabase: vi.fn(),
+  getWorkspaceMembers: vi.fn(),
+}));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
@@ -30,8 +36,14 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 vi.mock("@/lib/auth", () => ({ requireUser: auth.requireUser }));
-vi.mock("@/lib/permissions", () => ({ getWorkspaceAccess: perm.getWorkspaceAccess }));
-vi.mock("@/server/queries", () => ({ getDatabase: queries.getDatabase }));
+vi.mock("@/lib/permissions", () => ({
+  getWorkspaceAccess: perm.getWorkspaceAccess,
+  canPerformWorkspaceAction: perm.canPerformWorkspaceAction,
+}));
+vi.mock("@/server/queries", () => ({
+  getDatabase: queries.getDatabase,
+  getWorkspaceMembers: queries.getWorkspaceMembers,
+}));
 
 import { getLinkedDatabaseAction, listDatabasesAction } from "./linked-database";
 
@@ -71,6 +83,7 @@ beforeEach(() => {
   auth.requireUser.mockResolvedValue({ id: GUEST_ID });
   perm.getWorkspaceAccess.mockResolvedValue({ role: "GUEST" });
   db.teamspaceMemberFindMany.mockResolvedValue([]);
+  queries.getWorkspaceMembers.mockResolvedValue([]);
 
   // The scope query: every page of the workspace with this guest's grants.
   db.pageFindMany.mockImplementation(async (args: { where?: Record<string, unknown> }) => {
@@ -98,6 +111,7 @@ beforeEach(() => {
       type: page.type,
       title: page.title,
       icon: null,
+      permissions: (grants[page.id] ?? []).map((level) => ({ level })),
     };
   });
 
@@ -131,6 +145,10 @@ describe("getLinkedDatabaseAction — guest scope", () => {
     expect("error" in result).toBe(false);
     if ("error" in result) return;
     expect(result.databasePageId).toBe("db-1");
+    expect(result.canEdit).toBe(false);
+    expect(result.members).toEqual([]);
+    expect(result.relations).toEqual({});
+    expect(queries.getWorkspaceMembers).not.toHaveBeenCalled();
     expect(result.rows.map((row) => row.id)).toEqual(["row-1"]);
     expect(result.properties.map((property) => property.name)).toEqual(["Name"]);
     expect(result.views[0]?.config).toEqual({
@@ -180,15 +198,60 @@ describe("getLinkedDatabaseAction — guest scope", () => {
     expect(result.databasePageId).toBe("db-3");
   });
 
-  it("leaves a member untouched", async () => {
+  it("leaves a member untouched and offers the member directory", async () => {
     perm.getWorkspaceAccess.mockResolvedValue({ role: "MEMBER" });
+    queries.getWorkspaceMembers.mockResolvedValue([
+      { id: "user-2", name: "Bob", email: "bob@example.com", avatarUrl: null, role: "MEMBER" },
+    ]);
 
     const result = await getLinkedDatabaseAction("db-2");
 
     expect("error" in result).toBe(false);
     if ("error" in result) return;
     expect(result.databasePageId).toBe("db-2");
+    expect(result.canEdit).toBe(true);
+    expect(result.actingUserId).toBe(GUEST_ID);
+    expect(result.members).toEqual([{ id: "user-2", name: "Bob" }]);
     expect(result.rows.map((row) => row.id)).toEqual(["row-1"]);
+  });
+
+  it("projects relation options without leaking target values", async () => {
+    perm.getWorkspaceAccess.mockResolvedValue({ role: "MEMBER" });
+    queries.getDatabase.mockResolvedValueOnce({
+      properties: [],
+      views: [],
+      rows: [],
+      relationData: {
+        "rel-1": {
+          options: [{ id: "target-row", title: "Target", icon: "🎯" }],
+          valuesByRow: { "target-row": { "secret-prop": { text: "secret" } } },
+          properties: [{ id: "secret-prop", name: "Secret", type: "TEXT" }],
+        },
+      },
+    });
+
+    const result = await getLinkedDatabaseAction("db-2");
+
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    expect(result.relations).toEqual({
+      "rel-1": [{ id: "target-row", title: "Target", icon: "🎯" }],
+    });
+    // The embed only needs the picker options; target cell values and schema
+    // stay on the full database route.
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("does not offer writes when the member holds only READ on the database", async () => {
+    perm.getWorkspaceAccess.mockResolvedValue({ role: "MEMBER" });
+    grants = { "db-2": ["READ"] };
+
+    const result = await getLinkedDatabaseAction("db-2");
+
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    expect(result.canEdit).toBe(false);
+    expect(queries.getWorkspaceMembers).not.toHaveBeenCalled();
   });
 });
 

@@ -36,6 +36,7 @@ const h = vi.hoisted(() => {
     user: [],
     page: [],
     pagePermission: [],
+    workspaceMember: [],
     teamspace: [],
     teamspaceMember: [],
     property: [],
@@ -57,6 +58,7 @@ const perm = vi.hoisted(() => ({
   /** The role of the current actor — the seam the test switches. */
   getWorkspaceAccess: vi.fn(async () => ({ role: "GUEST" })),
   canEditContent: vi.fn((role: string) => role !== "GUEST"),
+  canPerformWorkspaceAction: vi.fn((role: string) => role !== "GUEST"),
 }));
 
 vi.mock("@/lib/db", () => {
@@ -265,6 +267,9 @@ vi.mock("@/lib/db", () => {
     user: {
       findMany: (args: Record<string, unknown>) => findMany("user", args),
     },
+    workspaceMember: {
+      findMany: (args: Record<string, unknown>) => findMany("workspaceMember", args),
+    },
   };
 
   return { prisma };
@@ -274,6 +279,7 @@ vi.mock("@/lib/auth", () => ({ requireUser: auth.requireUser }));
 vi.mock("@/lib/permissions", () => ({
   getWorkspaceAccess: perm.getWorkspaceAccess,
   canEditContent: perm.canEditContent,
+  canPerformWorkspaceAction: perm.canPerformWorkspaceAction,
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -316,7 +322,10 @@ function scopeQueries(): { model: string; op: string; args: Row }[] {
   return h.calls.filter((call) => {
     if (call.model !== "page" || call.op !== "findMany") return false;
     const select = call.args.select as Record<string, unknown> | undefined;
-    return Boolean(select && "permissions" in select);
+    // `findUnique` is implemented by this double as a `findMany`, so the
+    // action's own metadata read (workspaceId/type/title + permissions) also
+    // appears here. Only the scope walk selects `parentId`.
+    return Boolean(select && "permissions" in select && "parentId" in select);
   });
 }
 

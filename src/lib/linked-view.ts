@@ -27,6 +27,19 @@ export type LinkedViewMode = "synced" | "detached";
 /** Per-instance overrides: a `ViewConfig` subset merged over the source view. */
 export type LinkedViewOverrides = Partial<ViewConfig>;
 
+/**
+ * Row writes are a property of a *detached* instance whose reader may edit the
+ * source database. A synced instance mirrors the source and stays read-only
+ * here even for an editor, because writing through it would silently diverge
+ * from the source view the block claims to mirror.
+ */
+export function canWriteLinkedRows(
+  mode: LinkedViewMode | string | null | undefined,
+  canEdit: boolean,
+): boolean {
+  return mode === "detached" && canEdit;
+}
+
 export type LinkedView = {
   instanceId: string;
   databaseId: string;
@@ -52,6 +65,7 @@ const VIEW_CONFIG_KEYS: readonly string[] = [
   "filters",
   "filterMode",
   "filterTree",
+  "filterBuilder",
   "sorts",
   "groupByPropertyId",
   "visiblePropertyIds",
@@ -79,6 +93,7 @@ const SOURCE_OWNED_KEYS: readonly string[] = [
   "filters",
   "filterMode",
   "filterTree",
+  "filterBuilder",
   "sorts",
 ];
 

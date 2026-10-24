@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canWriteLinkedRows,
   convertMode,
   createLinkedView,
   describeLinkedView,
@@ -435,5 +436,15 @@ describe("normalizeViewConfig interop", () => {
     const linked = withOverrides(base, { description: "Instance" });
     const resolved = resolveViewConfig(source, linked);
     expect(normalizeViewConfig(resolved)).toEqual(resolved);
+  });
+});
+
+describe("canWriteLinkedRows", () => {
+  it("only writes through a detached instance the reader may edit", () => {
+    expect(canWriteLinkedRows("detached", true)).toBe(true);
+    expect(canWriteLinkedRows("detached", false)).toBe(false);
+    expect(canWriteLinkedRows("synced", true)).toBe(false);
+    expect(canWriteLinkedRows("synced", false)).toBe(false);
+    expect(canWriteLinkedRows(null, true)).toBe(false);
   });
 });

@@ -1,23 +1,30 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { Node, mergeAttributes } from "@tiptap/core";
 import {
   NodeViewWrapper,
   ReactNodeViewRenderer,
   type NodeViewProps,
 } from "@tiptap/react";
-import { ExternalLink, Loader2, Pencil, Trash2 } from "lucide-react";
+import { ExternalLink, ListFilter, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import {
+  addSort as appendSort,
   applyView,
   formatCell,
   normalizeViewConfig,
+  operatorsFor,
+  removeSort,
+  type FilterOperator,
   type QueryProperty,
   type QueryRow,
+  type Sort,
   type ViewConfig,
 } from "@/lib/database-query";
 import { t } from "@/lib/i18n";
 import {
+  canWriteLinkedRows,
   convertMode,
   createLinkedView,
   describeLinkedView,
@@ -27,6 +34,18 @@ import {
   type LinkedViewMode,
   type LinkedViewOverrides,
 } from "@/lib/linked-view";
+import {
+  addFilterLeaf,
+  clearFilterAndSortOverrides,
+  filterBuilderFromConfig,
+  filterLeaves,
+  removeFilterLeaf,
+  setFilterMatch,
+  updateFilterLeaf,
+} from "@/lib/linked-overrides";
+import type { FilterGroup, FilterLeaf } from "@/lib/filter-tree-ui";
+import { guarded } from "@/lib/actions-client";
+import { createRowAction } from "@/server/actions/database";
 import {
   DEFAULT_ROW_HEIGHT,
   parseInlineDatabaseBlock,
@@ -52,6 +71,27 @@ import {
   type LinkedDatabaseData,
 } from "@/server/actions/linked-database";
 
+// Transport failures become `{ error }` values, matching the action's own
+// refusal shape. The audit gate treats a `guarded(...)` wrapper as adopted.
+const createLinkedRow = guarded(createRowAction);
+
+// The row editor reuses the full database `Cell` (every property type). It is
+// split out so the editor route does not pay for that surface until a reader
+// actually opens a row.
+const LinkedRowEditor = dynamic(
+  () =>
+    import("./linked-row-editor").then((module) => ({
+      default: module.LinkedRowEditor,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <span className="noema-linked-loading">
+        <Loader2 className="h-4 w-4 animate-spin" />
+      </span>
+    ),
+  },
+);
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -293,6 +333,11 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
   const [picking, setPicking] = useState(false);
   const [data, setData] = useState<LinkedDatabaseData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [editingRowId, setEditingRowId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [writeError, setWriteError] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Gallery card preview: the size follows the measured body width, mirroring
   // `GalleryView` (the initial width of 0 keeps server and client identical).
@@ -339,7 +384,7 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [databasePageId]);
+  }, [databasePageId, reloadKey]);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -423,7 +468,28 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
   const sourceView =
     data?.views.find((view) => view.id === node.attrs.sourceViewId) ?? data?.views[0] ?? null;
   const sourceConfig = sourceView ? normalizeViewConfig(sourceView.config) : null;
-  const sourceRows = linkedRowsForView(data?.rows ?? [], data?.properties ?? [], sourceConfig);
+  // The first pass resolves the instance's effective config (source + local
+  // overrides). The second pass sizes the scroll shell from the rows that
+  // config actually selects: a detached filter that hides half the source must
+  // also shrink the embed instead of leaving dead scroll space.
+  const sizingEmbed = linkedEmbedModel({
+    instanceId: databasePageId,
+    databaseId: databasePageId,
+    sourceViewId: sourceView?.id ?? null,
+    mode: node.attrs.mode as string | null,
+    overrides: node.attrs.overrides,
+    sourceConfig,
+    sourceViewType: sourceView?.type ?? null,
+    maxRows: typeof node.attrs.maxRows === "number" ? (node.attrs.maxRows as number) : 20,
+    contentHeight: 0,
+    viewportHeight: 0,
+    overscan: 0,
+  });
+  const sourceRows = linkedRowsForView(
+    data?.rows ?? [],
+    data?.properties ?? [],
+    sizingEmbed.effective,
+  );
   const embed = linkedEmbedModel({
     instanceId: databasePageId,
     databaseId: databasePageId,
@@ -438,6 +504,10 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
     overscan: 0,
   });
   const visibleRows = sourceRows.slice(embed.window.start, embed.window.end);
+  const canWrite = canWriteLinkedRows(embed.linked.mode, data?.canEdit === true);
+  const editingRow = data?.rows.find((row) => row.id === editingRowId) ?? null;
+  const filterTree = filterBuilderFromConfig(embed.effective);
+  const overrideSorts = embed.effective.sorts ?? [];
   // A per-instance override of `visiblePropertyIds` narrows the embed; with no
   // source config (and so no override) every property renders, as before.
   const effectiveIds = embed.effective.visiblePropertyIds;
@@ -485,6 +555,43 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
       (property): property is LinkedDatabaseData["properties"][number] =>
         property !== undefined,
     );
+  const overrides = sanitizeOverrides(node.attrs.overrides);
+
+  const updateOverrides = (next: LinkedViewOverrides) => {
+    setWriteError(null);
+    updateAttributes({ overrides: next });
+  };
+
+  const applyViewSettings = (nextTree: FilterGroup, nextSorts: Sort[]) => {
+    updateOverrides({
+      ...overrides,
+      filterBuilder: nextTree,
+      sorts: nextSorts,
+    });
+  };
+
+  const createRow = async () => {
+    setCreating(true);
+    setWriteError(null);
+    const result = await createLinkedRow(databasePageId);
+    if ("error" in result) {
+      setWriteError(result.error);
+      setCreating(false);
+      return;
+    }
+    // Read once so the new empty row is present before the editor opens. The
+    // block remains usable if that read fails; the next explicit reload will
+    // pick the row up.
+    const refreshed = await getLinkedDatabaseAction(databasePageId);
+    if ("error" in refreshed) {
+      setWriteError(refreshed.error);
+      setReloadKey((key) => key + 1);
+    } else {
+      setData(refreshed);
+      setEditingRowId(result.id);
+    }
+    setCreating(false);
+  };
 
   return (
     <NodeViewWrapper className="noema-linked-db" data-linked-database="">
@@ -529,6 +636,34 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
           >
             {embed.linked.mode}
           </button>
+          {embed.linked.mode === "detached" && data && (
+            <button
+              type="button"
+              aria-pressed={settingsOpen}
+              aria-label={`${t(locale, "dbFilter")} / ${t(locale, "dbSort")}`}
+              title={`${t(locale, "dbFilter")} / ${t(locale, "dbSort")}`}
+              onClick={() => setSettingsOpen((open) => !open)}
+              className="noema-linked-open inline-flex items-center gap-1"
+            >
+              <ListFilter className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {canWrite && (
+            <button
+              type="button"
+              aria-label={t(locale, "newRow")}
+              title={t(locale, "newRow")}
+              disabled={creating}
+              onClick={() => void createRow()}
+              className="noema-linked-open inline-flex items-center gap-1"
+            >
+              {creating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Plus className="h-3.5 w-3.5" />
+              )}
+            </button>
+          )}
           <a
             href={`/w/${options.workspaceSlug}/${databasePageId}`}
             className="noema-linked-open"
@@ -558,6 +693,21 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
+        {writeError && (
+          <p role="alert" className="noema-linked-empty border-t border-border px-3 py-2">
+            {writeError}
+          </p>
+        )}
+        {settingsOpen && embed.linked.mode === "detached" && data && (
+          <LinkedViewSettingsPanel
+            locale={locale}
+            properties={data.properties}
+            builder={filterTree}
+            sorts={overrideSorts}
+            onChange={applyViewSettings}
+            onReset={() => updateOverrides(clearFilterAndSortOverrides(overrides))}
+          />
+        )}
         <div
           className="noema-linked-body"
           contentEditable={false}
@@ -581,12 +731,16 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
               columns={visibleProperties}
               rows={visibleRows}
               primaryId={primary?.id ?? null}
+              canWrite={canWrite}
+              onEdit={(rowId) => setEditingRowId(rowId)}
             />
           ) : viewMode === "list" ? (
             <LinkedListView
               locale={locale}
               properties={presetProperties}
               rows={visibleRows}
+              canWrite={canWrite}
+              onEdit={(rowId) => setEditingRowId(rowId)}
             />
           ) : (
             <div
@@ -610,8 +764,19 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
                 return (
                   <div
                     key={row.id}
-                    className="overflow-hidden rounded-lg border border-border bg-bg"
+                    className="relative overflow-hidden rounded-lg border border-border bg-bg"
                   >
+                    {canWrite && (
+                      <button
+                        type="button"
+                        aria-label={t(locale, "edit")}
+                        title={t(locale, "edit")}
+                        onClick={() => setEditingRowId(row.id)}
+                        className="noema-linked-open absolute right-1 top-1 bg-bg/80 backdrop-blur"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     {spec.showPreview && (
                       <div
                         className="grid place-items-center overflow-hidden bg-surface text-3xl"
@@ -663,6 +828,28 @@ function LinkedDatabaseView({ node, updateAttributes, deleteNode, extension }: N
           )}
         </div>
       </div>
+      {editingRow && data && (
+        <LinkedRowEditor
+          row={editingRow}
+          data={data}
+          workspaceId={options.workspaceId}
+          locale={locale}
+          onClose={() => setEditingRowId(null)}
+          onSaved={() => setReloadKey((key) => key + 1)}
+          onDeleted={() => {
+            const deletedId = editingRow.id;
+            setEditingRowId(null);
+            setData((current) =>
+              current
+                ? {
+                    ...current,
+                    rows: current.rows.filter((candidate) => candidate.id !== deletedId),
+                  }
+                : current,
+            );
+          }}
+        />
+      )}
     </NodeViewWrapper>
   );
 }
@@ -695,11 +882,15 @@ function LinkedTableView({
   columns,
   rows,
   primaryId,
+  canWrite,
+  onEdit,
 }: {
   locale: string;
   columns: { id: string; name: string; type: string }[];
   rows: readonly LinkedDatabaseRow[];
   primaryId: string | null;
+  canWrite: boolean;
+  onEdit: (rowId: string) => void;
 }) {
   return (
     <table className="noema-linked-table">
@@ -708,6 +899,7 @@ function LinkedTableView({
           {columns.map((property) => (
             <th key={property.id}>{property.name}</th>
           ))}
+          {canWrite && <th aria-label={t(locale, "edit")} />}
         </tr>
       </thead>
       <tbody>
@@ -728,10 +920,265 @@ function LinkedTableView({
                     ) || "—"}
               </td>
             ))}
+            {canWrite && (
+              <td className="w-8">
+                <button
+                  type="button"
+                  aria-label={t(locale, "edit")}
+                  title={t(locale, "edit")}
+                  onClick={() => onEdit(row.id)}
+                  className="noema-linked-open"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+              </td>
+            )}
           </tr>
         ))}
       </tbody>
     </table>
+  );
+}
+
+/**
+ * The in-block filter/sort editor for a detached linked instance. It edits the
+ * instance's `overrides` only; the source view is never written. Filters use
+ * the persisted AND/OR builder shape, which wins over the source's other filter
+ * shapes in the shared query engine.
+ */
+function LinkedViewSettingsPanel({
+  locale,
+  properties,
+  builder,
+  sorts,
+  onChange,
+  onReset,
+}: {
+  locale: string;
+  properties: LinkedDatabaseData["properties"];
+  builder: FilterGroup;
+  sorts: readonly Sort[];
+  onChange: (builder: FilterGroup, sorts: Sort[]) => void;
+  onReset: () => void;
+}) {
+  const leaves = filterLeaves(builder);
+  const firstProperty = properties[0] ?? null;
+  const noValue = new Set<FilterOperator>([
+    "is_empty",
+    "is_not_empty",
+    "checked",
+    "unchecked",
+  ]);
+  const propertyFor = (propertyId: string) =>
+    properties.find((property) => property.id === propertyId) ?? null;
+  const defaultOperator = (type: string): FilterOperator =>
+    (operatorsFor(type)[0]?.value as FilterOperator | undefined) ?? "is";
+
+  const addFilter = () => {
+    if (!firstProperty) return;
+    const op = defaultOperator(firstProperty.type);
+    onChange(
+      addFilterLeaf(builder, {
+        propertyId: firstProperty.id,
+        op,
+        ...(noValue.has(op) ? {} : { value: "" }),
+      }),
+      [...sorts],
+    );
+  };
+
+  const changeFilter = (leaf: FilterLeaf, patch: Partial<FilterLeaf>) => {
+    onChange(updateFilterLeaf(builder, leaf.id, patch), [...sorts]);
+  };
+
+  const changeFilterProperty = (leaf: FilterLeaf, propertyId: string) => {
+    const property = propertyFor(propertyId);
+    if (!property) return;
+    const op = defaultOperator(property.type);
+    changeFilter(leaf, {
+      propertyId,
+      op,
+      ...(noValue.has(op) ? {} : { value: "" }),
+    });
+  };
+
+  const changeFilterOperator = (leaf: FilterLeaf, op: FilterOperator) => {
+    changeFilter(leaf, {
+      op,
+      ...(noValue.has(op) ? {} : { value: leaf.value ?? "" }),
+    });
+  };
+
+  const addSort = () => {
+    const used = new Set(sorts.map((sort) => sort.propertyId));
+    const candidate = properties.find((property) => !used.has(property.id));
+    if (candidate) onChange(builder, appendSort([...sorts], candidate.id, "asc"));
+  };
+
+  return (
+    <div
+      className="space-y-2 border-t border-border px-3 py-2 text-xs"
+      data-testid="linked-view-overrides"
+      contentEditable={false}
+    >
+      <div className="flex items-center gap-2">
+        <span className="font-medium text-muted">{t(locale, "dbFilter")}</span>
+        {leaves.length > 1 && (
+          <select
+            aria-label={t(locale, "filterMatchModeAria")}
+            value={builder.op}
+            onChange={(event) =>
+              onChange(setFilterMatch(builder, event.target.value === "or" ? "or" : "and"), [
+                ...sorts,
+              ])
+            }
+            className="h-7 rounded-control border border-border bg-bg px-1"
+          >
+            <option value="and">AND</option>
+            <option value="or">OR</option>
+          </select>
+        )}
+        <button
+          type="button"
+          onClick={addFilter}
+          disabled={!firstProperty}
+          className="noema-linked-open ml-auto inline-flex items-center gap-1 disabled:opacity-50"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          {t(locale, "add")}
+        </button>
+      </div>
+      {leaves.map((leaf) => {
+        const property = propertyFor(leaf.propertyId);
+        const operators = property ? operatorsFor(property.type) : [];
+        return (
+          <div key={leaf.id} className="flex flex-wrap items-center gap-1">
+            <select
+              aria-label={t(locale, "properties")}
+              value={leaf.propertyId}
+              onChange={(event) => changeFilterProperty(leaf, event.target.value)}
+              className="h-7 max-w-36 rounded-control border border-border bg-bg px-1"
+            >
+              {!property && <option value={leaf.propertyId}>{leaf.propertyId}</option>}
+              {properties.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.name}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label={t(locale, "filterOperatorAria")}
+              value={leaf.op}
+              onChange={(event) =>
+                changeFilterOperator(leaf, event.target.value as FilterOperator)
+              }
+              className="h-7 max-w-36 rounded-control border border-border bg-bg px-1"
+            >
+              {operators.map((operator) => (
+                <option key={operator.value} value={operator.value}>
+                  {operator.label}
+                </option>
+              ))}
+            </select>
+            {!noValue.has(leaf.op) && (
+              <input
+                aria-label={t(locale, "filterGroupValueAria")}
+                value={leaf.value ?? ""}
+                onChange={(event) => changeFilter(leaf, { value: event.target.value })}
+                className="h-7 min-w-20 flex-1 rounded-control border border-border bg-bg px-1"
+              />
+            )}
+            <button
+              type="button"
+              aria-label={t(locale, "remove")}
+              title={t(locale, "remove")}
+              onClick={() => onChange(removeFilterLeaf(builder, leaf.id), [...sorts])}
+              className="noema-linked-open"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        );
+      })}
+
+      <div className="flex items-center gap-2 border-t border-border pt-2">
+        <span className="font-medium text-muted">{t(locale, "dbSort")}</span>
+        <button
+          type="button"
+          onClick={addSort}
+          disabled={properties.length === 0}
+          className="noema-linked-open ml-auto inline-flex items-center gap-1 disabled:opacity-50"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          {t(locale, "add")}
+        </button>
+      </div>
+      {sorts.map((sort) => (
+        <div key={sort.propertyId} className="flex items-center gap-1">
+          <select
+            aria-label={t(locale, "properties")}
+            value={sort.propertyId}
+            onChange={(event) =>
+              onChange(
+                builder,
+                sorts.map((candidate) =>
+                  candidate.propertyId === sort.propertyId
+                    ? { ...candidate, propertyId: event.target.value }
+                    : candidate,
+                ),
+              )
+            }
+            className="h-7 min-w-0 flex-1 rounded-control border border-border bg-bg px-1"
+          >
+            {properties.map((property) => (
+              <option key={property.id} value={property.id}>
+                {property.name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            aria-label={t(locale, "sortDirection")}
+            title={t(locale, "sortDirection")}
+            onClick={() =>
+              onChange(
+                builder,
+                sorts.map((candidate) =>
+                  candidate.propertyId === sort.propertyId
+                    ? {
+                        ...candidate,
+                        direction: candidate.direction === "asc" ? "desc" : "asc",
+                      }
+                    : candidate,
+                ),
+              )
+            }
+            className="noema-linked-open"
+          >
+            {sort.direction === "asc" ? "↑" : "↓"}
+          </button>
+          <button
+            type="button"
+            aria-label={t(locale, "remove")}
+            title={t(locale, "remove")}
+            onClick={() => onChange(builder, removeSort([...sorts], sort.propertyId))}
+            className="noema-linked-open"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ))}
+
+      {(leaves.length > 0 || sorts.length > 0) && (
+        <button
+          type="button"
+          onClick={onReset}
+          className="noema-linked-open text-xs"
+        >
+          {t(locale, "clear")}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -745,10 +1192,14 @@ function LinkedListView({
   locale,
   properties,
   rows,
+  canWrite,
+  onEdit,
 }: {
   locale: string;
   properties: readonly ViewPropertyLike[];
   rows: readonly LinkedDatabaseRow[];
+  canWrite: boolean;
+  onEdit: (rowId: string) => void;
 }) {
   return (
     <ul className="divide-y divide-border">
@@ -759,7 +1210,7 @@ function LinkedListView({
         return (
           <li key={row.id} className="flex items-center gap-2 py-1.5">
             <span className="w-4 text-center">{row.icon ?? "📄"}</span>
-            <span className="min-w-0">
+            <span className="min-w-0 flex-1">
               <span className="block truncate text-sm">
                 {model.primary || t(locale, "untitled")}
               </span>
@@ -769,6 +1220,17 @@ function LinkedListView({
                 </span>
               )}
             </span>
+            {canWrite && (
+              <button
+                type="button"
+                aria-label={t(locale, "edit")}
+                title={t(locale, "edit")}
+                onClick={() => onEdit(row.id)}
+                className="noema-linked-open shrink-0"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
           </li>
         );
       })}

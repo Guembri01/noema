@@ -235,7 +235,7 @@ Row counts in the status summary at the end count **feature rows only**; legend 
 | Open row in side peek | Preview row in a side drawer. | ✅ | Planned; needs drawer shell. Spec: docs/specs/navigation-ux.md. |
 | Inline database | Database embedded in a page body. | ✅ | Renders through the editor's linked-database node view; its height/scroll shell lives in `src/components/editor/**` (editor slot), so the scroll fix is queued there rather than patched from B15. |
 | Full-page database | Database as its own page. | ✅ | One toolbar above the table: view tabs + per-view menu (rename / duplicate / change type), Filter, Sort, Group, Colour and Properties controls, New row, Templates, New property, Deleted rows, Export/Import CSV and a live row count. |
-| Linked database | Reuse a database elsewhere. | 🟡 | Source-view binding, filters/sorts, view picker, synced/detached overrides and stale-id fallback shipped; linked-mode row writes and the in-block override editor remain (R89.14/R89.15). Covered by `linked-database.fix04.test.ts` and the guest-scope action test. |
+| Linked database | Reuse a database elsewhere. | ✅ | Source-view binding, view picker, synced/detached mode, stale-id fallback, and a detached-only in-block filter/sort editor (AND/OR builder + sorts) ship. A detached instance offers New row plus a row editor that reuses the database `Cell` renderer for every property type; create/edit/delete call `createRowAction`/`setPropertyValueAction`/`deleteRowAction`, and the primary title mirrors through `updatePageAction`. The server returns `canEdit` from the reader's page capabilities, so guests and explicit READ/COMMENT grants see no write affordances; synced instances stay read-only in the UI. Covered by `linked-overrides.test.ts`, `linked-database.fix04.test.ts`, `linked-view.test.ts` and the guest-scope action tests (R89.14/R89.15). |
 | Load limit / row pagination | Limit rows shown per view. | ✅ | The ticket tracker loads **100 rows per page** with keyset pagination (`getTicketsPage` + `loadMoreTicketsAction`) and a *Load more* control that disappears at the end; an e2e with 120 tickets proves no row is repeated or dropped. Databases load a bounded set. |
 | Show/hide properties | Choose visible columns. | ✅ | The Properties menu toggles columns per view (primary column pinned, hidden count shown) and the list is stored in the view config, so the same columns come back after a reload. e2e: *persists show/hide properties and filters across a reload* + `visibleColumns` unit tests. |
 | Freeze columns | Pin leading columns while scrolling. | ✅ | First column pinned with `position: sticky` while the table scrolls horizontally — on by default and toggled per view from the Properties menu (multi-column pinning not offered). e2e asserts the sticky header after reload. |
@@ -771,7 +771,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | --- | --- | --- | --- | --- | --- |
 | 1. Editor & blocks | 86 | 12 | 0 | 2 | 100 |
 | 2. Text formatting | 21 | 0 | 0 | 1 | 22 |
-| 3. Databases | 43 | 10 | 0 | 0 | 53 |
+| 3. Databases | 44 | 9 | 0 | 0 | 53 |
 | 4. Properties | 27 | 8 | 0 | 1 | 36 |
 | 5. Formulas | 15 | 1 | 0 | 0 | 16 |
 | 6. Templates | 6 | 3 | 0 | 1 | 10 |
@@ -790,7 +790,7 @@ The table below summarizes how many feature rows fall into each status, per area
 | 19. Known limitations & quirks | 0 | 0 | 0 | 15 | 15 |
 | 20. Projects, tickets & planning | 29 | 3 | 0 | 0 | 32 |
 | 21. Workspace lifecycle | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **454** | **87** | **0** | **22** | **563** |
+| **Total** | **455** | **86** | **0** | **22** | **563** |
 
 ## Deliberate divergences
 

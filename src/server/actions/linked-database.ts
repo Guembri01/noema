@@ -1,10 +1,14 @@
 "use server";
 
 import { requireUser } from "@/lib/auth";
-import { getWorkspaceAccess } from "@/lib/permissions";
+import {
+  canPerformWorkspaceAction,
+  getWorkspaceAccess,
+} from "@/lib/permissions";
+import { pageCapabilitiesFromRelation } from "@/lib/page-access";
 import { prisma } from "@/lib/db";
 import { guestReadablePageIds } from "@/lib/guest-access";
-import { getDatabase } from "@/server/queries";
+import { getDatabase, getWorkspaceMembers } from "@/server/queries";
 
 export type LinkedDatabaseData = {
   databasePageId: string;
@@ -13,6 +17,14 @@ export type LinkedDatabaseData = {
   properties: { id: string; name: string; type: string; config: unknown }[];
   views: { id: string; name: string; type: string; config: unknown }[];
   rows: { id: string; title: string; icon: string | null; values: Record<string, unknown> }[];
+  /** Whether this reader may write rows through the embed. */
+  canEdit: boolean;
+  /** The signed-in reader, for agent-stamped cells (VERIFICATION). */
+  actingUserId: string;
+  /** Workspace members offered by PEOPLE cells; empty without directory access. */
+  members: { id: string; name: string }[];
+  /** Relation targets keyed by property id, already scoped like the source view. */
+  relations: Record<string, { id: string; title: string; icon: string | null }[]>;
 };
 
 /**
@@ -63,7 +75,17 @@ export async function getLinkedDatabaseAction(
   // only after the scope check passed.
   const page = await prisma.page.findUnique({
     where: { id: databasePageId },
-    select: { workspaceId: true, type: true, title: true, icon: true },
+    select: {
+      workspaceId: true,
+      type: true,
+      title: true,
+      icon: true,
+      permissions: {
+        where: { userId: user.id },
+        select: { level: true },
+        take: 1,
+      },
+    },
   });
   if (!page || page.type !== "DATABASE") return { error: "Database not found." };
   const access = await getWorkspaceAccess(user.id, page.workspaceId);
@@ -85,7 +107,20 @@ export async function getLinkedDatabaseAction(
     return { error: "Database not found." };
   }
 
-  const database = await getDatabase(databasePageId, readable);
+  // A row write is authorised by `createRowAction` / `setPropertyValueAction` /
+  // `deleteRowAction` too; this only decides whether the embed *shows* the
+  // affordances. A guest never gets them (page capabilities deny edit), and an
+  // explicit READ/COMMENT page grant on the database denies them as well.
+  const canEdit = pageCapabilitiesFromRelation(access.role, page.permissions).edit;
+  const [database, memberRows] = await Promise.all([
+    getDatabase(databasePageId, readable),
+    // The directory is only read for a reader who can actually use the PEOPLE
+    // picker, and only when their workspace role may see the directory.
+    canEdit && canPerformWorkspaceAction(access.role, "viewMemberDirectory")
+      ? getWorkspaceMembers(page.workspaceId)
+      : Promise.resolve([]),
+  ]);
+  const relationData = database.relationData ?? {};
   return {
     databasePageId,
     title: page.title,
@@ -108,5 +143,18 @@ export async function getLinkedDatabaseAction(
       icon: row.icon,
       values: Object.fromEntries(row.propertyValues.map((value) => [value.propertyId, value.value])),
     })),
+    canEdit,
+    actingUserId: user.id,
+    members: memberRows.map((member) => ({ id: member.id, name: member.name })),
+    relations: Object.fromEntries(
+      Object.entries(relationData).map(([propertyId, data]) => [
+        propertyId,
+        data.options.map((option) => ({
+          id: option.id,
+          title: option.title,
+          icon: option.icon,
+        })),
+      ]),
+    ),
   };
 }
