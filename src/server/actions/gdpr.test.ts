@@ -55,6 +55,7 @@ const db = vi.hoisted(() => ({
   notificationFindMany: vi.fn(),
   notificationCreateMany: vi.fn(),
   notificationDelete: vi.fn(),
+  suggestionDeleteMany: vi.fn(),
   transaction: vi.fn(),
   userUpdate: vi.fn(),
   pageUpdate: vi.fn(),
@@ -82,6 +83,7 @@ vi.mock("@/lib/db", () => ({
       createMany: db.notificationCreateMany,
       delete: db.notificationDelete,
     },
+    pageSuggestionSession: { deleteMany: db.suggestionDeleteMany },
     $transaction: db.transaction,
   },
 }));
@@ -108,6 +110,7 @@ const tx = {
   pageFollow: { delete: db.followDelete },
   favorite: { delete: db.favoriteDelete },
   notification: { delete: db.notificationDelete },
+  pageSuggestionSession: { deleteMany: db.suggestionDeleteMany },
 };
 /** The store the mocked prisma reads from and writes to. */
 let followRows: FollowRow[] = [];
@@ -218,7 +221,23 @@ beforeEach(() => {
   db.transaction.mockImplementation(async (run: (client: typeof tx) => unknown) => run(tx));
 });
 
-describe("eraseSubjectDataAction — the link rows (B117)", () => {
+describe("eraseSubjectDataAction - the link rows (B117)", () => {
+  it("drops a suggestions base snapshot when the page body is erased", async () => {
+    db.pageFindMany.mockResolvedValue([
+      {
+        id: "pg_suggest",
+        title: "Notes",
+        content: { type: "doc", content: [] },
+        createdById: SUBJECT,
+        parentId: null,
+        workspaceId: "ws-1",
+      },
+    ]);
+    await eraseSubjectDataAction(SLUG);
+    expect(db.suggestionDeleteMany).toHaveBeenCalledWith({
+      where: { pageId: "pg_suggest" },
+    });
+  });
   it("removes the subject's follow, favourite and notification rows", async () => {
     const result = await eraseSubjectDataAction(SLUG);
 

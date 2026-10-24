@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getSchema, resolveExtensions } from "@tiptap/core";
+import { EditorState } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { applyOne, applySuggestions, createSuggestions, type Block } from "@/lib/suggestions";
 import { InputRules } from "./input-rules";
@@ -7,8 +8,10 @@ import {
   alignBlockIds,
   blockFromNode,
   deleteAnchorIndex,
+  getSmartSuggestionsState,
   SmartSuggestions,
   suggestionDeleteStyle,
+  suggestionsPluginKey,
   type BlockSource,
 } from "./suggestions";
 
@@ -234,12 +237,50 @@ describe("SmartSuggestions wiring", () => {
     expect(Object.keys(commands)).toEqual(
       expect.arrayContaining([
         "setSuggesting",
+        "hydrateSuggestions",
         "acceptSuggestion",
         "rejectSuggestion",
         "acceptAll",
         "rejectAll",
       ]),
     );
+  });
+
+  it("hydrates a persisted base and recomputes the pending diff", () => {
+    const editorState = EditorState.create({
+      schema,
+      doc: schema.nodeFromJSON({
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "new" }] },
+        ],
+      }),
+      plugins: (
+        SmartSuggestions.config.addProseMirrorPlugins as unknown as
+          | (() => import("@tiptap/pm/state").Plugin[])
+          | undefined
+      )?.call({} as never) ?? [],
+    });
+
+    const base: Block[] = [{ id: "b1", type: "paragraph", text: "old" }];
+    const hydrated = editorState.apply(
+      editorState.tr.setMeta(suggestionsPluginKey, {
+        type: "hydrate",
+        base,
+        authorId: "u1",
+      }),
+    );
+    const value = getSmartSuggestionsState(hydrated);
+    expect(value?.active).toBe(true);
+    expect(value?.base).toEqual(base);
+    expect(value?.authorId).toBe("u1");
+    expect(value?.suggestions).toHaveLength(1);
+    expect(value?.suggestions[0]).toMatchObject({
+      kind: "replace",
+      blockId: "b1",
+      before: { text: "old" },
+      after: { text: "new" },
+    });
   });
 });
 

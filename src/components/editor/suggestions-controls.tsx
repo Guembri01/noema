@@ -5,19 +5,28 @@
  * bulk accept/reject. The SmartSuggestions extension owns the session; this
  * component only reads its selectors and dispatches its commands.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { PenLine } from "lucide-react";
 import { useEditorFocus } from "@/components/editor/use-editor-focus";
+import { guarded } from "@/lib/actions-client";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n";
 import { Z } from "@/lib/design-tokens";
 import { FLOATING_CORNER } from "@/lib/floating-corner";
 import {
+  getSmartSuggestionsState,
   isSuggesting,
   pendingSuggestions,
 } from "@/components/editor/extensions/suggestions";
+import {
+  loadSuggestionSessionAction as rawLoadSuggestionSessionAction,
+  saveSuggestionSessionAction as rawSaveSuggestionSessionAction,
+} from "@/server/actions/suggestions";
 import type { Suggestion } from "@/lib/suggestions";
+
+const loadSuggestionSessionAction = guarded(rawLoadSuggestionSessionAction);
+const saveSuggestionSessionAction = guarded(rawSaveSuggestionSessionAction);
 
 function suggestionLabel(suggestion: Suggestion, locale: string): string {
   const before = suggestion.before?.text?.trim();
@@ -41,10 +50,21 @@ function suggestionLabel(suggestion: Suggestion, locale: string): string {
  * `HistoryControls` uses — so the count tracks the document even on changes
  * that do not originate from this control.
  */
-export function SuggestionsControls({ editor, locale }: { editor: Editor; locale: string }) {
+export function SuggestionsControls({
+  editor,
+  locale,
+  pageId,
+}: {
+  editor: Editor;
+  locale: string;
+  pageId: string;
+}) {
   const [, force] = useState(0);
   const [open, setOpen] = useState(false);
   const focused = useEditorFocus(editor);
+  const hydrated = useRef(false);
+  const lastSaved = useRef(JSON.stringify({ active: false }));
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const update = () => force((n) => n + 1);
@@ -53,6 +73,88 @@ export function SuggestionsControls({ editor, locale }: { editor: Editor; locale
       editor.off("transaction", update);
     };
   }, [editor]);
+
+  // Restore a persisted session once, then let the transaction listener save
+  // the base/session changes. Applying the base recomputes the pending list
+  // against the live document, so suggestions survive a reload.
+  useEffect(() => {
+    let cancelled = false;
+    hydrated.current = false;
+    loadSuggestionSessionAction(pageId)
+      .then((result) => {
+        if (cancelled) return;
+        if (
+          !("error" in result) &&
+          result.active &&
+          Array.isArray(result.base) &&
+          result.base.length > 0
+        ) {
+          editor
+            .chain()
+            .focus()
+            .hydrateSuggestions(result.base, {
+              authorId: result.authorId ?? undefined,
+            })
+            .run();
+          lastSaved.current = JSON.stringify({
+            active: true,
+            base: result.base,
+          });
+        } else {
+          lastSaved.current = JSON.stringify({ active: false });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) hydrated.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [editor, pageId]);
+
+  // Persist the committed base, debounced through the same 600 ms cadence as
+  // the document autosave. Accept/reject advances the base, so the effect
+  // naturally records the new comparison point.
+  useEffect(() => {
+    const snapshot = () => {
+      const state = getSmartSuggestionsState(editor.state);
+      const active = state?.active ?? false;
+      const base = active ? state?.base ?? null : null;
+      if (active && (!base || base.length === 0)) return null;
+      return {
+        active,
+        base,
+        key: JSON.stringify(active ? { active: true, base } : { active: false }),
+      };
+    };
+
+    const persist = (immediate: boolean) => {
+      if (!hydrated.current) return;
+      const next = snapshot();
+      if (!next || next.key === lastSaved.current) return;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      const commit = () => {
+        lastSaved.current = next.key;
+        void saveSuggestionSessionAction(
+          pageId,
+          next.active ? { active: true, base: next.base } : { active: false },
+        );
+      };
+      if (immediate) commit();
+      else saveTimer.current = setTimeout(commit, 600);
+    };
+
+    const onTransaction = () => persist(false);
+    editor.on("transaction", onTransaction);
+    return () => {
+      editor.off("transaction", onTransaction);
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+        persist(true);
+      }
+    };
+  }, [editor, pageId]);
 
   const active = isSuggesting(editor.state);
   const pending = pendingSuggestions(editor.state);

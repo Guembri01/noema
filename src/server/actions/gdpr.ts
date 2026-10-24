@@ -388,13 +388,22 @@ async function applyPage(
   fields: Record<string, unknown>,
 ): Promise<void> {
   const data: Prisma.PageUpdateInput = {};
+  let erasedContent = false;
   for (const op of operations) {
     if (op.action === "retain-legal") continue;
     if (op.field === "title") data.title = pseudonym("title", fields);
-    else if (op.field === "content") data.content = Prisma.DbNull;
+    else if (op.field === "content") {
+      data.content = Prisma.DbNull;
+      erasedContent = true;
+    }
     // `createdById` is a required FK to the subject row (itself pseudonymised).
   }
   if (Object.keys(data).length > 0) await tx.page.update({ where: { id }, data });
+  // Suggestions mode keeps a committed snapshot of the page body. Once that
+  // body is erased, the snapshot must not outlive it.
+  if (erasedContent) {
+    await tx.pageSuggestionSession.deleteMany({ where: { pageId: id } });
+  }
 }
 
 /** Apply the writable personal fields of one `comment` record. */

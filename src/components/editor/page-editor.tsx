@@ -1524,7 +1524,7 @@ function PageEditorBody({
           </DragHandle>
 
           <HistoryControls editor={editor} locale={locale} />
-          <SuggestionsControls editor={editor} locale={locale} />
+          <SuggestionsControls editor={editor} locale={locale} pageId={pageId} />
         </>
       )}
 

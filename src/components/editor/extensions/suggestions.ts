@@ -203,6 +203,7 @@ export function deleteAnchorIndex(
 
 type Meta =
   | { type: "set"; active: boolean; authorId?: string }
+  | { type: "hydrate"; base: Block[]; authorId?: string }
   | { type: "accept"; id: string }
   | { type: "acceptAll" };
 
@@ -411,6 +412,20 @@ function applyMeta(
     return next;
   }
 
+  if (meta.type === "hydrate") {
+    const base = meta.base.map((block) => ({ ...block }));
+    const hydrated: SmartSuggestionsState = {
+      active: true,
+      base,
+      proposed: [],
+      suggestions: [],
+      ordinal: Math.max(value.ordinal, base.length),
+      decorations: DecorationSet.empty,
+    };
+    if (meta.authorId !== undefined) hydrated.authorId = meta.authorId;
+    return recompute(hydrated, doc);
+  }
+
   if (!value.base) return value;
 
   if (meta.type === "accept") {
@@ -474,6 +489,11 @@ declare module "@tiptap/core" {
        * pending list (the on-screen content is kept).
        */
       setSuggesting: (active: boolean, options?: { authorId?: string }) => ReturnType;
+      /** Restore a persisted session: base blocks + optional author. */
+      hydrateSuggestions: (
+        base: Block[],
+        options?: { authorId?: string },
+      ) => ReturnType;
       /** Accept one pending suggestion by its engine id. */
       acceptSuggestion: (id: string) => ReturnType;
       /** Reject one pending suggestion by its engine id (reverts the block). */
@@ -526,6 +546,20 @@ export const SmartSuggestions = Extension.create({
             tr.setMeta(suggestionsPluginKey, {
               type: "set",
               active,
+              authorId: options?.authorId,
+            } satisfies Meta);
+            dispatch(tr);
+          }
+          return true;
+        },
+
+      hydrateSuggestions:
+        (base: Block[], options?: { authorId?: string }) =>
+        ({ tr, dispatch }: CommandProps) => {
+          if (dispatch) {
+            tr.setMeta(suggestionsPluginKey, {
+              type: "hydrate",
+              base,
               authorId: options?.authorId,
             } satisfies Meta);
             dispatch(tr);

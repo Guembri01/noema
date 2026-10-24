@@ -255,6 +255,7 @@ model Page {
   templates      Template[]
   versions       PageVersion[]
   comments       Comment[]
+  suggestionSession PageSuggestionSession?
   shareLinks     ShareLink[]
   favorites      Favorite[]
   followers      PageFollow[]
@@ -300,6 +301,20 @@ model PageVersion {
   page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
   @@index([pageId])
+}
+
+/// One in-progress track-changes (Suggestions mode) session per page. `base`
+/// is the committed block snapshot the live document is diffed against; the
+/// pending suggestion list is derived, so reloading a page recomputes it from
+/// this snapshot instead of persisting every edit row.
+model PageSuggestionSession {
+  id        String   @id @default(cuid())
+  pageId    String   @unique
+  base      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
 }
 
 // ---------------------------------------------------------------------------

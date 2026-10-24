@@ -2,20 +2,19 @@
 
 > Generated from `docs/FEATURE_MATRIX.md` by `npm run docs:gaps`. Do not edit by hand.
 
-**Status:** 563 feature rows — 468 implemented · 73 partial · 0 planned · 22 deliberately out of scope.
+**Status:** 563 feature rows — 470 implemented · 71 partial · 0 planned · 22 deliberately out of scope.
 
-This file lists the **73** rows that are not finished, area by area, plus 22 intentional divergences.
+This file lists the **71** rows that are not finished, area by area, plus 22 intentional divergences.
 
 ## Read this first — highest-leverage gaps
 
 | # | Gap | Why it matters | Area |
 | --- | --- | --- | --- |
-| 1 | **Suggestions mode persistence** | Block-level suggesting, decorations and accept/reject ship; persist the session and share it with collaborators, then add character-level diffs. | 7. Collaboration |
-| 2 | **Pagination everywhere** | Databases, tickets and audit lists load bounded sets; cursor pagination is pending. | 17. Data model & platform |
-| 3 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
-| 4 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
-| 5 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
-| 6 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
+| 1 | **Pagination everywhere** | Databases, tickets and audit lists load bounded sets; cursor pagination is pending. | 17. Data model & platform |
+| 2 | **Object storage & backups** | Uploads and scheduled backups to S3-compatible storage. | 17. Data model & platform |
+| 3 | **SAML SSO** | OIDC is implemented and tested; SAML needs a provider-agnostic strategy layer. | 8. Sharing & permissions |
+| 4 | **Undo/redo (global)** | App-wide undo beyond the editor's local history. | 16. Navigation & UX |
+| 5 | **Self-hosting & auth** | Packaging, provider-agnostic sign-in and documented deployment remain. | 17. Data model & platform |
 
 ## By area
 
@@ -84,7 +83,7 @@ This file lists the **73** rows that are not finished, area by area, plus 22 int
 
 ### 7. Collaboration
 
-17 done · 9 partial · 0 planned
+19 done · 7 partial · 0 planned
 
 | Feature | What it should do | Status | Notes |
 | --- | --- | --- | --- |
@@ -94,8 +93,6 @@ This file lists the **73** rows that are not finished, area by area, plus 22 int
 | Live cursors | Remote carets and selections. | 🟡 | Planned; needs presence transport. |
 | Inline comments | Comments anchored to a text range. | 🟡 | The bubble toolbar and the block context menu both resolve the top-level block id (`blockIdAt` / `blockAnchorId`) and dispatch `{ quote, blockId }`; the panel keeps the anchor in composer state, forwards it to `addCommentAction` for roots only (replies inherit their thread), the page route projects `blockId`, and a stored anchor renders a **Jump to block** button that scrolls the editor to `[data-block-id]`. The persisted shape still has no selection `from`/`to` offsets and no inline highlight, so exact range rendering remains open. R79.3. |
 | Comment mentions | Mention people in comments. | 🟡 | `@Name`, `@first`, `@ada@example.com` notify matching workspace members (`page.mention`); matching is a tested pure helper. Targets are the current `workspaceMember` rows, the author is skipped, and a guest target is filtered through `guestReadablePageIds` so a guest outside the page read scope receives neither the notification nor its `pageId`. Still open: no cross-event coalescing, edits do not re-dispatch, and inline `@user` nodes in page content dispatch nothing. R79.4. |
-| Suggestions mode | Propose edits for approval. | 🟡 | A block-level track-changes session ships: suggesting toggle, pending list, insert/replace decorations, deleted-block markers, and accept/reject one/all. It is session-local (not persisted across reloads or shared live), and the diff is block-level rather than character-level. |
-| Accept/reject suggestion | Resolve proposed changes. | 🟡 | Accept advances the base snapshot and reject rebuilds the affected block from it; structural blocks are decorated but not surgically revertible. Persistence/collaborative review remains. |
 | Coarse edit locks | Prevent simultaneous structural edits. | 🟡 | Planned fallback before full CRDT. |
 
 ### 8. Sharing & permissions
